@@ -106,6 +106,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `clm.py`                    | CLM sovereign LLM adapter - drives a customer-side CLM gateway |
 | `clm_tls_launcher.py`       | mTLS launcher for the CLM adapter |
 | `cloudflare_agents.py`      | Cloudflare Agents SDK adapter for local wrangler dev or deployed worker trigger |
+| `codebuddy.py`              | CodeBuddy CLI adapter (Tencent Cloud Code Assistant) |
 | `codebuff.py`               | Codebuff CLI adapter |
 | `codex.py`                  | OpenAI Codex CLI adapter |
 | `codex_cloudflare.py`       | Codex adapter for Cloudflare Sandbox execution |
@@ -125,15 +126,18 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
 | `goose.py`                  | Goose CLI adapter for Bernstein |
 | `gptme.py`                  | gptme CLI adapter |
+| `grok.py`                   | Grok CLI adapter (xAI Grok Build) |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
 | `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
+| `jules.py`                  | Jules Tools CLI adapter (Google) |
 | `junie.py`                  | JetBrains Junie CLI adapter |
 | `kilo.py`                   | Kilo CLI adapter (Stackblitz) |
 | `kimi.py`                   | Kimi CLI adapter |
 | `kiro.py`                   | Kiro CLI adapter |
 | `letta_code.py`             | Letta Code CLI adapter |
 | `manager.py`                |  |
+| `mimo.py`                   | MiMo Code CLI adapter (Xiaomi) |
 | `mistral.py`                | Mistral Vibe CLI adapter |
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
@@ -147,6 +151,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `plandex.py`                | Plandex CLI adapter |
 | `plugin_sdk.py`             | Adapter plugin SDK for third-party agent integration |
 | `q_dev.py`                  | AWS Q Developer CLI adapter (binary: ``q``) |
+| `qoder.py`                  | Qoder CLI adapter (Alibaba Qoder) |
 | `qwen.py`                   | Qwen CLI adapter for OpenAI compatible models |
 | `ralphex.py`                | Ralphex (umputun/ralphex) CLI adapter |
 | `registry.py`               | Adapter registry - look up CLI adapters by name |
@@ -156,7 +161,9 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
+| `trae.py`                   | Trae Agent CLI adapter (ByteDance) |
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
+| `warp.py`                   | Warp Agent CLI adapter (``oz``) |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
 
 ### `src/bernstein/agents/` - agent catalog & discovery
