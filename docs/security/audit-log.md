@@ -86,6 +86,35 @@ precedence is deny-wins and the posture is fail-closed:
 
 source: `src/bernstein/core/approval/gate.py`.
 
+### fleet config-plane events
+
+the fleet config plane (#2550) records every named-configuration mutation
+on this chain, so config identity is a projection of receipts rather than a
+mutable live-state row:
+
+| event_type | recorded when | key `details` |
+| --- | --- | --- |
+| `fleet.var_set` | a fleet variable is written | `name`, `old_value_hash`, `new_value_hash`, `chain_position` |
+| `fleet.conn_create` | a connection document is created | `name`, `document_hash`, `secret_name_digest` |
+| `fleet.conn_rotate` | a connection document is rotated | `name`, `old_document_hash`, `new_document_hash` |
+| `fleet.conn_resolve` | a document resolves for a task | `name`, `document_hash`, `task_id`, `token_id` |
+| `fleet.conn_refuse` | a document refuses to resolve | `name`, `document_hash`, `reason` |
+| `fleet.context_activate` | an operating context is activated | `name`, `settings_hash` |
+
+these families are covered by the HMAC chain like every other event, so a
+mutated, deleted, or reordered record fails `bernstein audit verify`. in
+addition a dedicated semantic pillar (`_verify_fleet_config`) reconstructs
+the config-plane state and checks that variable write ordinals are
+contiguous, value hashes chain from write to write, and every rotation or
+resolution names a document that was created - so a record that is
+individually well-formed but spliced out of its family is still caught.
+raw secret material never appears in any of these records: connection
+documents carry only a broker secret *reference*, and the chain stores only
+its digest.
+
+source: `src/bernstein/core/fleet/` and
+`src/bernstein/core/security/audit_chain.py`.
+
 ## Key management
 
 the HMAC key is loaded from, in order:

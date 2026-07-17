@@ -523,3 +523,89 @@ A chain element whose `conformance` is below the role's
 `conformance_floor` fails config validation. Validate declared chains with
 `bernstein doctor --failover-drill`. Full guide:
 [Provider availability & failover](provider-availability.md).
+
+## Fleet config plane (#2550)
+
+Three named-configuration primitives share one discipline: every write,
+rotation, and activation is an audit-chain event, every claim-time read is
+pinned into task lineage, and history, divergence, and replay all resolve
+from the chain rather than from live state. All three surfaces work offline;
+none require a running server.
+
+### Variables - `bernstein var`
+
+A fleet variable is a named JSON value whose identity is its audit-chain
+segment.
+
+```bash
+bernstein var set threshold 5        # records a fleet.var_set chain event
+bernstein var set threshold 9        # old->new value hashes chained
+bernstein var get threshold          # -> 9
+bernstein var history threshold      # every write, offline from the chain
+```
+
+Each `set` records the old and new value hashes plus a per-name write
+ordinal. A claim-time read (in the run path) pins `(name, value_hash,
+chain_position)` into the reading task's lineage spine, and replay resolves
+that pinned hash - never the live value - so a run replayed after N further
+mutations reads byte-identically. When two workers read different values,
+`var history` explains it from the chain alone: the write that landed
+between their two pinned positions. Values live under
+`.sdd/fleet/variables/` (content-addressed blobs plus a name index).
+
+### Connection documents - `bernstein conn`
+
+A connection document is a typed, named record (`prod-github`, `team-slack`)
+that task specs reference by name. It carries no secret material - only a
+broker secret *reference*, a scope, and connector defaults - and is signed
+with the local Ed25519 install identity.
+
+```bash
+bernstein conn create prod-github --secret github_pat --scope repo:read
+bernstein conn list
+bernstein conn rotate prod-github --secret github_pat_v2   # zero spec edits
+bernstein conn audit prod-github                           # every resolving task, offline
+```
+
+Rotation re-points every consumer at the next mint. Resolution runs only
+through the secrets-broker mint path, so the raw secret is minted into a
+short-lived token and registered for redaction; it never reaches an agent
+environment or artifact. A document copied to another install refuses to
+resolve (its signature does not verify against the copy's local identity),
+and the refusal is itself an audit event. See
+[secrets-broker.md](../security/secrets-broker.md#connection-documents-2550).
+
+### Operating contexts - `bernstein ctx`
+
+An operating context atomically pins server URL, store DSN, adapter
+defaults, and a budget-envelope name as one named unit. (The `context`
+command name is taken by the worker context-capsule surface (#2545), so this
+fleet surface is `ctx`.)
+
+```bash
+bernstein ctx create staging --server-url https://staging --set budget=42
+bernstein ctx use staging          # atomic activation, recorded on the chain
+bernstein ctx show                 # the active context + its settings hash
+bernstein ctx list
+```
+
+Activation inserts one `context` layer into the precedence chain, between
+the project and global layers (see the precedence note below), and records a
+`fleet.context_activate` event embedding the canonical effective-settings
+hash. Two installs with identical context content produce a byte-identical
+canonical document and an equal hash, so a run carries a configuration
+identity a verifier recomputes; config drift becomes a detected hash
+divergence with a named cause. With no context active, the existing
+four-layer precedence and the `bernstein profile` perf command are
+unchanged. Contexts live under `.sdd/fleet/contexts/`, with `active.json`
+recording the activation.
+
+Precedence with a context active (highest first): session > project >
+**context** > global > default.
+
+### Verification
+
+`bernstein audit verify` covers all three families through the HMAC chain
+and an additional semantic pillar that checks variable write-ordinal
+contiguity, value-hash lineage, and connection reference integrity. See
+[audit-log.md](../security/audit-log.md#fleet-config-plane-events).

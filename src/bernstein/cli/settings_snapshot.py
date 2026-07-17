@@ -3,17 +3,30 @@
 Provides ``capture_settings_snapshot()`` that collects all settings
 sources (environment, config files, defaults) with provenance info,
 and ``save_settings_snapshot()`` that persists to .sdd/traces/.
+
+For the fleet config plane (#2550) it also exposes canonical hashing of the
+effective settings: :func:`effective_settings_values` extracts the resolved
+key -> value map, :func:`canonical_settings_document` serialises it to
+platform-independent canonical JSON, and :func:`effective_settings_hash`
+digests it. Two installs with identical effective settings produce a
+byte-identical canonical document and an equal hash, so a run receipt can
+embed a configuration identity a verifier recomputes offline, and replay can
+name the diverging keys when the hash no longer matches.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +315,48 @@ def save_settings_snapshot(
     snapshot_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     return snapshot_path
+
+
+# ---------------------------------------------------------------------------
+# Canonical effective-settings hashing (#2550)
+# ---------------------------------------------------------------------------
+
+
+def effective_settings_values(snapshot: SettingsSnapshot) -> dict[str, Any]:
+    """Extract the resolved key -> value map from *snapshot*.
+
+    Only the effective values are kept; provenance, capture time, and the
+    raw environment are excluded so the map is a pure function of the
+    resolved configuration.
+    """
+    return {key: sv.value for key, sv in snapshot.settings.items()}
+
+
+def canonical_settings_document(settings: Mapping[str, Any]) -> str:
+    """Serialise an effective-settings map to canonical JSON.
+
+    Sorted keys, compact separators, ASCII-escaped: the encoding is a pure
+    function of the value, so two installs with identical effective settings
+    produce byte-identical documents.
+    """
+    return json.dumps(dict(settings), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def effective_settings_hash(settings: Mapping[str, Any]) -> str:
+    """Return the ``sha256:`` hash of the canonical effective-settings document."""
+    return "sha256:" + hashlib.sha256(canonical_settings_document(settings).encode("utf-8")).hexdigest()
+
+
+def diverging_keys(recorded: Mapping[str, Any], current: Mapping[str, Any]) -> list[str]:
+    """Return the sorted keys whose effective value differs between two maps.
+
+    A key present in only one map counts as diverging. Used by replay to name
+    the diverging keys when a recorded effective-settings hash no longer
+    matches the current one.
+    """
+    names: set[str] = set(recorded) | set(current)
+    changed = [k for k in names if recorded.get(k) != current.get(k)]
+    return sorted(changed)
 
 
 def format_snapshot(snapshot: SettingsSnapshot) -> str:

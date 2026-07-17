@@ -1154,6 +1154,17 @@ cli.add_command(intent_group, "intent")
 from bernstein.cli.commands.context_cmd import context_group  # noqa: E402
 
 cli.add_command(context_group, "context")
+# Fleet config plane: audit-chained variables, named connection documents,
+# and switchable operating contexts (#2550). The ``context`` name is taken
+# by the worker context-capsule surface above, so operating contexts are
+# exposed as ``ctx``.
+from bernstein.cli.commands.conn_cmd import conn_group  # noqa: E402
+from bernstein.cli.commands.ctx_cmd import ctx_group  # noqa: E402
+from bernstein.cli.commands.var_cmd import var_group  # noqa: E402
+
+cli.add_command(var_group, "var")
+cli.add_command(conn_group, "conn")
+cli.add_command(ctx_group, "ctx")
 # Signed maker-checker / judge-panel gate adjudications (#2294).
 from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 

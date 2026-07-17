@@ -123,6 +123,39 @@ value from the text it processes. The registry is updated automatically
 on mint and revoke; tests can clear it via
 `clear_redaction_registry()`.
 
+## Connection documents (#2550)
+
+A connection document is a typed, named record (`prod-github`, `team-slack`)
+that sits *above* the broker as a naming and reuse layer. It carries no
+secret material: it names a broker-managed secret, a scope, and connector
+defaults, and it is signed with the local Ed25519 install identity
+(`src/bernstein/core/lineage/identity.py`). Task specs, routines, and
+triggers reference the document by name, so rotating one document re-points
+every consumer at the next mint with zero spec edits.
+
+The document layer changes nothing the broker lifecycle owns. Resolution
+calls the same `SecretsBroker.mint` path, so the raw secret is minted into a
+short-lived token and registered for redaction exactly as above - the raw
+backing value never appears in an agent environment or a persisted artifact.
+Each resolution additionally emits a `fleet.conn_resolve` lineage receipt
+binding `(document name, document hash, task id, token id)`, so
+`bernstein conn audit` reconstructs every task that ever resolved a document
+offline from the chain alone.
+
+```
+bernstein conn create prod-github --secret github_pat --scope repo:read
+bernstein conn rotate prod-github --secret github_pat_v2   # signed chain event
+bernstein conn audit prod-github
+```
+
+Signature verification runs against the *local* install identity, not the
+key embedded in the document, so a document copied to another install
+refuses to resolve; the refusal is recorded as a `fleet.conn_refuse` event.
+Once scoped grants (below) are wired, a document resolution simply carries
+its grant reference - the document does not redefine mint, resolve, revoke,
+or grant authorization semantics. Documents live under
+`.sdd/fleet/connections/`. Source: `src/bernstein/core/fleet/connection.py`.
+
 ## Scoped per-task grants
 
 By default the broker hands any token holder the full backing secret. In

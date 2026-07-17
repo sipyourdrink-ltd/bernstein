@@ -230,8 +230,77 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # verify. Orthogonal to both HMAC chain and Merkle seal.
     all_passed = _verify_approval_cards() and all_passed
 
+    # Fleet config-plane events are a further integrity pillar: a variable
+    # write spliced out of its per-name lineage, or a connection resolution
+    # naming a document that was never created, must fail verify beyond the
+    # HMAC check (#2550). Orthogonal to both HMAC chain and Merkle seal.
+    all_passed = _verify_fleet_config() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
+
+
+def _verify_fleet_config() -> bool:
+    """Verify fleet config-plane semantic invariants. Returns True if valid.
+
+    Reconstructs the variable write lineage and connection references from the
+    chain and checks that write ordinals are contiguous, value hashes chain,
+    and every rotation/resolution names a created document (#2550). When no
+    fleet config events exist the check is a silent no-op.
+    """
+    from bernstein.core.fleet.config_audit import verify_fleet_config_events
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.security.audit_chain import (
+        EVENT_FLEET_VAR_SET,
+        AuditChainStore,
+    )
+
+    try:
+        chain = AuditChainStore(AUDIT_DIR, key=load_or_create_audit_key())
+    except OSError as exc:  # pragma: no cover - filesystem race
+        console.print(f"[red]Failed to load audit key for fleet config verification: {exc}[/red]")
+        return False
+
+    # Cheap presence probe: if no variable and no connection events exist,
+    # stay a silent no-op like the other pillars.
+    if not chain.query(event_type=EVENT_FLEET_VAR_SET) and not _has_any_connection_event(chain):
+        return True
+
+    ok, errors = verify_fleet_config_events(chain)
+    console.print()
+    if ok:
+        console.print(
+            Panel(
+                "[bold green]Fleet Config Verification Passed[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        return True
+    console.print(Panel("[bold red]Fleet Config Verification FAILED[/bold red]", border_style="red", expand=False))
+    for err in errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
+
+
+def _has_any_connection_event(chain: object) -> bool:
+    from bernstein.core.security.audit_chain import (
+        EVENT_FLEET_CONN_CREATE,
+        EVENT_FLEET_CONN_REFUSE,
+        EVENT_FLEET_CONN_RESOLVE,
+        EVENT_FLEET_CONN_ROTATE,
+    )
+
+    query = chain.query  # type: ignore[attr-defined]
+    return any(
+        query(event_type=event_type)
+        for event_type in (
+            EVENT_FLEET_CONN_CREATE,
+            EVENT_FLEET_CONN_ROTATE,
+            EVENT_FLEET_CONN_RESOLVE,
+            EVENT_FLEET_CONN_REFUSE,
+        )
+    )
 
 
 def _verify_grant_chains() -> bool:

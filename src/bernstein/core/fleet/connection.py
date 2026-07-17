@@ -1,0 +1,372 @@
+"""Named connection documents for the fleet config plane (#2550).
+
+A connection document is a typed, named record - ``prod-github``,
+``team-slack`` - that task specs, routines, and triggers reference by name.
+It carries **no secret material**: it names a broker-managed secret, a
+scope, and connector defaults, and it is signed with the local Ed25519
+install identity. The naming and reuse layer sits *above* the secrets
+broker's mint / resolve / revoke lifecycle and changes nothing that lifecycle
+owns.
+
+Three substrate-coupled properties make it more than a config file:
+
+* **Install-bound signature (isolation).** The document is signed by the
+  local install identity and :func:`resolve_document` verifies against the
+  *local* identity, not the embedded key. A document copied to another
+  install therefore refuses to resolve, and the refusal is a recorded
+  ``fleet.conn_refuse`` chain event - not a silent denial.
+
+* **Broker-only resolution + lineage receipt (verifiability).** Resolution
+  runs only through :meth:`SecretsBroker.mint`, so the raw secret is minted
+  into a short-lived token and registered for redaction; it never reaches an
+  agent environment or persisted artifact. Each resolution emits a
+  ``fleet.conn_resolve`` receipt binding ``(name, document hash, task id,
+  token id)``, so :func:`audit_resolutions` reconstructs every resolving task
+  offline from the chain alone.
+
+* **Rotation as a signed supersede.** Rotating one document re-points every
+  consumer at the next mint with zero task-spec edits (consumers reference by
+  name), and the rotation is a signed ``fleet.conn_rotate`` chain event.
+
+This module never imports the CLI or a running server.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from bernstein.core.lineage.identity import (
+    AgentCard,
+    load_or_create_signing_identity,
+    sign_detached,
+    verify_detached,
+)
+from bernstein.core.security.audit_chain import (
+    EVENT_FLEET_CONN_RESOLVE,
+    record_fleet_conn_create,
+    record_fleet_conn_refuse,
+    record_fleet_conn_resolve,
+    record_fleet_conn_rotate,
+)
+
+if TYPE_CHECKING:
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.secrets_broker import MintedToken, SecretsBroker
+
+__all__ = [
+    "ConnectionDocument",
+    "ConnectionDocumentStore",
+    "ConnectionRefused",
+    "ResolutionReceipt",
+    "audit_resolutions",
+    "create_document",
+    "resolve_document",
+    "rotate_document",
+    "verify_document_local",
+]
+
+#: Domain-separation tag folded into every signing preimage so a connection
+#: document signature can never be replayed as some other install artifact.
+_SIGN_DOMAIN = b"bernstein.fleet.conn.v1\x00"
+
+#: Fixed key id for the install identity that signs connection documents.
+FLEET_CONN_KID = "bernstein/fleet-conn/v1"
+
+_IDENTITY_PRIVATE_NAME = "fleet_conn_signing.pem"
+_IDENTITY_PUBLIC_NAME = "fleet_conn_signing.pub"
+
+
+class ConnectionRefused(Exception):
+    """Raised when a connection document refuses to resolve."""
+
+
+@dataclass(frozen=True)
+class ConnectionDocument:
+    """A signed, named connection document. Carries no secret material."""
+
+    name: str
+    secret_name: str
+    scope: str
+    connector_defaults: dict[str, Any] = field(default_factory=dict)
+    signer_public_key_pem: str = ""
+    signature: str = ""
+    version: int = 1
+
+    def _payload(self, *, include_signature: bool) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "secret_name": self.secret_name,
+            "scope": self.scope,
+            "connector_defaults": self.connector_defaults,
+            "signer_public_key_pem": self.signer_public_key_pem,
+            "version": self.version,
+        }
+        if include_signature:
+            payload["signature"] = self.signature
+        return payload
+
+    def unsigned_canonical_bytes(self) -> bytes:
+        """Return the canonical bytes that are signed (excludes the signature)."""
+        return json.dumps(
+            self._payload(include_signature=False),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+
+    def document_hash(self) -> str:
+        """Return the ``sha256:`` content hash of the unsigned canonical bytes."""
+        return "sha256:" + hashlib.sha256(self.unsigned_canonical_bytes()).hexdigest()
+
+    def to_json(self) -> str:
+        """Serialise the full signed document to canonical JSON."""
+        return json.dumps(
+            self._payload(include_signature=True),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> ConnectionDocument:
+        """Parse a document previously produced by :meth:`to_json`."""
+        data = json.loads(raw)
+        return cls(
+            name=data["name"],
+            secret_name=data["secret_name"],
+            scope=data.get("scope", ""),
+            connector_defaults=data.get("connector_defaults", {}),
+            signer_public_key_pem=data.get("signer_public_key_pem", ""),
+            signature=data.get("signature", ""),
+            version=int(data.get("version", 1)),
+        )
+
+
+@dataclass(frozen=True)
+class ResolutionReceipt:
+    """A projected ``fleet.conn_resolve`` receipt (reconstructed from chain)."""
+
+    name: str
+    document_hash: str
+    task_id: str
+    token_id: str
+
+
+class ConnectionDocumentStore:
+    """Filesystem-backed store of connection documents, keyed by name.
+
+    Conventionally rooted at ``<sdd>/fleet/connections``. Documents are stored
+    one JSON file per name; the raw backing secret is never written here.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = Path(root)
+
+    def _path(self, name: str) -> Path:
+        _validate_name(name)
+        return self._root / f"{name}.json"
+
+    def put(self, doc: ConnectionDocument) -> None:
+        """Persist *doc* under its name (atomic write)."""
+        self._root.mkdir(parents=True, exist_ok=True)
+        path = self._path(doc.name)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(doc.to_json(), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def get(self, name: str) -> ConnectionDocument:
+        """Load the document named *name*.
+
+        Raises:
+            KeyError: If no document is stored under *name*.
+        """
+        path = self._path(name)
+        if not path.exists():
+            raise KeyError(name)
+        return ConnectionDocument.from_json(path.read_text(encoding="utf-8"))
+
+    def list_names(self) -> list[str]:
+        """Return the names of all stored documents, sorted."""
+        if not self._root.exists():
+            return []
+        return sorted(p.stem for p in self._root.glob("*.json"))
+
+
+def _validate_name(name: str) -> None:
+    if not name or "/" in name or "\\" in name or name in {".", ".."} or "\x00" in name:
+        raise ValueError(f"invalid connection document name: {name!r}")
+
+
+def _digest_secret_name(secret_name: str) -> str:
+    """Return a stable digest of *secret_name* for chain records.
+
+    The raw reference name never lands in the audit chain; only its digest,
+    so a chain reader cannot enumerate secret names.
+    """
+    return "sha256:" + hashlib.sha256(secret_name.encode("utf-8")).hexdigest()
+
+
+def _local_identity(identity_dir: Path) -> tuple[str, str]:
+    return load_or_create_signing_identity(
+        Path(identity_dir),
+        private_name=_IDENTITY_PRIVATE_NAME,
+        public_name=_IDENTITY_PUBLIC_NAME,
+    )
+
+
+def _sign(doc: ConnectionDocument, private_key_pem: str) -> ConnectionDocument:
+    signature = sign_detached(
+        _SIGN_DOMAIN + doc.unsigned_canonical_bytes(),
+        private_key_pem,
+        kid=FLEET_CONN_KID,
+    )
+    return replace(doc, signature=signature)
+
+
+def verify_document_local(doc: ConnectionDocument, *, identity_dir: Path) -> bool:
+    """Return ``True`` iff *doc* was signed by the *local* install identity.
+
+    Verification uses the local install public key, not the key embedded in
+    the document, so a document copied from another install fails here even
+    though it is internally self-consistent.
+    """
+    _, local_pub = _local_identity(identity_dir)
+    card = AgentCard(agent_id="install", kid=FLEET_CONN_KID, public_key_pem=local_pub)
+    return verify_detached(_SIGN_DOMAIN + doc.unsigned_canonical_bytes(), doc.signature, card)
+
+
+def create_document(
+    *,
+    name: str,
+    secret_name: str,
+    scope: str,
+    connector_defaults: dict[str, Any] | None,
+    identity_dir: Path,
+    chain: AuditChainStore,
+    store: ConnectionDocumentStore,
+) -> ConnectionDocument:
+    """Create, sign, persist, and record a new connection document."""
+    _validate_name(name)
+    private_key_pem, public_key_pem = _local_identity(identity_dir)
+    unsigned = ConnectionDocument(
+        name=name,
+        secret_name=secret_name,
+        scope=scope,
+        connector_defaults=dict(connector_defaults or {}),
+        signer_public_key_pem=public_key_pem,
+        version=1,
+    )
+    doc = _sign(unsigned, private_key_pem)
+    store.put(doc)
+    record_fleet_conn_create(
+        chain=chain,
+        name=name,
+        document_hash=doc.document_hash(),
+        secret_name_digest=_digest_secret_name(secret_name),
+    )
+    return doc
+
+
+def rotate_document(
+    name: str,
+    *,
+    identity_dir: Path,
+    chain: AuditChainStore,
+    store: ConnectionDocumentStore,
+    new_secret_name: str | None = None,
+    new_scope: str | None = None,
+    new_connector_defaults: dict[str, Any] | None = None,
+) -> ConnectionDocument:
+    """Rotate the document named *name* and record a signed rotation event.
+
+    Consumers reference the document by name, so rotation re-points all of
+    them at the next mint with zero task-spec edits.
+    """
+    current = store.get(name)
+    private_key_pem, public_key_pem = _local_identity(identity_dir)
+    unsigned = ConnectionDocument(
+        name=name,
+        secret_name=new_secret_name if new_secret_name is not None else current.secret_name,
+        scope=new_scope if new_scope is not None else current.scope,
+        connector_defaults=(
+            dict(new_connector_defaults) if new_connector_defaults is not None else current.connector_defaults
+        ),
+        signer_public_key_pem=public_key_pem,
+        version=current.version + 1,
+    )
+    rotated = _sign(unsigned, private_key_pem)
+    store.put(rotated)
+    record_fleet_conn_rotate(
+        chain=chain,
+        name=name,
+        old_document_hash=current.document_hash(),
+        new_document_hash=rotated.document_hash(),
+        secret_name_digest=_digest_secret_name(rotated.secret_name),
+    )
+    return rotated
+
+
+def resolve_document(
+    name: str,
+    *,
+    identity_dir: Path,
+    task_id: str,
+    broker: SecretsBroker,
+    chain: AuditChainStore,
+    store: ConnectionDocumentStore,
+    ttl_seconds: int | None = None,
+) -> MintedToken:
+    """Resolve the document *name* to a short-lived broker token.
+
+    The document's signature is verified against the local install identity
+    first; on failure a ``fleet.conn_refuse`` event is recorded and
+    :class:`ConnectionRefused` is raised. On success the broker mints a
+    short-lived token (registering the raw secret for redaction), and a
+    ``fleet.conn_resolve`` lineage receipt is recorded.
+    """
+    doc = store.get(name)
+    if not verify_document_local(doc, identity_dir=identity_dir):
+        record_fleet_conn_refuse(
+            chain=chain,
+            name=name,
+            document_hash=doc.document_hash(),
+            reason="signature_verification_failed",
+        )
+        raise ConnectionRefused(f"connection document {name!r} is not signed by the local install identity")
+
+    token = broker.mint(secret_name=doc.secret_name, task_id=task_id, ttl_seconds=ttl_seconds)
+    record_fleet_conn_resolve(
+        chain=chain,
+        name=name,
+        document_hash=doc.document_hash(),
+        task_id=task_id,
+        token_id=token.token_id,
+    )
+    return token
+
+
+def audit_resolutions(chain: AuditChainStore, *, name: str | None = None) -> list[ResolutionReceipt]:
+    """Reconstruct every document resolution from the chain, oldest first.
+
+    With ``name`` given, only that document's resolutions are returned. This
+    resolves offline from the chain alone - no server, no live store.
+    """
+    receipts: list[ResolutionReceipt] = []
+    for event in chain.query(event_type=EVENT_FLEET_CONN_RESOLVE):
+        details = event.details
+        if name is not None and details.get("name") != name:
+            continue
+        receipts.append(
+            ResolutionReceipt(
+                name=str(details.get("name", "")),
+                document_hash=str(details.get("document_hash", "")),
+                task_id=str(details.get("task_id", "")),
+                token_id=str(details.get("token_id", "")),
+            )
+        )
+    return receipts
