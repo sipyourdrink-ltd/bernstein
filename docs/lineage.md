@@ -161,6 +161,59 @@ make -C examples/lineage demo-eu-mfg
 | `bernstein lineage gate` reports "missing trailing newline" | The final record was truncated or its terminating `\n` was stripped/flipped at EOF (e.g. an editor that drops the trailing newline, or a partial write). | Restore the full log from a trusted copy; a truncated final record is tamper-evidence. |
 | Genesis entry shows up with `parent_hashes: []` | First-time write of a file that existed before lineage was enabled. | Expected - see ADR-009 §11 on bootstrap. |
 
+## on_fail recovery receipts
+
+When a workflow DSL DAG routes control to a recovery node because an upstream
+node failed under a guard (the `fix-bugs` depends-on `run-tests` with
+`condition: "status == 'failed'"` pattern), the recovery task carries a
+**lineage-attested failure receipt** rather than a bare description.
+
+The receipt is the recovery task's primary artefact. It captures the failure
+the run already observed:
+
+| Field | Source |
+|---|---|
+| `source_status` | The failing task's terminal status. |
+| `condition_context` | The guard evaluation context (`status` / `result` / `output`). |
+| `gate_report` | The failing task's quality gate findings. |
+| `journal_tail` | The tail of the run's Merkle event journal, filtered to the failing task and stripped of wall-clock envelope. |
+
+The canonical, sorted-key serialization is content-addressed. Recording it on
+the run's lineage spine returns a Merkle-chained, HMAC-tagged entry hash, which
+is stamped on the recovery task (`metadata.recovery_receipt_hash`) and injected
+into the recovery agent's prompt. The recovery agent continues from the
+captured failure instead of rediscovering it.
+
+Because the receipt bytes are the spine entry's content, the anchored entry
+binds cryptographically to the exact failure summary. Verify that a recovery
+task's receipt resolves to a valid spine entry:
+
+```bash
+# Resolve the embedded receipt hash against the run's spine.
+bernstein lineage verify <run_id> --receipt-hash sha256:<entry-hash>
+
+# Also content-address the receipt artefact against the anchored entry.
+bernstein lineage verify <run_id> \
+  --receipt-hash sha256:<entry-hash> \
+  --receipt-file .sdd/lineage/receipts/<content-hash>.json
+```
+
+Exit codes: `0` the receipt resolves on an intact chain (and, with
+`--receipt-file`, its content matches the anchored entry); `2` it does not.
+
+Guarantees:
+
+- **Determinism.** Two runs over identical fixtures produce a byte-identical
+  receipt content hash and an identical spine entry hash.
+- **Tamper evidence.** Mutating any receipt field changes the content hash, so
+  it no longer matches the anchored entry; rewriting the spine row to cover it
+  up breaks the HMAC chain, which needs a key an editor does not have.
+- **Isolation.** The receipt's `artifact_path` stays repo-relative
+  (`.sdd/lineage/receipts/<content-hash>.json`).
+
+See [on_fail recovery receipts (workflow DSL)](workflows/on-fail-recovery-receipts.md)
+for the DAG authoring side.
+
 ## Key rotation
 
 Each lineage entry signs the key id (`agent_card_kid`) it was produced under, and the gate verifies the signature against the Agent Card for that exact `(agent_id, kid)` pair - not against whatever card currently sits at the agent id. This keeps historical entries verifiable after an agent rotates its key.
