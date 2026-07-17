@@ -609,6 +609,19 @@ EVENT_PROVENANCE_TAINT_DECISION = "provenance.taint_decision"
 #: text withheld) is itself anchored into the chain.
 EVENT_PROVENANCE_QUARANTINE = "provenance.quarantine"
 
+#: Issue #2544 -- admission events mirror the hash-chained admission ledger's
+#: grants, waivers, quarantines, and tag-conformance seals into the HMAC chain.
+#: Each event records only the admission row's identity (its ledger
+#: ``entry_hash``) plus the resource and the projected head, never the payloads
+#: themselves, so an operator can prove from the audit chain alone that a grant
+#: was issued (and against which pool, and at which chain head) without carrying
+#: the ledger. Two operators replaying the admission ledger derive the identical
+#: grant order; these events anchor that order into the tamper-evident log.
+EVENT_ADMISSION_GRANT = "admission.grant_receipt"
+EVENT_ADMISSION_WAIVER = "admission.waiver_receipt"
+EVENT_ADMISSION_QUARANTINE = "admission.quarantine_receipt"
+EVENT_ADMISSION_TAG_CONFORMANCE = "admission.tag_conformance_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1986,6 +1999,133 @@ def record_escalation_receipt(
             "window_size": window_size,
             "fork_snapshot_sha": fork_snapshot_sha,
             "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_admission_grant(
+    *,
+    chain: AuditChainStore,
+    grant_id: str,
+    pool: str,
+    task_id: str,
+    worker_id: str,
+    ledger_head: str,
+    over_limit: bool = False,
+    actor: str = "admission",
+) -> AuditEvent:
+    """Mirror an admission grant into the HMAC chain (#2544).
+
+    Records the grant's identity (its admission-ledger ``entry_hash``), the
+    resource it holds, and the admission-ledger head at issue time. A verifier
+    can prove from the audit chain alone that the grant existed at that head
+    without carrying the admission ledger's payloads.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADMISSION_GRANT,
+        actor=actor,
+        resource_type="admission_pool",
+        resource_id=pool,
+        details={
+            "grant_id": grant_id,
+            "ledger_head": ledger_head,
+            "over_limit": over_limit,
+            "pool": pool,
+            "task_id": task_id,
+            "worker_id": worker_id,
+        },
+    )
+
+
+def record_admission_waiver(
+    *,
+    chain: AuditChainStore,
+    grant_id: str,
+    resource: str,
+    task_id: str,
+    receipt_digest: str,
+    ledger_head: str,
+    actor: str = "admission",
+) -> AuditEvent:
+    """Mirror an ADVISE-posture waiver receipt into the HMAC chain (#2544).
+
+    Every over-limit pass under ADVISE writes a signed waiver receipt; this
+    event anchors the receipt's digest so soft enforcement degrades observably
+    instead of silently.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADMISSION_WAIVER,
+        actor=actor,
+        resource_type="admission_waiver",
+        resource_id=receipt_digest,
+        details={
+            "grant_id": grant_id,
+            "ledger_head": ledger_head,
+            "receipt_digest": receipt_digest,
+            "resource": resource,
+            "task_id": task_id,
+        },
+    )
+
+
+def record_admission_quarantine(
+    *,
+    chain: AuditChainStore,
+    entry_hash: str,
+    target_kind: str,
+    target: str,
+    affected_count: int,
+    ledger_head: str,
+    actor: str = "admission",
+) -> AuditEvent:
+    """Mirror a class-freeze quarantine into the HMAC chain (#2544).
+
+    Anchors the single admission-ledger quarantine row that carries the
+    complete affected-set manifest, so an incident postmortem can prove the
+    exact blast radius of a freeze offline.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADMISSION_QUARANTINE,
+        actor=actor,
+        resource_type="admission_quarantine",
+        resource_id=entry_hash,
+        details={
+            "affected_count": affected_count,
+            "entry_hash": entry_hash,
+            "ledger_head": ledger_head,
+            "target": target,
+            "target_kind": target_kind,
+        },
+    )
+
+
+def record_admission_tag_conformance(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    worker_id: str,
+    conformant: bool,
+    receipt_digest: str,
+    violation_count: int,
+    actor: str = "admission",
+) -> AuditEvent:
+    """Mirror a post-hoc tag-conformance seal into the HMAC chain (#2544).
+
+    A task that declared a tag contract (e.g. ``docs-only``) and broke it
+    carries a signed violation receipt; this event anchors the seal so merge
+    gates can prove the conformance verdict.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADMISSION_TAG_CONFORMANCE,
+        actor=actor,
+        resource_type="admission_tag_conformance",
+        resource_id=receipt_digest,
+        details={
+            "conformant": conformant,
+            "receipt_digest": receipt_digest,
+            "task_id": task_id,
+            "violation_count": violation_count,
+            "worker_id": worker_id,
         },
     )
 

@@ -26,7 +26,7 @@ from bernstein.core.persistence.atomic_write import write_atomic_json
 from bernstein.core.persistence.file_locks import _cross_process_lock
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Mapping
+    from collections.abc import Callable, Generator, Iterable, Mapping
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,12 @@ class ClaimFilter:
         completed_ids: Task ids whose dependencies are satisfied.
         max_attempts: Global retry ceiling. Rows with attempts greater than or
             equal to this value are skipped.
+        admits: Optional admission predicate over the entry's declared tags
+            (#2544). Returns ``True`` when every declared tag is currently
+            admissible (AND-of-all under its pool/tag limit). Supplied by the
+            admission engine's projection so the claim path is the one
+            admission gate. ``None`` disables the tag gate (default), keeping
+            every legacy claim unchanged.
     """
 
     project: str | None = None
@@ -86,6 +92,7 @@ class ClaimFilter:
     capability: str | None = None
     completed_ids: frozenset[str] = field(default_factory=frozenset)
     max_attempts: int | None = None
+    admits: Callable[[frozenset[str]], bool] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "completed_ids", frozenset(self.completed_ids))
@@ -102,6 +109,8 @@ class ClaimFilter:
             return False
         attempts_limit = self._attempts_limit(entry)
         if attempts_limit is not None and entry.attempts >= attempts_limit:
+            return False
+        if self.admits is not None and entry.tags and not self.admits(frozenset(entry.tags)):
             return False
         return all(dep in self.completed_ids for dep in entry.depends_on)
 
@@ -121,6 +130,7 @@ class BacklogEntry:
     project: str | None = None
     capabilities: list[str] = field(default_factory=_empty_str_list)
     depends_on: list[str] = field(default_factory=_empty_str_list)
+    tags: list[str] = field(default_factory=_empty_str_list)  # #2544 admission tags
     attempts: int = 0
     max_attempts: int | None = None
     claimed_at: float | None = None
@@ -152,6 +162,14 @@ class BacklogEntry:
         else:
             raise ValueError(f"backlog entry {task_id!r} has non-list depends_on")
 
+        raw_tags = raw.get("tags")
+        if raw_tags is None:
+            tag_values: list[Any] = []
+        elif isinstance(raw_tags, list):
+            tag_values = cast("list[Any]", raw_tags)
+        else:
+            raise ValueError(f"backlog entry {task_id!r} has non-list tags")
+
         raw_metadata = raw.get("metadata")
         if raw_metadata is None:
             metadata_values: dict[str, Any] = {}
@@ -167,6 +185,7 @@ class BacklogEntry:
             project=str(raw["project"]) if raw.get("project") is not None else None,
             capabilities=[str(capability) for capability in capability_values],
             depends_on=[str(dep) for dep in dependency_values],
+            tags=[str(tag) for tag in tag_values],
             attempts=int(raw.get("attempts") or 0),
             max_attempts=int(raw["max_attempts"]) if raw.get("max_attempts") is not None else None,
             claimed_at=float(raw["claimed_at"]) if raw.get("claimed_at") is not None else None,
@@ -188,6 +207,8 @@ class BacklogEntry:
             data["capabilities"] = self.capabilities.copy()
         if self.depends_on:
             data["depends_on"] = self.depends_on.copy()
+        if self.tags:
+            data["tags"] = self.tags.copy()
         if self.attempts:
             data["attempts"] = self.attempts
         if self.max_attempts is not None:
