@@ -403,6 +403,42 @@ def test_verify_continuity_shows_cold_downgrade_with_reason(tmp_path: Path) -> N
     assert result.downgrade_reason == "workspace_hash_mismatch"
 
 
+def test_verify_continuity_accepts_honored_fork(tmp_path: Path) -> None:
+    # A fork requested against a fork-capable adapter with a matching workspace
+    # is an honored continuation, not a downgrade: it carries no reason and the
+    # verifier must not treat the empty reason as a failure.
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = park_task(
+        sdd_dir=sdd,
+        task_id="T-fork",
+        adapter="claude",
+        session_id="s",
+        worktree_path=wt,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        chain=chain,
+    )
+    resume = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        requested_mode=RetryMode.FORK,
+    )
+    assert resume.decision.effective_mode is RetryMode.FORK
+    assert resume.decision.downgrade_reason == ""
+
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-fork", chain=chain)
+    assert result.ok, result.errors
+    assert result.effective_mode == "fork"
+    assert result.workspace_match
+    assert result.downgrade_reason == ""
+
+
 def test_mutating_suspend_row_fails_verification_at_that_index(tmp_path: Path) -> None:
     sdd = tmp_path / ".sdd"
     chain = _chain(tmp_path)
