@@ -65,6 +65,10 @@ For air-gap or BYO-model scenarios.
 - `cloudflare` - Cloudflare Agents SDK via wrangler.
 - `openai_agents` - in-process OpenAI Agents SDK v2 (requires the
   `[openai]` extra).
+- `computer_use` - fronts a third-party autonomous browser / computer-use
+  agent; each action is anchored into a signed, replayable lineage chain and
+  each task runs in an isolated browser profile (see
+  [`computer_use.md`](computer_use.md)).
 
 ### Other supported CLIs
 

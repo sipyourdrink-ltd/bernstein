@@ -230,8 +230,42 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # verify. Orthogonal to both HMAC chain and Merkle seal.
     all_passed = _verify_approval_cards() and all_passed
 
+    # Named sandbox pools are a further integrity pillar: a tampered pool body
+    # (its content-addressed hash no longer recomputes) or a forged placement
+    # receipt (a widened effective manifest, a swapped backend) must fail verify
+    # exactly like a tampered chain entry (#2547). Orthogonal to both the HMAC
+    # chain and the Merkle seal.
+    all_passed = _verify_pool_receipts() and all_passed
+
+    # Sovereign posture attestations + drift records are a further integrity
+    # pillar: a mutated effective-policy document, a forged posture signature,
+    # or a drift record whose hashes agree must fail verify exactly like a
+    # tampered chain entry (#2518). Orthogonal to both HMAC chain and Merkle seal.
+    all_passed = _verify_sovereign_attestations() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
+
+
+def _verify_pool_receipts() -> bool:
+    """Verify active pool bodies and placement receipts. Returns True if valid.
+
+    Content-addressed pool bodies and sealed placement receipts recompute their
+    own hashes offline; a mutated body or a forged placement fails here with the
+    pool or placement named. When no pools are configured this is a silent
+    no-op (AC: regression -- nothing changes without pools).
+    """
+    from bernstein.cli.commands.pool_cmd import verify_pools
+
+    ok, errors = verify_pools(Path.cwd())
+    console.print()
+    if ok:
+        console.print(Panel("[bold green]Pool Verification Passed[/bold green]", border_style="green", expand=False))
+        return True
+    console.print(Panel("[bold red]Pool Verification FAILED[/bold red]", border_style="red", expand=False))
+    for err in errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
 
 
 def _verify_grant_chains() -> bool:
@@ -450,6 +484,41 @@ def _verify_approval_cards() -> bool:
     return False
 
 
+def _verify_sovereign_attestations() -> bool:
+    """Verify sovereign posture attestations + drift records. Returns True if valid.
+
+    Re-verifies, from the ``sovereign.posture_attestation`` /
+    ``sovereign.posture_drift`` chain entries alone, that every record's
+    embedded Ed25519 signature checks out against its embedded public key, that
+    the recorded posture hash recomputes byte-identically from the recorded
+    effective-policy document, and that each drift record names at least one
+    diverging key (#2518). When no records exist the check is a silent no-op.
+    """
+    from bernstein.core.security.deployment_profile import verify_sovereign_attestations
+
+    result = verify_sovereign_attestations(AUDIT_DIR)
+    if result.attestation_count == 0 == result.drift_count:
+        return True  # no sovereign records; nothing to verify
+
+    console.print()
+    if result.ok:
+        console.print(
+            Panel("[bold green]Sovereign Posture Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Attestations", str(result.attestation_count))
+        table.add_row("Drift records", str(result.drift_count))
+        console.print(table)
+        return True
+
+    console.print(Panel("[bold red]Sovereign Posture Verification FAILED[/bold red]", border_style="red", expand=False))
+    for err in result.errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
+
+
 def _verify_clearance_gates() -> bool:
     """Verify clearance-gate integrity from the audit chain. Returns True if valid.
 
@@ -507,6 +576,60 @@ def verify_gates_cmd() -> None:
     passed = _verify_clearance_gates()
     console.print()
     raise SystemExit(0 if passed else 1)
+
+
+@audit_group.command("verify-suspension")
+@click.argument("task_id")
+@click.option("--workdir", default=".", help="Project root directory (parent of .sdd/).", type=click.Path())
+@click.option("--json", "as_json", is_flag=True, default=False, help="Print the continuity result as JSON.")
+def verify_suspension_cmd(task_id: str, workdir: str, as_json: bool) -> None:
+    """Prove a durable suspend/resume continuity offline (#2552).
+
+    \b
+    From a copied chain and the task journal alone, proves that a resumed task
+    continued from exactly the parked workspace hash -- or shows the recorded
+    fork/cold downgrade with its reason. Mutating the suspend row after the
+    fact fails journal verification at that exact chain position, and a
+    tampered receipt fails the HMAC chain. Exits non-zero on any break.
+    """
+    import json as _json
+
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.tasks.suspension import verify_suspension_continuity
+
+    sdd_dir = Path(workdir) / ".sdd"
+    chain = AuditChainStore(sdd_dir / "audit")
+    result = verify_suspension_continuity(sdd_dir=sdd_dir, task_id=task_id, chain=chain)
+
+    if as_json:
+        console.print_json(_json.dumps(result.to_dict()))
+        raise SystemExit(0 if result.ok else 1)
+
+    console.print()
+    if result.ok:
+        detail = f"continued {result.effective_mode}"
+        if result.effective_mode == "warm":
+            detail += " from the parked workspace hash"
+        elif result.downgrade_reason:
+            detail += f" ({result.downgrade_reason})"
+        console.print(
+            Panel(
+                f"[bold green]Suspension continuity verified[/bold green]\ntask [bold]{task_id}[/bold]: {detail}",
+                border_style="green",
+                expand=False,
+            )
+        )
+        raise SystemExit(0)
+    console.print(
+        Panel(
+            f"[bold red]Suspension continuity FAILED[/bold red] for task [bold]{task_id}[/bold]",
+            border_style="red",
+            expand=False,
+        )
+    )
+    for err in result.errors:
+        console.print(f"  [red]![/red] {err}")
+    raise SystemExit(1)
 
 
 @audit_group.command("verify-hmac")
@@ -2071,3 +2194,277 @@ def _print_post_archive_verify(audit_dir: Path) -> int:
         console.print(f"  [red]![/red] {err}")
     console.print()
     return 1
+
+
+# ---------------------------------------------------------------------------
+# Standard verifiable receipts (#2604)
+# ---------------------------------------------------------------------------
+
+
+@audit_group.group("receipt")
+def receipt_group() -> None:
+    """Export / verify standard, offline-verifiable audit receipts (#2604).
+
+    A receipt projects an existing audit-chain range into off-the-shelf
+    envelope formats (COSE_Sign1 per RFC 9052, in-toto / DSSE, and an RFC 6962
+    style transparency receipt) so an auditor can validate what an agent did
+    with tooling they already run - no bernstein install and no shared HMAC
+    secret. See docs/security/audit-receipt.md.
+    """
+
+
+def _find_receipt_verifier() -> Path | None:
+    """Locate the standalone ``tools/verify_audit_receipt.py`` script.
+
+    The verify wrapper deliberately shells out to the standalone tool to prove
+    it is self-contained. Resolution order: ``$BERNSTEIN_AUDIT_RECEIPT_VERIFIER``
+    override, then a ``tools/verify_audit_receipt.py`` walking up from the CWD
+    and from this module's location.
+    """
+    import os
+
+    override = os.environ.get("BERNSTEIN_AUDIT_RECEIPT_VERIFIER")
+    if override:
+        candidate = Path(override).expanduser()
+        return candidate if candidate.is_file() else None
+
+    for base in (Path.cwd(), Path(__file__).resolve()):
+        for parent in (base, *base.parents):
+            candidate = parent / "tools" / "verify_audit_receipt.py"
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+@receipt_group.command("export")
+@click.option(
+    "--format",
+    "formats",
+    default="cose,intoto,transparency",
+    show_default=True,
+    help="Comma-separated receipt formats to emit (cose, intoto, transparency).",
+)
+@click.option("--since", required=True, help="ISO-8601 inclusive lower bound of the chain range.")
+@click.option("--until", required=True, help="ISO-8601 exclusive upper bound of the chain range.")
+@click.option(
+    "--signing-key-path",
+    "signing_key_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help=(
+        "Path to the Ed25519 private key (PEM PKCS#8 or raw 32-byte) that signs "
+        "every receipt format. Reuses the lineage / head-signature KMS key "
+        "(see src/bernstein/core/security/lineage_kms.py). Mutually exclusive "
+        "with --signing-env-var."
+    ),
+)
+@click.option(
+    "--signing-env-var",
+    "signing_env_var",
+    default=None,
+    help="Env var carrying a PEM Ed25519 private key. Mutually exclusive with --signing-key-path.",
+)
+@click.option("--signing-key-id", "signing_key_id", default=None, help="Operator-stable JWK 'kid' for the receipt key.")
+@click.option(
+    "--online-rekor",
+    is_flag=True,
+    default=False,
+    help="Also submit the subject to a Rekor transparency log (opt-in; needs network + the sigstore extra).",
+)
+@click.option("--output", "-o", default=None, help="Output directory (defaults to .sdd/evidence/).")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Build the receipt in-memory and print the summary without writing to disk.",
+)
+@click.option("--dir", "workdir", default=".", show_default=True, help="Project root directory.")
+def receipt_export_cmd(
+    formats: str,
+    since: str,
+    until: str,
+    signing_key_path: str | None,
+    signing_env_var: str | None,
+    signing_key_id: str | None,
+    online_rekor: bool,
+    output: str | None,
+    dry_run: bool,
+    workdir: str,
+) -> None:
+    """Export a standard verifiable receipt over an audit-chain range.
+
+    \b
+      bernstein audit receipt export --format cose,intoto,transparency \\
+          --since 2026-01-01T00:00:00Z --until 2026-02-01T00:00:00Z \\
+          --signing-key-path /path/to/ed25519.pem
+
+    \b
+    The receipt subject digest IS the chain range head_sha256 - no format
+    recomputes a head of its own. The exported receipt re-verifies offline
+    with tools/verify_audit_receipt.py (stdlib + cryptography + cbor2), and
+    the export itself is recorded as an ``audit.receipt_export`` chain event.
+    """
+    from bernstein.core.persistence.lineage_signer import LineageSignerError
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.security.audit_chain import AuditChainStore, record_audit_receipt_export
+    from bernstein.core.security.audit_receipt import RekorUnavailableError, build_receipt
+    from bernstein.core.security.lineage_kms import EnvBasedKMSAdapter, FileBasedKMSAdapter, KMSAdapter
+
+    requested = tuple(f.strip() for f in formats.split(",") if f.strip())
+    if not requested:
+        console.print("[red]--format must name at least one of cose, intoto, transparency.[/red]")
+        raise SystemExit(2)
+
+    sdd_dir = Path(workdir).resolve() / ".sdd"
+    audit_dir = sdd_dir / "audit"
+    if not audit_dir.is_dir():
+        console.print(f"[red]Audit directory not found:[/red] {audit_dir}")
+        console.print("[dim]Run [bold]bernstein run[/bold] first to generate audit events.[/dim]")
+        raise SystemExit(1)
+
+    if signing_key_path and signing_env_var:
+        console.print("[red]--signing-key-path and --signing-env-var are mutually exclusive.[/red]")
+        raise SystemExit(2)
+
+    kms_adapter: KMSAdapter
+    try:
+        if signing_key_path:
+            kms_adapter = FileBasedKMSAdapter(Path(signing_key_path), kid=signing_key_id)
+        elif signing_env_var:
+            kms_adapter = EnvBasedKMSAdapter(signing_env_var, kid=signing_key_id)
+        else:
+            console.print("[red]Provide either --signing-key-path or --signing-env-var (Ed25519 receipt key).[/red]")
+            raise SystemExit(2)
+    except (LineageSignerError, OSError, ValueError) as exc:
+        console.print(f"[red]Failed to load receipt signing key: {exc}[/red]")
+        raise SystemExit(1) from None
+
+    output_dir = Path(output).resolve() if output else None
+    try:
+        hmac_key = load_or_create_audit_key()
+    except OSError as exc:  # pragma: no cover - filesystem race
+        console.print(f"[red]Failed to load audit key: {exc}[/red]")
+        raise SystemExit(1) from None
+
+    try:
+        receipt = build_receipt(
+            audit_dir,
+            since=since,
+            until=until,
+            key=hmac_key,
+            kms_adapter=kms_adapter,
+            formats=requested,
+            online_rekor=online_rekor,
+            output_dir=output_dir,
+            write=not dry_run,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from None
+    except RekorUnavailableError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from None
+
+    # Record the export in the HMAC chain so the projection is itself attested.
+    if not dry_run:
+        try:
+            chain = AuditChainStore(audit_dir)
+            record_audit_receipt_export(
+                chain=chain,
+                head_sha256=receipt.head_sha256,
+                since=receipt.since,
+                until=receipt.until,
+                event_count=receipt.event_count,
+                receipt_sha256=receipt.sha256,
+                formats=receipt.formats,
+            )
+        except OSError as exc:  # pragma: no cover - filesystem race
+            console.print(f"[yellow]Receipt written but audit event not recorded: {exc}[/yellow]")
+
+    console.print()
+    console.print(Panel("[bold]Audit Receipt[/bold]", border_style="green", expand=False))
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="dim", no_wrap=True, min_width=18)
+    table.add_column("Value")
+    table.add_row("Window", f"{receipt.since} → {receipt.until}")
+    table.add_row("Events", str(receipt.event_count))
+    table.add_row("Head SHA-256", receipt.head_sha256[:16] + "…")
+    table.add_row("Formats", ", ".join(receipt.formats))
+    table.add_row("Receipt SHA-256", receipt.sha256[:16] + "…")
+    if receipt.receipt_path is not None:
+        table.add_row("Receipt", str(receipt.receipt_path))
+    elif dry_run:
+        table.add_row("Receipt", "(dry-run, not written)")
+    console.print(table)
+    console.print()
+
+    if dry_run:
+        import json as _json
+
+        console.print("[dim]Receipt (dry-run):[/dim]")
+        console.print(_json.dumps(receipt.receipt, indent=2))
+        console.print()
+
+
+@receipt_group.command("verify")
+@click.argument("receipt_path", type=click.Path(dir_okay=False, exists=True, resolve_path=True))
+@click.option(
+    "--jwk",
+    "jwk_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Optional trusted Ed25519 JWK (OKP) to pin; the embedded receipt key must match.",
+)
+@click.option(
+    "--public-key",
+    "public_key_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Optional trusted Ed25519 public key PEM to pin; the embedded receipt key must match.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    default="all",
+    type=click.Choice(["cose", "intoto", "transparency", "all"]),
+    show_default=True,
+    help="Which format(s) to verify.",
+)
+def receipt_verify_cmd(
+    receipt_path: str,
+    jwk_path: str | None,
+    public_key_path: str | None,
+    fmt: str,
+) -> None:
+    """Verify an audit receipt by shelling to the standalone verifier.
+
+    \b
+    Runs tools/verify_audit_receipt.py in a subprocess - the same stdlib +
+    cryptography + cbor2 tool an external auditor runs - to prove the receipt
+    is self-contained and needs no bernstein code to validate. Exits non-zero
+    on any verification failure.
+    """
+    import subprocess
+    import sys
+
+    verifier = _find_receipt_verifier()
+    if verifier is None:
+        console.print(
+            "[red]Could not locate tools/verify_audit_receipt.py.[/red] "
+            "Set BERNSTEIN_AUDIT_RECEIPT_VERIFIER to its path, or run from a "
+            "bernstein source checkout.",
+        )
+        raise SystemExit(2)
+
+    cmd = [sys.executable, str(verifier), "--receipt", receipt_path, "--format", fmt, "--verbose"]
+    if jwk_path:
+        cmd.extend(["--jwk", jwk_path])
+    if public_key_path:
+        cmd.extend(["--public-key", public_key_path])
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.stdout:
+        console.print(proc.stdout.rstrip())
+    if proc.returncode != 0 and proc.stderr:
+        console.print(f"[red]{proc.stderr.rstrip()}[/red]")
+    raise SystemExit(proc.returncode)

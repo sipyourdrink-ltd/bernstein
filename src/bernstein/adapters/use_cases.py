@@ -146,6 +146,18 @@ USE_CASES: dict[str, AdapterUseCase] = {
         headline="Composio Agent Orchestrator (ao) CLI",
         binary="ao",
     ),
+    "computer_use": AdapterUseCase(
+        headline="Fronts a browser / computer-use agent with per-action lineage",
+        binary="computer-use-agent",
+        details=(
+            "Admits a third-party autonomous browser / computer-use agent that "
+            "owns its own decision loop. Each action the external agent takes "
+            "against a live UI is anchored into a signed, replayable lineage "
+            "chain (pre-action screenshot hashed into a content-addressed "
+            "anchor), and each task runs in an isolated browser profile."
+        ),
+        docs_path="docs/adapters/computer_use.md",
+    ),
     "continue": AdapterUseCase(
         headline="Continue.dev CLI for IDE-style coding agents in the terminal",
         binary="continue",

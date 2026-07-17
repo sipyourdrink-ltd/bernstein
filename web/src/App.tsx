@@ -21,6 +21,7 @@ import Approvals from './routes/Approvals';
 import Audit from './routes/Audit';
 import Costs from './routes/Costs';
 import Fleet from './routes/Fleet';
+import Missions from './routes/Missions';
 import Settings from './routes/Settings';
 
 // ── QueryClient ────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/approvals': 'Approvals',
   '/audit': 'Audit',
   '/costs': 'Costs',
+  '/missions': 'Missions',
   '/fleet': 'Fleet',
   '/settings': 'Settings',
 };
@@ -206,6 +208,7 @@ export default function App() {
                 <Route path="/approvals" element={<Approvals />} />
                 <Route path="/audit" element={<Audit />} />
                 <Route path="/costs" element={<Costs />} />
+                <Route path="/missions" element={<Missions />} />
                 {/* Fleet + Settings live in topbar / user-menu but stay deep-linkable. */}
                 <Route path="/fleet" element={<Fleet />} />
                 <Route path="/settings" element={<Settings />} />

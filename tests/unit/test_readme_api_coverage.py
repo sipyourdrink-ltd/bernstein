@@ -272,6 +272,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "supervisor",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "schedule",
+        # Per-goal SLA contracts: signed violation receipts (issue #2549)
+        "sla",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "team",
         # Audited webhook-node receipts: signed inbound + outbound (issue #2310)
@@ -286,6 +288,11 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "events",
         # Chain-anchored worker context capsules (issue #2545)
         "context",
+        # Bot-added: drift autofix (regen_contract_drift.py)
+        "task",
+        # Named sandbox pools: chain-projected manifests, governed overrides,
+        # and signed worker enrolment (issue #2547)
+        "pool",
     }
 )
 

@@ -81,6 +81,7 @@ def activity_verify_cmd(run: str, workdir: str, as_json: bool) -> None:
                     "ok": s.ok,
                     "evidence_reattached": s.evidence_reattached,
                     "signed_receipt_verified": s.signed_receipt_verified,
+                    "claim_verdicts": [cv.to_dict() for cv in s.claim_verdicts],
                     "reason": s.reason,
                 }
                 for s in result.stages
@@ -101,10 +102,16 @@ def activity_verify_cmd(run: str, workdir: str, as_json: bool) -> None:
                         notes.append("evidence reattached")
                     if stage.signed_receipt_verified:
                         notes.append("signed receipt verified")
+                    if stage.claim_verdicts:
+                        notes.append(f"{len(stage.claim_verdicts)} citations resolved")
                     extra = f" ({', '.join(notes)})" if notes else ""
                     console.print(f"  {tag} {stage.stage_id} [{stage.kind}]{extra}")
                 else:
                     console.print(f"  [red]MISMATCH[/red] {stage.stage_id} [{stage.kind}] -- {stage.reason}")
+                for claim in stage.claim_verdicts:
+                    claim_tag = "[green]cite OK[/green]" if claim.ok else "[red]cite FAIL[/red]"
+                    detail = f" -- {claim.reason}" if not claim.ok and claim.reason else ""
+                    console.print(f"    {claim_tag} claim={claim.claim_id} ({claim.citations_checked} checked){detail}")
             if result.ok:
                 console.print("[green]verified[/green] -- every activity reconstructs from the journal.")
 

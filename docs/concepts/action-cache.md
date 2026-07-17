@@ -73,11 +73,22 @@ Metrics:
 - Replay is byte-comparison strict. A different timestamp in a
   recorded log is a "drift" finding even if functionally equivalent.
 
+## Cache policy engine
+
+`derive_key` here is input-only and intentionally survives Bernstein code
+changes. When a task declares a `cache_policy` on its spec, its cache decisions
+route through the shared [cache policy engine](cache-policy.md): keys are
+composed over an ingredient recipe that also folds in the model version, adapter
+version, base worktree commit, and tool schema hash; staleness becomes a pure
+drift verdict over repo state; and eviction is transitive over `served_from`
+lineage edges. Tasks with no declared policy behave exactly as described above.
+
 ## Related
 
 - Source: `src/bernstein/core/persistence/action_cache.py`
 - Layered on: `src/bernstein/core/persistence/fingerprint.py` (memo
   store)
+- Policy engine: `src/bernstein/core/persistence/cache_policy.py`
 - CLI: `src/bernstein/cli/commands/cache_cmd.py`,
   `replay_filter_cmd.py`
 - PR #999

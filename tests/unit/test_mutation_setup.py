@@ -153,7 +153,13 @@ class TestKeyMutationScenarios:
             os.environ.pop("BERNSTEIN_SANDBOX", None)
 
     def test_guardrails_sandbox_relaxes_deny(self) -> None:
-        """DENY decisions on relaxable checks must become ALLOW in sandbox (mutant might skip relaxation)."""
+        """DENY decisions on isolation-relaxable checks must become ALLOW in sandbox (mutant might skip relaxation).
+
+        ``file_permissions`` is relaxed on container isolation alone.
+        ``scope_enforcement`` is deliberately NOT relaxed here because a
+        whole-repo mount (the Docker backend) still exposes every file; that
+        boundary is covered by ``test_guardrails_sandbox_scope.py``.
+        """
         import os
 
         from bernstein.core.guardrails import relax_sandboxed
@@ -161,8 +167,8 @@ class TestKeyMutationScenarios:
 
         os.environ["BERNSTEIN_SANDBOX"] = "1"
         try:
-            deny_decision = PermissionDecision(type=DecisionType.DENY, reason="out of scope file")
-            result = relax_sandboxed([deny_decision], check_name="scope_enforcement")
+            deny_decision = PermissionDecision(type=DecisionType.DENY, reason="role cannot write path")
+            result = relax_sandboxed([deny_decision], check_name="file_permissions")
             assert result[0].type == DecisionType.ALLOW
         finally:
             os.environ.pop("BERNSTEIN_SANDBOX", None)

@@ -103,6 +103,16 @@ KIND_TASK_COMPLETED = "task.completed"
 KIND_TASK_FAILED = "task.failed"
 KIND_TASK_ABANDONED = "task.abandoned"
 
+#: Durable suspension transitions (#2552). A ``task.suspended`` entry persists
+#: an operator park through orchestrator restarts and daemon crashes the same
+#: way detached run state survives; ``task.resumed`` records the durable
+#: revival. A parked task is deliberately excluded from :meth:`resume_frontier`
+#: -- it waits for an explicit ``bernstein task resume`` (or its ``--until``
+#: wake), never an auto-restart. A reader that predates these kinds still
+#: replays the chain (they count as unknown task kinds).
+KIND_TASK_SUSPENDED = "task.suspended"
+KIND_TASK_RESUMED = "task.resumed"
+
 #: Mission transition kinds (#2509). A mission is a ledger-projected multi-day
 #: goal; these transitions are the only mission state that touches disk -- the
 #: mission status is a pure projection over them (see
@@ -709,6 +719,7 @@ _STATE_STARTED = "started"
 _STATE_COMPLETED = "completed"
 _STATE_FAILED = "failed"
 _STATE_ABANDONED = "abandoned"
+_STATE_SUSPENDED = "suspended"
 
 _TASK_KIND_TO_STATE = {
     KIND_TASK_SCHEDULED: _STATE_SCHEDULED,
@@ -716,6 +727,11 @@ _TASK_KIND_TO_STATE = {
     KIND_TASK_COMPLETED: _STATE_COMPLETED,
     KIND_TASK_FAILED: _STATE_FAILED,
     KIND_TASK_ABANDONED: _STATE_ABANDONED,
+    # A durable park moves the task to ``suspended``; a durable resume moves it
+    # back to ``started`` (it is in-flight again). ``attempts`` is only bumped
+    # by ``task.started``, so a park/resume pair does not inflate the count.
+    KIND_TASK_SUSPENDED: _STATE_SUSPENDED,
+    KIND_TASK_RESUMED: _STATE_STARTED,
 }
 
 
@@ -778,8 +794,23 @@ class LedgerState:
         """Task ids whose latest transition is ``task.failed``."""
         return self._tasks_in_state(_STATE_FAILED)
 
+    @property
+    def suspended_tasks(self) -> list[str]:
+        """Task ids whose latest transition is ``task.suspended`` (#2552).
+
+        A parked task survives orchestrator restarts through this projection
+        but is deliberately kept out of :meth:`resume_frontier`: it resumes
+        only on an explicit ``bernstein task resume`` (or its ``--until``
+        wake), never on an auto-restart.
+        """
+        return self._tasks_in_state(_STATE_SUSPENDED)
+
     def resume_frontier(self) -> list[str]:
-        """Task ids a resume should (re)start: in-flight, then scheduled."""
+        """Task ids a resume should (re)start: in-flight, then scheduled.
+
+        Suspended tasks are excluded on purpose (see :attr:`suspended_tasks`):
+        an operator park is woken explicitly, not by an orchestrator restart.
+        """
         return self.in_flight_tasks + self.scheduled_tasks
 
     def to_dict(self) -> dict[str, Any]:
@@ -796,6 +827,7 @@ class LedgerState:
             "in_flight_tasks": self.in_flight_tasks,
             "scheduled_tasks": self.scheduled_tasks,
             "failed_tasks": self.failed_tasks,
+            "suspended_tasks": self.suspended_tasks,
             "resume_frontier": self.resume_frontier(),
         }
 
@@ -943,8 +975,10 @@ __all__ = [
     "KIND_TASK_ABANDONED",
     "KIND_TASK_COMPLETED",
     "KIND_TASK_FAILED",
+    "KIND_TASK_RESUMED",
     "KIND_TASK_SCHEDULED",
     "KIND_TASK_STARTED",
+    "KIND_TASK_SUSPENDED",
     "LEDGER_SCHEMA_VERSION",
     "ChainRelation",
     "LedgerEntry",

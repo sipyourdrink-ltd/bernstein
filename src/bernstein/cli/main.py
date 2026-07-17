@@ -70,6 +70,7 @@ from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.fork_cmd import fork_cmd
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
+from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
 from bernstein.cli.commands.role_adapter_policy_cmd import security_group as _role_adapter_security_group
 from bernstein.cli.commands.run_names_cmd import run_lookup_cmd
@@ -131,6 +132,7 @@ from bernstein.cli.task_cmd import (
     reject,
     review_cmd,
     sync,
+    task_group,
 )
 from bernstein.cli.templates_cmd import templates_group
 from bernstein.cli.triggers_cmd import triggers_group
@@ -856,6 +858,8 @@ def cli(
         max_blast_radius=None,
         # Bot-added: drift autofix (regen_contract_drift.py)
         attach=(),
+        # Bot-added: drift autofix (regen_contract_drift.py)
+        refresh_cache=False,
     )
 
 
@@ -865,6 +869,7 @@ def cli(
 
 # From task_cmd module - all registered with @click.command()
 cli.add_command(cancel)
+cli.add_command(task_group, "task")
 cli.add_command(add_task, "add-task")
 cli.add_command(sync)
 cli.add_command(review_cmd, "review")
@@ -910,6 +915,7 @@ cli.add_command(_thread_cmd, "thread")
 cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
 cli.add_command(policy_group, "policy")
+cli.add_command(pool_group, "pool")
 cli.add_command(_role_adapter_security_group, "security")
 cli.add_command(mcp_server, "mcp")
 # Wire the release-1.9 community catalog as a subgroup of `bernstein mcp`.
@@ -1064,6 +1070,11 @@ cli.add_command(fingerprint_group, "fingerprint")
 cli.add_command(fleet_group, "fleet")
 cli.add_command(triggers_group, "triggers")
 cli.add_command(schedule_group, "schedule")
+
+# Per-goal SLA contracts + signed violation receipts (#2549)
+from bernstein.cli.commands.sla_cmd import sla_group  # noqa: E402
+
+cli.add_command(sla_group, "sla")
 
 # Operator supervisor surface (#1800)
 from bernstein.cli.commands.supervisor_cmd import supervisor_group  # noqa: E402

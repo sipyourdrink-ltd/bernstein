@@ -104,8 +104,21 @@ except SandboxSelectionError as exc:
   returned `name` and resolves a different backend defeats the
   determinism guarantee.
 
+## Pools as a declared selector input
+
+A [named sandbox pool](../operations/sandbox-pools.md) composes with the selector
+without changing it. `pool_to_sandbox_policy` maps a merged pool placement into a
+`SandboxPolicy` (required capabilities from the merge, precedence from the pool
+backend allowlist, an exposed `backend` override as the policy override), and
+`select_pool_backend` filters the candidate backends to the allowlist before
+delegating to `select_sandbox`. The selector stays a pure function; the pool is
+just another declared input, so with no pool configured selection is
+byte-identical to today.
+
 ## Related
 
 - Source: `src/bernstein/core/sandbox/selector.py`
+- Pool placement: `src/bernstein/core/sandbox/pool_placement.py`
 - Registry: `src/bernstein/core/sandbox/registry.py`
+- [Named sandbox pools](../operations/sandbox-pools.md)
 - [Sandbox backends](../architecture/sandbox.md)

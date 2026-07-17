@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -35,6 +36,10 @@ from bernstein.core.orchestration.missions import (
     project_mission_from_ledger,
 )
 from bernstein.core.persistence.work_ledger import LedgerError, LedgerReader, WorkLedger
+
+if TYPE_CHECKING:
+    from bernstein.core.chat.bridge import BridgeProtocol
+    from bernstein.core.orchestration.mission_digest import MissionDigest
 
 # Exit codes shared across the group so operators (and the dashboard) can
 # branch on the specific failure mode.
@@ -302,6 +307,268 @@ def mission_resume_cmd(mission_id: str, workdir: Path | None, output_json: bool)
             f"[green]Resumed mission[/green] {mission_id} from {projection.entry_count} ledger entries "
             f"(status {projection.status_hash[:16]}...)"
         )
+
+
+# ---------------------------------------------------------------------------
+# digest: signed daily progress digest (#2510)
+# ---------------------------------------------------------------------------
+
+
+_FIRE_TIME_OPTION = click.option(
+    "--fire-time",
+    type=int,
+    required=True,
+    help="Integer Unix epoch of the canonical fire instant.",
+)
+
+
+def _build_digest(workdir: Path | None, mission_id: str, fire_time: int) -> tuple[MissionProjection, MissionDigest]:
+    from bernstein.core.orchestration.mission_digest import build_mission_digest
+
+    projection = project_mission_from_ledger(
+        sdd_dir=_sdd_dir(workdir), workdir=_workdir(workdir), mission_id=mission_id
+    )
+    return projection, build_mission_digest(projection, fire_time=fire_time)
+
+
+def _build_bridge(platform: str, token: str) -> BridgeProtocol:
+    """Construct a chat driver for *platform*, mirroring ``chat serve`` conventions.
+
+    Overridable in tests to inject an in-memory bridge without touching the
+    network. Slack additionally needs its Socket Mode app token via
+    ``BERNSTEIN_SLACK_APP_TOKEN``.
+    """
+    import os
+
+    if platform == "slack":
+        from bernstein.core.chat.drivers.slack import SlackBridge
+
+        app_token = os.environ.get("BERNSTEIN_SLACK_APP_TOKEN", "")
+        if not app_token:
+            raise click.UsageError(
+                "Slack requires the Socket Mode app token in $BERNSTEIN_SLACK_APP_TOKEN (plus the bot token)."
+            )
+        return SlackBridge(token=token, app_token=app_token)
+    if platform == "discord":
+        from bernstein.core.chat.drivers.discord import DiscordBridge
+
+        return DiscordBridge(token=token)
+    if platform == "telegram":
+        from bernstein.core.chat.drivers.telegram import TelegramBridge
+
+        return TelegramBridge(token=token)
+    raise click.UsageError(f"unsupported platform {platform!r}: expected slack, discord, or telegram")
+
+
+@mission_group.group("digest")
+def digest_group() -> None:
+    """Signed daily progress digests: show, send, verify."""
+
+
+@digest_group.command("show")
+@click.argument("mission_id")
+@_FIRE_TIME_OPTION
+@_WORKDIR_OPTION
+@_JSON_OPTION
+def mission_digest_show_cmd(mission_id: str, fire_time: int, workdir: Path | None, output_json: bool) -> None:
+    """Compute and print the canonical digest for a fire instant (read-only).
+
+    The digest is a pure fold over the ledger at ``fire_time``; it writes
+    nothing to the chain. Two operators with the same ledger print the same
+    ``digest_hash``.
+
+    \b
+    Exit codes:
+        0  digest computed
+        1  no mission ledger for this id
+    """
+    from bernstein.core.orchestration.mission_digest import render_digest_message
+
+    _require_mission(workdir, mission_id)
+    _projection, digest = _build_digest(workdir, mission_id, fire_time)
+    message = render_digest_message(digest)
+    if output_json:
+        payload = {
+            **digest.to_dict(),
+            "digest_hash": digest.digest_hash(),
+            "receipt_id": digest.receipt_id(),
+            "message": message,
+        }
+        console.print_json(json.dumps(payload))
+    else:
+        console.print(message)
+
+
+@digest_group.command("send")
+@click.argument("mission_id")
+@_FIRE_TIME_OPTION
+@click.option("--platform", type=click.Choice(["slack", "discord", "telegram"]), required=True)
+@click.option("--thread", "thread_id", required=True, help="Chat thread / channel to post the digest to.")
+@click.option("--token", default="", help="Bot token (falls back to the platform's env var).")
+@click.option("--recurrence", default="", help="Canonical recurrence rule the fire was produced by.")
+@_WORKDIR_OPTION
+@_JSON_OPTION
+def mission_digest_send_cmd(
+    mission_id: str,
+    fire_time: int,
+    platform: str,
+    thread_id: str,
+    token: str,
+    recurrence: str,
+    workdir: Path | None,
+    output_json: bool,
+) -> None:
+    """Record a digest receipt and post it to chat, idempotent per fire.
+
+    Delivery is keyed on the digest receipt id, so re-running the same fire
+    (including after a restart) records nothing new and posts nothing.
+
+    \b
+    Exit codes:
+        0  digest posted, or already delivered (idempotent no-op)
+        1  no mission ledger for this id
+    """
+    import asyncio
+
+    from bernstein.core.orchestration.mission_digest_delivery import run_digest_fire
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    _require_mission(workdir, mission_id)
+    resolved_token = token or _platform_token(platform)
+    bridge = _build_bridge(platform, resolved_token)
+    chain = AuditChainStore(_sdd_dir(workdir) / "audit")
+
+    result = asyncio.run(
+        run_digest_fire(
+            sdd_dir=_sdd_dir(workdir),
+            workdir=_workdir(workdir),
+            mission_id=mission_id,
+            fire_time=fire_time,
+            chain=chain,
+            bridge=bridge,
+            thread_id=thread_id,
+            recurrence=recurrence,
+        )
+    )
+    outcome = result.outcome
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "mission_id": mission_id,
+                    "digest_hash": result.digest.digest_hash(),
+                    "receipt_id": outcome.receipt_id,
+                    "posted": outcome.posted,
+                    "message_id": outcome.message_id,
+                    "reason": outcome.reason,
+                    "recorded_receipt": result.recorded_receipt,
+                    "fire_graph_hash": result.fire_graph_hash,
+                }
+            )
+        )
+    elif outcome.posted:
+        console.print(
+            f"[green]Digest posted[/green] to {platform}:{thread_id} "
+            f"(digest {result.digest.digest_hash()[:16]}..., receipt {outcome.receipt_id})"
+        )
+    else:
+        console.print(f"[yellow]Digest already delivered[/yellow] (receipt {outcome.receipt_id}); no double-post.")
+
+
+def _platform_token(platform: str) -> str:
+    import os
+
+    env = {
+        "slack": "BERNSTEIN_SLACK_BOT_TOKEN",
+        "discord": "BERNSTEIN_DISCORD_TOKEN",
+        "telegram": "BERNSTEIN_TELEGRAM_TOKEN",
+    }[platform]
+    token = os.environ.get(env, "")
+    if not token:
+        raise click.UsageError(f"{platform} requires a bot token via --token or ${env}.")
+    return token
+
+
+@digest_group.command("verify")
+@click.argument("mission_id")
+@_FIRE_TIME_OPTION
+@click.option(
+    "--message",
+    "message_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Path to the posted chat message text to verify against the ledger.",
+)
+@_WORKDIR_OPTION
+@_JSON_OPTION
+def mission_digest_verify_cmd(
+    mission_id: str,
+    fire_time: int,
+    message_path: Path,
+    workdir: Path | None,
+    output_json: bool,
+) -> None:
+    """Recompute the digest from the ledger and prove a posted message matches.
+
+    Recomputes the canonical digest at ``fire_time`` from the ledger, then
+    checks the posted message equals the digest's verbatim projection. An
+    edited or truncated message is detected as a mismatch. When an audit chain
+    is present the recorded digest receipt is cross-checked too: the chain must
+    verify and carry a receipt binding this exact ``digest_hash``.
+
+    \b
+    Exit codes:
+        0  the posted message matches the ledger-recomputed digest
+        1  no mission ledger for this id
+        2  mismatch (edited / truncated message, or a torn receipt)
+    """
+    from bernstein.core.orchestration.mission_digest import verify_message_matches
+    from bernstein.core.security.audit_chain import EVENT_MISSION_DIGEST_RECEIPT, AuditChainStore
+
+    _require_mission(workdir, mission_id)
+    _projection, digest = _build_digest(workdir, mission_id, fire_time)
+    posted = message_path.read_text(encoding="utf-8")
+    result = verify_message_matches(posted, digest)
+
+    # Optional receipt-side proof: the chain must verify and carry the receipt.
+    audit_dir = _sdd_dir(workdir) / "audit"
+    chain_verified: bool | None = None
+    receipt_present: bool | None = None
+    if audit_dir.exists():
+        chain = AuditChainStore(audit_dir)
+        chain_verified = chain.verify()[0]
+        events = chain.query(event_type=EVENT_MISSION_DIGEST_RECEIPT)
+        receipt_present = any(e.details.get("digest_hash") == digest.digest_hash() for e in events)
+
+    ok = result.matches and (chain_verified is not False) and (receipt_present is not False)
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "mission_id": mission_id,
+                    "ok": ok,
+                    "message_matches": result.matches,
+                    "reason": result.reason,
+                    "digest_hash": digest.digest_hash(),
+                    "receipt_id": digest.receipt_id(),
+                    "chain_verified": chain_verified,
+                    "receipt_present": receipt_present,
+                }
+            )
+        )
+    elif ok:
+        console.print(
+            f"[green]Digest verified:[/green] posted message matches the ledger-recomputed digest "
+            f"{digest.digest_hash()[:16]}..."
+        )
+    else:
+        console.print(f"[red]Digest verification failed for {mission_id!r}:[/red] {result.reason}")
+        if chain_verified is False:
+            console.print("  [red]-[/red] the audit chain does not verify (a receipt was tampered with)")
+        if receipt_present is False:
+            console.print("  [red]-[/red] no chain receipt binds this digest hash")
+    if not ok:
+        raise SystemExit(EXIT_VERIFY_FAILED)
 
 
 __all__ = [

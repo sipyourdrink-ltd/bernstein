@@ -627,6 +627,33 @@ def mission_ledger_dir(sdd_dir: Path, mission_id: str) -> Path:
     return run_ledger_dir(sdd_dir, mission_id)
 
 
+def list_missions(sdd_dir: Path) -> list[str]:
+    """Return mission ids under *sdd_dir* that declare a mission, newest first.
+
+    Missions and plain run ledgers share the ledger root; a directory is a
+    mission only when its ledger's first entry is a ``mission.defined``
+    transition. "Newest first" is by directory name (descending): mission ids
+    embed their creation ordering, and name order is a stable property of the
+    on-disk layout rather than of mtimes, which a copy can rewrite.
+    """
+    from bernstein.core.persistence.work_ledger import default_ledger_root
+
+    root = default_ledger_root(sdd_dir)
+    if not root.is_dir():
+        return []
+    found: list[str] = []
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        reader = LedgerReader(entry)
+        if not reader.exists():
+            continue
+        first = next(iter(reader.entries()), None)
+        if first is not None and first.kind == KIND_MISSION_DEFINED:
+            found.append(entry.name)
+    return sorted(found, reverse=True)
+
+
 def gather_evidence_hashes(workdir: Path, task_ids: Iterable[str]) -> dict[str, str]:
     """Recompute the content address of each task's sealed evidence bundle.
 
@@ -946,6 +973,7 @@ __all__ = [
     "enter_phase",
     "gather_evidence_hashes",
     "halt_phase",
+    "list_missions",
     "mission_ledger_dir",
     "pass_phase",
     "phase_envelope_key",

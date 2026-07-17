@@ -1,0 +1,27 @@
+# Contract for the reference browser / computer-use adapter (adapter:
+# computer_use, issue #2606).
+#
+# This adapter fronts a third-party autonomous browser / computer-use agent that
+# owns its own decision loop. Bernstein does not drive the step loop here; it
+# launches the external agent, isolates it to a per-task browser profile, and
+# anchors each action the agent takes into a signed lineage chain (the boundary
+# layer lives in bernstein.core.agents.computer_use_attestation). The concrete
+# driver stays behind the adapter contract, so the flag surface below is the
+# reference launcher's, not any specific browser tool's.
+adapter: computer_use
+binary: computer-use-agent
+install:
+  method: none
+  spec: ""
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: ""
+required_flags:
+  - "--model"
+  - "--prompt"
+  - "--user-data-dir"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

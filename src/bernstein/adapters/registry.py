@@ -26,6 +26,7 @@ from bernstein.adapters.codebuff import CodebuffAdapter
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.cody import CodyAdapter
 from bernstein.adapters.composio import ComposioAdapter
+from bernstein.adapters.computer_use import ReferenceComputerUseAdapter
 from bernstein.adapters.continue_dev import ContinueDevAdapter
 from bernstein.adapters.copilot import CopilotAdapter
 from bernstein.adapters.cursor import CursorAdapter
@@ -79,6 +80,9 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "codex": CodexAdapter,
     "cody": CodyAdapter,
     "composio": ComposioAdapter,
+    # Fronts a third-party autonomous browser / computer-use agent; per-action
+    # lineage anchoring lives in the boundary layer (issue #2606).
+    "computer_use": ReferenceComputerUseAdapter,
     "continue": ContinueDevAdapter,
     "copilot": CopilotAdapter,
     "cursor": CursorAdapter,

@@ -1,10 +1,10 @@
-# Bug Bounty Program
+# Coordinated Disclosure
 
-Full details of the Bernstein vulnerability disclosure and bug bounty program.
+Full details of the Bernstein vulnerability disclosure process and researcher sandbox. For the policy summary, severity classification, and recognition, see [`SECURITY.md`](../../SECURITY.md).
 
 ## Program overview
 
-Bernstein orchestrates AI coding agents that run directly on a user's machine. The attack surface is meaningful: agents read/write files, execute CLI commands, and communicate via a local HTTP task server. We treat security seriously and compensate researchers who find real issues.
+Bernstein orchestrates AI coding agents that run directly on a user's machine. The attack surface is meaningful: agents read/write files, execute CLI commands, and communicate via a local HTTP task server. We treat security seriously and recognize researchers who find real issues.
 
 Report a vulnerability by email to **forte@bernstein.run** (PGP key at
 `/.well-known/security-pgp.asc`), or open a private security advisory on

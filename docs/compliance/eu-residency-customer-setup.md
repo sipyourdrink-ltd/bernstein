@@ -39,6 +39,79 @@ Any other host (public IP, hosted-API hostname, unrecognised FQDN) is
 rejected with a structured `RESIDENCY_VIOLATION` error that names
 both the offending endpoint and the model that triggered the guard.
 
+## One flag: the sovereign profile
+
+The residency posture composes four independent surfaces (air-gap
+network profile, residency policy, endpoint certification, and the
+storage / catalog / compliance defaults). Assembling them by hand is
+error-prone: one missed setting -- a cloud storage sink left
+configured, a non-certified remote endpoint in a role, a catalog left
+online -- violates the constraints silently, because nothing states
+the intended posture, so nothing can detect drift from it.
+
+`--profile sovereign` composes those pieces with one flag and turns the
+active posture into a **signed, verifiable claim**:
+
+```bash
+$ bernstein run --profile sovereign --seed eu_residency.yaml
+Sovereign posture attested: sha256:68d8804db375b53aa6550c81a5f2f22e...
+```
+
+What the flag does:
+
+- **Pins** deny-all egress (the air-gap network posture and runtime
+  socket guard), offline catalog mode, local storage backends, strict
+  EU residency, and the compliance pack.
+- **Attests** the posture: the effective-policy document is projected
+  deterministically from your config, signed with the install's
+  Ed25519 sovereign identity, and anchored in the HMAC audit chain. The
+  document's canonical-JSON SHA-256 is the *posture identity*. An
+  auditor recomputes that hash from your config snapshot alone and
+  matches it against the chain-anchored attestation -- no need to trust
+  the running install.
+- **Refuses drift**: at every spawn the orchestrator recomputes the
+  posture from the live config. If it diverges from the attested hash
+  (for example a cloud storage sink was added after attestation), the
+  spawn is blocked and a signed drift record naming the exact diverging
+  keys is written to the chain. Drift is caught at spawn time, not at
+  audit time.
+
+Declare the residency regions in `bernstein.yaml` so they are part of
+the config snapshot the posture hash is computed from:
+
+```yaml
+# bernstein.yaml
+sovereign:
+  enabled: true
+  regions: [eu-central, eu-west]
+  enforce_strict: true
+  # Egress is deny-all by default. To reach a self-hosted EU model server,
+  # list it here (host / host:port / CIDR) -- NOT via --allow-network -- so the
+  # runtime network policy and the signed attestation come from the same config
+  # and cannot diverge. Every entry must be self-hosted or EU-region.
+  allowed_egress: ["10.0.0.5:11434"]
+storage:
+  backend: memory        # local sink only; a remote backend is drift
+```
+
+Under `--profile sovereign`, `--allow-network` is rejected: egress is declared
+in config so a deny-all attestation can never coexist with a runtime that
+quietly allows a destination.
+
+Verify the posture at any time:
+
+```bash
+$ bernstein doctor sovereign      # green when every axis is satisfied
+$ bernstein audit verify          # re-verifies the signed attestation offline
+```
+
+`bernstein doctor sovereign` renders the live posture hash against the
+chain-anchored attestation and fails on any drift; `bernstein audit
+verify` re-checks the attestation's Ed25519 signature and the recorded
+posture hash from the chain alone. The manual deployment recipe below
+remains valid for the underlying components, but the sovereign profile
+replaces the hand-assembly of the four surfaces with the single flag.
+
 ## Deployment recipe
 
 ### 1. Stand up an Ollama / vLLM endpoint inside the perimeter

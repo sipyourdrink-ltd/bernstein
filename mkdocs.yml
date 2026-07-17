@@ -198,6 +198,7 @@ nav:
       - Sandboxes:
           - Overview: architecture/sandbox.md
           - Backend selector: concepts/sandbox-selector.md
+          - Named sandbox pools: operations/sandbox-pools.md
           - Daytona: sandbox/daytona.md
           - Blaxel: sandbox/blaxel.md
           - Runloop: sandbox/runloop.md
@@ -293,6 +294,7 @@ nav:
           - Doctor: operations/doctor.md
           - Holds: operations/HOLDS.md
           - Review board: operations/review-board.md
+          - Mission timeline and digests: operations/mission-timeline.md
           - Work ledger: operations/work-ledger.md
           - Decision log: operations/decision-log.md
           - Intent capsules: operations/intent-capsules.md
@@ -306,6 +308,7 @@ nav:
       - Reliability:
           - Troubleshooting: operations/TROUBLESHOOTING.md
           - Checkpointed retries: operations/checkpointed-retries.md
+          - Durable suspend and resume: operations/durable-suspend-resume.md
           - Retry budget: operations/retry-budget.md
           - Auto-heal: operations/auto-heal.md
           - Agent crash loops: operations/agent_crash_loop.md
@@ -387,7 +390,7 @@ nav:
           - OWASP ASI detectors: security/owasp-asi.md
           - Promptware: security/promptware.md
           - Lethal trifecta: security/lethal-trifecta.md
-          - Bug bounty: security/bug-bounty.md
+          - Coordinated disclosure: security/bug-bounty.md
           - Acknowledgments: security/security-acknowledgments.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
@@ -502,6 +505,7 @@ nav:
           - Feature contract: concepts/feature-contract.md
           - Schema validation retry: concepts/schema-validation-retry.md
           - Action cache and replay: concepts/action-cache.md
+          - Cache policy engine: concepts/cache-policy.md
           - Discrete phase pipeline: concepts/phase-pipeline.md
           - Spec-as-test loop: concepts/spec-as-test.md
           - Abstracted code review: concepts/abstracted-code-review.md
@@ -515,6 +519,7 @@ nav:
           - Orchestrator hardening: concepts/orchestrator-hardening.md
       - Orchestration internals:
           - Task DAG: orchestration/task-dag.md
+          - Research activities: orchestration/research-activity.md
           - Run actor: orchestration/run-actor.md
           - Worker coordination: orchestration/worker-coordination.md
           - Review gate: orchestration/review-gate.md
