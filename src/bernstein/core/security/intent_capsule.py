@@ -35,6 +35,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import operator
 import types
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -318,7 +319,7 @@ def compile_capsule(
                 }
                 for e in plan.task_estimates
             ),
-            key=lambda row: row["task_id"],
+            key=operator.itemgetter("task_id"),
         ),
     }
     return IntentCapsule(
@@ -609,8 +610,7 @@ def iter_module_import_names(source_path: str | Path) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                names.add(alias.name)
+            names.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             names.add(node.module)
     return names

@@ -296,8 +296,8 @@ class PairedTable:
             raise ValueError(msg)
         both_pass = base_only = cand_only = both_fail = 0
         for task_id in sorted(base_keys):
-            bp = bool(baseline[task_id])
-            cp = bool(candidate[task_id])
+            bp = baseline[task_id]
+            cp = candidate[task_id]
             if bp and cp:
                 both_pass += 1
             elif bp and not cp:

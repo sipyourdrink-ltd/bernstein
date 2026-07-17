@@ -303,10 +303,9 @@ def load_acp_event_fixture(path: Path) -> list[bytes]:
         The non-empty lines as UTF-8 bytes (trailing newline included), ready
         to feed to :func:`bernstein.core.protocols.acp.client.drive_acp_lifecycle`.
     """
-    lines: list[bytes] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if raw.strip():
-            lines.append((raw + "\n").encode("utf-8"))
+    lines: list[bytes] = [
+        (raw + "\n").encode("utf-8") for raw in path.read_text(encoding="utf-8").splitlines() if raw.strip()
+    ]
     return lines
 
 

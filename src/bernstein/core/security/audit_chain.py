@@ -3090,7 +3090,7 @@ def record_adapter_version_posture_receipt(
         details={
             "receipt_sha256": receipt_sha256,
             "floor_map_hash": floor_map_hash,
-            "entries": [dict(entry) for entry in entries],
+            "entries": [entry.copy() for entry in entries],
         },
     )
 
@@ -3895,7 +3895,7 @@ def record_eval_gate_revocation(
         details={
             "receipt_hash": receipt_hash,
             "candidate_config_id": candidate_config_id,
-            "revoked_receipt_hashes": list(revoked_receipt_hashes),
+            "revoked_receipt_hashes": revoked_receipt_hashes.copy(),
             "reverts_to_stage": reverts_to_stage,
             "reverts_to_config_id": reverts_to_config_id,
             "trigger_receipt_hash": trigger_receipt_hash,

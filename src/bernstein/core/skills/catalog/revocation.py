@@ -320,7 +320,7 @@ class RevocationChecker:
     def refresh(self) -> None:
         """Force a reload of the revocation set now."""
         try:
-            self._revocations = list(self._load())
+            self._revocations = self._load().copy()
         except Exception as exc:  # pragma: no cover - defensive; enforcement never crashes callers
             raise RevocationError(f"failed to load revocations: {exc}") from exc
         self._last_poll = self._clock()

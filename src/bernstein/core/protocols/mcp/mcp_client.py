@@ -378,7 +378,7 @@ class MCPClientSession:
             "initialize",
             {
                 "protocolVersion": "2025-03-26",
-                "capabilities": dict(self._client_capabilities),
+                "capabilities": self._client_capabilities.copy(),
                 "clientInfo": {
                     "name": "bernstein",
                     "version": "1.0.0",

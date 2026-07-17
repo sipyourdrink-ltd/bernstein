@@ -369,9 +369,7 @@ class ClearanceGateCoordinator:
         jph = journal_prefix_hash(self._prefix_for(blocker))
         # A prior gate's clearance task is itself an open task in the cell; never
         # gate a gate on another gate.
-        open_deps = [
-            dep for dep in self._injector.open_dependent_task_ids(scope) if not str(dep).startswith("clearance-")
-        ]
+        open_deps = [dep for dep in self._injector.open_dependent_task_ids(scope) if not dep.startswith("clearance-")]
         spec = project_clearance_gate(
             blocker=blocker,
             scope_task_ids=open_deps,
