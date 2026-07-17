@@ -692,6 +692,22 @@ EVENT_CONTEXT_CAPSULE = "context.capsule"
 #: never goal text or task payloads.
 EVENT_MISSION_PHASE_RECEIPT = "mission.phase_receipt"
 
+#: Issue #2549 -- emitted whenever a per-goal SLA contract is evaluated against
+#: chain evidence inside a supervisor tick and found breached. A breach is a
+#: signed, offline-verifiable violation receipt (see
+#: :mod:`bernstein.core.orchestration.sla_receipt`); this event mirrors the
+#: receipt's identity into the HMAC chain by recording ``{contract_id,
+#: contract_hash, subject_type, subject_id, tick_instant, breached_axes,
+#: requested_action, effective_action, remediation_blocked, receipt_digest}``
+#: plus the previous chain digest. Because the receipt embeds the evidence and
+#: re-derives its verdict and remediation offline, a verifier holding only the
+#: receipt confirms the breach without orchestrator state; this event lets an
+#: operator prove, from the audit chain alone, that the breach was detected at a
+#: named chain position with a given remediation. Only identifiers, hashes, the
+#: breached axes, and the remediation decision are recorded -- never goal text
+#: or artifact contents. Evaluation is read-only and never dispatches a task.
+EVENT_SLA_VIOLATION = "sla.violation"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2069,6 +2085,70 @@ def record_escalation_receipt(
             "window_size": window_size,
             "fork_snapshot_sha": fork_snapshot_sha,
             "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_sla_violation(
+    *,
+    chain: AuditChainStore,
+    contract_id: str,
+    contract_hash: str,
+    subject_type: str,
+    subject_id: str,
+    tick_instant: int,
+    breached_axes: list[str],
+    requested_action: str,
+    effective_action: str,
+    remediation_blocked: bool,
+    receipt_digest: str,
+    actor: str = "sla_monitor",
+) -> AuditEvent:
+    """Append an ``sla.violation`` event into *chain* (#2549).
+
+    Mirrors a signed, offline-verifiable SLA violation receipt (see
+    :mod:`bernstein.core.orchestration.sla_receipt`) into the HMAC-chained audit
+    log so an operator can prove, from the chain alone, that a per-goal contract
+    was found breached at a named tick with a given remediation decision. The
+    receipt itself embeds the evidence and re-derives its verdict offline; this
+    event records only the receipt's identity and the decision.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        contract_id: The breached contract's id (``sla_<hex>``).
+        contract_hash: The content hash of the contract body.
+        subject_type: ``schedule`` / ``task_family`` / ``envelope``.
+        subject_id: The bound subject id.
+        tick_instant: The supervisor tick instant the breach was detected at.
+        breached_axes: The axis names that breached.
+        requested_action: The first-choice remediation action.
+        effective_action: The remediation action after the budget gate (the
+            fallback when the requested action was blocked).
+        remediation_blocked: True when the budget-envelope gate refused the
+            requested spend-more remediation.
+        receipt_digest: The violation receipt's payload digest.
+        actor: Recorded actor; defaults to ``"sla_monitor"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SLA_VIOLATION,
+        actor=actor,
+        resource_type="sla_contract",
+        resource_id=contract_id,
+        details={
+            "contract_id": contract_id,
+            "contract_hash": contract_hash,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "tick_instant": tick_instant,
+            "breached_axes": list(breached_axes),
+            "requested_action": requested_action,
+            "effective_action": effective_action,
+            "remediation_blocked": remediation_blocked,
+            "receipt_digest": receipt_digest,
         },
     )
 
@@ -4963,6 +5043,7 @@ __all__ = [
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
     "EVENT_SKILL_VERIFICATION_REFUSAL",
+    "EVENT_SLA_VIOLATION",
     "EVENT_SPEC_REQUIREMENT_SET",
     "EVENT_SPIFFE_SVID_BINDING",
     "EVENT_STEERING_RECEIPT",
@@ -5046,6 +5127,7 @@ __all__ = [
     "record_skill_install_receipt",
     "record_skill_usage",
     "record_skill_verification_refusal",
+    "record_sla_violation",
     "record_spec_requirement_set",
     "record_spiffe_svid_binding",
     "record_steering_receipt",

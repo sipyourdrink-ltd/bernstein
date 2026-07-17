@@ -1302,6 +1302,7 @@ def create_app(
     from bernstein.core.routes.review_board import router as review_board_router
     from bernstein.core.routes.sbom import router as sbom_router
     from bernstein.core.routes.session_peek import router as session_peek_router
+    from bernstein.core.routes.sla import router as sla_router
     from bernstein.core.routes.slo import router as slo_router
     from bernstein.core.routes.task_detail import router as task_detail_router
     from bernstein.core.routes.task_trace import router as task_trace_router
@@ -1346,6 +1347,7 @@ def create_app(
         plans_router,
         gateway_router,
         slo_router,
+        sla_router,
         custom_metrics_router,
         sbom_router,
         hooks_router,

@@ -1065,6 +1065,11 @@ cli.add_command(fleet_group, "fleet")
 cli.add_command(triggers_group, "triggers")
 cli.add_command(schedule_group, "schedule")
 
+# Per-goal SLA contracts + signed violation receipts (#2549)
+from bernstein.cli.commands.sla_cmd import sla_group  # noqa: E402
+
+cli.add_command(sla_group, "sla")
+
 # Operator supervisor surface (#1800)
 from bernstein.cli.commands.supervisor_cmd import supervisor_group  # noqa: E402
 

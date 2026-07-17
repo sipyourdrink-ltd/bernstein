@@ -279,6 +279,7 @@ class ScheduleSupervisor:
         running_probe: Callable[[Schedule], RunningFireState] | None = None,
         collision_policy: CollisionPolicy | str = CollisionPolicy.CANCEL_NEW,
         concurrency_cap: int = 1,
+        sla_monitor: Any | None = None,
     ) -> None:
         self._store = store
         self._dispatch = dispatch
@@ -304,6 +305,13 @@ class ScheduleSupervisor:
         # both to keep the boundary hermetic.
         self._refusal_chain = refusal_chain
         self._install_identity = install_identity
+        # #2549 per-goal SLA contracts. When a monitor is injected the tick
+        # evaluates registered contracts against chain evidence after firing
+        # schedules. Evaluation is read-only and never dispatches a task; a
+        # breach's only side effects are a signed receipt, an ``sla.violation``
+        # chain event, and a normalised trigger event. A params-less supervisor
+        # (no monitor) is byte-identical to the pre-#2549 behaviour.
+        self._sla_monitor = sla_monitor
 
     # -- Public API ---------------------------------------------------------
 
@@ -313,6 +321,11 @@ class ScheduleSupervisor:
         Returns the list of receipts emitted on this tick (mostly empty
         when no schedule is due). The list is also persisted to disk for
         ``bernstein schedule audit``.
+
+        When an SLA monitor is wired, registered per-goal contracts are
+        evaluated against chain evidence after schedules are processed. That
+        evaluation is read-only and never dispatches a task, so the fire path
+        above is unchanged.
         """
         now_epoch = int(now if now is not None else time.time())
         self._last_tick_at = float(now_epoch)
@@ -323,7 +336,21 @@ class ScheduleSupervisor:
                 receipts.extend(self._tick_one(schedule, now_epoch))
             except Exception:  # pragma: no cover - defensive
                 logger.exception("Supervisor tick failed for schedule %s", schedule.id)
+        self._evaluate_sla_contracts(now_epoch)
         return receipts
+
+    def _evaluate_sla_contracts(self, now_epoch: int) -> None:
+        """Evaluate registered SLA contracts (read-only; never dispatches).
+
+        A failure here is logged and swallowed so a bad contract can never wedge
+        a supervisor tick or interfere with the schedule fire path.
+        """
+        if self._sla_monitor is None:
+            return
+        try:
+            self._sla_monitor.evaluate(now_epoch)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("SLA contract evaluation failed on tick @ %s", now_epoch)
 
     def status(self, *, liveness_window_s: float = 120.0) -> SupervisorStatus:
         """Produce a doctor-ready snapshot.

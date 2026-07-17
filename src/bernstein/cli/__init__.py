@@ -108,6 +108,7 @@ _CLI_REDIRECT_MAP: dict[str, str] = {
     "scaffold_cmd": "bernstein.cli.commands.scaffold_cmd",
     "self_update_cmd": "bernstein.cli.commands.self_update_cmd",
     "session_cmd": "bernstein.cli.commands.session_cmd",
+    "sla_cmd": "bernstein.cli.commands.sla_cmd",
     "slo_cmd": "bernstein.cli.commands.slo_cmd",
     "splash": "bernstein.cli.display.splash",
     "splash_assets": "bernstein.cli.display.splash_assets",
