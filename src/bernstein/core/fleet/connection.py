@@ -33,6 +33,7 @@ This module never imports the CLI or a running server.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import json
@@ -97,6 +98,13 @@ class ConnectionDocument:
     signer_public_key_pem: str = ""
     signature: str = ""
     version: int = 1
+
+    def __post_init__(self) -> None:
+        # Own a deep copy of the connector defaults so a caller mutating the
+        # dict it passed in cannot alter a document after it was signed, which
+        # would otherwise desync the persisted bytes from the recorded
+        # document hash.
+        object.__setattr__(self, "connector_defaults", copy.deepcopy(self.connector_defaults))
 
     def _payload(self, *, include_signature: bool) -> dict[str, Any]:
         payload: dict[str, Any] = {

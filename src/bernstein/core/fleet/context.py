@@ -33,6 +33,7 @@ This module never imports the CLI or a running server.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -104,12 +105,23 @@ class OperatingContext:
     budget_envelope: str = ""
     config_layer: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Own a deep copy of the mutable maps so a caller mutating the dict
+        # it passed in cannot desync this context from the settings hash that
+        # was computed and audited at activation time.
+        object.__setattr__(self, "adapter_defaults", copy.deepcopy(self.adapter_defaults))
+        object.__setattr__(self, "config_layer", copy.deepcopy(self.config_layer))
+
     def composite(self) -> dict[str, Any]:
-        """Return the composite settings map hashed into the run receipt."""
-        composite: dict[str, Any] = {f: getattr(self, f) for f in _COMPOSITE_FIELDS}
+        """Return the composite settings map hashed into the run receipt.
+
+        Returns a deep copy so the receipt's snapshot is independent of later
+        in-place mutation of this context.
+        """
+        composite: dict[str, Any] = {f: copy.deepcopy(getattr(self, f)) for f in _COMPOSITE_FIELDS}
         # The config-layer overrides participate in the identity too, so a
         # drift in any pinned value changes the hash.
-        composite["config_layer"] = dict(self.config_layer)
+        composite["config_layer"] = copy.deepcopy(self.config_layer)
         return composite
 
     def canonical_document(self) -> str:

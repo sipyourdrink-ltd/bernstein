@@ -228,7 +228,44 @@ def test_create_records_audit_before_persist(tmp_path: Path) -> None:
     assert ok, errors
 
 
+def test_connection_document_defensive_copies_connector_defaults(tmp_path: Path) -> None:
+    from bernstein.core.fleet.connection import ConnectionDocument
+
+    defaults = {"base_url": "https://a", "nested": {"k": "v"}}
+    doc = ConnectionDocument(name="c", secret_name="s", scope="", connector_defaults=defaults)
+    before = doc.document_hash()
+    # Mutating the caller's dict (top-level and nested) must not affect the
+    # signed/hashed document.
+    defaults["base_url"] = "https://evil"
+    defaults["nested"]["k"] = "tampered"
+    assert doc.connector_defaults["base_url"] == "https://a"
+    assert doc.connector_defaults["nested"]["k"] == "v"
+    assert doc.document_hash() == before
+
+
 # -- context ----------------------------------------------------------------
+
+
+def test_context_defensive_copies_maps(tmp_path: Path) -> None:
+    layer = {"budget": 1, "nested": {"k": "v"}}
+    adapters = {"model": "claude"}
+    ctx = OperatingContext(name="prod", adapter_defaults=adapters, config_layer=layer)
+    receipt = ctx.run_receipt()
+    before = receipt.settings_hash
+
+    # Mutating the caller's dicts after construction must not change the
+    # context, its hash, or the receipt snapshot.
+    layer["budget"] = 999
+    layer["nested"]["k"] = "tampered"
+    adapters["model"] = "other"
+    assert ctx.config_layer["budget"] == 1
+    assert ctx.config_layer["nested"]["k"] == "v"
+    assert ctx.adapter_defaults["model"] == "claude"
+    assert ctx.settings_hash() == before
+    assert receipt.settings["config_layer"]["budget"] == 1
+
+
+# -- context (activation) ---------------------------------------------------
 
 
 def test_activation_records_event_before_pointer(tmp_path: Path) -> None:

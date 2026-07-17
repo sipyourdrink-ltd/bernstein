@@ -105,19 +105,28 @@ def test_document_persisted_without_secret_value(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
     store = ConnectionDocumentStore(tmp_path / "conns")
     identity = tmp_path / "identity"
+    # Populate connector_defaults with real (non-secret) connector config so
+    # the persistence assertion is not vacuous: the document carries operator
+    # defaults, references a broker secret by name, and never a secret value.
     create_document(
         name="team-slack",
         secret_name="slack_token",
         scope="chat:write",
-        connector_defaults={},
+        connector_defaults={"base_url": "https://slack.com/api", "timeout_s": 30},
         identity_dir=identity,
         chain=chain,
         store=store,
     )
-    # The raw secret value never touches the persisted document artifact.
     on_disk = (tmp_path / "conns" / "team-slack.json").read_text(encoding="utf-8")
     assert "slack_token" in on_disk  # the *reference* name is fine
+    assert "https://slack.com/api" in on_disk  # non-secret connector default persisted
     assert "xoxb" not in on_disk  # no secret value
+    # The document schema has no field that carries a raw secret value; only a
+    # broker secret *reference*. A secret is resolved solely through the broker
+    # mint path, never persisted here.
+    doc = store.get("team-slack")
+    assert doc.secret_name == "slack_token"
+    assert not hasattr(doc, "secret_value")
 
 
 def test_resolve_goes_through_broker_and_emits_receipt(tmp_path: Path) -> None:
