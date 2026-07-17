@@ -84,25 +84,99 @@ def is_sandboxed() -> bool:
     return False
 
 
-def relax_sandboxed(decisions: list[PermissionDecision], check_name: str = "") -> list[PermissionDecision]:
+def active_backend_provides_scoped_mount() -> bool:
+    """Return True only if the active sandbox backend proves a task-scoped mount.
+
+    The ``scope_enforcement`` guardrail reviews the write diff and flags any
+    file outside ``task.owned_files``. Relaxing it inside a sandbox is only
+    safe when the sandbox filesystem exposes *only* the task's owned files:
+    then the mount itself already enforces the boundary and the post-hoc
+    check is redundant.
+
+    That is not the case for every sandbox. The Docker backend bind-mounts
+    the whole repository read-only (required so ``git checkout`` keeps full
+    history), so the container sees every file and an out-of-scope write is a
+    real boundary crossing. Container isolation alone therefore does not make
+    the write-scope check redundant.
+
+    A backend opts in to the relaxation by declaring
+    :attr:`~bernstein.core.sandbox.backend.SandboxCapability.SCOPED_MOUNT`.
+    The active backend is read from ``BERNSTEIN_SANDBOX_RUNTIME`` (set by the
+    sandbox selector when a backend is chosen). When the backend cannot be
+    resolved, this returns ``False`` so the boundary is kept (fail closed).
+
+    Returns:
+        True when the active backend declares a task-scoped mount.
+    """
+    import os
+
+    runtime = os.environ.get("BERNSTEIN_SANDBOX_RUNTIME")
+    if not runtime:
+        return False
+    try:
+        from bernstein.core.sandbox.backend import SandboxCapability
+        from bernstein.core.sandbox.registry import get_backend
+
+        backend = get_backend(runtime)
+    except Exception:
+        # Unknown/unavailable backend: keep the boundary enforced.
+        return False
+    capabilities: frozenset[SandboxCapability] = getattr(backend, "capabilities", frozenset())
+    return SandboxCapability.SCOPED_MOUNT in capabilities
+
+
+def relax_sandboxed(
+    decisions: list[PermissionDecision],
+    check_name: str = "",
+    *,
+    scoped_mount: bool | None = None,
+) -> list[PermissionDecision]:
     """Relax ASK/DENY decisions to ALLOW when running in a sandbox (T466).
 
-    Only applies to checks that are sandbox-safe (e.g., file permissions,
-    scope enforcement). Safety-critical checks (secrets, immune paths,
-    dangerous operations) are never relaxed regardless of sandbox state.
+    Only applies to checks that are sandbox-safe. Safety-critical checks
+    (secrets, immune paths, dangerous operations) are never relaxed
+    regardless of sandbox state.
+
+    Two tiers of relaxability:
+
+    * ``file_permissions`` is relaxed on container isolation alone: the role
+      write-permission model is an in-repo policy, not a filesystem boundary,
+      so an isolated sandbox makes it redundant.
+    * ``scope_enforcement`` is relaxed only when the active backend proves a
+      mount scoped to ``task.owned_files``. Container isolation alone is
+      insufficient: a backend that mounts the whole repository (the Docker
+      backend bind-mounts the full repo read-only) still exposes every file,
+      so an out-of-scope write is a real boundary crossing and must stay
+      flagged. See :func:`active_backend_provides_scoped_mount`.
 
     Args:
         decisions: List of PermissionDecision from a guardrail check.
         check_name: Name of the guardrail check (e.g., "file_permissions").
+        scoped_mount: Whether the active sandbox mount is scoped to the
+            task's owned files. ``None`` (default) auto-detects via
+            :func:`active_backend_provides_scoped_mount`. Only consulted for
+            ``scope_enforcement``.
 
     Returns:
         Decisions with sandboxable ASK/DENY decisions relaxed to ALLOW,
-        or the original decisions if not sandboxed or not a relaxable check.
+        or the original decisions if not sandboxed or not relaxable in the
+        current context.
     """
-    # Checks that ARE safe to relax in a sandbox
-    RELAXABLE: frozenset[str] = frozenset({"file_permissions", "scope_enforcement"})
+    # Checks relaxable purely on the basis of container isolation.
+    RELAXABLE_ON_ISOLATION: frozenset[str] = frozenset({"file_permissions"})
+    # Checks relaxable only when the sandbox also proves a task-scoped mount.
+    RELAXABLE_WITH_SCOPED_MOUNT: frozenset[str] = frozenset({"scope_enforcement"})
 
-    if not decisions or not is_sandboxed() or check_name not in RELAXABLE:
+    if not decisions or not is_sandboxed():
+        return decisions
+
+    if check_name in RELAXABLE_WITH_SCOPED_MOUNT:
+        has_scoped_mount = active_backend_provides_scoped_mount() if scoped_mount is None else scoped_mount
+        if not has_scoped_mount:
+            # Whole-repo (or otherwise unscoped) mount: the write-scope
+            # boundary is NOT redundant, so keep ASK/DENY intact.
+            return decisions
+    elif check_name not in RELAXABLE_ON_ISOLATION:
         return decisions
 
     relaxed: list[PermissionDecision] = []
