@@ -19,8 +19,8 @@ assignees: []
 3. **GitHub private vulnerability reporting:** the "Report a vulnerability"
    button on the [Security tab](https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new).
 
-Initial triage acknowledgement: within 72 hours. SLA matrix and the bug
-bounty scope live in [`SECURITY.md`](../../SECURITY.md).
+Initial triage acknowledgement: within 72 hours. SLA matrix and the
+disclosure scope live in [`SECURITY.md`](../../SECURITY.md).
 
 ## If you opened this issue anyway
 

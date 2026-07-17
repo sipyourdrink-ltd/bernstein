@@ -44,7 +44,7 @@ Drift remediation paths used by the rows below:
 | `CONVENTIONS.md` | Mirror of canonical IR for Aider via `bernstein agents-md sync` | Drift versus AGENTS.md canonical | `agents-md-sync` |
 | `CODE_OF_CONDUCT.md` | None (Contributor Covenant 2.1 verbatim) | Repo URL change, contact email change | `static` |
 | `CONTRIBUTING.md` | `src/bernstein/adapters/registry.py`, `src/bernstein/adapters/base.py`, `templates/roles/`, `scripts/run_tests.py`, `.importlinter` | New adapter contract method, new role added under `templates/roles/`, change to lint / type-check pipeline | `manual-prose` |
-| `SECURITY.md` | `pyproject.toml` version, security policy contacts | Bounty program changes, scope changes, new in-scope target | `manual-prose` |
+| `SECURITY.md` | `pyproject.toml` version, security policy contacts | Disclosure policy changes, scope changes, new in-scope target | `manual-prose` |
 | `CHANGELOG.md` | Release-please managed (`release-please-config.json`, `release-please-manifest.json`) plus hand-curated `## Unreleased` section | New release tag, manual entry needed for behaviour-visible code change | `manual-prose` |
 | `CONTRIBUTORS.md` | None (hand-curated list of named contributors) | New contributor merged a PR | `static` |
 

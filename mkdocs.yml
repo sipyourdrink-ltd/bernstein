@@ -388,7 +388,7 @@ nav:
           - OWASP ASI detectors: security/owasp-asi.md
           - Promptware: security/promptware.md
           - Lethal trifecta: security/lethal-trifecta.md
-          - Bug bounty: security/bug-bounty.md
+          - Coordinated disclosure: security/bug-bounty.md
           - Acknowledgments: security/security-acknowledgments.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
