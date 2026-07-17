@@ -69,41 +69,73 @@ def _audit_chain(request: Request) -> AuditChainStore | None:
     return getattr(request.app.state, "audit_chain", None)
 
 
+#: Request header carrying the calling worker's identity, injected by the auth
+#: layer (mirrors the signed-identity transport convention used elsewhere, e.g.
+#: ``x-bernstein-telemetry-agent-id``). The authorization principal is read from
+#: here / request state, never from the request body, which a caller controls.
+_AGENT_ID_HEADER = "x-bernstein-agent-id"
+
+
 def _claim_holder(task: Task) -> str:
     return str(getattr(task, "claimed_by_session", None) or getattr(task, "assigned_agent", None) or "")
 
 
-def _require_claim_holder(task: Task, poster: str, request: Request) -> None:
-    """Refuse a post from a caller that does not hold the task's claim.
+def _caller_identity(request: Request) -> str:
+    """Return the authenticated caller identity for the request.
 
-    When the task has a claim holder and ``poster`` is not it, the refusal is
-    recorded into the audit chain (best-effort) and a typed 403 is raised.
+    Read from the request's authenticated context -- state populated by the auth
+    layer, or the identity transport header -- never from the request body. An
+    empty string means the caller presented no identity.
+    """
+    state_value = getattr(request.state, "agent_id", None) or getattr(request.state, "principal", None)
+    if isinstance(state_value, str) and state_value.strip():
+        return state_value.strip()
+    return request.headers.get(_AGENT_ID_HEADER, "").strip()
+
+
+def _refuse_artifact_post(task: Task, caller: str, request: Request, reason: str) -> None:
+    """Audit-record a refusal and raise the typed 403."""
+    chain = _audit_chain(request)
+    if chain is not None:
+        try:
+            from bernstein.core.security.audit_chain import record_run_artifact_refused
+
+            record_run_artifact_refused(
+                chain=chain,
+                task_id=task.id,
+                key="",
+                caller=caller,
+                reason=reason,
+            )
+        except Exception as exc:  # intentional-broad-except: refusal mirror is best-effort
+            logger.warning("task.artifact refusal mirror failed: %s", type(exc).__name__)
+    logger.info(
+        "task.artifact refused: task_id=%s caller=%s reason=%s",
+        sanitize_log(task.id),
+        sanitize_log(caller or "<none>"),
+        reason,
+    )
+    raise HTTPException(
+        status_code=403,
+        detail=f"caller does not hold an active claim for task '{task.id}'",
+    )
+
+
+def _require_claim_holder(task: Task, request: Request) -> str:
+    """Authorize the caller as the task's active claim holder; return its identity.
+
+    The caller identity comes from the authenticated request context, never the
+    request body. Posting is refused -- typed 403, audit-recorded -- when the
+    task has no active claim (nobody to hold it), when the caller presents no
+    identity, or when the caller is not the recorded claim holder.
     """
     holder = _claim_holder(task)
-    if holder and poster != holder:
-        chain = _audit_chain(request)
-        if chain is not None:
-            try:
-                from bernstein.core.security.audit_chain import record_run_artifact_refused
-
-                record_run_artifact_refused(
-                    chain=chain,
-                    task_id=task.id,
-                    key="",
-                    caller=poster,
-                    reason="claim_scope_violation",
-                )
-            except Exception as exc:  # intentional-broad-except: refusal mirror is best-effort
-                logger.warning("task.artifact refusal mirror failed: %s", type(exc).__name__)
-        logger.info(
-            "task.artifact refused: task_id=%s poster=%s (claim held by another)",
-            sanitize_log(task.id),
-            sanitize_log(poster),
-        )
-        raise HTTPException(
-            status_code=403,
-            detail=f"caller '{poster}' does not hold the claim for task '{task.id}'",
-        )
+    caller = _caller_identity(request)
+    if not holder:
+        _refuse_artifact_post(task, caller, request, "unclaimed_task")
+    if not caller or caller != holder:
+        _refuse_artifact_post(task, caller, request, "claim_scope_violation")
+    return caller
 
 
 def _build_payload(body: TaskArtifactPost) -> ArtifactPayload:
@@ -121,7 +153,8 @@ def post_task_artifact(task_id: str, body: TaskArtifactPost, request: Request) -
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     _require_task_access(task, request)
-    _require_claim_holder(task, body.poster, request)
+    # The recorded actor is the authenticated claim holder, not a body field.
+    caller = _require_claim_holder(task, request)
 
     try:
         payload = _build_payload(body)
@@ -134,7 +167,7 @@ def post_task_artifact(task_id: str, body: TaskArtifactPost, request: Request) -
             task_id=task_id,
             key=body.key,
             payload=payload,
-            actor=body.poster,
+            actor=caller,
             hmac_key=_hmac_key(),
             audit_chain=_audit_chain(request),
         )
@@ -181,13 +214,23 @@ def list_task_artifacts(task_id: str, request: Request) -> list[TaskArtifactCont
 
 
 @router.get("/tasks/{task_id}/progress", responses={404: {"description": "Task not found"}})
-def get_task_progress(task_id: str, request: Request, run_id: str = "") -> TaskProgressResponse:
-    """Return the chain-computed progress vector for a task."""
+def get_task_progress(task_id: str, request: Request) -> TaskProgressResponse:
+    """Return the chain-computed progress vector for a task.
+
+    The ledger read is resolved from the task's own authoritative run id, never
+    from a client-supplied parameter, so the vector cannot be steered by pairing
+    this task's journal with an arbitrary run's ledger.
+    """
     task = _get_store(request).get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     _require_task_access(task, request)
-    return build_progress_response(_sdd_dir(request), task_id, run_id=run_id)
+    return build_progress_response(_sdd_dir(request), task_id, run_id=_task_run_id_for(task))
+
+
+def _task_run_id_for(task: Task) -> str:
+    """Resolve a task's authoritative orchestration run id, or ``""``."""
+    return str(getattr(task, "run_id", "") or "")
 
 
 # ---------------------------------------------------------------------------

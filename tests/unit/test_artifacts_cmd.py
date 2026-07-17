@@ -19,6 +19,7 @@ from bernstein.cli.commands.audit_cmd import audit_group
 from bernstein.core.evidence.bundle import EvidenceStore
 from bernstein.core.evidence.run_artifacts import ArtifactPayload, post_run_artifact
 from bernstein.core.security.audit import load_or_create_audit_key
+from bernstein.core.security.audit_chain import AuditChainStore
 
 
 @pytest.fixture
@@ -28,7 +29,14 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _post(project: Path, *, task_id: str = "task-1", key: str = "summary", body: str = "hello", chain=None) -> None:  # type: ignore[no-untyped-def]
+def _post(
+    project: Path,
+    *,
+    task_id: str = "task-1",
+    key: str = "summary",
+    body: str = "hello",
+    chain: AuditChainStore | None = None,
+) -> None:
     post_run_artifact(
         sdd_dir=project / ".sdd",
         task_id=task_id,
@@ -40,9 +48,7 @@ def _post(project: Path, *, task_id: str = "task-1", key: str = "summary", body:
     )
 
 
-def _chain(project: Path):  # type: ignore[no-untyped-def]
-    from bernstein.core.security.audit_chain import AuditChainStore
-
+def _chain(project: Path) -> AuditChainStore:
     return AuditChainStore(project / ".sdd" / "audit", key=load_or_create_audit_key())
 
 
@@ -92,7 +98,11 @@ def test_audit_verify_passes_with_intact_artifacts(project: Path, monkeypatch: p
     # The audit group resolves ``.sdd`` relative to CWD; run inside the project.
     monkeypatch.chdir(project)
     result = CliRunner().invoke(audit_group, ["verify"])
+    # The artifact pillar passes for intact artifacts. (The overall exit code
+    # also reflects unrelated pillars -- e.g. the Merkle seal, absent in this
+    # minimal fixture -- so we assert the artifact-pillar result specifically.)
     assert "Run Artifact Verification Passed" in result.output
+    assert "Run Artifact Verification FAILED" not in result.output
 
 
 def test_audit_verify_fails_on_tampered_artifact(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:

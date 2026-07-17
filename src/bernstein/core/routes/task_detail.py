@@ -85,6 +85,11 @@ def task_detail(request: Request, task_id: str) -> TaskDetailResponse:
     task = _get_store(request).get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    # Enforce tenant-scoped task access before exposing any task detail,
+    # including verified artifact content and the progress projection (#2553).
+    from bernstein.core.routes.task_crud import _require_task_access
+
+    _require_task_access(task, request)
 
     runtime_dir = _get_runtime_dir(request)
     log_tail = ""

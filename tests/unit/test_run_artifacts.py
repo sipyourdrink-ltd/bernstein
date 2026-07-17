@@ -176,6 +176,82 @@ class TestTamperEvidence:
         results = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
         assert results
         assert not any(r.ok for r in results)
+        # The diagnostic names the (forged) key and the exact journal position.
+        reason = results[0].reason
+        assert "forged" in reason
+        assert "index=0" in reason
+
+    def test_tamper_hiding_every_row_still_fails(self, tmp_path: Path) -> None:
+        # Renaming the artifact_posted event breaks the Merkle chain AND removes
+        # the row from the artifact reader. Verification must still fail loudly
+        # rather than read as "no artifacts" (a clean, empty set).
+        sdd = _sdd(tmp_path)
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="k",
+            payload=ArtifactPayload.report("body"),
+            actor="w",
+            hmac_key=_KEY,
+        )
+        journal_path = sdd / "runs" / "task-task-1" / "journal.jsonl"
+        text = journal_path.read_text(encoding="utf-8")
+        journal_path.write_text(text.replace("artifact_posted", "artifact_hidden"), encoding="utf-8")
+
+        results = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert results, "tampering that hides all rows must still produce a verdict"
+        assert not any(r.ok for r in results)
+        assert "does not verify" in results[0].reason
+
+        # verify_all also surfaces the hidden-row tamper for audit verify.
+        all_results = verify_all_run_artifacts(tmp_path, hmac_key=_KEY)
+        assert all_results
+        assert not any(r.ok for r in all_results)
+
+
+class TestConcurrency:
+    def test_concurrent_posts_allocate_unique_versions(self, tmp_path: Path) -> None:
+        # Serialised version allocation: N threads posting to the same (task,key)
+        # must produce a clean 1..N version chain, never a duplicate version or a
+        # forked predecessor reference.
+        import threading
+
+        sdd = _sdd(tmp_path)
+        n = 12
+        barrier = threading.Barrier(n)
+        results: list[object] = []
+        results_lock = threading.Lock()
+
+        def _worker(i: int) -> None:
+            barrier.wait()  # maximise contention
+            rec = post_run_artifact(
+                sdd_dir=sdd,
+                task_id="task-1",
+                key="k",
+                payload=ArtifactPayload.report(f"draft {i}"),
+                actor="w",
+                hmac_key=_KEY,
+            )
+            with results_lock:
+                results.append(rec)
+
+        threads = [threading.Thread(target=_worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        rows = read_artifact_rows(sdd, "task-1")
+        versions = sorted(r.version for r in rows)
+        assert versions == list(range(1, n + 1)), f"versions not a clean 1..N chain: {versions}"
+        # Every version except v1 references exactly the prior version's identity.
+        by_version = {r.version: r for r in rows}
+        for v in range(2, n + 1):
+            assert by_version[v].prev_version_hash == by_version[v - 1].spine_entry_hash
+        # The whole chain verifies.
+        verdicts = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(verdicts) == n
+        assert all(x.ok for x in verdicts)
 
 
 class TestCap:

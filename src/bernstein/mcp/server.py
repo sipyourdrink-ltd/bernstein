@@ -777,11 +777,15 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
                 payload["url"] = url
             if link_kind:
                 payload["link_kind"] = link_kind
+            # Carry the caller identity in the request header (the server's
+            # authorization principal), not only in the body. The server refuses
+            # posts against a task this identity does not hold the claim for.
+            headers = {**_auth_headers(), "x-bernstein-agent-id": poster}
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.post(
                     f"{server_url}/tasks/{task_id}/artifacts",
                     json=payload,
-                    headers=_auth_headers(),
+                    headers=headers,
                 )
                 resp.raise_for_status()
                 data: dict[str, Any] = resp.json()

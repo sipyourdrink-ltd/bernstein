@@ -63,12 +63,19 @@ export function useTaskArtifacts({ taskId, enabled = true }: UseTaskArtifactsOpt
     placeholderData: (prev) => prev,
   });
 
-  // Live refresh: a matching SSE event invalidates the queries so the panel
-  // reflects the newly posted artifact / advanced progress at once.
-  const refreshOnEvent = useCallback(() => {
-    void client.invalidateQueries({ queryKey: ['task-artifacts', taskId] });
-    void client.invalidateQueries({ queryKey: ['task-progress', taskId] });
-  }, [client, taskId]);
+  // Live refresh: an SSE event for THIS task invalidates the queries so the
+  // panel reflects the newly posted artifact / advanced progress at once.
+  // Events for other tasks are ignored so one task's activity does not force a
+  // refetch on every open task panel.
+  const refreshOnEvent = useCallback(
+    (data: unknown) => {
+      const eventTaskId = (data as { task_id?: unknown } | null)?.task_id;
+      if (typeof eventTaskId === 'string' && eventTaskId !== taskId) return;
+      void client.invalidateQueries({ queryKey: ['task-artifacts', taskId] });
+      void client.invalidateQueries({ queryKey: ['task-progress', taskId] });
+    },
+    [client, taskId],
+  );
 
   useEventStream('/api/v1/events', {
     enabled: on,
@@ -78,12 +85,18 @@ export function useTaskArtifacts({ taskId, enabled = true }: UseTaskArtifactsOpt
     },
   });
 
+  // Retry both queries so a Retry action recovers whichever one errored.
+  const refetch = useCallback(
+    () => Promise.all([artifactsQuery.refetch(), progressQuery.refetch()]),
+    [artifactsQuery, progressQuery],
+  );
+
   return {
     artifacts: artifactsQuery.data ?? [],
     progress: progressQuery.data ?? null,
     initialLoading: artifactsQuery.isLoading && !artifactsQuery.data,
     isRefetching: artifactsQuery.isFetching && !artifactsQuery.isLoading,
     error: artifactsQuery.error ?? progressQuery.error,
-    refetch: artifactsQuery.refetch,
+    refetch,
   };
 }

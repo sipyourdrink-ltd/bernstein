@@ -2,8 +2,10 @@
 
 AC1: a worker posts a report and it appears on the task detail surface over SSE
 without reload, rendered with key, version, journal position, and content hash.
-Also covers version chaining, tamper rendering, claim isolation with an
-audit-recorded refusal, and the non-assertable progress vector.
+Also covers version chaining, tamper rendering, claim isolation (the authorization
+principal is the authenticated request identity, never the request body), the
+audit-recorded refusal, the oversized 413 path, and the non-assertable progress
+vector.
 """
 
 from __future__ import annotations
@@ -64,6 +66,26 @@ async def _create_task(client: AsyncClient, title: str) -> str:
     return str(resp.json()["id"])
 
 
+def _claim(app, task_id: str, holder: str) -> None:  # type: ignore[no-untyped-def]
+    """Record ``holder`` as the task's active claim holder."""
+    app.state.store.get_task(task_id).assigned_agent = holder
+
+
+async def _create_claimed_task(client: AsyncClient, app, title: str, holder: str) -> str:  # type: ignore[no-untyped-def]
+    task_id = await _create_task(client, title)
+    _claim(app, task_id, holder)
+    return task_id
+
+
+async def _post_artifact(client: AsyncClient, task_id: str, holder: str, **body: object):  # type: ignore[no-untyped-def]
+    """Post an artifact as ``holder`` (identity carried in the request header)."""
+    return await client.post(
+        f"/tasks/{task_id}/artifacts",
+        json={"poster": holder, **body},
+        headers={"x-bernstein-agent-id": holder},
+    )
+
+
 def _spy_sse(app) -> list[tuple[str, str]]:  # type: ignore[no-untyped-def]
     recorded: list[tuple[str, str]] = []
     original = app.state.sse_bus.publish
@@ -79,16 +101,15 @@ def _spy_sse(app) -> list[tuple[str, str]]:  # type: ignore[no-untyped-def]
 class TestPosting:
     async def test_post_report_appears_with_anchors_and_over_sse(self, app, client: AsyncClient) -> None:
         recorded = _spy_sse(app)
-        task_id = await _create_task(client, "report task")
+        task_id = await _create_claimed_task(client, app, "report task", "worker-a")
 
-        resp = await client.post(
-            f"/tasks/{task_id}/artifacts",
-            json={
-                "key": "audit-summary",
-                "artifact_type": "report",
-                "poster": "worker-a",
-                "body": "# Findings\nAll clear.",
-            },
+        resp = await _post_artifact(
+            client,
+            task_id,
+            "worker-a",
+            key="audit-summary",
+            artifact_type="report",
+            body="# Findings\nAll clear.",
         )
         assert resp.status_code == 201, resp.text
         data = resp.json()
@@ -111,43 +132,36 @@ class TestPosting:
         assert rows[0]["key"] == "audit-summary"
         assert rows[0]["verified"] is True
 
-    async def test_table_and_link_post(self, client: AsyncClient) -> None:
-        task_id = await _create_task(client, "table task")
-        table = await client.post(
-            f"/tasks/{task_id}/artifacts",
-            json={
-                "key": "cmp",
-                "artifact_type": "table",
-                "poster": "w",
-                "columns": ["metric", "before", "after"],
-                "rows": [["p95", "120", "80"]],
-            },
+    async def test_table_and_link_post(self, app, client: AsyncClient) -> None:
+        task_id = await _create_claimed_task(client, app, "table task", "w")
+        table = await _post_artifact(
+            client,
+            task_id,
+            "w",
+            key="cmp",
+            artifact_type="table",
+            columns=["metric", "before", "after"],
+            rows=[["p95", "120", "80"]],
         )
         assert table.status_code == 201, table.text
-        link = await client.post(
-            f"/tasks/{task_id}/artifacts",
-            json={
-                "key": "preview",
-                "artifact_type": "link",
-                "poster": "w",
-                "url": "https://preview.example/xyz",
-                "link_kind": "preview",
-            },
+        link = await _post_artifact(
+            client,
+            task_id,
+            "w",
+            key="preview",
+            artifact_type="link",
+            url="https://preview.example/xyz",
+            link_kind="preview",
         )
         assert link.status_code == 201, link.text
         assert link.json()["link_kind"] == "preview"
         assert link.json()["content"] == {"type": "link", "url": "https://preview.example/xyz", "kind": "preview"}
 
-    async def test_reposting_key_chains_versions(self, client: AsyncClient) -> None:
-        task_id = await _create_task(client, "versioned")
-        v1 = await client.post(
-            f"/tasks/{task_id}/artifacts",
-            json={"key": "r", "artifact_type": "report", "poster": "w", "body": "one"},
-        )
-        v2 = await client.post(
-            f"/tasks/{task_id}/artifacts",
-            json={"key": "r", "artifact_type": "report", "poster": "w", "body": "two"},
-        )
+    async def test_reposting_key_chains_versions(self, app, client: AsyncClient) -> None:
+        task_id = await _create_claimed_task(client, app, "versioned", "w")
+        v1 = await _post_artifact(client, task_id, "w", key="r", artifact_type="report", body="one")
+        v2 = await _post_artifact(client, task_id, "w", key="r", artifact_type="report", body="two")
+        assert v1.status_code == 201 and v2.status_code == 201
         assert v2.json()["version"] == 2
         assert v2.json()["prev_version_hash"] == v1.json()["spine_entry_hash"]
         rows = (await client.get(f"/tasks/{task_id}/artifacts")).json()
@@ -155,58 +169,74 @@ class TestPosting:
 
 
 class TestCaps:
-    async def test_oversized_payload_is_413(self, client: AsyncClient) -> None:
-        task_id = await _create_task(client, "big")
-        # Body under the pydantic ceiling but the route caps the stored blob.
-        resp = await client.post(
-            f"/tasks/{task_id}/artifacts",
-            json={"key": "big", "artifact_type": "report", "poster": "w", "body": "x" * 900},
-            headers={},
+    async def test_oversized_payload_is_413(self, app, client: AsyncClient) -> None:
+        task_id = await _create_claimed_task(client, app, "big", "w")
+        # An oversized payload is rejected with 413 end to end (here by the
+        # server's request-size guard, which shares the 1 MiB per-blob ceiling).
+        # The route's own ArtifactTooLargeError -> 413 mapping, which names the
+        # cap, is exercised in tests/unit/test_run_artifacts.py::TestCap.
+        resp = await _post_artifact(
+            client,
+            task_id,
+            "w",
+            key="big",
+            artifact_type="report",
+            body="x" * 1_048_576,
         )
-        # Default per-blob cap (1 MiB) is not exceeded here; assert the happy path
-        # so the cap wiring stays exercised. The unit suite covers the 413 path
-        # with a small cap.
-        assert resp.status_code == 201
+        assert resp.status_code == 413, resp.text
+        assert "exceeds" in resp.json()["detail"]
 
 
 class TestClaimIsolation:
     async def test_post_against_unheld_task_is_refused_and_audited(self, app, client: AsyncClient) -> None:
-        task_a = await _create_task(client, "task A")
-        task_b = await _create_task(client, "task B")
-        # Give each task a distinct claim holder.
-        app.state.store.get_task(task_a).assigned_agent = "agent-A"
-        app.state.store.get_task(task_b).assigned_agent = "agent-B"
+        await _create_claimed_task(client, app, "task A", "agent-A")
+        task_b = await _create_claimed_task(client, app, "task B", "agent-B")
 
-        # Worker holding A's claim tries to post to B: refused.
-        resp = await client.post(
-            f"/tasks/{task_b}/artifacts",
-            json={"key": "k", "artifact_type": "report", "poster": "agent-A", "body": "sneaky"},
-        )
+        # A worker whose authenticated identity is agent-A tries to post to task
+        # B (held by agent-B): refused (identity != claim holder).
+        resp = await _post_artifact(client, task_b, "agent-A", key="k", artifact_type="report", body="sneaky")
         assert resp.status_code == 403, resp.text
 
-        # The refusal is audit-recorded.
+        # The refusal is audit-recorded with the authenticated caller.
         refusals = app.state.audit_chain.query(event_type=EVENT_RUN_ARTIFACT_REFUSED)
         assert refusals
         assert refusals[-1].details["caller"] == "agent-A"
         assert refusals[-1].details["task_id"] == task_b
 
+        # A refused post writes nothing: task B still has no artifacts.
+        listing = await client.get(f"/tasks/{task_b}/artifacts")
+        assert listing.json() == []
+
         # The rightful holder can post.
-        ok = await client.post(
-            f"/tasks/{task_b}/artifacts",
-            json={"key": "k", "artifact_type": "report", "poster": "agent-B", "body": "legit"},
-        )
+        ok = await _post_artifact(client, task_b, "agent-B", key="k", artifact_type="report", body="legit")
         assert ok.status_code == 201
+
+    async def test_unclaimed_task_rejects_posts(self, app, client: AsyncClient) -> None:
+        task_id = await _create_task(client, "unclaimed")  # no claim holder set
+        resp = await _post_artifact(client, task_id, "whoever", key="k", artifact_type="report", body="x")
+        assert resp.status_code == 403, resp.text
+        assert app.state.audit_chain.query(event_type=EVENT_RUN_ARTIFACT_REFUSED)
+
+    async def test_body_poster_cannot_forge_identity(self, app, client: AsyncClient) -> None:
+        # The claim holder is agent-B; a caller sends the correct body poster but
+        # its authenticated header identity is agent-A. Authorization uses the
+        # header, not the body, so the post is still refused.
+        task_id = await _create_claimed_task(client, app, "spoof", "agent-B")
+        resp = await client.post(
+            f"/tasks/{task_id}/artifacts",
+            json={"poster": "agent-B", "key": "k", "artifact_type": "report", "body": "x"},
+            headers={"x-bernstein-agent-id": "agent-A"},
+        )
+        assert resp.status_code == 403, resp.text
 
 
 class TestProgress:
-    async def test_progress_is_not_moved_by_posting_artifacts(self, client: AsyncClient) -> None:
-        task_id = await _create_task(client, "progress task")
+    async def test_progress_is_not_moved_by_posting_artifacts(self, app, client: AsyncClient) -> None:
+        task_id = await _create_claimed_task(client, app, "progress task", "w")
         before = (await client.get(f"/tasks/{task_id}/progress")).json()
         for i in range(5):
-            await client.post(
-                f"/tasks/{task_id}/artifacts",
-                json={"key": f"r{i}", "artifact_type": "report", "poster": "w", "body": f"body {i}"},
-            )
+            resp = await _post_artifact(client, task_id, "w", key=f"r{i}", artifact_type="report", body=f"body {i}")
+            assert resp.status_code == 201, resp.text
         after = (await client.get(f"/tasks/{task_id}/progress")).json()
         # Posting five reports does not move the chain-computed progress vector.
         assert after["vector_hash"] == before["vector_hash"]

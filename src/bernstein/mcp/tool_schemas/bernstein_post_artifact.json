@@ -9,14 +9,15 @@
     "key": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"},
     "artifact_type": {"type": "string", "enum": ["report", "table", "link"]},
     "poster": {"type": "string", "minLength": 1, "maxLength": 256},
-    "body": {"type": "string", "maxLength": 60000},
+    "body": {"type": "string", "minLength": 1, "maxLength": 60000},
     "columns": {
-      "type": ["array", "null"],
+      "type": "array",
+      "minItems": 1,
       "maxItems": 64,
-      "items": {"type": "string", "maxLength": 256}
+      "items": {"type": "string", "minLength": 1, "maxLength": 256}
     },
     "rows": {
-      "type": ["array", "null"],
+      "type": "array",
       "maxItems": 4096,
       "items": {
         "type": "array",
@@ -24,7 +25,21 @@
         "items": {"type": "string", "maxLength": 4096}
       }
     },
-    "url": {"type": "string", "maxLength": 4096},
-    "link_kind": {"type": "string", "maxLength": 64}
-  }
+    "url": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "link_kind": {"type": "string", "enum": ["preview", "dashboard", "document"]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"artifact_type": {"const": "report"}}, "required": ["artifact_type"]},
+      "then": {"required": ["body"]}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "table"}}, "required": ["artifact_type"]},
+      "then": {"required": ["columns", "rows"]}
+    },
+    {
+      "if": {"properties": {"artifact_type": {"const": "link"}}, "required": ["artifact_type"]},
+      "then": {"required": ["url", "link_kind"]}
+    }
+  ]
 }

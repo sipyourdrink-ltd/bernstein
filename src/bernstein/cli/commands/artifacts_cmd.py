@@ -60,12 +60,18 @@ def artifacts_list_cmd(task: str, workdir: str) -> None:
     from bernstein.core.evidence.run_artifacts import read_artifact_rows, verify_run_artifacts
 
     sdd = Path(workdir).resolve() / ".sdd"
-    records = read_artifact_rows(sdd, task)
+    # Read WITHOUT the fail-closed filter so a tampered journal renders as
+    # tampered, not as "no artifacts". Verdicts drive the displayed state.
+    records = read_artifact_rows(sdd, task, verify=False)
+    verdict_list = verify_run_artifacts(sdd, task, hmac_key=_load_hmac_key())
+    verdicts = {(r.key, r.version): r for r in verdict_list}
     if not records:
+        tampered = [v for v in verdict_list if not v.ok]
+        if tampered:
+            console.print(f"[red]TAMPERED[/red] task={task} -- {tampered[0].reason}")
+            raise SystemExit(2)
         console.print(f"[yellow]No artifacts found for task[/yellow] {task}")
         raise SystemExit(1)
-
-    verdicts = {(r.key, r.version): r for r in verify_run_artifacts(sdd, task, hmac_key=_load_hmac_key())}
 
     console.print()
     console.print(f"[bold]Artifacts[/bold] task={task} ({len(records)} version(s))")
@@ -115,12 +121,18 @@ def artifacts_show_cmd(task: str, key: str, workdir: str) -> None:
     from bernstein.core.lineage.spine import content_hash_of
 
     sdd = Path(workdir).resolve() / ".sdd"
-    records = [r for r in read_artifact_rows(sdd, task) if r.key == key]
+    # Unverified read so a broken journal reaches the tampered (exit 2) path
+    # instead of masquerading as a missing artifact.
+    verdict_list = verify_run_artifacts(sdd, task, hmac_key=_load_hmac_key())
+    verdicts = {(r.key, r.version): r for r in verdict_list}
+    records = [r for r in read_artifact_rows(sdd, task, verify=False) if r.key == key]
     if not records:
+        tampered = [v for v in verdict_list if not v.ok]
+        if tampered:
+            console.print(f"[red]TAMPERED[/red] task={task} -- {tampered[0].reason}")
+            raise SystemExit(2)
         console.print(f"[yellow]No artifact[/yellow] key={key} for task {task}")
         raise SystemExit(1)
-
-    verdicts = {(r.key, r.version): r for r in verify_run_artifacts(sdd, task, hmac_key=_load_hmac_key())}
     latest = records[-1]
     verdict = verdicts.get((latest.key, latest.version))
     ok = verdict.ok if verdict is not None else False

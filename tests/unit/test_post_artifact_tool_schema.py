@@ -35,3 +35,35 @@ def test_bad_key_pattern_is_rejected() -> None:
         {"task_id": "task-1", "key": ".hidden", "artifact_type": "report", "poster": "w", "body": "x"},
     )
     assert isinstance(result, ValidationError)
+
+
+def _call(**fields: object) -> object:
+    return validate_tool_call(
+        "bernstein_post_artifact",
+        {"task_id": "task-1", "key": "k", "poster": "w", **fields},
+    )
+
+
+class TestTypeContract:
+    def test_report_without_body_is_rejected(self) -> None:
+        assert isinstance(_call(artifact_type="report"), ValidationError)
+
+    def test_report_empty_body_is_rejected(self) -> None:
+        assert isinstance(_call(artifact_type="report", body=""), ValidationError)
+
+    def test_table_requires_columns_and_rows(self) -> None:
+        assert isinstance(_call(artifact_type="table"), ValidationError)
+        assert isinstance(_call(artifact_type="table", columns=["a"]), ValidationError)
+
+    def test_valid_table_passes(self) -> None:
+        assert isinstance(_call(artifact_type="table", columns=["a"], rows=[["1"]]), ValidatedPayload)
+
+    def test_link_requires_url_and_kind(self) -> None:
+        assert isinstance(_call(artifact_type="link"), ValidationError)
+        assert isinstance(_call(artifact_type="link", url="https://x"), ValidationError)
+
+    def test_link_kind_must_be_declared(self) -> None:
+        assert isinstance(_call(artifact_type="link", url="https://x", link_kind="wild"), ValidationError)
+
+    def test_valid_link_passes(self) -> None:
+        assert isinstance(_call(artifact_type="link", url="https://x", link_kind="preview"), ValidatedPayload)

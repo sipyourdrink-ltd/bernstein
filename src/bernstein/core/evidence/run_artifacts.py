@@ -28,7 +28,9 @@ independently verifiable.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -41,6 +43,28 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
+
+logger = logging.getLogger(__name__)
+
+# Per-(task, key) locks serialise the version-allocation -> spine-seal ->
+# journal-append sequence so two concurrent posts in the same process cannot
+# both pick version N+1 and reference the same predecessor. The task server is
+# single-process, so a process-local lock is the correct scope; the spine and
+# journal additionally hold cross-process file locks for their own appends.
+_post_locks: dict[tuple[str, str], threading.Lock] = {}
+_post_locks_guard = threading.Lock()
+
+
+def _post_lock(task_id: str, key: str) -> threading.Lock:
+    """Return the shared lock guarding version allocation for ``(task_id, key)``."""
+    ident = (task_id, key)
+    with _post_locks_guard:
+        lock = _post_locks.get(ident)
+        if lock is None:
+            lock = threading.Lock()
+            _post_locks[ident] = lock
+        return lock
+
 
 #: The journal event type for a posted artifact. Kept in lockstep with
 #: :data:`bernstein.core.replay.progress.EVENT_ARTIFACT_POSTED` (progress must
@@ -326,55 +350,63 @@ def post_run_artifact(
     store = EvidenceStore(sdd_dir / "evidence", max_blob_bytes=max_blob_bytes)
     blob = store.put(content)
 
-    # 2. Version chaining by key: the new version references the prior one.
-    prior = latest_versions(sdd_dir, task_id).get(key)
-    version = (prior.version + 1) if prior is not None else 1
-    prev_version_hash = prior.spine_entry_hash if prior is not None else ""
+    # Serialise version allocation and anchoring for this (task, key). Holding
+    # one lock across the version lookup, the spine seal, and the journal append
+    # stops two concurrent posts from both selecting version N+1 and referencing
+    # the same predecessor (a corrupt version chain).
+    with _post_lock(task_id, key):
+        # 2. Version chaining by key: the new version references the prior one.
+        prior = latest_versions(sdd_dir, task_id).get(key)
+        version = (prior.version + 1) if prior is not None else 1
+        prev_version_hash = prior.spine_entry_hash if prior is not None else ""
 
-    # 3. Seal the canonical bytes into the lineage spine. The returned entry
-    #    hash IS the artifact's identity.
-    ts = int(time.time()) if timestamp is None else int(timestamp)
-    spine = LineageSpine(sdd_dir / "lineage", run_id=_task_run_id(task_id), hmac_key=hmac_key)
-    spine_entry_hash = spine.record(
-        artifact_path=f"run-artifacts/{_task_run_id(task_id)}/{key}/v{version}",
-        content=content,
-        actor=actor,
-        step_id=f"artifact:{key}:v{version}",
-        model="",
-        timestamp=ts,
-    )
+        # 3. Seal the canonical bytes into the lineage spine. The returned entry
+        #    hash IS the artifact's identity.
+        ts = int(time.time()) if timestamp is None else int(timestamp)
+        spine = LineageSpine(sdd_dir / "lineage", run_id=_task_run_id(task_id), hmac_key=hmac_key)
+        spine_entry_hash = spine.record(
+            artifact_path=f"run-artifacts/{_task_run_id(task_id)}/{key}/v{version}",
+            content=content,
+            actor=actor,
+            step_id=f"artifact:{key}:v{version}",
+            model="",
+            timestamp=ts,
+        )
 
-    # 4. Append the artifact_posted row to the task's Merkle-chained journal.
-    from bernstein.core.replay.journal import EventJournal
+        # 4. Append the artifact_posted row to the task's Merkle-chained journal.
+        from bernstein.core.replay.journal import EventJournal
 
-    journal = EventJournal.resume(_task_run_id(task_id), sdd_dir)
-    journal.record(
-        JOURNAL_EVENT_ARTIFACT_POSTED,
-        task_id=task_id,
-        key=key,
-        artifact_type=payload.artifact_type,
-        content_hash=blob.content_hash,
-        version=version,
-        prev_version_hash=prev_version_hash,
-        spine_entry_hash=spine_entry_hash,
-        link_kind=payload.link_kind,
-        size=blob.size,
-    )
-    record = RunArtifactRecord(
-        task_id=task_id,
-        key=key,
-        artifact_type=payload.artifact_type,
-        content_hash=blob.content_hash,
-        version=version,
-        prev_version_hash=prev_version_hash,
-        spine_entry_hash=spine_entry_hash,
-        journal_index=journal.event_count() - 1,
-        journal_event_hash=journal.head(),
-        link_kind=payload.link_kind,
-        size=blob.size,
-    )
+        journal = EventJournal.resume(_task_run_id(task_id), sdd_dir)
+        journal.record(
+            JOURNAL_EVENT_ARTIFACT_POSTED,
+            task_id=task_id,
+            key=key,
+            artifact_type=payload.artifact_type,
+            content_hash=blob.content_hash,
+            version=version,
+            prev_version_hash=prev_version_hash,
+            spine_entry_hash=spine_entry_hash,
+            link_kind=payload.link_kind,
+            size=blob.size,
+        )
+        record = RunArtifactRecord(
+            task_id=task_id,
+            key=key,
+            artifact_type=payload.artifact_type,
+            content_hash=blob.content_hash,
+            version=version,
+            prev_version_hash=prev_version_hash,
+            spine_entry_hash=spine_entry_hash,
+            journal_index=journal.event_count() - 1,
+            journal_event_hash=journal.head(),
+            link_kind=payload.link_kind,
+            size=blob.size,
+        )
 
     # 5. Mirror into the HMAC audit chain (best-effort: never blocks the post).
+    #    The journal + spine records are the primary, independently-verifiable
+    #    receipt; the mirror is a convenience for chain-only auditors. A mirror
+    #    failure is logged with context so it is never silently swallowed.
     if audit_chain is not None:
         try:
             from bernstein.core.security.audit_chain import record_run_artifact
@@ -392,8 +424,14 @@ def post_run_artifact(
                 journal_event_hash=record.journal_event_hash,
                 actor=actor,
             )
-        except Exception:  # intentional-broad-except: audit mirror is best-effort
-            pass
+        except Exception as exc:  # intentional-broad-except: audit mirror is best-effort
+            logger.warning(
+                "run_artifact: audit chain mirror failed for task=%s key=%s v%d: %s",
+                record.task_id,
+                record.key,
+                record.version,
+                type(exc).__name__,
+            )
 
     return record
 
@@ -419,9 +457,25 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
         return []
 
     journal_ok = verify_journal(path).ok
+    # Read rows WITHOUT the fail-closed filter: a tampered journal must still be
+    # walked so verification can report tampering rather than "no artifacts".
     rows = read_artifact_rows(sdd_dir, task_id, verify=False)
     if not rows:
-        return []
+        if journal_ok:
+            return []
+        # Tampering can rename or drop every artifact_posted row so none remain.
+        # An invalid journal must fail verification explicitly, never silently
+        # read as an empty (clean) artifact set.
+        return [
+            ArtifactVerifyResult(
+                ok=False,
+                task_id=task_id,
+                key="",
+                version=0,
+                journal_index=-1,
+                reason="task journal Merkle chain does not verify; artifact rows may be hidden by tampering",
+            )
+        ]
 
     store = EvidenceStore(sdd_dir / "evidence")
     spine = LineageSpine(sdd_dir / "lineage", run_id=_task_run_id(task_id), hmac_key=hmac_key)
@@ -474,6 +528,8 @@ def _verify_one_artifact(
 
 def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[ArtifactVerifyResult]:
     """Verify every task's artifacts under ``workdir/.sdd`` (for ``audit verify``)."""
+    from bernstein.core.replay.journal import verify_journal
+
     sdd_dir = workdir / ".sdd"
     runs_root = sdd_dir / "runs"
     if not runs_root.is_dir():
@@ -484,9 +540,23 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
         if not journal_path.is_file():
             continue
         task_id = _task_id_from_rows(journal_path)
-        if task_id is None:
+        if task_id is not None:
+            results.extend(verify_run_artifacts(sdd_dir, task_id, hmac_key=hmac_key))
             continue
-        results.extend(verify_run_artifacts(sdd_dir, task_id, hmac_key=hmac_key))
+        # No identifiable artifact rows. If this is an artifact journal
+        # (``task-*``) whose Merkle chain does not verify, tampering may have
+        # hidden every artifact row -- fail explicitly rather than skip.
+        if run_dir.name.startswith("task-") and not verify_journal(journal_path).ok:
+            results.append(
+                ArtifactVerifyResult(
+                    ok=False,
+                    task_id=run_dir.name.removeprefix("task-"),
+                    key="",
+                    version=0,
+                    journal_index=-1,
+                    reason=f"task journal Merkle chain does not verify ({run_dir.name}); artifact rows may be hidden",
+                )
+            )
     return results
 
 

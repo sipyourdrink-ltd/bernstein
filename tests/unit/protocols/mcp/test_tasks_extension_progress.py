@@ -35,16 +35,16 @@ def test_handle_without_progress_is_backward_compatible() -> None:
     wire = handle.to_wire()
     assert wire["progress"] is None
     assert wire["progressHash"] == ""
-    # The receipt hash is unchanged by the additive progress field: verify still
-    # holds and the pre-existing wire keys are intact.
+    # A handle with no progress verifies with no authoritative vector supplied.
     ok, reason = verify_handle(handle, _events("run_started"))
     assert ok, reason
     assert wire["receiptHash"] == handle.receipt_hash
 
 
-def test_progress_does_not_change_receipt_hash() -> None:
-    # Two handles identical but for the carried progress vector must share a
-    # receipt hash: progress is additive, not part of the receipt preimage.
+def test_progress_is_bound_to_the_receipt_hash() -> None:
+    # The progress vector is part of the receipt pre-image: two handles that
+    # differ only in their carried progress must have different receipt hashes,
+    # so a client cannot swap the vector without invalidating the receipt.
     base = RunHandle.from_journal(task_id="t1", run_id="run-1", events=_events("run_started"), chain_head="c")
     withp = RunHandle.from_journal(
         task_id="t1",
@@ -53,4 +53,22 @@ def test_progress_does_not_change_receipt_hash() -> None:
         chain_head="c",
         progress=fold_progress(task_id="t1", ledger_phase="completed"),
     )
-    assert base.receipt_hash == withp.receipt_hash
+    assert base.receipt_hash != withp.receipt_hash
+
+
+def test_verify_requires_authoritative_progress() -> None:
+    authoritative = fold_progress(task_id="t1", ledger_phase="started", ledger_attempts=1)
+    handle = RunHandle.from_journal(
+        task_id="t1", run_id="run-1", events=_events("run_started"), chain_head="c", progress=authoritative
+    )
+    # Supplying the authoritative vector verifies.
+    ok, reason = verify_handle(handle, _events("run_started"), progress=authoritative)
+    assert ok, reason
+    # A handle carrying progress cannot be verified without the authoritative one.
+    ok, reason = verify_handle(handle, _events("run_started"))
+    assert not ok
+    assert reason is not None and "authoritative" in reason
+    # A forged progress vector fails against the authoritative projection.
+    forged = fold_progress(task_id="t1", ledger_phase="completed", ledger_attempts=99)
+    ok, reason = verify_handle(handle, _events("run_started"), progress=forged)
+    assert not ok

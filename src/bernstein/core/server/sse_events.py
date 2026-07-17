@@ -152,15 +152,17 @@ class SSEEvent:
         Returns:
             SSEEvent instance.
         """
+        # Identity fields win over ``extra`` so a caller cannot rebind the
+        # task, key, type, or version by passing a colliding keyword.
         return cls(
             event=SSEEventType.TASK_ARTIFACT,
             data={
+                **extra,
                 "task_id": task_id,
                 "key": key,
                 "artifact_type": artifact_type,
                 "version": version,
-            }
-            | extra,
+            },
         )
 
     @classmethod
@@ -179,13 +181,15 @@ class SSEEvent:
         Returns:
             SSEEvent instance.
         """
+        # Identity fields win over ``extra`` so a caller cannot rebind the task
+        # or forge the vector hash by passing a colliding keyword.
         return cls(
             event=SSEEventType.TASK_PROGRESS,
             data={
+                **extra,
                 "task_id": task_id,
                 "vector_hash": vector_hash,
-            }
-            | extra,
+            },
         )
 
     @classmethod
