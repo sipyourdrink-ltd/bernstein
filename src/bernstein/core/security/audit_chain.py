@@ -640,6 +640,21 @@ EVENT_APPROVAL_CARD_RESOLVED = "chat.approval_card.resolved"
 #: alone, that a stale or tampered decision was contained and never executed.
 EVENT_APPROVAL_CARD_REFUSED = "chat.approval_card.refused"
 
+#: Issue #2509 -- emitted once per mission phase advancement (pass or halt). A
+#: mission is a ledger-projected multi-day goal; a phase advances only by a
+#: mission phase receipt that binds the gate verdict, the evidence bundle
+#: hashes it verified, the ledger position, the envelope, and the envelope
+#: spend at gate time. This event mirrors ``{mission_id, phase_id, gate_passed,
+#: receipt_hash, evidence_bundle_hashes, ledger_seq, envelope, spend_usd,
+#: reason, journal_entry_hash}`` into the HMAC chain so a phase pass (or an
+#: envelope-exhausted halt) is provable offline from the chain alone. The
+#: receipt binding lives as a ``mission.phase_passed`` / ``mission.phase_halted``
+#: entry in the work ledger; the projection derives phase state from receipts
+#: and ledger entries only, so a phase without a receipt is by definition not
+#: passed. Only identifiers, hashes, the verdict, and the spend are recorded --
+#: never goal text or task payloads.
+EVENT_MISSION_PHASE_RECEIPT = "mission.phase_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -4103,6 +4118,72 @@ def record_steering_receipt(
     )
 
 
+def record_mission_phase_receipt(
+    *,
+    chain: AuditChainStore,
+    mission_id: str,
+    phase_id: str,
+    gate_passed: bool,
+    receipt_hash: str,
+    evidence_bundle_hashes: Sequence[str],
+    ledger_seq: int,
+    envelope: str,
+    spend_usd: float,
+    journal_entry_hash: str,
+    reason: str = "",
+    actor: str = "mission",
+) -> AuditEvent:
+    """Append a ``mission.phase_receipt`` event into *chain* (#2509).
+
+    Mirrors a mission phase advancement (pass or envelope-exhausted halt) into
+    the HMAC-chained audit log after the receipt was chained into the mission's
+    work ledger. The receipt binds the gate verdict, the evidence bundle hashes
+    it verified, the ledger position, the envelope, and the spend at gate time,
+    so a phase pass is provable offline: a verifier recomputes the referenced
+    evidence bundles and confirms the receipt is chain-attested. Only
+    identifiers, hashes, the verdict, and the spend are recorded -- never goal
+    text or task payloads.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        mission_id: The mission the phase belongs to.
+        phase_id: The advanced phase.
+        gate_passed: Whether the verification gate passed (``False`` for a halt).
+        receipt_hash: ``sha256:``/hex hash of the canonical receipt binding.
+        evidence_bundle_hashes: Content addresses of the evidence bundles the
+            gate verified.
+        ledger_seq: The ledger position the receipt landed at.
+        envelope: The phase's budget envelope name.
+        spend_usd: The envelope spend at gate time.
+        journal_entry_hash: The mission ledger ``entry_hash`` of the receipt row.
+        reason: Halt reason (for example ``"envelope_exhausted"``); empty on a
+            pass.
+        actor: Recorded actor; defaults to ``"mission"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MISSION_PHASE_RECEIPT,
+        actor=actor,
+        resource_type="mission_phase",
+        resource_id=f"{mission_id}:{phase_id}",
+        details={
+            "mission_id": mission_id,
+            "phase_id": phase_id,
+            "gate_passed": gate_passed,
+            "receipt_hash": receipt_hash,
+            "evidence_bundle_hashes": list(evidence_bundle_hashes),
+            "ledger_seq": ledger_seq,
+            "envelope": envelope,
+            "spend_usd": spend_usd,
+            "reason": reason,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -4137,6 +4218,7 @@ __all__ = [
     "EVENT_MCP_STATELESS_CALL",
     "EVENT_MCP_TASK_HANDLE",
     "EVENT_MEMORY_WRITE",
+    "EVENT_MISSION_PHASE_RECEIPT",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
     "EVENT_PLUGIN_CONFORMANCE_RECEIPT",
@@ -4206,6 +4288,7 @@ __all__ = [
     "record_mcp_stateless_call",
     "record_mcp_task_handle",
     "record_memory_write",
+    "record_mission_phase_receipt",
     "record_multimodal_attach",
     "record_otel_projection",
     "record_plugin_conformance_receipt",
