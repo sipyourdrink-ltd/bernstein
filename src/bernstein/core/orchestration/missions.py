@@ -265,13 +265,12 @@ class MissionSpec:
             if isinstance(phases_raw, (list, tuple))
             else ()
         )
-        spec = cls(
+        return cls(
             mission_id=str(raw.get("mission_id", "")),
             goal=str(raw.get("goal", "")),
             phases=phases,
             schema_version=int(raw.get("schema_version", MISSION_SPEC_SCHEMA_VERSION) or MISSION_SPEC_SCHEMA_VERSION),
-        )
-        return spec.validate()
+        ).validate()
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +590,7 @@ def _project_phase(spec: PhaseSpec, accum: _PhaseAccum, evidence_hashes: Mapping
         budget_usd=spec.budget_usd,
         spend_usd=0.0,
         receipt_hash="",
-        ledger_seq=accum.entered_seq if accum.entered_seq >= 0 else 0,
+        ledger_seq=max(accum.entered_seq, 0),
     )
 
 
