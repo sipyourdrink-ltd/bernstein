@@ -293,6 +293,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Named sandbox pools: chain-projected manifests, governed overrides,
         # and signed worker enrolment (issue #2547)
         "pool",
+        # Agent-posted, journal-anchored task artifacts (issue #2553)
+        "artifacts",
     }
 )
 
