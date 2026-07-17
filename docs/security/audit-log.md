@@ -459,6 +459,9 @@ rare benign causes:
 - [Multi-tenant audit-chain export](audit-multitenant.md)
 - [DSSE / in-toto envelope](audit-dsse-envelope.md) - third-party-verifiable
   wrapper over the Article 12 bundle.
+- [Standard verifiable audit receipts](audit-receipt.md) - project a chain
+  range into COSE_Sign1, in-toto, and RFC 6962 transparency envelopes an
+  off-the-shelf verifier validates with no Bernstein install.
 - [EU AI Act Article 12 evidence pack](../compliance/eu-ai-act-article-12-bundle.md)
 - [Security hardening guide](security-hardening.md)
 - [Disaster recovery runbook](../operations/disaster-recovery.md)

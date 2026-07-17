@@ -1,0 +1,231 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bernstein.alexchernysh.com/schemas/audit-receipt-v1.json",
+  "title": "Bernstein Audit Receipt (v1)",
+  "description": "Standard, offline-verifiable receipt projecting an HMAC-chained audit-log range into off-the-shelf envelope formats (COSE_Sign1 per RFC 9052, in-toto/DSSE, and an RFC 6962 style transparency receipt). The receipt is a projection, not new evidence: its subject digest IS the chain range head_sha256 (never independently recomputed). Every format binds that single subject, and the receipt embeds the re-chained event range so a standard verifier can recompute the head from the embedded range and assert it equals the signed subject. Mutating any embedded entry diverges the recomputed head and every format fails.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "receipt_type",
+    "subject",
+    "range",
+    "events",
+    "signing",
+    "formats"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"],
+      "description": "Pinned receipt schema version."
+    },
+    "receipt_type": {
+      "type": "string",
+      "const": "https://bernstein.run/attestations/audit-receipt/v1",
+      "description": "URL identifying the receipt predicate/type."
+    },
+    "subject": {
+      "type": "object",
+      "required": ["name", "digest"],
+      "description": "The single attested subject. Its sha256 digest IS the chain range head_sha256; no independently recomputed head exists.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical name of the attested range."
+        },
+        "digest": {
+          "type": "object",
+          "required": ["sha256"],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "The chain range head_sha256 (subject digest)."
+            }
+          }
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "required": [
+        "since",
+        "until",
+        "genesis_prev_hmac",
+        "head_hmac",
+        "head_sha256",
+        "event_count"
+      ],
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "Inclusive ISO-8601 lower bound of the projected chain range."
+        },
+        "until": {
+          "type": "string",
+          "description": "Exclusive ISO-8601 upper bound of the projected chain range."
+        },
+        "genesis_prev_hmac": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Sentinel prev_hmac of the first re-chained event (always 0*64)."
+        },
+        "head_hmac": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "HMAC of the final event in the re-chained range (0*64 when empty)."
+        },
+        "head_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 over the canonical JSONL of the re-chained range. Equal to subject.digest.sha256."
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of events in the projected range."
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "description": "The embedded re-chained event range. A verifier recomputes head_sha256 from these bytes and asserts it equals the signed subject; mutating any entry breaks every format.",
+      "items": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "event_type",
+          "actor",
+          "resource_type",
+          "resource_id",
+          "details",
+          "prev_hmac",
+          "hmac"
+        ],
+        "properties": {
+          "timestamp": { "type": "string" },
+          "event_type": { "type": "string" },
+          "actor": { "type": "string" },
+          "resource_type": { "type": "string" },
+          "resource_id": { "type": "string" },
+          "details": { "type": "object" },
+          "prev_hmac": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "hmac": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "signing": {
+      "type": "object",
+      "required": ["alg", "key_id", "public_key_jwk"],
+      "description": "The Ed25519 verifying key shared by every format. Auditors may pin this JWK externally for additional trust; without pinning the key is trusted on first use.",
+      "properties": {
+        "alg": { "type": "string", "const": "EdDSA" },
+        "key_id": { "type": "string", "minLength": 1 },
+        "public_key_jwk": {
+          "type": "object",
+          "required": ["kty", "crv", "x"],
+          "properties": {
+            "kty": { "const": "OKP" },
+            "crv": { "const": "Ed25519" },
+            "alg": { "const": "EdDSA" },
+            "x": { "type": "string" },
+            "kid": { "type": "string" }
+          }
+        }
+      }
+    },
+    "formats": {
+      "type": "object",
+      "description": "One or more standard-envelope projections of the same subject. At least one is present.",
+      "minProperties": 1,
+      "properties": {
+        "cose": {
+          "type": "object",
+          "required": ["alg", "key_id", "content_type", "cose_sign1_b64"],
+          "description": "A COSE_Sign1 (RFC 9052) envelope, EdDSA, whose payload is the raw 32-byte subject digest.",
+          "properties": {
+            "alg": { "type": "string", "const": "EdDSA" },
+            "key_id": { "type": "string" },
+            "content_type": { "type": "string" },
+            "cose_sign1_b64": {
+              "type": "string",
+              "description": "Base64 of the canonical CBOR bytes of the CBOR-tag-18 COSE_Sign1 structure."
+            }
+          }
+        },
+        "intoto": {
+          "type": "object",
+          "required": ["payload", "payloadType", "signatures"],
+          "description": "A DSSE envelope carrying an in-toto v1 Statement whose subject digest is the chain head_sha256.",
+          "properties": {
+            "payload": { "type": "string" },
+            "payloadType": {
+              "type": "string",
+              "const": "application/vnd.in-toto+json"
+            },
+            "signatures": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["keyid", "sig"],
+                "properties": {
+                  "keyid": { "type": "string" },
+                  "sig": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "transparency": {
+          "type": "object",
+          "required": ["log_algorithm", "signed_tree_head", "inclusion_proof"],
+          "description": "An RFC 6962 style signed receipt. The signed tree head binds the range-event Merkle root and the subject digest; the inclusion proof places the chain-head event leaf in that tree. Offline by default; the optional rekor block records an online transparency-log submission.",
+          "properties": {
+            "log_algorithm": { "type": "string", "const": "RFC6962-SHA256" },
+            "signed_tree_head": {
+              "type": "object",
+              "required": ["tree_size", "root_hash", "subject_sha256", "signature_b64"],
+              "properties": {
+                "tree_size": { "type": "integer", "minimum": 0 },
+                "root_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "subject_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "signature_b64": { "type": "string" }
+              }
+            },
+            "inclusion_proof": {
+              "type": "object",
+              "required": ["leaf_index", "leaf_hash", "audit_path"],
+              "properties": {
+                "leaf_index": { "type": "integer" },
+                "leaf_hash": { "type": "string" },
+                "audit_path": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["hash", "left"],
+                    "properties": {
+                      "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                      "left": { "type": "boolean" }
+                    }
+                  }
+                }
+              }
+            },
+            "rekor": {
+              "type": ["object", "null"],
+              "description": "Optional online transparency-log receipt. Present only when Rekor submission was requested and succeeded.",
+              "properties": {
+                "log_index": { "type": "integer" },
+                "log_id": { "type": "string" },
+                "inclusion_proof": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}
