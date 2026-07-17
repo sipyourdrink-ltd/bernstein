@@ -116,6 +116,20 @@ def _cross_process_lock(lock_path: Path) -> Iterator[None]:
         fh.close()
 
 
+@contextmanager
+def cross_process_lock(lock_path: Path) -> Iterator[None]:
+    """Public alias for :func:`_cross_process_lock`.
+
+    A blocking exclusive OS-level file lock at *lock_path*, usable by any
+    subsystem that needs to serialize a load-modify-save cycle across
+    processes sharing a ``.sdd/`` directory (e.g. the fleet config plane's
+    variable writer). See the module docstring for the cross-process safety
+    contract and the NFS caveat.
+    """
+    with _cross_process_lock(lock_path):
+        yield
+
+
 @dataclass
 class FileLock:
     """A single file lock entry.

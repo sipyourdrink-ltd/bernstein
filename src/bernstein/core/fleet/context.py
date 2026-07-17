@@ -55,12 +55,17 @@ __all__ = [
     "RunContextReceipt",
     "canonical_document",
     "settings_hash_of",
+    "validate_context_name",
 ]
 
 #: Fields (in addition to the free-form config layer) that make up the
 #: composite configuration a context pins. These are what the effective
 #: settings hash and the divergence report are computed over.
 _COMPOSITE_FIELDS = ("server_url", "store_dsn", "adapter_defaults", "budget_envelope")
+
+#: Sentinel distinguishing an absent key from an explicit ``None`` value when
+#: comparing two effective-settings maps.
+_MISSING = object()
 
 
 class ContextHashMismatch(Exception):
@@ -190,7 +195,10 @@ class RunContextReceipt:
         current_map = current.composite() if isinstance(current, OperatingContext) else dict(current)
         current_hash = settings_hash_of(current_map)
         names = set(self.settings) | set(current_map)
-        diverging = sorted(k for k in names if self.settings.get(k) != current_map.get(k))
+        # A missing key and an explicit ``None`` value are different states;
+        # use a sentinel so one is never silently reported as equal to the
+        # other when naming diverging keys.
+        diverging = sorted(k for k in names if self.settings.get(k, _MISSING) != current_map.get(k, _MISSING))
         ok = current_hash == self.settings_hash
         if not ok and strict:
             raise ContextHashMismatch(
@@ -226,7 +234,21 @@ class ContextStore:
         return self._root / "active.json"
 
     def create(self, context: OperatingContext) -> OperatingContext:
-        """Persist *context* (atomic write). Definition is a local operation."""
+        """Persist *context* (atomic write). Definition is a local operation.
+
+        A currently-active context cannot be silently replaced with content
+        that would change its effective-settings hash: that would alter what a
+        running fleet resolves without a new, audited activation. Re-defining
+        the active context to a different identity is refused; deactivate (or
+        re-activate) it first.
+
+        Raises:
+            ValueError: If *context* renames or alters the active context's
+                settings identity in place.
+        """
+        recorded = self._active_settings_hash()
+        if recorded is not None and self.active_name() == context.name and context.settings_hash() != recorded:
+            raise ValueError(f"context {context.name!r} is active; re-activate to change its settings identity")
         self._root.mkdir(parents=True, exist_ok=True)
         _atomic_write_json(self._path(context.name), context.to_document())
         return context
@@ -251,12 +273,13 @@ class ContextStore:
     def activate(self, name: str, *, actor: str = "operator") -> RunContextReceipt:
         """Atomically activate *name* and record a ``fleet.context_activate`` event.
 
-        The activation pointer is written atomically, so an effective config
-        resolution sees the context layer entirely or not at all.
+        The activation event is recorded before the activation pointer is
+        written, so a live pointer can never exist without its audit record;
+        the pointer write is atomic, so an effective config resolution sees
+        the context layer entirely or not at all.
         """
         context = self.get(name)
         receipt = context.run_receipt()
-        _atomic_write_json(self._active_pointer, {"name": name, "settings_hash": receipt.settings_hash})
         if self._chain is not None:
             record_fleet_context_activate(
                 chain=self._chain,
@@ -264,6 +287,7 @@ class ContextStore:
                 settings_hash=receipt.settings_hash,
                 actor=actor,
             )
+        _atomic_write_json(self._active_pointer, {"name": name, "settings_hash": receipt.settings_hash})
         return receipt
 
     def deactivate(self) -> None:
@@ -274,6 +298,13 @@ class ContextStore:
 
     def active_name(self) -> str | None:
         """Return the active context name, or ``None`` when none is active."""
+        return self._active_field("name")
+
+    def _active_settings_hash(self) -> str | None:
+        """Return the settings hash recorded at activation, or ``None``."""
+        return self._active_field("settings_hash")
+
+    def _active_field(self, field_name: str) -> str | None:
         pointer = self._active_pointer
         if not pointer.exists():
             return None
@@ -281,8 +312,8 @@ class ContextStore:
             data = json.loads(pointer.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
-        name = data.get("name")
-        return name if isinstance(name, str) and name else None
+        value = data.get(field_name)
+        return value if isinstance(value, str) and value else None
 
     def active(self) -> OperatingContext | None:
         """Return the active context, or ``None`` when none is active."""
@@ -295,9 +326,19 @@ class ContextStore:
             return None
 
 
-def _validate_name(name: str) -> None:
+def validate_context_name(name: str) -> None:
+    """Validate an operating-context name, raising ``ValueError`` if invalid.
+
+    Rejects empty names, path separators, ``.``/``..``, the reserved
+    ``active`` pointer name, and NUL bytes, so a name can never escape the
+    context directory or shadow the activation pointer.
+    """
     if not name or "/" in name or "\\" in name or name in {".", "..", "active"} or "\x00" in name:
         raise ValueError(f"invalid operating context name: {name!r}")
+
+
+#: Backwards-compatible internal alias.
+_validate_name = validate_context_name
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:

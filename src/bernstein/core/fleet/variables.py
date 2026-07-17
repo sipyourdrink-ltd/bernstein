@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import content_hash_of
+from bernstein.core.persistence.file_locks import cross_process_lock
 from bernstein.core.security.audit_chain import (
     EVENT_FLEET_VAR_SET,
     record_fleet_var_set,
@@ -64,15 +65,30 @@ __all__ = [
 #: recognises pins by this prefix; the trailing segment is the variable name.
 _READ_ARTIFACT_PREFIX = "config/var"
 
+#: Lowercase hex alphabet for validating a ``sha256:<64 hex>`` blob digest.
+_HEX = frozenset("0123456789abcdef")
+
 
 def canonical_value_bytes(value: Any) -> bytes:
     """Serialise *value* to canonical JSON bytes.
 
     Sorted keys, compact separators, ASCII-escaped: the encoding is a pure
     function of the value, independent of platform and locale, so the value
-    hash is reproducible on every machine in the fleet.
+    hash is reproducible on every machine in the fleet. ``allow_nan`` is off
+    so ``NaN`` / ``Infinity`` (which are not valid JSON and would not survive
+    a round trip through a strict parser) are rejected rather than silently
+    written as non-portable tokens.
+
+    Raises:
+        ValueError: If *value* contains ``NaN`` / ``Infinity`` or is not
+            JSON-serialisable.
     """
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode(
+            "utf-8"
+        )
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"value is not canonical-JSON serialisable: {exc}") from exc
 
 
 def value_hash_of(value: Any) -> str:
@@ -126,48 +142,54 @@ class FleetVariableStore:
     """Content-addressed, audit-chained store of named fleet variables.
 
     Args:
-        root: Directory holding the value blobs and the name index (created on
+        root: Directory holding the value blobs and the write lock (created on
             demand); conventionally ``<sdd>/fleet/variables``.
         chain: The audit chain every write is recorded into. The chain is the
-            source of truth for history and divergence; the on-disk index is a
-            derived cache of the current per-name head.
+            single source of truth for the current value, the per-name write
+            head, history, and divergence; there is no mutable index to fall
+            out of sync with it.
     """
 
     def __init__(self, root: Path, *, chain: AuditChainStore) -> None:
         self._root = Path(root)
         self._chain = chain
         self._blobs = self._root / "blobs"
-        self._index_path = self._root / "index.json"
+        self._lock_path = self._root / ".write.lock"
 
     # -- writes -----------------------------------------------------------
 
     def set(self, name: str, value: Any, *, actor: str = "operator") -> VariableWrite:
         """Write *value* under *name* as a chain event and return the record.
 
-        The value bytes are written to the content-addressed blob store
-        (append-only, never overwritten) before the chain event lands, so a
-        pinned read can always resolve its value later.
+        The audit chain is the single source of truth for a variable's write
+        head. Head derivation, the blob write, and the chain append are
+        serialized under a cross-process lock, so two concurrent writers can
+        never mint the same ``chain_position`` or a mismatched
+        ``old_value_hash``. There is no mutable index to lose or corrupt: the
+        prior value hash and position are derived from the verified chain on
+        every write.
         """
         _validate_name(name)
-        index = self._load_index()
-        prior = index.get(name)
-        old_value_hash = prior["value_hash"] if prior else ""
-        chain_position = (prior["chain_position"] + 1) if prior else 0
-
+        # Canonicalise (and validate) the value before taking the lock so a
+        # bad value fails fast without blocking other writers.
         new_value_hash = value_hash_of(value)
-        self._write_blob(new_value_hash, canonical_value_bytes(value))
+        payload = canonical_value_bytes(value)
 
-        event = record_fleet_var_set(
-            chain=self._chain,
-            name=name,
-            old_value_hash=old_value_hash,
-            new_value_hash=new_value_hash,
-            chain_position=chain_position,
-            actor=actor,
-        )
+        with cross_process_lock(self._lock_path):
+            head = self._head_from_chain(name)
+            old_value_hash = head.new_value_hash if head is not None else ""
+            chain_position = (head.chain_position + 1) if head is not None else 0
 
-        index[name] = {"value_hash": new_value_hash, "chain_position": chain_position}
-        self._save_index(index)
+            # Blob first: a pinned read must always resolve its value later.
+            self._write_blob(new_value_hash, payload)
+            event = record_fleet_var_set(
+                chain=self._chain,
+                name=name,
+                old_value_hash=old_value_hash,
+                new_value_hash=new_value_hash,
+                chain_position=chain_position,
+                actor=actor,
+            )
 
         return VariableWrite(
             name=name,
@@ -186,22 +208,31 @@ class FleetVariableStore:
         Raises:
             KeyError: If the variable has never been written.
         """
-        index = self._load_index()
-        prior = index.get(name)
-        if prior is None:
+        head = self._head_from_chain(name)
+        if head is None:
             raise KeyError(name)
-        return self.resolve(prior["value_hash"])
+        return self.resolve(head.new_value_hash)
 
     def resolve(self, value_hash: str) -> Any:
         """Resolve a value from its content hash (replay path, never live).
 
+        The blob path is validated to be an exact ``sha256:<64 hex>`` digest
+        (no traversal), and the stored bytes are re-hashed and checked against
+        the requested digest before decoding, so a tampered or truncated blob
+        is rejected rather than returned as if authentic.
+
         Raises:
+            ValueError: If *value_hash* is malformed or the blob content does
+                not hash to it.
             KeyError: If no blob is stored for *value_hash*.
         """
         blob = self._blob_path(value_hash)
         if not blob.exists():
             raise KeyError(value_hash)
-        return json.loads(blob.read_bytes())
+        data = blob.read_bytes()
+        if content_hash_of(data) != value_hash:
+            raise ValueError(f"blob content hash mismatch for {value_hash!r}")
+        return json.loads(data)
 
     def read_for_task(
         self,
@@ -218,12 +249,11 @@ class FleetVariableStore:
         entry's ``content_hash`` equals the variable ``value_hash``. Replay
         recovers the value from this hash, never from the live store.
         """
-        index = self._load_index()
-        prior = index.get(name)
-        if prior is None:
+        head = self._head_from_chain(name)
+        if head is None:
             raise KeyError(name)
-        value_hash = str(prior["value_hash"])
-        chain_position = int(prior["chain_position"])
+        value_hash = head.new_value_hash
+        chain_position = head.chain_position
         value = self.resolve(value_hash)
 
         ts = timestamp if timestamp is not None else int(datetime.now(tz=UTC).timestamp())
@@ -277,14 +307,55 @@ class FleetVariableStore:
         return [w for w in self.history(name) if low < w.chain_position <= high]
 
     def list_names(self) -> list[str]:
-        """Return the names of all variables ever written, sorted."""
-        return sorted(self._load_index().keys())
+        """Return the names of all variables ever written, sorted.
+
+        Derived from the chain, so it is authoritative and needs no cache.
+        """
+        names = {str(event.details.get("name", "")) for event in self._chain.query(event_type=EVENT_FLEET_VAR_SET)}
+        names.discard("")
+        return sorted(names)
+
+    # -- chain projections (the chain is the source of truth) -------------
+
+    def _head_from_chain(self, name: str) -> VariableWrite | None:
+        """Return the latest write to *name* from the chain, or ``None``.
+
+        The head is the write with the highest ``chain_position`` for *name*,
+        read straight from the verified audit chain rather than a mutable
+        cache, so the write path can never trust a stale or corrupt index.
+        """
+        head: VariableWrite | None = None
+        for event in self._chain.query(event_type=EVENT_FLEET_VAR_SET):
+            details = event.details
+            if details.get("name") != name:
+                continue
+            try:
+                position = int(details.get("chain_position", 0))
+            except (TypeError, ValueError):
+                continue
+            if head is None or position > head.chain_position:
+                head = VariableWrite(
+                    name=name,
+                    old_value_hash=str(details.get("old_value_hash", "")),
+                    new_value_hash=str(details.get("new_value_hash", "")),
+                    chain_position=position,
+                    actor=event.actor,
+                    event_hmac=event.hmac,
+                )
+        return head
 
     # -- persistence helpers ----------------------------------------------
 
     def _blob_path(self, value_hash: str) -> Path:
-        # Strip the ``sha256:`` scheme prefix for the on-disk filename.
-        digest = value_hash.split(":", 1)[-1]
+        """Return the on-disk path for *value_hash*, rejecting malformed input.
+
+        Only an exact ``sha256:<64 lowercase hex>`` digest is accepted, so a
+        crafted value such as ``sha256:../../etc/passwd`` can never escape the
+        blob directory.
+        """
+        scheme, separator, digest = value_hash.partition(":")
+        if scheme != "sha256" or separator != ":" or len(digest) != 64 or any(c not in _HEX for c in digest):
+            raise ValueError(f"invalid content hash: {value_hash!r}")
         return self._blobs / f"{digest}.json"
 
     def _write_blob(self, value_hash: str, data: bytes) -> None:
@@ -295,21 +366,6 @@ class FleetVariableStore:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_bytes(data)
         os.replace(tmp, path)
-
-    def _load_index(self) -> dict[str, dict[str, Any]]:
-        if not self._index_path.exists():
-            return {}
-        try:
-            loaded = json.loads(self._index_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return loaded if isinstance(loaded, dict) else {}
-
-    def _save_index(self, index: dict[str, dict[str, Any]]) -> None:
-        self._root.mkdir(parents=True, exist_ok=True)
-        tmp = self._index_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(index, sort_keys=True, indent=2), encoding="utf-8")
-        os.replace(tmp, self._index_path)
 
 
 def replay_reads(spine: LineageSpine, store: FleetVariableStore) -> list[PinnedRead]:

@@ -34,6 +34,7 @@ This module never imports the CLI or a running server.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass, field, replace
@@ -182,13 +183,26 @@ class ConnectionDocumentStore:
     def get(self, name: str) -> ConnectionDocument:
         """Load the document named *name*.
 
+        The document's embedded ``name`` must match the requested name, so a
+        file renamed or swapped on disk cannot resolve under a name it was not
+        signed for.
+
         Raises:
             KeyError: If no document is stored under *name*.
+            ValueError: If the stored document's embedded name differs from
+                the requested name.
         """
         path = self._path(name)
         if not path.exists():
             raise KeyError(name)
-        return ConnectionDocument.from_json(path.read_text(encoding="utf-8"))
+        doc = ConnectionDocument.from_json(path.read_text(encoding="utf-8"))
+        if doc.name != name:
+            raise ValueError(f"connection document name mismatch: requested {name!r}, embedded {doc.name!r}")
+        return doc
+
+    def exists(self, name: str) -> bool:
+        """Return ``True`` if a document is stored under *name*."""
+        return self._path(name).exists()
 
     def list_names(self) -> list[str]:
         """Return the names of all stored documents, sorted."""
@@ -203,12 +217,18 @@ def _validate_name(name: str) -> None:
 
 
 def _digest_secret_name(secret_name: str) -> str:
-    """Return a stable digest of *secret_name* for chain records.
+    """Return an install-keyed digest of *secret_name* for chain records.
 
-    The raw reference name never lands in the audit chain; only its digest,
-    so a chain reader cannot enumerate secret names.
+    The raw reference name never lands in the audit chain; only a keyed
+    digest. A plain hash would let a chain reader enumerate likely names by
+    hashing candidates, so the digest is an HMAC under the local install
+    audit key: reproducible on this install (so ``conn audit`` can correlate)
+    but not precomputable by a reader who lacks the key.
     """
-    return "sha256:" + hashlib.sha256(secret_name.encode("utf-8")).hexdigest()
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    key = load_or_create_audit_key()
+    return "hmac-sha256:" + hmac.new(key, secret_name.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _local_identity(identity_dir: Path) -> tuple[str, str]:
@@ -250,8 +270,19 @@ def create_document(
     chain: AuditChainStore,
     store: ConnectionDocumentStore,
 ) -> ConnectionDocument:
-    """Create, sign, persist, and record a new connection document."""
+    """Create, sign, record, and persist a new connection document.
+
+    Refuses to overwrite an existing document (use :func:`rotate_document`
+    to change one). The audit record is written before the document is
+    persisted, so a document can never exist on disk without its create
+    receipt on the chain.
+
+    Raises:
+        FileExistsError: If a document already exists under *name*.
+    """
     _validate_name(name)
+    if store.exists(name):
+        raise FileExistsError(f"connection document {name!r} already exists; use rotate to change it")
     private_key_pem, public_key_pem = _local_identity(identity_dir)
     unsigned = ConnectionDocument(
         name=name,
@@ -262,13 +293,13 @@ def create_document(
         version=1,
     )
     doc = _sign(unsigned, private_key_pem)
-    store.put(doc)
     record_fleet_conn_create(
         chain=chain,
         name=name,
         document_hash=doc.document_hash(),
         secret_name_digest=_digest_secret_name(secret_name),
     )
+    store.put(doc)
     return doc
 
 
@@ -285,9 +316,25 @@ def rotate_document(
     """Rotate the document named *name* and record a signed rotation event.
 
     Consumers reference the document by name, so rotation re-points all of
-    them at the next mint with zero task-spec edits.
+    them at the next mint with zero task-spec edits. The current document's
+    signature is verified against the local install identity before rotation,
+    so a tampered or foreign document on disk cannot be laundered into a
+    freshly locally-signed one. The rotation receipt is recorded before the
+    new document is persisted.
+
+    Raises:
+        ConnectionRefused: If the current document is not signed by the local
+            install identity.
     """
     current = store.get(name)
+    if not verify_document_local(current, identity_dir=identity_dir):
+        record_fleet_conn_refuse(
+            chain=chain,
+            name=name,
+            document_hash=current.document_hash(),
+            reason="signature_verification_failed",
+        )
+        raise ConnectionRefused(f"connection document {name!r} is not signed by the local install identity")
     private_key_pem, public_key_pem = _local_identity(identity_dir)
     unsigned = ConnectionDocument(
         name=name,
@@ -300,7 +347,6 @@ def rotate_document(
         version=current.version + 1,
     )
     rotated = _sign(unsigned, private_key_pem)
-    store.put(rotated)
     record_fleet_conn_rotate(
         chain=chain,
         name=name,
@@ -308,6 +354,7 @@ def rotate_document(
         new_document_hash=rotated.document_hash(),
         secret_name_digest=_digest_secret_name(rotated.secret_name),
     )
+    store.put(rotated)
     return rotated
 
 

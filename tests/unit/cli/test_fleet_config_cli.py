@@ -6,8 +6,8 @@ against an isolated ``.sdd`` under ``tmp_path``.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
@@ -16,21 +16,19 @@ from bernstein.cli.commands.conn_cmd import conn_group
 from bernstein.cli.commands.ctx_cmd import ctx_group
 from bernstein.cli.commands.var_cmd import var_group
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 
 @pytest.fixture(autouse=True)
-def _isolated_audit_key(tmp_path: Path) -> None:
+def _isolated_audit_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Point the audit HMAC key at an isolated path so tests never touch the
     developer's real key."""
     key_path = tmp_path / "audit.key"
     key_path.write_bytes(b"cli-fleet-test-key-32-bytes-pad!!")
     key_path.chmod(0o600)
-    prev = os.environ.get("BERNSTEIN_AUDIT_KEY_PATH")
-    os.environ["BERNSTEIN_AUDIT_KEY_PATH"] = str(key_path)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_path))
     yield
-    if prev is None:
-        os.environ.pop("BERNSTEIN_AUDIT_KEY_PATH", None)
-    else:
-        os.environ["BERNSTEIN_AUDIT_KEY_PATH"] = prev
 
 
 def _workdir(tmp_path: Path) -> str:
@@ -123,6 +121,75 @@ def test_ctx_use_missing_exits_nonzero(tmp_path: Path) -> None:
     wd = _workdir(tmp_path)
     r = runner.invoke(ctx_group, ["use", "ghost", "-w", wd])
     assert r.exit_code == 1
+
+
+def test_var_set_rejects_invalid_json_but_accepts_bare_word(tmp_path: Path) -> None:
+    runner = CliRunner()
+    wd = _workdir(tmp_path)
+    # Looks like JSON (starts with '{') but is invalid -> rejected.
+    bad = runner.invoke(var_group, ["set", "k", "{not json", "-w", wd])
+    assert bad.exit_code != 0
+    # A bare word is still accepted as a string.
+    ok = runner.invoke(var_group, ["set", "k", "hello", "-w", wd])
+    assert ok.exit_code == 0, ok.output
+    got = runner.invoke(var_group, ["get", "k", "-w", wd])
+    assert "hello" in got.output
+
+
+def test_var_list_hides_values_by_default(tmp_path: Path) -> None:
+    runner = CliRunner()
+    wd = _workdir(tmp_path)
+    runner.invoke(var_group, ["set", "endpoint", '"https://secret.example"', "-w", wd])
+    default = runner.invoke(var_group, ["list", "-w", wd])
+    assert "endpoint" in default.output
+    assert "secret.example" not in default.output
+    with_values = runner.invoke(var_group, ["list", "--values", "-w", wd])
+    assert "secret.example" in with_values.output
+
+
+def test_conn_audit_json_empty_is_valid_json(tmp_path: Path) -> None:
+    runner = CliRunner()
+    wd = _workdir(tmp_path)
+    r = runner.invoke(conn_group, ["audit", "--json", "-w", wd])
+    assert r.exit_code == 0, r.output
+    assert r.output.strip() == "[]"
+
+
+def test_ctx_create_adapter_default_and_invalid_name(tmp_path: Path) -> None:
+    runner = CliRunner()
+    wd = _workdir(tmp_path)
+    ok = runner.invoke(
+        ctx_group,
+        ["create", "staging", "--adapter-default", "model=claude", "-w", wd],
+    )
+    assert ok.exit_code == 0, ok.output
+    shown = runner.invoke(ctx_group, ["show", "staging", "--json", "-w", wd])
+    assert '"model"' in shown.output and "claude" in shown.output
+    # An invalid name is a clean parameter error, not a traceback.
+    bad = runner.invoke(ctx_group, ["create", "../escape", "-w", wd])
+    assert bad.exit_code != 0
+
+
+def test_ctx_show_json_null_when_no_active(tmp_path: Path) -> None:
+    runner = CliRunner()
+    wd = _workdir(tmp_path)
+    r = runner.invoke(ctx_group, ["show", "--json", "-w", wd])
+    assert r.exit_code == 0, r.output
+    assert r.output.strip() == "null"
+
+
+def test_ctx_show_redacts_store_dsn(tmp_path: Path) -> None:
+    runner = CliRunner()
+    wd = _workdir(tmp_path)
+    runner.invoke(
+        ctx_group,
+        ["create", "prod", "--store-dsn", "postgres://user:topsecret@host:5432/db", "-w", wd],
+    )
+    redacted = runner.invoke(ctx_group, ["show", "prod", "-w", wd])
+    assert "topsecret" not in redacted.output
+    assert "***" in redacted.output
+    revealed = runner.invoke(ctx_group, ["show", "prod", "--reveal", "-w", wd])
+    assert "topsecret" in revealed.output
 
 
 def test_audit_verify_fails_after_variable_tamper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

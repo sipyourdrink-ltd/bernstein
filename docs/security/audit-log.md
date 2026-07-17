@@ -96,7 +96,7 @@ mutable live-state row:
 | --- | --- | --- |
 | `fleet.var_set` | a fleet variable is written | `name`, `old_value_hash`, `new_value_hash`, `chain_position` |
 | `fleet.conn_create` | a connection document is created | `name`, `document_hash`, `secret_name_digest` |
-| `fleet.conn_rotate` | a connection document is rotated | `name`, `old_document_hash`, `new_document_hash` |
+| `fleet.conn_rotate` | a connection document is rotated | `name`, `old_document_hash`, `new_document_hash`, `secret_name_digest` |
 | `fleet.conn_resolve` | a document resolves for a task | `name`, `document_hash`, `task_id`, `token_id` |
 | `fleet.conn_refuse` | a document refuses to resolve | `name`, `document_hash`, `reason` |
 | `fleet.context_activate` | an operating context is activated | `name`, `settings_hash` |
@@ -110,7 +110,8 @@ resolution names a document that was created - so a record that is
 individually well-formed but spliced out of its family is still caught.
 raw secret material never appears in any of these records: connection
 documents carry only a broker secret *reference*, and the chain stores only
-its digest.
+an install-keyed HMAC digest of that reference name (not the raw name, not
+the secret value).
 
 source: `src/bernstein/core/fleet/` and
 `src/bernstein/core/security/audit_chain.py`.

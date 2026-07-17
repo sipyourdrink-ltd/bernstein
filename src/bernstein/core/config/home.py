@@ -15,6 +15,7 @@ Environment overrides (take priority over all file-based config layers):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -326,6 +327,26 @@ def _load_project_config(project_dir: Path) -> dict[str, object]:
 #: the ``active.json`` activation pointer written by the fleet context store.
 _CONTEXT_DIR = ("fleet", "contexts")
 
+#: Fields the fleet context store hashes into the activated settings identity.
+#: Kept in sync with ``bernstein.core.fleet.context._COMPOSITE_FIELDS`` so this
+#: loader can recompute the identity without importing the fleet package.
+_CONTEXT_COMPOSITE_FIELDS = ("server_url", "store_dsn", "adapter_defaults", "budget_envelope")
+
+
+def _context_settings_hash(doc: dict[str, object]) -> str:
+    """Recompute a context document's canonical settings hash.
+
+    Mirrors ``bernstein.core.fleet.context.settings_hash_of(context.composite())``:
+    canonical JSON (sorted keys, compact separators, ASCII) over the composite
+    fields plus the config layer, digested with SHA-256. Kept dependency-light
+    so the low-level config resolver never imports the fleet package.
+    """
+    composite: dict[str, object] = {f: doc.get(f, "") for f in _CONTEXT_COMPOSITE_FIELDS}
+    layer = doc.get("config_layer")
+    composite["config_layer"] = layer if isinstance(layer, dict) else {}
+    canonical = json.dumps(composite, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
 
 def _load_context_config(project_dir: Path) -> tuple[dict[str, object], str | None]:
     """Load the active operating context's config overrides (#2550).
@@ -338,6 +359,12 @@ def _load_context_config(project_dir: Path) -> tuple[dict[str, object], str | No
     field is the exact key -> value map the context contributes to the
     precedence chain; this loader reads only plain JSON and never imports the
     fleet package, so the low-level config resolver stays dependency-light.
+
+    The layer is applied only when the document still hashes to the settings
+    identity recorded at activation. A document edited on disk after
+    activation (its hash no longer matching ``active.json``) is treated as no
+    active context: the resolver fails closed rather than silently resolving
+    under an unaudited configuration.
     """
     context_root = project_dir / ".sdd" / _CONTEXT_DIR[0] / _CONTEXT_DIR[1]
     active_pointer = context_root / "active.json"
@@ -350,6 +377,12 @@ def _load_context_config(project_dir: Path) -> tuple[dict[str, object], str | No
             return {}, None
         doc = json.loads((context_root / f"{name}.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, KeyError):
+        return {}, None
+    if not isinstance(doc, dict):
+        return {}, None
+    recorded_hash = active.get("settings_hash")
+    if isinstance(recorded_hash, str) and recorded_hash and _context_settings_hash(doc) != recorded_hash:
+        # The document drifted from its audited identity; fail closed.
         return {}, None
     layer = doc.get("config_layer")
     if not isinstance(layer, dict):

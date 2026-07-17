@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import click
 
@@ -39,12 +40,37 @@ def _store(workdir: Path):
     return ContextStore(sdd / "fleet" / "contexts", chain=chain)
 
 
+def _redact_dsn(dsn: str) -> str:
+    """Mask the password in a URL-style DSN, leaving the rest legible.
+
+    ``postgres://user:secret@host:5432/db`` becomes
+    ``postgres://user:***@host:5432/db``. A DSN with no credentials, or one
+    that does not parse as a URL, is returned unchanged.
+    """
+    if not dsn:
+        return dsn
+    try:
+        parsed = urlsplit(dsn)
+    except ValueError:
+        return dsn
+    if not parsed.password:
+        return dsn
+    userinfo = parsed.username or ""
+    host = parsed.hostname or ""
+    netloc = f"{userinfo}:***@{host}"
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
 def _parse_layer(pairs: tuple[str, ...]) -> dict[str, object]:
     layer: dict[str, object] = {}
     for pair in pairs:
         if "=" not in pair:
             raise click.BadParameter(f"expected key=value, got {pair!r}")
         key, raw = pair.split("=", 1)
+        if not key:
+            raise click.BadParameter("override key must not be empty")
         try:
             layer[key] = json.loads(raw)
         except json.JSONDecodeError:
@@ -78,6 +104,12 @@ def ctx_group() -> None:
 @click.option("--server-url", default="", help="Task-server URL the context pins.")
 @click.option("--store-dsn", default="", help="Persistence DSN the context pins.")
 @click.option("--budget-envelope", default="", help="Named budget envelope active under this context.")
+@click.option(
+    "--adapter-default",
+    "adapter_defaults",
+    multiple=True,
+    help="Adapter default k=value (repeatable).",
+)
 @click.option("--set", "layer", multiple=True, help="Config-layer override k=value (repeatable).")
 @_WORKDIR_OPTION
 def ctx_create_cmd(
@@ -85,11 +117,19 @@ def ctx_create_cmd(
     server_url: str,
     store_dsn: str,
     budget_envelope: str,
+    adapter_defaults: tuple[str, ...],
     layer: tuple[str, ...],
     workdir: str,
 ) -> None:
     """Define a new operating context named NAME."""
-    from bernstein.core.fleet.context import OperatingContext
+    from bernstein.core.fleet.context import OperatingContext, validate_context_name
+
+    # Validate the name before touching storage so an invalid name is a clean
+    # Click parameter error, not a half-created directory.
+    try:
+        validate_context_name(name)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
 
     store = _store(Path(workdir))
     store.create(
@@ -97,6 +137,7 @@ def ctx_create_cmd(
             name=name,
             server_url=server_url,
             store_dsn=store_dsn,
+            adapter_defaults=_parse_layer(adapter_defaults),
             budget_envelope=budget_envelope,
             config_layer=_parse_layer(layer),
         )
@@ -121,14 +162,27 @@ def ctx_use_cmd(name: str, workdir: str) -> None:
 @ctx_group.command("show")
 @click.argument("name", required=False, default=None)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+@click.option(
+    "--reveal",
+    is_flag=True,
+    default=False,
+    help="Show store-DSN credentials in full (redacted by default).",
+)
 @_WORKDIR_OPTION
-def ctx_show_cmd(name: str | None, as_json: bool, workdir: str) -> None:
-    """Show a context (or the active one when NAME is omitted)."""
+def ctx_show_cmd(name: str | None, as_json: bool, reveal: bool, workdir: str) -> None:
+    """Show a context (or the active one when NAME is omitted).
+
+    A store DSN can carry a username and password, so its credentials are
+    redacted in both JSON and human output unless ``--reveal`` is passed.
+    """
     store = _store(Path(workdir))
     if name is None:
         ctx = store.active()
         if ctx is None:
-            console.print("[dim]no active context[/dim]")
+            if as_json:
+                console.print_json("null")
+            else:
+                console.print("[dim]no active context[/dim]")
             return
     else:
         try:
@@ -136,12 +190,14 @@ def ctx_show_cmd(name: str | None, as_json: bool, workdir: str) -> None:
         except KeyError:
             console.print(f"[red]no such context:[/red] {name}")
             raise SystemExit(1) from None
+    shown_dsn = ctx.store_dsn if reveal else _redact_dsn(ctx.store_dsn)
     if as_json:
-        console.print_json(json.dumps({**ctx.to_document(), "settings_hash": ctx.settings_hash()}))
+        document = {**ctx.to_document(), "store_dsn": shown_dsn, "settings_hash": ctx.settings_hash()}
+        console.print_json(json.dumps(document))
         return
     console.print(f"[cyan]{ctx.name}[/cyan]  (settings {ctx.settings_hash()[:19]}...)")
     console.print(f"  server_url      = {ctx.server_url or '-'}")
-    console.print(f"  store_dsn       = {ctx.store_dsn or '-'}")
+    console.print(f"  store_dsn       = {shown_dsn or '-'}")
     console.print(f"  budget_envelope = {ctx.budget_envelope or '-'}")
     if ctx.config_layer:
         console.print(f"  config_layer    = {ctx.config_layer}")

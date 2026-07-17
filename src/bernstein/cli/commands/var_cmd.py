@@ -37,11 +37,24 @@ def _store(workdir: Path):
     return FleetVariableStore(sdd / "fleet" / "variables", chain=chain)
 
 
+#: A raw value that begins with one of these characters is unambiguously
+#: intended as JSON; if it then fails to parse it is a user error, not a
+#: string. A bare word (``hello``) is still accepted as a string.
+_JSON_INTENT_PREFIXES = ("{", "[", '"')
+
+
 def _parse_value(raw: str) -> object:
-    """Parse *raw* as JSON, falling back to the literal string."""
+    """Parse *raw* as JSON, falling back to a literal string for bare words.
+
+    A value that clearly signals JSON intent (starts with ``{``, ``[`` or
+    ``"``) but fails to parse is rejected rather than silently stored as the
+    literal string, so a malformed object is caught instead of persisted.
+    """
     try:
         return json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        if raw[:1] in _JSON_INTENT_PREFIXES:
+            raise click.BadParameter(f"value looks like JSON but is invalid: {exc}") from exc
         return raw
 
 
@@ -97,16 +110,29 @@ def var_get_cmd(name: str, as_json: bool, workdir: str) -> None:
 
 
 @var_group.command("list")
+@click.option(
+    "--values",
+    is_flag=True,
+    default=False,
+    help="Also print each current value (may expose sensitive config).",
+)
 @_WORKDIR_OPTION
-def var_list_cmd(workdir: str) -> None:
-    """List every variable name."""
+def var_list_cmd(values: bool, workdir: str) -> None:
+    """List every variable name (names only by default).
+
+    Values are shown only with ``--values`` so a routine listing does not
+    spill potentially sensitive configuration to the terminal or logs.
+    """
     store = _store(Path(workdir))
     names = store.list_names()
     if not names:
         console.print("[dim]no fleet variables set[/dim]")
         return
     for name in names:
-        console.print(f"{name} = {store.get(name)!r}")
+        if values:
+            console.print(f"{name} = {store.get(name)!r}")
+        else:
+            console.print(name)
 
 
 @var_group.command("history")

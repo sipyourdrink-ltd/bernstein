@@ -149,7 +149,10 @@ def conn_audit_cmd(name: str | None, as_json: bool, workdir: str) -> None:
 
     receipts = audit_resolutions(_chain(Path(workdir)), name=name)
     if not receipts:
-        console.print("[dim]no resolutions recorded[/dim]")
+        if as_json:
+            console.print_json("[]")
+        else:
+            console.print("[dim]no resolutions recorded[/dim]")
         return
     if as_json:
         console.print_json(

@@ -350,12 +350,14 @@ def effective_settings_hash(settings: Mapping[str, Any]) -> str:
 def diverging_keys(recorded: Mapping[str, Any], current: Mapping[str, Any]) -> list[str]:
     """Return the sorted keys whose effective value differs between two maps.
 
-    A key present in only one map counts as diverging. Used by replay to name
-    the diverging keys when a recorded effective-settings hash no longer
-    matches the current one.
+    A key present in only one map counts as diverging, and an absent key is
+    distinguished from an explicit ``None`` value via a sentinel. Used by
+    replay to name the diverging keys when a recorded effective-settings hash
+    no longer matches the current one.
     """
+    missing = object()
     names: set[str] = set(recorded) | set(current)
-    changed = [k for k in names if recorded.get(k) != current.get(k)]
+    changed = [k for k in names if recorded.get(k, missing) != current.get(k, missing)]
     return sorted(changed)
 
 

@@ -40,25 +40,29 @@ __all__ = ["verify_fleet_config_events"]
 
 def _verify_variable_lineage(chain: AuditChainStore) -> list[str]:
     errors: list[str] = []
-    by_name: dict[str, list[tuple[int, str, str]]] = {}
+    # Verify in audit-chain append order, per name. The events are consumed in
+    # the order they were recorded (never re-sorted), so a reordered history
+    # is a divergence rather than something a normalizing sort hides. A
+    # malformed record (e.g. a non-integer chain_position) is reported, not
+    # allowed to crash verification.
+    expected_next: dict[str, int] = {}
+    prior_new_hash: dict[str, str] = {}
     for event in chain.query(event_type=EVENT_FLEET_VAR_SET):
         d = event.details
         name = str(d.get("name", ""))
-        by_name.setdefault(name, []).append(
-            (
-                int(d.get("chain_position", -1)),
-                str(d.get("old_value_hash", "")),
-                str(d.get("new_value_hash", "")),
-            )
-        )
-    for name, writes in by_name.items():
-        writes.sort(key=lambda w: w[0])
-        for expected_pos, (pos, old_hash, _new) in enumerate(writes):
-            if pos != expected_pos:
-                errors.append(f"variable {name!r}: write ordinal {pos} out of sequence (expected {expected_pos})")
-            prior_new = writes[expected_pos - 1][2] if expected_pos > 0 else ""
-            if old_hash != prior_new:
-                errors.append(f"variable {name!r}: write {expected_pos} old_value_hash does not chain to prior write")
+        raw_position = d.get("chain_position")
+        if not isinstance(raw_position, int) or isinstance(raw_position, bool):
+            errors.append(f"variable {name!r}: malformed chain_position {raw_position!r}")
+            continue
+        old_hash = str(d.get("old_value_hash", ""))
+        new_hash = str(d.get("new_value_hash", ""))
+        want = expected_next.get(name, 0)
+        if raw_position != want:
+            errors.append(f"variable {name!r}: write ordinal {raw_position} out of sequence (expected {want})")
+        if old_hash != prior_new_hash.get(name, ""):
+            errors.append(f"variable {name!r}: write {raw_position} old_value_hash does not chain to prior write")
+        expected_next[name] = raw_position + 1
+        prior_new_hash[name] = new_hash
     return errors
 
 
