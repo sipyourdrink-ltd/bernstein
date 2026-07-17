@@ -1,3 +1,8 @@
+---
+search:
+  boost: 2
+---
+
 # Deployment Guide
 
 How to run Bernstein in different environments. Each section is self-contained with complete configuration examples.
@@ -404,6 +409,25 @@ docker compose logs -f bernstein-server
 docker compose logs -f bernstein-orchestrator
 ```
 
+> **Single-worker task server.** Only `bernstein-worker` replicas scale
+> horizontally. The `bernstein-server` container must run with **exactly one
+> uvicorn worker** - the in-process `TaskStore` holds state in memory and
+> guards mutations with `asyncio.Lock`. Running `uvicorn --workers N` (or
+> setting `WEB_CONCURRENCY>1` / `BERNSTEIN_WORKERS>1`) interleaves JSONL
+> appends and lets two workers claim the same task. The server refuses to
+> boot when multi-worker mode is requested; use a horizontal pool of
+> `bernstein-worker` replicas (or migrate to the SQLite/Redis backends -
+> separate ticket) for parallelism.
+
+### Backing up state
+
+`.sdd/` is mounted as a named volume (`sdd-data`). To back it up:
+
+```bash
+docker run --rm -v bernstein_sdd-data:/data -v $(pwd):/backup \
+  alpine tar czf /backup/sdd-backup.tar.gz /data
+```
+
 ### Service endpoints
 
 | Service | URL | Purpose |
@@ -448,6 +472,13 @@ Expected health response:
 - Helm 3.x
 - `kubectl` configured for your cluster
 - Persistent storage (EBS, NFS, local-path provisioner, etc.)
+
+Add the Bitnami repo first - the chart's PostgreSQL and Redis sub-charts depend on it:
+
+```bash
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+```
 
 ### Install with Helm
 
@@ -553,6 +584,92 @@ kubectl port-forward -n bernstein svc/bernstein-server 8052:8052
 ```
 
 For the full Helm chart parameter reference, see `docs/operations/HELM_DEPLOYMENT.md`.
+
+### Common overrides
+
+**Scale workers:**
+```bash
+helm upgrade bernstein ./deploy/helm/bernstein \
+  --namespace bernstein \
+  --set worker.replicaCount=8
+```
+
+**Disable HPA (fixed worker count):**
+```bash
+--set worker.autoscaling.enabled=false
+```
+
+**Expose the task server via ingress:**
+```bash
+--set ingress.enabled=true \
+--set ingress.className=nginx \
+--set "ingress.hosts[0].host=bernstein.example.com" \
+--set "ingress.hosts[0].paths[0].path=/" \
+--set "ingress.hosts[0].paths[0].pathType=Prefix"
+```
+
+**Use external PostgreSQL/Redis (e.g. managed cloud services):**
+```bash
+--set postgresql.enabled=false \
+--set redis.enabled=false \
+--set externalDatabase.url="postgresql://user:pass@host:5432/bernstein" \
+--set externalRedis.url="redis://host:6379/0"
+```
+
+### Architecture
+
+```
+                          ┌─────────────────┐
+                          │  Ingress (opt.)  │
+                          └────────┬────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │      bernstein-server        │
+                    │   Deployment + Service       │
+                    │   (ClusterIP :8052)          │
+                    └──┬──────────────────────┬───┘
+                       │                      │
+         ┌─────────────▼─────────┐   ┌────────▼────────────┐
+         │  bernstein-orchestrat │   │  bernstein-worker    │
+         │  Deployment (1 pod)   │   │  StatefulSet (N pods)│
+         │  run --remote         │   │  worker --server ... │
+         └───────────────────────┘   └─────────────────────┘
+                       │                      │
+              ┌────────▼────────┐   ┌─────────▼──────────┐
+              │   PostgreSQL    │   │       Redis          │
+              │  (bitnami chart)│   │  (bitnami chart)    │
+              └─────────────────┘   └────────────────────┘
+```
+
+### Resource sizing guide
+
+| Role | Replicas | CPU req | Mem req | Notes |
+|---|---|---|---|---|
+| server | 1 | 100m | 256Mi | Stateful - single replica |
+| orchestrator | 1 | 100m | 128Mi | Reads backlog, no heavy compute |
+| worker | 2-20 | 500m | 512Mi | Scale based on task throughput |
+
+Workers make outbound calls to LLM APIs and run `claude`/`codex`/`gemini` CLI binaries. They do **not** need GPUs.
+
+### Secrets management
+
+Never put API keys in `values.yaml`. Use one of:
+
+- **Kubernetes Secrets** (`kubectl create secret`) - simplest
+- **External Secrets Operator** - sync from AWS Secrets Manager, Vault, GCP Secret Manager
+- **Sealed Secrets** - encrypted secrets committed to git
+
+### Health checks
+
+```bash
+# Task server health
+kubectl exec -n bernstein deploy/bernstein-server -- \
+  curl -s http://localhost:8052/health
+
+# Live task queue
+kubectl exec -n bernstein deploy/bernstein-server -- \
+  curl -s http://localhost:8052/status
+```
 
 ### Raw Kubernetes manifests (without Helm)
 
@@ -813,6 +930,24 @@ server {
         proxy_read_timeout 600s;
     }
 }
+```
+
+**Caddy alternative (automatic HTTPS):**
+```caddyfile
+# /etc/caddy/Caddyfile
+bernstein.internal {
+    reverse_proxy 127.0.0.1:8052
+}
+```
+Caddy automatically obtains and renews a Let's Encrypt certificate: `systemctl start caddy`.
+
+Once TLS is in place, point remote workers at the `https://` URL and pair the
+bearer token with TLS so it is never transmitted in the clear:
+
+```bash
+BERNSTEIN_SERVER_URL=https://bernstein.internal \
+  BERNSTEIN_AUTH_TOKEN=<secret> \
+  bernstein worker
 ```
 
 ### Multi-project setup

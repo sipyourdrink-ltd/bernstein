@@ -1,3 +1,8 @@
+---
+search:
+  boost: 2
+---
+
 # Install Bernstein
 
 **What this page does**: Gets Bernstein installed on your machine, then verifies it runs.

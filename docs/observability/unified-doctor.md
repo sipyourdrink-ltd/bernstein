@@ -89,7 +89,7 @@ Two workflows ship alongside the command:
   `workflow_dispatch` for backfills.
 - `.github/workflows/docs-observability-snapshot.yml`: cron job at
   06:00 UTC that writes today's snapshot to
-  `docs/observability/snapshots/<YYYY-MM-DD>.json` and re-renders
+  `docs/_internal/observability/snapshots/<YYYY-MM-DD>.json` and re-renders
   `docs/observability/trends.md` with the last 30 days as unicode
   sparklines. After the render it runs `scripts/observability/gate.py`,
   which diffs today's snapshot against yesterday's and reports

@@ -1,3 +1,8 @@
+---
+search:
+  boost: 2
+---
+
 # CLI Reference
 
 Bernstein ships a large surface of CLI commands registered in `cli/main.py`. This page is the single-source reference for every flag on every visible command. For driving Bernstein from a script, also read [`cli/task-lifecycle.md`](cli/task-lifecycle.md) and [`cli/replay.md`](cli/replay.md).

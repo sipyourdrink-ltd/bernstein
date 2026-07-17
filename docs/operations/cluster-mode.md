@@ -18,11 +18,22 @@ parts are pure overhead.
 
 ## Architecture
 
-There is exactly one **central server** (`bernstein start` or `bernstein
-conduct --remote`) and zero-or-more **worker nodes** (`bernstein worker`).
+There is exactly one **central server** (`bernstein run --remote` - the `run`
+command is also exposed under the hidden alias `conduct`; both dispatch the
+same function) and zero-or-more **worker nodes** (`bernstein worker`).
 Workers never talk to each other. They register with the central server, send
 heartbeats, claim tasks, and report completion. All scheduling decisions
 happen on the central server.
+
+Quick start:
+
+```bash
+# 1) start a central server reachable from workers
+bernstein run --remote --goal "Build feature X"
+
+# 2) start one or more workers
+bernstein worker --server http://central-host:8052
+```
 
 ```text
                     +--------------------+

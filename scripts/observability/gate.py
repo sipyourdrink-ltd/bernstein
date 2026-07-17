@@ -1,7 +1,7 @@
 """Day-over-day regression gate for ``bernstein doctor observe`` snapshots.
 
 The daily workflow ``docs-observability-snapshot.yml`` appends one JSON
-snapshot per day under ``docs/observability/snapshots/<YYYY-MM-DD>.json``.
+snapshot per day under ``docs/_internal/observability/snapshots/<YYYY-MM-DD>.json``.
 Every metric row in a snapshot already carries a ``threshold_status``
 (``ok|warn|fail``) computed at probe time. Until now that verdict was
 written and never read. This gate diffs the two most recent snapshots and
@@ -21,7 +21,7 @@ standard library only) so it runs in CI and locally without any Bernstein
 import::
 
     python scripts/observability/gate.py \\
-        --snapshots docs/observability/snapshots \\
+        --snapshots docs/_internal/observability/snapshots \\
         --out .ci/observability/regressions.json
 
 Exit code is ``1`` when at least one ``fail``-severity regression is found,

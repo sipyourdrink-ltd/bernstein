@@ -4,8 +4,7 @@ Bernstein exposes its orchestration layer as MCP tools so any MCP client
 (Cursor, Claude Code, Cline, Windsurf, and others) can drive multi-agent work
 through Bernstein. This page describes the protocol surface and how to point a
 client at the server. For the per-tier tool catalogue see
-[`tool_tiers.md`](tool_tiers.md); for the full surface audit see
-[`server-audit-2026.md`](server-audit-2026.md).
+[`tool_tiers.md`](tool_tiers.md).
 
 ## Transports
 

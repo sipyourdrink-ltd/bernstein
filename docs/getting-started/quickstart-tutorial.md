@@ -1,3 +1,8 @@
+---
+search:
+  boost: 2
+---
+
 # Interactive Quickstart Tutorial
 
 Get Bernstein running and orchestrating agents in under 10 minutes.

@@ -9,6 +9,8 @@ tags:
   - orchestration
   - multi-agent
   - AI coding agents
+search:
+  boost: 2
 ---
 
 # Bernstein

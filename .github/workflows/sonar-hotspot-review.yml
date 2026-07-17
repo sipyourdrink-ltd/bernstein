@@ -10,7 +10,7 @@ on:
       manifest_path:
         description: "Path to the hotspot review manifest JSON."
         required: true
-        default: "docs/operations/sonar-hotspot-review-1785.json"
+        default: "docs/_internal/operations/sonar-hotspot-review-1785.json"
       dry_run:
         description: "Validate without changing Sonar hotspot status."
         required: true

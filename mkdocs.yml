@@ -40,7 +40,8 @@ theme:
     - navigation.instant.progress
     - navigation.tracking
     - navigation.sections
-    - navigation.expand
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.top
     - navigation.indexes
     - navigation.footer
@@ -102,7 +103,12 @@ plugins:
       cards_layout_options:
         background_color: "#4a148c"
         color: "#ffffff"
-  - tags
+  - redirects:
+      redirect_maps:
+        'operations/DEPLOYMENT.md': 'operations/deployment-guide.md'
+        'architecture/CLUSTER.md': 'operations/cluster-mode.md'
+        'quickstart/remote.md': 'getting-started/remote.md'
+        'operations/observability.md': 'operations/error-telemetry.md'
   - minify:
       minify_html: true
 
@@ -144,207 +150,298 @@ markdown_extensions:
   - abbr
 
 nav:
-  - Home: index.md
+  - Home:
+      - index.md
+      - Use cases: use-cases.md
+      - What's new: whats-new.md
+      - Benchmarks: benchmarks/BENCHMARKS.md
+      - Blog:
+          - Ten agents one release: blog/ten-agents-one-release.md
+          - Zero-LLM coordination: blog/zero-llm-coordination.md
+          - Multi-agent benchmark: blog/multi-agent-benchmark.md
+          - Self-evolution 30 days: blog/self-evolution-30-days.md
+          - COBOL modernization: blog/cobol-modernization.md
+          - v1.9 four commands: blog/v1.9-four-commands-last-mile.md
   - Get started:
+      - getting-started/index.md
       - Install: getting-started/install.md
+      - Install on Linux: getting-started/install-linux.md
+      - Remote quickstart (Codespaces): getting-started/remote.md
       - First run: getting-started/first-run.md
       - Tutorial: getting-started/quickstart-tutorial.md
-      - Install on Linux: getting-started/install-linux.md
-      - Configuration: operations/CONFIG.md
-      - Use cases: use-cases.md
-  - Concepts:
-      - Architecture: architecture/ARCHITECTURE.md
-      - Why deterministic: architecture/WHY_DETERMINISTIC.md
-      - Task lifecycle: architecture/LIFECYCLE.md
-      - Quality pipeline: architecture/quality-pipeline.md
-      - Model routing: architecture/model-routing.md
-      - State persistence: architecture/state-persistence.md
-      - CAS store: architecture/cas-store.md
-      - Plans (YAML schema): architecture/plans.md
-      - Permission modes: architecture/permission-modes.md
-      - Sandbox backends: architecture/sandbox.md
-      - Sandbox backend - Daytona: sandbox/daytona.md
-      - Sandbox backend - Blaxel: sandbox/blaxel.md
-      - Sandbox backend - Runloop: sandbox/runloop.md
-      - Sandbox backend - Vercel: sandbox/vercel.md
-      - Sandbox backend - Playwright self-test: sandbox/playwright-self-test.md
-      - Warm pool: architecture/warm-pool.md
-      - Adaptive parallelism: architecture/adaptive-parallelism.md
-      - Tiered context compaction: architecture/memory_tiers.md
-      - Artifact storage: architecture/storage.md
-      - Orchestration approaches: architecture/orchestration-approaches.md
-      - Skill packs: architecture/skills.md
-      - A2A v1.0 signed agent cards: architecture/a2a.md
-      - A2A capability cards and lineage interop: interop/a2a.md
-      - Design notes: architecture/DESIGN.md
-      - Glossary: reference/GLOSSARY.md
-      - AST-aware reviewer chunks: concepts/ast-aware-chunking.md
-      - Fingerprint memoization: concepts/fingerprint-memoization.md
-      - Artifact lineage trail: concepts/artifact-lineage.md
-      - Lineage trail (hub): lineage.md
-      - Feature contract: concepts/feature-contract.md
-      - Schema validation retry: concepts/schema-validation-retry.md
-      - Action cache and replay: concepts/action-cache.md
-      - Discrete phase pipeline: concepts/phase-pipeline.md
-      - Spec-as-test loop: concepts/spec-as-test.md
-      - Abstracted code review: concepts/abstracted-code-review.md
-      - Agent mode profiles: concepts/agent-mode-profiles.md
-      - Best-of-N delegation: concepts/best-of-n.md
-      - Swarm migration: concepts/swarm-migration.md
-      - Wiki build: concepts/wiki-build.md
-      - JSONL memory log: concepts/jsonl-memory-log.md
-      - Sandbox backend selector: concepts/sandbox-selector.md
-      - Prompt-to-repo scaffold: concepts/scaffold.md
-      - Team-hub conventions: concepts/team-hub.md
-      - Orchestrator hardening: concepts/orchestrator-hardening.md
-      - Eventing v2 (unified feed): events/grammar.md
-  - Web GUI:
-      - Overview: gui/index.md
-      - Install: gui/install.md
-      - Screens: gui/screens.md
-      - Playground (zero-cost dev): gui/playground.md
-      - Configuration: gui/configuration.md
-      - Troubleshooting: gui/troubleshooting.md
-      - Mobile: gui/mobile.md
-  - Adapters & integrations:
-      - Adapters overview: adapters/index.md
-      - Adapter guide: adapters/ADAPTER_GUIDE.md
-      - Strict output schemas: adapters/schemas.md
-      - OpenAI Agents SDK: adapters/openai-agents.md
-      - Gemini CLI: adapters/gemini.md
-      - CLM (Cyber Language Model): adapters/clm.md
-      - DeepSeek V4 (self-hosted): adapters/deepseek.md
-      - Session isolation: adapters/session_isolation.md
-      - Compatibility: adapters/compatibility.md
-      - Deferred adapters: adapter-deferred.md
-      - Hook system: integrations/hook-system.md
-      - Agent sessions (skill and plugin): integrations/agent-session.md
-      - Plugin SDK: integrations/plugin-sdk.md
-      - MCP server injection: integrations/mcp-server-injection.md
-      - MCP tool-search lazy loading: protocols/tool-search.md
-      - Cross-CLI agent-context sync (agents-md): agents-md.md
-      - .well-known service manifest: protocols/well-known-manifest.md
-      - cocoindex-code (MCP catalog): integrations/cocoindex-code.md
-      - GitHub Action: integrations/github-action.md
-      - GitHub App: integrations/github-app-setup.md
-      - GitLab App: integrations/gitlab-app-setup.md
-      - MCP server: mcp/server.md
-      - MCP client: mcp/client.md
-      - Trackers - contract: trackers/contract.md
-      - Trackers - Linear: trackers/linear.md
-      - Trackers - Jira Data Center: trackers/jira-data-center.md
-      - Trackers - Asana: trackers/asana.md
-      - Trackers - ClickUp: trackers/clickup.md
-      - Trackers - GitHub Projects: trackers/github-projects.md
-      - Trackers - Plane: trackers/plane.md
-      - Trackers - ServiceNow: trackers/servicenow.md
-      - Trackers - webhooks: trackers/webhooks.md
-      - Tracker pipeline: orchestration/tracker-pipeline.md
-      - Host registration - Claude Desktop: substrate/claude-desktop.md
-      - Host registration - Claude Code: substrate/claude-code.md
-      - Host registration - Cursor: substrate/cursor.md
-      - Host registration - Continue: substrate/continue.md
-      - Host registration - Cline: substrate/cline.md
-      - Host registration - Zed: substrate/zed.md
-      - Host registration - Aider: substrate/aider.md
+  - Guides:
+      - guides/index.md
+      - Web GUI:
+          - gui/index.md
+          - Install: gui/install.md
+          - Screens: gui/screens.md
+          - Playground: gui/playground.md
+          - Configuration: gui/configuration.md
+          - Mobile: gui/mobile.md
+          - Troubleshooting: gui/troubleshooting.md
+      - Adapters:
+          - adapters/index.md
+          - Choosing an adapter: adapters/openai-agents-comparison.md
+          - OpenAI Agents SDK: adapters/openai-agents.md
+          - Gemini CLI: adapters/gemini.md
+          - CLM: adapters/clm.md
+          - DeepSeek V4: adapters/deepseek.md
+          - Agy: adapters/agy.md
+          - Antigravity: adapters/antigravity.md
+          - Deferred adapters: adapter-deferred.md
+          - Adapter operations: operations/adapters.md
+          - Adapter security floor: adapters/security-floor.md
+          - Session isolation: adapters/session_isolation.md
+          - Stream signals: adapters/stream_signals.md
+          - Strict output schemas: adapters/schemas.md
+          - Conformance canary: adapters/conformance-canary.md
+      - Sandboxes:
+          - Overview: architecture/sandbox.md
+          - Backend selector: concepts/sandbox-selector.md
+          - Daytona: sandbox/daytona.md
+          - Blaxel: sandbox/blaxel.md
+          - Runloop: sandbox/runloop.md
+          - Vercel: sandbox/vercel.md
+          - Playwright self-test: sandbox/playwright-self-test.md
+      - Editors & host registration:
+          - Claude Code: substrate/claude-code.md
+          - Claude Desktop: substrate/claude-desktop.md
+          - Cursor: substrate/cursor.md
+          - Continue: substrate/continue.md
+          - Cline: substrate/cline.md
+          - Zed: substrate/zed.md
+          - Aider: substrate/aider.md
+      - Issue trackers:
+          - Contract: trackers/contract.md
+          - Tracker pipeline: orchestration/tracker-pipeline.md
+          - Issue-to-PR: orchestration/issue-to-pr.md
+          - Linear: trackers/linear.md
+          - Jira Data Center: trackers/jira-data-center.md
+          - Asana: trackers/asana.md
+          - ClickUp: trackers/clickup.md
+          - GitHub Projects: trackers/github-projects.md
+          - Plane: trackers/plane.md
+          - ServiceNow: trackers/servicenow.md
+          - Webhooks: trackers/webhooks.md
+      - Git hosting & CI:
+          - GitHub Action: integrations/github-action.md
+          - GitHub App: integrations/github-app-setup.md
+          - GitLab App: integrations/gitlab-app-setup.md
+          - GitLab integration: operations/gitlab.md
+      - MCP:
+          - Server: mcp/server.md
+          - Client: mcp/client.md
+          - Server injection: integrations/mcp-server-injection.md
+          - Tool-search lazy loading: protocols/tool-search.md
+          - cocoindex-code catalog: integrations/cocoindex-code.md
+      - Hooks, plugins & skills:
+          - Hook system: integrations/hook-system.md
+          - Hook prefilter: operations/hooks.md
+          - Plugin SDK: integrations/plugin-sdk.md
+          - Agent sessions: integrations/agent-session.md
+          - agents-md sync: agents-md.md
+          - Skills catalog: operations/skills-catalog.md
+          - Layered skill merge: skills/layered-merge.md
+          - Agent prompt template: examples/agent-prompt-template.md
+      - Memory & context:
+          - Session memory: memory/session-memory.md
+          - Cross-task share: memory/cross-task-share.md
+          - Operator memory: operations/memory.md
+          - Knowledge diary: operations/knowledge-diary.md
+          - Context compaction: operations/context-compaction.md
+      - Cloud (Cloudflare):
+          - cloudflare/cloudflare-overview.md
+          - Setup: cloudflare/cloudflare-setup.md
+          - Cloud CLI: cloudflare/cloudflare-cli.md
+          - Bridges: cloudflare/cloudflare-bridges.md
+          - Browser Rendering: cloudflare/cloudflare-browser-rendering.md
+          - Adapters: cloudflare/cloudflare-adapters.md
+          - Workers AI: cloudflare/cloudflare-ai.md
+          - MCP Remote: cloudflare/cloudflare-mcp.md
+          - Analytics: cloudflare/cloudflare-analytics.md
+      - Everyday workflows:
+          - Recipes: operations/recipes.md
+          - Worktrees: operations/worktrees.md
+          - Snapshot undo: git/snapshot-undo.md
+          - Session handoff: operations/session-handoff.md
+          - Routine scenarios: routine-scenarios.md
+          - Per-step routing: workflows/per-step-routing.md
   - Operations:
-      - Deployment: operations/DEPLOYMENT.md
-      - Deployment guide (long): operations/deployment-guide.md
-      - Helm chart: operations/HELM_DEPLOYMENT.md
-      - Cluster mode: operations/cluster-mode.md
-      - Cluster mTLS setup: cluster/mtls-setup.md
-      - Cluster deployment patterns: cluster/deployment-patterns.md
-      - Cluster observability: observability/cluster.md
-      - Cluster e2e harness: testing/cluster-e2e-harness.md
-      - Fleet (multi-project): operations/fleet.md
-      - Enterprise evaluation: ENTERPRISE.md
-      - Security & identity: operations/security-and-identity.md
-      - Capability matrix: security/capability-matrix.md
-      - Secrets & creds: operations/secrets.md
-      - Env isolation: operations/env-isolation.md
-      - Compliance: operations/compliance.md
-      - EU AI Act Article 12 evidence pack: compliance/eu-ai-act-article-12-bundle.md
-      - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
-      - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
-      - Regulator-class lineage: compliance/regulatory-lineage.md
-      - Regulatory lineage export (operator guide): compliance/lineage-export.md
-      - Air-gap installation: installation/air-gap.md
-      - Incident-to-eval synthesis: eval/incident-synthesis.md
-      - A/B runner primitive: eval/ab-runner.md
-      - Response-style profiles: operations/response-style-profiles.md
-      - Per-profile cost attribution: operations/profile-cost-attribution.md
-      - Profile A/B harness: operations/profile-ab-harness.md
-      - Role-template compression: operations/template-compression.md
-      - Proactive context compaction: operations/context-compaction.md
-      - Worker completion contracts: operations/worker-contracts.md
-      - Named team manifests: operations/team-manifests.md
-      - Orchestrator holds: operations/HOLDS.md
-      - Per-agent run instrumentation: operations/INSTRUMENTATION.md
-      - Verification tracking: operations/verification-tracking.md
-      - Deterministic replay: operations/deterministic-replay.md
-      - Run review board: operations/review-board.md
-      - Observability: operations/observability-overview.md
-      - Side-channel telemetry: observability/side-channel.md
-      - LLM watcher (opt-in): observability/llm-watcher.md
-      - Per-ticket transcript bundle: observability/ticket-bundle.md
-      - Notifications: operations/notifications.md
-      - Run command: operations/run.md
-      - Schedule (recurring goals): operations/schedule.md
-      - Resume: operations/resume.md
-      - Replay: operations/replay.md
-      - Commands overview: operations/commands.md
-      - Doctor: operations/doctor.md
-      - Provider availability & failover: operations/provider-availability.md
-      - Spending mandates: operations/spending-mandates.md
-      - Stall escalation receipts: operations/stall-escalation.md
-      - Intent capsules: operations/intent-capsules.md
-      - Checkpointed retries: operations/checkpointed-retries.md
-      - Audited webhook node: operations/webhook-node.md
-      - Chat bridges (Slack/Discord/Telegram/Teams): operations/chat-bridges.md
-      - Approval cards v2: integrations/approval-cards.md
-      - Microsoft Teams setup: integrations/teams-setup.md
-      - Lineage v2: operations/lineage-v2.md
-      - GitLab integration: operations/gitlab.md
-      - Cost optimization: operations/cost-optimization.md
-      - Cost-aware scheduling: operations/cost-aware-scheduling.md
-      - Performance tuning: operations/performance-tuning.md
-      - Autofix daemon: operations/autofix.md
-      - Merge queue: operations/merge-queue.md
-      - Review responder: operations/review-responder.md
-      - Review-bot acknowledgement: operations/review-bot-ack.md
-      - Preview server: operations/preview.md
-      - Voice control (experimental): operations/voice-control.md
-      - Chaos engineering: operations/chaos-engineering.md
-      - Disaster recovery: operations/disaster-recovery.md
-      - Runbooks: operations/runbooks.md
-      - Troubleshooting: operations/TROUBLESHOOTING.md
-      - Model policy: operations/MODEL_POLICY.md
-  - Cloud / Cloudflare:
-      - Overview: cloudflare/cloudflare-overview.md
-      - Setup: cloudflare/cloudflare-setup.md
-      - Cloud CLI: cloudflare/cloudflare-cli.md
-      - Bridges: cloudflare/cloudflare-bridges.md
-      - Browser Rendering: cloudflare/cloudflare-browser-rendering.md
-      - Adapters: cloudflare/cloudflare-adapters.md
-      - Workers AI: cloudflare/cloudflare-ai.md
-      - MCP Remote: cloudflare/cloudflare-mcp.md
-      - Analytics: cloudflare/cloudflare-analytics.md
+      - operations/index.md
+      - Deploy & scale:
+          - Deployment guide: operations/deployment-guide.md
+          - Helm chart: operations/HELM_DEPLOYMENT.md
+          - Cluster mode: operations/cluster-mode.md
+          - Cluster mTLS: cluster/mtls-setup.md
+          - Cluster patterns: cluster/deployment-patterns.md
+          - Cluster e2e harness: testing/cluster-e2e-harness.md
+          - Fleet: operations/fleet.md
+          - Fleet directory registry: fleet/directory-registry.md
+          - Air-gap install: installation/air-gap.md
+          - Migrations: operations/migrations.md
+          - Enterprise evaluation: ENTERPRISE.md
+      - Run & supervise:
+          - Commands overview: operations/commands.md
+          - Run: operations/run.md
+          - Run names: operations/run_names.md
+          - Schedule: operations/schedule.md
+          - Resume: operations/resume.md
+          - Replay: operations/replay.md
+          - Fork from step: operations/fork-from-step.md
+          - Simulate: operations/simulate.md
+          - Compare: operations/compare.md
+          - Doctor: operations/doctor.md
+          - Holds: operations/HOLDS.md
+          - Review board: operations/review-board.md
+          - Work ledger: operations/work-ledger.md
+          - Decision log: operations/decision-log.md
+          - Intent capsules: operations/intent-capsules.md
+          - Notifications: operations/notifications.md
+          - Chat bridges: operations/chat-bridges.md
+          - Approval cards v2: integrations/approval-cards.md
+          - Microsoft Teams setup: integrations/teams-setup.md
+          - Webhook node: operations/webhook-node.md
+          - Preview server: operations/preview.md
+          - Voice control: operations/voice-control.md
+      - Reliability:
+          - Troubleshooting: operations/TROUBLESHOOTING.md
+          - Checkpointed retries: operations/checkpointed-retries.md
+          - Retry budget: operations/retry-budget.md
+          - Auto-heal: operations/auto-heal.md
+          - Agent crash loops: operations/agent_crash_loop.md
+          - Stall escalation: operations/stall-escalation.md
+          - Abandonments: operations/abandonments.md
+          - Activity boundary: operations/activity-boundary.md
+          - Max turns: operations/MAX_TURNS.md
+          - Provider availability: operations/provider-availability.md
+          - Disaster recovery: operations/disaster-recovery.md
+          - Chaos engineering: operations/chaos-engineering.md
+          - Runbooks: operations/runbooks.md
+      - Cost & performance:
+          - Cost optimization: operations/cost-optimization.md
+          - Cost-aware scheduling: operations/cost-aware-scheduling.md
+          - Spending mandates: operations/spending-mandates.md
+          - Ticket cap: cost/ticket-cap.md
+          - Task budgets: concepts/task-budgets.md
+          - Performance tuning: operations/performance-tuning.md
+          - Response-style profiles: operations/response-style-profiles.md
+          - Per-profile cost attribution: operations/profile-cost-attribution.md
+          - Profile A/B harness: operations/profile-ab-harness.md
+          - Template compression: operations/template-compression.md
+      - Observability:
+          - Overview: operations/observability-overview.md
+          - Instrumentation: operations/INSTRUMENTATION.md
+          - Verification tracking: operations/verification-tracking.md
+          - Deterministic replay: operations/deterministic-replay.md
+          - Error telemetry & SBOM: operations/error-telemetry.md
+          - Telemetry disclosure: telemetry.md
+          - Side-channel telemetry: observability/side-channel.md
+          - LLM watcher: observability/llm-watcher.md
+          - Ticket bundle: observability/ticket-bundle.md
+          - Trace store: observability/trace-store.md
+          - Trends: observability/trends.md
+          - Progress watch: observability/progress-watch.md
+          - Rate limits: observability/rate-limits.md
+          - Unified doctor: observability/unified-doctor.md
+          - Telemetry share: observability/telemetry-share.md
+          - Cluster observability: observability/cluster.md
+          - GlitchTip setup: operations/glitchtip-setup.md
+          - GlitchTip ingester: operations/glitchtip-ingester.md
+          - GlitchTip insights: observability/glitchtip-insights.md
+          - Sonar: observability/sonar.md
+      - Merge & review automation:
+          - Merge queue: operations/merge-queue.md
+          - Merge gate: operations/merge-gate.md
+          - Autofix daemon: operations/autofix.md
+          - Autofix tier 3: operations/autofix-tier3.md
+          - Autofix ladder: autofix/ladder.md
+          - Telemetry-grounded autofix: autofix/telemetry-grounded.md
+          - Review responder: operations/review-responder.md
+          - Review-bot acknowledgement: operations/review-bot-ack.md
+          - Coverage ratchet: operations/coverage-ratchet.md
+          - Sonar sweeper: operations/sonar-sweeper.md
+          - Nightly canary: operations/nightly-canary.md
+          - CI: operations/ci.md
+          - CI topology: operations/ci-topology.md
+          - Post-CI dispatcher: operations/post-ci-dispatcher.md
+      - Evaluation & calibration:
+          - Incident-to-eval synthesis: eval/incident-synthesis.md
+          - A/B runner: eval/ab-runner.md
+          - YAML harness: eval/yaml-harness.md
+          - Pentest scenario: eval/security_pentest_scenario.md
+          - Calibration: operations/calibration.md
+          - Criterion profiles: operations/criterion-profiles.md
+      - Security & identity:
+          - Security & identity stack: operations/security-and-identity.md
+          - Security operations: operations/security.md
+          - Hardening: security/security-hardening.md
+          - Governance: operations/governance.md
+          - Secrets & creds: operations/secrets.md
+          - Secrets broker: security/secrets-broker.md
+          - Env isolation: operations/env-isolation.md
+          - Credential scoping: security/credential-scoping.md
+          - Capability matrix: security/capability-matrix.md
+          - Manager auth: security/manager-auth.md
+          - Agent-card keystore: security/keystore.md
+          - MCP signing: security/mcp-signing.md
+          - OWASP ASI detectors: security/owasp-asi.md
+          - Promptware: security/promptware.md
+          - Lethal trifecta: security/lethal-trifecta.md
+          - Bug bounty: security/bug-bounty.md
+          - Acknowledgments: security/security-acknowledgments.md
+      - Compliance & audit:
+          - Compliance overview: operations/compliance.md
+          - SOC 2 audit: security/AUDIT.md
+          - Audit log: security/audit-log.md
+          - Multi-tenant audit export: security/audit-multitenant.md
+          - DSSE / in-toto envelope: security/audit-dsse-envelope.md
+          - EU AI Act Article 12: compliance/eu-ai-act-article-12-bundle.md
+          - EU residency setup: compliance/eu-residency-customer-setup.md
+          - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
+          - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
+          - Regulator-class lineage: compliance/regulatory-lineage.md
+          - Lineage export: compliance/lineage-export.md
+          - Lineage v1 (user reference): lineage.md
+          - Lineage v2: operations/lineage-v2.md
+          - Lineage conflict resolution: lineage/conflict-resolution.md
+          - Tracker audit: lineage/tracker-audit.md
+          - A2A message receipts: operations/a2a-message-receipts.md
   - Reference:
-      - What's new: whats-new.md
-      - CLI reference: reference/cli-reference.md
-      - Task lifecycle CLI: reference/cli/task-lifecycle.md
-      - Replay CLI: reference/cli/replay.md
-      - MCP catalog: reference/mcp-catalog.md
-      - MCP tool tiers: mcp/tool_tiers.md
-      - Local endpoints: reference/local-endpoints.md
-      - SPIFFE workload identity: reference/spiffe-workload-identity.md
-      - API reference: reference/openapi-reference.md
-      - ACP bridge: reference/acp-bridge.md
-      - Feature matrix: reference/FEATURE_MATRIX.md
-      - Known limitations: reference/KNOWN_LIMITATIONS.md
-      - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
-      - Changelog: CHANGELOG.md
+      - reference/index.md
+      - CLI:
+          - CLI reference: reference/cli-reference.md
+          - Task lifecycle CLI: reference/cli/task-lifecycle.md
+          - Replay CLI: reference/cli/replay.md
+      - Configuration & schemas:
+          - Configuration: operations/CONFIG.md
+          - Task format: operations/task_format.md
+          - Plans (YAML schema): architecture/plans.md
+          - Team manifests: operations/team-manifests.md
+          - Worker contracts: operations/worker-contracts.md
+          - Model policy: operations/MODEL_POLICY.md
+          - Ticket schema: sdd/ticket_schema.md
+          - Adapter capability contract: adapters/capability_contract.md
+      - APIs & protocols:
+          - REST API: reference/openapi-reference.md
+          - API server operations: operations/api.md
+          - Supervisor API: api/supervisor.md
+          - Local endpoints: reference/local-endpoints.md
+          - ACP bridge: reference/acp-bridge.md
+          - ACP server and client roles: interop/acp.md
+          - A2A signed agent cards: architecture/a2a.md
+          - A2A capability cards & lineage interop: interop/a2a.md
+          - Eventing v2 (unified feed): events/grammar.md
+          - .well-known manifest: protocols/well-known-manifest.md
+          - SPIFFE workload identity: reference/spiffe-workload-identity.md
+          - MCP catalog: reference/mcp-catalog.md
+          - MCP tool tiers: mcp/tool_tiers.md
+      - Compatibility & limits:
+          - Feature matrix: reference/FEATURE_MATRIX.md
+          - Adapter compatibility: adapters/compatibility.md
+          - Known limitations: reference/KNOWN_LIMITATIONS.md
+          - Glossary: reference/GLOSSARY.md
       - Release notes:
+          - Changelog: CHANGELOG.md
           - v3.6.0: release-notes/v3.6.0.md
           - v3.5.0: release-notes/v3.5.0.md
           - v3.4.4: release-notes/v3.4.4.md
@@ -356,60 +453,98 @@ nav:
           - v3.2.0: release-notes/v3.2.0.md
           - v3.1.0: release-notes/v3.1.0.md
           - v3.0.0: release-notes/v3.0.0.md
-          - v2.16.1: release-notes/v2.16.1.md
-          - v2.16.0: release-notes/v2.16.0.md
-          - v2.15.0: release-notes/v2.15.0.md
-          - v2.14.1: release-notes/v2.14.1.md
-          - v2.14.0: release-notes/v2.14.0.md
-          - v2.13.0: release-notes/v2.13.0.md
-          - v2.12.0: release-notes/v2.12.0.md
-          - v2.11.0: release-notes/v2.11.0.md
-          - v2.10.0: release-notes/v2.10.0.md
-          - v2.9.0: release-notes/v2.9.0.md
-          - v2.8.5: release-notes/v2.8.5.md
-          - v2.8.2: release-notes/v2.8.2.md
-          - v2.6.0: release-notes/v2.6.0.md
-          - v2.5.1: release-notes/v2.5.1.md
-          - v2.5.0: release-notes/v2.5.0.md
-          - v2.4.0: release-notes/v2.4.0.md
-          - v2.3.1: release-notes/v2.3.1.md
-          - v2.3.0: release-notes/v2.3.0.md
-          - v2.0.0: release-notes/v2.0.0.md
-  - Adapter selection:
-      - OpenAI Agents vs Codex vs Claude: adapters/openai-agents-comparison.md
-  - Blog:
-      - Ten agents one release: blog/ten-agents-one-release.md
-      - v1.9 - Four commands that close the last-mile gap: blog/v1.9-four-commands-last-mile.md
-      - Zero-LLM coordination: blog/zero-llm-coordination.md
-      - Multi-agent benchmark: blog/multi-agent-benchmark.md
-      - Self-evolution 30 days: blog/self-evolution-30-days.md
-      - COBOL modernization: blog/cobol-modernization.md
-  - Decisions:
-      - Agent lifecycle: decisions/001-agent-lifecycle.md
-      - Self-evolution: decisions/003-self-evolution.md
-      - File-based state: decisions/004-file-based-state.md
-      - Short-lived agents: decisions/005-short-lived-agents.md
-      - No embedded LLM: decisions/006-no-embedded-llm.md
-      - Pluggy plugin system: decisions/007-pluggy-plugin-system.md
-      - Click for CLI: decisions/008-click-for-cli.md
-      - Lineage v1: decisions/009-lineage-v1.md
-  - Security:
-      - Hardening: security/security-hardening.md
-      - Manager → task server auth: security/manager-auth.md
-      - Agent-card keystore: security/keystore.md
-      - OWASP ASI01-10 detector pack: security/owasp-asi.md
-      - MCP server signing + supply-chain scan: security/mcp-signing.md
-      - Credential scoping (default-on): security/credential-scoping.md
-      - SOC 2 audit: security/AUDIT.md
-      - Audit log (operator guide): security/audit-log.md
-      - Multi-tenant audit-chain export: security/audit-multitenant.md
-      - DSSE / in-toto envelope: security/audit-dsse-envelope.md
-      - Lethal-trifecta security model: security/lethal-trifecta.md
-      - Capability matrix: security/capability-matrix.md
-      - Bug bounty: security/bug-bounty.md
-      - Acknowledgments: security/security-acknowledgments.md
-  - Benchmarks: benchmarks/BENCHMARKS.md
-
+          - v2.x:
+              - v2.16.1: release-notes/v2.16.1.md
+              - v2.16.0: release-notes/v2.16.0.md
+              - v2.15.0: release-notes/v2.15.0.md
+              - v2.14.1: release-notes/v2.14.1.md
+              - v2.14.0: release-notes/v2.14.0.md
+              - v2.13.0: release-notes/v2.13.0.md
+              - v2.12.0: release-notes/v2.12.0.md
+              - v2.11.0: release-notes/v2.11.0.md
+              - v2.10.0: release-notes/v2.10.0.md
+              - v2.9.0: release-notes/v2.9.0.md
+              - v2.8.5: release-notes/v2.8.5.md
+              - v2.8.2: release-notes/v2.8.2.md
+              - v2.6.0: release-notes/v2.6.0.md
+              - v2.5.1: release-notes/v2.5.1.md
+              - v2.5.0: release-notes/v2.5.0.md
+              - v2.4.0: release-notes/v2.4.0.md
+              - v2.3.1: release-notes/v2.3.1.md
+              - v2.3.0: release-notes/v2.3.0.md
+              - v2.0.0: release-notes/v2.0.0.md
+  - Architecture & internals:
+      - architecture/index.md
+      - System:
+          - Architecture: architecture/ARCHITECTURE.md
+          - Design notes: architecture/DESIGN.md
+          - Why deterministic: architecture/WHY_DETERMINISTIC.md
+          - Task lifecycle: architecture/LIFECYCLE.md
+          - Agent lifecycle diagram: diagrams/agent_lifecycle.md
+          - Task lifecycle diagram: diagrams/task_lifecycle.md
+          - Graphs: architecture/graphs.md
+          - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
+          - Quality pipeline: architecture/quality-pipeline.md
+          - Model routing: architecture/model-routing.md
+          - State persistence: architecture/state-persistence.md
+          - CAS store: architecture/cas-store.md
+          - Artifact storage: architecture/storage.md
+          - Permission modes: architecture/permission-modes.md
+          - Warm pool: architecture/warm-pool.md
+          - Adaptive parallelism: architecture/adaptive-parallelism.md
+          - Tiered context compaction: architecture/memory_tiers.md
+          - Skill packs: architecture/skills.md
+          - Orchestration approaches: architecture/orchestration-approaches.md
+      - Concepts:
+          - AST-aware reviewer chunks: concepts/ast-aware-chunking.md
+          - Fingerprint memoization: concepts/fingerprint-memoization.md
+          - Artifact lineage trail: concepts/artifact-lineage.md
+          - Feature contract: concepts/feature-contract.md
+          - Schema validation retry: concepts/schema-validation-retry.md
+          - Action cache and replay: concepts/action-cache.md
+          - Discrete phase pipeline: concepts/phase-pipeline.md
+          - Spec-as-test loop: concepts/spec-as-test.md
+          - Abstracted code review: concepts/abstracted-code-review.md
+          - Agent mode profiles: concepts/agent-mode-profiles.md
+          - Best-of-N delegation: concepts/best-of-n.md
+          - Swarm migration: concepts/swarm-migration.md
+          - Wiki build: concepts/wiki-build.md
+          - JSONL memory log: concepts/jsonl-memory-log.md
+          - Prompt-to-repo scaffold: concepts/scaffold.md
+          - Team-hub conventions: concepts/team-hub.md
+          - Orchestrator hardening: concepts/orchestrator-hardening.md
+      - Orchestration internals:
+          - Task DAG: orchestration/task-dag.md
+          - Run actor: orchestration/run-actor.md
+          - Worker coordination: orchestration/worker-coordination.md
+          - Review gate: orchestration/review-gate.md
+          - Failure taxonomy: orchestration/failure-taxonomy.md
+          - Federation: orchestration/federation.md
+          - Consensus scoring: quality/consensus-scoring.md
+          - Empirical confidence: quality/empirical-confidence.md
+          - Spec quality gate: planning/spec-quality-gate.md
+      - Decisions (ADRs):
+          - Agent lifecycle: decisions/001-agent-lifecycle.md
+          - Self-evolution: decisions/003-self-evolution.md
+          - File-based state: decisions/004-file-based-state.md
+          - Short-lived agents: decisions/005-short-lived-agents.md
+          - No embedded LLM: decisions/006-no-embedded-llm.md
+          - Pluggy plugin system: decisions/007-pluggy-plugin-system.md
+          - Click for CLI: decisions/008-click-for-cli.md
+          - Lineage v1: decisions/009-lineage-v1.md
+  - Contribute:
+      - contributing/index.md
+      - Code review process: CODE_REVIEW.md
+      - Testing & CI hardening: contributing/testing.md
+      - Lifecycle hooks contract: contributing/hooks.md
+      - Adapter contracts: contributing/adapter-contracts.md
+      - Writing adapters: adapters/ADAPTER_GUIDE.md
+      - Flake handling: contributing/flake-handling.md
+      - CI apps: maintainers/ci-apps.md
+      - Extended static analysis: ci/extended-static-analysis.md
+      - Release process: operations/release.md
+      - Docs drift playbook: playbooks/docs-drift.md
+      - Trend scan automation: devops/trend-scan-automation.md
 docs_dir: docs
 strict: false
 

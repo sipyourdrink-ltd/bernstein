@@ -1,3 +1,8 @@
+---
+search:
+  boost: 2
+---
+
 # First run
 
 **What this page does**: Takes you from "Bernstein is installed" to "I just watched

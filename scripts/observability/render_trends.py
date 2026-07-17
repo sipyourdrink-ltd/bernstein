@@ -2,17 +2,17 @@
 
 The companion to :command:`bernstein doctor observe`. The daily
 workflow ``docs-observability-snapshot.yml`` writes one JSON file per
-day under ``docs/observability/snapshots/<YYYY-MM-DD>.json`` (the raw
-``--json`` payload from ``observe``). This script reads the last N
-days, picks the headline metric for every backend, and renders a
-Markdown document with ASCII sparklines.
+day under ``docs/_internal/observability/snapshots/<YYYY-MM-DD>.json``
+(the raw ``--json`` payload from ``observe``). This script reads the
+last N days, picks the headline metric for every backend, and renders
+a Markdown document with ASCII sparklines.
 
 The renderer is deliberately dependency-free: it uses only the Python
 standard library plus a small unicode sparkline block alphabet. Run it
 locally without any Bernstein dependency:
 
     python scripts/observability/render_trends.py \\
-        --snapshots-dir docs/observability/snapshots \\
+        --snapshots-dir docs/_internal/observability/snapshots \\
         --out docs/observability/trends.md \\
         --days 30
 """
@@ -103,7 +103,7 @@ def render_markdown(snapshots: list[tuple[dt.date, dict[str, Any]]], *, days: in
             "# Observability trends\n\n"
             "_No snapshots captured yet. The daily workflow "
             "`docs-observability-snapshot.yml` populates "
-            "`docs/observability/snapshots/<date>.json`._\n"
+            "`docs/_internal/observability/snapshots/<date>.json`._\n"
         )
 
     first = snapshots[0][0]

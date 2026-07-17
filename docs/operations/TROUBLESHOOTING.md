@@ -1,3 +1,8 @@
+---
+search:
+  boost: 2
+---
+
 # Troubleshooting Guide
 
 Comprehensive reference for diagnosing and resolving Bernstein failures.

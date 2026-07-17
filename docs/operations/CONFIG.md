@@ -1,3 +1,8 @@
+---
+search:
+  boost: 2
+---
+
 # Bernstein Configuration Reference
 
 Bernstein configuration comes from three places:

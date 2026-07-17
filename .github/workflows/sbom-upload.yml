@@ -5,7 +5,7 @@ name: SBOM upload
 # DT_API_URL and DT_API_KEY being non-empty, so the workflow stays green
 # until the operator has stood up Dependency-Track.
 #
-# See docs/operations/observability.md for the DSN / DT_API_URL flow.
+# See docs/operations/error-telemetry.md for the DSN / DT_API_URL flow.
 
 on:
   push:

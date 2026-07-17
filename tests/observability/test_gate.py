@@ -2,7 +2,7 @@
 
 Covers ``scripts/observability/gate.py`` ``detect_regressions`` over two
 in-memory snapshot payloads (the same shape ``bernstein doctor observe
---json`` writes under ``docs/observability/snapshots/``):
+--json`` writes under ``docs/_internal/observability/snapshots/``):
 
 - an ``ok -> fail`` threshold-status flip,
 - a coverage drop past the early-warning floor,

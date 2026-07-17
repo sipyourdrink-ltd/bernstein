@@ -8,7 +8,7 @@ This doc is the canonical operator guide for the error-telemetry DSN
 flow: project provisioning, DSN distribution, runtime export, and event
 verification. The env-var resolution and side-channel transport are
 documented in [`side-channel.md`](../observability/side-channel.md);
-SBOM upload is covered in [`observability.md`](./observability.md).
+SBOM upload is covered in [`error-telemetry.md`](./error-telemetry.md).
 
 ## TL;DR
 
