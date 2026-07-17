@@ -979,13 +979,17 @@ class SecretsBroker:
 
     def _verify_grant(self, grant: Any, *, task_id: str, secret_name: str) -> tuple[bool, str]:
         """Confirm ``grant`` verifies against the chain and matches the request."""
+        from bernstein.core.identity import grants as _grants
+
         if getattr(grant, "task_id", None) != task_id:
             return False, "task_mismatch"
-        if getattr(grant, "secret_name", None) != secret_name:
+        # Grant records only ever carry the digest of secret_name (never the
+        # raw backend key/env var name -- see grants.digest_secret_name), so
+        # the comparison digests the requested name the same way.
+        if getattr(grant, "secret_name", None) != _grants.digest_secret_name(secret_name):
             return False, "secret_mismatch"
         if self._grant_ledger is None:
             return False, "no_ledger"
-        from bernstein.core.identity import grants as _grants
 
         run_id = str(getattr(grant, "run_id", ""))
         grant_id = str(getattr(grant, "grant_id", ""))

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.persistence.atomic_write import write_atomic_json
 from bernstein.core.persistence.file_locks import _cross_process_lock
+from bernstein.core.security.sanitize import sanitize_log
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping
@@ -322,7 +323,15 @@ def claim_next_entry(
             if claim_filter.allows(entry):
                 entry.claim(claimer_id, now=now)
                 backlog.save()
-                logger.debug("claim_next: %s -> %s (backlog=%s)", entry.id, claimer_id, backlog_path)
+                # claimer_id is caller-supplied (it reaches here from the
+                # claim-receipt HTTP route); strip CR/LF before logging so it
+                # cannot forge additional log lines.
+                logger.debug(
+                    "claim_next: %s -> %s (backlog=%s)",
+                    entry.id,
+                    sanitize_log(claimer_id),
+                    backlog_path,
+                )
                 return entry
     return None
 

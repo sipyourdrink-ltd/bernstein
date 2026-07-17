@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -188,3 +189,45 @@ def test_backlog_claim_cli_claims_disjoint_role_filtered_tasks(tmp_path: Path) -
     assert rows[0]["claimer"] == "agent-a"
     assert rows[1]["status"] == "open"
     assert rows[2]["claimer"] == "agent-b"
+
+
+def test_claim_next_entry_sanitizes_claimer_id_in_log(tmp_path: Path, caplog) -> None:
+    """A claimer_id carrying CR/LF cannot forge extra log lines.
+
+    claimer_id reaches ``claim_next_entry`` from an HTTP request body (the
+    claim-receipt route), so it is untrusted. A value embedding newlines
+    must not be able to make the debug log line look like multiple entries.
+    """
+    backlog_path = tmp_path / "backlog.json"
+    Backlog.write(backlog_path, [BacklogEntry(id="review-1", role="reviewer")])
+
+    forged_line = "claim_next: forged -> injected (backlog=/etc/passwd)"
+    hostile_claimer = f"worker-a\n{forged_line}\r\nworker-a"
+
+    with caplog.at_level(logging.DEBUG, logger="bernstein.core.tasks.claim"):
+        claimed = claim_next_entry(backlog_path, claimer_id=hostile_claimer, filter=ClaimFilter(role="reviewer"))
+
+    assert claimed is not None
+    # The claim itself still records the raw claimer id (functional data,
+    # not a log line -- no injection risk there).
+    assert claimed.claimer == hostile_claimer
+
+    debug_records = [r for r in caplog.records if r.name == "bernstein.core.tasks.claim"]
+    assert len(debug_records) == 1
+    message = debug_records[0].getMessage()
+
+    # No real CR/LF reached the formatted message, so the attacker's payload
+    # cannot split into a second, forged log record: exactly one record was
+    # emitted, and its message is a single line.
+    assert "\n" not in message
+    assert "\r" not in message
+    assert message.splitlines() == [message]
+    assert message.startswith("claim_next: review-1 -> ")
+    # sanitize_log escapes the newlines (visible content is kept, forgeable
+    # structure is not) rather than silently dropping the value.
+    assert r"\n" in message
+    assert r"\r" in message
+    assert forged_line in message
+    # Undoing the escaping is the only way to recover a second real line --
+    # proving no *actual* second log record was produced.
+    assert message.replace(r"\n", "\n").replace(r"\r", "\r").count("\n") == 2

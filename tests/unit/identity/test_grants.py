@@ -58,7 +58,9 @@ class TestGrantIssuance:
             capability_ceiling=("read", "list"),
         )
         assert g.task_id == "t-42"
-        assert g.secret_name == "K"
+        # The persisted/returned secret_name is a digest, never the raw name.
+        assert g.secret_name == grants.digest_secret_name("K")
+        assert g.secret_name != "K"
         assert g.audience == "vault.internal"
         assert g.expiry == 1_900_000_000
         assert tuple(g.capability_ceiling) == ("list", "read")  # sorted, canonical
@@ -79,6 +81,37 @@ class TestGrantIssuance:
         assert r.kind == grants.GRANT_REFUSED
         assert r.reason == "no_grant"
         assert r.hmac
+
+    def test_persisted_record_never_contains_raw_secret_name(self, ledger) -> None:
+        """No persisted surface (JSONL entry, receipt, or report) carries the
+        raw secret name in clear text -- only its ``sha256:`` digest.
+        """
+        raw_secret = "ANTHROPIC_API_KEY_SUPER_SECRET_VALUE"
+        g = ledger.issue_grant(
+            run_id="run-1",
+            task_id="t-1",
+            secret_name=raw_secret,
+            audience="aud",
+            expiry=2_000_000_000,
+        )
+        ledger.record_exchange(run_id="run-1", grant_id=g.grant_id, token_id="brn-tok-1")
+        ledger.revoke_grant(run_id="run-1", grant_id=g.grant_id, reason="task-exit", secret_name=raw_secret)
+
+        # On-disk JSONL (the audit chain entry) never contains the raw name.
+        raw_file = ledger.receipt_path("run-1").read_text(encoding="utf-8")
+        assert raw_secret not in raw_file
+        assert grants.digest_secret_name(raw_secret) in raw_file
+
+        # Neither does the in-memory receipt returned to the caller, nor its
+        # serialized JSONL entry.
+        assert g.secret_name == grants.digest_secret_name(raw_secret)
+        assert raw_secret not in g.secret_name
+        assert raw_secret not in json.dumps(g.to_entry())
+
+        # Nor a rendered offline verification report.
+        result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        report = grants.render_report(result, run_id="run-1")
+        assert raw_secret not in report
 
 
 class TestOfflineReconstruction:

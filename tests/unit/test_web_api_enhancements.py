@@ -541,6 +541,15 @@ class TestDashboardAuth:
         assert _password_digest("secret", b"\x00" * 16) != _password_digest("secret", b"\x11" * 16)
         assert _password_digest("secret", b"\x00" * 16) == _password_digest("secret", b"\x00" * 16)
 
+    def test_password_digest_default_salt_is_drawn_fresh_per_call(self) -> None:
+        """``_password_digest`` with no explicit salt still derives from a
+        random source at the KDF call site itself, not just in a caller.
+        """
+        from bernstein.core.server.dashboard_auth import _password_digest
+
+        digests = {_password_digest("secret") for _ in range(20)}
+        assert len(digests) == 20
+
     def test_session_store_active_count(self) -> None:
         """active_count should reflect live sessions."""
         from bernstein.core.dashboard_auth import DashboardSessionStore

@@ -46,7 +46,8 @@ One JSONL line per record under ``<root>/grants/<run_id>.jsonl``::
       "kind": "grant_issued",           # issued | exchanged | revoked | refused
       "grant_id": "...",
       "task_id": "t-42",
-      "secret_name": "ANTHROPIC_API_KEY",
+      "secret_name": "sha256:<hex>",    # digest only -- the raw backend
+                                         # secret/key name is never persisted
       "audience": "api.anthropic.com",
       "expiry": 1730000900,             # epoch seconds; 0 == no explicit expiry
       "capability_ceiling": ["read"],   # sorted, canonical
@@ -88,6 +89,7 @@ __all__ = [
     "GrantReceipt",
     "GrantSigner",
     "default_ledger",
+    "digest_secret_name",
     "find_active_grant",
     "install_grant_signer",
     "render_report",
@@ -162,6 +164,23 @@ def _compute_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
     return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
 
+def digest_secret_name(secret_name: str) -> str:
+    """Return a ``sha256:<hex>`` reference for ``secret_name``, safe to persist.
+
+    The backing-store secret name (e.g. an env var or Vault path) is never
+    written to a chain record, receipt, report, or log in clear text -- only
+    this deterministic digest is. The digest is stable, so matching a grant
+    by ``(task_id, secret_name)`` still works by comparing digests; the raw
+    name itself is only ever held in memory for the duration of the call that
+    computes this digest. An empty name digests to an empty string so an
+    absent/optional ``secret_name`` stays absent rather than becoming the
+    digest of the empty string.
+    """
+    if not secret_name:
+        return ""
+    return "sha256:" + hashlib.sha256(secret_name.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Ed25519 manager signer
 # ---------------------------------------------------------------------------
@@ -209,8 +228,11 @@ class GrantSigner:
         """Return the hex Ed25519 signature over the canonical ``body``."""
         from cryptography.hazmat.primitives import serialization
 
-        key = serialization.load_pem_private_key(self._private_pem, password=None)
-        return key.sign(_canonical(body).encode()).hex()  # type: ignore[union-attr]
+        return (
+            serialization.load_pem_private_key(self._private_pem, password=None)
+            .sign(_canonical(body).encode())  # type: ignore[union-attr]
+            .hex()
+        )
 
 
 def verify_grant_signature(public_key_pem: bytes | str, body: dict[str, Any], signature_hex: str) -> bool:
@@ -391,16 +413,20 @@ class GrantLedger:
             raise GrantError(f"unknown grant record kind {kind!r}")
         prev_hmac, record_index = self._tail(run_id)
         ts = int(created if created is not None else time.time())
+        # The raw secret_name is used only transiently, right here, to derive
+        # the digest that actually gets signed and persisted; it is never
+        # itself written into `signed` (and therefore never into the chain
+        # record, the receipt, or a rendered report).
         signed = {
             "run_id": run_id,
             "record_index": record_index,
             "kind": kind,
             "grant_id": grant_id,
             "task_id": task_id,
-            "secret_name": secret_name,
+            "secret_name": digest_secret_name(secret_name),
             "audience": audience,
-            "expiry": int(expiry),
-            "capability_ceiling": sorted(str(c) for c in capability_ceiling),
+            "expiry": expiry,
+            "capability_ceiling": sorted(capability_ceiling),
             "issuer": self._signer.issuer,
             "issuer_pubkey": self._signer.public_key_pem,
             "token_id": token_id,
@@ -695,10 +721,13 @@ def find_active_grant(
     # Index the issued records so we can return the receipt itself.
     issued: dict[str, GrantReceipt] = {r.grant_id: r for r in result.records if r.kind == GRANT_ISSUED}
     best: GrantReceipt | None = None
+    # Records only ever carry the digest (see digest_secret_name), so the
+    # lookup key is digested here too rather than the raw secret name.
+    wanted_secret = digest_secret_name(secret_name)
     for grant_id, state in life.items():
         if not state["issued"] or state["revoked"]:
             continue
-        if state["task_id"] != task_id or state["secret_name"] != secret_name:
+        if state["task_id"] != task_id or state["secret_name"] != wanted_secret:
             continue
         expiry = int(state["expiry"])
         if expiry and current >= expiry:

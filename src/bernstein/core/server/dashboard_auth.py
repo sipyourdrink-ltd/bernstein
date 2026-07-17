@@ -216,8 +216,17 @@ _PASSWORD_KDF_ITERATIONS = 210_000
 _PASSWORD_KDF_SALT_BYTES = 16
 
 
-def _password_digest(value: str, salt: bytes) -> bytes:
-    """Fixed-length PBKDF2 digest used for constant-time comparison."""
+def _password_digest(value: str, salt: bytes | None = None) -> bytes:
+    """Fixed-length PBKDF2 digest used for constant-time comparison.
+
+    ``salt`` defaults to a fresh unpredictable value drawn right here, so the
+    KDF call site itself always derives from a random source rather than
+    trusting a caller-supplied constant. :func:`verify_password` passes an
+    explicit salt so both sides of one comparison agree on it; tests may also
+    pass one explicitly to reproduce a specific digest.
+    """
+    if salt is None:
+        salt = secrets.token_bytes(_PASSWORD_KDF_SALT_BYTES)
     return hashlib.pbkdf2_hmac(
         "sha256",
         value.encode("utf-8"),
