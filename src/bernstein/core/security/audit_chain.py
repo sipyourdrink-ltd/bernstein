@@ -5380,6 +5380,192 @@ def record_audit_receipt_export(
     )
 
 
+# ---------------------------------------------------------------------------
+# Cache policy engine (#2551): every hit, miss, dedup claim, and eviction is an
+# audit-chain event carrying the policy hash and recipe hash, so the fact a
+# cache decision was taken under a named policy is itself chain-attested. Only
+# hashes, identifiers, and the decision are recorded -- never prompt or output
+# payloads.
+# ---------------------------------------------------------------------------
+
+#: A policy-gated cache lookup hit a fresh, admissible entry. Records the
+#: composed key, the policy and recipe hashes, the served entry's content id,
+#: and whether the served output was verified.
+EVENT_CACHE_HIT = "cache.hit"
+
+#: A policy-gated cache lookup found no admissible entry (absent, stale, or
+#: tombstoned). Records the composed key, the policy and recipe hashes, and a
+#: machine-readable miss reason.
+EVENT_CACHE_MISS = "cache.miss"
+
+#: A fleet worker deduped onto another worker's in-flight spawn for the same
+#: cache key. Records the key, the winner, the loser, the claim position, and
+#: the duplicate-of receipt tag so the dedup is receipt-verified, not trusted.
+EVENT_CACHE_DEDUP_CLAIM = "cache.dedup_claim"
+
+#: A cache key (and everything reachable over served-from edges) was evicted.
+#: Records the root key, the reason, the tombstoned count, and the recall set
+#: size so the revocation and its blast radius are chain-attested.
+EVENT_CACHE_EVICTION = "cache.eviction"
+
+
+def record_cache_hit(
+    *,
+    chain: AuditChainStore,
+    cache_key: str,
+    policy_hash: str,
+    recipe_hash: str,
+    entry_content_id: str,
+    verified: bool,
+    actor: str = "cache_policy",
+) -> AuditEvent:
+    """Append a ``cache.hit`` event into *chain* (#2551).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        cache_key: The composed cache key (hex).
+        policy_hash: ``sha256:`` hash of the policy in force.
+        recipe_hash: ``sha256:`` hash of the composed recipe.
+        entry_content_id: ``sha256:`` content id of the served cache entry.
+        verified: Whether the served output passed the completion gate.
+        actor: Recorded actor; defaults to ``"cache_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CACHE_HIT,
+        actor=actor,
+        resource_type="cache_entry",
+        resource_id=cache_key,
+        details={
+            "cache_key": cache_key,
+            "policy_hash": policy_hash,
+            "recipe_hash": recipe_hash,
+            "entry_content_id": entry_content_id,
+            "verified": verified,
+        },
+    )
+
+
+def record_cache_miss(
+    *,
+    chain: AuditChainStore,
+    cache_key: str,
+    policy_hash: str,
+    recipe_hash: str,
+    reason: str,
+    actor: str = "cache_policy",
+) -> AuditEvent:
+    """Append a ``cache.miss`` event into *chain* (#2551).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        cache_key: The composed cache key (hex).
+        policy_hash: ``sha256:`` hash of the policy in force.
+        recipe_hash: ``sha256:`` hash of the composed recipe.
+        reason: Machine-readable miss reason (``absent`` / ``stale`` /
+            ``tombstoned`` / ``unverified``).
+        actor: Recorded actor; defaults to ``"cache_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CACHE_MISS,
+        actor=actor,
+        resource_type="cache_entry",
+        resource_id=cache_key,
+        details={
+            "cache_key": cache_key,
+            "policy_hash": policy_hash,
+            "recipe_hash": recipe_hash,
+            "reason": reason,
+        },
+    )
+
+
+def record_cache_dedup_claim(
+    *,
+    chain: AuditChainStore,
+    cache_key: str,
+    winner: str,
+    loser: str,
+    claim_position: int,
+    receipt_hmac: str,
+    policy_hash: str,
+    recipe_hash: str,
+    actor: str = "cache_policy",
+) -> AuditEvent:
+    """Append a ``cache.dedup_claim`` event into *chain* (#2551).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        cache_key: The contended cache key (hex).
+        winner: Claimer id that won the spawn.
+        loser: Claimer id that deduped.
+        claim_position: 1-based arrival order of the loser.
+        receipt_hmac: The duplicate-of receipt tag proving the dedup edge.
+        policy_hash: ``sha256:`` hash of the policy in force.
+        recipe_hash: ``sha256:`` hash of the composed recipe.
+        actor: Recorded actor; defaults to ``"cache_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CACHE_DEDUP_CLAIM,
+        actor=actor,
+        resource_type="cache_dedup",
+        resource_id=cache_key,
+        details={
+            "cache_key": cache_key,
+            "winner": winner,
+            "loser": loser,
+            "claim_position": claim_position,
+            "receipt_hmac": receipt_hmac,
+            "policy_hash": policy_hash,
+            "recipe_hash": recipe_hash,
+        },
+    )
+
+
+def record_cache_eviction(
+    *,
+    chain: AuditChainStore,
+    cache_key: str,
+    reason: str,
+    tombstoned_count: int,
+    recall_count: int,
+    actor: str = "cache_policy",
+) -> AuditEvent:
+    """Append a ``cache.eviction`` event into *chain* (#2551).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        cache_key: The evicted root key (hex).
+        reason: The operator-supplied revocation reason.
+        tombstoned_count: Number of keys tombstoned by this eviction.
+        recall_count: Number of consuming runs in the recall set.
+        actor: Recorded actor; defaults to ``"cache_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CACHE_EVICTION,
+        actor=actor,
+        resource_type="cache_entry",
+        resource_id=cache_key,
+        details={
+            "cache_key": cache_key,
+            "reason": reason,
+            "tombstoned_count": tombstoned_count,
+            "recall_count": recall_count,
+        },
+    )
+
+
 def record_sovereign_attestation(
     *,
     chain: AuditChainStore,
@@ -5490,6 +5676,10 @@ __all__ = [
     "EVENT_APPROVAL_CARD_RESOLVED",
     "EVENT_AUDIT_RECEIPT_EXPORT",
     "EVENT_AUTOMATION_ACTION",
+    "EVENT_CACHE_DEDUP_CLAIM",
+    "EVENT_CACHE_EVICTION",
+    "EVENT_CACHE_HIT",
+    "EVENT_CACHE_MISS",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
@@ -5585,6 +5775,10 @@ __all__ = [
     "record_adapter_version_posture_receipt",
     "record_audit_receipt_export",
     "record_automation_action",
+    "record_cache_dedup_claim",
+    "record_cache_eviction",
+    "record_cache_hit",
+    "record_cache_miss",
     "record_checkpoint_retry",
     "record_computer_use_action",
     "record_context_capsule",
