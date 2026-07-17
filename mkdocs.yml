@@ -306,6 +306,7 @@ nav:
       - Reliability:
           - Troubleshooting: operations/TROUBLESHOOTING.md
           - Checkpointed retries: operations/checkpointed-retries.md
+          - Durable suspend and resume: operations/durable-suspend-resume.md
           - Retry budget: operations/retry-budget.md
           - Auto-heal: operations/auto-heal.md
           - Agent crash loops: operations/agent_crash_loop.md

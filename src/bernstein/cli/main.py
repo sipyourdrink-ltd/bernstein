@@ -131,6 +131,7 @@ from bernstein.cli.task_cmd import (
     reject,
     review_cmd,
     sync,
+    task_group,
 )
 from bernstein.cli.templates_cmd import templates_group
 from bernstein.cli.triggers_cmd import triggers_group
@@ -865,6 +866,7 @@ def cli(
 
 # From task_cmd module - all registered with @click.command()
 cli.add_command(cancel)
+cli.add_command(task_group, "task")
 cli.add_command(add_task, "add-task")
 cli.add_command(sync)
 cli.add_command(review_cmd, "review")

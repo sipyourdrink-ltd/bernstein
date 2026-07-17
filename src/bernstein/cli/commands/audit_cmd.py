@@ -509,6 +509,60 @@ def verify_gates_cmd() -> None:
     raise SystemExit(0 if passed else 1)
 
 
+@audit_group.command("verify-suspension")
+@click.argument("task_id")
+@click.option("--workdir", default=".", help="Project root directory (parent of .sdd/).", type=click.Path())
+@click.option("--json", "as_json", is_flag=True, default=False, help="Print the continuity result as JSON.")
+def verify_suspension_cmd(task_id: str, workdir: str, as_json: bool) -> None:
+    """Prove a durable suspend/resume continuity offline (#2552).
+
+    \b
+    From a copied chain and the task journal alone, proves that a resumed task
+    continued from exactly the parked workspace hash -- or shows the recorded
+    fork/cold downgrade with its reason. Mutating the suspend row after the
+    fact fails journal verification at that exact chain position, and a
+    tampered receipt fails the HMAC chain. Exits non-zero on any break.
+    """
+    import json as _json
+
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.tasks.suspension import verify_suspension_continuity
+
+    sdd_dir = Path(workdir) / ".sdd"
+    chain = AuditChainStore(sdd_dir / "audit")
+    result = verify_suspension_continuity(sdd_dir=sdd_dir, task_id=task_id, chain=chain)
+
+    if as_json:
+        console.print_json(_json.dumps(result.to_dict()))
+        raise SystemExit(0 if result.ok else 1)
+
+    console.print()
+    if result.ok:
+        detail = f"continued {result.effective_mode}"
+        if result.effective_mode == "warm":
+            detail += " from the parked workspace hash"
+        elif result.downgrade_reason:
+            detail += f" ({result.downgrade_reason})"
+        console.print(
+            Panel(
+                f"[bold green]Suspension continuity verified[/bold green]\ntask [bold]{task_id}[/bold]: {detail}",
+                border_style="green",
+                expand=False,
+            )
+        )
+        raise SystemExit(0)
+    console.print(
+        Panel(
+            f"[bold red]Suspension continuity FAILED[/bold red] for task [bold]{task_id}[/bold]",
+            border_style="red",
+            expand=False,
+        )
+    )
+    for err in result.errors:
+        console.print(f"  [red]![/red] {err}")
+    raise SystemExit(1)
+
+
 @audit_group.command("verify-hmac")
 def verify_hmac_cmd() -> None:
     """Verify HMAC chain integrity across all audit log files."""

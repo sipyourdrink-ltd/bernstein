@@ -765,3 +765,288 @@ def list_tasks(status_filter: str | None, role: str | None, as_json: bool) -> No
             str(t.get("priority", 2)),
         )
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Durable suspend / resume (#2552)
+# ---------------------------------------------------------------------------
+
+
+@click.group("task")
+def task_group() -> None:
+    """Durable task lifecycle: suspend and resume long-running sessions.
+
+    A task that must wait on a human (a mid-flight approval, an external
+    review, a credential rotation, a dependency landing) can PARK: the park
+    emits an attested receipt that releases the seat, sandbox, and budget
+    envelope, and ``bernstein task resume`` restores from that receipt
+    deterministically.
+    """
+
+
+def _suspension_context(workdir: str, task_id: str) -> tuple[Path, Any, Any]:
+    """Return ``(sdd_dir, audit_chain, work_ledger)`` for a task park/resume."""
+    from bernstein.core.persistence.work_ledger import WorkLedger, run_ledger_dir
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.tasks.checkpoint_retry import task_run_id
+
+    sdd_dir = Path(workdir) / ".sdd"
+    chain = AuditChainStore(sdd_dir / "audit")
+    ledger = WorkLedger.open(run_ledger_dir(sdd_dir, task_run_id(task_id)))
+    return sdd_dir, chain, ledger
+
+
+@task_group.command("suspend")
+@click.argument("task_id")
+@click.option("--workdir", default=".", help="Project root directory (parent of .sdd/).", type=click.Path())
+@click.option("--adapter", default=None, help="Adapter owning the session (defaults to the latest checkpoint).")
+@click.option("--session-id", default=None, help="Native session id (defaults to the latest checkpoint).")
+@click.option("--worktree", default=None, help="Worktree to hash (defaults to the checkpoint worktree or cwd).")
+@click.option("--envelope", default="subscription", show_default=True, help="Quota envelope whose headroom is freed.")
+@click.option("--reserved-usd", default=0.0, type=float, help="Envelope headroom reserved for the task.")
+@click.option("--spent-usd", default=0.0, type=float, help="Spend recorded against the reservation at park time.")
+@click.option(
+    "--until",
+    "until",
+    type=click.Choice(["approval"]),
+    default=None,
+    help="Compose with the approval sentinel: resume only when 'bernstein approve <task-id>' lands.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Print the park result as JSON.")
+def task_suspend(
+    task_id: str,
+    workdir: str,
+    adapter: str | None,
+    session_id: str | None,
+    worktree: str | None,
+    envelope: str,
+    reserved_usd: float,
+    spent_usd: float,
+    until: str | None,
+    as_json: bool,
+) -> None:
+    """Durably park a running task, releasing its seat, sandbox, and budget.
+
+    The park appends a suspend row to the task journal, binds its hash into the
+    HMAC audit chain *before* any release, then returns the seat, tears down the
+    sandbox, reaps the process, and releases unspent envelope headroom -- each
+    referencing the suspend receipt hash. The SUSPENDED state is persisted to
+    the work ledger so the park survives an orchestrator restart.
+
+    \b
+    Example:
+      bernstein task suspend T-abc123 --reserved-usd 10 --spent-usd 2.5
+      bernstein task suspend T-abc123 --until approval
+    """
+    from bernstein.core.orchestration.approval_gate import write_pending_sentinel
+    from bernstein.core.tasks.checkpoint_retry import latest_checkpoint
+    from bernstein.core.tasks.models import ApprovalSpec
+    from bernstein.core.tasks.suspension import WAKE_APPROVAL, park_task
+
+    sdd_dir, chain, ledger = _suspension_context(workdir, task_id)
+
+    checkpoint = latest_checkpoint(sdd_dir, task_id)
+    if adapter is None:
+        adapter = checkpoint.adapter if checkpoint else ""
+    if session_id is None:
+        session_id = checkpoint.session_id if checkpoint else ""
+    if worktree is None:
+        worktree = checkpoint.worktree_path if checkpoint and checkpoint.worktree_path else workdir
+
+    wake_condition = WAKE_APPROVAL if until == "approval" else ""
+
+    result = park_task(
+        sdd_dir=sdd_dir,
+        task_id=task_id,
+        adapter=adapter,
+        session_id=session_id,
+        worktree_path=Path(worktree),
+        envelope=envelope,
+        reserved_usd=reserved_usd,
+        spent_usd=spent_usd,
+        chain=chain,
+        ledger=ledger,
+        wake_condition=wake_condition,
+    )
+
+    if wake_condition == WAKE_APPROVAL:
+        write_pending_sentinel(
+            Path(workdir),
+            task_id,
+            ApprovalSpec(prompt=f"Resume parked task {task_id}?"),
+        )
+
+    released = {resource: detail for resource, detail in result.release.rows}
+    payload: dict[str, Any] = {
+        "task_id": task_id,
+        "status": "suspended",
+        "suspend_event_hash": result.suspend_row.event_hash,
+        "suspend_receipt_hash": result.suspend_receipt_hash,
+        "workspace_hash": result.suspend_row.workspace_hash,
+        "released_usd": result.release.released_usd,
+        "released_resources": sorted(released),
+        "wake_condition": wake_condition,
+        "ledger_entry_hash": result.ledger_entry_hash,
+    }
+    if as_json:
+        print_json(payload)
+        return
+    console.print(f"[green]Suspended:[/green] task [bold]{task_id}[/bold]")
+    console.print(f"[dim]parked-at:[/dim] {result.suspend_row.event_hash[:16]}")
+    console.print(f"[dim]receipt:[/dim] {result.suspend_receipt_hash[:16]}")
+    console.print(f"[dim]released:[/dim] {', '.join(sorted(released))} (${result.release.released_usd:.4f} headroom)")
+    if wake_condition == WAKE_APPROVAL:
+        console.print(f"[cyan]Wake gate:[/cyan] run 'bernstein approve {task_id}' to resume.")
+
+
+@task_group.command("resume")
+@click.argument("task_id")
+@click.option("--workdir", default=".", help="Project root directory (parent of .sdd/).", type=click.Path())
+@click.option("--worktree", default=None, help="Re-materialized worktree to hash (defaults to the parked path).")
+@click.option(
+    "--mode",
+    type=click.Choice(["warm", "fork", "cold"]),
+    default="warm",
+    show_default=True,
+    help="Requested continuation mode; downgraded (never upgraded) on drift.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Print the resume result as JSON.")
+def task_resume(task_id: str, workdir: str, worktree: str | None, mode: str, as_json: bool) -> None:
+    """Durably resume a parked task from its attested suspend receipt.
+
+    Reads the latest verified suspend row, re-derives the continuation mode
+    deterministically (warm when the workspace hash still matches, otherwise a
+    recorded fork/cold downgrade), and records the resume receipt binding the
+    suspend receipt it continued from. When the park was '--until approval' the
+    resume refuses until 'bernstein approve <task-id>' has landed its decision.
+
+    \b
+    Example:
+      bernstein task resume T-abc123
+    """
+    from bernstein.core.security.audit_chain import EVENT_TASK_SUSPENDED
+    from bernstein.core.tasks.suspension import (
+        WAKE_APPROVAL,
+        approval_decision_ref,
+        latest_suspension,
+        resume_task,
+        write_resume_marker,
+    )
+
+    sdd_dir, chain, ledger = _suspension_context(workdir, task_id)
+
+    suspend_row = latest_suspension(sdd_dir, task_id)
+    if suspend_row is None:
+        console.print(f"[red]No verified suspension found for task[/red] [bold]{task_id}[/bold].")
+        raise SystemExit(1)
+
+    approval_ref = ""
+    if suspend_row.wake_condition == WAKE_APPROVAL:
+        approval_ref = approval_decision_ref(Path(workdir), task_id)
+        if not approval_ref:
+            console.print(f"[yellow]Parked until approval:[/yellow] run 'bernstein approve {task_id}' before resuming.")
+            raise SystemExit(1)
+
+    # The suspend receipt hash is the identity bound at park time; recover it
+    # from the audit chain so the resume references exactly that receipt.
+    suspend_events = [e for e in chain.query(event_type=EVENT_TASK_SUSPENDED) if e.details.get("task_id") == task_id]
+    suspend_receipt_hash = suspend_events[-1].hmac if suspend_events else ""
+
+    new_worktree = Path(worktree) if worktree else Path(suspend_row.worktree_path or workdir)
+    result = resume_task(
+        sdd_dir=sdd_dir,
+        suspend_row=suspend_row,
+        new_worktree_path=new_worktree,
+        chain=chain,
+        suspend_receipt_hash=suspend_receipt_hash,
+        requested_mode=mode,
+        ledger=ledger,
+        approval_ref=approval_ref,
+    )
+    if approval_ref:
+        write_resume_marker(Path(workdir), task_id, result.resume_receipt_hash)
+
+    payload: dict[str, Any] = {
+        "task_id": task_id,
+        "status": "resumed",
+        "effective_mode": str(result.decision.effective_mode),
+        "requested_mode": str(result.decision.requested_mode),
+        "workspace_match": result.decision.workspace_match,
+        "downgrade_reason": result.decision.downgrade_reason,
+        "decision_hash": result.decision.decision_hash,
+        "continued_from": suspend_row.event_hash,
+        "resume_receipt_hash": result.resume_receipt_hash,
+        "approval_ref": approval_ref,
+    }
+    if as_json:
+        print_json(payload)
+        return
+    mode_str = str(result.decision.effective_mode)
+    console.print(f"[green]Resumed:[/green] task [bold]{task_id}[/bold] ([bold]{mode_str}[/bold])")
+    if result.decision.downgrade_reason:
+        console.print(f"[yellow]downgrade:[/yellow] {result.decision.downgrade_reason}")
+    console.print(f"[dim]continued-from:[/dim] {suspend_row.event_hash[:16]}")
+    console.print(f"[dim]decision:[/dim] {result.decision.decision_hash[:16]}")
+
+
+@task_group.command("list-suspended")
+@click.option("--workdir", default=".", help="Project root directory (parent of .sdd/).", type=click.Path())
+@click.option("--json", "as_json", is_flag=True, default=False, help="Print the parked tasks as JSON.")
+def task_list_suspended(workdir: str, as_json: bool) -> None:
+    """List durably-parked tasks with their parked-at hash and freed resources.
+
+    Reads every per-task work ledger under ``.sdd/runtime/ledger`` and surfaces
+    the tasks whose latest transition is ``task.suspended``, joined with the
+    released headroom and the parked-at journal hash from the suspend row.
+    """
+    from bernstein.core.persistence.work_ledger import (
+        LedgerReader,
+        default_ledger_root,
+        replay_state,
+    )
+    from bernstein.core.tasks.suspension import latest_suspension
+
+    sdd_dir = Path(workdir) / ".sdd"
+    ledger_root = default_ledger_root(sdd_dir)
+
+    parked: list[dict[str, Any]] = []
+    for run_dir in sorted(p for p in ledger_root.iterdir() if p.is_dir()) if ledger_root.exists() else []:
+        reader = LedgerReader(run_dir)
+        if not reader.exists():
+            continue
+        state = replay_state(reader.entries())
+        for task_id in state.suspended_tasks:
+            row = latest_suspension(sdd_dir, task_id)
+            parked.append(
+                {
+                    "task_id": task_id,
+                    "parked_at": row.event_hash if row else "",
+                    "workspace_hash": row.workspace_hash if row else "",
+                    "released_usd": row.released_usd if row else 0.0,
+                    "wake_condition": row.wake_condition if row else "",
+                }
+            )
+
+    if as_json:
+        print_json({"suspended": parked})
+        return
+    if not parked:
+        console.print("[dim]No suspended tasks.[/dim]")
+        return
+
+    from rich.table import Table
+
+    table = Table(show_lines=False, header_style="bold cyan")
+    table.add_column("Task", style="dim", min_width=10)
+    table.add_column("Parked-at", min_width=18)
+    table.add_column("Released $", justify="right")
+    table.add_column("Wake", min_width=8)
+    for entry in parked:
+        wake = str(entry["wake_condition"]) or "operator"
+        table.add_row(
+            str(entry["task_id"]),
+            str(entry["parked_at"])[:16],
+            f"{float(entry['released_usd']):.4f}",
+            wake,
+        )
+    console.print(table)
