@@ -239,6 +239,62 @@ def _truncate(text: str, limit: int) -> str:
     return flattened[: limit - 1] + "…"
 
 
+def _seal_recipe_refusal(spec: Any, overrides: dict[str, str], exc: Exception) -> str:
+    """Seal a signed, chain-anchored refusal for a bad recipe launch (#2545).
+
+    Best-effort: re-runs the operator overrides through the shared param
+    contract to recover the JSONPath of the offending field, then anchors a
+    signed :class:`InputRefusalReceipt` into the project audit chain. Returns
+    the receipt hash, or ``""`` when no chain / identity could be resolved.
+    """
+    try:
+        from bernstein.core.lineage.identity import load_or_create_signing_identity
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import AuditChainStore
+        from bernstein.core.security.input_refusal import BOUNDARY_RECIPE_LAUNCH, refuse_input
+        from bernstein.core.tasks.param_contract import ParamContract, ParamContractViolation
+
+        schema = [p.model_dump() if hasattr(p, "model_dump") else dict(p) for p in getattr(spec, "params", [])]
+        contract = ParamContract.from_schema(schema)
+        json_path = "$.params"
+        schema_hash = contract.schema_hash()
+        value_dig = ""
+        reason_code = "invalid"
+        try:
+            contract.validate_and_coerce(overrides)
+        except ParamContractViolation as violation:
+            json_path = violation.json_path
+            schema_hash = violation.schema_hash
+            value_dig = violation.value_digest
+            reason_code = violation.reason_code
+
+        sdd_dir = Path.cwd() / ".sdd"
+        chain = AuditChainStore(sdd_dir / "audit", key=load_or_create_audit_key())
+        priv, pub = load_or_create_signing_identity(
+            sdd_dir / "identity",
+            private_name="input_refusal.pem",
+            public_name="input_refusal.pub",
+        )
+        receipt = refuse_input(
+            chain=chain,
+            sdd_dir=sdd_dir,
+            boundary=BOUNDARY_RECIPE_LAUNCH,
+            resource_id=str(getattr(spec, "name", "")),
+            json_path=json_path,
+            schema_hash=schema_hash,
+            value_digest=value_dig,
+            reason_code=reason_code,
+            message=str(exc),
+            private_key_pem=priv,
+            public_key_pem=pub,
+        )
+        return receipt.receipt_hash()
+    except Exception:
+        # A refusal receipt is a best-effort audit artefact; never let sealing
+        # it mask the original operator-input error (still exits 1 downstream).
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
@@ -311,7 +367,14 @@ def run_cmd(
         overrides = parse_param_overrides(params)
         resolved = spec.resolve_params(overrides)
     except RecipeParamError as exc:
+        # #2545: a launch whose params fail the declared contract is not a bare
+        # exit 1 -- it seals a signed, chain-anchored refusal receipt so the
+        # refused launch is an auditable artefact rather than a vanished exit
+        # code. Rejection happens before any workflow runner spawns.
+        receipt_hash = _seal_recipe_refusal(spec, overrides, exc)
         console.print(f"[bold red]Invalid --param:[/bold red] {exc}")
+        if receipt_hash:
+            console.print(f"[dim]refusal receipt: {receipt_hash}[/dim]")
         raise SystemExit(1) from exc
 
     # --- render workflow ----------------------------------------------------

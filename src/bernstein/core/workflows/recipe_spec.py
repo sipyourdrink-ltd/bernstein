@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,6 +51,10 @@ if TYPE_CHECKING:
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from bernstein.core.tasks.param_contract import ParamType as ParamType
+from bernstein.core.tasks.param_contract import (
+    coerce_value as _shared_coerce_value,
+)
 from bernstein.core.workflows.workflow_spec import (
     WorkflowSpec,
     WorkflowSpecError,
@@ -65,9 +69,10 @@ from bernstein.core.workflows.workflow_spec import (
 # trip through YAML keys and CLI flags without escaping.
 _PARAM_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
-# The set of supported scalar types.  Kept small on purpose: recipes are
-# operator-facing, not a general-purpose templating engine.
-ParamType = Literal["string", "int", "float", "bool"]
+# The scalar type vocabulary is owned by
+# :mod:`bernstein.core.tasks.param_contract` and re-exported above so recipes
+# and schedules (#2545) share one declaration.  Kept small on purpose: recipes
+# are operator-facing, not a general-purpose templating engine.
 
 
 class RecipeParam(BaseModel):
@@ -157,6 +162,11 @@ class RecipeParamError(ValueError):
 def _coerce_value(raw: str, type_: ParamType) -> str | int | float | bool:
     """Coerce a raw CLI string into the parameter's declared scalar type.
 
+    Delegates to the shared
+    :func:`bernstein.core.tasks.param_contract.coerce_value` (the extracted
+    vocabulary) and re-raises coercion failures as :class:`RecipeParamError` so
+    the recipe layer's exit-code mapping and messages stay byte-identical.
+
     Args:
         raw: Raw string value as it appeared on the command line.
         type_: Declared parameter type.
@@ -168,26 +178,10 @@ def _coerce_value(raw: str, type_: ParamType) -> str | int | float | bool:
         RecipeParamError: When ``raw`` does not parse as the declared
             type.  Bool accepts the usual truthy / falsy spellings.
     """
-    if type_ == "string":
-        return raw
-    if type_ == "int":
-        try:
-            return int(raw)
-        except ValueError as exc:
-            raise RecipeParamError(f"expected int, got {raw!r}") from exc
-    if type_ == "float":
-        try:
-            return float(raw)
-        except ValueError as exc:
-            raise RecipeParamError(f"expected float, got {raw!r}") from exc
-    if type_ == "bool":
-        lowered = raw.strip().lower()
-        if lowered in {"true", "1", "yes", "y", "on"}:
-            return True
-        if lowered in {"false", "0", "no", "n", "off"}:
-            return False
-        raise RecipeParamError(f"expected bool, got {raw!r}")
-    raise RecipeParamError(f"unsupported type {type_!r}")  # pragma: no cover
+    try:
+        return _shared_coerce_value(raw, type_)
+    except ValueError as exc:
+        raise RecipeParamError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

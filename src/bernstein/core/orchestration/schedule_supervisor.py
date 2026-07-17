@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from bernstein.core.orchestration.schedule_projection import (
+    SCHEDULE_PROJECTION_REV,
     ProjectionResult,
     project_schedule_fire,
 )
@@ -165,6 +166,14 @@ class FireReceipt:
     counterfactual: bool = False
     goal: str = ""
     scenario_id: str = ""
+    # #2545 -- input-contract fields. ``params_hash`` is the validated-param
+    # content hash folded into the projection; ``refused`` marks a fire the
+    # supervisor refused before any dispatch because its params failed their
+    # declared contract, with the refusal receipt's identity recorded here.
+    params_hash: str = ""
+    refused: bool = False
+    refusal_json_path: str = ""
+    refusal_receipt_hash: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +264,8 @@ class ScheduleSupervisor:
         *,
         catch_up_limit: int = DEFAULT_CATCH_UP_LIMIT,
         record_fire_projection: bool = True,
+        refusal_chain: Any | None = None,
+        install_identity: tuple[str, str] | None = None,
     ) -> None:
         self._store = store
         self._dispatch = dispatch
@@ -265,6 +276,13 @@ class ScheduleSupervisor:
         self._receipts_dir.mkdir(parents=True, exist_ok=True)
         self._last_tick_at = 0.0
         self._last_fire_at = 0.0
+        # #2545 -- input contract. The refusal chain and install identity are
+        # resolved lazily from the store's ``.sdd`` directory when a
+        # params-declaring schedule first fires, so params-less schedules pay
+        # nothing and existing wiring keeps working unchanged. Tests inject
+        # both to keep the boundary hermetic.
+        self._refusal_chain = refusal_chain
+        self._install_identity = install_identity
 
     # -- Public API ---------------------------------------------------------
 
@@ -434,6 +452,118 @@ class ScheduleSupervisor:
             return "", ""
         return raw, profile_sha
 
+    def _input_contract_deps(self) -> tuple[Any, str, str] | None:
+        """Lazily resolve ``(refusal_chain, private_pem, public_pem)`` or None.
+
+        Built from the store's ``.sdd`` directory on first use so a
+        params-declaring schedule seals its refusal into the canonical audit
+        chain signed with the install identity. Returns None only when neither
+        an injected dependency nor an on-disk ``.sdd`` directory is available,
+        in which case a params fire is still refused (fail-closed) but without a
+        chain-anchored receipt.
+        """
+        chain = self._refusal_chain
+        identity = self._install_identity
+        if chain is not None and identity is not None:
+            return chain, identity[0], identity[1]
+        sdd_dir = getattr(self._store, "sdd_dir", None)
+        if sdd_dir is None:
+            return None
+        try:
+            from bernstein.core.lineage.identity import load_or_create_signing_identity
+            from bernstein.core.security.audit import load_or_create_audit_key
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            if chain is None:
+                chain = AuditChainStore(sdd_dir / "audit", key=load_or_create_audit_key())
+                self._refusal_chain = chain
+            if identity is None:
+                identity = load_or_create_signing_identity(
+                    sdd_dir / "identity",
+                    private_name="input_refusal.pem",
+                    public_name="input_refusal.pub",
+                )
+                self._install_identity = identity
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Could not resolve input-contract deps for %s", self._store)
+            return None
+        return chain, identity[0], identity[1]
+
+    def _validate_fire_params(self, schedule: Schedule, fire_epoch: int) -> tuple[str, FireReceipt | None]:
+        """Validate a schedule's params at fire time (#2545).
+
+        Returns ``(params_hash, refusal_receipt_or_None)``. A params-less
+        schedule returns ``("", None)`` and stays byte-identical to a pre-#2545
+        fire. A params fire whose values satisfy the declared contract returns
+        the validated content hash to fold into the projection. A params fire
+        that fails its contract returns a refused :class:`FireReceipt` and NO
+        params hash; the caller must not dispatch, so the malformed fire costs
+        zero adapter spawns and zero tokens.
+        """
+        if not schedule.params_schema and not schedule.params:
+            return "", None
+
+        from bernstein.core.tasks.param_contract import ParamContract, ParamContractViolation
+
+        contract = ParamContract.from_schema(schedule.params_schema)
+        try:
+            validated = contract.validate_and_coerce(schedule.params)
+        except ParamContractViolation as violation:
+            receipt = self._refuse_fire(schedule, fire_epoch, violation)
+            return "", receipt
+        return contract.params_hash(validated), None
+
+    def _refuse_fire(self, schedule: Schedule, fire_epoch: int, violation: Any) -> FireReceipt:
+        """Seal a signed refusal receipt for a malformed fire and persist it."""
+        from bernstein.core.security.input_refusal import BOUNDARY_SCHEDULE_FIRE, refuse_input
+
+        receipt_hash = ""
+        deps = self._input_contract_deps()
+        if deps is not None:
+            chain, priv, pub = deps
+            sdd_dir = getattr(self._store, "sdd_dir", None)
+            try:
+                receipt = refuse_input(
+                    chain=chain,
+                    sdd_dir=sdd_dir,
+                    boundary=BOUNDARY_SCHEDULE_FIRE,
+                    resource_id=schedule.id,
+                    json_path=violation.json_path,
+                    schema_hash=violation.schema_hash,
+                    value_digest=violation.value_digest,
+                    reason_code=violation.reason_code,
+                    message=str(violation),
+                    private_key_pem=priv,
+                    public_key_pem=pub,
+                    refused_at=fire_epoch,
+                )
+                receipt_hash = receipt.receipt_hash()
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Could not seal refusal receipt for schedule %s", schedule.id)
+        else:
+            logger.warning(
+                "Schedule %s params failed validation but no audit chain is available to seal a receipt", schedule.id
+            )
+
+        logger.warning("Refused malformed fire for schedule %s: %s", schedule.id, violation)
+        refused = FireReceipt(
+            schedule_id=schedule.id,
+            fire_time=fire_epoch,
+            projection_hash="",
+            rev=SCHEDULE_PROJECTION_REV,
+            prev_chain_digest=self._chain.chain_tail if self._chain is not None else "",
+            chain_digest="",
+            misfire_policy=schedule.misfire_policy,
+            dispatched=False,
+            goal=schedule.goal,
+            scenario_id=schedule.scenario_id,
+            refused=True,
+            refusal_json_path=str(getattr(violation, "json_path", "")),
+            refusal_receipt_hash=receipt_hash,
+        )
+        self._persist_receipt(refused)
+        return refused
+
     def _fire(
         self,
         schedule: Schedule,
@@ -441,7 +571,17 @@ class ScheduleSupervisor:
         *,
         counterfactual: bool,
     ) -> FireReceipt:
-        """Build the projection, dispatch the trigger event, and chain it."""
+        """Build the projection, dispatch the trigger event, and chain it.
+
+        A parameterized schedule is validated first (#2545): a malformed fire is
+        refused with a signed receipt and returns before any projection or
+        dispatch, so it costs zero adapter spawns. A valid fire folds the
+        validated params hash into the deterministic projection.
+        """
+        params_hash, refusal = self._validate_fire_params(schedule, fire_epoch)
+        if refusal is not None:
+            return refusal
+
         response_profile, profile_sha = self._resolve_response_profile(schedule)
         projection = project_schedule_fire(
             schedule_id=schedule.id,
@@ -451,6 +591,7 @@ class ScheduleSupervisor:
             scenario_id=schedule.scenario_id,
             response_profile=response_profile,
             profile_content_sha256=profile_sha,
+            params_hash=params_hash,
         )
 
         prev_chain = self._chain.chain_tail if self._chain is not None else ""
@@ -493,6 +634,7 @@ class ScheduleSupervisor:
             counterfactual=counterfactual,
             goal=schedule.goal,
             scenario_id=schedule.scenario_id,
+            params_hash=params_hash,
         )
         self._persist_receipt(receipt)
         return receipt

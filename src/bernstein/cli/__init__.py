@@ -40,6 +40,7 @@ _CLI_REDIRECT_MAP: dict[str, str] = {
     "compliance_cmd": "bernstein.cli.commands.compliance_cmd",
     "config_diff_cli": "bernstein.cli.commands.config_diff_cli",
     "config_path_cmd": "bernstein.cli.commands.config_path_cmd",
+    "context_cmd": "bernstein.cli.commands.context_cmd",
     "contextual_help": "bernstein.cli.utils.contextual_help",
     "conversation_inspector": "bernstein.cli.display.conversation_inspector",
     "cost": "bernstein.cli.commands.cost",

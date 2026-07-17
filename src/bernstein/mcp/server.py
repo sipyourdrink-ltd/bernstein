@@ -503,6 +503,70 @@ def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
             return _error_response(exc, hint="Run journal not found")
 
 
+def _register_context_tool(mcp: FastMCP[None]) -> None:
+    """Register the ``bernstein_context`` capsule tool (#2545).
+
+    A spawned worker reads one signed, chain-anchored answer to "what was I
+    given" -- task id, run id, params hash, worktree, role, budget envelope
+    remaining, dependency state, and the audit-chain head at spawn -- instead of
+    piecing it together from scattered env vars. The tool is served through the
+    same deny-by-default input firewall as every other MCP tool.
+    """
+
+    @mcp.tool()
+    async def bernstein_context(  # pyright: ignore[reportUnusedFunction]
+        task_id: str,
+        workdir: str = ".",
+        verify: bool = False,
+    ) -> str:
+        """Return the worker's context capsule, optionally verified offline.
+
+        Args:
+            task_id: The task whose capsule to read. Must be a plain
+                identifier - path separators and traversal are refused.
+            workdir: Project root directory (default: current directory).
+            verify: When true, recompute the capsule offline from the run
+                journal and audit chain and include the verdict.
+
+        Returns:
+            JSON of the capsule projection (and, when ``verify`` is set, the
+            offline verification result). A mock-layer fixture is reported as
+            such and never verifies as real.
+        """
+        err = _validate_or_error("bernstein_context", {"task_id": task_id, "workdir": workdir, "verify": verify})
+        if err is not None:
+            return _validation_error_response(err)
+        try:
+            from bernstein.core.agents.context_capsule import (
+                project_capsule,
+                read_capsule_record,
+                verify_context_capsule,
+            )
+            from bernstein.core.security.audit import load_or_create_audit_key
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            base = Path(workdir).resolve()
+            sdd_dir = base / ".sdd"
+            signed = read_capsule_record(sdd_dir, task_id)
+            if signed is None:
+                return _error_response(ValueError(f"no context capsule for task {task_id}"), hint="Capsule not found")
+            body: dict[str, Any] = {"capsule": project_capsule(signed)}
+            if verify:
+                chain = AuditChainStore(sdd_dir / "audit", key=load_or_create_audit_key())
+                result = verify_context_capsule(sdd_dir=sdd_dir, chain=chain, task_id=task_id)
+                body["verify"] = {
+                    "ok": result.ok,
+                    "reason": result.reason,
+                    "is_mock": result.is_mock,
+                    "signature_ok": result.signature_ok,
+                    "chain_ok": result.chain_ok,
+                    "journal_ok": result.journal_ok,
+                }
+            return json.dumps(body, indent=2)
+        except Exception as exc:
+            return _error_response(exc, hint="Context capsule not found")
+
+
 def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
     """Register mutation tools: stop, approve, create_subtask, claim, update."""
 
@@ -1073,6 +1137,7 @@ def create_mcp_server(
     _register_query_tools(mcp, server_url)
     _register_action_tools(mcp, server_url)
     _register_task_handle_tool(mcp)
+    _register_context_tool(mcp)
     _register_skill_tools(mcp)
     _register_tasks_extension(mcp, server_url)
     # rt-003: scenario <-> Routine bridge tools.

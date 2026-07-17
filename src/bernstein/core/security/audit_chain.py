@@ -640,6 +640,32 @@ EVENT_APPROVAL_CARD_RESOLVED = "chat.approval_card.resolved"
 #: alone, that a stale or tampered decision was contained and never executed.
 EVENT_APPROVAL_CARD_REFUSED = "chat.approval_card.refused"
 
+#: Issue #2545 -- emitted whenever an input boundary (schedule fire, recipe
+#: launch, MCP ``bernstein_run`` / ``bernstein_scenario`` call, or task-server
+#: claim) refuses a parameter that fails its declared contract. The event binds
+#: the signed refusal receipt's identity into the HMAC chain: the offending
+#: field's JSONPath, the declared schema hash, a digest of the rejected value
+#: (raw bytes never stored), the boundary, and the content hash of the sealed
+#: receipt. Rejection happens strictly before any adapter or model invocation,
+#: so a contiguous chain slice proves offline that a malformed fire was refused
+#: at zero spend -- and a mutated receipt is caught because the chain pins its
+#: content hash. Strip the chain and the receipt degrades to a logged
+#: validation error; with them the refusal is the tamper-evident proof artefact.
+EVENT_INPUT_REFUSAL = "input.refusal_receipt"
+
+#: Issue #2545 -- emitted once per spawned worker whose runtime context capsule
+#: is sealed. The capsule is a content-addressed, Ed25519-signed record of what
+#: the worker was given (task id, run id, params hash, worktree, role, budget
+#: envelope remaining, dependency state, and the audit chain head at spawn, plus
+#: the intent capsule hash when one exists). This event mirrors ``{task_id,
+#: run_id, params_hash, capsule_hash, audit_chain_head, intent_capsule_hash}``
+#: into the HMAC chain so a verifier holding only the journal and the chain can
+#: recompute the capsule byte-identically at the recorded chain position; a
+#: context divergence (different params, budget, or chain head than asserted) is
+#: caught as a hash mismatch. Only hashes and identifiers are recorded -- never
+#: prompt or budget content.
+EVENT_CONTEXT_CAPSULE = "context.capsule"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2070,6 +2096,106 @@ def record_intent_capsule(
             "goal_digest": goal_digest,
             "allowed_action_classes_hash": allowed_action_classes_hash,
             "expiry_ts": expiry_ts,
+        },
+    )
+
+
+def record_input_refusal(
+    *,
+    chain: AuditChainStore,
+    boundary: str,
+    json_path: str,
+    schema_hash: str,
+    value_digest: str,
+    receipt_hash: str,
+    resource_id: str,
+    reason_code: str = "invalid",
+    actor: str = "input_contract",
+) -> AuditEvent:
+    """Append an ``input.refusal_receipt`` event into *chain* (#2545).
+
+    Anchors a signed input-refusal receipt into the HMAC chain so a malformed
+    fire / claim / launch refused before any spawn is provable offline. Only
+    the offending field's JSONPath, the declared schema hash, a digest of the
+    rejected value (never the raw bytes), the boundary, the reason code, and the
+    sealed receipt's content hash are recorded.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        boundary: The input boundary that refused (e.g. ``schedule.fire``).
+        json_path: JSONPath of the offending field (``$.params.<name>``).
+        schema_hash: ``sha256:`` hash of the declared parameter schema.
+        value_digest: ``sha256:`` digest of the rejected value (or ``""``).
+        receipt_hash: ``sha256:`` content hash of the sealed refusal receipt.
+        resource_id: The refused resource (schedule id, recipe name, task id).
+        reason_code: Machine-stable reason (``bad_type``, ``missing_required``,
+            ``unknown_param``, ``bad_choice``).
+        actor: Recorded actor; defaults to ``"input_contract"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_INPUT_REFUSAL,
+        actor=actor,
+        resource_type="input_refusal",
+        resource_id=receipt_hash,
+        details={
+            "boundary": boundary,
+            "json_path": json_path,
+            "schema_hash": schema_hash,
+            "value_digest": value_digest,
+            "receipt_hash": receipt_hash,
+            "resource_id": resource_id,
+            "reason_code": reason_code,
+        },
+    )
+
+
+def record_context_capsule(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    run_id: str,
+    params_hash: str,
+    capsule_hash: str,
+    audit_chain_head: str,
+    intent_capsule_hash: str = "",
+    actor: str = "context_capsule",
+) -> AuditEvent:
+    """Append a ``context.capsule`` event into *chain* (#2545).
+
+    Mirrors a spawned worker's runtime context capsule identity into the HMAC
+    chain so a verifier holding only the journal and the chain can recompute the
+    capsule byte-identically at the recorded chain position. Only hashes and
+    identifiers are recorded.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task the capsule was built for.
+        run_id: The run whose journal the capsule hash is bound into.
+        params_hash: ``sha256:`` hash of the validated parameter map (same value
+            the spawn record and journal carry).
+        capsule_hash: ``sha256:`` content hash of the canonical capsule bytes.
+        audit_chain_head: The chain head the capsule pinned at spawn.
+        intent_capsule_hash: The #2514 intent capsule hash when one exists.
+        actor: Recorded actor; defaults to ``"context_capsule"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CONTEXT_CAPSULE,
+        actor=actor,
+        resource_type="context_capsule",
+        resource_id=capsule_hash,
+        details={
+            "task_id": task_id,
+            "run_id": run_id,
+            "params_hash": params_hash,
+            "capsule_hash": capsule_hash,
+            "audit_chain_head": audit_chain_head,
+            "intent_capsule_hash": intent_capsule_hash,
         },
     )
 
@@ -4345,6 +4471,7 @@ __all__ = [
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
+    "EVENT_CONTEXT_CAPSULE",
     "EVENT_COST_BATCH_ROUTE",
     "EVENT_COST_DISPATCH_RECEIPT",
     "EVENT_COST_PROFILE_REPORT",
@@ -4360,6 +4487,7 @@ __all__ = [
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
+    "EVENT_INPUT_REFUSAL",
     "EVENT_INTENT_CAPSULE",
     "EVENT_INTENT_DRIFT",
     "EVENT_MANDATE_CONSENT_RECEIPT",
@@ -4419,6 +4547,7 @@ __all__ = [
     "record_adapter_version_posture_receipt",
     "record_automation_action",
     "record_checkpoint_retry",
+    "record_context_capsule",
     "record_cost_batch_route",
     "record_cost_dispatch_receipt",
     "record_cost_profile_report",
@@ -4433,6 +4562,7 @@ __all__ = [
     "record_fork_snapshot",
     "record_gate_adjudication",
     "record_governance_decision",
+    "record_input_refusal",
     "record_intent_capsule",
     "record_intent_drift",
     "record_mandate_consent_receipt",

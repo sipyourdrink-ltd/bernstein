@@ -62,6 +62,12 @@ class Schedule:
         created_at: Unix epoch when the schedule was registered.
         last_fire_at: Unix epoch of the last successful fire, or 0 if the
             schedule has not fired since registration.
+        params_schema: Optional typed parameter declarations (#2545) - a list
+            of :class:`bernstein.core.tasks.param_contract.ParamSpec` schema
+            dicts. Empty (the default, and every pre-#2545 schedule) keeps the
+            schedule id and projection byte-identical to prior revs.
+        params: Operator-supplied raw parameter values validated and coerced
+            against ``params_schema`` at fire time. Empty by default.
     """
 
     id: str
@@ -72,6 +78,8 @@ class Schedule:
     created_at: float = 0.0
     last_fire_at: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
+    params_schema: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    params: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 class CronParseError(ValueError):
@@ -258,18 +266,30 @@ def validate_cron(expression: str) -> None:
 _GOAL_PATTERN = re.compile(r"[\r\n\t]+")
 
 
-def _canonical_schedule_id(cron: str, goal: str, scenario_id: str) -> str:
-    """Derive a stable schedule id from the canonical (cron, goal, scenario) tuple.
+def _canonical_schedule_id(
+    cron: str,
+    goal: str,
+    scenario_id: str,
+    params_schema: list[dict[str, Any]] | None = None,
+    params: dict[str, Any] | None = None,
+) -> str:
+    """Derive a stable schedule id from the canonical schedule body.
 
-    Equal triples land on the same id so reapplying ``schedule add`` from
+    Equal bodies land on the same id so reapplying ``schedule add`` from
     configuration is idempotent. The hex length is intentionally short
     (12 chars) so the id stays grep-friendly while keeping collision
     probability low for the operator's catalog.
+
+    The parameter block (#2545) is folded into the id ONLY when non-empty, so a
+    schedule without params keeps the exact id it had before params existed
+    (AC5); two schedules that differ only in their params get distinct ids.
     """
-    canonical = json.dumps(
-        {"cron": cron.strip(), "goal": goal.strip(), "scenario_id": scenario_id.strip()},
-        sort_keys=True,
-    )
+    body: dict[str, Any] = {"cron": cron.strip(), "goal": goal.strip(), "scenario_id": scenario_id.strip()}
+    if params_schema:
+        body["params_schema"] = params_schema
+    if params:
+        body["params"] = params
+    canonical = json.dumps(body, sort_keys=True)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
     return f"{_SCHEDULE_ID_PREFIX}{digest[:_SCHEDULE_ID_HEX_LEN]}"
 
@@ -323,6 +343,8 @@ class ScheduleStore:
         goal: str = "",
         scenario_id: str = "",
         misfire_policy: MisfirePolicy = "skip",
+        params_schema: list[dict[str, Any]] | None = None,
+        params: dict[str, Any] | None = None,
         now: float | None = None,
     ) -> Schedule:
         """Register a schedule.
@@ -333,13 +355,19 @@ class ScheduleStore:
                 NOT required - both may be set).
             scenario_id: Named scenario id.
             misfire_policy: ``"skip"`` (default) or ``"catch_up"``.
+            params_schema: Optional typed parameter declarations (#2545). When
+                provided, the declared ``params`` are validated and coerced at
+                registration time so a malformed default cannot be stored.
+            params: Optional raw parameter values checked against
+                ``params_schema``.
             now: Optional override for the creation timestamp (test
                 determinism). Defaults to ``time.time()``.
 
         Raises:
             CronParseError: When the cron expression is malformed.
-            ValueError: When neither goal nor scenario_id is set, or when
-                a stored value exceeds its length cap.
+            ValueError: When neither goal nor scenario_id is set, when a stored
+                value exceeds its length cap, or when the declared params fail
+                their own schema.
         """
         validate_cron(cron)
         clean_goal = _sanitize_goal(goal)
@@ -349,7 +377,21 @@ class ScheduleStore:
         if misfire_policy not in ("skip", "catch_up"):
             raise ValueError(f"unknown misfire policy: {misfire_policy!r}")
 
-        schedule_id = _canonical_schedule_id(cron, clean_goal, clean_scenario)
+        schema_list = list(params_schema or [])
+        params_map = dict(params or {})
+        if schema_list:
+            # Validate the schema *shape* at registration so a malformed
+            # declaration is caught early. The parameter *values* are the
+            # fire-time gate (#2545): the supervisor validates and coerces them
+            # before dispatch and seals a signed refusal receipt on failure, so
+            # a stored value that later drifts out of contract (a tightened
+            # schema, a mistyped edit) is refused at fire rather than silently
+            # dispatched.
+            from bernstein.core.tasks.param_contract import ParamContract
+
+            ParamContract.from_schema(schema_list)
+
+        schedule_id = _canonical_schedule_id(cron, clean_goal, clean_scenario, schema_list, params_map)
         existing = self.get(schedule_id)
         if existing is not None:
             return existing
@@ -363,6 +405,8 @@ class ScheduleStore:
             misfire_policy=misfire_policy,
             created_at=created_at,
             last_fire_at=0.0,
+            params_schema=schema_list,
+            params=params_map,
         )
         self._write(schedule)
         logger.info("Registered schedule %s (cron=%s)", schedule.id, schedule.cron)
@@ -418,6 +462,8 @@ class ScheduleStore:
             created_at=schedule.created_at,
             last_fire_at=fire_time,
             extra=dict(schedule.extra),
+            params_schema=[dict(s) for s in schedule.params_schema],
+            params=dict(schedule.params),
         )
         self._write(updated)
 
@@ -459,6 +505,18 @@ def _load_schedule(path: Path) -> Schedule | None:
             if isinstance(extra_raw, dict)
             else {}
         )
+        schema_raw = data.get("params_schema", [])
+        params_schema: list[dict[str, Any]] = (
+            [{str(k): v for k, v in row.items()} for row in schema_raw if isinstance(row, dict)]  # type: ignore[misc]
+            if isinstance(schema_raw, list)
+            else []
+        )
+        params_raw = data.get("params", {})
+        params: dict[str, Any] = (
+            {str(k): v for k, v in params_raw.items()}  # type: ignore[misc]
+            if isinstance(params_raw, dict)
+            else {}
+        )
         return Schedule(
             id=str(data["id"]),
             cron=str(data["cron"]),
@@ -468,6 +526,8 @@ def _load_schedule(path: Path) -> Schedule | None:
             created_at=float(data.get("created_at", 0.0)),
             last_fire_at=float(data.get("last_fire_at", 0.0)),
             extra=extra,
+            params_schema=params_schema,
+            params=params,
         )
     except (KeyError, TypeError, ValueError) as exc:
         logger.warning("Malformed schedule file %s: %s", path, exc)

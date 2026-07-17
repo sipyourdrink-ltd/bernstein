@@ -174,6 +174,16 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
         # the passthrough set the filtered env drops it and the manager agent's
         # run_command calls fail with ModelBehaviorError: Tool run_command not found.
         "BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND",
+        # ``BERNSTEIN_CONTEXT_CAPSULE_PATH`` (#2545) points the spawned worker at
+        # the on-disk signed context capsule sealed for its task -- the single
+        # verifiable answer to "what was I given" (task id, run id, params hash,
+        # worktree, role, budget envelope remaining, dependency state, and the
+        # audit-chain head at spawn). Set alongside ``BERNSTEIN_RUN_ID`` /
+        # ``BERNSTEIN_TASK_ID`` before spawn; without it in the passthrough set
+        # the filtered env drops it and worker-side code that cites its capsule
+        # falls back to scattered env vars. It is a plain path, not a
+        # credential, so passing it through is safe.
+        "BERNSTEIN_CONTEXT_CAPSULE_PATH",
     }
 )
 

@@ -1143,6 +1143,10 @@ cli.add_command(escalation_group, "escalation")
 from bernstein.cli.commands.intent_cmd import intent_group  # noqa: E402
 
 cli.add_command(intent_group, "intent")
+# Chain-anchored worker context capsules (#2545).
+from bernstein.cli.commands.context_cmd import context_group  # noqa: E402
+
+cli.add_command(context_group, "context")
 # Signed maker-checker / judge-panel gate adjudications (#2294).
 from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 
