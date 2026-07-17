@@ -281,6 +281,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Bot-added: drift autofix (regen_contract_drift.py)
         "intent",
         # Bot-added: drift autofix (regen_contract_drift.py)
+        "mission",
         "limits",
         "events",
         # Chain-anchored worker context capsules (issue #2545)

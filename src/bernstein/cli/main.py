@@ -1269,6 +1269,10 @@ from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
 
 cli.add_command(ledger_group, "ledger")
 
+# Ledger-projected missions: multi-day goals with phase gates + envelopes (#2509).
+from bernstein.cli.commands.mission_cmd import mission_group  # noqa: E402
+
+cli.add_command(mission_group, "mission")
 # Named resource pools with lease-backed admission projected from the ledger (#2544).
 from bernstein.cli.commands.limits_cmd import limits_group  # noqa: E402
 
