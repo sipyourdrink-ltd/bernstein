@@ -103,6 +103,17 @@ KIND_TASK_COMPLETED = "task.completed"
 KIND_TASK_FAILED = "task.failed"
 KIND_TASK_ABANDONED = "task.abandoned"
 
+#: Mission transition kinds (#2509). A mission is a ledger-projected multi-day
+#: goal; these transitions are the only mission state that touches disk -- the
+#: mission status is a pure projection over them (see
+#: :mod:`bernstein.core.orchestration.missions`). The replay projection above
+#: treats them as unknown task kinds (counted, otherwise ignored), so a mission
+#: ledger still resumes on a reader that predates missions.
+KIND_MISSION_DEFINED = "mission.defined"
+KIND_MISSION_PHASE_ENTERED = "mission.phase_entered"
+KIND_MISSION_PHASE_PASSED = "mission.phase_passed"
+KIND_MISSION_PHASE_HALTED = "mission.phase_halted"
+
 #: Default bucket filename; the layout matches the replay journal so a
 #: future compaction pass can roll ``<n>.jsonl`` files for both.
 _DEFAULT_BUCKET = "000000.jsonl"
@@ -922,6 +933,10 @@ def run_ledger_dir(sdd_dir: Path, run_id: str) -> Path:
 
 __all__ = [
     "GENESIS_HASH",
+    "KIND_MISSION_DEFINED",
+    "KIND_MISSION_PHASE_ENTERED",
+    "KIND_MISSION_PHASE_HALTED",
+    "KIND_MISSION_PHASE_PASSED",
     "KIND_RUN_CLOSED",
     "KIND_RUN_OPEN",
     "KIND_RUN_RESUMED",
