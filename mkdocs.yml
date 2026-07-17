@@ -517,6 +517,7 @@ nav:
           - Orchestrator hardening: concepts/orchestrator-hardening.md
       - Orchestration internals:
           - Task DAG: orchestration/task-dag.md
+          - Research activities: orchestration/research-activity.md
           - Run actor: orchestration/run-actor.md
           - Worker coordination: orchestration/worker-coordination.md
           - Review gate: orchestration/review-gate.md
