@@ -27,6 +27,7 @@ fo = "fo"            # fo = fan_out (test_complexity_correlation.py)
 thr = "thr"          # thr = threshold (scripts/mutmut_critical.py)
 strat = "strat"      # strat = strategy (adapter STRATEGY_MATRIX, test_adapter_wave_2521.py)
 Aktive = "Aktive"    # correct German word for "Active" (i18n.py)
+abd = "abd"          # deterministic 3-byte hash fixture b"abd" (test_computer_use_lineage.py)
 
 # Technical terms used consistently in the codebase
 unparseable = "unparseable"
