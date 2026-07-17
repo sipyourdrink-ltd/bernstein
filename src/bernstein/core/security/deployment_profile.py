@@ -69,6 +69,7 @@ __all__ = [
     "SovereignVerifyResult",
     "attestation_path",
     "build_posture_attestation",
+    "endpoint_certification_violations",
     "evaluate_posture_drift",
     "is_local_or_eu_host",
     "load_config_snapshot",
@@ -76,6 +77,7 @@ __all__ = [
     "read_posture_attestation",
     "record_and_sign_drift",
     "resolve_effective_policy",
+    "sovereign_egress_allowlist",
     "verify_sovereign_attestations",
 ]
 
@@ -148,6 +150,32 @@ def is_local_or_eu_host(base_url: str) -> bool:
     return ip.is_loopback or ip.is_private
 
 
+def _egress_token_is_local(token: str) -> bool:
+    """Return True iff an ``--allow-network`` token targets a local / EU host.
+
+    Handles the three token shapes the network policy accepts: a CIDR
+    (``10.0.0.0/8``), a bare host or ``host:port``, and bracketed IPv6. ``none``
+    is vacuously local (deny-all); ``any`` is never local (opens all egress).
+    """
+    tok = token.strip().lower()
+    if not tok or tok == "none":
+        return True
+    if tok == "any":
+        return False
+    if "/" in tok:
+        try:
+            net = ipaddress.ip_network(tok, strict=False)
+        except ValueError:
+            return False
+        return net.is_loopback or net.is_private
+    host = tok
+    if tok.startswith("[") and "]" in tok:  # [::1] or [2001:db8::1]:443
+        host = tok[1 : tok.index("]")]
+    elif tok.count(":") == 1:  # host:port (single colon => not bare IPv6)
+        host = tok.rsplit(":", 1)[0]
+    return is_local_or_eu_host(host)
+
+
 # ---------------------------------------------------------------------------
 # Effective policy (the posture identity)
 # ---------------------------------------------------------------------------
@@ -167,6 +195,7 @@ class EffectivePolicy:
     profile: str
     schema_version: int
     network_egress: str
+    egress_allowlist: tuple[str, ...]
     catalog_mode: str
     compliance_pack: str
     storage_backend: str
@@ -181,6 +210,7 @@ class EffectivePolicy:
             "profile": self.profile,
             "schema_version": self.schema_version,
             "network_egress": self.network_egress,
+            "egress_allowlist": list(self.egress_allowlist),
             "catalog_mode": self.catalog_mode,
             "compliance_pack": self.compliance_pack,
             "storage_backend": self.storage_backend,
@@ -204,8 +234,16 @@ class EffectivePolicy:
         :func:`endpoint_certification_violations`.
         """
         problems: list[str] = []
-        if self.network_egress != _PINNED_NETWORK_EGRESS:
-            problems.append(f"network egress is {self.network_egress!r}, sovereign requires deny-all")
+        # Egress may be deny-all, or an allow-list of self-hosted / EU-region
+        # destinations (a residency deployment must reach its own model server
+        # on an RFC-1918 address). A public destination in the allow-list is a
+        # violation; the allow-list itself is attested so the claim is truthful.
+        for token in self.egress_allowlist:
+            if not _egress_token_is_local(token):
+                problems.append(
+                    f"egress allow-list entry {token!r} is neither self-hosted nor EU-region; "
+                    "sovereign permits only local / EU-region egress destinations"
+                )
         if self.catalog_mode != _PINNED_CATALOG_MODE:
             problems.append(f"catalog mode is {self.catalog_mode!r}, sovereign requires offline")
         if self.storage_backend not in LOCAL_STORAGE_BACKENDS:
@@ -300,6 +338,26 @@ def _project_residency(config: Mapping[str, Any]) -> tuple[bool, tuple[str, ...]
     return enforce_strict, regions
 
 
+def sovereign_egress_allowlist(config_snapshot: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Return the sorted, de-duplicated ``sovereign.allowed_egress`` tokens.
+
+    This is the single source of truth for sovereign egress: the runtime
+    network policy is installed from it and the effective policy attests it, so
+    the attested ``network_egress`` can never claim deny-all while the runtime
+    allows a destination. ``--allow-network`` is rejected under sovereign
+    precisely so the CLI and the attested config cannot diverge.
+    """
+    config: Mapping[str, Any] = config_snapshot or {}
+    block = config.get("sovereign")
+    if not isinstance(block, Mapping):
+        return ()
+    raw = block.get("allowed_egress")
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        return ()
+    tokens = {str(t).strip() for t in raw if str(t).strip()}
+    return tuple(sorted(tokens))
+
+
 def resolve_effective_policy(profile_name: str, config_snapshot: Mapping[str, Any] | None) -> EffectivePolicy:
     """Resolve the canonical effective policy for *profile_name* (pure function).
 
@@ -320,10 +378,12 @@ def resolve_effective_policy(profile_name: str, config_snapshot: Mapping[str, An
     if isinstance(storage, Mapping):
         storage_backend = str(storage.get("backend", "memory"))
     enforce_strict, regions = _project_residency(config)
+    egress = sovereign_egress_allowlist(config)
     return EffectivePolicy(
         profile=profile_name,
         schema_version=EFFECTIVE_POLICY_SCHEMA_VERSION,
-        network_egress=_PINNED_NETWORK_EGRESS,
+        network_egress=_PINNED_NETWORK_EGRESS if not egress else "allow-list",
+        egress_allowlist=egress,
         catalog_mode=_PINNED_CATALOG_MODE,
         compliance_pack=_PINNED_COMPLIANCE_PACK,
         storage_backend=storage_backend,
@@ -558,7 +618,14 @@ class PostureDriftRefusal(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class DriftEvaluation:
-    """Outcome of comparing the live posture against the attestation."""
+    """Outcome of comparing the live posture against the attestation.
+
+    ``drifted`` is hash divergence from the attestation. ``violations`` is the
+    set of live compliance failures (config-only *and* endpoint-certification):
+    these are checked every spawn so a receipt revoked or deleted *without* a
+    config change -- which leaves the posture hash unchanged -- is still caught.
+    A spawn is refused when :attr:`should_refuse` is True.
+    """
 
     drifted: bool
     reason: str
@@ -566,6 +633,12 @@ class DriftEvaluation:
     observed_hash: str
     diverging_keys: tuple[str, ...]
     observed_policy: EffectivePolicy
+    violations: tuple[str, ...] = ()
+
+    @property
+    def should_refuse(self) -> bool:
+        """True iff the spawn must be refused (hash drift or a live violation)."""
+        return self.drifted or bool(self.violations)
 
 
 def _diverging_keys(attested: Mapping[str, Any], observed: Mapping[str, Any]) -> tuple[str, ...]:
@@ -576,10 +649,14 @@ def _diverging_keys(attested: Mapping[str, Any], observed: Mapping[str, Any]) ->
 def evaluate_posture_drift(*, workdir: Path, config_snapshot: Mapping[str, Any] | None) -> DriftEvaluation:
     """Recompute the live posture and compare it to the stored attestation.
 
-    An absent attestation is itself drift (the posture was never attested).
+    An absent attestation is itself drift (the posture was never attested). Live
+    compliance is re-checked every call -- including endpoint certification
+    against the on-disk receipts -- so a revoked or deleted receipt is caught
+    even when the config (and therefore the posture hash) is unchanged.
     """
     observed = resolve_effective_policy(SOVEREIGN_PROFILE, config_snapshot)
     observed_hash = observed.posture_hash()
+    violations = tuple(observed.violations()) + tuple(endpoint_certification_violations(observed, workdir=workdir))
     attestation = read_posture_attestation(workdir)
     if attestation is None:
         return DriftEvaluation(
@@ -589,15 +666,17 @@ def evaluate_posture_drift(*, workdir: Path, config_snapshot: Mapping[str, Any] 
             observed_hash=observed_hash,
             diverging_keys=(),
             observed_policy=observed,
+            violations=violations,
         )
     if attestation.posture_hash == observed_hash:
         return DriftEvaluation(
             drifted=False,
-            reason="",
+            reason="" if not violations else f"live posture violates the sovereign profile: {'; '.join(violations)}",
             attested_hash=attestation.posture_hash,
             observed_hash=observed_hash,
             diverging_keys=(),
             observed_policy=observed,
+            violations=violations,
         )
     diverging = _diverging_keys(attestation.effective_policy, observed.to_canonical_document())
     return DriftEvaluation(
@@ -607,6 +686,7 @@ def evaluate_posture_drift(*, workdir: Path, config_snapshot: Mapping[str, Any] 
         observed_hash=observed_hash,
         diverging_keys=diverging,
         observed_policy=observed,
+        violations=violations,
     )
 
 
@@ -634,6 +714,7 @@ def record_and_sign_drift(
         "attested_hash": evaluation.attested_hash,
         "observed_hash": evaluation.observed_hash,
         "diverging_keys": list(evaluation.diverging_keys),
+        "violations": list(evaluation.violations),
         "effective_policy": evaluation.observed_policy.to_canonical_document(),
         "timestamp": timestamp,
     }
@@ -740,7 +821,14 @@ def _verify_one_record(
             errors.append(f"{kind} {subject}: recorded hash {recorded} does not match recomputed {recomputed}")
     if kind == _RECORD_KIND_DRIFT:
         diverging = body.get("diverging_keys")
-        if not isinstance(diverging, list) or not diverging:
-            errors.append(f"{kind} {subject}: drift record names no diverging keys")
-        if body.get("attested_hash") == body.get("observed_hash"):
+        raw_violations = body.get("violations")
+        has_diverging = isinstance(diverging, list) and bool(diverging)
+        has_violations = isinstance(raw_violations, list) and bool(raw_violations)
+        # A drift record must name a reason to refuse: either hash-drift keys or
+        # live compliance violations (a receipt revoked without a config change).
+        if not has_diverging and not has_violations:
+            errors.append(f"{kind} {subject}: drift record names no diverging keys or violations")
+        # Hash drift implies the attested and observed hashes must differ; a
+        # violation-only refusal legitimately keeps them equal.
+        if has_diverging and body.get("attested_hash") == body.get("observed_hash"):
             errors.append(f"{kind} {subject}: drift record's attested and observed hashes agree")

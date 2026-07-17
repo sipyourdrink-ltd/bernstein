@@ -2776,22 +2776,24 @@ class AgentSpawner:
             )
 
     def _preflight_posture_drift(self) -> None:
-        """Refuse a spawn when the sovereign posture drifted from attestation (#2518).
+        """Refuse a spawn when the sovereign posture drifted or is non-compliant (#2518).
 
         No-op unless the run activated ``--profile sovereign``. When active,
         recomputes the effective residency posture from the live workspace
-        config and compares its canonical hash to the attested hash. On any
-        divergence -- a cloud storage sink added, a catalog re-enabled, a role
-        repointed at a non-certified endpoint -- this signs and anchors a drift
-        record naming the exact diverging keys, then refuses the spawn. The
-        signed drift record re-verifies under ``bernstein audit verify``, so the
-        divergence is caught at spawn time and evidenced on the chain rather
-        than surfacing at audit time.
+        config and compares its canonical hash to the attested hash, and
+        re-checks live compliance -- storage locality, offline catalog, strict
+        EU residency, and endpoint certification against the on-disk receipts.
+        A spawn is refused on hash drift (a cloud storage sink added, a catalog
+        re-enabled, a role repointed) *or* a live violation (an endpoint whose
+        certification receipt was revoked without a config change, which leaves
+        the posture hash unchanged). The signed refusal record re-verifies under
+        ``bernstein audit verify``, so the divergence is caught at spawn time and
+        evidenced on the chain rather than surfacing at audit time.
 
         Raises:
-            PostureDriftRefusal: On posture drift (or a missing attestation).
-                Deliberately not a ``SpawnError`` so the per-provider failover
-                loop never retries it -- a drift refusal is a hard stop.
+            PostureDriftRefusal: On drift, a live violation, or a missing
+                attestation. Deliberately not a ``SpawnError`` so the
+                per-provider failover loop never retries it -- a hard stop.
         """
         from bernstein.core.security.network_policy import is_sovereign_profile
 
@@ -2810,7 +2812,7 @@ class AgentSpawner:
 
         snapshot = load_config_snapshot(self._workdir)
         evaluation = evaluate_posture_drift(workdir=self._workdir, config_snapshot=snapshot)
-        if not evaluation.drifted:
+        if not evaluation.should_refuse:
             return
 
         chain = AuditChainStore(self._workdir / ".sdd" / "audit")
@@ -2820,17 +2822,19 @@ class AgentSpawner:
             timestamp=int(_time.time()),
             chain=chain,
         )
-        diverging = ", ".join(evaluation.diverging_keys) or "(attestation missing)"
+        diverging = ", ".join(evaluation.diverging_keys) or "(none)"
+        violations = "; ".join(evaluation.violations) or "(none)"
         logger.error(
-            "spawn refused: sovereign posture drift - diverging_keys=[%s] attested=%s observed=%s",
+            "spawn refused: sovereign posture - diverging_keys=[%s] violations=[%s] attested=%s observed=%s",
             diverging,
+            violations,
             evaluation.attested_hash or "<none>",
             evaluation.observed_hash,
         )
         raise PostureDriftRefusal(
-            f"sovereign posture drift: {evaluation.reason}. Diverging keys: {diverging}. "
-            "Re-activate the profile (bernstein run --profile sovereign) after restoring the "
-            "intended posture, or inspect it with 'bernstein doctor sovereign'.",
+            f"sovereign posture refusal: {evaluation.reason}. Diverging keys: {diverging}. "
+            f"Violations: {violations}. Re-activate the profile (bernstein run --profile sovereign) "
+            "after restoring the intended posture, or inspect it with 'bernstein doctor sovereign'.",
             record=record,
             record_sha256=record_sha256,
         )
@@ -4093,6 +4097,12 @@ class AgentSpawner:
         """
         if not tasks:
             raise ValueError("Cannot resume with empty task list")
+
+        # Sovereign posture drift gate (#2518): the resume path goes straight to
+        # the adapter without ``_spawn_for_tasks_internal``, so it must apply the
+        # same gate or a sovereign run could resume an agent after the posture
+        # drifted. A hard stop (``PostureDriftRefusal``), same as the main path.
+        self._preflight_posture_drift()
 
         # Build resume context prefix
         files_list = "\n".join(f"  - {f}" for f in changed_files) if changed_files else "  (none)"
