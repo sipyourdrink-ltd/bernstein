@@ -394,9 +394,9 @@ mkdocs-minify-plugin==0.8.0 \
     --hash=sha256:5fba1a3f7bd9a2142c9954a6559a57e946587b21f133165ece30ea145c66aee6 \
     --hash=sha256:bc11b78b8120d79e817308e2b11539d790d21445eb63df831e393f76e52e753d
     # via -r docs/requirements.in
-mkdocs-redirects==1.2.2 \
-    --hash=sha256:3094981b42ffab29313c2c1b8ac3969861109f58b2dd58c45fc81cd44bfa0095 \
-    --hash=sha256:7dbfa5647b79a3589da4401403d69494bd1f4ad03b9c15136720367e1f340ed5
+mkdocs-redirects==1.2.3 \
+    --hash=sha256:5e980330999299729a2d6a125347d1af78023d68a23681a4de3053ce7dfe2e51 \
+    --hash=sha256:ec7312fff462d03ec16395d0c001006a418f8d0c21cdf2b47ff11cf839dc3ce0
     # via -r docs/requirements.in
 packaging==26.2 \
     --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e \
