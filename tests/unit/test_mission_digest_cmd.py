@@ -93,7 +93,9 @@ def _build_mission(workdir: Path) -> None:
     spec = MissionSpec(
         mission_id="m-cli",
         goal="cli mission",
-        phases=(PhaseSpec(phase_id="p1", name="prepare", gate=("task-a",), envelope="mission-m-cli-p1", budget_usd=30.0),),
+        phases=(
+            PhaseSpec(phase_id="p1", name="prepare", gate=("task-a",), envelope="mission-m-cli-p1", budget_usd=30.0),
+        ),
     )
     ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
     define_mission(ledger=ledger, spec=spec)
@@ -112,7 +114,9 @@ def _build_mission(workdir: Path) -> None:
 def test_digest_show_json(tmp_path: Path) -> None:
     _build_mission(tmp_path)
     runner = CliRunner()
-    res = runner.invoke(mission_group, ["digest", "show", "m-cli", "--fire-time", _FIRE, "--workdir", str(tmp_path), "--json"])
+    res = runner.invoke(
+        mission_group, ["digest", "show", "m-cli", "--fire-time", _FIRE, "--workdir", str(tmp_path), "--json"]
+    )
     assert res.exit_code == 0, res.output
     body = json.loads(res.output)
     assert body["mission_id"] == "m-cli"
@@ -128,12 +132,19 @@ def test_digest_send_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     runner = CliRunner()
 
     args = [
-        "digest", "send", "m-cli",
-        "--fire-time", _FIRE,
-        "--platform", "slack",
-        "--thread", "C123",
-        "--token", "xoxb-test",
-        "--workdir", str(tmp_path),
+        "digest",
+        "send",
+        "m-cli",
+        "--fire-time",
+        _FIRE,
+        "--platform",
+        "slack",
+        "--thread",
+        "C123",
+        "--token",
+        "xoxb-test",
+        "--workdir",
+        str(tmp_path),
         "--json",
     ]
     first = runner.invoke(mission_group, args)
@@ -158,12 +169,19 @@ def test_digest_verify_matches_then_detects_edit(tmp_path: Path, monkeypatch: py
     send = runner.invoke(
         mission_group,
         [
-            "digest", "send", "m-cli",
-            "--fire-time", _FIRE,
-            "--platform", "telegram",
-            "--thread", "42",
-            "--token", "tg-test",
-            "--workdir", str(tmp_path),
+            "digest",
+            "send",
+            "m-cli",
+            "--fire-time",
+            _FIRE,
+            "--platform",
+            "telegram",
+            "--thread",
+            "42",
+            "--token",
+            "tg-test",
+            "--workdir",
+            str(tmp_path),
             "--json",
         ],
     )
@@ -175,7 +193,18 @@ def test_digest_verify_matches_then_detects_edit(tmp_path: Path, monkeypatch: py
     msg_ok.write_text(posted_text, encoding="utf-8")
     ok = runner.invoke(
         mission_group,
-        ["digest", "verify", "m-cli", "--fire-time", _FIRE, "--message", str(msg_ok), "--workdir", str(tmp_path), "--json"],
+        [
+            "digest",
+            "verify",
+            "m-cli",
+            "--fire-time",
+            _FIRE,
+            "--message",
+            str(msg_ok),
+            "--workdir",
+            str(tmp_path),
+            "--json",
+        ],
     )
     assert ok.exit_code == 0, ok.output
     report = json.loads(ok.output)
@@ -189,7 +218,18 @@ def test_digest_verify_matches_then_detects_edit(tmp_path: Path, monkeypatch: py
     msg_bad.write_text(posted_text.replace("$10.00", "$88.00"), encoding="utf-8")
     bad = runner.invoke(
         mission_group,
-        ["digest", "verify", "m-cli", "--fire-time", _FIRE, "--message", str(msg_bad), "--workdir", str(tmp_path), "--json"],
+        [
+            "digest",
+            "verify",
+            "m-cli",
+            "--fire-time",
+            _FIRE,
+            "--message",
+            str(msg_bad),
+            "--workdir",
+            str(tmp_path),
+            "--json",
+        ],
     )
     assert bad.exit_code == 2, bad.output
     assert json.loads(bad.output)["message_matches"] is False

@@ -328,7 +328,9 @@ def test_restart_does_not_double_post(tmp_path: Path) -> None:
     digest = build_mission_digest(proj, fire_time=_FIRE)
     bridge = _SpyBridge()
 
-    asyncio.run(deliver_digest(bridge=bridge, thread_id="chan", digest=digest, ledger=DigestDeliveryLedger(sdd_dir, "m-1")))
+    asyncio.run(
+        deliver_digest(bridge=bridge, thread_id="chan", digest=digest, ledger=DigestDeliveryLedger(sdd_dir, "m-1"))
+    )
     # Simulate a restart: brand-new ledger instance reads the durable file.
     outcome = asyncio.run(
         deliver_digest(bridge=bridge, thread_id="chan", digest=digest, ledger=DigestDeliveryLedger(sdd_dir, "m-1"))
