@@ -298,6 +298,7 @@ version = "3.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "asn1crypto" },
+    { name = "cbor2" },
     { name = "click" },
     { name = "cryptography" },
     { name = "defusedxml" },
@@ -463,6 +464,7 @@ requires-dist = [
     { name = "botbuilder-core", marker = "extra == 'teams'", specifier = ">=4.15" },
     { name = "boto3", marker = "extra == 'r2'", specifier = ">=1.43.6" },
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.43.6" },
+    { name = "cbor2", specifier = ">=5.6" },
     { name = "click", specifier = ">=8.3.3" },
     { name = "crosshair-tool", marker = "extra == 'dev'", specifier = ">=0.0.95" },
     { name = "cryptography", specifier = ">=45.0.7" },

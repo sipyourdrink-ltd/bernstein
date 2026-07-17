@@ -708,6 +708,17 @@ EVENT_MISSION_PHASE_RECEIPT = "mission.phase_receipt"
 #: or artifact contents. Evaluation is read-only and never dispatches a task.
 EVENT_SLA_VIOLATION = "sla.violation"
 
+#: Issue #2604 -- emitted once per ``bernstein audit receipt export``. A
+#: receipt projects an existing audit-chain range into standard, offline-
+#: verifiable envelopes (COSE_Sign1, in-toto/DSSE, RFC 6962 transparency).
+#: The event mirrors the projection's identity into the HMAC chain by recording
+#: ``{head_sha256, since, until, event_count, receipt_sha256, formats}`` plus
+#: the previous chain digest, so the fact that a standard receipt was emitted
+#: over a named range (and which head it bound) is itself chain-attested. The
+#: receipt subject digest IS the chain ``head_sha256``; only hashes, the window,
+#: and the format list are recorded -- never event payloads.
+EVENT_AUDIT_RECEIPT_EXPORT = "audit.receipt_export"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -4976,6 +4987,53 @@ def record_recipe_fleet_apply(
     )
 
 
+def record_audit_receipt_export(
+    *,
+    chain: AuditChainStore,
+    head_sha256: str,
+    since: str,
+    until: str,
+    event_count: int,
+    receipt_sha256: str,
+    formats: tuple[str, ...] | list[str],
+    actor: str = "audit",
+) -> AuditEvent:
+    """Append an ``audit.receipt_export`` event into *chain* (#2604).
+
+    Records that a standard, offline-verifiable receipt was projected over the
+    chain range ``[since, until)`` and which head it bound. Only hashes, the
+    window, the event count, and the emitted format list are recorded -- never
+    event payloads.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        head_sha256: The chain range head - the receipt's subject digest.
+        since: ISO-8601 inclusive lower bound of the projected range.
+        until: ISO-8601 exclusive upper bound of the projected range.
+        event_count: Number of events in the projected range.
+        receipt_sha256: SHA-256 of the canonical receipt bytes.
+        formats: The receipt formats emitted (subset of cose/intoto/transparency).
+        actor: Recorded actor; defaults to ``"audit"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_AUDIT_RECEIPT_EXPORT,
+        actor=actor,
+        resource_type="audit_receipt",
+        resource_id=head_sha256,
+        details={
+            "head_sha256": head_sha256,
+            "since": since,
+            "until": until,
+            "event_count": event_count,
+            "receipt_sha256": receipt_sha256,
+            "formats": sorted(formats),
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -4987,6 +5045,7 @@ __all__ = [
     "EVENT_APPROVAL_CARD_ISSUED",
     "EVENT_APPROVAL_CARD_REFUSED",
     "EVENT_APPROVAL_CARD_RESOLVED",
+    "EVENT_AUDIT_RECEIPT_EXPORT",
     "EVENT_AUTOMATION_ACTION",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
@@ -5074,6 +5133,7 @@ __all__ = [
     "record_adapter_floor_update_receipt",
     "record_adapter_spawn_preflight_receipt",
     "record_adapter_version_posture_receipt",
+    "record_audit_receipt_export",
     "record_automation_action",
     "record_checkpoint_retry",
     "record_context_capsule",

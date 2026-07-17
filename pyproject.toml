@@ -93,6 +93,11 @@ dependencies = [
     # hand-rolling a DER parser. Used exclusively by
     # ``bernstein.core.security.rfc3161_verifier``.
     "asn1crypto>=1.5",
+    # Canonical CBOR encoding for the COSE_Sign1 (RFC 9052) audit receipt.
+    # MIT-licensed; deterministic-encoding mode gives byte-identical receipt
+    # replay. Used by ``bernstein.core.security.audit_receipt`` and the
+    # standalone ``tools/verify_audit_receipt.py`` verifier.
+    "cbor2>=5.6",
     # Pure-Python PDF generation for the EU AI Act Article 12 evidence pack
     # rendered by `bernstein compliance pack`. MIT-licensed, no native deps.
     # Used exclusively by ``bernstein.core.compliance.article12``.
