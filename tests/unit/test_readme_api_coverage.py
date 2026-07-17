@@ -280,6 +280,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "activity",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "intent",
+        # Bot-added: drift autofix (regen_contract_drift.py)
+        "mission",
     }
 )
 
