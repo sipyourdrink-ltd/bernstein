@@ -1,0 +1,17 @@
+name: warp_adapter_spawn
+adapter_class: bernstein.adapters.warp.WarpAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    model: "claude-sonnet-4-6"
+    expected_pid: 5711
+    # Warp authenticates via `oz login` (cached under $HOME), so no provider
+    # secret is threaded onto the child env; env_extra_keys is intentionally
+    # omitted. `oz agent run` inherits the spawn cwd, so no -C flag on argv.
+    inner_argv:
+      - "oz"
+      - "agent"
+      - "run"
+      - "--prompt"
+      - "fix the bug in main.py"
+      - "--model"
+      - "claude-sonnet-4-6"

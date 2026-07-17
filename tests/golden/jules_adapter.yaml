@@ -1,0 +1,18 @@
+name: jules_adapter_spawn
+adapter_class: bernstein.adapters.jules.JulesAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    # Jules selects the model server-side; --repo . targets the repo in the
+    # spawn cwd and --session carries the prompt.
+    model: "default"
+    expected_pid: 5811
+    inner_argv:
+      - "jules"
+      - "remote"
+      - "new"
+      - "--repo"
+      - "."
+      - "--session"
+      - "fix the bug in main.py"
+    env_extra_keys:
+      - "JULES_API_KEY"

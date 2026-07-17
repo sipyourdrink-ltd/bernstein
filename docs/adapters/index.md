@@ -72,6 +72,17 @@ See `bernstein integrations list` for the full enumerated set. This
 page lists categories rather than re-listing each entry so the index
 does not drift.
 
+Recently added, each behind the conformance contract and the nightly
+[conformance canary](conformance-canary.md):
+
+- [`grok`](grok.md) - xAI Grok Build CLI (headless, auto-approve).
+- [`qoder`](qoder.md) - Alibaba Qoder CLI (`qodercli -p`).
+- [`codebuddy`](codebuddy.md) - Tencent CodeBuddy CLI (headless print mode).
+- [`trae`](trae.md) - ByteDance Trae Agent (`trae-cli run`).
+- [`mimo`](mimo.md) - Xiaomi MiMo Code CLI (OpenCode core).
+- [`warp`](warp.md) - Warp Agent CLI (`oz agent run`).
+- [`jules`](jules.md) - Google Jules Tools (async cloud agent).
+
 ## Adding a new adapter
 
 1. Add a `<name>.py` module under `src/bernstein/adapters/` implementing

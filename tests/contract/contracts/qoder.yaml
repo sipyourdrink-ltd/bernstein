@@ -1,0 +1,25 @@
+# Contract for the Alibaba Qoder CLI (adapter: qoder).
+#
+# Always-passed surface from src/bernstein/adapters/qoder.py:
+# ``qodercli -p <prompt>``. In headless mode the ``-p`` flag runs a
+# prompt-type command non-interactively; Qoder resolves the model from
+# its own ``/model`` configuration, so no model flag is on argv.
+#
+# Verified against https://docs.qoder.com/en/cli/command on 2026-07-17.
+adapter: qoder
+binary: qodercli
+install:
+  method: npm
+  spec: "@qoder/cli@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+    - "QODER_API_KEY"
+    - "DASHSCOPE_API_KEY"
+required_flags:
+  - "-p"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

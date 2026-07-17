@@ -1,0 +1,29 @@
+# Contract for the xAI Grok Build CLI (adapter: grok).
+#
+# Always-passed surface from src/bernstein/adapters/grok.py:
+# ``grok -p <prompt> --output-format json --always-approve --no-auto-update``.
+# ``--always-approve`` is the dangerous-mode (auto-approve tool calls) flag;
+# ``--no-auto-update`` keeps an unattended run from phoning home mid-task.
+#
+# Verified against the xAI Grok Build CLI headless reference
+# (https://docs.x.ai/build/cli/headless-scripting) on 2026-07-17.
+adapter: grok
+binary: grok
+install:
+  method: manual
+  spec: "grok (xAI Grok Build; install via the upstream installer at https://docs.x.ai/build/overview)"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+    - "XAI_API_KEY"
+    - "GROK_API_KEY"
+required_flags:
+  - "-p"
+  - "--output-format"
+  - "--always-approve"
+  - "--no-auto-update"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

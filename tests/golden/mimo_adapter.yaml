@@ -1,0 +1,17 @@
+name: mimo_adapter_spawn
+adapter_class: bernstein.adapters.mimo.MimoAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    model: "mimo-v2.5-pro"
+    expected_pid: 5611
+    inner_argv:
+      - "mimo"
+      - "run"
+      - "--model"
+      - "mimo-v2.5-pro"
+      - "--dangerously-skip-permissions"
+      - "fix the bug in main.py"
+    env_extra_keys:
+      - "MIMO_API_KEY"
+      - "ANTHROPIC_API_KEY"
+      - "OPENAI_API_KEY"

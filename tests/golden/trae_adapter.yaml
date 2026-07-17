@@ -1,0 +1,17 @@
+name: trae_adapter_spawn
+adapter_class: bernstein.adapters.trae.TraeAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    # Trae resolves provider/model from its config; the run subcommand takes
+    # the prompt positionally and inherits the spawn cwd as its working dir.
+    model: "default"
+    expected_pid: 5511
+    inner_argv:
+      - "trae-cli"
+      - "run"
+      - "fix the bug in main.py"
+    env_extra_keys:
+      - "ANTHROPIC_API_KEY"
+      - "OPENAI_API_KEY"
+      - "GOOGLE_API_KEY"
+      - "OPENROUTER_API_KEY"

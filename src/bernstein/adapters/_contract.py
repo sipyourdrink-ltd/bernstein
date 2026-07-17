@@ -660,6 +660,38 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "q_dev": AdapterStrategy(),
     "qwen": AdapterStrategy(),
     "ralphex": AdapterStrategy(),
+    # Adapter wave (issue #2521). Each row reflects the tool's real
+    # headless surface; see the per-adapter docs pages for the flag map.
+    # grok (xAI Grok Build): -p headless, --always-approve auto-approves
+    # tool calls, and --output-format json/streaming-json emits structured
+    # events.
+    "grok": AdapterStrategy(
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
+    ),
+    # codebuddy (Tencent): Claude-Code-shaped -p print mode,
+    # --dangerously-skip-permissions for unattended runs, stream-json events.
+    "codebuddy": AdapterStrategy(
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.STREAM_JSON,
+    ),
+    # mimo (Xiaomi MiMo Code, OpenCode core): `run` one-shot with
+    # --dangerously-skip-permissions.
+    "mimo": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
+    # trae (ByteDance Trae Agent): `run` is an autonomous one-shot with no
+    # interactive permission gate, so dangerous mode is always-on.
+    "trae": AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON),
+    # jules (Google Jules Tools): `remote new` dispatches to Jules' isolated
+    # cloud sandbox; there is no local permission gate, so always-on.
+    "jules": AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON),
+    # qoder (Alibaba Qoder): -p headless runs prompt commands, but exposes
+    # no flag to bypass permissions, so dangerous mode stays unsupported.
+    "qoder": AdapterStrategy(),
+    # warp (`oz agent run`): permission behaviour is governed by the selected
+    # Warp agent profile, not a per-run flag, so dangerous mode is declared
+    # unsupported and autonomy is delegated to a pre-configured allow-all
+    # profile (see docs/adapters/warp.md).
+    "warp": AdapterStrategy(),
 }
 
 

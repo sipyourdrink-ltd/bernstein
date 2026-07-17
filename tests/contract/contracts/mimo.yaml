@@ -1,0 +1,29 @@
+# Contract for the Xiaomi MiMo Code CLI (adapter: mimo).
+#
+# Always-passed surface from src/bernstein/adapters/mimo.py:
+# ``mimo run --model <id> --dangerously-skip-permissions <prompt>``.
+# MiMo Code is built on the OpenCode core; ``run`` is the one-shot task
+# entry and ``--dangerously-skip-permissions`` runs it unattended.
+#
+# Verified against https://github.com/XiaomiMiMo/MiMo-Code on 2026-07-17.
+adapter: mimo
+binary: mimo
+install:
+  method: npm
+  spec: "@xiaomi-mimo/cli"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+    - "MIMO_API_KEY"
+    - "ANTHROPIC_API_KEY"
+    - "OPENAI_API_KEY"
+# ``--dangerously-skip-permissions`` lives under ``mimo run`` rather than
+# top-level ``mimo --help``, so only the ``run`` subcommand is drift-checked
+# here; the flag itself is exercised by the adapter unit tests.
+required_flags: []
+required_subcommands:
+  - "run"
+expected_models:
+  command: []
+  required_present: []

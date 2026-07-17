@@ -1,0 +1,25 @@
+# Contract for the Google Jules Tools CLI (adapter: jules).
+#
+# Always-passed surface from src/bernstein/adapters/jules.py:
+# ``jules remote new --repo . --session <prompt>``. Jules runs the session
+# in its cloud sandbox and selects the model server-side, so no model flag
+# is on argv. ``--repo`` / ``--session`` live under ``jules remote new``
+# rather than top-level ``jules --help``, so only the ``remote`` subcommand
+# is drift-checked here; the flags are exercised by the adapter unit tests.
+#
+# Verified against https://jules.google/docs/cli/reference/ on 2026-07-17.
+adapter: jules
+binary: jules
+install:
+  method: npm
+  spec: "@google/jules"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "JULES_API_KEY"
+required_flags: []
+required_subcommands:
+  - "remote"
+expected_models:
+  command: []
+  required_present: []

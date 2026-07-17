@@ -132,11 +132,23 @@ CANARY_MATRIX: tuple[CanaryTarget, ...] = (
     CanaryTarget(adapter="agy", binary="agy", model="default"),
     CanaryTarget(adapter="aider", binary="aider", model="gpt-5-mini"),
     CanaryTarget(adapter="claude", binary="claude", model="haiku"),
+    # Adapter wave (issue #2521): each new CLI joins the nightly probe so
+    # its "supported" claim is receipt-backed, not asserted. Binaries that
+    # are not installed on the runner probe as skip; a last-green row only
+    # appears once a passing receipt exists. "default" marks server-side or
+    # config-driven model selection (no model flag on the CLI).
+    CanaryTarget(adapter="codebuddy", binary="codebuddy", model="gpt-5-mini"),
     CanaryTarget(adapter="codex", binary="codex", model="gpt-5-mini"),
     CanaryTarget(adapter="copilot", binary="copilot", model="auto"),
     CanaryTarget(adapter="gemini", binary="gemini", model="gemini-3.1-flash-lite"),
+    CanaryTarget(adapter="grok", binary="grok", model="grok-code-fast-1"),
+    CanaryTarget(adapter="jules", binary="jules", model="default"),
+    CanaryTarget(adapter="mimo", binary="mimo", model="default"),
     CanaryTarget(adapter="opencode", binary="opencode", model="haiku"),
+    CanaryTarget(adapter="qoder", binary="qodercli", model="default"),
     CanaryTarget(adapter="qwen", binary="qwen", model="qwen3-coder-flash"),
+    CanaryTarget(adapter="trae", binary="trae-cli", model="default"),
+    CanaryTarget(adapter="warp", binary="oz", model="auto"),
 )
 
 

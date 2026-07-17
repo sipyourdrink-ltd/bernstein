@@ -1,0 +1,30 @@
+# Contract for the Tencent CodeBuddy CLI (adapter: codebuddy).
+#
+# Always-passed surface from src/bernstein/adapters/codebuddy.py:
+# ``codebuddy -p <prompt> --model <id> --output-format stream-json
+# --dangerously-skip-permissions``.
+# ``--dangerously-skip-permissions`` (short ``-y``) is required in
+# non-interactive mode.
+#
+# Verified against https://www.codebuddy.ai/docs/cli/headless on 2026-07-17.
+adapter: codebuddy
+binary: codebuddy
+install:
+  method: npm
+  spec: "@tencent-ai/codebuddy-code@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+    - "CODEBUDDY_API_KEY"
+    - "ANTHROPIC_API_KEY"
+    - "OPENAI_API_KEY"
+required_flags:
+  - "-p"
+  - "--model"
+  - "--output-format"
+  - "--dangerously-skip-permissions"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

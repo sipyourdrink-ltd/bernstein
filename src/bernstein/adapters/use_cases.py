@@ -125,6 +125,11 @@ USE_CASES: dict[str, AdapterUseCase] = {
         headline="Cloudflare Agents SDK driver via wrangler dev or worker trigger",
         binary="wrangler",
     ),
+    "codebuddy": AdapterUseCase(
+        headline="Tencent CodeBuddy CLI - headless print mode with stream-json events",
+        binary="codebuddy",
+        docs_path="docs/adapters/codebuddy.md",
+    ),
     "codebuff": AdapterUseCase(
         headline="Codebuff CLI integration",
         binary="codebuff",
@@ -202,6 +207,11 @@ USE_CASES: dict[str, AdapterUseCase] = {
         headline="gptme - local-first coding agent with shell and Python tools",
         binary="gptme",
     ),
+    "grok": AdapterUseCase(
+        headline="xAI Grok Build CLI - headless coding agent with auto-approve",
+        binary="grok",
+        docs_path="docs/adapters/grok.md",
+    ),
     "hermes": AdapterUseCase(
         headline="Hermes Agent by Nous Research",
         binary="hermes",
@@ -213,6 +223,11 @@ USE_CASES: dict[str, AdapterUseCase] = {
             "Orchestrates IaC agents that always run plan/preview before "
             "apply. Enforces operator approval on destructive changes."
         ),
+    ),
+    "jules": AdapterUseCase(
+        headline="Google Jules Tools CLI - dispatch tasks to the async cloud agent",
+        binary="jules",
+        docs_path="docs/adapters/jules.md",
     ),
     "junie": AdapterUseCase(
         headline="JetBrains Junie CLI for IDE-aligned coding tasks",
@@ -233,6 +248,11 @@ USE_CASES: dict[str, AdapterUseCase] = {
     "letta_code": AdapterUseCase(
         headline="Letta Code CLI - stateful coding agent",
         binary="letta",
+    ),
+    "mimo": AdapterUseCase(
+        headline="Xiaomi MiMo Code CLI - OpenCode-core agent with skip-permissions runs",
+        binary="mimo",
+        docs_path="docs/adapters/mimo.md",
     ),
     "mistral": AdapterUseCase(
         headline="Mistral Vibe CLI",
@@ -290,6 +310,11 @@ USE_CASES: dict[str, AdapterUseCase] = {
         headline="AWS Q Developer CLI (binary: q)",
         binary="q",
     ),
+    "qoder": AdapterUseCase(
+        headline="Alibaba Qoder CLI (binary: qodercli) - headless prompt runs",
+        binary="qodercli",
+        docs_path="docs/adapters/qoder.md",
+    ),
     "qwen": AdapterUseCase(
         headline="Qwen CLI for OpenAI-compatible Qwen models",
         binary="qwen",
@@ -301,6 +326,16 @@ USE_CASES: dict[str, AdapterUseCase] = {
     "rovo": AdapterUseCase(
         headline="Atlassian Rovo Dev CLI",
         binary="rovo",
+    ),
+    "trae": AdapterUseCase(
+        headline="ByteDance Trae Agent CLI (binary: trae-cli) - autonomous one-shot runs",
+        binary="trae-cli",
+        docs_path="docs/adapters/trae.md",
+    ),
+    "warp": AdapterUseCase(
+        headline="Warp Agent CLI (binary: oz) - non-interactive agent runs",
+        binary="oz",
+        docs_path="docs/adapters/warp.md",
     ),
 }
 

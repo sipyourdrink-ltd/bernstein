@@ -1,0 +1,28 @@
+# Contract for the Warp Agent CLI (adapter: warp, binary: oz).
+#
+# Always-passed surface from src/bernstein/adapters/warp.py:
+# ``oz agent run --prompt <prompt> [--model <id>]``. The Warp CLI ships as
+# the ``oz`` binary (the older ``warp-cli`` is deprecated); ``agent run``
+# executes a task non-interactively in the spawn cwd. Unattended permission
+# handling is delegated to a pre-configured Warp agent profile, so there is
+# no skip-permissions flag on argv.
+#
+# Verified against https://docs.warp.dev/reference/cli/ on 2026-07-17.
+adapter: warp
+binary: oz
+install:
+  method: manual
+  spec: "oz (Warp Agent CLI; install via the upstream installer at https://docs.warp.dev/reference/cli/)"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: ""
+# ``--prompt`` lives under ``oz agent run`` rather than top-level ``oz
+# --help``, so only the top-level ``agent`` subcommand is drift-checked
+# here; the ``--prompt`` flag is exercised by the adapter unit tests.
+required_flags: []
+required_subcommands:
+  - "agent"
+expected_models:
+  command: []
+  required_present: []

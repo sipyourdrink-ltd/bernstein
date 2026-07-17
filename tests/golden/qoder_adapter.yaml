@@ -1,0 +1,14 @@
+name: qoder_adapter_spawn
+adapter_class: bernstein.adapters.qoder.QoderAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    # Qoder resolves the model via its own /model config; no model flag on argv.
+    model: "default"
+    expected_pid: 5411
+    inner_argv:
+      - "qodercli"
+      - "-p"
+      - "fix the bug in main.py"
+    env_extra_keys:
+      - "QODER_API_KEY"
+      - "DASHSCOPE_API_KEY"

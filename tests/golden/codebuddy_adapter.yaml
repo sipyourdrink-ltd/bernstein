@@ -1,0 +1,19 @@
+name: codebuddy_adapter_spawn
+adapter_class: bernstein.adapters.codebuddy.CodebuddyAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    model: "gpt-5"
+    expected_pid: 5311
+    inner_argv:
+      - "codebuddy"
+      - "-p"
+      - "fix the bug in main.py"
+      - "--model"
+      - "gpt-5"
+      - "--output-format"
+      - "stream-json"
+      - "--dangerously-skip-permissions"
+    env_extra_keys:
+      - "CODEBUDDY_API_KEY"
+      - "ANTHROPIC_API_KEY"
+      - "OPENAI_API_KEY"

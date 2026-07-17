@@ -22,6 +22,7 @@ from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.adapters.cline import ClineAdapter
 from bernstein.adapters.clm import ClmAdapter
 from bernstein.adapters.cloudflare_agents import CloudflareAgentsAdapter
+from bernstein.adapters.codebuddy import CodebuddyAdapter
 from bernstein.adapters.codebuff import CodebuffAdapter
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.cody import CodyAdapter
@@ -36,13 +37,16 @@ from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.goose import GooseAdapter
 from bernstein.adapters.gptme import GptmeAdapter
+from bernstein.adapters.grok import GrokAdapter
 from bernstein.adapters.hermes import HermesAdapter
 from bernstein.adapters.iac import IaCAdapter
+from bernstein.adapters.jules import JulesAdapter
 from bernstein.adapters.junie import JunieAdapter
 from bernstein.adapters.kilo import KiloAdapter
 from bernstein.adapters.kimi import KimiAdapter
 from bernstein.adapters.kiro import KiroAdapter
 from bernstein.adapters.letta_code import LettaCodeAdapter
+from bernstein.adapters.mimo import MimoAdapter
 from bernstein.adapters.mistral import MistralAdapter
 from bernstein.adapters.mock import MockAgentAdapter
 from bernstein.adapters.ollama import OllamaAdapter
@@ -53,9 +57,12 @@ from bernstein.adapters.openhands import OpenHandsAdapter
 from bernstein.adapters.pi import PiAdapter
 from bernstein.adapters.plandex import PlandexAdapter
 from bernstein.adapters.q_dev import QDevAdapter
+from bernstein.adapters.qoder import QoderAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.ralphex import RalphexAdapter
 from bernstein.adapters.rovo import RovoAdapter
+from bernstein.adapters.trae import TraeAdapter
+from bernstein.adapters.warp import WarpAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +82,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "cline": ClineAdapter,
     "clm": ClmAdapter,
     "cloudflare": CloudflareAgentsAdapter,
+    "codebuddy": CodebuddyAdapter,
     "codebuff": CodebuffAdapter,
     "codex": CodexAdapter,
     "cody": CodyAdapter,
@@ -94,13 +102,16 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "generic": GenericAdapter,
     "goose": GooseAdapter,
     "gptme": GptmeAdapter,
+    "grok": GrokAdapter,
     "hermes": HermesAdapter,
     "iac": IaCAdapter,
+    "jules": JulesAdapter,
     "junie": JunieAdapter,
     "kilo": KiloAdapter,
     "kimi": KimiAdapter,
     "kiro": KiroAdapter,
     "letta_code": LettaCodeAdapter,
+    "mimo": MimoAdapter,
     "mistral": MistralAdapter,
     "mock": MockAgentAdapter,
     "ollama": OllamaAdapter,
@@ -111,9 +122,12 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "pi": PiAdapter,
     "plandex": PlandexAdapter,
     "q_dev": QDevAdapter,
+    "qoder": QoderAdapter,
     "qwen": QwenAdapter,
     "ralphex": RalphexAdapter,
     "rovo": RovoAdapter,
+    "trae": TraeAdapter,
+    "warp": WarpAdapter,
 }
 
 _entrypoints_loaded = False

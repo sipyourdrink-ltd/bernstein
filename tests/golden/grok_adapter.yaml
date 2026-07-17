@@ -1,0 +1,19 @@
+name: grok_adapter_spawn
+adapter_class: bernstein.adapters.grok.GrokAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    # Grok resolves the model from its own config; the model never reaches
+    # argv (it is recorded by the worker wrapper only).
+    model: "grok-code-fast-1"
+    expected_pid: 5211
+    inner_argv:
+      - "grok"
+      - "-p"
+      - "fix the bug in main.py"
+      - "--output-format"
+      - "json"
+      - "--always-approve"
+      - "--no-auto-update"
+    env_extra_keys:
+      - "XAI_API_KEY"
+      - "GROK_API_KEY"

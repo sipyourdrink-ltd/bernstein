@@ -1,0 +1,27 @@
+# Contract for the ByteDance Trae Agent CLI (adapter: trae).
+#
+# Always-passed surface from src/bernstein/adapters/trae.py:
+# ``trae-cli run <prompt>``. The ``run`` subcommand executes a single
+# task non-interactively in the spawn cwd; provider/model are resolved
+# from the Trae config, so no model flag is on argv.
+#
+# Verified against https://github.com/bytedance/trae-agent on 2026-07-17.
+adapter: trae
+binary: trae-cli
+install:
+  method: pipx
+  spec: "trae-agent"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+    - "ANTHROPIC_API_KEY"
+    - "OPENAI_API_KEY"
+    - "GOOGLE_API_KEY"
+    - "OPENROUTER_API_KEY"
+required_flags: []
+required_subcommands:
+  - "run"
+expected_models:
+  command: []
+  required_present: []

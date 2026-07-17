@@ -39,7 +39,22 @@ Last updated: 2026-07-16
 | `kilo` | Stackblitz | No | Yes (ACP/MCP) |
 | `cloudflare` | Cloudflare | No | No |
 | `iac` | N/A (Terraform/Pulumi) | No | No |
+| `grok` | xAI (Grok Build) | JSON (`--output-format json`) | No |
+| `codebuddy` | Tencent | JSON (`--output-format stream-json`) | Yes |
+| `qoder` | Alibaba (binary `qodercli`) | No | Yes |
+| `trae` | ByteDance (binary `trae-cli`) | No | No |
+| `mimo` | Xiaomi (OpenCode core) | No | Yes |
+| `warp` | Warp (binary `oz`) | No | Yes (`--mcp`) |
+| `jules` | Google (async cloud agent) | No | No |
 | `generic` | Any | Depends on CLI | No |
+
+Support for each adapter is receipt-backed, not asserted: the nightly
+[conformance canary](conformance-canary.md) probes every registered adapter
+and the last-green table there is a projection of passing receipts. A newly
+landed adapter (the `grok` / `qoder` / `codebuddy` / `trae` / `mimo` / `warp`
+/ `jules` wave) is exercised from its first night but only earns a last-green
+row once a passing receipt exists. Run `bernstein integrations list` for the
+current registry rather than counting rows here.
 
 The detailed comparison matrix with cost tier, reasoning grade, and recommended use cases lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md).
 
