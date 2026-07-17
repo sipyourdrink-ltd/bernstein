@@ -584,6 +584,7 @@ class ScheduleSupervisor:
         )
         self._persist_receipt(refused)
         return refused
+
     def _dispatch_or_collide(self, schedule: Schedule, fire_epoch: int) -> FireReceipt:
         """Evaluate the collision guard, then dispatch or record a collision.
 
