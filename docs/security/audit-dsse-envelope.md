@@ -179,6 +179,9 @@ verifying against itself.
 - [Multi-tenant audit-chain export](audit-multitenant.md) - same DSSE
   primitives applied to a per-tenant slice with optional RFC 3161
   timestamping.
+- [Standard verifiable audit receipts](audit-receipt.md) - reuses these DSSE
+  primitives to project a chain range into COSE_Sign1, in-toto, and RFC 6962
+  transparency envelopes an off-the-shelf verifier validates.
 - [EU AI Act Article 12 evidence pack](../compliance/eu-ai-act-article-12-bundle.md)
   - the bundle the envelope wraps.
 - [Regulatory lineage](../compliance/regulatory-lineage.md) - the
