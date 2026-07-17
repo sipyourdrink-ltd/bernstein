@@ -1,0 +1,112 @@
+name: SPIFFE Extra E2E
+
+# Packages the SPIFFE credential path end to end (issue #2516). The default
+# self-contained install ships the Ed25519 identity path with the ``spiffe``
+# extra absent; operators who need workload-attested credentials install
+# ``bernstein[spiffe]``. This job builds the wheel and proves both shapes:
+#
+#   * the built wheel installs with the ``spiffe`` extra and the extra-present
+#     grant / SPIFFE suite passes (injected Workload API factory; no live SPIRE
+#     agent required);
+#   * a clean install WITHOUT the extra runs the same identity suites and the
+#     default Ed25519 paths pass unchanged.
+#
+# Kept out of the main CI matrix because it builds and installs the wheel into
+# throwaway virtualenvs, which the docs+test matrix does not need.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/bernstein/core/identity/grants.py"
+      - "src/bernstein/core/identity/spiffe/**"
+      - "src/bernstein/core/security/secrets_broker.py"
+      - "src/bernstein/cli/commands/secrets_cmd.py"
+      - "tests/unit/identity/test_grants.py"
+      - "tests/unit/identity/spiffe/**"
+      - "tests/unit/security/test_secrets_broker_grants.py"
+      - "pyproject.toml"
+      - ".github/workflows/spiffe-extra-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/bernstein/core/identity/grants.py"
+      - "src/bernstein/core/identity/spiffe/**"
+      - "src/bernstein/core/security/secrets_broker.py"
+      - ".github/workflows/spiffe-extra-e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spiffe-extra-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spiffe-extra-e2e:
+    name: SPIFFE extra E2E (built wheel, extra-present + no-extra suites)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+
+      - name: Build the wheel
+        run: |
+          uv build --wheel --out-dir dist
+          ls -1 dist/*.whl
+
+      - name: No-extra regression suite (default Ed25519 path, extra absent)
+        # The critical guarantee: with the spiffe extra ABSENT the default
+        # identity paths pass unchanged. This step is hard-required.
+        run: |
+          python -m venv .venv-noextra
+          . .venv-noextra/bin/activate
+          pip install --upgrade pip
+          pip install dist/*.whl pytest
+          # Prove the extra is genuinely absent, then run the identity suites.
+          python -c "import importlib.util as u; assert u.find_spec('spiffe') is None, 'spiffe extra unexpectedly present'; print('spiffe extra absent: OK')"
+          python -c "from bernstein.core.identity import grants; print('grants import OK without extra')"
+          python -c "from bernstein.core.identity.spiffe.workload_api import spiffe_extra_available; assert spiffe_extra_available() is False; print('spiffe_extra_available()=False OK')"
+          pytest -q \
+            tests/unit/identity/test_grants.py \
+            tests/unit/identity/spiffe/ \
+            tests/unit/security/test_secrets_broker_grants.py \
+            tests/unit/security/test_broker_grant_config.py \
+            tests/unit/cli/test_secrets_grants_cli.py \
+            tests/unit/test_doctor_spiffe.py
+
+      - name: Extra-present suite (built wheel installed with [spiffe])
+        # Best-effort: the py-spiffe SDK is a real third-party install; when it
+        # is unavailable on the runner this step degrades to a skip rather than
+        # reddening the packaging gate. The no-extra suite above is the hard
+        # guarantee; this step proves the packaged extra path when installable.
+        continue-on-error: true
+        run: |
+          WHEEL=$(ls dist/*.whl | head -1)
+          python -m venv .venv-extra
+          . .venv-extra/bin/activate
+          pip install --upgrade pip
+          if ! pip install "${WHEEL}[spiffe]" pytest; then
+            echo "::warning::py-spiffe SDK not installable on this runner; skipping extra-present suite"
+            exit 0
+          fi
+          python -c "from bernstein.core.identity.spiffe.workload_api import spiffe_extra_available; assert spiffe_extra_available() is True; print('spiffe extra present: OK')"
+          # The grant / spiffe suites use an injected Workload API factory, so
+          # they exercise the packaged path without a live SPIRE agent.
+          pytest -q \
+            tests/unit/identity/test_grants.py \
+            tests/unit/identity/spiffe/ \
+            tests/unit/security/test_secrets_broker_grants.py \
+            tests/unit/test_doctor_spiffe.py

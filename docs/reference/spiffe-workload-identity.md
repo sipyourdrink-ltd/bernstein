@@ -104,6 +104,20 @@ With the socket reachable, `bernstein.core.identity.spiffe.workload_api`
 fetches the SVID, `bind_svid_to_card` binds it to the card and records the
 receipt, and `svid_tls_config` wires the SVID into the task server's mTLS.
 
+## Scoped credential grants carry the SPIFFE ID
+
+When the secrets broker runs in grant-enforcing mode with
+`grants.identity_mode: spiffe`, `bernstein.core.identity.spiffe.grant_identity`
+resolves the workload SPIFFE ID (from the fetched SVID) as the issuer identity
+on each scoped credential grant. The grant record's issuer is then the same
+`spiffe://` id checkable via `bernstein spiffe verify-binding`, so a
+per-task downstream credential is bound to the workload identity, not just to
+the install-scoped manager key. `bernstein doctor` preflights the extra and the
+Workload API socket; with the extra absent the grant issuer falls back to the
+default Ed25519 manager identity and the regression suite is unchanged. See
+[the secrets broker guide](../security/secrets-broker.md#scoped-per-task-grants)
+for the full grant lifecycle.
+
 ## Threat model notes
 
 - **Determinism is the trust root.** The SPIFFE ID is a pure function of the

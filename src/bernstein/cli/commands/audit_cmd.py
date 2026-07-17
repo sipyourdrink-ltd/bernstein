@@ -218,8 +218,65 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # must fail verify (#2556). Orthogonal to both HMAC chain and Merkle seal.
     all_passed = _verify_clearance_gates() and all_passed
 
+    # Credential grant chains are a further integrity pillar: a mutated,
+    # deleted, or reordered grant / exchange / revocation record must fail
+    # verify exactly like a tampered chain entry (#2516). Orthogonal to both
+    # HMAC chain and Merkle seal.
+    all_passed = _verify_grant_chains() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
+
+
+def _verify_grant_chains() -> bool:
+    """Verify every per-run credential grant chain. Returns True if all valid.
+
+    Reconstructs each ``<audit>/grants/<run>.jsonl`` from genesis, recomputing
+    the HMAC linkage and the manager Ed25519 signature on every record. A
+    mutated field, a deleted record, or reordered records make ``bernstein
+    audit verify`` fail with the run and record named, exactly like a tampered
+    chain entry (#2516). When no grant chains exist the check is a silent no-op.
+    """
+    from bernstein.core.identity import grants
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    grants_dir = AUDIT_DIR / "grants"
+    if not grants_dir.is_dir():
+        return True  # no grant chains recorded; nothing to verify
+    run_files = sorted(grants_dir.glob("*.jsonl"))
+    if not run_files:
+        return True
+
+    try:
+        key = load_or_create_audit_key()
+    except OSError as exc:  # pragma: no cover - filesystem race
+        console.print(f"[red]Failed to load audit key for grant verification: {exc}[/red]")
+        return False
+
+    failures: list[tuple[str, list[str]]] = []
+    for path in run_files:
+        run_id = path.stem
+        result = grants.verify_grant_chain(root=AUDIT_DIR, run_id=run_id, key=key)
+        if not result.valid:
+            failures.append((run_id, result.errors))
+
+    console.print()
+    if not failures:
+        console.print(
+            Panel("[bold green]Grant Chain Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Runs", str(len(run_files)))
+        console.print(table)
+        return True
+
+    console.print(Panel("[bold red]Grant Chain Verification FAILED[/bold red]", border_style="red", expand=False))
+    for run_id, errors in failures:
+        for err in errors:
+            console.print(f"  [red]![/red] run {run_id}: {err}")
+    return False
 
 
 def _verify_hmac_chain() -> bool:

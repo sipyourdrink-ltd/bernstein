@@ -495,6 +495,90 @@ def check_port_available() -> dict[str, Any]:
     }
 
 
+def _spiffe_extra_available() -> bool:
+    """Return True when the optional ``spiffe`` extra (py-spiffe SDK) is importable.
+
+    Wrapped as a module-level indirection so tests can stub the extra presence
+    without installing the SDK.
+    """
+    from bernstein.core.identity.spiffe.workload_api import spiffe_extra_available
+
+    return spiffe_extra_available()
+
+
+def _spiffe_socket_reachable(endpoint: str) -> bool:
+    """Return True when the SPIRE Workload API socket at ``endpoint`` accepts a connect.
+
+    Accepts a ``unix://`` endpoint or a bare filesystem path. A missing path or
+    a non-socket file is treated as unreachable; the probe never blocks longer
+    than half a second and never sends credential material.
+    """
+    import stat as _stat
+
+    path = endpoint[len("unix://") :] if endpoint.startswith("unix://") else endpoint
+    if not path:
+        return False
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return False
+    if not _stat.S_ISSOCK(mode):
+        return False
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(0.5)
+        probe.connect(path)
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
+
+
+def check_spiffe_workload_api() -> dict[str, Any]:
+    """Preflight the packaged SPIFFE credential path (issue #2516, Phase 4).
+
+    The default Ed25519 identity path needs no extra. This check reports:
+
+    * PASS (informational) when the ``spiffe`` extra is absent -- the default
+      path is active and nothing is broken;
+    * WARN when the extra is present but ``SPIFFE_ENDPOINT_SOCKET`` is unset or
+      the socket is not reachable -- workload-attested grants cannot be issued
+      until a SPIRE agent is wired up;
+    * PASS when the extra is present and the Workload API socket is reachable --
+      the SVID path is ready and new grants can carry the SPIFFE ID issuer.
+    """
+    name = "SPIFFE workload API"
+    if not _spiffe_extra_available():
+        return {
+            "name": name,
+            "status": _CHECK_PASS,
+            "detail": "spiffe extra not installed; default Ed25519 identity path active",
+            "fix": "",
+        }
+    endpoint = os.environ.get("SPIFFE_ENDPOINT_SOCKET", "").strip()
+    if not endpoint:
+        return {
+            "name": name,
+            "status": _CHECK_WARN,
+            "detail": "spiffe extra present but SPIFFE_ENDPOINT_SOCKET is unset",
+            "fix": "Point SPIFFE_ENDPOINT_SOCKET at the SPIRE agent's Workload API socket",
+        }
+    if not _spiffe_socket_reachable(endpoint):
+        return {
+            "name": name,
+            "status": _CHECK_WARN,
+            "detail": f"Workload API socket not reachable at {endpoint}",
+            "fix": "Start the SPIRE agent or correct SPIFFE_ENDPOINT_SOCKET",
+        }
+    return {
+        "name": name,
+        "status": _CHECK_PASS,
+        "detail": f"SVID path ready; Workload API socket reachable at {endpoint}",
+        "fix": "",
+    }
+
+
 def check_sdd_workspace() -> dict[str, Any]:
     """Check for .sdd/ workspace structure."""
     workdir = Path.cwd()
@@ -727,6 +811,7 @@ def run_all_checks() -> list[dict[str, Any]]:
             check_port_available(),
             check_sdd_workspace(),
             check_schedule_supervisor(),
+            check_spiffe_workload_api(),
         )
     )
     return checks

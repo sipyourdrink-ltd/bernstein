@@ -189,6 +189,7 @@ class MintedToken:
     task_id: str
     expires_at: float
     ttl_seconds: int
+    audience: str = ""
 
     def is_expired(self, *, now: float | None = None) -> bool:
         """Return ``True`` when wall-clock time has passed ``expires_at``."""
@@ -471,6 +472,14 @@ class FileEncryptedBackend(SecretsBackend):
 # ---------------------------------------------------------------------------
 
 
+#: Valid identity modes for grant issuance. ``ed25519`` is the default,
+#: self-contained manager identity; ``spiffe`` relabels the grant issuer to the
+#: workload's SPIFFE ID when the ``spiffe`` extra and a Workload API socket are
+#: available (issue #2516).
+IdentityMode = Literal["ed25519", "spiffe"]
+_IDENTITY_MODES: frozenset[str] = frozenset({"ed25519", "spiffe"})
+
+
 @dataclass(frozen=True)
 class BrokerConfig:
     """Runtime configuration for the broker, mirrored from bernstein.yaml.
@@ -480,12 +489,18 @@ class BrokerConfig:
         ttl_seconds_default: Default token lifetime in seconds.
         ttl_overrides: Per-secret-name override map.
         backend_settings: Free-form options forwarded to the backend ctor.
+        require_grant: When True the broker refuses to mint without a
+            verifiable, chain-anchored grant (issue #2516).
+        identity_mode: ``ed25519`` (default) or ``spiffe``; ``spiffe`` binds
+            grant issuer identity to the workload SPIFFE ID when available.
     """
 
     backend: BackendName
     ttl_seconds_default: int = _DEFAULT_TTL_SECONDS
     ttl_overrides: dict[str, int] = field(default_factory=dict)
     backend_settings: dict[str, Any] = field(default_factory=dict)
+    require_grant: bool = False
+    identity_mode: IdentityMode = "ed25519"
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None) -> BrokerConfig:
@@ -514,11 +529,28 @@ class BrokerConfig:
         if not isinstance(backend_settings_raw, dict):
             raise SecretsBrokerError("backend_settings must be a mapping")
         backend_settings: dict[str, Any] = {str(k): v for k, v in backend_settings_raw.items()}
+
+        # Grant / identity block (issue #2516). Both default to the legacy,
+        # grant-free, self-contained Ed25519 behaviour when the block is absent.
+        grants_raw: object = raw.get("grants")
+        if grants_raw is None:
+            grants_raw = {}
+        if not isinstance(grants_raw, dict):
+            raise SecretsBrokerError("grants block must be a mapping")
+        require_grant = bool(grants_raw.get("require_grant", False))
+        identity_mode_raw: object = grants_raw.get("identity_mode", "ed25519")
+        if not isinstance(identity_mode_raw, str) or identity_mode_raw not in _IDENTITY_MODES:
+            valid = ", ".join(sorted(_IDENTITY_MODES))
+            raise SecretsBrokerError(f"unknown grants.identity_mode {identity_mode_raw!r}; valid: {valid}")
+        identity_mode: IdentityMode = identity_mode_raw  # type: ignore[assignment]
+
         return cls(
             backend=backend,
             ttl_seconds_default=ttl_default,
             ttl_overrides=overrides,
             backend_settings=backend_settings,
+            require_grant=require_grant,
+            identity_mode=identity_mode,
         )
 
 
@@ -534,6 +566,10 @@ class _Registration:
     token: MintedToken
     raw_value: str
     revoked: bool = False
+    # Grant lineage (issue #2516). Empty in legacy (grant-free) mode.
+    grant_id: str = ""
+    run_id: str = ""
+    audience: str = ""
 
 
 class SecretsBroker:
@@ -543,6 +579,19 @@ class SecretsBroker:
     The broker is designed to be created once at orchestrator startup and
     shared across tasks. Backends do their own connectivity per call;
     operators wanting caching should wrap the backend.
+
+    Grant-enforcing mode (issue #2516)
+    ==================================
+
+    When constructed with a ``grant_ledger`` and ``require_grant=True``, the
+    broker refuses to mint a token unless a verifiable, chain-anchored grant
+    exists for the ``(task_id, secret_name)`` pair. The refusal is itself a
+    chain event. A minted token inherits the grant's task id, audience, and
+    expiry; the token id is recorded in the grant lifecycle. ``resolve`` then
+    refuses a token presented outside its granted audience, and audience,
+    expiry, and revocation refusals are recorded as chain-anchored records
+    rather than only as in-process callbacks. Left unset, the broker keeps its
+    legacy grant-free behaviour unchanged.
     """
 
     def __init__(
@@ -552,11 +601,15 @@ class SecretsBroker:
         config: BrokerConfig,
         audit_sink: AuditSink | None = None,
         clock: Callable[[], float] = time.time,
+        grant_ledger: Any = None,
+        require_grant: bool = False,
     ) -> None:
         self._backend = backend
         self._config = config
         self._audit_sink = audit_sink
         self._clock = clock
+        self._grant_ledger = grant_ledger
+        self._require_grant = require_grant
         self._lock = threading.Lock()
         self._registry: dict[str, _Registration] = {}
         # Secondary index keyed by token value so ``resolve`` is O(1).
@@ -574,6 +627,8 @@ class SecretsBroker:
         secret_name: str,
         task_id: str,
         ttl_seconds: int | None = None,
+        grant: Any = None,
+        run_id: str | None = None,
     ) -> MintedToken:
         """Mint a short-lived token for ``secret_name`` scoped to ``task_id``.
 
@@ -584,34 +639,83 @@ class SecretsBroker:
                 keyed off this id.
             ttl_seconds: Lifetime override. ``None`` uses the per-secret
                 override, then the config default.
+            grant: A :class:`~bernstein.core.identity.grants.GrantReceipt` the
+                orchestrator issued for this task. Required in grant-enforcing
+                mode; the minted token inherits the grant's audience and expiry.
+            run_id: Run scope for chain-anchored refusal records when no grant
+                is presented. Defaults to the grant's run id, else ``task_id``.
 
         Returns:
             A :class:`MintedToken`. The ``value`` field is what the agent
             process should see in its env.
+
+        Raises:
+            SecretsBrokerError: In grant-enforcing mode, when no verifiable
+                grant exists for the ``(task_id, secret_name)`` pair. The
+                refusal is recorded as a chain event before the error is raised.
         """
         if not secret_name:
             raise SecretsBrokerError("secret_name must not be empty")
         if not task_id:
             raise SecretsBrokerError("task_id must not be empty")
+
+        audience = ""
+        grant_id = ""
+        grant_run_id = run_id or ""
+        expires_override: float | None = None
+        if self._require_grant:
+            grant_run_id, grant_id, audience, expires_override = self._authorize_mint(
+                secret_name=secret_name, task_id=task_id, grant=grant, run_id=run_id
+            )
+        elif grant is not None:
+            # Grant supplied without enforcement: still honour its scope so the
+            # token carries the audience and expiry the grant authorized.
+            grant_run_id = str(getattr(grant, "run_id", "") or run_id or "")
+            grant_id = str(getattr(grant, "grant_id", ""))
+            audience = str(getattr(grant, "audience", ""))
+            grant_expiry = int(getattr(grant, "expiry", 0) or 0)
+            if grant_expiry:
+                expires_override = float(grant_expiry)
+
         ttl = self._resolve_ttl(secret_name, ttl_seconds)
         raw_value = self._backend.read(secret_name)
         token_id = _new_token_id()
         token_value = _new_token_value()
         now = self._clock()
+        expires_at = expires_override if expires_override is not None else now + ttl
+        effective_ttl = int(expires_at - now) if expires_override is not None else ttl
         token = MintedToken(
             token_id=token_id,
             value=token_value,
             secret_name=secret_name,
             task_id=task_id,
-            expires_at=now + ttl,
-            ttl_seconds=ttl,
+            expires_at=expires_at,
+            ttl_seconds=effective_ttl,
+            audience=audience,
         )
-        registration = _Registration(token=token, raw_value=raw_value)
+        registration = _Registration(
+            token=token,
+            raw_value=raw_value,
+            grant_id=grant_id,
+            run_id=grant_run_id,
+            audience=audience,
+        )
         with self._lock:
             self._registry[token_id] = registration
             self._by_value[token_value] = registration
         register_secret_for_redaction(raw_value)
         register_secret_for_redaction(token_value)
+        # Record the broker exchange in the grant lifecycle so token-to-grant
+        # resolution works offline from the chain alone (issue #2516).
+        if grant_id and grant_run_id and self._grant_ledger is not None:
+            self._record_grant_exchange(
+                run_id=grant_run_id,
+                grant_id=grant_id,
+                token_id=token_id,
+                task_id=task_id,
+                secret_name=secret_name,
+                audience=audience,
+            )
         self._emit(
             AuditEvent(
                 kind="mint",
@@ -619,7 +723,7 @@ class SecretsBroker:
                 secret_name=secret_name,
                 task_id=task_id,
                 ts_ns=time.time_ns(),
-                ttl_seconds=ttl,
+                ttl_seconds=effective_ttl,
             )
         )
         return token
@@ -631,19 +735,34 @@ class SecretsBroker:
         secret_name: str,
         task_id: str,
         ttl_seconds: int | None = None,
+        grant: Any = None,
+        run_id: str | None = None,
     ) -> Generator[MintedToken, None, None]:
         """Mint a token; auto-revoke on context-manager exit."""
-        token = self.mint(secret_name=secret_name, task_id=task_id, ttl_seconds=ttl_seconds)
+        token = self.mint(
+            secret_name=secret_name,
+            task_id=task_id,
+            ttl_seconds=ttl_seconds,
+            grant=grant,
+            run_id=run_id,
+        )
         try:
             yield token
         finally:
             self.revoke(token.token_id, reason="scope-exit")
 
-    def resolve(self, token_value: str) -> str:
+    def resolve(self, token_value: str, *, audience: str | None = None) -> str:
         """Return the raw backing value for a minted token value.
 
+        Args:
+            token_value: The opaque token the agent process holds.
+            audience: When set, the audience the caller is presenting the token
+                to. A token minted from a grant refuses to resolve outside its
+                granted audience, and the refusal is recorded as a chain event.
+
         Raises:
-            SecretsBrokerError: If the token is unknown, revoked, or expired.
+            SecretsBrokerError: If the token is unknown, revoked, expired, or
+                presented outside its granted audience.
         """
         if not token_value:
             raise SecretsBrokerError("empty token value")
@@ -651,17 +770,25 @@ class SecretsBroker:
         # Stage the audit event inside the lock, dispatch it outside so a
         # slow audit sink cannot stall every other broker operation.
         deferred: AuditEvent | None = None
-        expired = False
         raw_value: str | None = None
+        # Chain-anchored refusal descriptor: (reason, run_id, task_id, secret,
+        # grant_id, error_message). Recorded and raised after the lock.
+        refusal: tuple[str, str, str, str, str, str] | None = None
         with self._lock:
             reg = self._by_value.get(token_value)
             if reg is None:
                 raise SecretsBrokerError("unknown token")
             if reg.revoked:
-                raise SecretsBrokerError("token has been revoked")
-            if now >= reg.token.expires_at:
+                refusal = (
+                    "revoked",
+                    reg.run_id,
+                    reg.token.task_id,
+                    reg.token.secret_name,
+                    reg.grant_id,
+                    "token has been revoked",
+                )
+            elif now >= reg.token.expires_at:
                 reg.revoked = True
-                expired = True
                 deferred = AuditEvent(
                     kind="expire",
                     token_id=reg.token.token_id,
@@ -670,6 +797,23 @@ class SecretsBroker:
                     ts_ns=time.time_ns(),
                     ttl_seconds=reg.token.ttl_seconds,
                     reason="ttl",
+                )
+                refusal = (
+                    "expired",
+                    reg.run_id,
+                    reg.token.task_id,
+                    reg.token.secret_name,
+                    reg.grant_id,
+                    "token has expired",
+                )
+            elif reg.audience and audience is not None and audience != reg.audience:
+                refusal = (
+                    f"audience_mismatch:{audience}",
+                    reg.run_id,
+                    reg.token.task_id,
+                    reg.token.secret_name,
+                    reg.grant_id,
+                    f"token presented outside its granted audience {reg.audience!r}",
                 )
             else:
                 raw_value = reg.raw_value
@@ -682,8 +826,16 @@ class SecretsBroker:
                 )
         if deferred is not None:
             self._emit(deferred)
-        if expired:
-            raise SecretsBrokerError("token has expired")
+        if refusal is not None:
+            reason, run_id, task_id, secret_name, grant_id, message = refusal
+            self._record_grant_refusal(
+                run_id=run_id,
+                task_id=task_id,
+                secret_name=secret_name,
+                grant_id=grant_id,
+                reason=f"resolve_{reason}",
+            )
+            raise SecretsBrokerError(message)
         if raw_value is None:  # pragma: no cover - defensive; branch above ensures non-None
             raise SecretsBrokerError("broker internal state corrupt")
         return raw_value
@@ -692,6 +844,7 @@ class SecretsBroker:
         """Revoke a single token by id. Returns ``True`` when it existed."""
         deferred: AuditEvent | None = None
         token_value_to_drop: str | None = None
+        grant_ref: tuple[str, str, str, str] | None = None
         with self._lock:
             reg = self._registry.get(token_id)
             if reg is None or reg.revoked:
@@ -707,8 +860,12 @@ class SecretsBroker:
                 reason=reason,
             )
             token_value_to_drop = reg.token.value
+            if reg.grant_id and reg.run_id:
+                grant_ref = (reg.run_id, reg.grant_id, reg.token.task_id, reg.token.secret_name)
         if token_value_to_drop is not None:
             unregister_secret_for_redaction(token_value_to_drop)
+        if grant_ref is not None:
+            self._record_grant_revocation(*grant_ref, reason=reason)
         if deferred is not None:
             self._emit(deferred)
         return True
@@ -717,6 +874,7 @@ class SecretsBroker:
         """Revoke every live token owned by ``task_id``. Returns count."""
         deferred: list[AuditEvent] = []
         token_values_to_drop: list[str] = []
+        grant_refs: list[tuple[str, str, str, str]] = []
         with self._lock:
             for reg in self._registry.values():
                 if reg.revoked or reg.token.task_id != task_id:
@@ -734,8 +892,12 @@ class SecretsBroker:
                     )
                 )
                 token_values_to_drop.append(reg.token.value)
+                if reg.grant_id and reg.run_id:
+                    grant_refs.append((reg.run_id, reg.grant_id, task_id, reg.token.secret_name))
         for value in token_values_to_drop:
             unregister_secret_for_redaction(value)
+        for ref in grant_refs:
+            self._record_grant_revocation(*ref, reason=reason)
         for event in deferred:
             self._emit(event)
         return len(deferred)
@@ -768,6 +930,128 @@ class SecretsBroker:
         if per_secret is not None:
             return int(per_secret)
         return self._config.ttl_seconds_default
+
+    # -- grant enforcement (issue #2516) ------------------------------------
+
+    def _authorize_mint(
+        self,
+        *,
+        secret_name: str,
+        task_id: str,
+        grant: Any,
+        run_id: str | None,
+    ) -> tuple[str, str, str, float | None]:
+        """Refuse to mint without a verifiable grant; record refusals on-chain.
+
+        Returns ``(run_id, grant_id, audience, expires_override)`` for a grant
+        that verifies against the chain and matches ``(task_id, secret_name)``.
+        Any refusal is appended to the grant ledger as a ``grant_refused``
+        record before the raising :class:`SecretsBrokerError` propagates.
+        """
+        refusal_run = run_id or (str(getattr(grant, "run_id", "")) if grant is not None else "") or task_id
+        if grant is None:
+            self._record_grant_refusal(
+                run_id=refusal_run,
+                task_id=task_id,
+                secret_name=secret_name,
+                grant_id="",
+                reason="no_grant_presented",
+            )
+            raise SecretsBrokerError(f"no verifiable grant for task {task_id!r} secret {secret_name!r}")
+
+        grant_run = str(getattr(grant, "run_id", "") or refusal_run)
+        grant_id = str(getattr(grant, "grant_id", ""))
+        ok, reason = self._verify_grant(grant, task_id=task_id, secret_name=secret_name)
+        if not ok:
+            self._record_grant_refusal(
+                run_id=grant_run,
+                task_id=task_id,
+                secret_name=secret_name,
+                grant_id=grant_id,
+                reason=f"grant_{reason}",
+            )
+            raise SecretsBrokerError(f"grant refused for task {task_id!r} secret {secret_name!r}: {reason}")
+
+        audience = str(getattr(grant, "audience", ""))
+        expiry = int(getattr(grant, "expiry", 0) or 0)
+        expires_override = float(expiry) if expiry else None
+        return grant_run, grant_id, audience, expires_override
+
+    def _verify_grant(self, grant: Any, *, task_id: str, secret_name: str) -> tuple[bool, str]:
+        """Confirm ``grant`` verifies against the chain and matches the request."""
+        if getattr(grant, "task_id", None) != task_id:
+            return False, "task_mismatch"
+        if getattr(grant, "secret_name", None) != secret_name:
+            return False, "secret_mismatch"
+        if self._grant_ledger is None:
+            return False, "no_ledger"
+        from bernstein.core.identity import grants as _grants
+
+        run_id = str(getattr(grant, "run_id", ""))
+        grant_id = str(getattr(grant, "grant_id", ""))
+        result = _grants.verify_grant_chain(
+            root=self._grant_ledger.root, run_id=run_id, key=self._grant_ledger.hmac_key
+        )
+        if not result.valid:
+            return False, "chain_unverified"
+        active = _grants.find_active_grant(result, task_id=task_id, secret_name=secret_name, now=self._clock())
+        if active is None or active.grant_id != grant_id:
+            return False, "not_active"
+        return True, "ok"
+
+    def _record_grant_exchange(
+        self,
+        *,
+        run_id: str,
+        grant_id: str,
+        token_id: str,
+        task_id: str,
+        secret_name: str,
+        audience: str,
+    ) -> None:
+        if self._grant_ledger is None:
+            return
+        try:
+            self._grant_ledger.record_exchange(
+                run_id=run_id,
+                grant_id=grant_id,
+                token_id=token_id,
+                task_id=task_id,
+                secret_name=secret_name,
+                audience=audience,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("grant exchange record failed: %s", type(exc).__name__)
+
+    def _record_grant_revocation(
+        self, run_id: str, grant_id: str, task_id: str, secret_name: str, *, reason: str
+    ) -> None:
+        if self._grant_ledger is None:
+            return
+        try:
+            self._grant_ledger.revoke_grant(
+                run_id=run_id,
+                grant_id=grant_id,
+                task_id=task_id,
+                secret_name=secret_name,
+                reason=reason,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("grant revocation record failed: %s", type(exc).__name__)
+
+    def _record_grant_refusal(self, *, run_id: str, task_id: str, secret_name: str, grant_id: str, reason: str) -> None:
+        if self._grant_ledger is None or not run_id:
+            return
+        try:
+            self._grant_ledger.record_refusal(
+                run_id=run_id,
+                task_id=task_id,
+                secret_name=secret_name,
+                grant_id=grant_id,
+                reason=reason,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("grant refusal record failed: %s", type(exc).__name__)
 
     def _emit(self, event: AuditEvent) -> None:
         """Dispatch *event* to the logger and the optional audit sink.
@@ -823,9 +1107,24 @@ def build_broker_from_config(
     raw: dict[str, Any] | None,
     *,
     audit_sink: AuditSink | None = None,
+    grant_ledger: Any = None,
 ) -> SecretsBroker:
-    """Build a broker from a raw ``security.secrets`` mapping."""
+    """Build a broker from a raw ``security.secrets`` mapping.
+
+    When ``grants.require_grant`` is set in config, pass a ``grant_ledger``
+    (a :class:`~bernstein.core.identity.grants.GrantLedger`) so the broker can
+    enforce and record chain-anchored grants (issue #2516). Grant enforcement
+    is a no-op without a ledger even when ``require_grant`` is set, so a
+    misconfigured install fails closed at mint time rather than silently
+    minting unscoped tokens.
+    """
     config = BrokerConfig.from_raw(raw)
     factory = _BACKEND_REGISTRY[config.backend]
     backend = factory(**config.backend_settings)
-    return SecretsBroker(backend, config=config, audit_sink=audit_sink)
+    return SecretsBroker(
+        backend,
+        config=config,
+        audit_sink=audit_sink,
+        grant_ledger=grant_ledger,
+        require_grant=config.require_grant,
+    )
