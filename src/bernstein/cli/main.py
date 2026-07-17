@@ -1269,6 +1269,10 @@ cli.add_command(ledger_group, "ledger")
 from bernstein.cli.commands.mission_cmd import mission_group  # noqa: E402
 
 cli.add_command(mission_group, "mission")
+# Named resource pools with lease-backed admission projected from the ledger (#2544).
+from bernstein.cli.commands.limits_cmd import limits_group  # noqa: E402
+
+cli.add_command(limits_group, "limits")
 
 # Detached run service: submit a goal, disconnect, reattach later (#2352).
 from bernstein.cli.commands.run_service_cmd import run_service_group  # noqa: E402

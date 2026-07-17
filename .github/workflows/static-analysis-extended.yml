@@ -130,7 +130,7 @@ jobs:
             semgrep.sarif > semgrep.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: semgrep.filtered.sarif
           category: semgrep-ce
@@ -179,7 +179,7 @@ jobs:
             trivy-fs.sarif > trivy-fs.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: trivy-fs.filtered.sarif
           category: trivy-fs
@@ -251,7 +251,7 @@ jobs:
             trivy-iac.sarif > trivy-iac.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: trivy-iac.filtered.sarif
           category: trivy-iac
@@ -323,7 +323,7 @@ jobs:
             vulture.sarif > vulture.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: vulture.filtered.sarif
           category: vulture
@@ -380,7 +380,7 @@ jobs:
             refurb.sarif > refurb.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: refurb.filtered.sarif
           category: refurb
@@ -447,7 +447,7 @@ jobs:
             perflint.sarif > perflint.filtered.sarif
       - name: Upload SARIF to Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: perflint.filtered.sarif
           category: perflint
