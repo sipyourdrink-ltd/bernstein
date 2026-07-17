@@ -1212,6 +1212,18 @@ def exec_restart() -> None:
         "Capable adapters: claude, gemini."
     ),
 )
+@click.option(
+    "--refresh-cache",
+    "refresh_cache",
+    is_flag=True,
+    default=False,
+    help=(
+        "Cache policy bypass (issue #2551): ignore every policy cache hit for "
+        "this run, then repopulate the cache with the fresh outputs. Exports "
+        "BERNSTEIN_REFRESH_CACHE=1 for the orchestrator; tasks with no declared "
+        "cache policy are unaffected."
+    ),
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -1255,6 +1267,7 @@ def run(
     criterion_profile: str | None = None,
     max_blast_radius: float | None = None,
     attach: tuple[Path, ...] = (),
+    refresh_cache: bool = False,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -1306,6 +1319,7 @@ def run(
             criterion_profile=criterion_profile,
             max_blast_radius=max_blast_radius,
             attach=attach,
+            refresh_cache=refresh_cache,
         )
     except (click.UsageError, SystemExit):
         raise
@@ -1357,6 +1371,7 @@ def _run_impl(
     criterion_profile: str | None,
     max_blast_radius: float | None,
     attach: tuple[Path, ...] = (),
+    refresh_cache: bool = False,
 ) -> None:
     """Concrete ``run`` implementation; wrapped by :func:`run` for hinting.
 
@@ -1469,6 +1484,12 @@ def _run_impl(
         except (RetryBudgetError, ValueError) as exc:
             raise click.UsageError(f"invalid --retry-budget value: {exc}") from exc
         os.environ["BERNSTEIN_RETRY_BUDGET_SPEC"] = retry_budget_spec
+    # Issue #2551: --refresh-cache bypasses policy cache hits for this run and
+    # repopulates. Exported so the orchestrator's cache boundary reads it via
+    # ``bernstein.core.persistence.cache_policy.refresh_requested``. Tasks with
+    # no declared policy are unaffected.
+    if refresh_cache:
+        os.environ["BERNSTEIN_REFRESH_CACHE"] = "1"
     # Print the startup banner unless the parent ``cli()`` group already
     # rendered the premium splash for this invocation. Regressed by commit
     # 1e5c13013 ("fix: ... double banner ..."), which mistakenly removed the

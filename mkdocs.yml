@@ -503,6 +503,7 @@ nav:
           - Feature contract: concepts/feature-contract.md
           - Schema validation retry: concepts/schema-validation-retry.md
           - Action cache and replay: concepts/action-cache.md
+          - Cache policy engine: concepts/cache-policy.md
           - Discrete phase pipeline: concepts/phase-pipeline.md
           - Spec-as-test loop: concepts/spec-as-test.md
           - Abstracted code review: concepts/abstracted-code-review.md
