@@ -381,7 +381,7 @@ class ClaudeStreamParser:
         subtype = str(msg.get("subtype", ""))
 
         if subtype in PROVIDER_MUTATION_SUBTYPES:
-            signal: dict[str, Any] = {"kind": subtype, "detail": dict(msg)}
+            signal: dict[str, Any] = {"kind": subtype, "detail": msg.copy()}
             self.state.provider_mutations.append(signal)
             return StreamEvent(
                 event_type=StreamEventType.PROVIDER_STATE_MUTATION,

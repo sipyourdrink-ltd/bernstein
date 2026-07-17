@@ -226,7 +226,7 @@ def build_version_posture_receipt(entries: list[dict[str, Any]], *, generated_at
     return {
         "schema_version": _VERSION_POSTURE_SCHEMA_VERSION,
         "kind": "adapter.version_posture",
-        "entries": [dict(entry) for entry in entries],
+        "entries": [entry.copy() for entry in entries],
         "floor_map_hash": floor_map_content_hash(),
         "generated_at": generated_at,
     }
@@ -515,11 +515,11 @@ def _spiffe_socket_reachable(endpoint: str) -> bool:
     """
     import stat as _stat
 
-    path = endpoint[len("unix://") :] if endpoint.startswith("unix://") else endpoint
+    path = endpoint.removeprefix("unix://")
     if not path:
         return False
     try:
-        mode = os.stat(path).st_mode
+        mode = Path(path).stat().st_mode
     except OSError:
         return False
     if not _stat.S_ISSOCK(mode):
@@ -798,8 +798,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks.extend(check_adapters_installed())
     checks.extend(check_adapter_advisories())
     checks.extend(check_canary_last_green())
-    checks.append(check_price_table_advisory())
-    checks.append(check_knob_matrix_advisory())
+    checks.extend((check_price_table_advisory(), check_knob_matrix_advisory()))
     checks.extend(check_skill_revocations())
     checks.append(check_eval_gate_min_n_advisory())
     checks.extend(check_api_keys())

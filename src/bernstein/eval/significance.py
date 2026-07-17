@@ -296,8 +296,8 @@ class PairedTable:
             raise ValueError(msg)
         both_pass = base_only = cand_only = both_fail = 0
         for task_id in sorted(base_keys):
-            bp = bool(baseline[task_id])
-            cp = bool(candidate[task_id])
+            bp = baseline[task_id]
+            cp = candidate[task_id]
             if bp and cp:
                 both_pass += 1
             elif bp and not cp:
@@ -508,10 +508,10 @@ def _hash_obj(obj: Any) -> str:
 
 def result_set_hash(outcomes: Mapping[str, bool]) -> str:
     """Return an order-invariant content hash over per-task pass/fail outcomes."""
-    canonical = {str(task_id): bool(passed) for task_id, passed in outcomes.items()}
+    canonical = dict(outcomes)
     return _hash_obj(canonical)
 
 
 def suite_content_hash(task_ids: Sequence[str]) -> str:
     """Return an order-invariant content hash over a suite's task ids."""
-    return _hash_obj(sorted(str(t) for t in task_ids))
+    return _hash_obj(sorted(task_ids))

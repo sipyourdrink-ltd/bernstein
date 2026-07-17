@@ -428,7 +428,7 @@ def _verify_approval_cards() -> bool:
     from bernstein.core.approval.card_verify import verify_approval_cards
 
     result = verify_approval_cards(AUDIT_DIR)
-    if result.issued_count == 0 and result.resolved_count == 0:
+    if result.issued_count == 0 == result.resolved_count:
         return True  # no approval cards recorded; nothing to verify
 
     console.print()

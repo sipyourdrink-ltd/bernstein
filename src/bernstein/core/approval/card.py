@@ -84,7 +84,7 @@ def args_digest(tool_args: dict[str, Any]) -> str:
     decision echoing the card commits to the concrete invocation and not just
     the tool name.
     """
-    return hashlib.sha256(_canonical_dumps(dict(tool_args)).encode("utf-8")).hexdigest()
+    return hashlib.sha256(_canonical_dumps(tool_args.copy()).encode("utf-8")).hexdigest()
 
 
 def _bound_reasoning(reasoning: str) -> str:
@@ -93,7 +93,7 @@ def _bound_reasoning(reasoning: str) -> str:
     The bound is applied deterministically so identical intent text always
     yields identical envelope bytes.
     """
-    text = (reasoning or "").strip()
+    text = reasoning.strip()
     if len(text) <= REASONING_MAX_CHARS:
         return text
     return text[: REASONING_MAX_CHARS - 1].rstrip() + "…"
@@ -137,8 +137,8 @@ class ImpactEstimate:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "score": float(self.score),
-            "hard_one_way": bool(self.hard_one_way),
+            "score": self.score,
+            "hard_one_way": self.hard_one_way,
             "rationale": self.rationale,
             "fired_detectors": list(self.fired_detectors),
         }
@@ -169,7 +169,7 @@ class RollbackPlan:
     irreversible: bool
 
     def to_dict(self) -> dict[str, Any]:
-        return {"procedure": self.procedure, "irreversible": bool(self.irreversible)}
+        return {"procedure": self.procedure, "irreversible": self.irreversible}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RollbackPlan:
@@ -211,8 +211,8 @@ class ApprovalCardV2:
             "reasoning": self.reasoning,
             "impact": self.impact.to_dict(),
             "rollback": self.rollback.to_dict(),
-            "created_at": float(self.created_at),
-            "not_after": float(self.not_after),
+            "created_at": self.created_at,
+            "not_after": self.not_after,
             "card_version": self.card_version,
         }
 
@@ -433,7 +433,11 @@ def render_card_text(card: ApprovalCardV2) -> str:
     ]
     if impact.hard_one_way or card.rollback.irreversible:
         lines.append("IRREVERSIBLE ACTION: change tripped a one-way-door blast-radius detector.")
-    lines.append(f"Rollback: {card.rollback.procedure}")
-    lines.append(f"Expires at: {card.not_after:.0f} (enforced by the audit chain, not this chat client)")
-    lines.append(f"Card hash: {card_hash(card)}")
+    lines.extend(
+        (
+            f"Rollback: {card.rollback.procedure}",
+            f"Expires at: {card.not_after:.0f} (enforced by the audit chain, not this chat client)",
+            f"Card hash: {card_hash(card)}",
+        )
+    )
     return "\n".join(lines)

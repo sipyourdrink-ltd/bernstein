@@ -215,7 +215,7 @@ def _default_model_knobs(pricing: Mapping[str, Any]) -> ModelKnobs:
     return ModelKnobs(
         effort_levels=DEFAULT_EFFORT_LEVELS,
         default_effort=DEFAULT_EFFORT,
-        lanes=dict(LANE_MULTIPLIERS),
+        lanes=LANE_MULTIPLIERS.copy(),
         cache_strategies=cache_strategies,
     )
 
@@ -250,8 +250,8 @@ def _coerce_knobs(raw: Mapping[str, Any], *, key: str) -> ModelKnobs:
     def _numeric_map(field: str, fallback: dict[str, float], *, always: dict[str, float]) -> dict[str, float]:
         rows = raw.get(field)
         if not isinstance(rows, Mapping):
-            return dict(fallback)
-        out: dict[str, float] = dict(always)
+            return fallback.copy()
+        out: dict[str, float] = always.copy()
         for name, value in rows.items():
             try:
                 num = float(value)
@@ -262,7 +262,7 @@ def _coerce_knobs(raw: Mapping[str, Any], *, key: str) -> ModelKnobs:
             out[str(name)] = num
         return out
 
-    lanes = _numeric_map("lanes", dict(LANE_MULTIPLIERS), always={LANE_INTERACTIVE: 1.0})
+    lanes = _numeric_map("lanes", LANE_MULTIPLIERS.copy(), always={LANE_INTERACTIVE: 1.0})
     cache_strategies = _numeric_map("cache_strategies", {CACHE_NONE: 1.0}, always={CACHE_NONE: 1.0})
     return ModelKnobs(
         effort_levels=effort_levels,
@@ -293,7 +293,7 @@ def load_knob_matrix(
     base_matrix = base if base is not None else DEFAULT_KNOB_MATRIX
     if not models:
         return base_matrix
-    merged: dict[str, ModelKnobs] = dict(base_matrix.models)
+    merged: dict[str, ModelKnobs] = base_matrix.models.copy()
     for key, raw in models.items():
         merged[key] = _coerce_knobs(raw, key=key)
     return KnobMatrix(models=merged, as_of=as_of or base_matrix.as_of, revision=revision)

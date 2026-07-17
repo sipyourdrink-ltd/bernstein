@@ -247,8 +247,7 @@ class TeamsBridge(BridgeProtocol):
     async def start(self) -> None:
         """Construct the Bot Framework connector client and begin serving."""
         connector_mod = _import_teams_connector()
-        credentials_mod = _import_teams_credentials()
-        credentials = credentials_mod.MicrosoftAppCredentials(self._token, self._app_password)
+        credentials = _import_teams_credentials().MicrosoftAppCredentials(self._token, self._app_password)
         # ``ConnectorClient`` targets a tenant service url; when the operator
         # did not pin one we defer to the SDK default so replies still route.
         self._client = connector_mod.ConnectorClient(credentials, base_url=self._service_url or None)

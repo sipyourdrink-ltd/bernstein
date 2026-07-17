@@ -157,7 +157,7 @@ def compute_graph_delta_hash(
             "injected_edges": sorted(injected_edges),
             "blocker_content_hash": blocker_content_hash,
             "scope_cell_id": scope_cell_id,
-            "deadline": int(deadline),
+            "deadline": deadline,
         }
     )
     return _sha256_hex(payload)
@@ -229,8 +229,8 @@ def project_clearance_gate(
     content_hash = blocker_content_hash(agent_id=blocker.agent_id, content=blocker.content, cell_id=blocker.cell_id)
     seed = _canonical({"content_hash": content_hash, "journal_prefix_hash": journal_prefix_hash, "scope": scope})
     clearance_task_id = "clearance-" + _sha256_hex(seed)[:16]
-    injected = tuple(sorted({str(t) for t in scope_task_ids}))
-    deadline = int(blocker.timestamp) + int(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else 0
+    injected = tuple(sorted(set(scope_task_ids)))
+    deadline = int(blocker.timestamp) + ttl_seconds if ttl_seconds and ttl_seconds > 0 else 0
     graph_delta_hash = compute_graph_delta_hash(
         clearance_task_id=clearance_task_id,
         injected_edges=injected,
@@ -369,9 +369,7 @@ class ClearanceGateCoordinator:
         jph = journal_prefix_hash(self._prefix_for(blocker))
         # A prior gate's clearance task is itself an open task in the cell; never
         # gate a gate on another gate.
-        open_deps = [
-            dep for dep in self._injector.open_dependent_task_ids(scope) if not str(dep).startswith("clearance-")
-        ]
+        open_deps = [dep for dep in self._injector.open_dependent_task_ids(scope) if not dep.startswith("clearance-")]
         spec = project_clearance_gate(
             blocker=blocker,
             scope_task_ids=open_deps,
