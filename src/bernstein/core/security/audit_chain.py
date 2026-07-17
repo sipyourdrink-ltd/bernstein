@@ -704,6 +704,23 @@ EVENT_CONTEXT_CAPSULE = "context.capsule"
 #: never goal text or task payloads.
 EVENT_MISSION_PHASE_RECEIPT = "mission.phase_receipt"
 
+#: Issue #2510 -- emitted once per recurring mission digest fire. A mission
+#: digest is a pure deterministic projection of the mission state at a fire
+#: instant (see :mod:`bernstein.core.orchestration.mission_digest`); this event
+#: anchors that projection in the HMAC chain by recording ``{mission_id,
+#: fire_time, digest_hash, receipt_id, mission_status_hash, ledger_head,
+#: phases_passed, gates_passed, gates_failed, total_spend_usd, schedule_id,
+#: recurrence, fire_graph_hash, journal_entry_hash}`` plus the previous chain
+#: digest. The posted chat message embeds ``digest_hash``, so a recipient
+#: recomputes the digest from the ledger and proves the message matches the
+#: chain-attested receipt; a tampered receipt fails chain verification at its
+#: exact position. ``receipt_id`` is the per-fire delivery idempotency key, a
+#: pure function of ``(mission_id, fire_time, digest_hash)``, so a restart
+#: between fire computation and delivery does not double-post. Only identifiers,
+#: hashes, counts, and the spend are recorded -- never goal text or task
+#: payloads.
+EVENT_MISSION_DIGEST_RECEIPT = "mission.digest_receipt"
+
 #: Issue #2549 -- emitted whenever a per-goal SLA contract is evaluated against
 #: chain evidence inside a supervisor tick and found breached. A breach is a
 #: signed, offline-verifiable violation receipt (see
@@ -4869,6 +4886,85 @@ def record_mission_phase_receipt(
     )
 
 
+def record_mission_digest_receipt(
+    *,
+    chain: AuditChainStore,
+    mission_id: str,
+    fire_time: int,
+    digest_hash: str,
+    receipt_id: str,
+    mission_status_hash: str,
+    ledger_head: str,
+    phases_passed: int,
+    gates_passed: int,
+    gates_failed: int,
+    total_spend_usd: float,
+    schedule_id: str = "",
+    recurrence: str = "",
+    fire_graph_hash: str = "",
+    journal_entry_hash: str = "",
+    actor: str = "mission_digest",
+) -> AuditEvent:
+    """Append a ``mission.digest_receipt`` event into *chain* (#2510).
+
+    Anchors one recurring mission-digest fire in the HMAC chain. The digest is
+    a pure deterministic projection of the mission state at ``fire_time`` (see
+    :mod:`bernstein.core.orchestration.mission_digest`); ``digest_hash`` is the
+    hash of its canonical bytes, embedded in the posted chat message so a
+    recipient recomputes the digest from the ledger and proves the message
+    matches this chain-attested receipt. ``receipt_id`` is the per-fire delivery
+    idempotency key, a pure function of ``(mission_id, fire_time, digest_hash)``.
+    Only identifiers, hashes, counts, and the spend are recorded -- never goal
+    text or task payloads.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        mission_id: The mission the digest summarises.
+        fire_time: Integer Unix epoch of the canonical fire instant.
+        digest_hash: Hex hash of the canonical digest bytes.
+        receipt_id: Deterministic per-fire delivery idempotency key.
+        mission_status_hash: The mission projection's status hash at fire time.
+        ledger_head: The work-ledger head the projection folded to.
+        phases_passed: Count of phases the digest reports as passed.
+        gates_passed: Count of phases whose verification gate passed.
+        gates_failed: Count of phases halted (gate failed / envelope exhausted).
+        total_spend_usd: Total spend across all envelopes at fire time.
+        schedule_id: The recurring schedule that fired the digest, when any.
+        recurrence: Canonical recurrence rule of the fire, when any.
+        fire_graph_hash: The deterministic schedule-fire projection hash the
+            digest fire was anchored on, when any.
+        journal_entry_hash: The lineage-spine / ledger entry hash the digest
+            was sealed against, when any.
+        actor: Recorded actor; defaults to ``"mission_digest"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MISSION_DIGEST_RECEIPT,
+        actor=actor,
+        resource_type="mission_digest",
+        resource_id=receipt_id,
+        details={
+            "mission_id": mission_id,
+            "fire_time": fire_time,
+            "digest_hash": digest_hash,
+            "receipt_id": receipt_id,
+            "mission_status_hash": mission_status_hash,
+            "ledger_head": ledger_head,
+            "phases_passed": phases_passed,
+            "gates_passed": gates_passed,
+            "gates_failed": gates_failed,
+            "total_spend_usd": total_spend_usd,
+            "schedule_id": schedule_id,
+            "recurrence": recurrence,
+            "fire_graph_hash": fire_graph_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Eventing v2 (#2548): fire receipts, automation actions, absence proofs, and
 # webhook payload anchors. These are the chain records the events package writes
@@ -5595,6 +5691,7 @@ __all__ = [
     "EVENT_MCP_STATELESS_CALL",
     "EVENT_MCP_TASK_HANDLE",
     "EVENT_MEMORY_WRITE",
+    "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
@@ -5689,6 +5786,7 @@ __all__ = [
     "record_mcp_stateless_call",
     "record_mcp_task_handle",
     "record_memory_write",
+    "record_mission_digest_receipt",
     "record_mission_phase_receipt",
     "record_multimodal_attach",
     "record_otel_projection",

@@ -293,6 +293,7 @@ nav:
           - Doctor: operations/doctor.md
           - Holds: operations/HOLDS.md
           - Review board: operations/review-board.md
+          - Mission timeline and digests: operations/mission-timeline.md
           - Work ledger: operations/work-ledger.md
           - Decision log: operations/decision-log.md
           - Intent capsules: operations/intent-capsules.md
