@@ -1294,6 +1294,7 @@ def create_app(
     from bernstein.core.routes.hooks import router as hooks_router
     from bernstein.core.routes.identities import router as identities_router
     from bernstein.core.routes.mcp_bot_tools import router as mcp_bot_tools_router
+    from bernstein.core.routes.missions import router as missions_router
     from bernstein.core.routes.orchestrator_holds import router as orchestrator_holds_router
     from bernstein.core.routes.paginated_tasks import router as paginated_tasks_router
     from bernstein.core.routes.plans import router as plans_router
@@ -1371,6 +1372,7 @@ def create_app(
         session_peek_router,
         orchestrator_holds_router,
         review_board_router,
+        missions_router,
     ]
 
     # Fresh per-app router: including route groups mutates the target router,

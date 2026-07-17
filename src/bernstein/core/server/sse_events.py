@@ -31,6 +31,7 @@ class SSEEventType(StrEnum):
     MERGE_COMPLETED = "merge.completed"
     RUN_STARTED = "run.started"
     RUN_COMPLETED = "run.completed"
+    MISSION_UPDATED = "mission.updated"
     HEARTBEAT = "heartbeat"
 
 
@@ -284,6 +285,33 @@ class SSEEvent:
             event=SSEEventType.RUN_COMPLETED,
             data={
                 "run_id": run_id,
+            }
+            | extra,
+        )
+
+    @classmethod
+    def mission_updated(cls, mission_id: str, status_hash: str, overall: str = "", **extra: Any) -> SSEEvent:
+        """Create a mission_updated event for the timeline screen (#2510).
+
+        Carries the mission's canonical ``status_hash`` so a client can refresh
+        its projection only when the folded state actually changed, and confirm
+        it is rendering the same state two operators would agree on.
+
+        Args:
+            mission_id: Mission identifier.
+            status_hash: The mission projection's canonical status hash.
+            overall: Overall mission state (``active`` / ``complete`` / ...).
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
+        return cls(
+            event=SSEEventType.MISSION_UPDATED,
+            data={
+                "mission_id": mission_id,
+                "status_hash": status_hash,
+                "overall": overall,
             }
             | extra,
         )

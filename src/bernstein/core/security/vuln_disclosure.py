@@ -1,15 +1,16 @@
-"""Automated vulnerability disclosure program with bug bounty integration.
+"""Coordinated vulnerability disclosure with non-monetary recognition.
 
 Provides structured vulnerability report handling, triage workflows,
 coordinated disclosure timelines, and RFC 9116 security.txt generation.
-Integrates with bug bounty platforms (HackerOne, Bugcrowd) for reward
-management and researcher communication.
+Recognition for valid reports is non-monetary - severity maps to a
+recognition tier (acknowledgment, public credit, CVE credit, hall of
+fame) rather than a cash payout.
 
 Usage::
 
     from bernstein.core.security.vuln_disclosure import (
         VulnReport,
-        BountyScope,
+        DisclosureScope,
         VulnerabilityDisclosureManager,
         generate_security_txt,
     )
@@ -62,6 +63,21 @@ class ReportStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class RecognitionTier(StrEnum):
+    """Non-monetary recognition granted for a valid disclosure.
+
+    The project is non-commercial and runs no paid bounty; researchers are
+    recognized through acknowledgment, public credit, CVE credit, and the
+    hall of fame rather than a cash reward.
+    """
+
+    NONE = "none"
+    ACKNOWLEDGMENT = "acknowledgment"
+    PUBLIC_CREDIT = "public-credit"
+    CVE_CREDIT = "cve-credit"
+    HALL_OF_FAME = "hall-of-fame"
+
+
 @dataclass(frozen=True)
 class VulnReport:
     """A vulnerability report submitted by a security researcher.
@@ -90,29 +106,30 @@ class VulnReport:
 
 
 @dataclass(frozen=True)
-class BountyScope:
-    """Scope definition for the bug bounty program.
+class DisclosureScope:
+    """Scope definition for the coordinated disclosure program.
+
+    Recognition is non-monetary: ``recognition`` maps a severity level to a
+    :class:`RecognitionTier` value rather than a cash amount.
 
     Attributes:
         in_scope: Components or endpoints that are in scope.
         out_of_scope: Components explicitly out of scope.
-        rewards: Mapping from severity level to USD reward amount.
+        recognition: Mapping from severity level to recognition tier.
         response_sla_hours: Maximum hours before initial triage response.
-        max_reward: Absolute cap on any single bounty payout.
     """
 
-    in_scope: tuple[str, ...]
+    in_scope: tuple[str, ...] = ()
     out_of_scope: tuple[str, ...] = ()
-    rewards: dict[str, float] = field(
+    recognition: dict[str, str] = field(
         default_factory=lambda: {
-            "low": 100.0,
-            "medium": 500.0,
-            "high": 1500.0,
-            "critical": 5000.0,
+            "low": RecognitionTier.ACKNOWLEDGMENT.value,
+            "medium": RecognitionTier.PUBLIC_CREDIT.value,
+            "high": RecognitionTier.CVE_CREDIT.value,
+            "critical": RecognitionTier.HALL_OF_FAME.value,
         }
     )
     response_sla_hours: int = 48
-    max_reward: float = 10000.0
 
 
 @dataclass(frozen=True)
@@ -157,7 +174,7 @@ def generate_security_txt(
 
     Args:
         contact: Contact URI (e.g. ``mailto:security@example.com`` or
-                 ``https://hackerone.com/example``).
+                 ``https://github.com/example/repo/security/advisories``).
         policy_url: URL to the full security/vulnerability policy.
         expires: Date when this file expires (ISO 8601). Defaults to 1 year.
         encryption: URL pointing to a PGP public key for encrypted reports.
@@ -207,14 +224,20 @@ class VulnerabilityDisclosureManager:
     """Manages the full lifecycle of vulnerability disclosure.
 
     Handles report submission, triage, fix tracking, and coordinated
-    disclosure timelines. Provides reward calculation based on bounty scope.
+    disclosure timelines. Classifies each report into a non-monetary
+    recognition tier based on the disclosure scope.
 
     Usage::
 
         mgr = VulnerabilityDisclosureManager(
-            scope=BountyScope(
+            scope=DisclosureScope(
                 in_scope=("/api/v1/*", "/api/v2/*"),
-                rewards={"low": 100, "medium": 500, "high": 2000, "critical": 10000},
+                recognition={
+                    "low": "acknowledgment",
+                    "medium": "public-credit",
+                    "high": "cve-credit",
+                    "critical": "hall-of-fame",
+                },
             ),
         )
         report_id = mgr.submit_report(report)
@@ -223,21 +246,21 @@ class VulnerabilityDisclosureManager:
 
     def __init__(
         self,
-        scope: BountyScope | None = None,
+        scope: DisclosureScope | None = None,
         *,
         triage_sla_hours: int = 48,
         fix_deadline_days: int = 90,
         disclosure_delay_days: int = 30,
     ) -> None:
-        self._scope = scope or BountyScope()
+        self._scope = scope or DisclosureScope()
         self._reports: dict[str, VulnReport] = {}
         self._triage_sla_hours = triage_sla_hours
         self._fix_deadline_days = fix_deadline_days
         self._disclosure_delay_days = disclosure_delay_days
 
     @property
-    def scope(self) -> BountyScope:
-        """Return the current bounty scope configuration."""
+    def scope(self) -> DisclosureScope:
+        """Return the current disclosure scope configuration."""
         return self._scope
 
     @property
@@ -436,19 +459,20 @@ class VulnerabilityDisclosureManager:
             milestones=milestones,
         )
 
-    # -- Reward calculation ---------------------------------------------------
+    # -- Recognition classification -------------------------------------------
 
-    def calculate_reward(self, report_id: str) -> float:
-        """Calculate the bounty reward for a triaged report.
+    def classify_recognition(self, report_id: str) -> str:
+        """Classify a triaged report into a non-monetary recognition tier.
 
-        Looks up the severity in the bounty scope's reward table.
-        Returns 0.0 if the severity is not in the table.
+        Looks up the severity in the disclosure scope's recognition table.
+        Returns :attr:`RecognitionTier.NONE` (``"none"``) if the severity is
+        not in the table.
 
         Args:
             report_id: Tracking ID of the report.
 
         Returns:
-            The calculated reward amount in USD.
+            The recognition tier value (see :class:`RecognitionTier`).
 
         Raises:
             KeyError: If the report does not exist.
@@ -457,8 +481,7 @@ class VulnerabilityDisclosureManager:
         if report is None:
             raise KeyError(f"Report {report_id!r} not found")
 
-        reward = self._scope.rewards.get(report.severity, 0.0)
-        return min(reward, self._scope.max_reward)
+        return self._scope.recognition.get(report.severity, RecognitionTier.NONE.value)
 
     # -- SLA compliance -------------------------------------------------------
 

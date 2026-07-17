@@ -17,6 +17,12 @@ from click.testing import CliRunner
 from bernstein.cli.commands.activity_cmd import activity_group
 from bernstein.core.orchestration.activity import dispatch_activity
 from bernstein.core.orchestration.activity_modalities import ContentStore, ResearchActivity
+from bernstein.core.orchestration.research_worker import (
+    ClaimDraft,
+    ResearchBudget,
+    ResearchWorker,
+    SpanRef,
+)
 from bernstein.core.replay.journal import EventJournal
 
 
@@ -29,6 +35,37 @@ def _seed_run(project: Path, run_id: str = "run-cli-1") -> str:
     result = research.finish(artifact={"summary": "found 2 sources"})
     journal = EventJournal(run_id=run_id, sdd_dir=project / ".sdd")
     dispatch_activity(result, stage_id="research-0", journal=journal)
+    return run_id
+
+
+_REPORT_PAGES = {
+    "https://a": b"<html>Python 3.13 ships an optional free-threaded build.</html>",
+    "https://b": b"<html>Module foo is deprecated and slated for removal.</html>",
+}
+
+
+def _seed_report_run(project: Path, run_id: str = "run-cli-report") -> str:
+    """Seed a citation-lineage research report anchored into RUN's journal."""
+    store = ContentStore(project / ".sdd" / "cas")
+    worker = ResearchWorker(store=store, budget=ResearchBudget(max_fetches=5))
+
+    def synth(query: str, fetched: tuple[object, ...]) -> list[ClaimDraft]:
+        return [
+            ClaimDraft(
+                statement="3.13 has an optional free-threaded build",
+                spans=(SpanRef(source_ref="https://a", quote="optional free-threaded build"),),
+            ),
+            ClaimDraft(
+                statement="foo is deprecated",
+                spans=(SpanRef(source_ref="https://b", quote="deprecated and slated for removal"),),
+            ),
+        ]
+
+    run = worker.run(
+        query="what changed", sources=list(_REPORT_PAGES), fetch_fn=_REPORT_PAGES.__getitem__, synthesise=synth
+    )
+    journal = EventJournal(run_id=run_id, sdd_dir=project / ".sdd")
+    dispatch_activity(run.result, stage_id="research-0", journal=journal)
     return run_id
 
 
@@ -104,3 +141,48 @@ def test_verify_missing_run_exits_nonzero(project: Path) -> None:
     )
     assert result.exit_code == 1, result.output
     assert "no" in result.output.lower()
+
+
+def test_verify_reports_per_claim_citation_verdicts(project: Path) -> None:
+    run_id = _seed_report_run(project)
+    result = CliRunner().invoke(
+        activity_group,
+        ["verify", run_id, "--workdir", str(project), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    verdicts = payload["stages"][0]["claim_verdicts"]
+    assert [v["claim_id"] for v in verdicts] == ["c1", "c2"]
+    assert all(v["ok"] for v in verdicts)
+    assert all(v["citations_checked"] == 1 for v in verdicts)
+
+
+def test_verify_text_output_lists_citation_verdicts(project: Path) -> None:
+    run_id = _seed_report_run(project)
+    result = CliRunner().invoke(
+        activity_group,
+        ["verify", run_id, "--workdir", str(project)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "cite OK" in result.output
+    assert "claim=c1" in result.output
+
+
+def test_verify_fails_naming_claim_when_source_altered(project: Path) -> None:
+    run_id = _seed_report_run(project)
+    store = ContentStore(project / ".sdd" / "cas")
+    journal_path = project / ".sdd" / "runs" / run_id / "journal.jsonl"
+    rows = [json.loads(line) for line in journal_path.read_text().splitlines() if line.strip()]
+    cited_hash = rows[0]["observations"][0]["content_hash"]
+    store.force_put(cited_hash, b"<html>rewritten, quote gone</html>")
+
+    result = CliRunner().invoke(
+        activity_group,
+        ["verify", run_id, "--workdir", str(project), "--json"],
+    )
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    stage = payload["stages"][0]
+    assert cited_hash in stage["reason"]
+    assert any(not v["ok"] for v in stage["claim_verdicts"])

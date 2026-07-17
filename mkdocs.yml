@@ -293,6 +293,7 @@ nav:
           - Doctor: operations/doctor.md
           - Holds: operations/HOLDS.md
           - Review board: operations/review-board.md
+          - Mission timeline and digests: operations/mission-timeline.md
           - Work ledger: operations/work-ledger.md
           - Decision log: operations/decision-log.md
           - Intent capsules: operations/intent-capsules.md
@@ -504,6 +505,7 @@ nav:
           - Feature contract: concepts/feature-contract.md
           - Schema validation retry: concepts/schema-validation-retry.md
           - Action cache and replay: concepts/action-cache.md
+          - Cache policy engine: concepts/cache-policy.md
           - Discrete phase pipeline: concepts/phase-pipeline.md
           - Spec-as-test loop: concepts/spec-as-test.md
           - Abstracted code review: concepts/abstracted-code-review.md
@@ -517,6 +519,7 @@ nav:
           - Orchestrator hardening: concepts/orchestrator-hardening.md
       - Orchestration internals:
           - Task DAG: orchestration/task-dag.md
+          - Research activities: orchestration/research-activity.md
           - Run actor: orchestration/run-actor.md
           - Worker coordination: orchestration/worker-coordination.md
           - Review gate: orchestration/review-gate.md

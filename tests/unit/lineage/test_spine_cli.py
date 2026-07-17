@@ -102,3 +102,98 @@ def test_replay_empty_run(tmp_path: Path, monkeypatch) -> None:
     result = _run(["replay", "empty", "--workdir", str(tmp_path)])
     assert result.exit_code != 0
     assert "no entries" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Recovery receipt resolution (issue #2557)
+# ---------------------------------------------------------------------------
+
+
+def _seed_receipt(workdir: Path, run_id: str) -> tuple[str, bytes]:
+    """Anchor one recovery receipt and return (entry_hash, receipt_bytes)."""
+    from bernstein.core.planning.recovery_receipt import RecoveryReceipt, record_receipt_on_spine
+
+    root = workdir / ".sdd" / "lineage"
+    spine = LineageSpine(root, run_id=run_id, hmac_key=_KEY)
+    receipt = RecoveryReceipt(
+        failing_node_id="run-tests",
+        recovery_node_id="fix-bugs",
+        source_status="failed",
+        condition_context={"status": "failed", "result": "3 failing", "output": {}},
+    )
+    entry_hash = record_receipt_on_spine(receipt, spine=spine, timestamp=0)
+    return entry_hash, receipt.canonical_bytes()
+
+
+def test_verify_receipt_hash_resolves(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    key_file = tmp_path / "audit.key"
+    key_file.write_bytes(_KEY)
+    key_file.chmod(0o600)
+    entry_hash, _ = _seed_receipt(tmp_path, "run-1")
+
+    result = _run(["verify", "run-1", "--workdir", str(tmp_path), "--receipt-hash", entry_hash])
+    assert result.exit_code == 0, result.output
+    assert "receipt resolves" in result.output.lower()
+
+
+def test_verify_receipt_content_match(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    key_file = tmp_path / "audit.key"
+    key_file.write_bytes(_KEY)
+    key_file.chmod(0o600)
+    entry_hash, receipt_bytes = _seed_receipt(tmp_path, "run-1")
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_bytes(receipt_bytes)
+
+    result = _run(
+        [
+            "verify",
+            "run-1",
+            "--workdir",
+            str(tmp_path),
+            "--receipt-hash",
+            entry_hash,
+            "--receipt-file",
+            str(receipt_path),
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    assert "content matches" in result.output.lower()
+
+
+def test_verify_receipt_tampered_content_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    key_file = tmp_path / "audit.key"
+    key_file.write_bytes(_KEY)
+    key_file.chmod(0o600)
+    entry_hash, _ = _seed_receipt(tmp_path, "run-1")
+    forged = tmp_path / "forged.json"
+    forged.write_bytes(b'{"tampered": true}')
+
+    result = _run(
+        [
+            "verify",
+            "run-1",
+            "--workdir",
+            str(tmp_path),
+            "--receipt-hash",
+            entry_hash,
+            "--receipt-file",
+            str(forged),
+        ]
+    )
+    assert result.exit_code == 2
+    assert "receipt verification failed" in result.output.lower()
+
+
+def test_verify_receipt_missing_hash_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    key_file = tmp_path / "audit.key"
+    key_file.write_bytes(_KEY)
+    key_file.chmod(0o600)
+    _seed_receipt(tmp_path, "run-1")
+
+    result = _run(["verify", "run-1", "--workdir", str(tmp_path), "--receipt-hash", "sha256:deadbeef"])
+    assert result.exit_code == 2
+    assert "failed" in result.output.lower()

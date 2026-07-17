@@ -196,6 +196,52 @@ class TestNullBackfillNoReadRegression:
 
 
 # ---------------------------------------------------------------------------
+# get_relevant read filter (mirrors query's read_only_from_adapters contract)
+# ---------------------------------------------------------------------------
+
+
+class TestGetRelevantReadFilter:
+    """``get_relevant`` honours the same opt-in ``read_only_from_adapters`` filter as ``query``."""
+
+    def _seed_mixed_adapters(self, store: SQLiteMemoryStore) -> None:
+        store.add(type="learning", content="from-a", tags=["topic"], source_adapter="adapter-a")
+        store.add(type="learning", content="from-b", tags=["topic"], source_adapter="adapter-b")
+        store.add(type="learning", content="from-null", tags=["topic"])  # NULL source_adapter
+
+    def test_get_relevant_without_filter_returns_all_rows(self, store: SQLiteMemoryStore) -> None:
+        self._seed_mixed_adapters(store)
+        contents = {e.content for e in store.get_relevant(["topic"])}
+        assert contents == {"from-a", "from-b", "from-null"}
+
+    def test_get_relevant_filters_by_single_adapter(self, store: SQLiteMemoryStore) -> None:
+        self._seed_mixed_adapters(store)
+        contents = {e.content for e in store.get_relevant(["topic"], read_only_from_adapters=["adapter-a"])}
+        assert contents == {"from-a"}
+
+    def test_get_relevant_filters_by_multiple_adapters(self, store: SQLiteMemoryStore) -> None:
+        self._seed_mixed_adapters(store)
+        contents = {
+            e.content for e in store.get_relevant(["topic"], read_only_from_adapters=["adapter-a", "adapter-b"])
+        }
+        assert contents == {"from-a", "from-b"}
+
+    def test_get_relevant_empty_filter_list_returns_nothing(self, store: SQLiteMemoryStore) -> None:
+        self._seed_mixed_adapters(store)
+        assert store.get_relevant(["topic"], read_only_from_adapters=[]) == []
+
+    def test_get_relevant_filter_excludes_null_source_adapter(self, store: SQLiteMemoryStore) -> None:
+        self._seed_mixed_adapters(store)
+        contents = {e.content for e in store.get_relevant(["topic"], read_only_from_adapters=["adapter-a"])}
+        assert "from-null" not in contents
+
+    def test_get_relevant_filter_with_no_tags_still_applies_adapter_filter(self, store: SQLiteMemoryStore) -> None:
+        """The allow-list applies even on the tag-less (list()-delegating) path."""
+        self._seed_mixed_adapters(store)
+        contents = {e.content for e in store.get_relevant([], read_only_from_adapters=["adapter-b"])}
+        assert contents == {"from-b"}
+
+
+# ---------------------------------------------------------------------------
 # Mixed-adapter contamination scenario
 # ---------------------------------------------------------------------------
 

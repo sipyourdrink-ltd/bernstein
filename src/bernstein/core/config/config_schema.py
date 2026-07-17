@@ -311,6 +311,35 @@ class StorageSchema(BaseModel):
     redis_url: str | None = None
 
 
+class SovereignProfileSchema(BaseModel):
+    """Sovereign deployment profile declaration (issue #2518).
+
+    Declares the residency posture the ``--profile sovereign`` activation
+    pins: the EU regions data may reside in and whether region enforcement is
+    strict. The remaining posture axes (deny-all egress, offline catalog,
+    local storage, compliance pack) are profile constants and need no config
+    surface; the profile composes them. This block only exists so the
+    residency regions are part of the config snapshot an auditor recomputes
+    the posture hash from -- see
+    :mod:`bernstein.core.security.deployment_profile`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="Marker that the workspace is intended to run under --profile sovereign.",
+    )
+    regions: list[str] = Field(
+        default_factory=lambda: ["eu-central", "eu-west"],
+        description="Residency regions data may reside in; sovereign requires the EU set.",
+    )
+    enforce_strict: bool = Field(
+        default=True,
+        description="When true, a residency region outside the pinned set halts the run.",
+    )
+
+
 class SessionSchema(BaseModel):
     """Session resume configuration."""
 
@@ -798,6 +827,7 @@ class BernsteinConfig(BaseModel):
     worktree_setup: WorktreeSetupSchema | None = None
     notify: NotifyConfigSchema | None = None
     storage: StorageSchema | None = None
+    sovereign: SovereignProfileSchema | None = None
     session: SessionSchema | None = None
     github: GithubSchema | None = None
     cluster: ClusterSchema | None = None

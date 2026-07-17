@@ -333,23 +333,56 @@ class SQLiteMemoryStore:
 
         return removed
 
-    def get_relevant(self, tags: list[str], limit: int = 10) -> list[MemoryEntry]:
-        """Find most relevant memories for a set of tags (e.g. from a task)."""
-        if not tags:
+    def get_relevant(
+        self,
+        tags: list[str],
+        limit: int = 10,
+        *,
+        read_only_from_adapters: list[str] | None = None,
+    ) -> list[MemoryEntry]:
+        """Find most relevant memories for a set of tags (e.g. from a task).
+
+        ``read_only_from_adapters`` mirrors :meth:`query`'s allow-list: when
+        set, only rows whose ``source_adapter`` matches one of the supplied
+        values are returned, and NULL-provenance rows are excluded. An empty
+        list means "no adapter is allowed" and returns nothing. Default
+        (``None``) preserves the legacy behaviour of returning every
+        matching row regardless of provenance.
+
+        This is a low-level, opt-in primitive. Callers that need a
+        higher-level default-enforced policy - e.g. the spawned-agent prompt
+        path - should use :mod:`bernstein.core.memory.trust_policy` instead
+        of relying on callers to remember to pass this keyword.
+        """
+        if read_only_from_adapters is not None and not read_only_from_adapters:
+            # Empty allow-list = nobody allowed. Short-circuit without SQL.
+            return []
+
+        if not tags and read_only_from_adapters is None:
             return self.list(limit=limit)
 
-        # Simple overlap-based ranking using SQLite
-        # We search for entries that share at least one tag, then rank by overlap + recency
-        tag_clauses = ["tags LIKE ?" for _ in tags]
-        query = f"""
-            SELECT id, type, content, tags, importance, task_id, created_at,
-                   source_agent, source_model, source_adapter
-            FROM memory
-            WHERE {" OR ".join(tag_clauses)}
-            ORDER BY importance DESC, created_at DESC
-            LIMIT ?
-        """
-        params = [f"%{t}%" for t in tags] + [limit]
+        where: list[str] = []
+        params: list[Any] = []
+
+        if tags:
+            # Simple overlap-based ranking using SQLite: entries that share
+            # at least one tag, ranked by overlap + recency.
+            tag_clauses = ["tags LIKE ?" for _ in tags]
+            where.append(f"({' OR '.join(tag_clauses)})")
+            params.extend(f"%{t}%" for t in tags)
+
+        if read_only_from_adapters is not None:
+            placeholders = ",".join("?" for _ in read_only_from_adapters)
+            where.append(f"source_adapter IN ({placeholders})")
+            params.extend(read_only_from_adapters)
+
+        query = (
+            "SELECT id, type, content, tags, importance, task_id, created_at, "
+            "source_agent, source_model, source_adapter FROM memory "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY importance DESC, created_at DESC LIMIT ?"
+        )
+        params.append(limit)
 
         entries: list[MemoryEntry] = []
         with sqlite3.connect(self.db_path) as conn:

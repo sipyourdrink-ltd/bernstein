@@ -1,7 +1,8 @@
 """Tests for bernstein.core.security.vuln_disclosure.
 
 Covers vulnerability report lifecycle, triage, disclosure timelines,
-reward calculation, SLA compliance, and security.txt generation.
+non-monetary recognition classification, SLA compliance, and
+security.txt generation.
 """
 
 from __future__ import annotations
@@ -11,8 +12,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bernstein.core.security.vuln_disclosure import (
-    BountyScope,
+    DisclosureScope,
     DisclosureTimeline,
+    RecognitionTier,
     ReportStatus,
     VulnerabilityDisclosureManager,
     VulnReport,
@@ -39,19 +41,23 @@ def sample_report() -> VulnReport:
 
 
 @pytest.fixture
-def sample_scope() -> BountyScope:
-    """Create a sample bounty scope."""
-    return BountyScope(
+def sample_scope() -> DisclosureScope:
+    """Create a sample disclosure scope."""
+    return DisclosureScope(
         in_scope=("/api/v1/*", "/api/v2/*"),
         out_of_scope=("/static/*", "/docs/*"),
-        rewards={"low": 100.0, "medium": 500.0, "high": 1500.0, "critical": 5000.0},
+        recognition={
+            "low": "acknowledgment",
+            "medium": "public-credit",
+            "high": "cve-credit",
+            "critical": "hall-of-fame",
+        },
         response_sla_hours=48,
-        max_reward=10000.0,
     )
 
 
 @pytest.fixture
-def manager(sample_scope: BountyScope) -> VulnerabilityDisclosureManager:
+def manager(sample_scope: DisclosureScope) -> VulnerabilityDisclosureManager:
     """Create a disclosure manager with the sample scope."""
     return VulnerabilityDisclosureManager(
         scope=sample_scope,
@@ -293,20 +299,21 @@ class TestDisclosureTimeline:
 
 
 # ---------------------------------------------------------------------------
-# VulnerabilityDisclosureManager - reward calculation
+# VulnerabilityDisclosureManager - recognition classification
 # ---------------------------------------------------------------------------
 
 
-class TestRewardCalculation:
-    """Tests for bounty reward calculation."""
+class TestRecognitionClassification:
+    """Tests for non-monetary recognition classification."""
 
-    def test_high_severity_reward(self, manager: VulnerabilityDisclosureManager, sample_report: VulnReport) -> None:
+    def test_high_severity_recognition(
+        self, manager: VulnerabilityDisclosureManager, sample_report: VulnReport
+    ) -> None:
         manager.submit_report(sample_report)
         manager.triage_report("VR-001")
-        reward = manager.calculate_reward("VR-001")
-        assert reward == pytest.approx(1500.0)
+        assert manager.classify_recognition("VR-001") == "cve-credit"
 
-    def test_critical_severity_reward(self, manager: VulnerabilityDisclosureManager) -> None:
+    def test_critical_severity_recognition(self, manager: VulnerabilityDisclosureManager) -> None:
         report = VulnReport(
             report_id="VR-CRIT",
             severity="critical",
@@ -316,15 +323,13 @@ class TestRewardCalculation:
         )
         manager.submit_report(report)
         manager.triage_report("VR-CRIT")
-        reward = manager.calculate_reward("VR-CRIT")
-        assert reward == pytest.approx(5000.0)
+        assert manager.classify_recognition("VR-CRIT") == "hall-of-fame"
 
-    def test_unknown_severity_zero_reward(self, manager: VulnerabilityDisclosureManager) -> None:
-        """Severity not in the reward table should return 0."""
-        # Use a scope with no "info" tier
-        scope = BountyScope(
+    def test_unknown_severity_no_recognition(self, manager: VulnerabilityDisclosureManager) -> None:
+        """A severity not in the recognition table maps to 'none'."""
+        scope = DisclosureScope(
             in_scope=("/api/*",),
-            rewards={"high": 1000, "critical": 5000},
+            recognition={"high": "cve-credit", "critical": "hall-of-fame"},
         )
         mgr = VulnerabilityDisclosureManager(scope=scope)
         report = VulnReport(
@@ -336,25 +341,29 @@ class TestRewardCalculation:
         )
         mgr.submit_report(report)
         mgr.triage_report("VR-LOW")
-        assert mgr.calculate_reward("VR-LOW") == pytest.approx(0.0)
+        assert mgr.classify_recognition("VR-LOW") == RecognitionTier.NONE.value
 
-    def test_reward_capped_at_max(self, manager: VulnerabilityDisclosureManager) -> None:
-        scope = BountyScope(
+    def test_custom_recognition_mapping(self, manager: VulnerabilityDisclosureManager) -> None:
+        """A custom recognition mapping is honoured verbatim."""
+        scope = DisclosureScope(
             in_scope=("/api/*",),
-            rewards={"critical": 50000.0},
-            max_reward=10000.0,
+            recognition={"medium": "public-credit"},
         )
         mgr = VulnerabilityDisclosureManager(scope=scope)
         report = VulnReport(
-            report_id="VR-CAP",
-            severity="critical",
-            title="RCE",
-            description="Remote code execution",
+            report_id="VR-MED",
+            severity="medium",
+            title="SSRF",
+            description="Server-side request forgery",
             reporter_email="a@b.com",
         )
         mgr.submit_report(report)
-        mgr.triage_report("VR-CAP")
-        assert mgr.calculate_reward("VR-CAP") == pytest.approx(10000.0)
+        mgr.triage_report("VR-MED")
+        assert mgr.classify_recognition("VR-MED") == "public-credit"
+
+    def test_classify_nonexistent_raises(self, manager: VulnerabilityDisclosureManager) -> None:
+        with pytest.raises(KeyError):
+            manager.classify_recognition("VR-MISSING")
 
 
 # ---------------------------------------------------------------------------
@@ -432,27 +441,48 @@ class TestVulnReport:
 
 
 # ---------------------------------------------------------------------------
-# BountyScope data model
+# DisclosureScope data model
 # ---------------------------------------------------------------------------
 
 
-class TestBountyScope:
-    """Tests for the BountyScope dataclass."""
+class TestDisclosureScope:
+    """Tests for the DisclosureScope dataclass."""
 
-    def test_default_rewards(self) -> None:
-        scope = BountyScope(in_scope=("/api/*",))
-        assert scope.rewards["low"] == pytest.approx(100.0)
-        assert scope.rewards["critical"] == pytest.approx(5000.0)
+    def test_default_recognition(self) -> None:
+        scope = DisclosureScope(in_scope=("/api/*",))
+        assert scope.recognition["low"] == RecognitionTier.ACKNOWLEDGMENT.value
+        assert scope.recognition["critical"] == RecognitionTier.HALL_OF_FAME.value
 
-    def test_custom_rewards(self) -> None:
-        scope = BountyScope(
+    def test_custom_recognition(self) -> None:
+        scope = DisclosureScope(
             in_scope=("/api/*",),
-            rewards={"low": 50.0, "high": 3000.0},
+            recognition={"low": "acknowledgment", "high": "cve-credit"},
         )
-        assert scope.rewards.get("low") == pytest.approx(50.0)
-        assert scope.rewards.get("high") == pytest.approx(3000.0)
+        assert scope.recognition.get("low") == "acknowledgment"
+        assert scope.recognition.get("high") == "cve-credit"
+
+    def test_no_monetary_fields(self) -> None:
+        """The scope carries no dollar-denominated reward fields."""
+        scope = DisclosureScope(in_scope=("/api/*",))
+        assert not hasattr(scope, "rewards")
+        assert not hasattr(scope, "max_reward")
+
+    def test_default_scope_needs_no_targets(self) -> None:
+        """A scope is constructible with no in-scope targets.
+
+        The manager falls back to ``DisclosureScope()`` when no scope is
+        supplied, so an empty in-scope default must be valid.
+        """
+        scope = DisclosureScope()
+        assert scope.in_scope == ()
+        assert scope.recognition["critical"] == RecognitionTier.HALL_OF_FAME.value
+
+    def test_manager_default_scope_is_constructible(self) -> None:
+        """VulnerabilityDisclosureManager() works with no scope argument."""
+        mgr = VulnerabilityDisclosureManager()
+        assert mgr.scope.in_scope == ()
 
     def test_frozen_scope(self) -> None:
-        scope = BountyScope(in_scope=("/api/*",))
+        scope = DisclosureScope(in_scope=("/api/*",))
         with pytest.raises(AttributeError):
-            scope.max_reward = 999999  # type: ignore[misc]
+            scope.response_sla_hours = 999  # type: ignore[misc]

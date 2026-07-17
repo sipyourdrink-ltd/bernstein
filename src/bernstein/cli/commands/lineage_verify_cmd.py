@@ -53,13 +53,39 @@ def _spine_dir(workdir: str) -> Path:
     default=None,
     help="Customer Ed25519 public key (legacy chain only; re-verifies every customer_signature).",
 )
-def lineage_verify_cmd(run_id: str, workdir: str, public_key_path: str | None) -> None:
+@click.option(
+    "--receipt-hash",
+    "receipt_hash",
+    default=None,
+    help="Recovery receipt spine entry hash to resolve against the run's spine (issue #2557).",
+)
+@click.option(
+    "--receipt-file",
+    "receipt_file",
+    type=click.Path(dir_okay=False, exists=True),
+    default=None,
+    help="Recovery receipt artifact JSON; content-addresses it against the anchored entry.",
+)
+def lineage_verify_cmd(
+    run_id: str,
+    workdir: str,
+    public_key_path: str | None,
+    receipt_hash: str | None,
+    receipt_file: str | None,
+) -> None:
     """Verify the lineage spine for *run_id*.
+
+    With ``--receipt-hash`` (optionally ``--receipt-file``) it instead confirms
+    a recovery task's embedded failure-receipt hash resolves to a valid,
+    Merkle-chained, HMAC-tagged spine entry.
 
     Exit codes: 0 = OK, 1 = no entries / bad input, 2 = tamper detected.
     """
     lineage_root = _spine_dir(workdir)
     spine_path = lineage_root / run_id / "spine.jsonl"
+
+    if receipt_hash is not None:
+        _verify_receipt(run_id, lineage_root, spine_path, receipt_hash, receipt_file)
 
     if spine_path.exists():
         spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key())
@@ -85,6 +111,40 @@ def lineage_verify_cmd(run_id: str, workdir: str, public_key_path: str | None) -
         raise SystemExit(1)
 
     _verify_legacy(run_id, workdir, public_key_path, lineage_root)
+
+
+def _verify_receipt(
+    run_id: str,
+    lineage_root: Path,
+    spine_path: Path,
+    receipt_hash: str,
+    receipt_file: str | None,
+) -> None:
+    """Resolve a recovery receipt hash against the run's spine (issue #2557).
+
+    Exit codes: 0 = receipt resolves on an intact chain, 2 = it does not.
+    """
+    from bernstein.core.planning.recovery_receipt import resolve_receipt_on_spine
+
+    if not spine_path.exists():
+        console.print()
+        console.print(f"[red]No spine for run[/red] {run_id} -- cannot resolve receipt {receipt_hash}.")
+        raise SystemExit(2)
+
+    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key())
+    content = Path(receipt_file).read_bytes() if receipt_file is not None else None
+    resolution = resolve_receipt_on_spine(spine, entry_hash=receipt_hash, receipt_content=content)
+
+    console.print()
+    console.print(f"[bold]Recovery receipt[/bold] run={run_id} entry={receipt_hash[:16]}")
+    if resolution.ok:
+        detail = "content matches anchored entry" if content is not None else "chain-anchored"
+        console.print(f"[green]OK[/green] -- receipt resolves to a valid spine entry ({detail}).")
+        raise SystemExit(0)
+    console.print(f"[red]RECEIPT VERIFICATION FAILED[/red] -- {len(resolution.errors)} error(s):")
+    for err in resolution.errors[:50]:
+        console.print(f"  - {err}")
+    raise SystemExit(2)
 
 
 def _verify_legacy(run_id: str, workdir: str, public_key_path: str | None, lineage_root: Path) -> None:
