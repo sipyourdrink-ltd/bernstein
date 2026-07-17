@@ -5137,6 +5137,22 @@ EVENT_SCHEDULE_COLLISION = "schedule.collision_receipt"
 #: the apply receipt binds the reviewed plan to the registry mutation.
 EVENT_RECIPE_FLEET_APPLY = "recipe.fleet_apply"
 
+#: Issue #2518 -- emitted once per sovereign-profile activation. The active
+#: residency posture (deny-all egress, offline catalog, local storage, strict
+#: EU residency, compliance pack, and the config-derived declared endpoints /
+#: catalogs) is projected into a canonical effective-policy document, signed
+#: with the install's Ed25519 sovereign identity, and mirrored here by
+#: recording ``{signed_body, signature, signer_public_key_pem}`` -- never the
+#: operator's config file. The attestation, not the config file, is what an
+#: auditor recomputes and checks against the chain.
+EVENT_SOVEREIGN_ATTESTATION = "sovereign.posture_attestation"
+
+#: Issue #2518 -- emitted once per spawn-time drift refusal. When the live
+#: posture recomputed at spawn diverges from the attested posture hash, the
+#: signed drift record naming the exact diverging keys is anchored here so the
+#: divergence is a chain-attested refusal rather than a silent misconfiguration.
+EVENT_SOVEREIGN_DRIFT = "sovereign.posture_drift"
+
 
 def record_recipe_register(
     *,
@@ -5364,6 +5380,103 @@ def record_audit_receipt_export(
     )
 
 
+def record_sovereign_attestation(
+    *,
+    chain: AuditChainStore,
+    profile: str,
+    posture_hash: str,
+    signed_body: dict[str, Any],
+    signature: str,
+    signer_public_key_pem: str,
+    actor: str = "sovereign_profile",
+) -> AuditEvent:
+    """Anchor a signed sovereign posture attestation into *chain* (#2518).
+
+    Mirrors a sealed posture attestation into the HMAC-chained audit log so an
+    auditor can prove, from the chain alone, that a residency posture was
+    activated and signed. The signed body (the canonical effective-policy
+    document, its posture hash, and the timestamp), the detached Ed25519
+    signature, and the embedded public key are recorded so the record
+    re-verifies offline and key-material free -- never the operator's raw config
+    file.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        profile: The activated profile name (``sovereign``).
+        posture_hash: ``sha256:`` hash of the canonical effective-policy
+            document; the posture identity and this record's subject.
+        signed_body: The canonical signed preimage (effective-policy document,
+            posture hash, schema version, timestamp).
+        signature: Base64url-encoded detached Ed25519 signature over the
+            canonical ``signed_body`` bytes.
+        signer_public_key_pem: PEM public key that verifies ``signature``.
+        actor: Recorded actor; defaults to ``"sovereign_profile"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SOVEREIGN_ATTESTATION,
+        actor=actor,
+        resource_type="sovereign_posture",
+        resource_id=posture_hash,
+        details={
+            "profile": profile,
+            "posture_hash": posture_hash,
+            "signed_body": signed_body,
+            "signature": signature,
+            "signer_public_key_pem": signer_public_key_pem,
+        },
+    )
+
+
+def record_sovereign_drift(
+    *,
+    chain: AuditChainStore,
+    profile: str,
+    observed_hash: str,
+    signed_body: dict[str, Any],
+    signature: str,
+    signer_public_key_pem: str,
+    actor: str = "sovereign_profile",
+) -> AuditEvent:
+    """Anchor a signed sovereign posture drift refusal into *chain* (#2518).
+
+    Emitted when the live posture recomputed at spawn diverges from the
+    attested posture. The signed body names the attested and observed hashes
+    and the exact diverging keys, so the divergence is a chain-attested,
+    offline-verifiable refusal rather than a silent misconfiguration.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        profile: The active profile name (``sovereign``).
+        observed_hash: ``sha256:`` hash of the recomputed live posture; this
+            record's subject.
+        signed_body: The canonical signed preimage (attested + observed hashes,
+            diverging keys, the observed effective-policy document, timestamp).
+        signature: Base64url-encoded detached Ed25519 signature over the
+            canonical ``signed_body`` bytes.
+        signer_public_key_pem: PEM public key that verifies ``signature``.
+        actor: Recorded actor; defaults to ``"sovereign_profile"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SOVEREIGN_DRIFT,
+        actor=actor,
+        resource_type="sovereign_posture_drift",
+        resource_id=observed_hash,
+        details={
+            "profile": profile,
+            "observed_hash": observed_hash,
+            "signed_body": signed_body,
+            "signature": signature,
+            "signer_public_key_pem": signer_public_key_pem,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -5434,6 +5547,8 @@ __all__ = [
     "EVENT_SKILL_USAGE",
     "EVENT_SKILL_VERIFICATION_REFUSAL",
     "EVENT_SLA_VIOLATION",
+    "EVENT_SOVEREIGN_ATTESTATION",
+    "EVENT_SOVEREIGN_DRIFT",
     "EVENT_SPEC_REQUIREMENT_SET",
     "EVENT_SPIFFE_SVID_BINDING",
     "EVENT_STEERING_RECEIPT",
@@ -5524,6 +5639,8 @@ __all__ = [
     "record_skill_usage",
     "record_skill_verification_refusal",
     "record_sla_violation",
+    "record_sovereign_attestation",
+    "record_sovereign_drift",
     "record_spec_requirement_set",
     "record_spiffe_svid_binding",
     "record_steering_receipt",

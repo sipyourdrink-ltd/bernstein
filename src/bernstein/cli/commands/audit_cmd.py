@@ -230,6 +230,12 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # verify. Orthogonal to both HMAC chain and Merkle seal.
     all_passed = _verify_approval_cards() and all_passed
 
+    # Sovereign posture attestations + drift records are a further integrity
+    # pillar: a mutated effective-policy document, a forged posture signature,
+    # or a drift record whose hashes agree must fail verify exactly like a
+    # tampered chain entry (#2518). Orthogonal to both HMAC chain and Merkle seal.
+    all_passed = _verify_sovereign_attestations() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
 
@@ -445,6 +451,41 @@ def _verify_approval_cards() -> bool:
         return True
 
     console.print(Panel("[bold red]Approval Card Verification FAILED[/bold red]", border_style="red", expand=False))
+    for err in result.errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
+
+
+def _verify_sovereign_attestations() -> bool:
+    """Verify sovereign posture attestations + drift records. Returns True if valid.
+
+    Re-verifies, from the ``sovereign.posture_attestation`` /
+    ``sovereign.posture_drift`` chain entries alone, that every record's
+    embedded Ed25519 signature checks out against its embedded public key, that
+    the recorded posture hash recomputes byte-identically from the recorded
+    effective-policy document, and that each drift record names at least one
+    diverging key (#2518). When no records exist the check is a silent no-op.
+    """
+    from bernstein.core.security.deployment_profile import verify_sovereign_attestations
+
+    result = verify_sovereign_attestations(AUDIT_DIR)
+    if result.attestation_count == 0 == result.drift_count:
+        return True  # no sovereign records; nothing to verify
+
+    console.print()
+    if result.ok:
+        console.print(
+            Panel("[bold green]Sovereign Posture Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Attestations", str(result.attestation_count))
+        table.add_row("Drift records", str(result.drift_count))
+        console.print(table)
+        return True
+
+    console.print(Panel("[bold red]Sovereign Posture Verification FAILED[/bold red]", border_style="red", expand=False))
     for err in result.errors:
         console.print(f"  [red]![/red] {err}")
     return False

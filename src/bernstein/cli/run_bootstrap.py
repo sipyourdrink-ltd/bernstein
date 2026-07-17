@@ -357,37 +357,94 @@ def _install_network_policy(
             disables the airgap boundary so we reject it at parse time.
     """
     from bernstein.core.security.network_policy import (
+        ENV_SOVEREIGN_MODE,
         PROFILE_AIRGAP,
+        PROFILE_SOVEREIGN,
         NetworkPolicy,
         NetworkPolicyConfigError,
         install_policy,
     )
 
     profile_norm = (run_profile or "").strip().lower() or None
-    if profile_norm == PROFILE_AIRGAP:
+    # Sovereign composes the airgap network posture: the same deny-all default
+    # and runtime socket guard, plus the residency posture wired up separately
+    # in ``_activate_sovereign_profile``. So a network-locked profile is either
+    # airgap or sovereign.
+    network_locked = profile_norm in {PROFILE_AIRGAP, PROFILE_SOVEREIGN}
+    if network_locked:
         for spec in allow_network:
             if spec.strip().lower() == "any":
                 raise NetworkPolicyConfigError(
-                    "--profile airgap is incompatible with --allow-network any: "
+                    f"--profile {profile_norm} is incompatible with --allow-network any: "
                     "explicit allow-list entries (host, host:port, or CIDR) are required, "
                     "or omit --allow-network to keep the deny-all default.",
                 )
     if allow_network:
         policy = NetworkPolicy.from_specs(allow_network)
-    elif profile_norm == PROFILE_AIRGAP:
+    elif network_locked:
         policy = NetworkPolicy.deny_all()
     else:
         policy = NetworkPolicy.allow_all()
-    install_policy(policy, profile=profile_norm)
+    # Under sovereign, install the airgap network profile mode so every airgap
+    # network behaviour (deny-all default, doctor airgap, socket guard) fires;
+    # the dedicated sovereign marker distinguishes the superset.
+    network_profile = PROFILE_AIRGAP if profile_norm == PROFILE_SOVEREIGN else profile_norm
+    install_policy(policy, profile=network_profile)
+    if profile_norm == PROFILE_SOVEREIGN:
+        os.environ[ENV_SOVEREIGN_MODE] = "1"
 
-    # Under airgap profile, also patch socket.socket.connect so an
+    # Under a network-locked profile, also patch socket.socket.connect so an
     # un-declared outbound dial cannot bypass the per-adapter check.
-    # Outside airgap the guard self-disables (returns False) so the
+    # Outside these profiles the guard self-disables (returns False) so the
     # call is safe to issue unconditionally.
-    if profile_norm == PROFILE_AIRGAP:
+    if network_locked:
         from bernstein.core.security.socket_guard import install_runtime_socket_guard
 
         install_runtime_socket_guard()
+
+
+def _activate_sovereign_profile(*, run_profile: str | None, workdir: Path) -> None:
+    """Attest the sovereign residency posture at run start (issue #2518).
+
+    No-op unless ``--profile sovereign`` was selected. When active, resolves
+    the effective policy from the workspace config snapshot, signs it with the
+    install's Ed25519 sovereign identity, and anchors the attestation in the
+    HMAC audit chain. The attestation is what the auditor checks; the spawn
+    gate later recomputes the posture and refuses on drift.
+    """
+    from bernstein.core.security.network_policy import PROFILE_SOVEREIGN
+
+    if (run_profile or "").strip().lower() != PROFILE_SOVEREIGN:
+        return
+
+    import time as _time
+
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.deployment_profile import (
+        SOVEREIGN_PROFILE,
+        build_posture_attestation,
+        load_config_snapshot,
+        resolve_effective_policy,
+    )
+
+    snapshot = load_config_snapshot(workdir)
+    policy = resolve_effective_policy(SOVEREIGN_PROFILE, snapshot)
+    chain = AuditChainStore(workdir / ".sdd" / "audit")
+    attestation = build_posture_attestation(
+        workdir=workdir,
+        policy=policy,
+        timestamp=int(_time.time()),
+        chain=chain,
+    )
+    violations = policy.violations()
+    console.print(f"[dim]Sovereign posture attested:[/dim] {attestation.posture_hash}")
+    if violations:
+        console.print(
+            "[yellow]Sovereign posture has non-compliant settings; run "
+            "'bernstein doctor sovereign' for the full report:[/yellow]"
+        )
+        for problem in violations:
+            console.print(f"  [yellow]-[/yellow] {problem}")
 
 
 def _show_dry_run_plan(
@@ -1055,11 +1112,13 @@ def exec_restart() -> None:
     "--profile",
     "run_profile",
     default=None,
-    type=click.Choice(["airgap"], case_sensitive=False),
+    type=click.Choice(["airgap", "sovereign"], case_sensitive=False),
     help=(
         "Run profile. 'airgap' = no network egress by default, MCP catalog disabled, "
-        "memo store pinned to .sdd/runtime/memo/. Combine with --allow-network to open "
-        "specific destinations."
+        "memo store pinned to .sdd/runtime/memo/. 'sovereign' = airgap network posture "
+        "plus a signed, chain-anchored residency posture (local storage, offline catalog, "
+        "strict EU residency, certified endpoints) that refuses spawns on drift. Combine "
+        "with --allow-network to open specific destinations."
     ),
 )
 @click.option(
@@ -1512,6 +1571,7 @@ def _run_impl(
     )
 
     _install_network_policy(run_profile=run_profile, allow_network=allow_network)
+    _activate_sovereign_profile(run_profile=run_profile, workdir=Path.cwd())
 
     _configure_quality_gate_bypass(
         goal=goal,
