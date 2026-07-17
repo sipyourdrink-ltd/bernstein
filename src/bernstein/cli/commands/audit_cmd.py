@@ -224,6 +224,12 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # HMAC chain and Merkle seal.
     all_passed = _verify_grant_chains() and all_passed
 
+    # Approval cards are a further integrity pillar: a resolved approval must be
+    # re-checkable offline (#2511). A mutated stored envelope, a decision that
+    # echoed an unknown card_hash, or a decision made after expiry must fail
+    # verify. Orthogonal to both HMAC chain and Merkle seal.
+    all_passed = _verify_approval_cards() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
 
@@ -407,6 +413,40 @@ def _verify_tournament_receipts() -> bool:
     for result in failures:
         task = result.receipt.task_id if result.receipt is not None else "?"
         console.print(f"  [red]![/red] task {task}: {result.reason}")
+    return False
+
+
+def _verify_approval_cards() -> bool:
+    """Verify resolved approval cards offline. Returns True if all valid.
+
+    Reconstructs, from the ``chat.approval_card.issued`` / ``resolved`` chain
+    entries alone, that every resolved card's stored envelope still hashes to
+    its recorded ``card_hash`` (no post-hoc mutation), that the decision echoed
+    an issued envelope, and that it landed before expiry (#2511). When no cards
+    were recorded the check is a silent no-op.
+    """
+    from bernstein.core.approval.card_verify import verify_approval_cards
+
+    result = verify_approval_cards(AUDIT_DIR)
+    if result.issued_count == 0 and result.resolved_count == 0:
+        return True  # no approval cards recorded; nothing to verify
+
+    console.print()
+    if result.ok:
+        console.print(
+            Panel("[bold green]Approval Card Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Issued", str(result.issued_count))
+        table.add_row("Resolved", str(result.reconstructed_count))
+        console.print(table)
+        return True
+
+    console.print(Panel("[bold red]Approval Card Verification FAILED[/bold red]", border_style="red", expand=False))
+    for err in result.errors:
+        console.print(f"  [red]![/red] {err}")
     return False
 
 

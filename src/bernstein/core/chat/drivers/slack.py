@@ -74,6 +74,7 @@ from bernstein.core.chat.bridge import (
     ChatMessage,
     CommandHandler,
     PendingApproval,
+    approval_body,
 )
 
 if TYPE_CHECKING:
@@ -384,7 +385,8 @@ class SlackBridge(BridgeProtocol):
         carries the approval id.
         """
         client = self._require_web()
-        text = f"{approval.title}\n\n{approval.body}"
+        body = approval_body(approval)
+        text = f"{approval.title}\n\n{body}"
         blocks = [
             {
                 "type": "section",
@@ -392,7 +394,7 @@ class SlackBridge(BridgeProtocol):
             },
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": approval.body},
+                "text": {"type": "mrkdwn", "text": body},
             },
             {
                 "type": "actions",

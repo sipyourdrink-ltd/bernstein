@@ -43,11 +43,12 @@ __all__ = ["chat_group"]
 logger = logging.getLogger(__name__)
 
 _DEFAULT_WORKDIR = Path.cwd
-_PLATFORM_CHOICES = ("telegram", "discord", "slack")
+_PLATFORM_CHOICES = ("telegram", "discord", "slack", "teams")
 _ENV_TOKEN_MAP = {
     "telegram": "BERNSTEIN_TELEGRAM_TOKEN",
     "discord": "BERNSTEIN_DISCORD_TOKEN",
     "slack": "BERNSTEIN_SLACK_TOKEN",
+    "teams": "BERNSTEIN_TEAMS_TOKEN",
 }
 
 #: Slack Socket Mode app-level token env var. Bot token (``xoxb-...``) goes
@@ -55,10 +56,15 @@ _ENV_TOKEN_MAP = {
 #: lives separately so operators can rotate the two independently.
 _SLACK_APP_TOKEN_ENV = "BERNSTEIN_SLACK_APP_TOKEN"
 
+#: Microsoft Teams app-password env var. The app id (``MicrosoftAppId``) goes
+#: in ``BERNSTEIN_TEAMS_TOKEN``; the client secret lives here so operators can
+#: rotate the two independently.
+_TEAMS_APP_PASSWORD_ENV = "BERNSTEIN_TEAMS_APP_PASSWORD"
+
 
 @click.group("chat")
 def chat_group() -> None:
-    """Drive Bernstein agents from Telegram, Discord, or Slack."""
+    """Drive Bernstein agents from Telegram, Discord, Slack, or Microsoft Teams."""
 
 
 @chat_group.command("serve")
@@ -89,6 +95,10 @@ def chat_serve(platform: str, token: str | None, allow: str | None) -> None:
     if platform == "discord" and not resolved_token:
         raise click.UsageError(
             "Discord requires `--token` or $BERNSTEIN_DISCORD_TOKEN.",
+        )
+    if platform == "teams" and not resolved_token:
+        raise click.UsageError(
+            "Teams requires `--token` (the app id) or $BERNSTEIN_TEAMS_TOKEN.",
         )
 
     overrides = _split_allow(allow)
@@ -630,6 +640,13 @@ def _instantiate_bridge(driver_cls: Any, platform: str, token: str) -> BridgePro
                 f"Slack requires the Socket Mode app token in ${_SLACK_APP_TOKEN_ENV} (in addition to the bot token).",
             )
         return driver_cls(token=token, app_token=app_token)
+    if platform == "teams":
+        app_password = os.environ.get(_TEAMS_APP_PASSWORD_ENV, "")
+        if not app_password:
+            raise click.UsageError(
+                f"Teams requires the app password in ${_TEAMS_APP_PASSWORD_ENV} (in addition to the app id).",
+            )
+        return driver_cls(token=token, app_password=app_password)
     return driver_cls(token)
 
 

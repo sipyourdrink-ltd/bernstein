@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import click
+import httpx
 from rich.console import Console
 from rich.table import Table
 
@@ -329,6 +331,102 @@ def ls_cmd(ctx: click.Context) -> None:
         table.add_row(project.name, str(project.path), project.task_server_url)
     _console.print(table)
     _print_config_errors(config)
+
+
+# ---------------------------------------------------------------------------
+# Receipt-backed steering of a single running worker (#2508)
+# ---------------------------------------------------------------------------
+
+
+def _post_steer(server_url: str, token: str | None, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """POST a steering command to a task server and return the receipt."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    resp = httpx.post(f"{server_url}/tasks/{task_id}/steer", json=payload, timeout=10.0, headers=headers)
+    resp.raise_for_status()
+    return resp.json()  # type: ignore[no-any-return]
+
+
+@fleet_group.command("steer")
+@click.argument("task_id")
+@click.argument("kind", type=click.Choice(["pause", "resume", "guidance", "redirect", "abort"]))
+@click.option("--guidance", default="", help="Guidance text (guidance kind).")
+@click.option("--redirect-target", "redirect_target", default="", help="New objective (redirect kind).")
+@click.option("--reason", default="", help="Human-readable reason (pause / abort).")
+@click.option("--session-id", "session_id", default="", help="Target worker session (pause / abort).")
+@click.option("--adapter", default="", help="Adapter owning the session (pause checkpoint).")
+@click.option("--worktree", default="", help="Worktree path (pause checkpoint baseline).")
+@click.option("--principal", default="", help="Declared operator seat (loopback attribution only).")
+@click.option("--server", "server_url", default=None, help="Task server URL (default $BERNSTEIN_SERVER_URL).")
+@click.option("--token", default=None, help="Operator scoped token (default $BERNSTEIN_AUTH_TOKEN).")
+@click.option("--json", "as_json", is_flag=True, help="Emit the raw receipt JSON.")
+def steer_cmd(
+    task_id: str,
+    kind: str,
+    guidance: str,
+    redirect_target: str,
+    reason: str,
+    session_id: str,
+    adapter: str,
+    worktree: str,
+    principal: str,
+    server_url: str | None,
+    token: str | None,
+    as_json: bool,
+) -> None:
+    """Steer one running worker: pause, resume, guidance, redirect, or abort.
+
+    The action is a receipt first and an effect second. The confirmed
+    payload hash is computed locally and sent to the server, which binds it
+    into the audit chain before any effect runs and returns the receipt the
+    delivered effect references. A mismatch between the locally shown payload
+    and the executed command is rejected by the server.
+    """
+    from bernstein.cli.helpers import SERVER_URL
+    from bernstein.core.orchestration.steering import InvalidSteeringCommand, SteeringCommand
+
+    server = server_url or SERVER_URL
+    auth = token or os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    command = SteeringCommand(
+        kind=kind,
+        task_id=task_id,
+        principal=principal or "cli-operator",
+        guidance=guidance,
+        redirect_target=redirect_target,
+        reason=reason,
+        session_id=session_id,
+        adapter=adapter,
+        worktree=worktree,
+    )
+    try:
+        command.validate()
+    except InvalidSteeringCommand as exc:
+        raise click.ClickException(str(exc)) from None
+
+    payload = {
+        "kind": kind,
+        "principal": principal,
+        "guidance": guidance,
+        "redirect_target": redirect_target,
+        "reason": reason,
+        "session_id": session_id,
+        "adapter": adapter,
+        "worktree": worktree,
+        "displayed_payload_hash": command.payload_hash(),
+    }
+    try:
+        receipt = _post_steer(server, auth, task_id, payload)
+    except httpx.HTTPStatusError as exc:
+        raise click.ClickException(f"steer rejected ({exc.response.status_code}): {exc.response.text}") from None
+    except httpx.HTTPError as exc:
+        raise click.ClickException(f"task server unreachable: {exc}") from None
+
+    if as_json:
+        _console.print_json(json.dumps(receipt))
+        return
+    _console.print(
+        f"[green]Steered[/green] task {task_id} ({kind}); "
+        f"receipt {str(receipt.get('receipt_hash', ''))[:24]} at mailbox seq {receipt.get('mailbox_seq')}"
+    )
 
 
 # ---------------------------------------------------------------------------

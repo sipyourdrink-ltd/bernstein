@@ -53,6 +53,7 @@ __all__ = [
     "MAX_MESSAGE_BODY_BYTES",
     "MAX_PENDING_PER_TASK",
     "MESSAGE_KINDS",
+    "STEER_MESSAGE_KINDS",
     "MailboxError",
     "MailboxFull",
     "MailboxMessage",
@@ -66,9 +67,25 @@ __all__ = [
 #: Journal schema version. Bumping requires a parallel reader.
 MAILBOX_SCHEMA_VERSION: int = 1
 
+#: Operator-outbound steering message kinds (#2508). A fleet steering action
+#: rides this same journal as a typed message so queued guidance reaches the
+#: worker in chain append order, exactly once, even mid-tool-call. Each steer
+#: message body carries the ``receipt_hash`` of the ``steering.receipt`` audit
+#: event that authorised it, so an effect without a matching receipt is
+#: rejected on consumption.
+STEER_MESSAGE_KINDS: tuple[str, ...] = (
+    "steer.pause",
+    "steer.resume",
+    "steer.guidance",
+    "steer.redirect",
+    "steer.abort",
+)
+
 #: The typed message vocabulary. This is deliberately closed: coordination
-#: payloads are data handed between workers, not conversation.
-MESSAGE_KINDS: tuple[str, ...] = ("finding", "artefact_ref", "question")
+#: payloads are data handed between workers, not conversation. The ``steer.*``
+#: kinds (#2508) are operator-outbound control messages; every other kind is
+#: worker-to-worker coordination.
+MESSAGE_KINDS: tuple[str, ...] = ("finding", "artefact_ref", "question", *STEER_MESSAGE_KINDS)
 
 #: Strict cap on the message body, measured in UTF-8 bytes of the raw
 #: (pre-redaction) input so redaction can never widen what is accepted.

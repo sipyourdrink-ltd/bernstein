@@ -621,6 +621,36 @@ EVENT_ADMISSION_GRANT = "admission.grant_receipt"
 EVENT_ADMISSION_WAIVER = "admission.waiver_receipt"
 EVENT_ADMISSION_QUARANTINE = "admission.quarantine_receipt"
 EVENT_ADMISSION_TAG_CONFORMANCE = "admission.tag_conformance_receipt"
+#: Issue #2511 -- emitted once per approval card v2 issuance. An approval card
+#: is a hash-committed decision record: the operator-visible envelope (action
+#: and canonical args digest, bounded reasoning digest, blast-radius impact
+#: estimate, rollback procedure with an explicit irreversible marker, and a
+#: ``not_after`` expiry) is canonicalised and hashed into ``card_hash``, and
+#: this event stores the full envelope plus ``card_hash`` and
+#: ``prev_chain_digest``. Because the whole envelope is inside the signed HMAC
+#: chain, a verifier can reconstruct exactly the fields shown to the operator
+#: and detect any post-hoc mutation: a mutated envelope no longer hashes to the
+#: recorded ``card_hash`` and no longer matches the chain HMAC. Strip the chain
+#: and the card degrades from a verifiable decision record to a message with a
+#: log.
+EVENT_APPROVAL_CARD_ISSUED = "chat.approval_card.issued"
+
+#: Issue #2511 -- emitted when an issued approval card is resolved (approve /
+#: reject) after the gate has confirmed the echoed ``card_hash`` matches the
+#: issued envelope and the decision arrived before ``not_after``. The event
+#: binds ``{card_hash, decision, approver, worktree_id, resolved_at}`` so a
+#: verifier can join the decision to the exact issued envelope and prove the
+#: operator decided against the fields that were hashed, not a divergent view.
+EVENT_APPROVAL_CARD_RESOLVED = "chat.approval_card.resolved"
+
+#: Issue #2511 -- emitted when the gate refuses to resolve an approval card:
+#: either the echoed ``card_hash`` does not match any issued envelope (a field
+#: the operator saw was mutated) or the decision arrived at or after
+#: ``not_after`` (expiry is enforced by the chain-side clock regardless of what
+#: the chat client still renders). The refusal records ``{card_hash, reason,
+#: expected_card_hash, worktree_id}`` so an operator can prove, from the chain
+#: alone, that a stale or tampered decision was contained and never executed.
+EVENT_APPROVAL_CARD_REFUSED = "chat.approval_card.refused"
 
 
 # ---------------------------------------------------------------------------
@@ -4140,6 +4170,305 @@ def record_provenance_quarantine(
     )
 
 
+#: Issue #2508 -- emitted for every fleet steering action (pause / resume /
+#: guidance / redirect / abort) before its effect executes. The signed,
+#: principal-named receipt binds the exact command payload the operator
+#: confirmed (``payload_hash``), the target task, and the authorising scope
+#: to a fixed chain position. The delivered effect references this event's
+#: chain HMAC, so an effect with no matching receipt is rejected and a
+#: mutated payload breaks verification at exactly this position -- a
+#: tampered intervention is distinguishable from a steered one. The guidance
+#: or redirect text itself never enters the chain (only its hash); it rides
+#: the mailbox journal under DLP redaction. This constant is additive and
+#: must never be reordered or removed.
+EVENT_STEERING_RECEIPT = "steering.receipt"
+
+
+def record_steering_receipt(
+    *,
+    chain: AuditChainStore,
+    kind: str,
+    task_id: str,
+    principal: str,
+    scope: str,
+    payload_hash: str,
+    actor: str = "fleet_steering",
+) -> AuditEvent:
+    """Append a ``steering.receipt`` event into *chain* (#2508).
+
+    A fleet steering action (pause / resume / guidance / redirect / abort)
+    is a receipt first and an effect second: the operator's exact command is
+    bound into the HMAC chain here, before any effect executes, and the
+    delivered effect references this receipt's chain HMAC. The effect is
+    rejected when no matching receipt precedes it, so an operator
+    intervention can never touch a worker without leaving a signed,
+    position-fixed record. Mutating the recorded payload after the fact
+    breaks the chain HMAC at exactly this position, so a tampered
+    intervention is distinguishable from a legitimately steered one.
+
+    Only the command's shape is recorded: the steering kind, the target
+    task, the acting principal, the authorising scope, and the
+    ``payload_hash`` -- the ``sha256:`` digest of the exact command payload
+    the operator confirmed. The guidance or redirect text itself is never
+    stored in the chain; it rides the mailbox journal under DLP redaction.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        kind: One of ``pause`` / ``resume`` / ``guidance`` / ``redirect`` /
+            ``abort``.
+        task_id: The steered task.
+        principal: The acting operator (seat attribution).
+        scope: The authorising token scope the action was granted under.
+        payload_hash: ``sha256:`` digest of the confirmed command payload;
+            binds the receipt to the exact text shown in the confirmation UI.
+        actor: Recorded actor; defaults to ``"fleet_steering"``.
+
+    Returns:
+        The recorded :class:`AuditEvent`; its ``hmac`` is the receipt
+        identity the delivered effect references.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_STEERING_RECEIPT,
+        actor=actor,
+        resource_type="steering_command",
+        resource_id=task_id,
+        details={
+            "kind": kind,
+            "task_id": task_id,
+            "principal": principal,
+            "scope": scope,
+            "payload_hash": payload_hash,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Eventing v2 (#2548): fire receipts, automation actions, absence proofs, and
+# webhook payload anchors. These are the chain records the events package writes
+# so the unified feed reacts to itself: a rule fire mints a receipt before the
+# effect runs, the executed action is its own chain event, an expired
+# expectation carries a negative proof, and an inbound webhook payload is
+# content-addressed into the chain before any template render.
+# ---------------------------------------------------------------------------
+
+EVENT_RULE_FIRE_RECEIPT = "events.rule_fire_receipt"
+"""Rule fire receipt: rule hash, matched event hashes, and rendered action."""
+
+EVENT_AUTOMATION_ACTION = "events.automation_action"
+"""An executed automation action, referencing its fire receipt."""
+
+EVENT_EXPECTATION_EXPIRED = "events.expectation_expired"
+"""An expired absence expectation carrying a negative proof."""
+
+EVENT_WEBHOOK_PAYLOAD_ANCHOR = "events.webhook_payload_anchor"
+"""An inbound webhook payload content-addressed into the chain before render."""
+
+EVENT_FEED_RENDER_FAILURE = "events.render_failure"
+"""A webhook template render failure, carrying the payload digest only."""
+
+
+def record_rule_fire_receipt(
+    *,
+    chain: AuditChainStore,
+    rule_hash: str,
+    matched_event_hmacs: Sequence[str],
+    action_kind: str,
+    action_digest: str,
+    actor: str = "events_automation",
+) -> AuditEvent:
+    """Append an ``events.rule_fire_receipt`` event into *chain* (#2548).
+
+    Minted before the effect executes, the receipt commits to the rule identity,
+    the HMACs of the events that matched, and the rendered action's digest. A
+    verifier holding the feed window can confirm the action a receipt authorises,
+    and an executed action without a matching receipt is rejected.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        rule_hash: ``sha256:`` identity of the rule that fired.
+        matched_event_hmacs: HMACs of the events that satisfied the rule.
+        action_kind: The rendered action's kind.
+        action_digest: The rendered action's ``sha256:`` digest.
+        actor: Recorded actor; defaults to ``"events_automation"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RULE_FIRE_RECEIPT,
+        actor=actor,
+        resource_type="rule_fire_receipt",
+        resource_id=action_digest,
+        details={
+            "rule_hash": rule_hash,
+            "matched_event_hmacs": list(matched_event_hmacs),
+            "action_kind": action_kind,
+            "action_digest": action_digest,
+        },
+    )
+
+
+def record_automation_action(
+    *,
+    chain: AuditChainStore,
+    action_kind: str,
+    action_digest: str,
+    fire_receipt_hmac: str,
+    triggering_event_hmac: str,
+    result_status: str = "dispatched",
+    actor: str = "events_automation",
+) -> AuditEvent:
+    """Append an ``events.automation_action`` event into *chain* (#2548).
+
+    The executed action is itself a chain event, referencing the fire receipt
+    that authorised it and the triggering event it was rendered against, so an
+    automated intervention is observable in the same feed it reacts to.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        action_kind: The executed action's kind.
+        action_digest: The executed action's ``sha256:`` digest.
+        fire_receipt_hmac: HMAC of the fire receipt event that authorised it.
+        triggering_event_hmac: HMAC of the event the action was rendered against.
+        result_status: Short status token for the effect outcome.
+        actor: Recorded actor; defaults to ``"events_automation"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_AUTOMATION_ACTION,
+        actor=actor,
+        resource_type="automation_action",
+        resource_id=action_digest,
+        details={
+            "action_kind": action_kind,
+            "action_digest": action_digest,
+            "fire_receipt_hmac": fire_receipt_hmac,
+            "triggering_event_hmac": triggering_event_hmac,
+            "result_status": result_status,
+        },
+    )
+
+
+def record_expectation_expired(
+    *,
+    chain: AuditChainStore,
+    after_hmac: str,
+    to_hmac: str,
+    expect: str,
+    rule_hash: str = "",
+    actor: str = "events_absence",
+) -> AuditEvent:
+    """Append an ``events.expectation_expired`` event into *chain* (#2548).
+
+    The event embeds a negative proof: no event matching ``expect`` exists
+    between the two named chain positions ``after_hmac`` and ``to_hmac``. A
+    verifier confirms the assertion against the stored window; injecting a
+    matching event into the window makes the proof fail.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        after_hmac: HMAC of the anchoring event - the lower named position.
+        to_hmac: HMAC of the last observed event - the upper named position.
+        expect: The label glob asserted absent across the span.
+        rule_hash: Optional ``sha256:`` identity of the expectation rule.
+        actor: Recorded actor; defaults to ``"events_absence"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_EXPECTATION_EXPIRED,
+        actor=actor,
+        resource_type="expectation",
+        resource_id=after_hmac,
+        details={
+            "after_hmac": after_hmac,
+            "to_hmac": to_hmac,
+            "expect": expect,
+            "rule_hash": rule_hash,
+        },
+    )
+
+
+def record_webhook_payload_anchor(
+    *,
+    chain: AuditChainStore,
+    payload_digest: str,
+    source: str,
+    template_id: str,
+    actor: str = "events_webhook",
+) -> AuditEvent:
+    """Append an ``events.webhook_payload_anchor`` event into *chain* (#2548).
+
+    The raw inbound payload bytes are content-addressed into the chain before any
+    template renders them, so a render is always reproducible from the recorded
+    bytes. Only the digest is recorded - never the payload.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        payload_digest: ``sha256:`` content address of the raw payload bytes.
+        source: The inbound source label the payload arrived from.
+        template_id: The template selected to render the payload.
+        actor: Recorded actor; defaults to ``"events_webhook"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_WEBHOOK_PAYLOAD_ANCHOR,
+        actor=actor,
+        resource_type="webhook_payload",
+        resource_id=payload_digest,
+        details={
+            "payload_digest": payload_digest,
+            "source": source,
+            "template_id": template_id,
+        },
+    )
+
+
+def record_render_failure(
+    *,
+    chain: AuditChainStore,
+    payload_digest: str,
+    template_id: str,
+    error_kind: str,
+    source: str = "",
+    actor: str = "events_webhook",
+) -> AuditEvent:
+    """Append an ``events.render_failure`` diagnostic event into *chain* (#2548).
+
+    A template render failure surfaces as a feed event carrying the payload
+    digest and a short error token, and never the payload content.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        payload_digest: ``sha256:`` content address of the raw payload bytes.
+        template_id: The template that failed to render.
+        error_kind: Short token for the failure (``invalid_json`` /
+            ``missing_resource``).
+        source: The inbound source label, when known.
+        actor: Recorded actor; defaults to ``"events_webhook"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_FEED_RENDER_FAILURE,
+        actor=actor,
+        resource_type="webhook_payload",
+        resource_id=payload_digest,
+        details={
+            "payload_digest": payload_digest,
+            "template_id": template_id,
+            "error_kind": error_kind,
+            "source": source,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -4148,6 +4477,10 @@ __all__ = [
     "EVENT_ADAPTER_FLOOR_UPDATE",
     "EVENT_ADAPTER_SPAWN_PREFLIGHT",
     "EVENT_ADAPTER_VERSION_POSTURE",
+    "EVENT_APPROVAL_CARD_ISSUED",
+    "EVENT_APPROVAL_CARD_REFUSED",
+    "EVENT_APPROVAL_CARD_RESOLVED",
+    "EVENT_AUTOMATION_ACTION",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
@@ -4161,6 +4494,8 @@ __all__ = [
     "EVENT_EVAL_GATE_REVOCATION",
     "EVENT_EVAL_GATE_VERDICT",
     "EVENT_EVIDENCE_BUNDLE",
+    "EVENT_EXPECTATION_EXPIRED",
+    "EVENT_FEED_RENDER_FAILURE",
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
@@ -4183,6 +4518,7 @@ __all__ = [
     "EVENT_REVIEW_BOARD_ACTION",
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
+    "EVENT_RULE_FIRE_RECEIPT",
     "EVENT_RUN_LIFECYCLE",
     "EVENT_RUN_SSH_TASK",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
@@ -4192,6 +4528,7 @@ __all__ = [
     "EVENT_SKILL_VERIFICATION_REFUSAL",
     "EVENT_SPEC_REQUIREMENT_SET",
     "EVENT_SPIFFE_SVID_BINDING",
+    "EVENT_STEERING_RECEIPT",
     "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TASK_CLAIM_RECEIPT",
     "EVENT_TASK_MAILBOX_MESSAGE",
@@ -4200,6 +4537,7 @@ __all__ = [
     "EVENT_THREAD_APPROVAL",
     "EVENT_TOURNAMENT_SELECTION",
     "EVENT_WEBHOOK_NODE_RECEIPT",
+    "EVENT_WEBHOOK_PAYLOAD_ANCHOR",
     "EVENT_WORK_LEDGER_ANCHOR",
     "AuditChainStore",
     "CostProfileReportDetails",
@@ -4218,6 +4556,7 @@ __all__ = [
     "record_adapter_floor_update_receipt",
     "record_adapter_spawn_preflight_receipt",
     "record_adapter_version_posture_receipt",
+    "record_automation_action",
     "record_checkpoint_retry",
     "record_cost_batch_route",
     "record_cost_dispatch_receipt",
@@ -4229,6 +4568,7 @@ __all__ = [
     "record_eval_gate_revocation",
     "record_eval_gate_verdict",
     "record_evidence_bundle",
+    "record_expectation_expired",
     "record_fork_snapshot",
     "record_gate_adjudication",
     "record_governance_decision",
@@ -4247,9 +4587,11 @@ __all__ = [
     "record_process_reap_receipt",
     "record_provenance_quarantine",
     "record_provider_state_mutation",
+    "record_render_failure",
     "record_review_board_action",
     "record_review_receipt",
     "record_routing_failover_receipt",
+    "record_rule_fire_receipt",
     "record_run_lifecycle",
     "record_run_ssh_task",
     "record_schedule_fire_projection",
@@ -4260,6 +4602,7 @@ __all__ = [
     "record_skill_verification_refusal",
     "record_spec_requirement_set",
     "record_spiffe_svid_binding",
+    "record_steering_receipt",
     "record_subagent_delegation",
     "record_taint_decision",
     "record_task_claim_receipt",
@@ -4267,5 +4610,6 @@ __all__ = [
     "record_thread_approval",
     "record_tournament_selection",
     "record_webhook_node_receipt",
+    "record_webhook_payload_anchor",
     "record_work_ledger_anchor",
 ]

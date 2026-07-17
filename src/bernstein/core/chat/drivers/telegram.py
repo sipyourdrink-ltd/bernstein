@@ -42,6 +42,7 @@ from bernstein.core.chat.bridge import (
     ChatMessage,
     CommandHandler,
     PendingApproval,
+    approval_body,
 )
 
 __all__ = ["EDIT_THROTTLE_S", "TelegramBridge", "TelegramDependencyError"]
@@ -200,7 +201,7 @@ class TelegramBridge(BridgeProtocol):
         app = self._require_app()
         sent = await app.bot.send_message(
             chat_id=_to_chat_id(approval.thread_id),
-            text=f"{approval.title}\n\n{approval.body}",
+            text=f"{approval.title}\n\n{approval_body(approval)}",
             reply_markup=keyboard,
         )
         return str(sent.message_id)

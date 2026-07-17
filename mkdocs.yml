@@ -197,6 +197,7 @@ nav:
       - Prompt-to-repo scaffold: concepts/scaffold.md
       - Team-hub conventions: concepts/team-hub.md
       - Orchestrator hardening: concepts/orchestrator-hardening.md
+      - Eventing v2 (unified feed): events/grammar.md
   - Web GUI:
       - Overview: gui/index.md
       - Install: gui/install.md
@@ -299,7 +300,9 @@ nav:
       - Intent capsules: operations/intent-capsules.md
       - Checkpointed retries: operations/checkpointed-retries.md
       - Audited webhook node: operations/webhook-node.md
-      - Chat bridges (Slack/Discord/Telegram): operations/chat-bridges.md
+      - Chat bridges (Slack/Discord/Telegram/Teams): operations/chat-bridges.md
+      - Approval cards v2: integrations/approval-cards.md
+      - Microsoft Teams setup: integrations/teams-setup.md
       - Lineage v2: operations/lineage-v2.md
       - GitLab integration: operations/gitlab.md
       - Cost optimization: operations/cost-optimization.md

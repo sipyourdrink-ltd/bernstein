@@ -45,7 +45,8 @@ def load_driver(platform: str) -> type[BridgeProtocol]:
     installed) only surfaces when that driver is actually selected.
 
     Args:
-        platform: One of ``"telegram"``, ``"discord"``, ``"slack"``.
+        platform: One of ``"telegram"``, ``"discord"``, ``"slack"``,
+            ``"teams"``.
 
     Returns:
         The driver class. Instantiation is the caller's responsibility.
@@ -66,6 +67,10 @@ def load_driver(platform: str) -> type[BridgeProtocol]:
         from bernstein.core.chat.drivers.slack import SlackBridge
 
         return SlackBridge
+    if normalised == "teams":
+        from bernstein.core.chat.drivers.teams import TeamsBridge
+
+        return TeamsBridge
     raise ValueError(
-        f"Unknown chat platform {platform!r}. Supported: telegram, discord, slack.",
+        f"Unknown chat platform {platform!r}. Supported: telegram, discord, slack, teams.",
     )

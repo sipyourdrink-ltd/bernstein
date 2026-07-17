@@ -15,7 +15,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bernstein.core.approval.card import ApprovalCardV2
 
 
 @dataclass(slots=True)
@@ -54,12 +57,36 @@ class PendingApproval:
         title: Short human-friendly headline.
         body: Multi-line description (diff preview, tool args, etc.).
         thread_id: Where to deliver the approval card.
+        card: Optional hash-committed v2 decision envelope (issue #2511).
+            When set, drivers render the envelope fields verbatim via
+            :func:`bernstein.core.approval.card.render_card_text` instead of
+            re-summarising ``body``, so what is displayed is exactly what was
+            hashed into ``card_hash``.
+        card_hash: The ``card_hash`` the decision must echo on resolve. Empty
+            for legacy v1 cards.
     """
 
     approval_id: str
     title: str
     body: str
     thread_id: str
+    card: ApprovalCardV2 | None = None
+    card_hash: str = ""
+
+
+def approval_body(approval: PendingApproval) -> str:
+    """Return the operator-facing body a driver should render for *approval*.
+
+    For a v2 card the body is the verbatim projection of the hashed envelope;
+    for a legacy v1 card it is the free-text ``body``. Centralising this keeps
+    every driver rendering exactly what was hashed (no driver-local
+    re-summarisation).
+    """
+    if approval.card is not None:
+        from bernstein.core.approval.card import render_card_text
+
+        return render_card_text(approval.card)
+    return approval.body
 
 
 CommandHandler = Callable[[ChatMessage], Awaitable[None]]

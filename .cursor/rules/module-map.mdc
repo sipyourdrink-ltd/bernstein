@@ -31,6 +31,7 @@ alwaysApply: false
 | `distribution/`             | Distribution utilities - air-gap wheelhouse build, verify, signing |
 | `endpoints/`                | Local-model worker tier: endpoint conformance and signed certification |
 | `errors/`                   | Structured first-run error categorization for Bernstein |
+| `events/`                   | Eventing v2 - the chain-projected unified event feed (#2548) |
 | `evidence/`                 | Verification evidence bundles (issue #2362) |
 | `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
 | `git/`                      | git sub-package |

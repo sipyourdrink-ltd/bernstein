@@ -81,6 +81,7 @@ from bernstein.core.chat.bridge import (
     ChatMessage,
     CommandHandler,
     PendingApproval,
+    approval_body,
 )
 from bernstein.core.orchestration.scheduler_partitions import (
     PartitionViolationError,
@@ -442,7 +443,7 @@ class DiscordBridge(BridgeProtocol):
             )
 
         channel = await self._resolve_channel(approval.thread_id)
-        text = f"{approval.title}\n\n{approval.body}"
+        text = f"{approval.title}\n\n{approval_body(approval)}"
         view_cls: Any = self._ui_mod.View
         button_cls: Any = self._ui_mod.Button
         style_cls: Any = getattr(self._discord_mod, "ButtonStyle", None)

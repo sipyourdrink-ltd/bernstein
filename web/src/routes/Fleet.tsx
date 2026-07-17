@@ -32,6 +32,7 @@ import {
   SectionLabel,
 } from '@/lib/states';
 import { cn } from '@/lib/utils';
+import SteeringControls from '@/components/SteeringControls';
 
 // ── Domain types ───────────────────────────────────────────────────────────
 // Mirrors `ProjectSnapshot.to_dict()` from
@@ -271,6 +272,7 @@ export default function Fleet() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState('');
+  const [steerTaskId, setSteerTaskId] = useState('');
   const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
   // React Query keys are namespaced by mode (see Tasks.tsx for the
@@ -328,6 +330,17 @@ export default function Fleet() {
       </div>
 
       <CrossProjectSearch value={query} onChange={setQuery} parsed={parsed} />
+
+      <div className="flex flex-col gap-2">
+        <SectionLabel>Steer a running worker</SectionLabel>
+        <input
+          value={steerTaskId}
+          onChange={(e) => setSteerTaskId(e.target.value)}
+          placeholder="task id to steer"
+          className="w-full max-w-sm rounded-md border border-border bg-background p-2 font-mono text-[12px] text-foreground"
+        />
+        <SteeringControls taskId={steerTaskId} />
+      </div>
 
       {trimmedQuery && searchQ.data && (
         <div className="rounded-md border border-border bg-card p-3 text-[12px] text-muted-foreground">
