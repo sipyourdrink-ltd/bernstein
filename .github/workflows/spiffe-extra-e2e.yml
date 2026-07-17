@@ -67,46 +67,33 @@ jobs:
           uv build --wheel --out-dir dist
           ls -1 dist/*.whl
 
-      - name: No-extra regression suite (default Ed25519 path, extra absent)
-        # The critical guarantee: with the spiffe extra ABSENT the default
-        # identity paths pass unchanged. This step is hard-required.
+      - name: No-extra regression (default Ed25519 path, extra absent)
+        # The critical guarantee: with the spiffe extra ABSENT the packaged
+        # wheel imports and the grant / broker paths work end to end. Driven as
+        # a self-contained script off the INSTALLED wheel (not the repo pytest
+        # tree) so it needs no test-only plugins. Hard-required.
         run: |
           python -m venv .venv-noextra
           . .venv-noextra/bin/activate
           pip install --upgrade pip
-          pip install dist/*.whl pytest
-          # Prove the extra is genuinely absent, then run the identity suites.
-          python -c "import importlib.util as u; assert u.find_spec('spiffe') is None, 'spiffe extra unexpectedly present'; print('spiffe extra absent: OK')"
-          python -c "from bernstein.core.identity import grants; print('grants import OK without extra')"
-          python -c "from bernstein.core.identity.spiffe.workload_api import spiffe_extra_available; assert spiffe_extra_available() is False; print('spiffe_extra_available()=False OK')"
-          pytest -q \
-            tests/unit/identity/test_grants.py \
-            tests/unit/identity/spiffe/ \
-            tests/unit/security/test_secrets_broker_grants.py \
-            tests/unit/security/test_broker_grant_config.py \
-            tests/unit/cli/test_secrets_grants_cli.py \
-            tests/unit/test_doctor_spiffe.py
+          pip install dist/*.whl
+          python tests/scripts/spiffe_extra_e2e_check.py --mode no-extra
 
-      - name: Extra-present suite (built wheel installed with [spiffe])
+      - name: Extra-present path (built wheel installed with [spiffe])
         # Best-effort: the py-spiffe SDK is a real third-party install; when it
         # is unavailable on the runner this step degrades to a skip rather than
-        # reddening the packaging gate. The no-extra suite above is the hard
-        # guarantee; this step proves the packaged extra path when installable.
+        # reddening the packaging gate. The no-extra path above is the hard
+        # guarantee; this proves the packaged extra path when installable. The
+        # Workload API fetch uses an injected factory, so no live SPIRE agent is
+        # required.
         continue-on-error: true
         run: |
           WHEEL=$(ls dist/*.whl | head -1)
           python -m venv .venv-extra
           . .venv-extra/bin/activate
           pip install --upgrade pip
-          if ! pip install "${WHEEL}[spiffe]" pytest; then
-            echo "::warning::py-spiffe SDK not installable on this runner; skipping extra-present suite"
+          if ! pip install "${WHEEL}[spiffe]"; then
+            echo "::warning::py-spiffe SDK not installable on this runner; skipping extra-present path"
             exit 0
           fi
-          python -c "from bernstein.core.identity.spiffe.workload_api import spiffe_extra_available; assert spiffe_extra_available() is True; print('spiffe extra present: OK')"
-          # The grant / spiffe suites use an injected Workload API factory, so
-          # they exercise the packaged path without a live SPIRE agent.
-          pytest -q \
-            tests/unit/identity/test_grants.py \
-            tests/unit/identity/spiffe/ \
-            tests/unit/security/test_secrets_broker_grants.py \
-            tests/unit/test_doctor_spiffe.py
+          python tests/scripts/spiffe_extra_e2e_check.py --mode extra

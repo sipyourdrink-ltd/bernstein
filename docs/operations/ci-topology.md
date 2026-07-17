@@ -78,6 +78,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sonar-hotspot-review.yml | SonarQube hotspot review | workflow_dispatch | {"cancel-in-progress": "false", "group": "sonar-hotspot-review"} | 1 |
 | .github/workflows/sonar-pr-comment.yml | SonarQube PR insights comment | pull_request | {"cancel-in-progress": "true", "group": "sonar-pr-comment-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/sonar-scan.yml | SonarQube scan | schedule, workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-scan-${{ github.ref }}"} | 1 |
+| .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
 | .github/workflows/static-analysis-extended.yml | static-analysis (extended) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
 | .github/workflows/telegram-notify.yml | Telegram CI Notifications | workflow_call | - | 1 |
@@ -159,6 +160,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sonar-hotspot-review.yml | review: Apply hotspot review manifest |
 | .github/workflows/sonar-pr-comment.yml | comment: Sonar smells delta comment |
 | .github/workflows/sonar-scan.yml | scan: SonarQube scan |
+| .github/workflows/spiffe-extra-e2e.yml | spiffe-extra-e2e: SPIFFE extra E2E (built wheel, extra-present + no-extra suites) |
 | .github/workflows/stale.yml | stale |
 | .github/workflows/static-analysis-extended.yml | perflint: perflint (hot-path antipatterns)<br>refurb: refurb (idioms)<br>semgrep: Semgrep (CE rules)<br>trivy-fs: Trivy (filesystem)<br>trivy-iac: Trivy (IaC)<br>vulture: vulture (dead code) |
 | .github/workflows/telegram-notify.yml | notify |
@@ -240,6 +242,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sonar-hotspot-review.yml | workflow: {"contents": "read"} | SONAR_TOKEN |
 | .github/workflows/sonar-pr-comment.yml | workflow: {"contents": "read", "issues": "write", "pull-requests": "write"} | SONAR_TOKEN |
 | .github/workflows/sonar-scan.yml | workflow: {"actions": "read", "contents": "read"} | GITHUB_TOKEN, SONAR_TOKEN |
+| .github/workflows/spiffe-extra-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/stale.yml | workflow: {"issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/static-analysis-extended.yml | workflow: {"contents": "read"}<br>perflint: {"contents": "read", "security-events": "write"}<br>refurb: {"contents": "read", "security-events": "write"}<br>semgrep: {"contents": "read", "security-events": "write"}<br>trivy-fs: {"contents": "read", "security-events": "write"}<br>trivy-iac: {"contents": "read", "security-events": "write"}<br>vulture: {"contents": "read", "security-events": "write"} | - |
 | .github/workflows/telegram-notify.yml | workflow: {"actions": "read", "contents": "read"} | TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
