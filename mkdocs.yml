@@ -197,6 +197,7 @@ nav:
       - Prompt-to-repo scaffold: concepts/scaffold.md
       - Team-hub conventions: concepts/team-hub.md
       - Orchestrator hardening: concepts/orchestrator-hardening.md
+      - Eventing v2 (unified feed): events/grammar.md
   - Web GUI:
       - Overview: gui/index.md
       - Install: gui/install.md

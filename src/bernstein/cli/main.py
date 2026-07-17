@@ -64,6 +64,7 @@ from bernstein.cli.commands.consensus_cmd import consensus_group
 from bernstein.cli.commands.criterion_profile_cmd import criterion_profile_group
 from bernstein.cli.commands.decisions_cmd import decisions_group
 from bernstein.cli.commands.desktop_register_cmd import desktop_register_cmd
+from bernstein.cli.commands.events_cmd import events_group
 from bernstein.cli.commands.export_cmd import export_cmd
 from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.fork_cmd import fork_cmd
@@ -1017,6 +1018,7 @@ cli.add_command(resume_cmd, "resume")
 cli.add_command(fork_cmd, "fork")
 cli.add_command(wrap_up, "wrap-up")
 cli.add_command(audit_group, "audit")
+cli.add_command(events_group, "events")
 cli.add_command(bom_group, "bom")
 cli.add_command(bundle_group, "bundle")
 cli.add_command(compliance_group, "compliance")
@@ -1262,6 +1264,11 @@ cli.add_command(hook_gate_group, "hook-gate")
 from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
 
 cli.add_command(ledger_group, "ledger")
+
+# Named resource pools with lease-backed admission projected from the ledger (#2544).
+from bernstein.cli.commands.limits_cmd import limits_group  # noqa: E402
+
+cli.add_command(limits_group, "limits")
 
 # Detached run service: submit a goal, disconnect, reattach later (#2352).
 from bernstein.cli.commands.run_service_cmd import run_service_group  # noqa: E402
