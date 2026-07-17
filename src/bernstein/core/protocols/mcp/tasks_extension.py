@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from pathlib import Path
 
+    from bernstein.core.replay.progress import ProgressVector
     from bernstein.core.security.audit_chain import AuditChainStore
 
 __all__ = [
@@ -252,6 +253,16 @@ class RunHandle:
     chain_head: str
     spec_revision: str = SPEC_REVISION
     trace_id: str = ""
+    #: The task's chain-computed progress vector (#2553), when the caller has
+    #: projected one. Carried on the handle so a poller sees how far along the
+    #: task is, not just its lifecycle status. It is a projection of journaled
+    #: work, never self-reported: a worker moves it only by doing real work.
+    progress: ProgressVector | None = None
+
+    @property
+    def progress_hash(self) -> str:
+        """Stable hash of the carried progress vector, or ``""`` when absent."""
+        return self.progress.vector_hash() if self.progress is not None else ""
 
     @property
     def receipt_hash(self) -> str:
@@ -299,6 +310,8 @@ class RunHandle:
             "traceId": self.trace_id,
             "receiptHash": self.receipt_hash,
             "pollToken": self.poll_token,
+            "progress": self.progress.to_wire() if self.progress is not None else None,
+            "progressHash": self.progress_hash,
         }
 
     @staticmethod
@@ -309,6 +322,7 @@ class RunHandle:
         events: Iterable[Mapping[str, Any]],
         chain_head: str,
         trace_id: str = "",
+        progress: ProgressVector | None = None,
     ) -> RunHandle:
         """Project a handle from a run journal and the current chain head.
 
@@ -331,6 +345,7 @@ class RunHandle:
             journal_head=_journal_head(rows),
             chain_head=chain_head,
             trace_id=trace_id,
+            progress=progress,
         )
 
 
@@ -375,6 +390,7 @@ def verify_handle(handle: RunHandle, events: Iterable[Mapping[str, Any]]) -> tup
         chain_head=handle.chain_head,
         spec_revision=handle.spec_revision,
         trace_id=handle.trace_id,
+        progress=handle.progress,
     )
     if expected.receipt_hash != handle.receipt_hash:
         return False, "receipt_hash does not match the projected handle"

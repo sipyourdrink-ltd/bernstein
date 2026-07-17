@@ -21,6 +21,8 @@ class SSEEventType(StrEnum):
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
     TASK_RETRIED = "task.retried"
+    TASK_ARTIFACT = "task.artifact"
+    TASK_PROGRESS = "task.progress"
     AGENT_SPAWNED = "agent.spawned"
     AGENT_EXITED = "agent.exited"
     GATE_RESULT = "gate.result"
@@ -127,6 +129,60 @@ class SSEEvent:
             data={
                 "task_id": task_id,
                 "reason": reason,
+            }
+            | extra,
+        )
+
+    @classmethod
+    def task_artifact(cls, task_id: str, key: str, artifact_type: str = "", version: int = 1, **extra: Any) -> SSEEvent:
+        """Create a task.artifact event (#2553).
+
+        Emitted when a worker posts a journal-anchored artifact. The payload
+        carries the artifact identity (key, type, version, content hash), never
+        the artifact bytes -- clients fetch and re-verify the content.
+
+        Args:
+            task_id: Task the artifact is bound to.
+            key: The artifact slot key.
+            artifact_type: One of ``report`` / ``table`` / ``link``.
+            version: The 1-based version within the key.
+            **extra: Additional payload fields (e.g. ``content_hash``).
+
+        Returns:
+            SSEEvent instance.
+        """
+        return cls(
+            event=SSEEventType.TASK_ARTIFACT,
+            data={
+                "task_id": task_id,
+                "key": key,
+                "artifact_type": artifact_type,
+                "version": version,
+            }
+            | extra,
+        )
+
+    @classmethod
+    def task_progress(cls, task_id: str, vector_hash: str = "", **extra: Any) -> SSEEvent:
+        """Create a task.progress event (#2553).
+
+        Emitted when a task's chain-computed progress vector advances. Progress
+        is never self-reported: the payload is a projection of journaled work,
+        identified by ``vector_hash``.
+
+        Args:
+            task_id: Task whose progress advanced.
+            vector_hash: Stable hash of the canonical progress vector.
+            **extra: The progress vector fields (checkpoints, earned_steps, ...).
+
+        Returns:
+            SSEEvent instance.
+        """
+        return cls(
+            event=SSEEventType.TASK_PROGRESS,
+            data={
+                "task_id": task_id,
+                "vector_hash": vector_hash,
             }
             | extra,
         )

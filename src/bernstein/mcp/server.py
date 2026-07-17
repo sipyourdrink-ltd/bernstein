@@ -705,6 +705,91 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             return _error_response(exc)
 
     @mcp.tool()
+    async def bernstein_post_artifact(  # pyright: ignore[reportUnusedFunction]
+        task_id: str,
+        key: str,
+        artifact_type: str,
+        poster: str,
+        body: str = "",
+        columns: list[str] | None = None,
+        rows: list[list[str]] | None = None,
+        url: str = "",
+        link_kind: str = "",
+    ) -> str:
+        """Attach a journal-anchored artifact to a task you hold the claim for.
+
+        The artifact is stored content-addressed, sealed into the lineage
+        spine, appended to the task's Merkle-chained journal, and mirrored to
+        the audit chain. The returned record IS the receipt: its identity is the
+        spine entry hash, and any reviewer can re-verify the content hash offline
+        against the same chain ``bernstein audit verify`` walks. Reposting a key
+        appends a new version chained to the prior one. There is no way to set
+        progress here - progress is a chain-computed projection of journaled
+        work, never postable.
+
+        Args:
+            task_id: The task to attach the artifact to. You must hold its claim.
+            key: The artifact slot; reposting a key appends a new version.
+            artifact_type: One of ``report`` (markdown ``body``), ``table``
+                (``columns`` + ``rows``), or ``link`` (``url`` + ``link_kind``).
+            poster: Your claim identity; posting against a task you do not hold
+                is refused and the refusal is audit-recorded.
+            body: Markdown body, for ``report`` artifacts.
+            columns: Column headers, for ``table`` artifacts.
+            rows: Rows of cells, for ``table`` artifacts.
+            url: The URL, for ``link`` artifacts.
+            link_kind: The declared link kind - ``preview`` / ``dashboard`` /
+                ``document`` - for ``link`` artifacts.
+
+        Returns:
+            JSON of the chain-anchored artifact record (``key``, ``version``,
+            ``content_hash``, ``spine_entry_hash``, ``journal_index``, ...).
+        """
+        err = _validate_or_error(
+            "bernstein_post_artifact",
+            {
+                "task_id": task_id,
+                "key": key,
+                "artifact_type": artifact_type,
+                "poster": poster,
+                "body": body,
+                "columns": columns,
+                "rows": rows,
+                "url": url,
+                "link_kind": link_kind,
+            },
+        )
+        if err is not None:
+            return _validation_error_response(err)
+        try:
+            payload: dict[str, Any] = {
+                "key": key,
+                "artifact_type": artifact_type,
+                "poster": poster,
+            }
+            if body:
+                payload["body"] = body
+            if columns is not None:
+                payload["columns"] = columns
+            if rows is not None:
+                payload["rows"] = rows
+            if url:
+                payload["url"] = url
+            if link_kind:
+                payload["link_kind"] = link_kind
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{server_url}/tasks/{task_id}/artifacts",
+                    json=payload,
+                    headers=_auth_headers(),
+                )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(data, indent=2)
+        except Exception as exc:
+            return _error_response(exc)
+
+    @mcp.tool()
     async def bernstein_stop(  # pyright: ignore[reportUnusedFunction]
         workdir: str = ".",
     ) -> str:

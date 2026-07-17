@@ -342,6 +342,7 @@ nav:
           - Trace store: observability/trace-store.md
           - Trends: observability/trends.md
           - Progress watch: observability/progress-watch.md
+          - Task artifacts and progress: observability/task-artifacts.md
           - Rate limits: observability/rate-limits.md
           - Unified doctor: observability/unified-doctor.md
           - Telemetry share: observability/telemetry-share.md

@@ -480,6 +480,82 @@ class TaskMessageResponse(BaseModel):
     signer_public_key_pem: str
 
 
+class TaskArtifactPost(BaseModel):
+    """Body for POST /tasks/{task_id}/artifacts (#2553).
+
+    An agent-posted, journal-anchored artifact. ``artifact_type`` selects the
+    payload shape: ``report`` uses ``body`` (markdown); ``table`` uses
+    ``columns`` and ``rows``; ``link`` uses ``url`` and ``link_kind``
+    (``preview`` / ``dashboard`` / ``document``). ``poster`` is the claim
+    identity: a caller may only post against a task whose claim it holds.
+
+    There is deliberately no progress field. Progress is a chain-computed
+    projection of journaled work, never postable.
+    """
+
+    key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}$")
+    artifact_type: str = Field(pattern="^(report|table|link)$")
+    poster: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    body: str = Field(default="", max_length=1_048_576)
+    columns: list[str] = Field(default_factory=list[str])
+    rows: list[list[str]] = Field(default_factory=list[list[str]])
+    url: str = Field(default="", max_length=_MAX_PATH_LEN)
+    link_kind: str = Field(default="", max_length=64)
+
+
+class TaskArtifactResponse(BaseModel):
+    """One posted artifact version, with its chain anchors and verify state."""
+
+    task_id: str
+    key: str
+    artifact_type: str
+    content_hash: str
+    version: int
+    prev_version_hash: str
+    spine_entry_hash: str
+    journal_index: int
+    journal_event_hash: str
+    link_kind: str = ""
+    size: int = 0
+    verified: bool = True
+    verify_reason: str = ""
+
+
+class TaskArtifactContentResponse(TaskArtifactResponse):
+    """A posted artifact version plus its decoded content (for rendering).
+
+    ``content`` carries the type-specific fields (``body`` for a report,
+    ``columns``/``rows`` for a table, ``url``/``kind`` for a link). When the
+    stored blob fails its hash check ``verified`` is False and ``content`` is
+    omitted -- the surface must render *tampered*, never the bytes.
+    """
+
+    content: dict[str, Any] | None = None
+
+
+class TaskProgressResponse(BaseModel):
+    """The chain-computed progress vector for a task (#2553).
+
+    A pure projection of journaled work: checkpoints, diffs, gates, evidence
+    producers, and ledger transitions. ``vector_hash`` is the stable hash of the
+    canonical vector; two projections of the same run agree byte-for-byte.
+    """
+
+    task_id: str
+    schema_version: int
+    checkpoints: int
+    diffs_captured: int
+    gate_attempts: int
+    evidence_declared: int
+    evidence_passed: int
+    ledger_phase: str
+    ledger_attempts: int
+    terminal: bool
+    earned_steps: int
+    phase_ordinal: int
+    vector_hash: str
+
+
 class TaskSteerPost(BaseModel):
     """Body for POST /tasks/{task_id}/steer (#2508).
 

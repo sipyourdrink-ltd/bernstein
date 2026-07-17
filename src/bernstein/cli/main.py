@@ -1265,6 +1265,11 @@ from bernstein.cli.commands.evidence_cmd import evidence_group  # noqa: E402
 
 cli.add_command(evidence_group, "evidence")
 
+# Agent-posted, journal-anchored task artifacts: reports, tables, links (#2553).
+from bernstein.cli.commands.artifacts_cmd import artifacts_group  # noqa: E402
+
+cli.add_command(artifacts_group, "artifacts")
+
 # In-process verification gate driven by worker hooks: blocks a failing
 # completion or an out-of-scope write in-session, sealing gate receipts (#2360).
 from bernstein.cli.commands.hook_gate_cmd import hook_gate_group  # noqa: E402

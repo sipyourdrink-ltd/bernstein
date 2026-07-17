@@ -22,6 +22,7 @@ import { TaskDiffPanel } from '@/components/diff/TaskDiffPanel';
 import { TaskGatesPanel } from '@/components/gates/TaskGatesPanel';
 import { TaskDepsPanel } from '@/components/deps/TaskDepsPanel';
 import { TaskTracePanel } from '@/components/trace/TaskTracePanel';
+import { TaskArtifactsPanel } from '@/components/artifacts';
 import {
   formatUSD,
   formatDuration,
@@ -306,7 +307,7 @@ const CHIPS: { key: ChipKey; label: string; statusParam?: string }[] = [
 
 // ── Detail tabs ─────────────────────────────────────────────────────────────
 
-const DETAIL_TABS = ['Summary', 'Diff', 'Gates', 'Logs', 'Deps', 'Trace'] as const;
+const DETAIL_TABS = ['Summary', 'Diff', 'Gates', 'Artifacts', 'Logs', 'Deps', 'Trace'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
 // ── Operator-syntax token highlighter ───────────────────────────────────────
@@ -1591,6 +1592,8 @@ function TaskTabContent({
       return <TaskDiffPanel taskId={taskId} active />;
     case 'Gates':
       return <TaskGatesPanel taskId={taskId} active />;
+    case 'Artifacts':
+      return <TaskArtifactsPanel taskId={taskId} active />;
     case 'Deps':
       return <TaskDepsPanel taskId={taskId} active />;
     case 'Trace':

@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_post_artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "key", "artifact_type", "poster"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]+$"},
+    "key": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"},
+    "artifact_type": {"type": "string", "enum": ["report", "table", "link"]},
+    "poster": {"type": "string", "minLength": 1, "maxLength": 256},
+    "body": {"type": "string", "maxLength": 60000},
+    "columns": {
+      "type": ["array", "null"],
+      "maxItems": 64,
+      "items": {"type": "string", "maxLength": 256}
+    },
+    "rows": {
+      "type": ["array", "null"],
+      "maxItems": 4096,
+      "items": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {"type": "string", "maxLength": 4096}
+      }
+    },
+    "url": {"type": "string", "maxLength": 4096},
+    "link_kind": {"type": "string", "maxLength": 64}
+  }
+}

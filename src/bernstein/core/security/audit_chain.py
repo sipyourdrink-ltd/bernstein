@@ -5364,6 +5364,117 @@ def record_audit_receipt_export(
     )
 
 
+#: Issue #2553 -- emitted once per agent-posted task artifact. The artifact
+#: bytes are content-addressed in the evidence store and sealed into the lineage
+#: spine; this mirror records only the identity (content hash, spine anchor,
+#: journal position, version chain) so the fact that a worker posted a given
+#: artifact at a known run position is itself chain-attested. The artifact
+#: payload is never recorded here.
+EVENT_RUN_ARTIFACT = "run.artifact"
+
+#: Issue #2553 -- emitted when a caller is refused an artifact post against a
+#: task whose claim it does not hold. The refusal is chain-attested so an
+#: operator can prove, from the chain alone, that isolation held.
+EVENT_RUN_ARTIFACT_REFUSED = "run.artifact_refused"
+
+
+def record_run_artifact(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    key: str,
+    artifact_type: str,
+    content_hash: str,
+    version: int,
+    prev_version_hash: str,
+    spine_entry_hash: str,
+    journal_index: int,
+    journal_event_hash: str,
+    actor: str = "run_artifact",
+) -> AuditEvent:
+    """Append a ``run.artifact`` event into *chain* (#2553).
+
+    Mirrors an agent-posted task artifact into the HMAC-chained audit log. Only
+    the artifact identity is recorded -- the content hash, its spine anchor, the
+    version chain, and the anchoring journal position -- never the artifact
+    bytes. A verifier holding the stored blob can recompute the content hash
+    byte-identically and confirm the artifact is chain-attested.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task the artifact is bound to.
+        key: The artifact slot key.
+        artifact_type: One of ``report`` / ``table`` / ``link``.
+        content_hash: ``sha256:`` hash of the stored canonical bytes.
+        version: 1-based version number within the key.
+        prev_version_hash: The prior version's spine entry hash, or ``""``.
+        spine_entry_hash: This version's lineage-spine entry hash (its identity).
+        journal_index: 0-based index of the anchoring ``artifact_posted`` row.
+        journal_event_hash: The anchoring journal row's Merkle ``event_hash``.
+        actor: Recorded actor; defaults to ``"run_artifact"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RUN_ARTIFACT,
+        actor=actor,
+        resource_type="run_artifact",
+        resource_id=spine_entry_hash,
+        details={
+            "task_id": task_id,
+            "key": key,
+            "artifact_type": artifact_type,
+            "content_hash": content_hash,
+            "version": version,
+            "prev_version_hash": prev_version_hash,
+            "spine_entry_hash": spine_entry_hash,
+            "journal_index": journal_index,
+            "journal_event_hash": journal_event_hash,
+        },
+    )
+
+
+def record_run_artifact_refused(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    key: str,
+    caller: str,
+    reason: str,
+    actor: str = "run_artifact",
+) -> AuditEvent:
+    """Append a ``run.artifact_refused`` event into *chain* (#2553).
+
+    Records that a caller was refused an artifact post it was not authorised to
+    make (it does not hold the target task's claim). The refusal is chain-
+    attested so an operator can prove isolation held.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task the post was refused against.
+        key: The artifact key the caller attempted.
+        caller: The identity that attempted the post.
+        reason: A short typed reason string.
+        actor: Recorded actor; defaults to ``"run_artifact"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RUN_ARTIFACT_REFUSED,
+        actor=actor,
+        resource_type="run_artifact",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "key": key,
+            "caller": caller,
+            "reason": reason,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -5425,6 +5536,8 @@ __all__ = [
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
     "EVENT_RULE_FIRE_RECEIPT",
+    "EVENT_RUN_ARTIFACT",
+    "EVENT_RUN_ARTIFACT_REFUSED",
     "EVENT_RUN_LIFECYCLE",
     "EVENT_RUN_SSH_TASK",
     "EVENT_SCHEDULE_COLLISION",
@@ -5514,6 +5627,8 @@ __all__ = [
     "record_review_receipt",
     "record_routing_failover_receipt",
     "record_rule_fire_receipt",
+    "record_run_artifact",
+    "record_run_artifact_refused",
     "record_run_lifecycle",
     "record_run_ssh_task",
     "record_schedule_collision",

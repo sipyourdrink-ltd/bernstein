@@ -208,6 +208,11 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # both the HMAC chain and the Merkle seal.
     all_passed = _verify_evidence_bundles() and all_passed
 
+    # Agent-posted artifacts are a further integrity pillar: a flipped byte in a
+    # stored artifact blob or its journal row must fail verify with the artifact
+    # named (#2553). Orthogonal to both the HMAC chain and the Merkle seal.
+    all_passed = _verify_run_artifacts() and all_passed
+
     # Tournament selection receipts are a further integrity pillar: a tampered
     # score or a hand-picked winner must fail verify exactly like a tampered
     # chain entry (#2353). Orthogonal to both HMAC chain and Merkle seal.
@@ -367,6 +372,50 @@ def _verify_evidence_bundles() -> bool:
     for result in failures:
         task = result.bundle.task_id if result.bundle is not None else "?"
         console.print(f"  [red]![/red] task {task}: {result.reason}")
+    return False
+
+
+def _verify_run_artifacts() -> bool:
+    """Verify every agent-posted artifact and print results. Returns True if valid.
+
+    A flipped byte in a stored artifact blob, or in its journal row, makes
+    ``bernstein audit verify`` fail with the artifact key and its exact journal
+    position named -- exactly like a tampered chain entry (#2553). When no
+    artifacts exist the check is a silent no-op.
+    """
+    from bernstein.core.evidence.run_artifacts import verify_all_run_artifacts
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    # AUDIT_DIR is ``.sdd/audit``; the project root is two levels up. Artifacts
+    # live under ``<root>/.sdd/runs/*/journal.jsonl`` + ``<root>/.sdd/evidence``.
+    workdir = AUDIT_DIR.parent.parent
+
+    try:
+        key = load_or_create_audit_key()
+    except OSError as exc:  # pragma: no cover - filesystem race
+        console.print(f"[red]Failed to load audit key for artifact verification: {exc}[/red]")
+        return False
+
+    results = verify_all_run_artifacts(workdir, hmac_key=key)
+    if not results:
+        return True  # no artifacts recorded; nothing to verify
+
+    failures = [r for r in results if not r.ok]
+    console.print()
+    if not failures:
+        console.print(
+            Panel("[bold green]Run Artifact Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Artifacts", str(len(results)))
+        console.print(table)
+        return True
+
+    console.print(Panel("[bold red]Run Artifact Verification FAILED[/bold red]", border_style="red", expand=False))
+    for result in failures:
+        console.print(f"  [red]![/red] task {result.task_id} key={result.key} v{result.version}: {result.reason}")
     return False
 
 
