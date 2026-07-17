@@ -87,6 +87,18 @@ EVENT_COST_PROFILE_REPORT = "cost.profile_report"
 #: artifact byte-identically and check it against the chain.
 EVENT_EVAL_AB_COMPARISON = "eval.ab_comparison"
 
+#: Issue #2606 -- emitted for every action a third-party autonomous browser /
+#: computer-use agent decides on against a live UI. The event is the per-action
+#: replay manifest: it carries the action anchor
+#: (``sha256(prev_anchor, observation_hash, action)``), the prior anchor, the
+#: pre-action screenshot's CAS SHA-256, the normalised DOM/accessibility digest,
+#: the observation hash, the canonicalised action (kind / target / value
+#: digest), the signed lineage entry hash, the worker identity, the worktree
+#: id, and the previous chain digest. Mirrors ``multimodal.attach`` but for the
+#: outbound action stream; a replay walks these events, re-hashes the stored
+#: bytes, recomputes each anchor, and compares against the signed lineage head.
+EVENT_COMPUTER_USE_ACTION = "computer_use.action"
+
 #: Issue #2249 -- emitted once per applied role-template compression
 #: (``bernstein templates compress``). The event carries the full
 #: compression receipt: role, pre/post role-template directory digests,
@@ -887,6 +899,113 @@ def record_multimodal_attach(
         actor=worker_id,
         resource_type="multimodal_attachment",
         resource_id=sha256,
+        details=payload,
+    )
+
+
+@dataclass(frozen=True)
+class ComputerUseActionDetails:
+    """Structured payload for the ``computer_use.action`` event (#2606)."""
+
+    run_id: str
+    action_index: int
+    anchor: str
+    prev_anchor: str
+    observation_hash: str
+    screenshot_sha256: str
+    dom_digest: str
+    action_kind: str
+    action_target: str
+    action_value_digest: str
+    lineage_entry_hash: str
+    worker_id: str
+    worktree_id: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "action_index": self.action_index,
+            "anchor": self.anchor,
+            "prev_anchor": self.prev_anchor,
+            "observation_hash": self.observation_hash,
+            "screenshot_sha256": self.screenshot_sha256,
+            "dom_digest": self.dom_digest,
+            "action_kind": self.action_kind,
+            "action_target": self.action_target,
+            "action_value_digest": self.action_value_digest,
+            "lineage_entry_hash": self.lineage_entry_hash,
+            "worker_id": self.worker_id,
+            "worktree_id": self.worktree_id,
+        }
+
+
+def record_computer_use_action(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    action_index: int,
+    anchor: str,
+    prev_anchor: str,
+    observation_hash: str,
+    screenshot_sha256: str,
+    dom_digest: str,
+    action_kind: str,
+    action_target: str,
+    action_value_digest: str,
+    lineage_entry_hash: str,
+    worker_id: str,
+    worktree_id: str,
+) -> AuditEvent:
+    """Append a ``computer_use.action`` event into *chain* (#2606).
+
+    This is the per-action replay manifest for a third-party browser /
+    computer-use agent: it names the CAS blob of the pre-action screenshot, the
+    normalised DOM/accessibility digest, and the canonicalised action, so a
+    replay can re-derive the observation hash and recompute the action anchor
+    without re-running the agent. Mirrors :func:`record_multimodal_attach`.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: Identifier of the computer-use run the action belongs to.
+        action_index: Zero-based position of the action in the run.
+        anchor: The action anchor
+            (``sha256(prev_anchor, observation_hash, action)``), lower-case hex.
+        prev_anchor: The prior action's anchor, or the genesis sentinel for the
+            first action.
+        observation_hash: ``sha256(pre_action_screenshot + dom_digest)``.
+        screenshot_sha256: CAS SHA-256 of the pre-action screenshot bytes.
+        dom_digest: Normalised DOM/accessibility digest (hex).
+        action_kind: The action verb (e.g. ``navigate``, ``type``, ``click``).
+        action_target: The action target (URL / selector / element ref).
+        action_value_digest: SHA-256 of any typed value; never the raw value.
+        lineage_entry_hash: The signed lineage entry hash for this action.
+        worker_id: Identifier of the worker fronting the external agent.
+        worktree_id: Worktree the run is isolated to.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The details payload carries every
+        input plus ``prev_chain_digest`` (set to the chain head at write time).
+    """
+    payload = ComputerUseActionDetails(
+        run_id=run_id,
+        action_index=action_index,
+        anchor=anchor,
+        prev_anchor=prev_anchor,
+        observation_hash=observation_hash,
+        screenshot_sha256=screenshot_sha256,
+        dom_digest=dom_digest,
+        action_kind=action_kind,
+        action_target=action_target,
+        action_value_digest=action_value_digest,
+        lineage_entry_hash=lineage_entry_hash,
+        worker_id=worker_id,
+        worktree_id=worktree_id,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_COMPUTER_USE_ACTION,
+        actor=worker_id,
+        resource_type="computer_use_action",
+        resource_id=anchor,
         details=payload,
     )
 
@@ -4970,6 +5089,7 @@ __all__ = [
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
+    "EVENT_COMPUTER_USE_ACTION",
     "EVENT_CONTEXT_CAPSULE",
     "EVENT_COST_BATCH_ROUTE",
     "EVENT_COST_DISPATCH_RECEIPT",
@@ -5036,6 +5156,7 @@ __all__ = [
     "EVENT_WEBHOOK_PAYLOAD_ANCHOR",
     "EVENT_WORK_LEDGER_ANCHOR",
     "AuditChainStore",
+    "ComputerUseActionDetails",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
     "ForkSnapshotDetails",
@@ -5055,6 +5176,7 @@ __all__ = [
     "record_audit_receipt_export",
     "record_automation_action",
     "record_checkpoint_retry",
+    "record_computer_use_action",
     "record_context_capsule",
     "record_cost_batch_route",
     "record_cost_dispatch_receipt",

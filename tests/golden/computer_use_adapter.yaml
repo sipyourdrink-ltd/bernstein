@@ -1,0 +1,7 @@
+name: computer_use_adapter_spawn
+adapter_class: bernstein.adapters.computer_use.ReferenceComputerUseAdapter
+steps:
+  - prompt: "complete the signup flow on example.test"
+    model: "sonnet"
+    expected_pid: 4242
+    expected_log_suffix: ".log"

@@ -626,6 +626,12 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "clm": AdapterStrategy(),
     "cloudflare": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "codebuff": AdapterStrategy(),
+    # Fronts a third-party autonomous browser / computer-use agent (issue
+    # #2606). The external agent owns its own loop, so Bernstein neither
+    # resumes it natively nor reads a structured lifecycle stream: liveness is
+    # polled and the per-action record is the signed lineage chain, not stdout
+    # text. Dangerous-mode is the external agent's own concern.
+    "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),
