@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bernstein.alexchernysh.com/schemas/sandbox-pool-placement-receipt-v1.json",
+  "title": "Bernstein Sandbox Pool Placement Receipt (v1)",
+  "description": "A sealed placement decision (#2547). Every pool dispatch seals (pool_hash, template_hash, overrides_hash, effective_manifest_hash, selector_inputs, chosen_backend) into this receipt, whose identity is its own placement_hash: a sha256 over every other field. The receipt is the proof, not a decoration on a log line: a forged backend or a widened effective_manifest_hash recomputes to a different placement_hash and fails verification, exactly like a tampered chain entry. Two hosts holding the same pool manifest and recipe seal a byte-identical receipt.",
+  "type": "object",
+  "required": [
+    "pool_hash",
+    "template_hash",
+    "overrides_hash",
+    "effective_manifest_hash",
+    "chosen_backend",
+    "selector_inputs",
+    "schema_version",
+    "timestamp",
+    "placement_hash"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "pool_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Identity of the pool the placement targeted."
+    },
+    "template_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the pool base template."
+    },
+    "overrides_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the canonical overrides dict the recipe supplied."
+    },
+    "effective_manifest_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 pinning the full effective placement (template + capabilities + egress + credential env)."
+    },
+    "chosen_backend": {
+      "type": "string",
+      "description": "The backend the pure selector chose given the pool as a declared input."
+    },
+    "selector_inputs": {
+      "type": "object",
+      "description": "Canonical record of every input the pick was a pure function of (allowlist, override, capabilities, egress, credentials, budget, candidates)."
+    },
+    "schema_version": {
+      "type": "integer",
+      "enum": [1],
+      "description": "Pinned placement receipt wire-format version."
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Stable integer timestamp so identical placements seal byte-identically."
+    },
+    "placement_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 over every other field; the placement receipt identity."
+    }
+  }
+}

@@ -274,3 +274,12 @@ Both endpoints respond with an empty list + `{"stub": true}` until a
 Cache-key hygiene: every fleet-mode query is namespaced under
 `['fleet', ...]`; existing single-project keys are untouched, so a
 mode flip never invalidates the wrong cache.
+
+## Named sandbox pools
+
+Where fleet-mode aggregates discovery across projects, [named sandbox
+pools](sandbox-pools.md) govern where cluster work may land and which knobs
+recipe authors may turn. A worker joins a pool with `bernstein worker --pool
+<name> --server <url>`, signing an Ed25519 enrolment receipt that binds its
+install identity to the pool, so the execution host of every subsequent claim is
+cryptographically attributable and offline-verifiable.

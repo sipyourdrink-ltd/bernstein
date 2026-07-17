@@ -5870,6 +5870,353 @@ def record_sovereign_drift(
     )
 
 
+# ---------------------------------------------------------------------------
+# Named sandbox pools (#2547)
+# ---------------------------------------------------------------------------
+# A pool's lifecycle lives in the chain: register/update/retire events are the
+# only mutation path, and the runtime pool registry is a deterministic
+# projection rebuilt by replaying them (see
+# ``bernstein.core.sandbox.pool_registry``). Placement is a receipt: every
+# dispatch seals ``(pool_hash, effective_manifest_hash, chosen_backend)`` so a
+# run's placement is provable offline from the chain alone, and a refused
+# override is itself chained so an over-broad recipe leaves a tamper-evident
+# trace instead of merely being absent from logs.
+
+#: A pool manifest was registered. Records the pool name and its canonical
+#: ``pool_hash`` so the registry projection can be rebuilt from the chain.
+EVENT_POOL_REGISTERED = "pool.registered"
+
+#: A pool manifest was updated (superseded by a new canonical hash). Records
+#: both the prior and the new ``pool_hash`` so the projection is unambiguous.
+EVENT_POOL_UPDATED = "pool.updated"
+
+#: A pool was retired. The projection drops it; existing receipts still verify.
+EVENT_POOL_RETIRED = "pool.retired"
+
+#: A governed override was refused by the pool ceiling before any sandbox was
+#: created. Records the pool, the offending field, and the machine-readable
+#: refusal reason so the fail-closed decision is chain-attested, not just a log.
+EVENT_POOL_OVERRIDE_REFUSED = "pool.override_refused"
+
+#: A dispatch sealed its placement into the chain. Records the pool, template,
+#: overrides, and effective manifest hashes plus the chosen backend, so the
+#: placement of any run is provable offline (AC: verifiability).
+EVENT_POOL_PLACEMENT_RECEIPT = "pool.placement_receipt"
+
+#: A worker enrolled into a pool. Records the ``pool_hash``, the worker's
+#: install-identity key id, and the enrolment signature so the execution host
+#: of subsequent claims is cryptographically attributable (AC: verifiability).
+EVENT_POOL_WORKER_ENROLLED = "pool.worker_enrolled"
+
+#: A pool-scoped claim was signed by an enrolled worker. Records the claim
+#: hash, the worker key id, the signature, and the placement receipt hash so a
+#: reviewer can prove which enrolled host executed the run.
+EVENT_POOL_CLAIM_RECEIPT = "pool.claim_receipt"
+
+#: A warm pre-provisioned slot was quarantined because its provisioned manifest
+#: hash diverged from the dispatch's effective hash. Records both hashes so the
+#: infra drift is chain-attested and the dispatch falls back to cold cleanly.
+EVENT_POOL_WARM_QUARANTINE = "pool.warm_quarantine"
+
+
+def record_pool_registered(
+    *,
+    chain: AuditChainStore,
+    pool_name: str,
+    pool_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``pool.registered`` event into *chain* (#2547).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        pool_name: Operator-facing pool name.
+        pool_hash: Canonical hash identifying the registered pool manifest.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_REGISTERED,
+        actor=actor,
+        resource_type="sandbox_pool",
+        resource_id=pool_hash,
+        details={"pool_name": pool_name, "pool_hash": pool_hash},
+    )
+
+
+def record_pool_updated(
+    *,
+    chain: AuditChainStore,
+    pool_name: str,
+    pool_hash: str,
+    prev_pool_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``pool.updated`` event into *chain* (#2547).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        pool_name: Operator-facing pool name.
+        pool_hash: New canonical hash identifying the pool manifest.
+        prev_pool_hash: The superseded pool hash for the same name.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_UPDATED,
+        actor=actor,
+        resource_type="sandbox_pool",
+        resource_id=pool_hash,
+        details={"pool_name": pool_name, "pool_hash": pool_hash, "prev_pool_hash": prev_pool_hash},
+    )
+
+
+def record_pool_retired(
+    *,
+    chain: AuditChainStore,
+    pool_name: str,
+    pool_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``pool.retired`` event into *chain* (#2547).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        pool_name: Operator-facing pool name.
+        pool_hash: Canonical hash of the retired pool manifest.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_RETIRED,
+        actor=actor,
+        resource_type="sandbox_pool",
+        resource_id=pool_hash,
+        details={"pool_name": pool_name, "pool_hash": pool_hash},
+    )
+
+
+def record_pool_override_refused(
+    *,
+    chain: AuditChainStore,
+    pool_hash: str,
+    reason: str,
+    refused_field: str,
+    overrides_hash: str,
+    author: str = "recipe",
+    actor: str = "sandbox_pool",
+) -> AuditEvent:
+    """Append a ``pool.override_refused`` event into *chain* (#2547).
+
+    The refusal itself is a chained receipt: an override that widened egress,
+    added a credential env var beyond the ceiling, or touched a non-exposed
+    field leaves a tamper-evident trace and no sandbox is created.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        pool_hash: Canonical hash of the pool that refused the override.
+        reason: Machine-readable refusal reason (e.g. ``egress_widened``).
+        refused_field: The offending override field.
+        overrides_hash: Hash of the canonical overrides that were refused.
+        author: Who authored the override (``"recipe"`` or ``"agent"``), so a
+            refusal driven by an agent-authored recipe is distinguishable.
+        actor: Recorded actor; defaults to ``"sandbox_pool"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_OVERRIDE_REFUSED,
+        actor=actor,
+        resource_type="sandbox_pool",
+        resource_id=pool_hash,
+        details={
+            "pool_hash": pool_hash,
+            "reason": reason,
+            "refused_field": refused_field,
+            "overrides_hash": overrides_hash,
+            "author": author,
+        },
+    )
+
+
+def record_pool_placement_receipt(
+    *,
+    chain: AuditChainStore,
+    placement_hash: str,
+    pool_hash: str,
+    template_hash: str,
+    overrides_hash: str,
+    effective_manifest_hash: str,
+    chosen_backend: str,
+    selector_inputs_hash: str,
+    actor: str = "sandbox_pool",
+) -> AuditEvent:
+    """Append a ``pool.placement_receipt`` event into *chain* (#2547).
+
+    Mirrors one sealed placement into the HMAC chain so the placement of any
+    run is provable offline. A verifier holding the same pool manifest and
+    recipe recomputes ``effective_manifest_hash`` byte-identically; flipping one
+    byte of the recorded effective manifest breaks chain verification.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        placement_hash: Self-hash pinning the whole placement receipt.
+        pool_hash: The pool the placement targeted.
+        template_hash: Hash of the pool base template.
+        overrides_hash: Hash of the canonical overrides.
+        effective_manifest_hash: Hash pinning the effective manifest.
+        chosen_backend: The backend the pure selector chose.
+        selector_inputs_hash: Hash over the selector inputs the pick used.
+        actor: Recorded actor; defaults to ``"sandbox_pool"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_PLACEMENT_RECEIPT,
+        actor=actor,
+        resource_type="sandbox_placement",
+        resource_id=placement_hash,
+        details={
+            "placement_hash": placement_hash,
+            "pool_hash": pool_hash,
+            "template_hash": template_hash,
+            "overrides_hash": overrides_hash,
+            "effective_manifest_hash": effective_manifest_hash,
+            "chosen_backend": chosen_backend,
+            "selector_inputs_hash": selector_inputs_hash,
+        },
+    )
+
+
+def record_pool_worker_enrolled(
+    *,
+    chain: AuditChainStore,
+    pool_hash: str,
+    worker_name: str,
+    keyid: str,
+    enrolment_hash: str,
+    signature: str,
+    actor: str = "task_server",
+) -> AuditEvent:
+    """Append a ``pool.worker_enrolled`` event into *chain* (#2547).
+
+    Binds a worker's Ed25519 install-identity key id to a ``pool_hash`` so the
+    execution host of every subsequent claim is cryptographically attributable
+    and ``bernstein audit verify`` can prove it offline.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        pool_hash: The pool the worker enrolled into.
+        worker_name: The worker's declared name.
+        keyid: The worker install-identity key thumbprint (RFC 7638).
+        enrolment_hash: Self-hash of the signed enrolment receipt body.
+        signature: Base64 Ed25519 signature over the enrolment body.
+        actor: Recorded actor; defaults to ``"task_server"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_WORKER_ENROLLED,
+        actor=actor,
+        resource_type="pool_worker",
+        resource_id=keyid,
+        details={
+            "pool_hash": pool_hash,
+            "worker_name": worker_name,
+            "keyid": keyid,
+            "enrolment_hash": enrolment_hash,
+            "signature": signature,
+        },
+    )
+
+
+def record_pool_claim_receipt(
+    *,
+    chain: AuditChainStore,
+    claim_hash: str,
+    pool_hash: str,
+    task_id: str,
+    keyid: str,
+    signature: str,
+    placement_hash: str,
+    actor: str = "pool_worker",
+) -> AuditEvent:
+    """Append a ``pool.claim_receipt`` event into *chain* (#2547).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        claim_hash: Self-hash of the signed claim receipt body.
+        pool_hash: The pool the claim executed under.
+        task_id: The claimed task id.
+        keyid: The enrolled worker's install-identity key thumbprint.
+        signature: Base64 Ed25519 signature over the claim body.
+        placement_hash: The placement receipt hash the completion carries.
+        actor: Recorded actor; defaults to ``"pool_worker"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_CLAIM_RECEIPT,
+        actor=actor,
+        resource_type="pool_claim",
+        resource_id=claim_hash,
+        details={
+            "claim_hash": claim_hash,
+            "pool_hash": pool_hash,
+            "task_id": task_id,
+            "keyid": keyid,
+            "signature": signature,
+            "placement_hash": placement_hash,
+        },
+    )
+
+
+def record_pool_warm_quarantine(
+    *,
+    chain: AuditChainStore,
+    pool_hash: str,
+    provisioned_manifest_hash: str,
+    dispatch_manifest_hash: str,
+    slot_id: str,
+    actor: str = "sandbox_pool",
+) -> AuditEvent:
+    """Append a ``pool.warm_quarantine`` event into *chain* (#2547).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        pool_hash: The pool the warm slot belonged to.
+        provisioned_manifest_hash: Effective hash the slot was provisioned for.
+        dispatch_manifest_hash: Effective hash the dispatch required.
+        slot_id: Identifier of the quarantined warm slot.
+        actor: Recorded actor; defaults to ``"sandbox_pool"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_POOL_WARM_QUARANTINE,
+        actor=actor,
+        resource_type="warm_slot",
+        resource_id=slot_id,
+        details={
+            "pool_hash": pool_hash,
+            "provisioned_manifest_hash": provisioned_manifest_hash,
+            "dispatch_manifest_hash": dispatch_manifest_hash,
+            "slot_id": slot_id,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -5922,6 +6269,14 @@ __all__ = [
     "EVENT_PLUGIN_CONFORMANCE_RECEIPT",
     "EVENT_PLUGIN_INSTALL_RECEIPT",
     "EVENT_PLUGIN_UPDATE_RECEIPT",
+    "EVENT_POOL_CLAIM_RECEIPT",
+    "EVENT_POOL_OVERRIDE_REFUSED",
+    "EVENT_POOL_PLACEMENT_RECEIPT",
+    "EVENT_POOL_REGISTERED",
+    "EVENT_POOL_RETIRED",
+    "EVENT_POOL_UPDATED",
+    "EVENT_POOL_WARM_QUARANTINE",
+    "EVENT_POOL_WORKER_ENROLLED",
     "EVENT_PROCESS_REAP_RECEIPT",
     "EVENT_PROVENANCE_QUARANTINE",
     "EVENT_PROVENANCE_TAINT_DECISION",
@@ -6021,6 +6376,14 @@ __all__ = [
     "record_plugin_conformance_receipt",
     "record_plugin_install_receipt",
     "record_plugin_update_receipt",
+    "record_pool_claim_receipt",
+    "record_pool_override_refused",
+    "record_pool_placement_receipt",
+    "record_pool_registered",
+    "record_pool_retired",
+    "record_pool_updated",
+    "record_pool_warm_quarantine",
+    "record_pool_worker_enrolled",
     "record_process_reap_receipt",
     "record_provenance_quarantine",
     "record_provider_state_mutation",

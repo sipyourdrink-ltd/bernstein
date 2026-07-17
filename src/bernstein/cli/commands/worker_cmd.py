@@ -71,6 +71,8 @@ class WorkerLoop:
         poll_interval: int = 10,
         poll_config: PollConfig | None = None,
         workdir: Path | None = None,
+        pool: str | None = None,
+        pool_hash: str | None = None,
     ) -> None:
         self._server_url = server_url.rstrip("/")
         self._name = name or socket.gethostname()
@@ -78,6 +80,9 @@ class WorkerLoop:
         self._roles = roles or ["backend", "qa", "security", "frontend"]
         self._labels = labels or {}
         self._auth_token = auth_token
+        self._pool = pool
+        self._pool_hash = pool_hash
+        self._enrolment_keyid: str | None = None
         self._adapter_name = adapter or _detect_worker_adapter()
         # Prefer explicit PollConfig; fall back to legacy poll_interval (seconds).
         if poll_config is not None:
@@ -99,6 +104,80 @@ class WorkerLoop:
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
         return headers
+
+    def _resolve_pool_hash(self) -> str | None:
+        """Resolve the pool hash to enrol against, if a pool was requested.
+
+        Prefers an explicit ``--pool-hash``; otherwise projects the local audit
+        chain to find the active hash for ``--pool`` name. Returns ``None`` when
+        no pool was requested (the worker behaves exactly as before).
+        """
+        if self._pool_hash:
+            return self._pool_hash
+        if not self._pool:
+            return None
+        with suppress(Exception):
+            from bernstein.core.sandbox.pool_registry import project_pool_registry
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            audit_dir = self._workdir / ".sdd" / "audit"
+            if audit_dir.is_dir():
+                events = [e for e in AuditChainStore(audit_dir).query() if str(e.event_type).startswith("pool.")]
+                return project_pool_registry(events).get(self._pool)
+        return None
+
+    def _enrol(self, client: httpx.Client) -> None:
+        """Sign an enrolment receipt binding the install identity to the pool.
+
+        Additive: only runs when ``--pool`` (or ``--pool-hash``) was given. The
+        receipt is signed with the worker's Ed25519 install identity, written to
+        the content-addressed enrolment store, and offered to the server over
+        the same outbound-only channel the worker already uses -- no inbound
+        socket is ever opened (#2547).
+        """
+        pool_hash = self._resolve_pool_hash()
+        if not pool_hash:
+            if self._pool:
+                console.print(f"[yellow]Pool {self._pool!r} not resolvable locally; skipping enrolment.[/yellow]")
+            return
+        import time as _time
+
+        from bernstein.core.identity.http_signing import default_keystore
+        from bernstein.core.sandbox.pool_enrolment import build_enrolment_receipt
+
+        try:
+            keystore = default_keystore()
+            receipt = build_enrolment_receipt(
+                keystore=keystore,
+                pool_hash=pool_hash,
+                worker_name=self._name,
+                created=int(_time.time()),
+            )
+        except Exception as exc:  # keystore/permission failure must not crash the worker
+            logger.warning("pool enrolment signing skipped: %s", exc)
+            return
+
+        self._enrolment_keyid = receipt.keyid
+        self._write_enrolment(receipt)
+        pool_label = self._pool or pool_hash[:16]
+        console.print(f"[green]Enrolled[/green] into pool [bold]{pool_label}[/bold] as key {receipt.keyid[:12]}...")
+
+        with suppress(httpx.HTTPError):
+            client.post(
+                f"{self._server_url}/cluster/pools/enroll",
+                json=receipt.to_dict(),
+                headers=self._headers(),
+                timeout=10.0,
+            )
+
+    def _write_enrolment(self, receipt: object) -> None:
+        """Persist a signed enrolment receipt to the content-addressed store."""
+        with suppress(Exception):
+            enrol_dir = self._workdir / ".sdd" / "sandbox" / "enrolments"
+            enrol_dir.mkdir(parents=True, exist_ok=True)
+            keyid = getattr(receipt, "keyid", "worker")
+            safe = "".join(c for c in keyid if c.isalnum() or c in ("-", "_")) or "worker"
+            (enrol_dir / f"{safe}.json").write_text(receipt.to_canonical_json(), encoding="utf-8")  # type: ignore[attr-defined]
 
     @property
     def available_slots(self) -> int:
@@ -351,6 +430,7 @@ class WorkerLoop:
                 return
 
             console.print(f"[green]Registered[/green] as node [bold]{node_id}[/bold]")
+            self._enrol(client)
             last_heartbeat = time.monotonic()
 
             while self._running:
@@ -429,6 +509,16 @@ class WorkerLoop:
     show_default=True,
     help="Milliseconds between heartbeats to the central server.",
 )
+@click.option(
+    "--pool",
+    default=None,
+    help="Named sandbox pool to enrol into (signs an Ed25519 enrolment receipt).",
+)
+@click.option(
+    "--pool-hash",
+    default=None,
+    help="Explicit pool hash to enrol against (overrides --pool name resolution).",
+)
 def worker(
     server: str,
     name: str | None,
@@ -440,6 +530,8 @@ def worker(
     poll_interval: int,
     poll_interval_ms: int | None,
     heartbeat_interval_ms: int,
+    pool: str | None,
+    pool_hash: str | None,
 ) -> None:
     """Join a Bernstein cluster as a worker node.
 
@@ -493,5 +585,7 @@ def worker(
         adapter=adapter if adapter != "auto" else None,
         poll_interval=poll_interval,
         poll_config=cfg,
+        pool=pool,
+        pool_hash=pool_hash,
     )
     loop.run()

@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bernstein.alexchernysh.com/schemas/sandbox-pool-manifest-v1.json",
+  "title": "Bernstein Named Sandbox Pool Manifest (v1)",
+  "description": "A frozen, canonicalized named sandbox pool (#2547). Its identity is its pool_hash: a sha256 over the canonical JSON of every other field. Pools are registered, updated, and retired only by appending pool.* events to the HMAC audit chain; the runtime pool registry is a deterministic projection rebuilt by replaying those events, and the manifest body is held content-addressed so a tampered body no longer recomputes to its pool_hash.",
+  "type": "object",
+  "required": [
+    "name",
+    "backend_allowlist",
+    "template",
+    "exposed_fields",
+    "capability_ceiling",
+    "network_egress_class",
+    "credential_env_allowlist",
+    "schema_version",
+    "pool_hash"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator-facing pool name a recipe targets."
+    },
+    "backend_allowlist": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Backend names placement may choose from, in operator-preferred order. Empty means any registered backend."
+    },
+    "template": {
+      "type": "object",
+      "required": ["root", "env", "timeout_seconds"],
+      "additionalProperties": false,
+      "description": "The JSON-safe base workspace template exposed to recipes.",
+      "properties": {
+        "root": { "type": "string", "description": "Absolute workspace root inside the sandbox." },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Environment variables seeded for every exec (canonicalized with sorted keys)."
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 0, "description": "Default wall-clock exec timeout." }
+      }
+    },
+    "exposed_fields": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["root", "env", "timeout_seconds", "backend", "capabilities", "network_egress_class"]
+      },
+      "uniqueItems": true,
+      "description": "The exact override keys recipes may set. Any key outside this set is refused fail-closed."
+    },
+    "max_concurrency": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Pool-level concurrency ceiling (0 == unbounded)."
+    },
+    "capability_ceiling": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["file_rw", "exec", "network", "gpu", "snapshot", "persistent_volumes", "scoped_mount"]
+      },
+      "uniqueItems": true,
+      "description": "Maximum sandbox capabilities an effective placement may require. Must include file_rw and exec."
+    },
+    "network_egress_class": {
+      "type": "string",
+      "enum": ["none", "loopback", "restricted", "open"],
+      "description": "Widest network egress class placement may request. An override requesting a wider class is refused."
+    },
+    "credential_env_allowlist": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "Credential env-var names a recipe override may introduce, bound to credential_scoping known keys."
+    },
+    "schema_version": {
+      "type": "integer",
+      "enum": [1],
+      "description": "Pinned pool manifest wire-format version."
+    },
+    "pool_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 over the canonical payload of every other field; the pool identity."
+    }
+  }
+}
