@@ -37,6 +37,11 @@ Noteable = "Noteable" # GitLab webhook field name, capitalised form
 optin = "optin"      # compound abbreviation for "opt-in"; used in test filenames
 Optin = "Optin"      # capitalised form for class names / docs
 
+# Audit receipt envelope formats (RFC 9052 COSE_Sign1, in-toto/DSSE)
+cose = "cose"        # COSE_Sign1 signature format (audit receipt export)
+COSE = "COSE"        # COSE_Sign1 signature format, acronym form
+intoto = "intoto"    # in-toto v1 Statement / DSSE attestation format
+
 # Proper nouns and product names
 Hashi = "Hashi"      # HashiCorp
 certifi = "certifi"  # Python CA certificate package
