@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import json
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -210,6 +211,7 @@ class CacheKeyArbiter:
         self._path = backlog_path
         self._cache_key = cache_key
         self._contenders = 0
+        self._counter_lock = threading.Lock()
 
     @property
     def cache_key(self) -> str:
@@ -229,7 +231,9 @@ class CacheKeyArbiter:
         """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_backlog()
-        self._contenders += 1
+        with self._counter_lock:
+            self._contenders += 1
+            position = self._contenders - 1
         claimed = claim_next_entry(self._path, claimer_id=claimer, filter=ClaimFilter())
         if claimed is not None and claimed.id == self._cache_key:
             return ClaimOutcome(won=True, claimer=claimer, claim_position=0, winner=claimer)
@@ -237,7 +241,7 @@ class CacheKeyArbiter:
         return ClaimOutcome(
             won=False,
             claimer=claimer,
-            claim_position=self._contenders - 1,
+            claim_position=position,
             winner=winner,
         )
 

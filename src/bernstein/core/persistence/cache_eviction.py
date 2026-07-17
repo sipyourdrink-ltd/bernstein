@@ -26,6 +26,7 @@ tombstone order across processes.
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -247,10 +248,10 @@ class TombstoneStore:
         consumers_seen: set[str] = set()
 
         # BFS from the evicted key. A queued node is always a cache key.
-        queue: list[str] = [key]
+        queue: deque[str] = deque([key])
         queued: set[str] = {key}
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current not in tombstoned_seen:
                 tombstoned_order.append(current)
                 tombstoned_seen.add(current)
