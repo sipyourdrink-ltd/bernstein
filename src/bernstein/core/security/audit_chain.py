@@ -4595,6 +4595,227 @@ def record_render_failure(
     )
 
 
+# ---------------------------------------------------------------------------
+# Registered-recipe lifecycle events (#2546)
+# ---------------------------------------------------------------------------
+#
+# A registered recipe is a content-addressed run definition whose entire
+# lifecycle lives on this chain: register, supersede (definition change),
+# rollback (re-point the name at a prior hash), pause / resume (a
+# definition-level fire gate), a collision receipt for every overlap the
+# supervisor evaluates, and a fleet apply bound to a reviewed plan hash.
+# There is no mutable registry row; the live name -> hash mapping is a pure
+# projection of these receipts. The constants are additive; never edit or
+# remove an existing entry.
+
+#: A recipe definition was registered for the first time under a name.
+EVENT_RECIPE_REGISTER = "recipe.register"
+
+#: A changed definition body supersedes the prior hash for a name
+#: (operator-signed: carries old_hash and new_hash and a spine edge).
+EVENT_RECIPE_SUPERSEDE = "recipe.supersede"
+
+#: A name was re-pointed at a prior definition hash (rollback receipt);
+#: nothing is deleted, the roll-back is itself a chain record.
+EVENT_RECIPE_ROLLBACK = "recipe.rollback"
+
+#: A recipe was paused: a definition-level state record that stops future
+#: fires while keeping the recipe's identity and history.
+EVENT_RECIPE_PAUSE = "recipe.pause"
+
+#: A paused recipe was resumed.
+EVENT_RECIPE_RESUME = "recipe.resume"
+
+#: The supervisor evaluated a concurrency collision against a still-running
+#: fire and emitted a deterministic decision (ENQUEUE / CANCEL_NEW /
+#: SUPERSEDE_WITH_HANDOFF). Emitted for every evaluated collision so a
+#: double-fire is a recorded decision rather than a silent double-write.
+EVENT_SCHEDULE_COLLISION = "schedule.collision_receipt"
+
+#: A declarative fleet manifest was applied against an exact plan hash;
+#: the apply receipt binds the reviewed plan to the registry mutation.
+EVENT_RECIPE_FLEET_APPLY = "recipe.fleet_apply"
+
+
+def record_recipe_register(
+    *,
+    chain: AuditChainStore,
+    name: str,
+    recipe_hash: str,
+    spine_anchor: str,
+    prev_receipt_digest: str,
+    actor: str = "recipe_registry",
+) -> AuditEvent:
+    """Append a ``recipe.register`` event into *chain* (#2546).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        name: Operator-facing recipe name the hash is registered under.
+        recipe_hash: ``sha256`` over the canonical definition bytes; the
+            recipe's content-addressed identity.
+        spine_anchor: Lineage-spine entry hash the canonical bytes were
+            sealed into, or ``""`` when lineage recording is disabled.
+        prev_receipt_digest: The chain digest of the previous lifecycle
+            receipt for this name (``""`` for the first registration); the
+            per-name definition lineage links through this field so a
+            verifier can detect a reordered or missing receipt.
+        actor: Recorded actor; defaults to ``"recipe_registry"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RECIPE_REGISTER,
+        actor=actor,
+        resource_type="registered_recipe",
+        resource_id=recipe_hash,
+        details={
+            "name": name,
+            "recipe_hash": recipe_hash,
+            "spine_anchor": spine_anchor,
+            "prev_receipt_digest": prev_receipt_digest,
+        },
+    )
+
+
+def record_recipe_supersede(
+    *,
+    chain: AuditChainStore,
+    name: str,
+    old_hash: str,
+    new_hash: str,
+    spine_anchor: str,
+    prev_receipt_digest: str,
+    actor: str = "recipe_registry",
+) -> AuditEvent:
+    """Append an operator-signed ``recipe.supersede`` event (#2546).
+
+    The receipt names both the retired ``old_hash`` and the live
+    ``new_hash`` so ``recipes history`` walks the definition change offline.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RECIPE_SUPERSEDE,
+        actor=actor,
+        resource_type="registered_recipe",
+        resource_id=new_hash,
+        details={
+            "name": name,
+            "old_hash": old_hash,
+            "new_hash": new_hash,
+            "spine_anchor": spine_anchor,
+            "prev_receipt_digest": prev_receipt_digest,
+        },
+    )
+
+
+def record_recipe_rollback(
+    *,
+    chain: AuditChainStore,
+    name: str,
+    from_hash: str,
+    to_hash: str,
+    prev_receipt_digest: str,
+    actor: str = "recipe_registry",
+) -> AuditEvent:
+    """Append a ``recipe.rollback`` event re-pointing *name* at a prior hash."""
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RECIPE_ROLLBACK,
+        actor=actor,
+        resource_type="registered_recipe",
+        resource_id=to_hash,
+        details={
+            "name": name,
+            "from_hash": from_hash,
+            "to_hash": to_hash,
+            "prev_receipt_digest": prev_receipt_digest,
+        },
+    )
+
+
+def record_recipe_pause(
+    *,
+    chain: AuditChainStore,
+    name: str,
+    recipe_hash: str,
+    paused: bool,
+    prev_receipt_digest: str,
+    actor: str = "recipe_registry",
+) -> AuditEvent:
+    """Append a ``recipe.pause`` / ``recipe.resume`` state record (#2546).
+
+    ``paused`` selects the event type so a single helper covers both
+    transitions; the pause window is reconstructable from the receipts
+    alone (a paused recipe keeps its identity and fires nothing).
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RECIPE_PAUSE if paused else EVENT_RECIPE_RESUME,
+        actor=actor,
+        resource_type="registered_recipe",
+        resource_id=recipe_hash,
+        details={
+            "name": name,
+            "recipe_hash": recipe_hash,
+            "paused": paused,
+            "prev_receipt_digest": prev_receipt_digest,
+        },
+    )
+
+
+def record_schedule_collision(
+    *,
+    chain: AuditChainStore,
+    resource_id: str,
+    policy: str,
+    action: str,
+    receipt_hash: str,
+    running_fire_id: str,
+    resume_from_checkpoint: str,
+    warm_resume: bool,
+    actor: str = "schedule_supervisor",
+) -> AuditEvent:
+    """Append a ``schedule.collision_receipt`` event (#2546).
+
+    Emitted for every collision the supervisor evaluates, so an overrun is
+    a recorded decision rather than a silent double-write. ``receipt_hash``
+    is the stable hash of the pure :func:`decide_collision` outcome, so two
+    operators over identical running-fire state record the same receipt.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SCHEDULE_COLLISION,
+        actor=actor,
+        resource_type="schedule_collision",
+        resource_id=resource_id,
+        details={
+            "policy": policy,
+            "action": action,
+            "receipt_hash": receipt_hash,
+            "running_fire_id": running_fire_id,
+            "resume_from_checkpoint": resume_from_checkpoint,
+            "warm_resume": warm_resume,
+        },
+    )
+
+
+def record_recipe_fleet_apply(
+    *,
+    chain: AuditChainStore,
+    plan_hash: str,
+    applied: tuple[str, ...],
+    actor: str = "recipe_registry",
+) -> AuditEvent:
+    """Append a ``recipe.fleet_apply`` event bound to the reviewed *plan_hash*."""
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RECIPE_FLEET_APPLY,
+        actor=actor,
+        resource_type="recipe_fleet_plan",
+        resource_id=plan_hash,
+        details={
+            "plan_hash": plan_hash,
+            "applied": list(applied),
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -4643,12 +4864,19 @@ __all__ = [
     "EVENT_PROVENANCE_QUARANTINE",
     "EVENT_PROVENANCE_TAINT_DECISION",
     "EVENT_PROVIDER_STATE_MUTATION",
+    "EVENT_RECIPE_FLEET_APPLY",
+    "EVENT_RECIPE_PAUSE",
+    "EVENT_RECIPE_REGISTER",
+    "EVENT_RECIPE_RESUME",
+    "EVENT_RECIPE_ROLLBACK",
+    "EVENT_RECIPE_SUPERSEDE",
     "EVENT_REVIEW_BOARD_ACTION",
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
     "EVENT_RULE_FIRE_RECEIPT",
     "EVENT_RUN_LIFECYCLE",
     "EVENT_RUN_SSH_TASK",
+    "EVENT_SCHEDULE_COLLISION",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SIGNAL_GATE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
@@ -4717,6 +4945,11 @@ __all__ = [
     "record_process_reap_receipt",
     "record_provenance_quarantine",
     "record_provider_state_mutation",
+    "record_recipe_fleet_apply",
+    "record_recipe_pause",
+    "record_recipe_register",
+    "record_recipe_rollback",
+    "record_recipe_supersede",
     "record_render_failure",
     "record_review_board_action",
     "record_review_receipt",
@@ -4724,6 +4957,7 @@ __all__ = [
     "record_rule_fire_receipt",
     "record_run_lifecycle",
     "record_run_ssh_task",
+    "record_schedule_collision",
     "record_schedule_fire_projection",
     "record_sensitive_gate",
     "record_signal_gate_projection",

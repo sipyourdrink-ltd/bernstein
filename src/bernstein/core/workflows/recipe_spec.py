@@ -216,6 +216,14 @@ class RecipeSpec(BaseModel):
     version: str = Field(default="1.0.0")
     params: list[RecipeParam] = Field(default_factory=list)
     nodes: list[dict[str, Any]] = Field(min_length=1)
+    # Optional #2546 registration blocks. A manifest without them parses and
+    # behaves exactly as before (zero schedules, zero triggers, empty pool).
+    # They carry the registration surface (schedule kinds, triggers, sandbox
+    # pool, pins) folded into the content-addressed recipe hash.
+    schedules: list[dict[str, Any]] = Field(default_factory=list)
+    triggers: list[dict[str, Any]] = Field(default_factory=list)
+    sandbox_pool: str = Field(default="", max_length=128)
+    pins: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("params")
     @classmethod

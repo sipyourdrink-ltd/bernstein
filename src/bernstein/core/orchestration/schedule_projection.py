@@ -209,6 +209,8 @@ def project_schedule_fire(
     recurrence: str = "",
     trigger_input_hash: str = "",
     params_hash: str = "",
+    timezone: str = "",
+    dst_policy: str = "",
 ) -> ProjectionResult:
     """Project ``(schedule_id, fire_time, last_state)`` onto a task graph.
 
@@ -264,6 +266,17 @@ def project_schedule_fire(
             task identity and the graph hash. Two operators with equal schedule
             state and params provably fire the byte-identical graph; a changed
             param provably changes the graph hash.
+        timezone: Declared IANA timezone the schedule evaluates its local
+            wall time in (#2546). Folded into the task identity and payload
+            ONLY when non-empty, so two hosts in different system timezones
+            prove the identical fire decision through a DST transition,
+            while a UTC / zone-less schedule (every pre-#2546 schedule)
+            stays byte-identical to prior revs.
+        dst_policy: The DST ambiguity policy (see
+            :class:`bernstein.core.orchestration.schedule_kinds.DstPolicy`)
+            that resolved this fire instant; folded alongside ``timezone``
+            so the ambiguity decision is part of the canonical body rather
+            than an out-of-band host default.
 
     Returns:
         A ProjectionResult with the canonical task graph and its hash.
@@ -308,6 +321,9 @@ def project_schedule_fire(
         task_id_seed_obj["trigger_input_hash"] = trigger_input_hash
     if params_hash:
         task_id_seed_obj["params_hash"] = params_hash
+    if timezone:
+        task_id_seed_obj["timezone"] = timezone
+        task_id_seed_obj["dst_policy"] = dst_policy
     task_id_seed = json.dumps(task_id_seed_obj, sort_keys=True).encode()
     task_id = "sched-task-" + hashlib.sha256(task_id_seed).hexdigest()[:16]
 
@@ -325,6 +341,8 @@ def project_schedule_fire(
         metadata = (*metadata, ("trigger_input_hash", trigger_input_hash))
     if params_hash:
         metadata = (*metadata, ("params_hash", params_hash))
+    if timezone:
+        metadata = (*metadata, ("timezone", timezone), ("dst_policy", dst_policy))
     if response_profile:
         # ``mode`` rides the node metadata so a task created from this node
         # resolves the same profile at spawn time
@@ -367,6 +385,9 @@ def project_schedule_fire(
         canonical_obj["trigger_input_hash"] = trigger_input_hash
     if params_hash:
         canonical_obj["params_hash"] = params_hash
+    if timezone:
+        canonical_obj["timezone"] = timezone
+        canonical_obj["dst_policy"] = dst_policy
     canonical_bytes = json.dumps(
         canonical_obj,
         sort_keys=True,
