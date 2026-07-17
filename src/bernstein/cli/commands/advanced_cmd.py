@@ -767,6 +767,33 @@ def doctor_airgap_cmd(ctx: click.Context) -> None:
     raise SystemExit(run_doctor_airgap(workdir=Path.cwd(), as_json=as_json))
 
 
+@doctor.command("sovereign")
+@click.pass_context
+def doctor_sovereign_cmd(ctx: click.Context) -> None:
+    """Run the battery of sovereign-profile self-checks.
+
+    \b
+    Checks the composed residency posture activated by --profile sovereign:
+      - sovereign profile is the active entry point
+      - network egress denies every destination by default (airgap posture)
+      - runtime socket guard is active
+      - storage backend keeps artifacts on local disk
+      - catalog is offline (no enabled sources)
+      - residency enforcement is strict and EU-only
+      - every gated remote endpoint carries a verified certification receipt
+      - the posture is attested and the live posture has not drifted
+      - audit chain HMAC is intact
+
+    Renders the live posture hash against the chain-anchored attestation.
+    Exit code is 0 only when every check passes.
+    """
+    from bernstein.cli.commands.doctor_sovereign_cmd import run_doctor_sovereign
+
+    parent = ctx.obj if isinstance(ctx.obj, dict) else {}
+    as_json = bool(parent.get("as_json", False))
+    raise SystemExit(run_doctor_sovereign(workdir=Path.cwd(), as_json=as_json))
+
+
 @doctor.command("scoping")
 @click.option("--agent-id", default="default", show_default=True, help="Agent id to resolve.")
 @click.option("--role", default="default", show_default=True, help="Role hint for fallback.")

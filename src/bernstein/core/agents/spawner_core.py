@@ -2775,6 +2775,66 @@ class AgentSpawner:
                 verdict.advisory_id,
             )
 
+    def _preflight_posture_drift(self) -> None:
+        """Refuse a spawn when the sovereign posture drifted from attestation (#2518).
+
+        No-op unless the run activated ``--profile sovereign``. When active,
+        recomputes the effective residency posture from the live workspace
+        config and compares its canonical hash to the attested hash. On any
+        divergence -- a cloud storage sink added, a catalog re-enabled, a role
+        repointed at a non-certified endpoint -- this signs and anchors a drift
+        record naming the exact diverging keys, then refuses the spawn. The
+        signed drift record re-verifies under ``bernstein audit verify``, so the
+        divergence is caught at spawn time and evidenced on the chain rather
+        than surfacing at audit time.
+
+        Raises:
+            PostureDriftRefusal: On posture drift (or a missing attestation).
+                Deliberately not a ``SpawnError`` so the per-provider failover
+                loop never retries it -- a drift refusal is a hard stop.
+        """
+        from bernstein.core.security.network_policy import is_sovereign_profile
+
+        if not is_sovereign_profile():
+            return
+
+        import time as _time
+
+        from bernstein.core.security.audit_chain import AuditChainStore
+        from bernstein.core.security.deployment_profile import (
+            PostureDriftRefusal,
+            evaluate_posture_drift,
+            load_config_snapshot,
+            record_and_sign_drift,
+        )
+
+        snapshot = load_config_snapshot(self._workdir)
+        evaluation = evaluate_posture_drift(workdir=self._workdir, config_snapshot=snapshot)
+        if not evaluation.drifted:
+            return
+
+        chain = AuditChainStore(self._workdir / ".sdd" / "audit")
+        record, record_sha256 = record_and_sign_drift(
+            workdir=self._workdir,
+            evaluation=evaluation,
+            timestamp=int(_time.time()),
+            chain=chain,
+        )
+        diverging = ", ".join(evaluation.diverging_keys) or "(attestation missing)"
+        logger.error(
+            "spawn refused: sovereign posture drift - diverging_keys=[%s] attested=%s observed=%s",
+            diverging,
+            evaluation.attested_hash or "<none>",
+            evaluation.observed_hash,
+        )
+        raise PostureDriftRefusal(
+            f"sovereign posture drift: {evaluation.reason}. Diverging keys: {diverging}. "
+            "Re-activate the profile (bernstein run --profile sovereign) after restoring the "
+            "intended posture, or inspect it with 'bernstein doctor sovereign'.",
+            record=record,
+            record_sha256=record_sha256,
+        )
+
     def _resolve_routing(
         self,
         tasks: list[Task],
@@ -2851,6 +2911,13 @@ class AgentSpawner:
                 [t.id for t in tasks],
             )
             raise ShutdownInProgress("Orchestrator shutting down - refusing new spawn")
+
+        # Sovereign posture drift gate (issue #2518): when the run activated
+        # --profile sovereign, recompute the residency posture from the live
+        # config and refuse the spawn if it diverges from the attested hash.
+        # A hard stop -- ``PostureDriftRefusal`` is not a ``SpawnError`` so the
+        # provider-failover loop never retries it.
+        self._preflight_posture_drift()
 
         # Disk space check: refuse to spawn if less than 1 GB free.
         # Worktree creation + agent output can consume significant disk.

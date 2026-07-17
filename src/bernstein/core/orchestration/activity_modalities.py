@@ -67,6 +67,12 @@ from bernstein.core.orchestration.activity import (
     TerminalState,
     evidence_set_hash,
 )
+from bernstein.core.orchestration.research_report import (
+    ClaimVerdict,
+    ResearchReport,
+    ResearchReportVerdict,
+    verify_research_report,
+)
 from bernstein.core.replay.journal import load_events, verify_journal
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
@@ -715,6 +721,8 @@ class StageVerdict:
             content store and re-verified against their pinned hashes.
         signed_receipt_verified: Whether a data/ops signed receipt was reattached
             from the store and its plan + input/output signatures re-verified.
+        claim_verdicts: Per-claim citation verdicts for a research stage
+            (empty for other modalities), in the report's claim order.
         reason: A short human-readable explanation on failure, else empty.
     """
 
@@ -723,6 +731,7 @@ class StageVerdict:
     ok: bool
     evidence_reattached: bool
     signed_receipt_verified: bool = False
+    claim_verdicts: tuple[ClaimVerdict, ...] = ()
     reason: str = ""
 
 
@@ -841,6 +850,28 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
             reason="journal Merkle chain diverges",
         )
 
+    # Research citation lineage (#2524): resolve every claim's citation against
+    # the store first, so a tampered *cited* page fails naming the claim and the
+    # mismatched hash rather than as an anonymous observation-reattach failure.
+    claim_verdicts: tuple[ClaimVerdict, ...] = ()
+    if store is not None and kind == ActivityKind.RESEARCH.value:
+        research = _verify_research_stage(row, store=store)
+        if research is not None:
+            claim_verdicts = research.claims
+            if not research.ok:
+                reason = research.reason or next(
+                    (c.reason for c in research.claims if not c.ok),
+                    "research report verification failed",
+                )
+                return StageVerdict(
+                    stage_id=stage_id,
+                    kind=kind,
+                    ok=False,
+                    evidence_reattached=False,
+                    claim_verdicts=claim_verdicts,
+                    reason=reason,
+                )
+
     reattached = False
     if store is not None:
         for obs in rebuilt:
@@ -852,6 +883,7 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
                     kind=kind,
                     ok=False,
                     evidence_reattached=False,
+                    claim_verdicts=claim_verdicts,
                     reason=f"evidence bytes missing from store for {obs.ref!r}",
                 )
             recomputed_hash = "sha256:" + _sha256_hex(content)
@@ -861,6 +893,7 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
                     kind=kind,
                     ok=False,
                     evidence_reattached=False,
+                    claim_verdicts=claim_verdicts,
                     reason=f"content hash mismatch reattaching {obs.ref!r}",
                 )
         reattached = bool(rebuilt)
@@ -885,6 +918,7 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
         ok=True,
         evidence_reattached=reattached,
         signed_receipt_verified=receipt_verified,
+        claim_verdicts=claim_verdicts,
     )
 
 
@@ -933,3 +967,54 @@ def _verify_data_ops_stage(row: dict[str, Any], *, store: ContentStore) -> DataO
             reason=f"stored receipt is not valid JSON: {type(exc).__name__}",
         )
     return verify_data_ops_receipt(receipt, store=store)
+
+
+def _verify_research_stage(row: dict[str, Any], *, store: ContentStore) -> ResearchReportVerdict | None:
+    """Reattach and re-resolve a research report's citation lineage (#2524).
+
+    The report's canonical bytes were stored content-addressed under the stage's
+    ``artifact_hash``. This reattaches them by that hash, confirms they still hash
+    to the anchored ``artifact_hash`` (tamper of the report itself), parses the
+    report, and resolves every claim's citation offline against the store --
+    naming the claim and the mismatched hash on any altered source page. Returns
+    ``None`` when no report is stored (a legacy or non-report research row), so
+    the generic evidence check stands alone.
+    """
+    artifact_hash = str(row.get("artifact_hash", ""))
+    digest = artifact_hash.split(":", 1)[-1]
+    # Realpath-contain the store lookup: the hash comes from the journal, so only
+    # a bare sha256 hex digest may address a blob (no path separators).
+    if not _SHA256_HEX.match(digest):
+        return ResearchReportVerdict(
+            ok=False,
+            claims=(),
+            reason=f"malformed artifact_hash for research stage: {artifact_hash!r}",
+        )
+    try:
+        report_bytes = store.get(artifact_hash)
+    except KeyError:
+        return None
+    if "sha256:" + _sha256_hex(report_bytes) != artifact_hash:
+        return ResearchReportVerdict(
+            ok=False,
+            claims=(),
+            reason=f"report bytes do not match anchored artifact_hash {artifact_hash!r}",
+        )
+    try:
+        report = ResearchReport.from_dict(json.loads(report_bytes))
+    except (ValueError, TypeError) as exc:
+        return ResearchReportVerdict(
+            ok=False,
+            claims=(),
+            reason=f"stored report is not valid JSON: {type(exc).__name__}",
+        )
+    # A stored report with no claims is not a valid research artifact; surface it
+    # as one refused claim so the failure is not silently empty.
+    verdict = verify_research_report(report, store=store)
+    if not report.claims and not verdict.claims:
+        return ResearchReportVerdict(
+            ok=False,
+            claims=(ClaimVerdict(claim_id="", ok=False, citations_checked=0, reason="report holds no claims"),),
+            reason=verdict.reason or "report holds no claims",
+        )
+    return verdict

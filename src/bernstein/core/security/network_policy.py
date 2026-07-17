@@ -27,8 +27,15 @@ from urllib.parse import urlparse
 
 ENV_NETWORK_POLICY: Final[str] = "BERNSTEIN_NETWORK_POLICY"
 ENV_PROFILE_MODE: Final[str] = "BERNSTEIN_PROFILE_MODE"
+#: Marker set alongside the airgap network posture when ``--profile sovereign``
+#: is selected (issue #2518). Sovereign composes the airgap network profile, so
+#: it sets ``ENV_PROFILE_MODE=airgap`` for the deny-all + socket-guard posture
+#: and additionally sets this marker so the sovereign-specific gates (drift
+#: refusal, ``doctor sovereign``) can tell they are active.
+ENV_SOVEREIGN_MODE: Final[str] = "BERNSTEIN_SOVEREIGN_MODE"
 
 PROFILE_AIRGAP: Final[str] = "airgap"
+PROFILE_SOVEREIGN: Final[str] = "sovereign"
 
 
 class NetworkPolicyDenied(RuntimeError):
@@ -229,6 +236,16 @@ def policy_from_env() -> NetworkPolicy:
 def is_airgap_profile() -> bool:
     """Return True iff the active run was started with ``--profile airgap``."""
     return os.environ.get(ENV_PROFILE_MODE, "").strip().lower() == PROFILE_AIRGAP
+
+
+def is_sovereign_profile() -> bool:
+    """Return True iff the active run was started with ``--profile sovereign``.
+
+    Sovereign composes the airgap network posture, so ``is_airgap_profile()``
+    is also True under sovereign; this marker distinguishes the sovereign
+    superset (drift refusal + residency posture) from a bare airgap run.
+    """
+    return os.environ.get(ENV_SOVEREIGN_MODE, "").strip().lower() in {"1", "true", PROFILE_SOVEREIGN}
 
 
 def install_policy(policy: NetworkPolicy, *, profile: str | None = None) -> None:

@@ -887,6 +887,138 @@ class TestCreateTask:
 
 
 # ===========================================================================
+# on_fail recovery receipts (issue #2557)
+# ===========================================================================
+
+
+def _recovery_dag() -> WorkflowDAG:
+    """DAG whose ``fix-bugs`` recovery node depends on failing ``run-tests``."""
+    return WorkflowDAG(
+        definition=WorkflowDefinition(
+            name="ci",
+            phases=(
+                WorkflowPhase(name="verify"),
+                WorkflowPhase(name="implement"),
+            ),
+        ),
+        nodes=(
+            DAGNode(id="run-tests", phase="verify", role="qa"),
+            DAGNode(id="fix-bugs", phase="implement", role="backend", description="Fix the failing tests"),
+        ),
+        edges=(
+            DAGEdge(
+                source="run-tests",
+                target="fix-bugs",
+                condition=ConditionExpr(raw="status == 'failed'"),
+            ),
+        ),
+    )
+
+
+class TestRecoveryReceiptCreateTask:
+    def test_source_none_is_byte_identical_to_legacy(self) -> None:
+        """AC5: ``create_task(node_id)`` without a source task is unchanged."""
+        executor = DAGExecutor(_recovery_dag())
+        plain = executor.create_task("fix-bugs")
+        explicit = executor.create_task("fix-bugs", source_task=None)
+
+        # Metadata is untouched (default empty dict) on the no-source path.
+        assert plain.metadata == {}
+        assert explicit.metadata == {}
+
+        # Every field except the per-call uuid id and wall-clock created_at.
+        import dataclasses
+
+        norm_a = dataclasses.replace(plain, id="X", created_at=0.0)
+        norm_b = dataclasses.replace(explicit, id="X", created_at=0.0)
+        assert norm_a == norm_b
+
+    def test_recovery_task_prompt_has_failure_context(self, tmp_path: Path) -> None:
+        """AC1: the recovery task's injected prompt carries status, gates, tail."""
+        from bernstein.core.lineage.spine import LineageSpine
+        from bernstein.core.quality.quality_gates import QualityGateCheckResult, QualityGatesResult
+        from bernstein.core.replay.journal import EventJournal
+
+        executor = DAGExecutor(_recovery_dag())
+        source = _task("run-tests-fixed", role="qa", status=TaskStatus.FAILED, result_summary='{"status": "failed"}')
+        edge = executor.dag.edges[0]
+        journal = EventJournal(run_id="run-1", sdd_dir=tmp_path / ".sdd")
+        journal.record("task_failed", task_id="run-tests-fixed", reason="tests")
+        gate_report = QualityGatesResult(
+            task_id="run-tests-fixed",
+            passed=False,
+            gate_results=[QualityGateCheckResult(gate="tests", passed=False, blocked=True, detail="3 failing")],
+        )
+        spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id="run-1", hmac_key=b"k" * 32)
+        recovery_store: dict[str, str] = {}
+
+        task = executor.create_task(
+            "fix-bugs",
+            source_task=source,
+            source_edge=edge,
+            spine=spine,
+            journal=journal,
+            gate_report=gate_report,
+            recovery_store=recovery_store,
+            timestamp=0,
+        )
+
+        assert task.id in recovery_store
+        preamble = recovery_store[task.id]
+        assert "failed" in preamble  # failing status
+        assert "tests" in preamble  # gate finding
+        assert "task_failed" in preamble  # journal tail
+        # The spine entry hash is stamped on metadata and injected into the prompt.
+        entry_hash = task.metadata["recovery_receipt_hash"]
+        assert entry_hash in preamble
+        assert task.metadata["recovery_failing_node"] == "run-tests"
+
+    def test_recovery_receipt_hash_resolves_on_spine(self, tmp_path: Path) -> None:
+        """AC2: the stamped entry hash resolves to a valid spine entry."""
+        from bernstein.core.lineage.spine import LineageSpine
+        from bernstein.core.planning.recovery_receipt import resolve_receipt_on_spine
+
+        executor = DAGExecutor(_recovery_dag())
+        source = _task("run-tests-fixed", role="qa", status=TaskStatus.FAILED, result_summary='{"status": "failed"}')
+        spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id="run-1", hmac_key=b"k" * 32)
+
+        task = executor.create_task(
+            "fix-bugs",
+            source_task=source,
+            source_edge=executor.dag.edges[0],
+            spine=spine,
+            timestamp=0,
+        )
+        entry_hash = task.metadata["recovery_receipt_hash"]
+        resolution = resolve_receipt_on_spine(spine, entry_hash=entry_hash)
+        assert resolution.ok
+
+    def test_receipt_built_without_spine_still_stamps_content_hash(self) -> None:
+        """No spine: the content hash is stamped, no entry hash, no crash."""
+        executor = DAGExecutor(_recovery_dag())
+        source = _task("run-tests-fixed", role="qa", status=TaskStatus.FAILED, result_summary='{"status": "failed"}')
+        recovery_store: dict[str, str] = {}
+        task = executor.create_task(
+            "fix-bugs",
+            source_task=source,
+            source_edge=executor.dag.edges[0],
+            recovery_store=recovery_store,
+        )
+        assert task.metadata["recovery_receipt_content_hash"].startswith("sha256:")
+        assert "recovery_receipt_hash" not in task.metadata
+        assert task.id in recovery_store
+
+    def test_guard_routing_unchanged(self) -> None:
+        """The receipt path does not alter edge resolution or readiness."""
+        executor = DAGExecutor(_recovery_dag())
+        failed = {"run-tests": _task("run-tests-x", status=TaskStatus.FAILED, result_summary='{"status": "failed"}')}
+        assert "fix-bugs" in executor.ready_nodes(failed)
+
+        done = {"run-tests": _task("run-tests-x", status=TaskStatus.DONE, result_summary='{"status": "done"}')}
+        assert "fix-bugs" not in executor.ready_nodes(done)
+
+
+# ===========================================================================
 # WorkflowDAG tests
 # ===========================================================================
 

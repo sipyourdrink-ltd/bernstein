@@ -80,10 +80,15 @@ import yaml
 
 from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.models import Scope, Task, TaskStatus
+from bernstein.core.planning.recovery_receipt import DEFAULT_JOURNAL_TAIL
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bernstein.core.lineage.spine import LineageSpine
+    from bernstein.core.quality.quality_gates import QualityGatesResult
+    from bernstein.core.replay.journal import EventJournal
 
 logger = logging.getLogger(__name__)
 
@@ -967,11 +972,53 @@ class DAGExecutor:
         """Increment the retry counter for a node."""
         self._retry_counts[node_id] = self._retry_counts.get(node_id, 0) + 1
 
-    def create_task(self, node_id: str) -> Task:
+    def create_task(
+        self,
+        node_id: str,
+        *,
+        source_task: Task | None = None,
+        source_edge: DAGEdge | None = None,
+        spine: LineageSpine | None = None,
+        journal: EventJournal | None = None,
+        gate_report: QualityGatesResult | None = None,
+        recovery_store: dict[str, str] | None = None,
+        actor: str = "dag-executor",
+        model: str = "",
+        timestamp: int = 0,
+        journal_tail_limit: int = DEFAULT_JOURNAL_TAIL,
+    ) -> Task:
         """Create a Task from a DAG node template.
+
+        When ``source_task`` is supplied (an ``on_fail`` recovery hop), the
+        created Task carries a lineage-attested failure receipt built from the
+        failing task's condition context, the tail of the run journal filtered
+        to that task, and its quality gate report. The receipt is the recovery
+        task's primary artifact: it is anchored on the run's lineage spine (when
+        ``spine`` is given) and injected into the recovery agent's prompt
+        through ``recovery_store`` (the same channel ``evict_degraded_sessions``
+        populates). When ``source_task`` is ``None`` the output is byte-identical
+        to a bare node instantiation - root and unconditional nodes are
+        unchanged.
 
         Args:
             node_id: The DAG node ID to instantiate.
+            source_task: The failing upstream Task, when this is a recovery hop.
+            source_edge: The resolved failing edge; its ``source`` names the
+                failing node. Falls back to ``source_task.id`` when omitted.
+            spine: The run's lineage spine; when given, the receipt is anchored
+                and its entry hash is stamped on the Task metadata.
+            journal: The run's event journal; its tail (filtered to the failing
+                task) is folded into the receipt.
+            gate_report: The failing task's quality gate report.
+            recovery_store: The ``orchestrator._context_recovery`` channel; when
+                given, the rendered receipt preamble is stored keyed by the new
+                Task id.
+            actor: Actor recorded on the spine entry.
+            model: Model string recorded on the spine entry.
+            timestamp: Stable integer timestamp for the spine entry (default 0
+                so identical fixtures replay byte-identically).
+            journal_tail_limit: Maximum number of trailing journal events kept
+                in the receipt.
 
         Returns:
             A new Task ready for scheduling.
@@ -989,7 +1036,7 @@ class DAGExecutor:
             if edge.condition is None and edge.edge_type in {EdgeType.BLOCKS, EdgeType.VALIDATES}
         ]
 
-        return Task(
+        task = Task(
             id=task_id,
             title=node.description or f"DAG node: {node.id}",
             description=node.description,
@@ -1001,6 +1048,84 @@ class DAGExecutor:
             depends_on=dep_ids,
             created_at=time.time(),
         )
+
+        if source_task is None:
+            # Byte-identical to the historical behaviour: no receipt, no
+            # metadata mutation (metadata stays its default empty dict).
+            return task
+
+        self._attach_recovery_receipt(
+            task,
+            node=node,
+            source_task=source_task,
+            source_edge=source_edge,
+            spine=spine,
+            journal=journal,
+            gate_report=gate_report,
+            recovery_store=recovery_store,
+            actor=actor,
+            model=model,
+            timestamp=timestamp,
+            journal_tail_limit=journal_tail_limit,
+        )
+        return task
+
+    def _attach_recovery_receipt(
+        self,
+        task: Task,
+        *,
+        node: DAGNode,
+        source_task: Task,
+        source_edge: DAGEdge | None,
+        spine: LineageSpine | None,
+        journal: EventJournal | None,
+        gate_report: QualityGatesResult | None,
+        recovery_store: dict[str, str] | None,
+        actor: str,
+        model: str,
+        timestamp: int,
+        journal_tail_limit: int,
+    ) -> None:
+        """Build, anchor, and inject a failure receipt for a recovery Task."""
+        from bernstein.core.planning.recovery_receipt import (
+            RECEIPT_CONTENT_HASH_METADATA_KEY,
+            RECEIPT_FAILING_NODE_METADATA_KEY,
+            RECEIPT_HASH_METADATA_KEY,
+            build_receipt,
+            record_receipt_on_spine,
+        )
+        from bernstein.core.replay.journal import load_events
+
+        failing_node_id = source_edge.source if source_edge is not None else source_task.id
+        journal_events = load_events(journal.path) if journal is not None else None
+
+        receipt = build_receipt(
+            failing_node_id=failing_node_id,
+            recovery_node_id=node.id,
+            source_status=source_task.status.value,
+            condition_context=build_condition_context(source_task),
+            source_task_id=source_task.id,
+            journal_events=journal_events,
+            gate_report=gate_report,
+            journal_tail_limit=journal_tail_limit,
+        )
+
+        task.metadata[RECEIPT_CONTENT_HASH_METADATA_KEY] = receipt.content_hash()
+        task.metadata[RECEIPT_FAILING_NODE_METADATA_KEY] = failing_node_id
+
+        if spine is not None:
+            entry_hash = record_receipt_on_spine(
+                receipt,
+                spine=spine,
+                actor=actor,
+                model=model,
+                timestamp=timestamp,
+            )
+            receipt = receipt.with_entry_hash(entry_hash)
+            task.metadata[RECEIPT_HASH_METADATA_KEY] = entry_hash
+
+        if recovery_store is not None:
+            recovery_store[task.id] = receipt.render_preamble()
 
 
 # ---------------------------------------------------------------------------
