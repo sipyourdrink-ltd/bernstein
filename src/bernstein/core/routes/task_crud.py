@@ -1932,6 +1932,7 @@ def task_counts(
         abandoned=counts.get("abandoned", 0),
         blocked_by_abandon=counts.get("blocked_by_abandon", 0),
         refused=counts.get("refused", 0),
+        suspended=counts.get("suspended", 0),
         total=counts.get("total", 0),
     )
 
