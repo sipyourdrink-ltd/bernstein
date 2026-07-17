@@ -123,12 +123,19 @@ def list_cmd(bundled_only: bool) -> None:
 
 @recipes_group.command("show")
 @click.argument("name")
-def show_cmd(name: str) -> None:
+@click.option(
+    "--registered",
+    is_flag=True,
+    default=False,
+    help="Show the live registered definition (content hash + pause state) instead of the manifest.",
+)
+def show_cmd(name: str, registered: bool) -> None:
     """Print the manifest for ``name`` - params, nodes, dependency layers.
 
     \b
     Example:
       bernstein recipes show bump-dependency
+      bernstein recipes show nightly-triage --registered
     """
     from rich.console import Console
     from rich.panel import Panel
@@ -139,6 +146,9 @@ def show_cmd(name: str) -> None:
     )
 
     console = Console()
+    if registered:
+        _show_registered(name, console)
+        return
     try:
         path, spec = resolve_recipe(name, workdir=Path.cwd())
     except RecipeSpecError as exc:
@@ -155,6 +165,21 @@ def show_cmd(name: str) -> None:
     _render_params_table(spec, console)
     _render_nodes_table(spec, console)
     _render_layer_plan(spec, console)
+
+
+def _show_registered(name: str, console: Console) -> None:
+    """Print the live registered definition for ``name`` (content hash + state)."""
+    registry = _open_registry()
+    live = registry.live_hash(name)
+    if live is None:
+        console.print(f"[yellow]{name!r} is not registered.[/yellow] Run 'bernstein recipes register {name}'.")
+        raise SystemExit(1)
+    paused = registry.is_paused(name)
+    receipts = registry.history(name)
+    console.print(f"[bold]{name}[/bold]  [cyan]recipe_{live[:12]}[/cyan]")
+    console.print(f"  recipe_hash: {live}")
+    console.print(f"  state: {'[yellow]paused[/yellow]' if paused else '[green]active[/green]'}")
+    console.print(f"  lifecycle receipts: {len(receipts)}")
 
 
 def _render_params_table(spec: RecipeSpec, console: Console) -> None:
@@ -401,6 +426,266 @@ def _execute(
     console.print(table)
     if not execution.succeeded:
         raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# Registered-recipe lifecycle (#2546): content-addressed run definitions
+# ---------------------------------------------------------------------------
+
+
+def _sdd_dir(*, create: bool = False) -> Path:
+    """Return the project ``.sdd`` directory.
+
+    With ``create`` the directory is materialised (registration is a
+    first-class create operation); otherwise a missing ``.sdd`` exits 1 with
+    an ``bernstein init`` hint, matching the schedule surface.
+    """
+    sdd = Path.cwd() / ".sdd"
+    if create:
+        sdd.mkdir(parents=True, exist_ok=True)
+        return sdd
+    if not sdd.exists():
+        from rich.console import Console
+
+        Console().print("[red]error:[/red] no .sdd/ directory found. Run 'bernstein init' first.")
+        raise SystemExit(1)
+    return sdd
+
+
+def _open_registry(*, create: bool = False) -> Any:
+    from bernstein.core.workflows.recipe_registry import RecipeRegistry
+
+    return RecipeRegistry(_sdd_dir(create=create))
+
+
+def _resolve_pins(spec: Any) -> Any:
+    from bernstein.core.workflows.recipe_registry import _pins_from_spec
+
+    return _pins_from_spec(spec)
+
+
+@recipes_group.command("register")
+@click.argument("name")
+@click.option(
+    "--collision-policy",
+    type=click.Choice(["enqueue", "cancel_new", "supersede_with_handoff"]),
+    default="cancel_new",
+    help="Concurrency-collision strategy folded into the recipe hash.",
+)
+@click.option("--concurrency-cap", type=int, default=1, help="Max concurrent fires.")
+@click.option("--sandbox-pool", default="", help="Named sandbox pool for fires.")
+def register_cmd(name: str, collision_policy: str, concurrency_cap: int, sandbox_pool: str) -> None:
+    """Register a recipe as a content-addressed run definition.
+
+    The recipe id is the sha256 of its canonical body; registration seals
+    the canonical bytes into the lineage spine and writes a register (or, for
+    a changed body, an operator-signed supersede) receipt to the audit chain.
+    """
+    from rich.console import Console
+
+    from bernstein.core.workflows.recipe_spec import RecipeSpecError, resolve_recipe
+
+    console = Console()
+    try:
+        _path, spec = resolve_recipe(name, workdir=Path.cwd())
+    except RecipeSpecError as exc:
+        console.print(f"[bold red]Recipe load failed:[/bold red] {exc}")
+        raise SystemExit(2) from exc
+
+    registry = _open_registry(create=True)
+    registered = registry.register(
+        spec=spec,
+        pins=_resolve_pins(spec),
+        collision_policy=collision_policy,
+        concurrency_cap=concurrency_cap,
+        sandbox_pool=sandbox_pool,
+    )
+    console.print(f"[bold green]Registered[/bold green] {registered.name} as [cyan]{registered.recipe_id}[/cyan]")
+    console.print(f"  recipe_hash: {registered.recipe_hash}")
+    console.print(f"  spine_anchor: {registered.spine_anchor or '(lineage disabled)'}")
+    if registered.superseded_hash:
+        console.print(f"  supersedes: {registered.superseded_hash[:16]}")
+
+
+@recipes_group.command("fire")
+@click.argument("name")
+@click.option("--at", type=int, default=None, help="Fire instant as an integer Unix epoch (default: now).")
+@click.option("-g", "--goal", default="", help="Free-text goal folded into the fire projection.")
+def fire_cmd(name: str, at: int | None, goal: str) -> None:
+    """Fire a registered recipe by name; the receipt is the response.
+
+    A paused recipe fires nothing. Otherwise the fire is a deterministic
+    projection whose hash plus chain anchor is the reply - not an opaque job
+    id.
+    """
+    import time
+
+    from rich.console import Console
+
+    from bernstein.core.workflows.recipe_registry import RecipeRegistryError
+
+    console = Console()
+    registry = _open_registry()
+    fire_time = at if at is not None else int(time.time())
+    try:
+        result = registry.fire(name, fire_time=fire_time, goal=goal)
+    except RecipeRegistryError as exc:
+        console.print(f"[bold red]Fire failed:[/bold red] {exc}")
+        raise SystemExit(1) from exc
+    if not result.dispatched:
+        console.print(f"[yellow]Not fired:[/yellow] {result.reason or 'recipe is paused'}")
+        return
+    console.print(f"[bold green]Fired[/bold green] {result.name} @ {result.fire_time}")
+    console.print(f"  projection_hash: {result.projection_hash}")
+    console.print(f"  chain_anchor: {result.chain_anchor[:16]}")
+
+
+@recipes_group.command("history")
+@click.argument("name")
+@click.option("--verify", is_flag=True, default=False, help="Verify the receipts against the HMAC chain offline.")
+def history_cmd(name: str, verify: bool) -> None:
+    """Walk a recipe's definition-lineage receipts (register/supersede/rollback/pause).
+
+    With ``--verify`` the receipts are checked against the HMAC audit chain
+    with no server running; a broken or reordered link exits non-zero.
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    registry = _open_registry()
+    receipts = registry.history(name)
+    if not receipts:
+        console.print(f"[dim]No lifecycle receipts for {name!r}.[/dim]")
+        raise SystemExit(1)
+
+    table = Table(title=f"Definition lineage: {name}")
+    table.add_column("Event")
+    table.add_column("Hash / target")
+    for ev in receipts:
+        details = ev["details"]
+        marker = details.get("recipe_hash") or details.get("new_hash") or details.get("to_hash") or ""
+        table.add_row(ev["event_type"], str(marker)[:16])
+    console.print(table)
+
+    if verify:
+        ok, errors = registry.verify_history(name)
+        if ok:
+            console.print("[bold green]verified:[/bold green] receipts chain intact")
+        else:
+            console.print("[bold red]verification failed:[/bold red]")
+            for err in errors[:10]:
+                console.print(f"  - {err}")
+            raise SystemExit(1)
+
+
+@recipes_group.command("rollback")
+@click.argument("name")
+@click.argument("target_hash")
+def rollback_cmd(name: str, target_hash: str) -> None:
+    """Re-point NAME at a prior definition hash via a rollback receipt (nothing deleted)."""
+    from rich.console import Console
+
+    from bernstein.core.workflows.recipe_registry import RecipeRegistryError
+
+    console = Console()
+    registry = _open_registry()
+    try:
+        registry.rollback(name, target_hash)
+    except RecipeRegistryError as exc:
+        console.print(f"[bold red]Rollback failed:[/bold red] {exc}")
+        raise SystemExit(1) from exc
+    console.print(f"[bold green]Rolled back[/bold green] {name} to {target_hash[:16]}")
+
+
+@recipes_group.command("pause")
+@click.argument("name")
+def pause_cmd(name: str) -> None:
+    """Pause NAME: future fires stop; identity and history are kept."""
+    _toggle_pause(name, paused=True)
+
+
+@recipes_group.command("resume")
+@click.argument("name")
+def resume_cmd(name: str) -> None:
+    """Resume a paused NAME."""
+    _toggle_pause(name, paused=False)
+
+
+def _toggle_pause(name: str, *, paused: bool) -> None:
+    from rich.console import Console
+
+    from bernstein.core.workflows.recipe_registry import RecipeRegistryError
+
+    console = Console()
+    registry = _open_registry()
+    try:
+        if paused:
+            registry.pause(name)
+        else:
+            registry.resume(name)
+    except RecipeRegistryError as exc:
+        console.print(f"[bold red]Failed:[/bold red] {exc}")
+        raise SystemExit(1) from exc
+    console.print(f"[bold green]{'Paused' if paused else 'Resumed'}[/bold green] {name}")
+
+
+@recipes_group.command("plan")
+@click.argument("names", nargs=-1, required=True)
+def plan_cmd(names: tuple[str, ...]) -> None:
+    """Emit a byte-reproducible fleet plan (plan_hash) for the named recipes."""
+    from rich.console import Console
+
+    from bernstein.core.workflows.recipe_fleet import ManifestEntry, plan_fleet
+    from bernstein.core.workflows.recipe_spec import RecipeSpecError, resolve_recipe
+
+    console = Console()
+    registry = _open_registry(create=True)
+    manifest = []
+    for name in names:
+        try:
+            _path, spec = resolve_recipe(name, workdir=Path.cwd())
+        except RecipeSpecError as exc:
+            console.print(f"[bold red]Recipe load failed:[/bold red] {exc}")
+            raise SystemExit(2) from exc
+        manifest.append(ManifestEntry(spec=spec, pins=_resolve_pins(spec)))
+    plan = plan_fleet(registry, manifest)
+    console.print(f"[bold]plan_hash:[/bold] {plan.plan_hash}")
+    console.print(f"  to_register: {', '.join(plan.to_register) or '(none)'}")
+    console.print(f"  to_supersede: {', '.join(plan.to_supersede) or '(none)'}")
+    console.print(f"  unchanged: {', '.join(plan.unchanged) or '(none)'}")
+
+
+@recipes_group.command("apply")
+@click.option("--plan", "plan_hash", required=True, help="The approved plan hash to apply against.")
+@click.argument("names", nargs=-1, required=True)
+def apply_cmd(plan_hash: str, names: tuple[str, ...]) -> None:
+    """Apply the named recipes iff the registry still matches the approved plan hash."""
+    from rich.console import Console
+
+    from bernstein.core.workflows.recipe_fleet import (
+        FleetDriftError,
+        ManifestEntry,
+        apply_fleet,
+    )
+    from bernstein.core.workflows.recipe_spec import RecipeSpecError, resolve_recipe
+
+    console = Console()
+    registry = _open_registry(create=True)
+    manifest = []
+    for name in names:
+        try:
+            _path, spec = resolve_recipe(name, workdir=Path.cwd())
+        except RecipeSpecError as exc:
+            console.print(f"[bold red]Recipe load failed:[/bold red] {exc}")
+            raise SystemExit(2) from exc
+        manifest.append(ManifestEntry(spec=spec, pins=_resolve_pins(spec)))
+    try:
+        applied = apply_fleet(registry, manifest, plan_hash=plan_hash)
+    except FleetDriftError as exc:
+        console.print(f"[bold red]Apply refused (drift):[/bold red] {exc}")
+        raise SystemExit(1) from exc
+    console.print(f"[bold green]Applied[/bold green] {', '.join(applied) or '(nothing to change)'}")
 
 
 __all__ = ["recipes_group"]

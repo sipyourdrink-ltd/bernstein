@@ -39,6 +39,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+from bernstein.core.orchestration.collision import (
+    CollisionPolicy,
+    RunningFireState,
+    decide_collision,
+)
 from bernstein.core.orchestration.schedule_projection import (
     ProjectionResult,
     project_schedule_fire,
@@ -64,6 +69,11 @@ DEFAULT_TICK_INTERVAL_S = 30.0
 
 #: Event-type string written into the audit chain for each fire.
 AUDIT_EVENT_TYPE = "schedule.fire"
+
+#: Event-type string written into the audit chain for each evaluated
+#: concurrency collision (#2546). Matches
+#: :data:`bernstein.core.security.audit_chain.EVENT_SCHEDULE_COLLISION`.
+COLLISION_EVENT_TYPE = "schedule.collision_receipt"
 
 
 # ---------------------------------------------------------------------------
@@ -255,12 +265,23 @@ class ScheduleSupervisor:
         *,
         catch_up_limit: int = DEFAULT_CATCH_UP_LIMIT,
         record_fire_projection: bool = True,
+        running_probe: Callable[[Schedule], RunningFireState] | None = None,
+        collision_policy: CollisionPolicy | str = CollisionPolicy.CANCEL_NEW,
+        concurrency_cap: int = 1,
     ) -> None:
         self._store = store
         self._dispatch = dispatch
         self._chain = _AuditChainAdapter(audit_writer) if audit_writer is not None else None
         self._catch_up_limit = max(1, catch_up_limit)
         self._record_fire_projection_enabled = record_fire_projection
+        # #2546 collision guard. Without a running probe the supervisor keeps
+        # its historical behaviour (no liveness check); with one it evaluates
+        # a deterministic collision decision before every dispatch and emits a
+        # collision receipt for every overlap it considers, so an overrun is a
+        # recorded decision rather than a silent double-write.
+        self._running_probe = running_probe
+        self._collision_policy = CollisionPolicy(collision_policy)
+        self._concurrency_cap = max(1, concurrency_cap)
         self._receipts_dir = store.directory.parent / "schedule_receipts"
         self._receipts_dir.mkdir(parents=True, exist_ok=True)
         self._last_tick_at = 0.0
@@ -356,7 +377,7 @@ class ScheduleSupervisor:
                     skipped_windows.append(next_fire)
                     current_anchor = next_fire
                     continue
-                receipts.append(self._fire(schedule, next_fire, counterfactual=False))
+                receipts.append(self._dispatch_or_collide(schedule, next_fire))
                 fires_dispatched += 1
             else:  # skip policy
                 # Only dispatch the most recent missed instant; older
@@ -373,7 +394,7 @@ class ScheduleSupervisor:
                         skipped_windows.append(next_fire)
                         current_anchor = next_fire
                         continue
-                receipts.append(self._fire(schedule, next_fire, counterfactual=False))
+                receipts.append(self._dispatch_or_collide(schedule, next_fire))
                 fires_dispatched += 1
             current_anchor = next_fire
 
@@ -433,6 +454,83 @@ class ScheduleSupervisor:
             )
             return "", ""
         return raw, profile_sha
+
+    def _dispatch_or_collide(self, schedule: Schedule, fire_epoch: int) -> FireReceipt:
+        """Evaluate the collision guard, then dispatch or record a collision.
+
+        With no running probe this is a straight pass-through to
+        :meth:`_fire`, preserving the historical dispatch path. With a probe
+        that reports a still-running previous fire, the decision is the pure
+        :func:`decide_collision` outcome:
+
+        - ``DISPATCH`` / ``SUPERSEDE`` -> fire (supersede resumes from the
+          running fire's recorded checkpoint reference);
+        - ``ENQUEUE`` / ``CANCEL`` -> never dispatch a second task graph;
+          only a collision receipt is written.
+
+        A collision receipt is emitted for every overlap considered, so a
+        double-fire is a recorded, offline-verifiable decision.
+        """
+        if self._running_probe is None:
+            return self._fire(schedule, fire_epoch, counterfactual=False)
+        running = self._running_probe(schedule)
+        decision = decide_collision(
+            policy=self._collision_policy,
+            running=running,
+            concurrency_cap=self._concurrency_cap,
+        )
+        if not (running.running and running.running_count >= self._concurrency_cap):
+            # No live collision: dispatch normally (no receipt needed - the
+            # fire's own audit entry already records it).
+            return self._fire(schedule, fire_epoch, counterfactual=False)
+
+        self._append_collision(schedule, fire_epoch, decision)
+        if decision.dispatch:
+            # SUPERSEDE_WITH_HANDOFF: the stale run is checkpointed elsewhere;
+            # the new fire proceeds, resuming from the recorded checkpoint.
+            return self._fire(schedule, fire_epoch, counterfactual=False)
+        # ENQUEUE / CANCEL_NEW: record the decision, dispatch nothing.
+        receipt = FireReceipt(
+            schedule_id=schedule.id,
+            fire_time=fire_epoch,
+            projection_hash="",
+            rev="",
+            prev_chain_digest="",
+            chain_digest=decision.receipt_hash,
+            misfire_policy=schedule.misfire_policy,
+            dispatched=False,
+            skipped_windows=(),
+            counterfactual=False,
+            goal=schedule.goal,
+            scenario_id=schedule.scenario_id,
+        )
+        self._persist_receipt(receipt)
+        return receipt
+
+    def _append_collision(self, schedule: Schedule, fire_epoch: int, decision: Any) -> str:
+        """Append a ``schedule.collision_receipt`` entry to the audit chain.
+
+        Mirrors :meth:`_append_audit` so the collision decision rides the
+        same HMAC chain as the fires it guards. Returns the new chain digest
+        (or the stable receipt hash when no chain is wired).
+        """
+        if self._chain is None:
+            return decision.receipt_hash
+        return self._chain.append(
+            event_type=COLLISION_EVENT_TYPE,
+            actor="schedule_supervisor",
+            resource_type="schedule_collision",
+            resource_id=schedule.id,
+            details={
+                "schedule_id": schedule.id,
+                "fire_time": fire_epoch,
+                "policy": str(decision.policy),
+                "action": str(decision.action),
+                "receipt_hash": decision.receipt_hash,
+                "resume_from_checkpoint": decision.resume_from_checkpoint,
+                "warm_resume": decision.warm_resume,
+            },
+        )
 
     def _fire(
         self,
