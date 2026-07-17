@@ -215,6 +215,12 @@ slack = ["slack-sdk>=3.27", "aiohttp>=3.9"]
 # bot token, and set ``BERNSTEIN_DISCORD_TOKEN`` before invoking
 # ``bernstein chat serve --platform=discord``.
 discord = ["discord.py>=2.4"]
+# Microsoft Teams bidirectional driver over the Bot Framework. Enable with:
+#   pip install 'bernstein[teams]'
+# Register a bot in the Azure Bot Service, copy the app id and password, and
+# set ``BERNSTEIN_TEAMS_TOKEN`` (app id) plus ``BERNSTEIN_TEAMS_APP_PASSWORD``
+# (client secret) before invoking ``bernstein chat serve --platform=teams``.
+teams = ["botbuilder-core>=4.15", "aiohttp>=3.9"]
 # Contamination-resistant eval harness (SWE-bench Pro / Terminal-Bench 2.0 /
 # SWE-rebench). Kept optional so production installs don't pull HuggingFace
 # datasets unless the operator opts into the nightly leaderboard path.

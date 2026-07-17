@@ -609,6 +609,37 @@ EVENT_PROVENANCE_TAINT_DECISION = "provenance.taint_decision"
 #: text withheld) is itself anchored into the chain.
 EVENT_PROVENANCE_QUARANTINE = "provenance.quarantine"
 
+#: Issue #2511 -- emitted once per approval card v2 issuance. An approval card
+#: is a hash-committed decision record: the operator-visible envelope (action
+#: and canonical args digest, bounded reasoning digest, blast-radius impact
+#: estimate, rollback procedure with an explicit irreversible marker, and a
+#: ``not_after`` expiry) is canonicalised and hashed into ``card_hash``, and
+#: this event stores the full envelope plus ``card_hash`` and
+#: ``prev_chain_digest``. Because the whole envelope is inside the signed HMAC
+#: chain, a verifier can reconstruct exactly the fields shown to the operator
+#: and detect any post-hoc mutation: a mutated envelope no longer hashes to the
+#: recorded ``card_hash`` and no longer matches the chain HMAC. Strip the chain
+#: and the card degrades from a verifiable decision record to a message with a
+#: log.
+EVENT_APPROVAL_CARD_ISSUED = "chat.approval_card.issued"
+
+#: Issue #2511 -- emitted when an issued approval card is resolved (approve /
+#: reject) after the gate has confirmed the echoed ``card_hash`` matches the
+#: issued envelope and the decision arrived before ``not_after``. The event
+#: binds ``{card_hash, decision, approver, worktree_id, resolved_at}`` so a
+#: verifier can join the decision to the exact issued envelope and prove the
+#: operator decided against the fields that were hashed, not a divergent view.
+EVENT_APPROVAL_CARD_RESOLVED = "chat.approval_card.resolved"
+
+#: Issue #2511 -- emitted when the gate refuses to resolve an approval card:
+#: either the echoed ``card_hash`` does not match any issued envelope (a field
+#: the operator saw was mutated) or the decision arrived at or after
+#: ``not_after`` (expiry is enforced by the chain-side clock regardless of what
+#: the chat client still renders). The refusal records ``{card_hash, reason,
+#: expected_card_hash, worktree_id}`` so an operator can prove, from the chain
+#: alone, that a stale or tampered decision was contained and never executed.
+EVENT_APPROVAL_CARD_REFUSED = "chat.approval_card.refused"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -4008,6 +4039,9 @@ __all__ = [
     "EVENT_ADAPTER_FLOOR_UPDATE",
     "EVENT_ADAPTER_SPAWN_PREFLIGHT",
     "EVENT_ADAPTER_VERSION_POSTURE",
+    "EVENT_APPROVAL_CARD_ISSUED",
+    "EVENT_APPROVAL_CARD_REFUSED",
+    "EVENT_APPROVAL_CARD_RESOLVED",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
