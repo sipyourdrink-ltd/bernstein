@@ -182,8 +182,8 @@ class RecoveryReceipt:
             "recovery_node_id": self.recovery_node_id,
             "source_status": self.source_status,
             "condition_context": self.condition_context,
-            "gate_report": [dict(g) for g in self.gate_report],
-            "journal_tail": [dict(e) for e in self.journal_tail],
+            "gate_report": [g.copy() for g in self.gate_report],
+            "journal_tail": [e.copy() for e in self.journal_tail],
         }
 
     def canonical_bytes(self) -> bytes:
@@ -297,7 +297,7 @@ def build_receipt(
         failing_node_id=failing_node_id,
         recovery_node_id=recovery_node_id,
         source_status=source_status,
-        condition_context=dict(condition_context),
+        condition_context=condition_context.copy(),
         gate_report=gate_report_findings(gate_report),
         journal_tail=tail,
     )

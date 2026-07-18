@@ -216,8 +216,8 @@ class EffectivePolicy:
             "storage_backend": self.storage_backend,
             "residency_enforce_strict": self.residency_enforce_strict,
             "residency_regions": list(self.residency_regions),
-            "model_endpoints": [dict(e) for e in self.model_endpoints],
-            "catalogs": [dict(c) for c in self.catalogs],
+            "model_endpoints": [e.copy() for e in self.model_endpoints],
+            "catalogs": [c.copy() for c in self.catalogs],
         }
 
     def posture_hash(self) -> str:
@@ -719,7 +719,7 @@ def record_and_sign_drift(
         "timestamp": timestamp,
     }
     signature = sign_payload(_canonical_bytes(signed_body), private_pem)
-    record = dict(signed_body)
+    record = signed_body.copy()
     record["signer_public_key_pem"] = public_pem
     record["signature"] = signature
     record_sha256 = _sha256_of(record)

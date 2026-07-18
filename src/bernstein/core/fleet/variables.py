@@ -303,7 +303,7 @@ class FleetVariableStore:
         the recorded cause of the two workers reading different values. This
         resolves from the chain alone, with no server running.
         """
-        low, high = sorted((int(position_a), int(position_b)))
+        low, high = sorted((position_a, position_b))
         return [w for w in self.history(name) if low < w.chain_position <= high]
 
     def list_names(self) -> list[str]:

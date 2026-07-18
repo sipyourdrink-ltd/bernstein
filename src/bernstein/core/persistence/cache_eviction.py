@@ -176,8 +176,8 @@ class RecallSet:
         return {
             "root_key": self.root_key,
             "reason": self.reason,
-            "tombstoned": list(self.tombstoned),
-            "consumers": list(self.consumers),
+            "tombstoned": self.tombstoned.copy(),
+            "consumers": self.consumers.copy(),
         }
 
 

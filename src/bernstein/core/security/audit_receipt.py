@@ -306,7 +306,7 @@ def _merkle_root_and_path(
     if not leaves:
         return _EMPTY_TREE_ROOT, []
     path: list[tuple[str, bool]] = []
-    level = list(leaves)
+    level = leaves.copy()
     idx = index
     while len(level) > 1:
         sibling = idx ^ 1

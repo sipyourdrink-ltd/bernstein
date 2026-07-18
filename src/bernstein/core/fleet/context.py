@@ -138,9 +138,9 @@ class OperatingContext:
             "name": self.name,
             "server_url": self.server_url,
             "store_dsn": self.store_dsn,
-            "adapter_defaults": dict(self.adapter_defaults),
+            "adapter_defaults": self.adapter_defaults.copy(),
             "budget_envelope": self.budget_envelope,
-            "config_layer": dict(self.config_layer),
+            "config_layer": self.config_layer.copy(),
         }
 
     @classmethod

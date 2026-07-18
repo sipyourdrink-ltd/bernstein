@@ -362,10 +362,10 @@ class CacheEntry:
         """Return the canonical dict form of the entry."""
         return {
             "key": self.key,
-            "input_hashes": dict(self.input_hashes),
+            "input_hashes": self.input_hashes.copy(),
             "output_hash": self.output_hash,
             "producing_task": self.producing_task,
-            "diff_file_hashes": dict(self.diff_file_hashes),
+            "diff_file_hashes": self.diff_file_hashes.copy(),
             "base_commit": self.base_commit,
             "verified": self.verified,
             "recipe_hash": self.recipe_hash,

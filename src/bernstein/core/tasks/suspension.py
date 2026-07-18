@@ -804,7 +804,7 @@ class ContinuityResult:
             "effective_mode": self.effective_mode,
             "workspace_match": self.workspace_match,
             "downgrade_reason": self.downgrade_reason,
-            "errors": list(self.errors),
+            "errors": self.errors.copy(),
         }
 
 
