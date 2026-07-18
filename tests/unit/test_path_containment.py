@@ -247,7 +247,7 @@ def test_run_ledger_dir_refuses_symlink_escape(tmp_path: Path) -> None:
     root = default_ledger_root(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (root / "run-evil").symlink_to(outside, target_is_directory=True)
+    _symlink_or_skip(root / "run-evil", outside)
 
     with pytest.raises(PathContainmentError):
         run_ledger_dir(tmp_path, "run-evil")
