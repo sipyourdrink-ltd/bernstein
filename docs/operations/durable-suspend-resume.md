@@ -98,11 +98,29 @@ guarantees back the proof:
 - Mutating the suspend **receipt** breaks the HMAC audit chain at that exact
   position, which `bernstein audit verify` reports.
 
-The verifier only reports success on a complete, self-consistent proof. It
-refuses a park that was never resumed, a resume receipt that hangs off some
-other park's suspend receipt, a receipt naming a suspend or resume row the task
-journal does not hold, and a park carrying more than one settlement. Partial
-evidence is a failure, not a pass.
+The outcome is a tri-state on the `status` field, so a caller can branch on it
+without parsing messages:
+
+| `status` | meaning | exit code |
+|---|---|---|
+| `verified` | a settlement happened and its proof holds | 0 |
+| `pending` | the park has not settled yet, nothing to prove | 0 |
+| `failed` | a settlement is claimed but its evidence does not hold | 1 |
+
+`failed` is reserved for a real break: a resume receipt hanging off another
+park's suspend receipt, a receipt naming a suspend or resume row the task
+journal does not hold, a park carrying more than one settlement, or a broken
+chain or journal.
+
+A live park reports `pending`, not `failed`. It is an incomplete lifecycle
+rather than a broken proof, and reporting it as a failure would bury real
+breaks when sweeping a fleet that has parked tasks in it. The `ok` field means
+"no integrity failure found" and so covers both `verified` and `pending`; test
+`status == "verified"` when you need a settled, proven continuity.
+
+The distinction between `pending` and `failed` is which suspend row a resume
+receipt *claims*, not merely whether any resume exists: a task parked twice
+with only the first park settled leaves the second park `pending`.
 
 ## What the resume path refuses
 

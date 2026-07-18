@@ -47,6 +47,9 @@ from bernstein.core.security.audit_chain import (
 )
 from bernstein.core.tasks.checkpoint_retry import RetryMode, task_run_id
 from bernstein.core.tasks.suspension import (
+    CONTINUITY_FAILED,
+    CONTINUITY_PENDING,
+    CONTINUITY_VERIFIED,
     RESOURCE_BUDGET,
     RESOURCE_PROCESS,
     RESOURCE_SANDBOX,
@@ -905,17 +908,144 @@ def test_resume_refuses_an_unsafe_task_id_on_the_suspend_row(tmp_path: Path) -> 
         )
 
 
-def test_verify_continuity_rejects_a_park_that_was_never_resumed(tmp_path: Path) -> None:
-    """An unresumed park is an incomplete proof, not a verified continuity."""
+def test_verify_continuity_reports_an_unresumed_park_as_pending_not_failed(tmp_path: Path) -> None:
+    """A live park is an incomplete lifecycle, not a broken proof.
+
+    It must not claim a verified continuity (the original defect), and it must
+    not report as a failure either: an operator sweeping a fleet with live
+    parks would drown the real breaks in false alarms.
+    """
     sdd = tmp_path / ".sdd"
     chain = _chain(tmp_path)
     wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
     _park(tmp_path, chain, "T-open", wt)
 
     result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-open", chain=chain)
-    assert not result.ok
+    assert result.status == CONTINUITY_PENDING
+    assert result.pending
+    assert not result.verified
     assert not result.resumed
-    assert any("resume receipt" in err for err in result.errors)
+    # Not a failure: no errors, and ok stays true so a sweep is not flooded.
+    assert result.ok
+    assert result.errors == []
+    # The distinction is machine-readable, not prose.
+    assert result.to_dict()["status"] == CONTINUITY_PENDING
+
+
+def test_pending_and_failed_are_distinguishable_without_reading_messages(tmp_path: Path) -> None:
+    """The three outcomes are separable programmatically."""
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    # Pending: parked, never settled.
+    _park(tmp_path, chain, "T-live", wt)
+    pending = verify_suspension_continuity(sdd_dir=sdd, task_id="T-live", chain=chain)
+
+    # Verified: parked and settled cleanly.
+    settled = _park(tmp_path, chain, "T-done", wt)
+    resume_task(
+        sdd_dir=sdd,
+        suspend_row=settled.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=settled.suspend_receipt_hash,
+    )
+    verified = verify_suspension_continuity(sdd_dir=sdd, task_id="T-done", chain=chain)
+
+    # Failed: a settlement claimed against a foreign receipt.
+    broken = _park(tmp_path, chain, "T-bad", wt)
+    decoy = _park(tmp_path, chain, "T-decoy3", wt)
+    record_task_resume(
+        chain=chain,
+        task_id="T-bad",
+        suspend_receipt_hash=decoy.suspend_receipt_hash,
+        suspend_event_hash=broken.suspend_row.event_hash,
+        resume_event_hash="0" * 64,
+        journal_index=99,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=True,
+        new_workspace_hash=broken.suspend_row.workspace_hash,
+        downgrade_reason="",
+        decision_hash="0" * 64,
+    )
+    failed = verify_suspension_continuity(sdd_dir=sdd, task_id="T-bad", chain=chain)
+
+    assert (pending.status, verified.status, failed.status) == (
+        CONTINUITY_PENDING,
+        CONTINUITY_VERIFIED,
+        CONTINUITY_FAILED,
+    )
+    # ok separates "nothing broken" from "broken"; status separates the rest.
+    assert pending.ok and verified.ok and not failed.ok
+    assert not pending.resumed and verified.resumed and not failed.resumed
+
+
+def test_second_park_is_pending_while_the_first_park_is_settled(tmp_path: Path) -> None:
+    """Resume receipts that claim a *different* row leave this park pending.
+
+    Without the claim check, the earlier park's resume receipt would look like
+    a foreign settlement of the live park and report a false failure.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    first = _park(tmp_path, chain, "T-again", wt)
+    resume_task(
+        sdd_dir=sdd,
+        suspend_row=first.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=first.suspend_receipt_hash,
+    )
+    assert verify_suspension_continuity(sdd_dir=sdd, task_id="T-again", chain=chain).verified
+
+    # Park it again; the new park has not settled.
+    _park(tmp_path, chain, "T-again", wt)
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-again", chain=chain)
+    assert result.status == CONTINUITY_PENDING, result.errors
+    assert result.ok
+    assert result.errors == []
+
+
+def test_verify_suspension_cli_exit_codes_are_stable_across_states(tmp_path: Path) -> None:
+    """Live parks keep exit 0; only a real break exits 1."""
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.audit_cmd import audit_group
+    from bernstein.cli.commands.task_cmd import task_group
+
+    root = tmp_path
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    runner = CliRunner()
+
+    parked = runner.invoke(task_group, ["suspend", "T-exit", "--workdir", str(root), "--worktree", str(wt), "--json"])
+    assert parked.exit_code == 0, parked.output
+
+    # Parked, not resumed: exit 0, and the text says so rather than claiming
+    # a verified continuity.
+    pending = runner.invoke(audit_group, ["verify-suspension", "T-exit", "--workdir", str(root)])
+    assert pending.exit_code == 0, pending.output
+    assert "not settled yet" in " ".join(pending.output.split())
+
+    pending_json = runner.invoke(audit_group, ["verify-suspension", "T-exit", "--workdir", str(root), "--json"])
+    assert pending_json.exit_code == 0
+    assert '"status": "pending"' in " ".join(pending_json.output.split())
+
+    # Resumed cleanly: still exit 0, now reported as verified.
+    resumed = runner.invoke(task_group, ["resume", "T-exit", "--workdir", str(root), "--worktree", str(wt), "--json"])
+    assert resumed.exit_code == 0, resumed.output
+    done = runner.invoke(audit_group, ["verify-suspension", "T-exit", "--workdir", str(root)])
+    assert done.exit_code == 0, done.output
+    assert "continuity verified" in " ".join(done.output.split()).lower()
+
+    # A task with no suspend receipt at all is still a failure: exit 1.
+    missing = runner.invoke(audit_group, ["verify-suspension", "T-nosuch", "--workdir", str(root)])
+    assert missing.exit_code == 1
 
 
 def test_verify_continuity_rejects_a_resume_bound_to_a_foreign_receipt(tmp_path: Path) -> None:

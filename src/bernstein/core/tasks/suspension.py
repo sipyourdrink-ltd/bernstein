@@ -38,9 +38,11 @@ there is no suspension, only a dead process:
   that a resumed task continued from exactly the parked workspace hash, or
   reads the recorded fork/cold downgrade with its reason. Mutating the suspend
   row after the fact fails journal verification at that exact chain position,
-  and incomplete or unrelated evidence (an unresumed park, a resume receipt
-  hanging off another park, a receipt naming a row the journal never held) is
-  refused rather than reported as verified.
+  and unrelated evidence (a resume receipt hanging off another park, a receipt
+  naming a row the journal never held, a park settled twice) is refused rather
+  than reported as verified. A park that has not settled yet reports
+  ``pending`` rather than failing: a live park is an incomplete lifecycle, not
+  a broken proof.
 * **A receipt only counts for the park it binds.** Every release and every
   resume resolves the claimed ``task.suspend_receipt`` on the chain and checks
   it names this task and this suspend row (:func:`verify_suspension_receipt`)
@@ -109,6 +111,19 @@ RESOURCE_BUDGET = "budget"
 #: task resumes only once ``bernstein approve <task-id>`` lands its decision
 #: file (see :func:`approval_decision_ref`).
 WAKE_APPROVAL = "approval"
+
+#: Machine-readable outcomes of :func:`verify_suspension_continuity`. A caller
+#: branches on these rather than parsing an error string.
+#:
+#: A live park and a broken proof are different things and must not collapse
+#: into one signal: an operator sweeping a fleet with parked tasks would see
+#: every live park as a failure and the real breaks would drown. ``pending``
+#: therefore means "this park has not settled yet, so there is nothing to
+#: verify", while ``failed`` is reserved for a settlement that actually
+#: happened against evidence that does not hold.
+CONTINUITY_VERIFIED = "verified"
+CONTINUITY_PENDING = "pending"
+CONTINUITY_FAILED = "failed"
 
 #: A ``task_id`` is an opaque identifier, never a path fragment. Anything that
 #: reaches a filesystem name derived from it (the approval decision file, the
@@ -1110,11 +1125,18 @@ class ContinuityResult:
     """Outcome of :func:`verify_suspension_continuity`.
 
     Attributes:
-        ok: ``True`` only when every check passed: audit HMAC chain intact,
-            task journal Merkle chain intact, and a resume receipt that hangs
-            off the parked suspend receipt and continued from exactly the
-            parked suspend row. An unresumed park is an incomplete proof and
-            reports ``False``.
+        status: The machine-readable outcome, one of
+            :data:`CONTINUITY_VERIFIED`, :data:`CONTINUITY_PENDING`, or
+            :data:`CONTINUITY_FAILED`. Branch on this. ``verified`` means a
+            settlement happened and its proof holds; ``pending`` means the park
+            has not settled yet, so there is nothing to prove; ``failed`` means
+            a settlement is claimed but its evidence does not hold.
+        ok: ``True`` when no integrity failure was found, which covers both
+            ``verified`` and ``pending``. This is deliberately *not* "a resume
+            was verified" -- a live park is not a broken proof, and collapsing
+            the two would make every parked task in a fleet sweep look like a
+            failure. Test ``status == CONTINUITY_VERIFIED`` (or ``resumed``)
+            when you need a settled, proven continuity.
         chain_ok: Whether the HMAC audit chain verified.
         journal_ok: Whether the task journal Merkle chain verified.
         resumed: Whether a resume receipt *bound to the parked suspend receipt*
@@ -1135,9 +1157,21 @@ class ContinuityResult:
     workspace_match: bool
     downgrade_reason: str
     errors: list[str] = field(default_factory=list)
+    status: str = CONTINUITY_FAILED
+
+    @property
+    def pending(self) -> bool:
+        """Whether the park simply has not settled yet (nothing to prove)."""
+        return self.status == CONTINUITY_PENDING
+
+    @property
+    def verified(self) -> bool:
+        """Whether a settlement happened *and* its continuity proof holds."""
+        return self.status == CONTINUITY_VERIFIED
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "status": self.status,
             "ok": self.ok,
             "chain_ok": self.chain_ok,
             "journal_ok": self.journal_ok,
@@ -1191,11 +1225,21 @@ def verify_suspension_continuity(
        or cold downgrade with its reason);
     4. both receipts name rows the task journal actually holds.
 
-    Incomplete or unrelated evidence fails. A park that was never resumed has
-    nothing to prove and reports ``ok=False``; a resume receipt bound to some
-    other park's suspend receipt is not this park's proof; and a receipt naming
-    a suspend or resume row absent from the journal is refused rather than
-    treated as a verified continuation.
+    The outcome is a tri-state on :attr:`ContinuityResult.status`:
+
+    * ``verified`` -- a settlement happened and its proof holds.
+    * ``pending`` -- the park has not settled yet, so there is nothing to
+      prove. Not a failure: a live park is an incomplete lifecycle, and
+      reporting it as broken would bury real breaks in a fleet sweep.
+    * ``failed`` -- a settlement is claimed but its evidence does not hold: a
+      resume receipt hanging off another park's suspend receipt, a receipt
+      naming a suspend or resume row the journal does not hold, more than one
+      settlement of a single park, or a broken chain or journal.
+
+    The distinction between ``pending`` and ``failed`` is which suspend row a
+    resume receipt *claims*, not merely whether any resume exists: a task
+    parked twice with only the first park settled leaves the second park
+    ``pending``, because those receipts claim a different row.
 
     No worker, no network, no live worktree is required -- everything is read
     from the chain and the journal.
@@ -1230,6 +1274,7 @@ def verify_suspension_continuity(
             workspace_match=False,
             downgrade_reason="",
             errors=errors,
+            status=CONTINUITY_FAILED,
         )
 
     suspend_event = suspend_events[-1]
@@ -1247,16 +1292,18 @@ def verify_suspension_continuity(
             f"suspend receipt references suspend row {parked_hash[:16]}... which is absent from the task journal"
         )
 
+    # A receipt "claims" this park when it names the parked suspend row. That
+    # is what separates a live park from a forgery: a task parked twice, with
+    # only the first park resumed, has resume receipts on the chain that claim
+    # a *different* row, and its second park is simply pending -- not broken.
+    claimants = [
+        e for e in resume_events if parked_hash and str(e.details.get("suspend_event_hash", "")) == parked_hash
+    ]
+
     # Select by binding, not by recency: the resume receipt must hang off *this*
     # suspend receipt and name *this* suspend row. Anything else is a resume of
     # some other park and proves nothing about this one.
-    bound_resumes = [
-        e
-        for e in resume_events
-        if str(e.details.get("suspend_receipt_hash", "")) == suspend_event.hmac
-        and parked_hash
-        and str(e.details.get("suspend_event_hash", "")) == parked_hash
-    ]
+    bound_resumes = [e for e in claimants if str(e.details.get("suspend_receipt_hash", "")) == suspend_event.hmac]
 
     # One park, one settlement. More than one resume receipt hanging off a
     # single suspend receipt means a settled decision was replayed, which the
@@ -1270,19 +1317,16 @@ def verify_suspension_continuity(
     effective_mode = ""
     workspace_match = False
     downgrade_reason = ""
-    if not resume_events:
-        # An unresumed park is an incomplete proof. The continuity claim is
-        # "resumed from exactly the parked state"; with no resume receipt there
-        # is nothing to verify, so it must not report as verified.
-        errors.append(f"no resume receipt found for task {task_id!r}: continuity proof is incomplete")
-    elif not bound_resumes:
-        latest = resume_events[-1]
-        continued_from = str(latest.details.get("suspend_event_hash", ""))
+    if not bound_resumes and claimants:
+        # Something claims to have settled this exact park but does not hang off
+        # its receipt. That is a forged or foreign settlement, not a live park.
+        claimed_by = str(claimants[-1].details.get("suspend_receipt_hash", ""))
         errors.append(
-            "no resume receipt continued from the parked suspend row "
-            f"(latest continued_from={continued_from[:16]}..., parked={parked_hash[:16]}...)"
+            "no resume receipt continued from the parked suspend row: a receipt claims suspend row "
+            f"{parked_hash[:16]}... but hangs off suspend receipt {claimed_by[:16]}..., "
+            f"not {suspend_event.hmac[:16]}..."
         )
-    else:
+    elif bound_resumes:
         resume_event = bound_resumes[-1]
         effective_mode = str(resume_event.details.get("effective_mode", ""))
         workspace_match = bool(resume_event.details.get("workspace_match", False))
@@ -1302,7 +1346,17 @@ def verify_suspension_continuity(
         if effective_mode == str(RetryMode.WARM) and not workspace_match:
             errors.append("warm resume recorded without a workspace-hash match")
 
-    ok = chain_ok and journal_ok and resumed and not errors
+    # No failure found: the park is either settled and proven, or still live.
+    # A live park keeps ok=True so a fleet sweep is not flooded with false
+    # failures and so the CLI's exit code for the ordinary parked case is
+    # unchanged; ``status`` is what tells the two apart.
+    ok = chain_ok and journal_ok and not errors
+    if not ok:
+        status = CONTINUITY_FAILED
+    elif resumed:
+        status = CONTINUITY_VERIFIED
+    else:
+        status = CONTINUITY_PENDING
     return ContinuityResult(
         ok=ok,
         chain_ok=chain_ok,
@@ -1312,10 +1366,14 @@ def verify_suspension_continuity(
         workspace_match=workspace_match,
         downgrade_reason=downgrade_reason,
         errors=errors,
+        status=status,
     )
 
 
 __all__ = [
+    "CONTINUITY_FAILED",
+    "CONTINUITY_PENDING",
+    "CONTINUITY_VERIFIED",
     "JOURNAL_EVENT_RESUME",
     "JOURNAL_EVENT_SUSPEND",
     "RESOURCE_BUDGET",
