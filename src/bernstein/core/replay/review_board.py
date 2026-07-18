@@ -59,8 +59,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.replay.journal import (
-    JOURNAL_FILENAME,
     JournalPathError,
+    contained_run_journal,
     load_events,
     run_journal_path,
     verify_journal,
@@ -373,7 +373,13 @@ def list_board_runs(sdd_dir: Path) -> list[str]:
     runs_root = sdd_dir / "runs"
     if not runs_root.is_dir():
         return []
-    run_ids = [entry.name for entry in runs_root.iterdir() if entry.is_dir() and (entry / JOURNAL_FILENAME).is_file()]
+    run_ids = [
+        entry.name
+        for entry in runs_root.iterdir()
+        if entry.is_dir()
+        and (journal := contained_run_journal(runs_root, entry.name)) is not None
+        and journal.is_file()
+    ]
     return sorted(run_ids, reverse=True)
 
 

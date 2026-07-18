@@ -127,6 +127,39 @@ def run_journal_path(sdd_dir: Path, run_id: str) -> Path:
         raise JournalPathError(f"run_id escapes the journal runs root: {run_id!r}") from exc
 
 
+def contained_run_journal(runs_root: Path, entry_name: str, filename: str = JOURNAL_FILENAME) -> Path | None:
+    """Return the journal path for an iterated run directory, or ``None``.
+
+    For the sweep case: the caller obtained *entry_name* by iterating
+    *runs_root*, so it cannot carry ``..`` or a separator. That covers only
+    half the threat. A directory entry with a perfectly ordinary name can be
+    a **symlink** pointing outside the runs root - the name is innocent, the
+    target is not - and iteration says nothing about what the entry resolves
+    to. Containment is what closes that half, so sweeps re-derive through
+    the same barrier as targeted lookups.
+
+    Returns ``None`` for an entry that escapes, so a sweep skips it and
+    keeps going rather than aborting the whole pass over one bad entry.
+
+    Args:
+        runs_root: The directory being iterated.
+        entry_name: A directory entry name from that iteration.
+        filename: Journal filename to append.
+
+    Returns:
+        The contained journal path, or ``None`` when the entry escapes.
+    """
+    try:
+        return contained_path(runs_root, entry_name, filename, label="run directory")
+    except PathContainmentError:
+        logger.warning(
+            "skipping run directory %r: it resolves outside %s",
+            entry_name,
+            runs_root,
+        )
+        return None
+
+
 def _payload_hash(event_type: str, payload: dict[str, Any]) -> str:
     """Return the SHA-256 of the canonical, timing-excluded payload.
 
@@ -590,6 +623,7 @@ __all__ = [
     "JournalPathError",
     "JournalVerifyResult",
     "compute_event_hash",
+    "contained_run_journal",
     "load_events",
     "rebuild_state",
     "record_dispatch_knob_selection",

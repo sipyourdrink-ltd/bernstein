@@ -34,7 +34,7 @@ from bernstein.core.orchestration.schedule_projection import (
     project,
     project_schedule_fire,
 )
-from bernstein.core.replay.journal import EventJournal, load_events
+from bernstein.core.replay.journal import EventJournal, contained_run_journal, load_events
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -261,7 +261,10 @@ def load_fire_records(sdd_dir: Path) -> list[dict[str, Any]]:
         return []
     rows: list[dict[str, Any]] = []
     for run_dir in sorted(runs_root.glob("sched-fire-*")):
-        for event in load_events(run_dir / "journal.jsonl"):
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None:
+            continue
+        for event in load_events(journal_path):
             if event.get("event") == JOURNAL_EVENT:
                 rows.append(event)
     rows.sort(key=lambda r: (int(r.get("fire_time", 0)), str(r.get("schedule_id", ""))))

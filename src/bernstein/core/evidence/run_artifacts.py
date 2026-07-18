@@ -551,7 +551,7 @@ def _verify_one_artifact(
 
 def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[ArtifactVerifyResult]:
     """Verify every task's artifacts under ``workdir/.sdd`` (for ``audit verify``)."""
-    from bernstein.core.replay.journal import verify_journal
+    from bernstein.core.replay.journal import contained_run_journal, verify_journal
 
     sdd_dir = workdir / ".sdd"
     runs_root = sdd_dir / "runs"
@@ -559,8 +559,8 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
         return []
     results: list[ArtifactVerifyResult] = []
     for run_dir in sorted(p for p in runs_root.iterdir() if p.is_dir()):
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         task_id = _task_id_from_rows(journal_path)
         if task_id is not None:
@@ -607,12 +607,12 @@ def live_artifact_content_hashes(sdd_dir: Path) -> set[str]:
     runs_root = sdd_dir / "runs"
     if not runs_root.is_dir():
         return set()
-    from bernstein.core.replay.journal import load_events
+    from bernstein.core.replay.journal import contained_run_journal, load_events
 
     live: set[str] = set()
     for run_dir in runs_root.iterdir():
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         for row in load_events(journal_path):
             if str(row.get("event", "")) == JOURNAL_EVENT_ARTIFACT_POSTED:

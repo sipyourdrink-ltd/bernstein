@@ -642,41 +642,51 @@ def _source_files() -> list[Path]:
     return sorted(src.rglob("*.py"))
 
 
-#: Sites that join a runs-root path from a name obtained by iterating the
-#: directory itself. The name comes from the filesystem, never from a caller,
-#: so there is no external identifier to contain. Each entry must stay
-#: justified; adding to this list is how a reviewer sees the exception.
-_ITERATION_DERIVED_ALLOWLIST = {
-    "core/evidence/run_artifacts.py",
-    "core/orchestration/schedule_fire_record.py",
-    "core/replay/review_board.py",
-    "cli/commands/advanced_cmd.py",
-}
+#: Helpers that ARE the barrier, so a journal filename on their own lines is
+#: the routed construction rather than a bypass of it.
+_BARRIER_CALLS = (
+    "contained_path(",
+    "run_journal_path(",
+    "task_journal_path(",
+    "contained_run_journal(",
+)
 
 
 def test_no_unrouted_journal_path_construction() -> None:
-    """No source file may build a journal path by hand.
+    """No source file may build a journal path outside the barrier.
 
     The escape this PR closes is reachable from any raw
-    ``<base> / <run_id> / journal.jsonl`` join, so the guarantee is only as
+    ``<base> / <name> / journal.jsonl`` join, so the guarantee is only as
     good as the claim that no such join remains. This asserts that claim
     mechanically instead of trusting a hand-kept list: a new unrouted reader
     fails here the moment it is added.
+
+    There is deliberately no allowlist. Sites that obtain the directory name
+    by iterating the runs root are covered too: iteration proves the name is
+    a single innocent component, but an entry with an ordinary name can
+    still be a symlink pointing outside the root, and only resolution
+    catches that. An exemption here would cover exactly the half of the
+    threat iteration already handles.
     """
-    pattern = re.compile(
-        r"/\s*(?:run_id|task_id|_task_run_id\(|task_run_id\()[^\n]*?/\s*(?:JOURNAL_FILENAME|\"journal\.jsonl\"|_REPLAY_JSONL)"
-    )
+    # The word boundary goes INSIDE each alternative: a trailing \b after
+    # the quoted literal can never match, because the pattern ends on a
+    # quote and \b there demands a following word character. That hole made
+    # every `x / "journal.jsonl"` form invisible to this scan.
+    pattern = re.compile(r"/\s*(?:JOURNAL_FILENAME\b|\"journal\.jsonl\"|_REPLAY_JSONL\b)")
     offenders: list[str] = []
     for path in _source_files():
         rel = path.relative_to(path.parents[1]).as_posix()
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            if pattern.search(line) and rel not in _ITERATION_DERIVED_ALLOWLIST:
-                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+            if not pattern.search(line):
+                continue
+            if any(call in line for call in _BARRIER_CALLS):
+                continue
+            offenders.append(f"{rel}:{lineno}: {line.strip()}")
 
     assert not offenders, (
-        "these sites build a journal path from an identifier without the "
-        "containment barrier; route them through run_journal_path / "
-        "task_journal_path / contained_path:\n  " + "\n  ".join(offenders)
+        "these sites build a journal path without the containment barrier; "
+        "route them through run_journal_path / task_journal_path / "
+        "contained_run_journal / contained_path:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -781,3 +791,49 @@ def test_verify_run_reports_an_unusable_run_id_without_losing_the_audit_finding(
     assert result.ledger_ok is False
     assert any("unusable run id" in e for e in result.errors)
     assert result.ok is False
+
+
+# ---------------------------------------------------------------------------
+# Sweeps: iteration gives an innocent NAME, not an innocent TARGET
+# ---------------------------------------------------------------------------
+
+
+def test_sweeps_skip_a_symlinked_run_directory_with_an_innocent_name(tmp_path: Path) -> None:
+    """A run directory whose name is ordinary but which points outside is skipped.
+
+    Iterating the runs root proves the entry name is a single component with
+    no ``..`` and no separator. It proves nothing about what the entry
+    resolves to. This plants a directory called ``run-ok`` - an entirely
+    legitimate name - that is a symlink to a tree outside the runs root, and
+    asserts every sweeping reader declines to read through it.
+    """
+    from bernstein.cli.commands.advanced_cmd import _replay_find_run_dirs
+    from bernstein.core.evidence.run_artifacts import live_artifact_content_hashes
+    from bernstein.core.replay.review_board import list_board_runs
+
+    sdd_dir = tmp_path / ".sdd"
+    runs_root = sdd_dir / "runs"
+    runs_root.mkdir(parents=True)
+
+    # A genuine run inside the root, so the sweeps have real work to do.
+    honest = EventJournal("run-honest", sdd_dir)
+    honest.record("tool.call", tool="Read")
+
+    # A planted run outside the root, reachable only through the symlink.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    planted = EventJournal("planted", elsewhere)
+    planted.record("artifact_posted", task_id="T-1", key="k", content_hash="sha256:evil")
+    _symlink_or_skip(runs_root / "run-ok", planted.path.parent)
+
+    assert (runs_root / "run-ok").is_dir(), "symlink should look like an ordinary run dir"
+    assert (runs_root / "run-ok" / "journal.jsonl").is_file(), "and its journal should look readable"
+
+    assert "run-ok" not in list_board_runs(sdd_dir)
+    assert "run-honest" in list_board_runs(sdd_dir)
+
+    assert "sha256:evil" not in live_artifact_content_hashes(sdd_dir)
+
+    replay_dirs = {d.name for d in _replay_find_run_dirs(runs_root)}
+    assert "run-ok" not in replay_dirs
+    assert "run-honest" in replay_dirs

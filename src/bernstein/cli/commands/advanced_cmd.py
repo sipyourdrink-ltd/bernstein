@@ -1699,8 +1699,14 @@ def _replay_find_run_dirs(runs_dir: Path) -> list[Path]:
     """Return sorted list of run directories that contain replay logs."""
     if not runs_dir.exists():
         return []
+    from bernstein.core.replay.journal import contained_run_journal
+
+    def _has_journal(d: Path) -> bool:
+        journal = contained_run_journal(runs_dir, d.name, _REPLAY_JSONL)
+        return journal is not None and journal.exists()
+
     return sorted(
-        (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
+        (d for d in runs_dir.iterdir() if d.is_dir() and _has_journal(d)),
         key=lambda d: d.name,
         reverse=True,
     )
@@ -1724,8 +1730,12 @@ def _replay_list_runs(runs_dir: Path) -> None:
     table.add_column("SHA")
     table.add_column("Events", justify="right")
     table.add_column("Size", justify="right")
+    from bernstein.core.replay.journal import contained_run_journal
+
     for d in run_dirs:
-        replay_file = d / _REPLAY_JSONL
+        replay_file = contained_run_journal(runs_dir, d.name, _REPLAY_JSONL)
+        if replay_file is None:
+            continue
         event_count = sum(1 for line in replay_file.read_text().splitlines() if line.strip())
         size_kb = replay_file.stat().st_size / 1024
         metadata = read_session_replay_metadata(d)
