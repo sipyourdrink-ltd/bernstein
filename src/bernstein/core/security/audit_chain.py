@@ -39,6 +39,8 @@ from bernstein.core.security.audit import (
 from bernstein.core.security.audit import (
     AuditEvent,
     AuditLog,
+    ChainScanCursor,
+    ChainScanResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -899,6 +901,20 @@ class AuditChainStore:
             since=since,
             until=until,
         )
+
+    def scan_verified(
+        self,
+        cursor: ChainScanCursor | None = None,
+        *,
+        event_type: str | None = None,
+    ) -> ChainScanResult:
+        """Delegate to :meth:`AuditLog.scan_verified` (incremental + authenticated).
+
+        Readers that need authenticated rows on a hot path should use this and
+        keep the returned cursor: it verifies exactly what it reads while
+        costing O(appended bytes) per call rather than O(entire chain) (#2648).
+        """
+        return self._log.scan_verified(cursor, event_type=event_type)
 
     def verify(self) -> tuple[bool, list[str]]:
         """Delegate to the underlying :class:`AuditLog`."""

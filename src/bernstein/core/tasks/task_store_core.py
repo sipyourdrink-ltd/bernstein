@@ -1124,7 +1124,8 @@ class TaskStore:
             dependent_task_ids: Optional explicit dependent set. When supplied,
                 only these ids receive an edge (intersected with the OPEN tasks
                 re-selected under the lock). When ``None``, every OPEN task in
-                the gate's cell scope is gated.
+                the gate's cell scope **and tenant** is gated; tasks belonging
+                to another tenant are never gated by this gate.
 
         Returns:
             A tuple of ``(gate_task, injected_dependent_ids)`` where the id list
@@ -1151,12 +1152,18 @@ class TaskStore:
 
             # Re-select the OPEN dependents under the same lock that creates the
             # gate. A gate never gates another gate, and never gates itself.
+            # Scope by tenant as well as cell. Every other selection path in
+            # this store filters candidates by normalized tenant; omitting it
+            # here would let a gate created for one tenant inject depends_on
+            # edges onto another tenant's OPEN tasks in the same cell, which is
+            # a containment failure rather than a cosmetic gap (#2648).
             candidates = [
                 task.id
                 for task in self._by_status[TaskStatus.OPEN].values()
                 if task.id != clearance_task_id
                 and not task.id.startswith("clearance-")
                 and (cell_id is None or task.cell_id == cell_id)
+                and task.tenant_id == gate.tenant_id
                 and (requested is None or task.id in requested)
             ]
             targets = sorted(set(candidates))

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import json
 import stat
 import threading
@@ -904,3 +905,246 @@ def test_post_bulletin_route_reports_a_pending_action_instead_of_500(tmp_path: P
     assert pending.status_code == 202, f"expected 202 (stored, action pending), got {pending.status_code}"
     assert pending.json()["content"] == "y"
     assert len(board.pending_actions) == 1
+
+
+# ---------------------------------------------------------------------------
+# Round 3: bounded authenticated scan, a discriminating anchor guard, the CLI
+# archive read path, multi-hmac acceptance, and tenant containment.
+# ---------------------------------------------------------------------------
+
+
+def test_authenticated_chain_scan_is_incremental(tmp_path: Path) -> None:
+    """A warm scan must not re-read history it already authenticated.
+
+    Asserted as bounded work (rows returned) rather than wall-clock, so it
+    cannot flake, but it is the property that keeps gate materialization off
+    the O(entire chain) path.
+    """
+    from bernstein.core.security.audit import AuditLog
+
+    log = AuditLog(tmp_path / "audit", key=b"k" * 32)
+    for i in range(200):
+        log.log(event_type="task.transition", actor="x", resource_type="task", resource_id=f"t{i}", details={})
+
+    first = log.scan_verified()
+    assert first.ok, first.errors
+    assert len(first.events) == 200
+    assert first.rescanned is True
+
+    log.log(event_type="task.transition", actor="x", resource_type="task", resource_id="new", details={})
+    second = log.scan_verified(first.cursor)
+    assert second.ok, second.errors
+    assert len(second.events) == 1, "the scan re-read history it had already authenticated"
+    assert second.rescanned is False
+
+    third = log.scan_verified(second.cursor)
+    assert third.events == [], "an unchanged chain still produced work"
+
+
+def test_incremental_scan_still_catches_tampering(tmp_path: Path) -> None:
+    """Neither the cursor nor the signed index may mask a tampered row."""
+    from bernstein.core.security.audit import AuditLog
+
+    audit = tmp_path / "audit"
+    log = AuditLog(audit, key=b"k" * 32)
+    for i in range(20):
+        log.log(event_type="task.transition", actor="x", resource_type="task", resource_id=f"t{i}", details={})
+    warm = log.scan_verified(event_type="task.transition")
+    assert warm.ok
+
+    # Rewrite an already-consumed row in place, preserving the byte length so a
+    # size check alone would not notice.
+    segment = next(iter(sorted(audit.glob("*.jsonl"))))
+    rows = [json.loads(line) for line in segment.read_text().splitlines() if line.strip()]
+    rows[5]["actor"] = "y"
+    segment.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+
+    cold = AuditLog(audit, key=b"k" * 32).scan_verified(event_type="task.transition")
+    assert not cold.ok, "a tampered row survived the indexed scan"
+
+
+def test_a_forged_segment_index_is_ignored(tmp_path: Path) -> None:
+    """An attacker with write access to the audit dir cannot forge the index."""
+    from bernstein.core.security.audit import AuditLog
+
+    audit = tmp_path / "audit"
+    log = AuditLog(audit, key=b"k" * 32)
+    for i in range(10):
+        log.log(event_type="task.transition", actor="x", resource_type="task", resource_id=f"t{i}", details={})
+    assert log.scan_verified(event_type="task.transition").ok
+
+    index_path = audit / ".segment-index.json"
+    assert index_path.is_file(), "the segment index was never written"
+
+    # Forge an entry that claims the whole segment is already covered and
+    # contained no rows. The prefix digest is computed over public bytes, so an
+    # attacker can satisfy it; only the HMAC signature stops this.
+    segment = next(iter(sorted(audit.glob("*.jsonl"))))
+    raw = segment.read_bytes()
+    doc = json.loads(index_path.read_text())
+    stem = segment.name[: -len(".jsonl")]
+    doc["payload"]["segments"] = {
+        stem: {
+            "byte_len": len(raw),
+            "prefix_sha256": hashlib.sha256(raw).hexdigest(),
+            "start_hmac": "0" * 64,
+            "end_hmac": "0" * 64,
+            "rows": [],
+        }
+    }
+    index_path.write_text(json.dumps(doc))  # signature is now stale
+
+    fresh = AuditLog(audit, key=b"k" * 32).scan_verified(event_type="task.transition")
+    assert len(fresh.events) == 10, "a forged index suppressed rows instead of being ignored"
+    assert fresh.ok
+
+
+def test_resolution_closes_a_gate_whose_pending_rows_differ(tmp_path: Path) -> None:
+    """Writer and verifier must pick the same anchor when the rows disagree.
+
+    Two authentic pending rows with *different* edge sets (a dependent was
+    claimed between restarts). If the writer anchors on one row and the verifier
+    on the other, the recorded fields diverge and the gate can never be closed.
+    Unlike an agreement assertion over one shared helper, this discriminates:
+    it fails for any pair of anchor rules that are not the same rule.
+    """
+    from bernstein.core.communication.signal_actions import journal_prefix_hash, project_clearance_gate
+
+    board = BulletinBoard()
+    posted = board.post(_blocker())
+    jph = journal_prefix_hash([posted])
+    wide = project_clearance_gate(blocker=posted, scope_task_ids=["task-x", "task-y"], journal_prefix_hash=jph)
+    narrow = project_clearance_gate(blocker=posted, scope_task_ids=["task-x"], journal_prefix_hash=jph)
+    assert wide.clearance_task_id == narrow.clearance_task_id
+    assert wide.graph_delta_hash != narrow.graph_delta_hash
+
+    for spec in (wide, narrow):
+        record_signal_gate_projection(
+            chain=AuditChainStore(tmp_path / "audit", key=b"k" * 32),
+            blocker_content_hash=spec.blocker_content_hash,
+            clearance_task_id=spec.clearance_task_id,
+            injected_edges=list(spec.injected_edges),
+            graph_delta_hash=spec.graph_delta_hash,
+            scope_cell_id=spec.scope_cell_id,
+            deadline=spec.deadline,
+            resolution="pending",
+        )
+
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    assert chain.verify()[0]
+    coord = ClearanceGateCoordinator(
+        bulletin=board, injector=InMemoryClearanceInjector(open_by_cell={"cell-a": ["task-x"]}), chain=chain
+    )
+    coord.resolve(wide.clearance_task_id, resolver="operator:alex")
+
+    result = verify_clearance_gates(chain.query_chain())
+    assert result.ok, result.errors
+
+
+def test_verifier_accepts_a_resolution_anchored_on_an_earlier_pending_row(tmp_path: Path) -> None:
+    """Every recorded pending HMAC is a valid back-reference, not just the last.
+
+    This is the whole reason GateAnchor accumulates entry_hmacs: a resolution
+    written against an earlier materialization must still close the gate.
+    """
+    from bernstein.core.communication.signal_actions import journal_prefix_hash, project_clearance_gate
+
+    board = BulletinBoard()
+    posted = board.post(_blocker())
+    spec = project_clearance_gate(
+        blocker=posted, scope_task_ids=["task-x"], journal_prefix_hash=journal_prefix_hash([posted])
+    )
+    for _ in range(2):
+        record_signal_gate_projection(
+            chain=AuditChainStore(tmp_path / "audit", key=b"k" * 32),
+            blocker_content_hash=spec.blocker_content_hash,
+            clearance_task_id=spec.clearance_task_id,
+            injected_edges=list(spec.injected_edges),
+            graph_delta_hash=spec.graph_delta_hash,
+            scope_cell_id=spec.scope_cell_id,
+            deadline=spec.deadline,
+            resolution="pending",
+        )
+
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    pending_rows = chain.query_chain(event_type=EVENT_SIGNAL_GATE_PROJECTION)
+    earliest_hmac = pending_rows[0].hmac
+    latest_hmac = pending_rows[-1].hmac
+    assert earliest_hmac != latest_hmac
+
+    # Resolve against the EARLIER row, which no current writer would choose.
+    record_signal_gate_projection(
+        chain=chain,
+        blocker_content_hash=spec.blocker_content_hash,
+        clearance_task_id=spec.clearance_task_id,
+        injected_edges=list(spec.injected_edges),
+        graph_delta_hash=spec.graph_delta_hash,
+        scope_cell_id=spec.scope_cell_id,
+        deadline=spec.deadline,
+        resolution="cleared",
+        resolver="operator:alex",
+        blocker_entry_hash=earliest_hmac,
+    )
+
+    result = verify_clearance_gates(chain.query_chain())
+    assert result.ok, result.errors
+
+
+def test_verify_gates_cli_reports_violations_after_archiving(isolated_audit: Path) -> None:
+    """The CLI read path must survive retention archiving.
+
+    Exercises the CLI over an archived chain, which is the difference between a
+    silent PASS and a reported violation; the coordinator-side test covers the
+    write path only.
+    """
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.audit_cmd import audit_group
+    from bernstein.core.security.audit_chain import record_task_claim_receipt
+
+    clearance_id = _materialize_on_cwd_chain()
+    record_task_claim_receipt(
+        chain=AuditChainStore(AUDIT_DIR),
+        task_id="task-x",
+        role="backend",
+        claimed_by="sess-rogue",
+        depends_on=[clearance_id],
+        task_version=2,
+        claim_path="by_id",
+    )
+
+    before = CliRunner().invoke(audit_group, ["verify-gates"])
+    assert before.exit_code == 1, before.output
+
+    _archive_all_segments(AUDIT_DIR)
+
+    after = CliRunner().invoke(audit_group, ["verify-gates"])
+    assert after.exit_code == 1, f"archiving hid the violation from the CLI:\n{after.output}"
+    assert "task-x" in after.output
+
+
+def test_gate_creation_never_injects_a_cross_tenant_edge(tmp_path: Path) -> None:
+    """A gate must not gate another tenant's work in the same cell."""
+    from bernstein.core.server import TaskCreate
+    from bernstein.core.tasks.task_store_core import TaskStore
+
+    async def scenario() -> tuple[list[str], str, str]:
+        store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+        mine = await store.create(
+            TaskCreate(title="A", description="d", role="backend", cell_id="cell-a", tenant_id="tenant-a")
+        )
+        theirs = await store.create(
+            TaskCreate(title="B", description="d", role="backend", cell_id="cell-a", tenant_id="tenant-b")
+        )
+        _gate, edges = await store.create_gate_with_edges(
+            clearance_task_id="clearance-t",
+            title="gate",
+            role="clearance",
+            cell_id="cell-a",
+            tenant_id="tenant-a",
+        )
+        return edges, mine.id, theirs.id
+
+    edges, mine, theirs = asyncio.run(scenario())
+    assert mine in edges, "the gate did not gate its own tenant's open task"
+    assert theirs not in edges, "the gate injected a cross-tenant depends_on edge"

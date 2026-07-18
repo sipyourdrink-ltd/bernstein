@@ -445,6 +445,136 @@ def _chain_tail_from_bytes(raw_bytes: bytes) -> str | None:
     return None
 
 
+@dataclass
+class ChainScanCursor:
+    """Resume point for an incremental authenticated chain scan.
+
+    The audit chain is append-only and HMAC-linked, so a reader that has
+    already authenticated a prefix can resume from the running ``prev_hmac``
+    and verify only the bytes appended since. Without this, every reader that
+    wants authenticated rows pays a full HMAC walk of the whole chain on every
+    call, which turns an O(1) hot path into O(entire chain) (#2648).
+
+    Attributes:
+        prev_hmac: Chain digest at the end of the consumed prefix.
+        consumed: Bytes already verified per segment, keyed by segment date
+            stem so a live ``<date>.jsonl`` and its archived
+            ``<date>.jsonl.gz`` counterpart are the same segment.
+        order: Segment stems in the order they were consumed, used to detect
+            history that changed underneath the cursor.
+    """
+
+    prev_hmac: str = _GENESIS_HMAC
+    consumed: dict[str, int] = field(default_factory=dict)
+    order: list[str] = field(default_factory=list)
+    complete: set[str] = field(default_factory=set)
+    fingerprint: dict[str, tuple[int, int]] = field(default_factory=dict)
+
+
+@dataclass
+class ChainScanResult:
+    """Outcome of :meth:`AuditLog.scan_verified`."""
+
+    ok: bool
+    events: list[AuditEvent]
+    cursor: ChainScanCursor
+    errors: list[str] = field(default_factory=list)
+    rescanned: bool = False
+
+
+def _segment_stem(path: Path) -> str:
+    """Return the date stem shared by a live segment and its archived form."""
+    name = path.name
+    return name[: -len(".jsonl.gz")] if name.endswith(".jsonl.gz") else name[: -len(".jsonl")]
+
+
+#: Filename of the signed per-segment scan index inside the audit directory.
+#: The index is derived data, so it lives beside the log rather than beside the
+#: key; it is HMAC-signed with the audit key, so an attacker who can write the
+#: audit directory cannot forge an entry that would be trusted (#2648).
+_SEGMENT_INDEX_NAME = ".segment-index.json"
+
+#: Bump when the stored entry shape changes so old indexes are ignored.
+_SEGMENT_INDEX_VERSION = 1
+
+
+def _sign_index_payload(payload: dict[str, Any], key: bytes) -> str:
+    return _hmac.new(key, json.dumps(payload, sort_keys=True).encode(), hashlib.sha256).hexdigest()
+
+
+def _load_segment_index(audit_dir: Path, key: bytes, event_type: str) -> dict[str, Any]:
+    """Return the verified per-segment index, or ``{}`` when unusable.
+
+    Any failure (missing, unparsable, wrong version, wrong filter, or a bad
+    signature) degrades to an empty index, which simply costs a full walk. The
+    index can therefore never weaken verification: it is only ever consulted
+    for segments whose signed fingerprint still matches what is on disk.
+    """
+    path = audit_dir / _SEGMENT_INDEX_NAME
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    payload = doc.get("payload")
+    if not isinstance(payload, dict):
+        return {}
+    if doc.get("hmac") != _sign_index_payload(cast("dict[str, Any]", payload), key):
+        return {}
+    typed = cast("dict[str, Any]", payload)
+    if typed.get("version") != _SEGMENT_INDEX_VERSION or typed.get("event_type") != event_type:
+        return {}
+    segments = typed.get("segments")
+    return cast("dict[str, Any]", segments) if isinstance(segments, dict) else {}
+
+
+def _store_segment_index(audit_dir: Path, key: bytes, event_type: str, segments: dict[str, Any]) -> None:
+    """Atomically write the signed per-segment index (best effort)."""
+    payload: dict[str, Any] = {
+        "version": _SEGMENT_INDEX_VERSION,
+        "event_type": event_type,
+        "segments": segments,
+    }
+    doc = {"payload": payload, "hmac": _sign_index_payload(payload, key)}
+    path = audit_dir / _SEGMENT_INDEX_NAME
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    try:
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(doc))
+        os.replace(tmp, path)
+    except OSError:
+        logger.debug("could not persist audit segment index at %s", path, exc_info=True)
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _event_to_row(event: AuditEvent) -> dict[str, Any]:
+    return {
+        "timestamp": event.timestamp,
+        "event_type": event.event_type,
+        "actor": event.actor,
+        "resource_type": event.resource_type,
+        "resource_id": event.resource_id,
+        "details": event.details,
+        "prev_hmac": event.prev_hmac,
+        "hmac": event.hmac,
+    }
+
+
+def _row_to_event(row: dict[str, Any]) -> AuditEvent:
+    return AuditEvent(
+        timestamp=row.get("timestamp", ""),
+        event_type=row.get("event_type", ""),
+        actor=row.get("actor", ""),
+        resource_type=row.get("resource_type", ""),
+        resource_id=row.get("resource_id", ""),
+        details=row.get("details", {}),
+        prev_hmac=row.get("prev_hmac", ""),
+        hmac=row.get("hmac", ""),
+    )
+
+
 def _events_from_text(
     text: str,
     *,
@@ -671,6 +801,183 @@ class AuditLog:
         return event
 
     # -- verify -------------------------------------------------------------
+
+    def scan_verified(
+        self,
+        cursor: ChainScanCursor | None = None,
+        *,
+        event_type: str | None = None,
+    ) -> ChainScanResult:
+        """Authenticate and read the chain at a cost bounded by what changed.
+
+        Verifies exactly the segments it reads (archived then live, in the same
+        order and with the same checks as :meth:`verify`). Two mechanisms keep
+        it off the O(entire chain) path that a naive authenticated read forces:
+
+        * **Cursor.** A caller that keeps the returned cursor pays only for the
+          bytes appended since its last call.
+        * **Signed segment index.** A cold caller (new process, empty cursor)
+          adopts a previously verified prefix of each segment instead of
+          re-walking it. Adoption is gated on a SHA-256 of the exact prefix
+          bytes, so it is a cheap re-authentication rather than a trust
+          assumption: a tampered prefix fails the digest and is fully
+          re-verified. The index itself is HMAC-signed with the audit key, so an
+          attacker with write access to the audit directory cannot forge an
+          entry, and any unusable index simply degrades to a full walk (#2648).
+
+        Args:
+            cursor: Resume point from a previous call, or ``None`` to scan all.
+            event_type: If set, only return events of this type, and enable the
+                segment index (which retains only the filtered rows).
+
+        Returns:
+            A :class:`ChainScanResult` whose ``events`` are the newly consumed
+            rows and whose ``cursor`` should be passed to the next call.
+        """
+        segments: list[tuple[str, Path, bool]] = [
+            (_segment_stem(p), p, True) for p in _archived_segment_paths(self._audit_dir)
+        ]
+        segments += [(_segment_stem(p), p, False) for p in sorted(self._audit_dir.glob(_JSONL_GLOB))]
+
+        # A cursor is only usable when what it consumed is still a prefix of
+        # what is on disk, in the same order and no shorter.
+        resume = cursor is not None
+        if cursor is not None:
+            stems = [stem for stem, _p, _a in segments]
+            if not set(cursor.order).issubset(set(stems)) or stems[: len(cursor.order)] != cursor.order:
+                resume = False
+
+        active = cursor if resume and cursor is not None else ChainScanCursor()
+        errors: list[str] = []
+        events: list[AuditEvent] = []
+
+        # A consumed segment that changed other than by appending invalidates
+        # the cursor: the bytes behind the resume point are no longer the bytes
+        # that were authenticated.
+        if resume:
+            for stem, path, _archived in segments:
+                prior = active.fingerprint.get(stem)
+                if prior is None:
+                    continue
+                try:
+                    info = path.stat()
+                except OSError:
+                    resume = False
+                    break
+                if info.st_size < prior[0] or (stem in active.complete and (info.st_size, info.st_mtime_ns) != prior):
+                    resume = False
+                    break
+            if not resume:
+                return self.scan_verified(None, event_type=event_type)
+
+        use_index = event_type is not None
+        index: dict[str, Any] = _load_segment_index(self._audit_dir, self._key, event_type or "") if use_index else {}
+        fresh_index: dict[str, Any] = {}
+        index_changed = False
+
+        for stem, path, archived in segments:
+            if archived and stem in active.complete:
+                continue
+
+            already = active.consumed.get(stem, 0)
+            start_hmac = active.prev_hmac
+            # ``raw`` is the whole segment, held only when we actually need all
+            # of it (a cold segment). When the cursor already covers a prefix we
+            # seek past it instead, so a warm scan never re-reads the history it
+            # has authenticated.
+            raw: bytes | None = None
+            adopted_rows: list[dict[str, Any]] = []
+
+            if archived:
+                raw = _read_archived_segment(path, errors)
+                if raw is None:
+                    return ChainScanResult(ok=False, events=events, cursor=active, errors=errors, rescanned=not resume)
+                if already > len(raw):
+                    return self.scan_verified(None, event_type=event_type)
+                total = len(raw)
+            else:
+                try:
+                    total = path.stat().st_size
+                except OSError:
+                    continue
+                if already > total:
+                    return self.scan_verified(None, event_type=event_type)
+                if already == 0:
+                    raw = path.read_bytes()
+                    total = len(raw)
+
+            if use_index and already == 0 and raw is not None:
+                entry = index.get(stem)
+                if isinstance(entry, dict):
+                    covered = int(entry.get("byte_len", 0) or 0)
+                    if (
+                        0 < covered <= total
+                        and entry.get("start_hmac") == start_hmac
+                        and isinstance(entry.get("rows"), list)
+                        and entry.get("prefix_sha256") == hashlib.sha256(raw[:covered]).hexdigest()
+                    ):
+                        # The prefix is byte-identical to what was verified, so
+                        # adopt its result and verify only what came after.
+                        adopted_rows = cast("list[dict[str, Any]]", entry["rows"])
+                        events.extend(_row_to_event(r) for r in adopted_rows)
+                        active.prev_hmac = str(entry.get("end_hmac", start_hmac))
+                        already = covered
+
+            if already == total and stem in active.consumed:
+                if use_index and stem in index:
+                    fresh_index[stem] = index[stem]
+                continue
+
+            if raw is not None:
+                tail = raw[already:]
+            else:
+                with path.open("rb") as handle:
+                    handle.seek(already)
+                    tail = handle.read()
+
+            active.prev_hmac = _verify_log_bytes(tail, path.name, active.prev_hmac, self._key, errors)
+            segment_events = _events_from_text(
+                tail.decode("utf-8", errors="replace"),
+                event_type=event_type,
+                actor=None,
+                since=None,
+                until=None,
+            )
+            events.extend(segment_events)
+            active.consumed[stem] = already + len(tail)
+            if archived:
+                active.complete.add(stem)
+            with contextlib.suppress(OSError):
+                info = path.stat()
+                active.fingerprint[stem] = (info.st_size, info.st_mtime_ns)
+            if stem not in active.order:
+                active.order.append(stem)
+
+            # Refresh the index only on a cold segment, where the whole segment
+            # is in hand. A warm (seek) pass keeps the existing entry: its
+            # shorter prefix stays valid and adoptable.
+            if use_index and not errors and raw is not None:
+                fresh_index[stem] = {
+                    "byte_len": already + len(tail),
+                    "prefix_sha256": hashlib.sha256(raw[: already + len(tail)]).hexdigest(),
+                    "start_hmac": start_hmac,
+                    "end_hmac": active.prev_hmac,
+                    "rows": adopted_rows + [_event_to_row(e) for e in segment_events],
+                }
+                index_changed = True
+            elif use_index and stem in index:
+                fresh_index[stem] = index[stem]
+
+        if use_index and index_changed and not errors:
+            _store_segment_index(self._audit_dir, self._key, event_type or "", fresh_index)
+
+        return ChainScanResult(
+            ok=not errors,
+            events=events,
+            cursor=active,
+            errors=errors,
+            rescanned=not resume,
+        )
 
     def verify(self) -> tuple[bool, list[str]]:
         """Walk archived then live JSONL segments and verify the HMAC chain.

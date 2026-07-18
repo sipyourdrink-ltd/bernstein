@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from bernstein.core.communication.bulletin import BulletinBoard, BulletinMessage
-    from bernstein.core.security.audit import AuditEvent
+    from bernstein.core.security.audit import AuditEvent, ChainScanCursor
     from bernstein.core.security.audit_chain import AuditChainStore
 
 
@@ -509,6 +509,8 @@ class ClearanceGateCoordinator:
         self._last_bulletin_ts: float = 0.0
         self._lock = threading.RLock()
         self._chain_loaded = False
+        self._scan_cursor: ChainScanCursor | None = None
+        self._gate_events: list[AuditEvent] = []
 
     # -- durable gate index -------------------------------------------------
 
@@ -534,22 +536,27 @@ class ClearanceGateCoordinator:
         """
         if self._chain_loaded and not force:
             return
-        chain_ok, chain_errors = self._chain.verify()
-        if not chain_ok:
+        # Authenticate and read the same segments, incrementally. The first call
+        # walks the whole chain; later calls verify and parse only the bytes
+        # appended since, so materializing a gate stays O(new rows) instead of
+        # O(entire chain) on a path that runs per blocker inside POST /bulletin.
+        result = self._chain.scan_verified(self._scan_cursor, event_type=EVENT_SIGNAL_GATE_PROJECTION)
+        if not result.ok:
             raise ClearanceChainUnverified(
                 "refusing to build the clearance-gate index from an unverified audit chain: "
-                + "; ".join(chain_errors[:3])
+                + "; ".join(result.errors[:3])
             )
-        # Read exactly the segments verify() authenticated. query() covers live
-        # files only, so using it here would silently drop every gate whose row
-        # has been archived, re-enabling double-injection after routine
-        # retention maintenance.
-        events = self._chain.query_chain(event_type=EVENT_SIGNAL_GATE_PROJECTION)
-        anchors = build_gate_anchors(events)
+        if result.rescanned:
+            # History under the cursor changed, so the previously derived index
+            # is not trustworthy; rebuild it from the full re-walk.
+            self._gate_events.clear()
+        self._scan_cursor = result.cursor
+        self._gate_events.extend(event for event in result.events if event.event_type == EVENT_SIGNAL_GATE_PROJECTION)
+        anchors = build_gate_anchors(self._gate_events)
         for clearance_task_id, anchor in anchors.items():
             self._materialized[clearance_task_id] = anchor.to_spec()
             self._entry_hmac[clearance_task_id] = anchor.entry_hmac
-        for event in events:
+        for event in self._gate_events:
             details = event.details
             clearance_task_id = str(details.get("clearance_task_id", ""))
             if not clearance_task_id or str(details.get("resolution", "pending")) == "pending":
@@ -847,7 +854,8 @@ def project_gate_states(
     whether a gate is open (#2648).
     """
     states: dict[str, ClearanceGateState] = {}
-    anchors: dict[str, GateAnchor] = {}
+    # Same shared anchor selection the verifier and the coordinator use.
+    anchors = build_gate_anchors(events)
     for idx, event in enumerate(events):
         if event.event_type != EVENT_SIGNAL_GATE_PROJECTION:
             continue
@@ -855,9 +863,6 @@ def project_gate_states(
         clearance_task_id = str(details.get("clearance_task_id", ""))
         resolution = str(details.get("resolution", "pending"))
         if resolution == "pending":
-            anchors.setdefault(clearance_task_id, GateAnchor(clearance_task_id=clearance_task_id)).absorb_pending(
-                details, hmac=event.hmac, index=idx
-            )
             states[clearance_task_id] = ClearanceGateState(
                 clearance_task_id=clearance_task_id,
                 blocker_content_hash=str(details.get("blocker_content_hash", "")),
@@ -984,8 +989,12 @@ def verify_clearance_gates(
     errors: list[str] = []
     violations: list[tuple[str, int]] = []
     open_gates: dict[str, GateAnchor] = {}
-    materialized: dict[str, GateAnchor] = {}
     seen: set[str] = set()
+
+    # Anchor selection is owned by build_gate_anchors, the same function the
+    # coordinator writes its blocker_entry_hash from. Re-deriving it inline here
+    # is what let the writer and the verifier drift apart (#2648).
+    materialized = build_gate_anchors(events)
 
     for idx, event in enumerate(events):
         if event.event_type == EVENT_SIGNAL_GATE_PROJECTION:
@@ -1010,9 +1019,9 @@ def verify_clearance_gates(
                     f"(recomputed {recomputed[:12]}.. != stored {stored[:12]}..)"
                 )
             if resolution == "pending":
-                anchor = materialized.setdefault(clearance_task_id, GateAnchor(clearance_task_id=clearance_task_id))
-                anchor.absorb_pending(details, hmac=event.hmac, index=idx)
-                open_gates[clearance_task_id] = anchor
+                anchor = materialized.get(clearance_task_id)
+                if anchor is not None:
+                    open_gates[clearance_task_id] = anchor
             else:
                 closing_errors = _validate_gate_resolution_row(
                     clearance_task_id=clearance_task_id,
