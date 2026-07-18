@@ -7,6 +7,8 @@ so verdicts are a pure, bit-stable function of the evidence.
 
 from __future__ import annotations
 
+import math
+from decimal import ROUND_HALF_EVEN, Decimal
 from fractions import Fraction
 
 import pytest
@@ -78,6 +80,36 @@ def test_canonical_round_is_half_even_and_stable() -> None:
     assert canonical_round(1 / 3) == canonical_round(1 / 3)
     # A value already at fewer places is unchanged.
     assert canonical_round(0.5) == 0.5
+
+
+def test_canonical_round_normalises_negative_zero_without_a_tolerance() -> None:
+    """Negative zero is flattened by sign, not by a magnitude comparison.
+
+    The sign fix must not behave like an ``isclose``-to-zero test: a value that
+    quantises to a genuinely non-zero p-value has to survive intact, otherwise
+    the verdict changes.
+    """
+    # Every representation of zero comes back as positive zero.
+    for value in (-0.0, 0.0, -1e-15, 1e-15):
+        result = canonical_round(value)
+        assert result == 0.0
+        # ``math.copysign`` is the only way to tell 0.0 from -0.0 by value.
+        assert math.copysign(1.0, result) == 1.0
+
+    # The smallest magnitude that survives quantisation at 10 places is kept
+    # exactly, with its sign. A tolerance comparison would flatten these.
+    assert canonical_round(1e-10) == 1e-10
+    assert canonical_round(-1e-10) == -1e-10
+    assert math.copysign(1.0, canonical_round(-1e-10)) == -1.0
+
+
+def test_canonical_round_is_bit_identical_to_the_quantised_decimal() -> None:
+    """Rounding stays a pure quantise plus sign fix, so replays are stable."""
+    for value in (0.1, 1 / 3, 0.12345678905, 2.5, -7.25, 1e-9, -1e-9):
+        expected = float(Decimal(value).quantize(Decimal(1).scaleb(-10), rounding=ROUND_HALF_EVEN))
+        result = canonical_round(value)
+        # Bit-identical, not merely close.
+        assert result.hex() == expected.hex()
 
 
 # ---------------------------------------------------------------------------

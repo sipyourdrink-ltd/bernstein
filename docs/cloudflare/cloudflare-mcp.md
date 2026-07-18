@@ -20,9 +20,11 @@ The MCP remote transport exposes Bernstein's MCP server over HTTP using the stre
 | `path` | `str` | `"/mcp"` | URL path for MCP endpoint |
 | `auth_type` | `str` | `"bearer"` | Authentication: `"none"`, `"bearer"`, or `"oauth"` |
 | `auth_token` | `str` | `""` | Bearer token; when empty it is read from `BERNSTEIN_MCP_TOKEN` (or `BERNSTEIN_MCP_AUTH_TOKEN`) |
-| `cors_origins` | `list[str]` | `["http://localhost:*"]` | CORS allowed origins |
+| `cors_origins` | `list[str]` | `["http://localhost:*"]` | CORS allowed origins; clear-text `http://` origins must be loopback-pinned |
 
 The config is safe by default: it binds to loopback and expects a bearer token. Construction raises `RemoteMCPConfigError` for any combination that would expose the JSON-RPC surface without authentication -- `auth_type="none"` on a non-loopback host, or `auth_type="bearer"` with no token on a non-loopback host. There is no session store, so there are no session capacity or timeout fields; see [Stateless serving](../mcp/server.md#stateless-serving).
+
+The same rule covers browser origins. Bearer tokens ride on whatever origin CORS admits, so a clear-text `http://` origin is only accepted when it is pinned to a loopback host (`127.0.0.1`, `localhost` or `[::1]`); that is why the default is safe despite being clear-text. Any other origin must use `https://`, and `RemoteMCPConfigError` names the offending entries otherwise.
 
 ---
 
