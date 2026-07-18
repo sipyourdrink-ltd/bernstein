@@ -266,7 +266,20 @@ def _validate_ids(task_id: str, key: str) -> None:
 
 
 def _artifact_journal_path(sdd_dir: Path, task_id: str) -> Path:
-    return sdd_dir / "runs" / _task_run_id(task_id) / "journal.jsonl"
+    """Return the task journal path, proven to sit under ``<sdd>/runs``.
+
+    ``task_id`` arrives from the dashboard API, so the derived run id goes
+    through the containment barrier and the *returned* value is the
+    normalised, checked path. Readers open that value rather than the raw
+    join, so a crafted id (or a symlinked run directory) cannot address a
+    journal outside the runs root.
+
+    Raises:
+        PathContainmentError: The derived run id escapes the runs root.
+    """
+    from bernstein.core.tasks.checkpoint_retry import task_journal_path
+
+    return task_journal_path(sdd_dir, task_id)
 
 
 def _row_to_record(row: dict[str, Any]) -> RunArtifactRecord:
@@ -293,10 +306,20 @@ def read_artifact_rows(sdd_dir: Path, task_id: str, *, verify: bool = True) -> l
         task_id: The task whose artifacts to read.
         verify: When True (default), a task journal that fails Merkle
             verification yields no records (fail-closed).
+
+    A task id too long to name a file reads as empty, matching the
+    "no journal" case: ``_TASK_ID_RE`` accepts 256 characters and
+    ``task_run_id`` adds a prefix, so the derived component can exceed
+    ``NAME_MAX``. A *containment* failure is deliberately not caught - a
+    traversal or symlink escape must surface, never read as empty.
     """
     from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.security.path_containment import PathTooLongError
 
-    path = _artifact_journal_path(sdd_dir, task_id)
+    try:
+        path = _artifact_journal_path(sdd_dir, task_id)
+    except PathTooLongError:
+        return []
     if not path.is_file():
         return []
     if verify and not verify_journal(path).ok:
@@ -528,7 +551,7 @@ def _verify_one_artifact(
 
 def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[ArtifactVerifyResult]:
     """Verify every task's artifacts under ``workdir/.sdd`` (for ``audit verify``)."""
-    from bernstein.core.replay.journal import verify_journal
+    from bernstein.core.replay.journal import contained_run_journal, verify_journal
 
     sdd_dir = workdir / ".sdd"
     runs_root = sdd_dir / "runs"
@@ -536,8 +559,8 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
         return []
     results: list[ArtifactVerifyResult] = []
     for run_dir in sorted(p for p in runs_root.iterdir() if p.is_dir()):
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         task_id = _task_id_from_rows(journal_path)
         if task_id is not None:
@@ -584,12 +607,12 @@ def live_artifact_content_hashes(sdd_dir: Path) -> set[str]:
     runs_root = sdd_dir / "runs"
     if not runs_root.is_dir():
         return set()
-    from bernstein.core.replay.journal import load_events
+    from bernstein.core.replay.journal import contained_run_journal, load_events
 
     live: set[str] = set()
     for run_dir in runs_root.iterdir():
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         for row in load_events(journal_path):
             if str(row.get("event", "")) == JOURNAL_EVENT_ARTIFACT_POSTED:

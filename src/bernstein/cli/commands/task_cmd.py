@@ -841,7 +841,21 @@ def task_suspend(
     from bernstein.core.orchestration.approval_gate import write_pending_sentinel
     from bernstein.core.tasks.checkpoint_retry import latest_checkpoint
     from bernstein.core.tasks.models import ApprovalSpec
-    from bernstein.core.tasks.suspension import WAKE_APPROVAL, park_task
+    from bernstein.core.tasks.suspension import (
+        WAKE_APPROVAL,
+        UnsafeTaskIdError,
+        park_task,
+        validate_task_id,
+    )
+
+    # The park derives filesystem names (the journal run dir, and the approval
+    # sentinel under --until approval) from the task id, so it is checked as an
+    # identifier before anything is written.
+    try:
+        validate_task_id(task_id)
+    except UnsafeTaskIdError as exc:
+        console.print(f"[red]Refusing to park:[/red] {exc}")
+        raise SystemExit(1) from exc
 
     sdd_dir, chain, ledger = _suspension_context(workdir, task_id)
 
@@ -924,14 +938,26 @@ def task_resume(task_id: str, workdir: str, worktree: str | None, mode: str, as_
     Example:
       bernstein task resume T-abc123
     """
-    from bernstein.core.security.audit_chain import EVENT_TASK_SUSPENDED
     from bernstein.core.tasks.suspension import (
         WAKE_APPROVAL,
+        ReleaseWithoutReceiptError,
+        ResumeApprovalRequiredError,
+        SuspendReceiptMismatchError,
+        SuspensionAlreadySettledError,
+        UnsafeTaskIdError,
         approval_decision_ref,
+        find_suspension_receipt,
         latest_suspension,
         resume_task,
+        validate_task_id,
         write_resume_marker,
     )
+
+    try:
+        validate_task_id(task_id)
+    except UnsafeTaskIdError as exc:
+        console.print(f"[red]Refusing to resume:[/red] {exc}")
+        raise SystemExit(1) from exc
 
     sdd_dir, chain, ledger = _suspension_context(workdir, task_id)
 
@@ -947,22 +973,39 @@ def task_resume(task_id: str, workdir: str, worktree: str | None, mode: str, as_
             console.print(f"[yellow]Parked until approval:[/yellow] run 'bernstein approve {task_id}' before resuming.")
             raise SystemExit(1)
 
-    # The suspend receipt hash is the identity bound at park time; recover it
-    # from the audit chain so the resume references exactly that receipt.
-    suspend_events = [e for e in chain.query(event_type=EVENT_TASK_SUSPENDED) if e.details.get("task_id") == task_id]
-    suspend_receipt_hash = suspend_events[-1].hmac if suspend_events else ""
+    # The suspend receipt is selected by identity, not by recency: it must be
+    # the receipt that binds *this* suspend row's hash and journal index. A task
+    # parked more than once therefore never resumes against another park's
+    # receipt, and a substituted receipt has nothing to match.
+    receipt = find_suspension_receipt(chain=chain, task_id=task_id, suspend_row=suspend_row)
+    if receipt is None:
+        console.print(
+            f"[red]No suspend receipt binds the parked row for task[/red] [bold]{task_id}[/bold] "
+            f"([dim]parked-at {suspend_row.event_hash[:16]}[/dim])."
+        )
+        raise SystemExit(1)
 
     new_worktree = Path(worktree) if worktree else Path(suspend_row.worktree_path or workdir)
-    result = resume_task(
-        sdd_dir=sdd_dir,
-        suspend_row=suspend_row,
-        new_worktree_path=new_worktree,
-        chain=chain,
-        suspend_receipt_hash=suspend_receipt_hash,
-        requested_mode=mode,
-        ledger=ledger,
-        approval_ref=approval_ref,
-    )
+    try:
+        result = resume_task(
+            sdd_dir=sdd_dir,
+            suspend_row=suspend_row,
+            new_worktree_path=new_worktree,
+            chain=chain,
+            suspend_receipt_hash=receipt.hmac,
+            requested_mode=mode,
+            ledger=ledger,
+            approval_ref=approval_ref,
+        )
+    except (
+        ReleaseWithoutReceiptError,
+        ResumeApprovalRequiredError,
+        SuspendReceiptMismatchError,
+        SuspensionAlreadySettledError,
+        UnsafeTaskIdError,
+    ) as exc:
+        console.print(f"[red]Refusing to resume:[/red] {exc}")
+        raise SystemExit(1) from exc
     if approval_ref:
         write_resume_marker(Path(workdir), task_id, result.resume_receipt_hash)
 

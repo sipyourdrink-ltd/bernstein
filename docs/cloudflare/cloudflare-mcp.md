@@ -20,9 +20,13 @@ The MCP remote transport exposes Bernstein's MCP server over HTTP using the stre
 | `path` | `str` | `"/mcp"` | URL path for MCP endpoint |
 | `auth_type` | `str` | `"bearer"` | Authentication: `"none"`, `"bearer"`, or `"oauth"` |
 | `auth_token` | `str` | `""` | Bearer token; when empty it is read from `BERNSTEIN_MCP_TOKEN` (or `BERNSTEIN_MCP_AUTH_TOKEN`) |
-| `cors_origins` | `list[str]` | `["http://localhost:*"]` | CORS allowed origins |
+| `cors_origins` | `list[str]` | `["http://localhost:*"]` | CORS allowed origins; clear-text `http://` origins must be loopback-pinned |
 
 The config is safe by default: it binds to loopback and expects a bearer token. Construction raises `RemoteMCPConfigError` for any combination that would expose the JSON-RPC surface without authentication -- `auth_type="none"` on a non-loopback host, or `auth_type="bearer"` with no token on a non-loopback host. There is no session store, so there are no session capacity or timeout fields; see [Stateless serving](../mcp/server.md#stateless-serving).
+
+The same rule covers browser origins. Bearer tokens ride on whatever origin CORS admits, so a clear-text origin is only accepted when it is pinned to a loopback host (`127.0.0.1`, `localhost` or `[::1]`); that is why the default is safe despite being clear-text. Any other clear-text origin is refused with a `RemoteMCPConfigError` naming the offending entries, so a non-loopback origin has to use TLS. The clear-text schemes held to this rule are `http`, `ws` and `ftp`.
+
+Origins are parsed with `urllib.parse.urlsplit`, so a malformed authority (`http://[::1]evil.test`, `http://[::1]@evil.test`) is refused rather than being read as loopback. Origins carrying no scheme at all, such as the `*` and `null` CORS tokens, are left untouched.
 
 ---
 

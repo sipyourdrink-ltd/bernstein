@@ -40,8 +40,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 if TYPE_CHECKING:
@@ -321,6 +323,105 @@ def compose_key_hex(policy: CachePolicy, inputs: RecipeInputs) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Key safety: a cache key is a key, never a path
+# ---------------------------------------------------------------------------
+
+#: Upper bound on a cache key's length. A composed key is 64 hex characters;
+#: the ceiling leaves room for operator-facing labels without admitting a value
+#: long enough to blow a filesystem name limit.
+MAX_CACHE_KEY_LENGTH: Final[int] = 128
+
+#: A cache key must be a single, self-contained path component: it starts with
+#: an alphanumeric character and continues with alphanumerics, dot, underscore,
+#: or hyphen. This admits every key :func:`compose_key_hex` produces and every
+#: operator-facing label, while excluding separators, traversal segments,
+#: leading dots, leading dashes, control characters, and whitespace.
+_SAFE_CACHE_KEY_RE: Final[re.Pattern[str]] = re.compile(r"\A[0-9A-Za-z][0-9A-Za-z._-]*\Z")
+
+_PATH_SEPARATORS: Final[tuple[str, ...]] = ("/", "\\")
+
+
+class UnsafeCacheKeyError(ValueError):
+    """Typed refusal: a cache key cannot be used to address a cache artefact.
+
+    Raised before any filesystem work happens, so a refused key never creates,
+    truncates, or overwrites a file. ``key`` and ``reason`` are exposed as
+    attributes so a caller can render an operator-facing message without
+    re-parsing the string form.
+    """
+
+    def __init__(self, key: str, reason: str) -> None:
+        self.key = key
+        self.reason = reason
+        super().__init__(f"unsafe cache key {key!r}: {reason}")
+
+
+def validate_cache_key(key: str) -> str:
+    """Return ``key`` unchanged when it is safe to use as a path component.
+
+    A cache key reaches the cache boundary from a composed recipe, a served-from
+    ledger row, or an operator's ``bernstein cache evict <key>`` argument. The
+    last of those is untrusted input, so the key is validated here rather than
+    interpolated into a path and hoped for.
+
+    Raises:
+        UnsafeCacheKeyError: When the key is empty, over
+            :data:`MAX_CACHE_KEY_LENGTH`, contains a path separator, a NUL, or
+            any character outside ``[0-9A-Za-z._-]``, or begins with a
+            character that would make it a traversal segment or a hidden file.
+    """
+    if not key:
+        raise UnsafeCacheKeyError(key, "is empty")
+    if len(key) > MAX_CACHE_KEY_LENGTH:
+        raise UnsafeCacheKeyError(key, f"is longer than {MAX_CACHE_KEY_LENGTH} characters")
+    if "\x00" in key:
+        raise UnsafeCacheKeyError(key, "contains a NUL byte")
+    if any(sep in key for sep in _PATH_SEPARATORS):
+        raise UnsafeCacheKeyError(key, "contains a path separator")
+    if key in (os.curdir, os.pardir):
+        raise UnsafeCacheKeyError(key, "is a relative path segment")
+    if not _SAFE_CACHE_KEY_RE.match(key):
+        raise UnsafeCacheKeyError(key, "must start with an alphanumeric and contain only [0-9A-Za-z._-]")
+    return key
+
+
+def cache_key_slug(key: str, *, length: int = 16) -> str:
+    """Return a short, filesystem-safe label for ``key``.
+
+    The key is validated first, so the truncation operates on a value already
+    known to be a single safe path component; a prefix of such a value is
+    itself a safe path component.
+    """
+    if length <= 0:
+        raise ValueError(f"cache_key_slug: length must be positive, got {length!r}")
+    return validate_cache_key(key)[:length]
+
+
+def resolve_cached_path(base: Path, name: str) -> Path:
+    """Return ``base/name`` resolved, proven to live strictly inside ``base``.
+
+    ``base`` is canonicalised first, so a base directory that is itself a
+    symlink is *followed*, not refused: containment is then asserted against
+    that canonical target. What the check refuses is a ``name`` that resolves
+    outside the canonical base - including the case where ``base/name`` is a
+    symlink pointing elsewhere, since the candidate is resolved too.
+
+    Callers pass a ``name`` built from an already validated key, so it carries
+    no separators; this resolution step is the second, independent barrier
+    rather than the primary one.
+
+    Raises:
+        UnsafeCacheKeyError: When the resolved candidate is not strictly inside
+            the canonical base directory.
+    """
+    resolved_base = Path(base).resolve()
+    candidate = (resolved_base / name).resolve()
+    if resolved_base not in candidate.parents:
+        raise UnsafeCacheKeyError(name, f"resolves outside the cache directory {resolved_base}")
+    return candidate
+
+
+# ---------------------------------------------------------------------------
 # Cache entry (content-addressed lineage record)
 # ---------------------------------------------------------------------------
 
@@ -515,6 +616,7 @@ def evaluate_freshness(
 
 __all__ = [
     "MANDATORY_INGREDIENTS",
+    "MAX_CACHE_KEY_LENGTH",
     "OPTIONAL_INGREDIENTS",
     "REASON_BASE_NOT_ANCESTOR",
     "REASON_BASE_OUTSIDE_WINDOW",
@@ -528,10 +630,14 @@ __all__ = [
     "FreshnessVerdict",
     "RecipeInputs",
     "RepoState",
+    "UnsafeCacheKeyError",
+    "cache_key_slug",
     "compose_key",
     "compose_key_hex",
     "compose_recipe",
     "evaluate_freshness",
     "recipe_hash",
     "refresh_requested",
+    "resolve_cached_path",
+    "validate_cache_key",
 ]

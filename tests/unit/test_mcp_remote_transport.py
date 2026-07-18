@@ -482,6 +482,104 @@ class TestCORSHeaders:
 
 
 # ---------------------------------------------------------------------------
+# Clear-text CORS origin policy
+# ---------------------------------------------------------------------------
+
+
+class TestClearTextCORSOrigins:
+    """A clear-text browser origin is only allowed when pinned to loopback.
+
+    Bearer tokens ride on these origins, so a plaintext origin that resolves off
+    the machine would put them on the wire. The default stays clear-text because
+    it is loopback-pinned by construction, not because the scheme is unchecked.
+    """
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://localhost:*",
+            "http://127.0.0.1:8053",
+            "http://[::1]:*",
+            "http://[::1]",
+            "http://localhost",
+            # Scheme and host are case-insensitive, so this is still loopback.
+            "HTTP://LOCALHOST:*",
+            "https://example.com",
+            "https://app.example.com:443",
+            # TLS is accepted regardless of how far off-box the host is.
+            "https://[2001:db8::1]:8053",
+            "wss://example.com",
+            # Non-URL CORS tokens carry no scheme and are left alone.
+            "*",
+            "null",
+        ],
+    )
+    def test_loopback_plaintext_and_tls_origins_are_accepted(
+        self,
+        origin: str,
+        _clear_token_env: None,
+    ) -> None:
+        cfg = RemoteMCPConfig(cors_origins=[origin])
+        assert cfg.cors_origins == [origin]
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://example.com",
+            "http://192.168.1.10:8053",
+            "http://evil.test:*",
+            # A loopback-looking prefix that is really a different host.
+            "http://localhost.evil.test",
+            "HTTP://Example.COM",
+            # Bracketed IPv6 literals are unwrapped before the loopback test,
+            # so an off-box IPv6 host is refused with or without a port.
+            "http://[2001:db8::1]:8053",
+            "http://[2001:db8::1]",
+            # ::1 is loopback, ::2 is not; the whole literal has to match.
+            "http://[::2]:*",
+            # Malformed authorities that hand-rolled bracket stripping used to
+            # collapse to a bare "::1" and admit as loopback.
+            "http://[::1]evil.test",
+            "http://[::1]@evil.test",
+            "http://[::1",
+            # Other clear-text schemes are held to the same loopback rule.
+            "ws://evil.test",
+            "ftp://evil.test",
+        ],
+    )
+    def test_non_loopback_plaintext_origin_is_refused(
+        self,
+        origin: str,
+        _clear_token_env: None,
+    ) -> None:
+        with pytest.raises(RemoteMCPConfigError, match="clear-text CORS"):
+            RemoteMCPConfig(cors_origins=[origin])
+
+    def test_refusal_names_every_offending_origin(self, _clear_token_env: None) -> None:
+        with pytest.raises(RemoteMCPConfigError) as excinfo:
+            RemoteMCPConfig(cors_origins=["http://localhost:*", "http://a.test", "http://b.test"])
+        message = str(excinfo.value)
+        assert "a.test" in message
+        assert "b.test" in message
+        # The loopback origin is not listed as an offender.
+        assert "http://localhost:*" not in message
+
+    def test_default_origin_is_loopback_pinned(self, _clear_token_env: None) -> None:
+        cfg = RemoteMCPConfig()
+        assert cfg.cors_origins == ["http://localhost:*"]
+        # The default survives its own policy check.
+        assert not any(remote_transport_module._is_plaintext_non_loopback_origin(o) for o in cfg.cors_origins)
+
+    def test_default_list_is_not_shared_between_configs(self, _clear_token_env: None) -> None:
+        """The default must stay a fresh list, not a shared mutable global."""
+        first = RemoteMCPConfig()
+        second = RemoteMCPConfig()
+        assert first.cors_origins is not second.cors_origins
+        first.cors_origins.append("https://example.com")
+        assert second.cors_origins == ["http://localhost:*"]
+
+
+# ---------------------------------------------------------------------------
 # ASGI app tests
 # ---------------------------------------------------------------------------
 

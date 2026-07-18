@@ -160,13 +160,13 @@ def _register_health_tool(mcp: FastMCP[None]) -> None:
 def _get_journal_head(task_id: str) -> str:
     from pathlib import Path
 
-    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.replay.journal import EventJournal, run_journal_path
     from bernstein.core.tasks.checkpoint_retry import task_run_id
 
     run_id = task_run_id(task_id)
     sdd_dir = Path.cwd() / ".sdd"
     try:
-        journal_path = sdd_dir / "runs" / run_id / "journal.jsonl"
+        journal_path = run_journal_path(sdd_dir, run_id)
         if journal_path.exists():
             journal = EventJournal.resume(run_id, sdd_dir)
             return journal.head()
@@ -476,18 +476,20 @@ def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
             return _validation_error_response(err)
         try:
             from bernstein.core.protocols.mcp.tasks_extension import RunHandle
-            from bernstein.core.replay.journal import JOURNAL_FILENAME, load_events
+            from bernstein.core.replay.journal import (
+                JournalPathError,
+                load_events,
+                run_journal_path,
+            )
 
             base = Path(workdir).resolve()
-            runs_root = (base / ".sdd" / "runs").resolve()
-            journal_path = (runs_root / run_id / JOURNAL_FILENAME).resolve()
-            # Realpath-containment check (CodeQL): a crafted run_id must not
-            # escape the runs root via ``..`` or an absolute path. A plain run
-            # id resolves to ``<runs_root>/<run_id>/journal.jsonl``; anything
-            # else is refused.
-            if journal_path.parent.parent != runs_root:
+            # Shared barrier rather than a local containment check, so this
+            # surface cannot drift from the rest of the run-journal readers.
+            try:
+                journal_path = run_journal_path(base / ".sdd", run_id)
+            except JournalPathError as exc:
                 return _error_response(
-                    ValueError("run_id escapes the runs directory"),
+                    exc,
                     hint="run_id must be a plain run identifier",
                 )
             events = load_events(journal_path)

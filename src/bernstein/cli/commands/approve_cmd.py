@@ -106,10 +106,20 @@ def approve(task_id: str, workdir: str, prompt: bool) -> None:
     Example:
       bernstein approve T-abc123
     """
-    approvals_dir = Path(workdir) / ".sdd" / "runtime" / "approvals"
+    from bernstein.core.orchestration.approval_gate import UnsafeApprovalIdError, approval_path
+
+    # The decision file name is derived from task_id, so the id goes through the
+    # same rule the read side uses. Validated before mkdir: an unchecked id here
+    # created directories and wrote a decision file anywhere on disk.
+    try:
+        decision_file = approval_path(Path(workdir), task_id, ".approved")
+        rejected_file = approval_path(Path(workdir), task_id, ".rejected")
+    except UnsafeApprovalIdError as exc:
+        console.print(f"[red]Refusing to approve:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    approvals_dir = decision_file.parent
     approvals_dir.mkdir(parents=True, exist_ok=True)
-    decision_file = approvals_dir / f"{task_id}.approved"
-    rejected_file = approvals_dir / f"{task_id}.rejected"
 
     if rejected_file.exists():
         console.print(

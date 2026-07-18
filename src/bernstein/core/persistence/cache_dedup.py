@@ -5,14 +5,21 @@ same cache key, only one should pay for the minutes-to-hours agent run. A naive
 in-process lock cannot dedup across hosts, and a losing worker that *blocks* on
 an hours-long run wastes a seat.
 
-This routes cache-key contention through the same atomic claim primitive the
-task backlog uses (:func:`bernstein.core.tasks.claim.claim_next_entry`): the
+This routes cache-key contention through the same atomic claim protocol the
+task backlog uses (:func:`bernstein.core.tasks.claim.backlog_transaction`): the
 cache key becomes a single-row backlog, the first worker to flip it to
 ``in_progress`` wins the spawn, and every loser receives a signed
 :class:`DuplicateOfReceipt` binding it to the winner's key and claim position.
 The loser does not block; it completes by a lineage edge to the winner's
 verified output. If the winner never records a verified output the claim can be
 released and re-contended deterministically.
+
+Row creation, the claim flip, the winner read, and the release all happen
+inside one held claim lock. Creating the row outside the lock would let a
+second contender's create overwrite a claim the first contender had already
+been granted, and releasing outside the lock would let a stale reopen clobber a
+concurrent claim; both windows are closed by running the whole read-modify-save
+cycle as a single transaction.
 
 Verifiability (issue #2551 AC3): a :class:`DuplicateOfReceipt` is HMAC-signed
 over its canonical body with the audit-chain key, so it verifies offline; any
@@ -29,11 +36,15 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.cache_policy import (
+    resolve_cached_path,
+    validate_cache_key,
+)
 from bernstein.core.tasks.claim import (
     Backlog,
     BacklogEntry,
     ClaimFilter,
-    claim_next_entry,
+    backlog_transaction,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +52,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _RECEIPT_VERSION = 1
+
+#: Status a released row returns to, matching the claim primitive's vocabulary.
+_OPEN_STATUS = "open"
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -197,19 +211,36 @@ class ClaimOutcome:
     winner: str
 
 
-class CacheKeyArbiter:
-    """Serialise spawns for one cache key through the atomic claim primitive.
+def arbiter_backlog_path(base_dir: Path, cache_key: str) -> Path:
+    """Return the contended-key backlog path for ``cache_key`` under ``base_dir``.
 
-    The arbiter is backed by a single-row backlog file named after the cache
-    key. ``claim_next_entry`` flips the row to ``in_progress`` atomically under
-    a cross-process file lock, so exactly one worker among N contenders wins,
-    even across hosts sharing the backlog directory. A killed winner's claim is
-    released by :meth:`release` and the next contender proceeds.
+    The arbiter's backlog file is named after the cache key, so the key is
+    validated as a single path component and the composed path is proven to
+    resolve inside ``base_dir`` before it is handed back.
+
+    Raises:
+        UnsafeCacheKeyError: When ``cache_key`` is not a safe path component or
+            the composed path would escape ``base_dir``.
+    """
+    return resolve_cached_path(base_dir, f"{validate_cache_key(cache_key)}.json")
+
+
+class CacheKeyArbiter:
+    """Serialise spawns for one cache key through the atomic claim protocol.
+
+    The arbiter is backed by a single-row backlog file addressed by the cache
+    key (see :func:`arbiter_backlog_path`). Row creation, the flip to
+    ``in_progress``, the winner read, and the release each run inside one held
+    claim lock - the same cross-thread and cross-process lock the task backlog
+    claims under - so exactly one worker among N contenders wins even when all
+    of them arrive before the backlog exists, and even across hosts sharing the
+    backlog directory. A killed winner's claim is released by :meth:`release`
+    and the next contender proceeds.
     """
 
     def __init__(self, backlog_path: Path, cache_key: str) -> None:
         self._path = backlog_path
-        self._cache_key = cache_key
+        self._cache_key = validate_cache_key(cache_key)
         self._contenders = 0
         self._counter_lock = threading.Lock()
 
@@ -217,9 +248,26 @@ class CacheKeyArbiter:
     def cache_key(self) -> str:
         return self._cache_key
 
+    def _row(self, backlog: Backlog) -> BacklogEntry | None:
+        """Return this key's row in ``backlog``, or ``None`` when absent."""
+        for entry in backlog.entries:
+            if entry.id == self._cache_key:
+                return entry
+        return None
+
     def _ensure_backlog(self) -> None:
-        if not self._path.exists():
-            Backlog.write(self._path, [BacklogEntry(id=self._cache_key)])
+        """Create this key's row inside the claim lock, idempotently.
+
+        Never overwrites an existing document: a row that is already present
+        (claimed or not) is left exactly as it is, so a late initialiser cannot
+        reset a claim another contender has already been granted.
+        """
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with backlog_transaction(self._path) as backlog:
+            if self._row(backlog) is not None:
+                return
+            backlog.entries.append(BacklogEntry(id=self._cache_key))
+            backlog.save()
 
     def contend(self, claimer: str) -> ClaimOutcome:
         """Attempt to claim the cache key for ``claimer``.
@@ -228,16 +276,31 @@ class CacheKeyArbiter:
         ``claim_position=0``. Every later caller finds the row already claimed
         and returns ``won=False`` with a 1-based ``claim_position`` reflecting
         arrival order, plus the winning claimer id.
+
+        Creating the row, testing eligibility, flipping it, and reading back the
+        winner all happen in one transaction, so no contender can observe or
+        overwrite a half-initialised claim.
         """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._ensure_backlog()
         with self._counter_lock:
             self._contenders += 1
             position = self._contenders - 1
-        claimed = claim_next_entry(self._path, claimer_id=claimer, filter=ClaimFilter())
-        if claimed is not None and claimed.id == self._cache_key:
-            return ClaimOutcome(won=True, claimer=claimer, claim_position=0, winner=claimer)
-        winner = self._current_winner()
+        with backlog_transaction(self._path) as backlog:
+            entry = self._row(backlog)
+            created = entry is None
+            if entry is None:
+                entry = BacklogEntry(id=self._cache_key)
+                backlog.entries.append(entry)
+            # The claim predicate is the backlog's own, scoped to this key's row
+            # so a shared backlog directory can never hand the arbiter a foreign
+            # row to claim.
+            if ClaimFilter().allows(entry):
+                entry.claim(claimer)
+                backlog.save()
+                return ClaimOutcome(won=True, claimer=claimer, claim_position=0, winner=claimer)
+            if created:
+                backlog.save()
+            winner = entry.claimer or ""
         return ClaimOutcome(
             won=False,
             claimer=claimer,
@@ -245,32 +308,41 @@ class CacheKeyArbiter:
             winner=winner,
         )
 
-    def _current_winner(self) -> str:
-        backlog = Backlog.load(self._path)
-        for entry in backlog.entries:
-            if entry.id == self._cache_key and entry.claimer is not None:
+    def current_winner(self) -> str:
+        """Return the claimer currently holding this key, or ``""`` when free.
+
+        Read under the claim lock, so the answer is consistent with the claim
+        state rather than a snapshot taken mid-transaction.
+        """
+        with backlog_transaction(self._path) as backlog:
+            entry = self._row(backlog)
+            if entry is not None and entry.claimer is not None:
                 return entry.claimer
         return ""
 
     def release(self) -> None:
         """Release the claim so the next contender can win (winner failed).
 
-        Re-opens the backlog row to ``open`` and clears the claimer, mirroring a
-        deterministic claim release: the successor's next :meth:`contend` wins.
+        Re-opens the backlog row to ``open`` and clears the claimer inside the
+        claim lock, mirroring a deterministic claim release: the successor's
+        next :meth:`contend` wins. Holding the lock across the load and the save
+        means a release can never clobber a claim granted in between.
         """
-        backlog = Backlog.load(self._path)
-        for entry in backlog.entries:
-            if entry.id == self._cache_key:
-                entry.status = "open"
-                entry.claimer = None
-                entry.claimed_at = None
-        backlog.save()
+        with backlog_transaction(self._path) as backlog:
+            entry = self._row(backlog)
+            if entry is None or (entry.claimer is None and entry.status == _OPEN_STATUS):
+                return
+            entry.status = _OPEN_STATUS
+            entry.claimer = None
+            entry.claimed_at = None
+            backlog.save()
 
 
 __all__ = [
     "CacheKeyArbiter",
     "ClaimOutcome",
     "DuplicateOfReceipt",
+    "arbiter_backlog_path",
     "mint_duplicate_receipt",
     "verify_duplicate_receipt",
 ]

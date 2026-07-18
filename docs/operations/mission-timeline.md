@@ -24,6 +24,28 @@ The web UI route `Missions` renders the deterministic mission projection:
   tampered entry) or a referenced evidence bundle no longer matches the hash its
   receipt bound, the screen switches to an explicit unverified banner instead of
   best-effort rendering.
+- **Gate binding.** A phase renders `passed` only when its receipt binds the
+  exact gate the phase declares: a passing verdict, precisely the gate's task
+  ids, one bundle hash per task id, and bundles that still hash as recorded. A
+  receipt that verifies unrelated evidence, or binds none of the gate's tasks,
+  renders `unverified`. A phase must declare at least one gate task: a gateless
+  phase would satisfy every one of those checks vacuously, so it is refused
+  when the mission is defined rather than allowed to project as a pass that
+  bound no evidence.
+- **Tampered is never reported as missing.** The declared mission id lives in a
+  ledger row that no hash has checked, so it cannot by itself justify a
+  not-found. Only a chain that verifies may answer "no such mission"; a torn
+  chain always renders the unverified banner, and a ledger declaring more than
+  one mission renders `unverified` too, since that is an ambiguity rather than
+  an absence. The CLI applies the identical rule, so the two surfaces agree on
+  every shape.
+- **Halts and phase isolation.** Budget envelopes are per-phase, so exhausting
+  one phase's envelope never gates dispatch for another. The *projection* is
+  currently coarser than that: any halted phase reports the whole mission as
+  `halted` and can still be named as the active phase. Aligning the projection
+  with the dispatch-level isolation changes `mission_status_hash` for every
+  ledger carrying a halt, so it ships with a `schema_version` bump in a minor
+  release rather than a patch.
 
 The read-only projection routes back this screen:
 

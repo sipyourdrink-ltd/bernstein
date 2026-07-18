@@ -870,13 +870,20 @@ class AuditChainStore:
         actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        include_archived: bool = False,
     ) -> list[AuditEvent]:
-        """Delegate to the underlying :class:`AuditLog`."""
+        """Delegate to the underlying :class:`AuditLog`.
+
+        ``include_archived`` also replays archived ``*.jsonl.gz`` segments, so
+        a caller reasoning about linkage across the retention boundary sees
+        the same events :meth:`verify` does.
+        """
         return self._log.query(
             event_type=event_type,
             actor=actor,
             since=since,
             until=until,
+            include_archived=include_archived,
         )
 
     def verify(self) -> tuple[bool, list[str]]:

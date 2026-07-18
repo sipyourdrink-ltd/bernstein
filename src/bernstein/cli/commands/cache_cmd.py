@@ -16,12 +16,12 @@ from bernstein.core.persistence.action_cache import (
     open_cache,
 )
 from bernstein.core.persistence.cache_eviction import (
-    cache_dir,
     open_ledger,
     open_tombstones,
+    recall_report_path,
     write_recall_report,
 )
-from bernstein.core.persistence.cache_policy import CachePolicy
+from bernstein.core.persistence.cache_policy import CachePolicy, UnsafeCacheKeyError
 from bernstein.core.semantic_cache import ResponseCacheManager, SemanticCacheEntry
 
 
@@ -188,12 +188,22 @@ def evict_cache_key(key: str, reason: str, workdir: Path, as_json: bool) -> None
     audit-chain event, and writes a recall report under
     ``.sdd/caching/policy/``. A tombstoned key can never serve again, even when
     its drift verdict is fresh.
+
+    KEY must be a single cache key, not a path: a value that would address a
+    file outside ``.sdd/caching/policy/`` is refused before anything is written.
     """
     root = workdir.resolve()
-    ledger = open_ledger(root)
-    recall = open_tombstones(root).evict(key, reason, ledger=ledger, ts=int(time.time()))
+    # Resolve the report path first: an unsafe key is refused before the
+    # tombstone journal, the audit chain, or the filesystem is touched.
+    try:
+        report_path = recall_report_path(root, key)
+    except UnsafeCacheKeyError as exc:
+        console.print(f"[red]Refusing to evict: {exc}[/red]")
+        raise SystemExit(2) from exc
 
-    report_path = cache_dir(root) / f"recall-{key[:16]}.json"
+    ledger = open_ledger(root)
+    tombstones = open_tombstones(root)
+    recall = tombstones.evict(key, reason, ledger=ledger, ts=int(time.time()))
     write_recall_report(report_path, recall)
 
     # Chain-attest the eviction. Best-effort: a missing audit key must not fail
