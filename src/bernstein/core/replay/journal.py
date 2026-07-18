@@ -97,6 +97,36 @@ def _validated_run_id(run_id: str) -> str:
     return run_id
 
 
+def run_journal_path(sdd_dir: Path, run_id: str) -> Path:
+    """Return the run's journal path, contained under ``<sdd>/runs``.
+
+    Every reader of a run journal must derive its path here rather than
+    rebuilding ``<sdd>/runs/<run_id>/journal.jsonl`` by hand, so that a
+    crafted run id cannot address a journal outside the runs root and a
+    symlinked run directory cannot redirect the read. This is the run-level
+    twin of ``checkpoint_retry.task_journal_path``.
+
+    ``verify_journal`` is not a substitute: it is an unkeyed Merkle
+    recompute, so a journal planted outside the tree verifies cleanly.
+
+    Args:
+        sdd_dir: The project ``.sdd`` directory.
+        run_id: The run whose journal to locate.
+
+    Returns:
+        The containment-checked journal path.
+
+    Raises:
+        JournalPathError: The run id is not a safe path segment, or the
+            resolved journal escapes the runs root.
+    """
+    safe_run_id = _validated_run_id(run_id)
+    try:
+        return contained_path(sdd_dir / "runs", safe_run_id, JOURNAL_FILENAME, label="run id")
+    except PathContainmentError as exc:
+        raise JournalPathError(f"run_id escapes the journal runs root: {run_id!r}") from exc
+
+
 def _payload_hash(event_type: str, payload: dict[str, Any]) -> str:
     """Return the SHA-256 of the canonical, timing-excluded payload.
 
@@ -171,17 +201,13 @@ class EventJournal:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
         # Path-injection barrier (py/path-injection). A run_id names one journal
-        # directory and must be a single safe path segment, so it goes through
-        # the allowlist first and the runs-root containment check second. The
-        # journal path is the value ``contained_path`` returns -- the normalised,
-        # containment-checked path -- never the raw join, so every filesystem
-        # sink below is built from a location proven to sit under the runs root
-        # even when the run directory is a symlink pointing elsewhere.
-        safe_run_id = _validated_run_id(run_id)
-        try:
-            self._path = contained_path(self._runs_root, safe_run_id, JOURNAL_FILENAME, label="run id")
-        except PathContainmentError as exc:
-            raise JournalPathError(f"run_id escapes the journal runs root: {run_id!r}") from exc
+        # directory and must be a single safe path segment. The writer shares
+        # ``run_journal_path`` with every run-journal reader, so there is one
+        # definition of where a run journal lives and one barrier guarding it:
+        # the path is the normalised, containment-checked value, never the raw
+        # join, so every filesystem sink below is built from a location proven
+        # to sit under the runs root even when the run directory is a symlink.
+        self._path = run_journal_path(sdd_dir, run_id)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0

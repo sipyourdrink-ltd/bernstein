@@ -31,7 +31,10 @@ from bernstein.core.persistence.work_ledger import (
 )
 from bernstein.core.replay.journal import EventJournal, JournalPathError
 from bernstein.core.security.path_containment import (
+    MAX_PATH_BYTES,
+    MAX_SEGMENT_BYTES,
     PathContainmentError,
+    PathTooLongError,
     contained_path,
     validate_path_segment,
 )
@@ -79,23 +82,52 @@ def test_validate_path_segment_refuses_unsafe_ids(bad_id: str) -> None:
         validate_path_segment(bad_id, label="run id")
 
 
-@pytest.mark.parametrize(
-    "good_id",
-    ["run-1", "run_1", "task-T.1", "a", "fleet", "A" * 255, f"task-{'T' * 256}"],
-)
+@pytest.mark.parametrize("good_id", ["run-1", "run_1", "task-T.1", "a", "fleet", "A" * 255])
 def test_validate_path_segment_accepts_ordinary_ids(good_id: str) -> None:
-    """A plain identifier passes through unchanged.
-
-    The last case is a task run id derived from the longest task id
-    ``_TASK_ID_RE`` accepts; the segment bound must stay clear of it.
-    """
+    """A plain identifier passes through unchanged."""
     assert validate_path_segment(good_id) == good_id
 
 
-def test_validate_path_segment_refuses_absurdly_long_id() -> None:
-    """The sanity bound still rejects a segment nothing legitimate produces."""
+def test_validate_path_segment_refuses_segment_over_name_max() -> None:
+    """A component past NAME_MAX is a typed error, never an OSError.
+
+    Without this the filesystem raises ``OSError(ENAMETOOLONG)`` at open(),
+    which escapes the ``ValueError`` hierarchy every caller guards on and
+    turns a rejected identifier into a crash. Linux raises; macOS returns
+    False from ``is_file()``, so only the bound makes this deterministic
+    across platforms.
+    """
+    with pytest.raises(PathTooLongError):
+        validate_path_segment("A" * (MAX_SEGMENT_BYTES + 1))
+
+
+def test_segment_length_is_measured_in_bytes_not_characters() -> None:
+    """NAME_MAX is a byte limit, so a multi-byte name must not slip past.
+
+    The alphabet rejects non-ASCII anyway, so this pins the bound itself
+    rather than relying on the allowlist to be the only gate.
+    """
+    from bernstein.core.security.path_containment import MAX_SEGMENT_BYTES as limit
+
+    two_byte = "é"  # one char, two bytes encoded
+    assert len(two_byte) < len(two_byte.encode("utf-8"))
     with pytest.raises(PathContainmentError):
-        validate_path_segment("A" * 513)
+        validate_path_segment(two_byte * limit)
+
+
+def test_contained_path_refuses_path_over_path_max(tmp_path: Path) -> None:
+    """A legal-length segment under a deep base can still exceed PATH_MAX."""
+    deep = tmp_path
+    while len(str(deep).encode()) < MAX_PATH_BYTES:
+        deep = deep / ("d" * 200)
+    with pytest.raises(PathTooLongError):
+        contained_path(deep, "run-1")
+
+
+def test_path_too_long_is_a_containment_error_and_value_error() -> None:
+    """The capacity error stays inside the documented exception hierarchy."""
+    assert issubclass(PathTooLongError, PathContainmentError)
+    assert issubclass(PathTooLongError, ValueError)
 
 
 def test_contained_path_joins_under_base(tmp_path: Path) -> None:
@@ -401,6 +433,76 @@ def test_validated_canonical_lines_round_trips(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Run-journal readers (the run-level twin of the task-journal family)
+# ---------------------------------------------------------------------------
+
+
+def _plant_journal_outside_runs_root(tmp_path: Path) -> tuple[Path, str]:
+    """Build a verifying journal outside ``<sdd>/runs`` and return a hop to it.
+
+    The returned id is a relative traversal, the shape an operator can pass
+    on the CLI. The planted chain is written by the real writer, so
+    ``verify_journal`` recomputes it cleanly: only containment tells it
+    apart from one of ours.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    (sdd_dir / "runs").mkdir(parents=True)
+    other = tmp_path / "other_sdd"
+    other.mkdir()
+    planted = EventJournal("legit", other)
+    planted.record("activity.result", stage="s1")
+    return sdd_dir, "../../other_sdd/runs/legit"
+
+
+def test_run_journal_path_refuses_traversal(tmp_path: Path) -> None:
+    """The shared run-journal helper refuses a traversal id."""
+    from bernstein.core.replay.journal import JournalPathError, run_journal_path
+
+    sdd_dir, hostile = _plant_journal_outside_runs_root(tmp_path)
+    with pytest.raises(JournalPathError):
+        run_journal_path(sdd_dir, hostile)
+
+
+def test_verify_run_activities_refuses_traversal_run_id(tmp_path: Path) -> None:
+    """The activity verifier must not verify a journal outside the tree.
+
+    Before routing, this returned ``found=True chain_ok=True`` for a journal
+    read entirely outside the runs root, while ``EventJournal`` refused the
+    byte-identical id.
+    """
+    from bernstein.core.orchestration.activity_modalities import verify_run_activities
+
+    sdd_dir, hostile = _plant_journal_outside_runs_root(tmp_path)
+    result = verify_run_activities(sdd_dir, run_id=hostile)
+    assert result.found is False
+    assert result.ok is False
+
+
+def test_fork_run_refuses_traversal_run_id(tmp_path: Path) -> None:
+    """Forking cannot seed a child run from a journal outside the tree.
+
+    Matched on the containment branch specifically: an unrouted ``fork_run``
+    also raises ``ForkError`` here, but only after reading the outside
+    journal and failing to find a snapshot in it. A bare ``raises`` would
+    pass either way and prove nothing.
+    """
+    from bernstein.core.replay.fork import ForkError, fork_run
+
+    sdd_dir, hostile = _plant_journal_outside_runs_root(tmp_path)
+    with pytest.raises(ForkError, match="cannot fork run"):
+        fork_run(sdd_dir, hostile, from_step=0, repo_root=tmp_path)
+
+
+def test_event_journal_still_refuses_the_same_id(tmp_path: Path) -> None:
+    """The writer and the readers now agree on what a run id may name."""
+    from bernstein.core.replay.journal import JournalPathError
+
+    sdd_dir, hostile = _plant_journal_outside_runs_root(tmp_path)
+    with pytest.raises(JournalPathError):
+        EventJournal(hostile, sdd_dir)
+
+
+# ---------------------------------------------------------------------------
 # Allowlist edge cases
 # ---------------------------------------------------------------------------
 
@@ -419,9 +521,10 @@ def test_validate_path_segment_refuses_trailing_newline(bad_id: str) -> None:
 def test_long_task_id_reads_empty_rather_than_raising(tmp_path: Path) -> None:
     """An id the module's own validator blesses must not blow up a read.
 
-    ``_TASK_ID_RE`` accepts 256 characters, and ``task_run_id`` prefixes
-    ``task-``. The segment bound must stay clear of that, so the read
-    degrades to "no journal" exactly as it did before the barrier.
+    ``_TASK_ID_RE`` accepts 256 characters and ``task_run_id`` prefixes
+    ``task-``, so the derived component exceeds NAME_MAX. That is a capacity
+    failure, not an attack: the read degrades to "no journal" exactly as a
+    missing file would, instead of raising ENAMETOOLONG out of the barrier.
     """
     from bernstein.core.evidence.run_artifacts import _validate_ids, read_artifact_rows
 
@@ -431,6 +534,41 @@ def test_long_task_id_reads_empty_rather_than_raising(tmp_path: Path) -> None:
     _validate_ids(task_id, "k")
 
     assert read_artifact_rows(sdd_dir, task_id) == []
+
+
+def test_long_task_id_degrades_across_the_routed_readers(tmp_path: Path) -> None:
+    """No routed reader turns an over-long id into a crash."""
+    from bernstein.core.replay import progress
+    from bernstein.core.tasks import checkpoint_retry
+
+    sdd_dir = tmp_path / ".sdd"
+    (sdd_dir / "runs").mkdir(parents=True)
+    task_id = "T" * 256
+
+    assert progress._load_task_journal_rows(sdd_dir, task_id) == []
+    assert checkpoint_retry.latest_checkpoint(sdd_dir, task_id) is None
+
+
+def test_containment_failure_is_never_swallowed_as_too_long(tmp_path: Path) -> None:
+    """Readers degrade on capacity, never on a containment violation.
+
+    The two failure modes share a base class, so this pins that the readers
+    catch only the narrow one - a symlink escape must still surface.
+    """
+    from bernstein.core.evidence.run_artifacts import read_artifact_rows
+    from bernstein.core.replay import progress
+    from bernstein.core.tasks import checkpoint_retry
+
+    sdd_dir, _ = _plant_symlinked_task_journal(tmp_path)
+
+    for call in (
+        lambda: read_artifact_rows(sdd_dir, "T-1"),
+        lambda: progress._load_task_journal_rows(sdd_dir, "T-1"),
+        lambda: checkpoint_retry.latest_checkpoint(sdd_dir, "T-1"),
+    ):
+        with pytest.raises(PathContainmentError) as caught:
+            call()
+        assert not isinstance(caught.value, PathTooLongError)
 
 
 def test_no_stray_writes_outside_base(tmp_path: Path) -> None:
