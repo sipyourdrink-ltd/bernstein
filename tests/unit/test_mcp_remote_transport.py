@@ -508,6 +508,10 @@ class TestClearTextCORSOrigins:
             "https://app.example.com:443",
             # TLS is accepted regardless of how far off-box the host is.
             "https://[2001:db8::1]:8053",
+            "wss://example.com",
+            # Non-URL CORS tokens carry no scheme and are left alone.
+            "*",
+            "null",
         ],
     )
     def test_loopback_plaintext_and_tls_origins_are_accepted(
@@ -533,6 +537,14 @@ class TestClearTextCORSOrigins:
             "http://[2001:db8::1]",
             # ::1 is loopback, ::2 is not; the whole literal has to match.
             "http://[::2]:*",
+            # Malformed authorities that hand-rolled bracket stripping used to
+            # collapse to a bare "::1" and admit as loopback.
+            "http://[::1]evil.test",
+            "http://[::1]@evil.test",
+            "http://[::1",
+            # Other clear-text schemes are held to the same loopback rule.
+            "ws://evil.test",
+            "ftp://evil.test",
         ],
     )
     def test_non_loopback_plaintext_origin_is_refused(

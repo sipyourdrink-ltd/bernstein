@@ -23,6 +23,7 @@ import os
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -66,6 +67,12 @@ _TOKEN_ENV_VARS = ("BERNSTEIN_MCP_TOKEN", "BERNSTEIN_MCP_AUTH_TOKEN")
 # is loopback-pinned (see ``RemoteMCPConfig.__post_init__``).
 _PLAINTEXT_SCHEME = "http"
 
+# Every scheme that carries traffic without TLS. `ws` and `ftp` are not valid
+# browser origins, but enumerating them keeps the enforced policy identical to
+# the documented one: clear-text is loopback-only, everything else is TLS.
+# Non-URL CORS tokens such as `*` and `null` have no scheme and are untouched.
+_CLEAR_TEXT_SCHEMES = frozenset({_PLAINTEXT_SCHEME, "ws", "ftp"})
+
 # Default browser origin. Clear-text is acceptable here only because the origin
 # is pinned to a loopback host, so the traffic never leaves the machine; every
 # non-loopback origin is required to be TLS.
@@ -94,27 +101,42 @@ def _is_localhost(host: str) -> bool:
     return host in _LOCALHOST_HOSTS
 
 
-def _origin_host(origin: str) -> str:
-    """Return the host of a CORS ``origin``, without scheme, port or path.
+def _origin_host(origin: str) -> str | None:
+    """Return the host of a CORS ``origin``, or ``None`` if it does not parse.
 
-    Tolerates the ``host:*`` port glob the server accepts and bracketed IPv6
-    literals (``http://[::1]:*``).
+    Delegates to :func:`urllib.parse.urlsplit` so bracketed IPv6 literals are
+    unwrapped by the stdlib instead of by hand. Hand-rolled bracket stripping
+    silently accepted malformed authorities: ``http://[::1]evil.test`` and
+    ``http://[::1]@evil.test`` both collapsed to ``::1`` and were admitted as
+    loopback. ``urlsplit`` raises on those, so they are refused.
+
+    ``hostname`` never parses the port, so the ``host:*`` port glob the server
+    accepts survives, and the host comes back already lower-cased. Userinfo is
+    refused outright: a browser ``Origin`` never carries it, so its presence
+    means the value is not an origin.
     """
-    _, _, remainder = origin.partition("://")
-    authority = remainder.split("/", 1)[0]
-    if authority.startswith("["):
-        closing = authority.find("]")
-        return authority[1:closing] if closing != -1 else authority[1:]
-    host, sep, _port = authority.rpartition(":")
-    return host if sep else authority
+    try:
+        parts = urlsplit(origin)
+        if "@" in parts.netloc:
+            return None
+        return parts.hostname
+    except ValueError:
+        return None
 
 
 def _is_plaintext_non_loopback_origin(origin: str) -> bool:
-    """Return True if ``origin`` is clear-text and not pinned to loopback."""
-    if not origin.lower().startswith(f"{_PLAINTEXT_SCHEME}://"):
+    """Return True if ``origin`` is clear-text and not pinned to loopback.
+
+    Every clear-text scheme is covered, not just ``http``, so the policy the
+    docs state holds for anything that would put a bearer token on the wire.
+    An origin that does not parse is not provably loopback, so it is refused.
+    """
+    # Scheme is case-insensitive per RFC 3986.
+    scheme, sep, _rest = origin.partition("://")
+    if not sep or scheme.lower() not in _CLEAR_TEXT_SCHEMES:
         return False
-    # Scheme and host are case-insensitive per RFC 3986.
-    return not _is_localhost(_origin_host(origin).lower())
+    host = _origin_host(origin)
+    return host is None or not _is_localhost(host)
 
 
 def _constant_time_eq(left: str, right: str) -> bool:
