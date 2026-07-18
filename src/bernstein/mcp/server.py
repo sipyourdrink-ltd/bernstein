@@ -76,6 +76,18 @@ FuncMetadata.convert_result = _patched_convert_result
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 
+# Self-description advertised to MCP clients on connect.
+_SERVER_INSTRUCTIONS = (
+    "Bernstein: deterministic, verifiable orchestration for CLI coding agents - "
+    "reproducible parallel runs, signed audit trail, air-gap friendly. "
+    "Dispatches goals across 40+ CLI agent adapters (Claude Code, Codex, "
+    "Gemini CLI, and more), each task in its own git worktree behind "
+    "lint/type/test gates. Scheduling is plain Python with no LLM in the "
+    "coordination loop, so runs replay byte-identically. An always-on lineage "
+    "spine and replay journal record every run; an opt-in HMAC-chained audit "
+    "log adds receipts that verify offline."
+)
+
 # Timeout for all httpx calls to the task server (seconds).
 _HTTP_TIMEOUT = 5.0
 
@@ -1219,7 +1231,7 @@ def create_mcp_server(
     from bernstein.mcp.prompts import register_prompt_resources
 
     active_tier = resolve_active_tier(tier)
-    mcp: FastMCP[None] = FastMCP(name)
+    mcp: FastMCP[None] = FastMCP(name, instructions=_SERVER_INSTRUCTIONS)
     register_capability_resource(mcp)
     register_prompt_resources(mcp)
     _register_health_tool(mcp)

@@ -23,7 +23,7 @@ use Bernstein. Skip to [README.md](https://github.com/sipyourdrink-ltd/bernstein
 These are non-negotiable. If your change fails any of them, revert and
 re-cut.
 
-1. **No invented stats.** Every numeric claim ("43 adapters", "296 stars")
+1. **No invented stats.** Every numeric claim ("40+ adapters", "296 stars")
    must trace to a checked source: a count computed from the codebase at
    PR time, the GitHub API at PR time, or a primary-source paper. State
    the date inline so the reader can refresh.

@@ -1,10 +1,10 @@
 ---
-title: Bernstein - Open-Source Multi-Agent Orchestration Platform
+title: Bernstein - Deterministic, Verifiable Orchestration for CLI Coding Agents
 description: >-
-  Bernstein is the open-source multi-agent orchestrator for AI coding agents.
-  Run Claude Code, Codex, Gemini CLI, and the OpenAI Agents SDK in parallel.
-  Deterministic scheduling, 40+ adapters, pluggable sandbox backends,
-  cloud artifact storage, progressive skills, zero vendor lock-in.
+  Deterministic, verifiable orchestration for CLI coding agents - reproducible
+  parallel runs, signed audit trail, air-gap friendly. Run Claude Code, Codex,
+  Gemini CLI, and 40+ more behind one orchestration surface, with plain-Python
+  scheduling, per-task git worktrees, and zero vendor lock-in.
 tags:
   - orchestration
   - multi-agent
@@ -15,7 +15,7 @@ search:
 
 # Bernstein
 
-**Orchestrate any AI coding agent. Any model. One command.**
+**Reproducible multi-agent runs. Verifiable results. Any CLI coding agent.**
 
 <figure markdown>
   ![Bernstein in action - parallel AI agents orchestrated in real time](assets/in-action-small.gif){ loading=lazy width="700" }
@@ -27,6 +27,8 @@ search:
 Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history.
 
 No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
+
+Results stay checkable after the run ends: an always-on lineage spine and replay journal record what happened, and an opt-in HMAC-chained audit log (`--audit`) adds receipts you can verify offline.
 
 ## Install
 
@@ -71,6 +73,13 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
     Pure Python orchestration - zero LLM tokens on coordination.
     Every decision is auditable code, not a model response.
+
+- :material-check-decagram:{ .lg .middle } **Verifiable results**
+
+    ---
+
+    An always-on lineage spine and replay journal record every run.
+    Add `--audit` for an HMAC-chained audit log and receipts you can verify offline.
 
 - :material-swap-horizontal:{ .lg .middle } **Any agent, any model**
 

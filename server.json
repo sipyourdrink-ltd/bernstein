@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sipyourdrink-ltd/bernstein",
-  "description": "Multi-agent orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, +40 more).",
+  "description": "Deterministic, verifiable orchestration for CLI coding agents - reproducible parallel runs, signed audit trail, air-gap friendly. 40+ adapters (Claude Code, Codex, Gemini CLI, and more).",
   "repository": {
     "url": "https://github.com/sipyourdrink-ltd/bernstein",
     "source": "github"
