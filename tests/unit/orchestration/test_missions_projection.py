@@ -332,8 +332,10 @@ def test_status_hash_is_pinned_for_a_canonical_ledger(tmp_path: Path) -> None:
 
 
 #: Pinned mission status hash for the canonical two-phase fixture. Anchors the
-#: cross-host determinism guarantee in CI.
-_PINNED_STATUS_HASH = "bb00506ccf411e5a329514bcc32cd0299d472396cc2dc405d56438bc435ac839"
+#: cross-host determinism guarantee in CI. Regenerated for
+#: MISSION_STATUS_SCHEMA_VERSION 2 (phase isolation for halts); the v1 value was
+#: bb00506ccf411e5a329514bcc32cd0299d472396cc2dc405d56438bc435ac839.
+_PINNED_STATUS_HASH = "ea1d74c86cba9d74bd27f1eba7b19de1e74e4441a94ce3c8081afa6ad929e846"
 
 
 # ---------------------------------------------------------------------------
@@ -813,8 +815,14 @@ def test_spec_rejects_unsupported_schema_version() -> None:
 
 
 def test_spec_from_dict_rejects_non_string_scalars() -> None:
-    """#2652: malformed scalars are refused rather than str()-coerced."""
-    with pytest.raises(MissionSpecError):
+    """#2652: malformed scalars are refused rather than str()-coerced.
+
+    The ``match`` is load-bearing. Without it the old ``str(...)`` coercion
+    also raises MissionSpecError -- it stringifies the dict and the result
+    fails the pre-existing mission_id regex -- so the test would pass against
+    unfixed code and prove nothing about the typed boundary.
+    """
+    with pytest.raises(MissionSpecError, match="must be a string"):
         MissionSpec.from_dict({**_spec().to_dict(), "mission_id": {"nested": "object"}})
 
 
@@ -901,3 +909,137 @@ def test_halt_phase_refuses_non_finite_spend(tmp_path: Path) -> None:
     with pytest.raises(MissionSpecError, match="spend"):
         halt_phase(ledger=ledger, spec=spec, phase_id="p1", spend_usd=float("nan"), reason="x")
     ledger.close()
+
+
+# ---------------------------------------------------------------------------
+# Review hardening (#2680) -- the receipt hash must survive persistence
+# ---------------------------------------------------------------------------
+
+
+def _pass_with(tmp_path: Path, *, spend: float, envelope: str) -> str:
+    """Seal an honest pass receipt and return the projected phase state."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = MissionSpec(
+        mission_id="m-1",
+        goal="g",
+        phases=(PhaseSpec(phase_id="p1", name="prep", gate=("task-a",), envelope=envelope, budget_usd=40.0),),
+    )
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    _seal_evidence(tmp_path, "task-a")
+    enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p1")
+    ev = gather_evidence_hashes(tmp_path, ("task-a",))
+    pass_phase(ledger=ledger, spec=spec, phase_id="p1", evidence_hashes=ev, spend_usd=spend)
+    ledger.close()
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    return project_mission(entries, ev).phases[0].state
+
+
+def test_negative_zero_spend_still_projects_passed(tmp_path: Path) -> None:
+    """#2680: -0.0 is a legal zero spend and must not condemn an honest phase.
+
+    -0.0 passes the ``>= 0`` guard but is falsy, so a lossy ``or 0.0`` read
+    would reconstruct +0.0, break the receipt hash comparison, and leave the
+    phase unverified forever on an append-only chain.
+    """
+    assert _pass_with(tmp_path, spend=-0.0, envelope="env-p1") == PHASE_PASSED
+
+
+def test_zero_spend_still_projects_passed(tmp_path: Path) -> None:
+    """Control for the -0.0 case: ordinary zero spend is unaffected."""
+    assert _pass_with(tmp_path, spend=0.0, envelope="env-p1") == PHASE_PASSED
+
+
+def test_negative_zero_spend_is_normalised_before_sealing(tmp_path: Path) -> None:
+    """#2680: -0.0 never reaches the chain, so no receipt binds the -0.0 token."""
+    import json as _json
+
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    _seal_evidence(tmp_path, "task-a")
+    ev = gather_evidence_hashes(tmp_path, ("task-a",))
+    receipt = pass_phase(ledger=ledger, spec=spec, phase_id="p1", evidence_hashes=ev, spend_usd=-0.0)
+    ledger.close()
+    assert _json.dumps(receipt.spend_usd) == "0.0"
+    bucket = (mission_ledger_dir(sdd_dir, spec.mission_id) / "000000.jsonl").read_text(encoding="utf-8")
+    assert "-0.0" not in bucket
+
+
+def test_redacted_envelope_still_projects_passed(tmp_path: Path) -> None:
+    """#2680: the ledger redacts payload strings before hashing.
+
+    A spec-legal envelope carrying a home path is rewritten on the write path,
+    so a receipt hash taken over the unredacted binding would disagree with
+    every recomputation and strand an honest phase as unverified.
+    """
+    import os
+
+    home = os.environ.get("HOME", "/tmp")
+    assert _pass_with(tmp_path, spend=3.0, envelope=f"{home}/envelopes/p1") == PHASE_PASSED
+
+
+def test_secret_bearing_envelope_still_projects_passed(tmp_path: Path) -> None:
+    """#2680: a redacted key=value envelope must not strand an honest phase."""
+    assert _pass_with(tmp_path, spend=3.0, envelope="api_key=supersecretvalue123456") == PHASE_PASSED
+
+
+def test_receipt_hash_matches_the_persisted_payload(tmp_path: Path) -> None:
+    """#2680: the sealed hash is recomputable from the bytes on disk."""
+    import os
+
+    from bernstein.core.orchestration.missions import _canonical_bytes, _sha256_hex
+
+    sdd_dir = tmp_path / ".sdd"
+    home = os.environ.get("HOME", "/tmp")
+    spec = MissionSpec(
+        mission_id="m-1",
+        goal="g",
+        phases=(PhaseSpec(phase_id="p1", name="prep", gate=("task-a",), envelope=f"{home}/env/p1", budget_usd=40.0),),
+    )
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    _seal_evidence(tmp_path, "task-a")
+    ev = gather_evidence_hashes(tmp_path, ("task-a",))
+    pass_phase(ledger=ledger, spec=spec, phase_id="p1", evidence_hashes=ev, spend_usd=3.0)
+    ledger.close()
+
+    entry = next(
+        e
+        for e in LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries()
+        if e.kind == KIND_MISSION_PHASE_PASSED
+    )
+    stored = entry.payload["receipt_hash"]
+    binding = {k: v for k, v in entry.payload.items() if k != "receipt_hash"}
+    assert stored == _sha256_hex(_canonical_bytes(binding))
+
+
+# ---------------------------------------------------------------------------
+# Review hardening (#2680) -- projection rule changes are versioned
+# ---------------------------------------------------------------------------
+
+
+def test_status_schema_version_is_2_for_phase_isolation() -> None:
+    """#2680: the halt-isolation rules moved the hash, so the version moved.
+
+    Without the bump a verifier holding a pre-upgrade digest cannot tell
+    "folded under different projection rules" from "tampered with", which is
+    the one distinction this field exists to make.
+    """
+    from bernstein.core.orchestration.missions import MISSION_STATUS_SCHEMA_VERSION
+
+    assert MISSION_STATUS_SCHEMA_VERSION == 2
+
+
+def test_halted_mission_status_declares_the_projection_version(tmp_path: Path) -> None:
+    """#2680: the version travels inside the hashed canonical status."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    halt_phase(ledger=ledger, spec=spec, phase_id="p1", spend_usd=40.0, reason="envelope_exhausted")
+    ledger.close()
+
+    status = project_mission(list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries()), {})
+    assert status.schema_version == 2
+    assert status.to_dict()["schema_version"] == 2

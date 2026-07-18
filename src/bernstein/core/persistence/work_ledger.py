@@ -233,6 +233,19 @@ def _redact_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     return cleaned, count
 
 
+def redact_ledger_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return *payload* as :meth:`WorkLedger.append` will persist it.
+
+    Redaction runs before hashing on the write path, so a payload that binds
+    its own content hash must hash the redacted form or the persisted hash will
+    disagree with anything a reader recomputes. Redaction is idempotent, so a
+    payload already passed through here survives :meth:`WorkLedger.append`
+    unchanged.
+    """
+    cleaned, _ = _redact_payload(payload)
+    return cleaned
+
+
 # ---------------------------------------------------------------------------
 # Dataclass: one entry in the ledger
 # ---------------------------------------------------------------------------
@@ -992,6 +1005,7 @@ __all__ = [
     "compare_chains",
     "compute_entry_hash",
     "default_ledger_root",
+    "redact_ledger_payload",
     "replay_state",
     "run_ledger_dir",
     "validated_canonical_lines",

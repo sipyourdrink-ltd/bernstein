@@ -156,6 +156,13 @@ def _require_mission(workdir: Path | None, mission_id: str) -> None:
     ``mission.defined`` transition naming the requested id; anything else is
     not this mission, and reporting it as verified would let ``verify`` bless a
     directory that carries no mission at all.
+
+    :meth:`LedgerReader.entries` yields any parseable row without checking a
+    single hash, so the mission id read here is an unverified claim. When the
+    claim does not match, the chain is verified before a verdict is returned:
+    a torn chain is a tamper (:data:`EXIT_VERIFY_FAILED`), not a benign
+    not-found, and must not be downgraded to one. The chain walk runs only on
+    the failure path, so a healthy mission pays nothing for it.
     """
     ledger_dir = mission_ledger_dir(_sdd_dir(workdir), mission_id)
     reader = LedgerReader(ledger_dir)
@@ -164,16 +171,24 @@ def _require_mission(workdir: Path | None, mission_id: str) -> None:
         raise SystemExit(EXIT_NO_MISSION)
 
     defined = [entry for entry in reader.entries() if entry.kind == KIND_MISSION_DEFINED]
+    if len(defined) == 1 and str(defined[0].payload.get("mission_id", "")) == mission_id:
+        return
+
+    if not reader.verify().ok:
+        console.print(
+            f"[red]Mission verification failed for {mission_id!r}:[/red] the work-ledger chain at "
+            f"{ledger_dir} does not verify (a ledger entry was tampered with)"
+        )
+        raise SystemExit(EXIT_VERIFY_FAILED)
+
     if not defined:
         console.print(f"[red]Not a mission ledger:[/red] {ledger_dir} declares no mission")
-        raise SystemExit(EXIT_NO_MISSION)
-    if len(defined) > 1:
+    elif len(defined) > 1:
         console.print(f"[red]Not a mission ledger:[/red] {ledger_dir} declares {len(defined)} missions")
-        raise SystemExit(EXIT_NO_MISSION)
-    declared = str(defined[0].payload.get("mission_id", ""))
-    if declared != mission_id:
+    else:
+        declared = str(defined[0].payload.get("mission_id", ""))
         console.print(f"[red]Ledger at {ledger_dir} declares mission {declared!r}, not {mission_id!r}[/red]")
-        raise SystemExit(EXIT_NO_MISSION)
+    raise SystemExit(EXIT_NO_MISSION)
 
 
 def _render_status(proj: MissionProjection) -> None:
@@ -222,6 +237,7 @@ def mission_status_cmd(mission_id: str, workdir: Path | None, output_json: bool)
     Exit codes:
         0  status projected
         1  no ledger declaring this mission id
+        2  the ledger chain does not verify (tampered entry)
     """
     _require_mission(workdir, mission_id)
     projection = project_mission_from_ledger(
@@ -318,6 +334,7 @@ def mission_resume_cmd(mission_id: str, workdir: Path | None, output_json: bool)
     Exit codes:
         0  mission state rebuilt from the ledger
         1  no ledger declaring this mission id
+        2  the ledger chain does not verify (tampered entry)
     """
     _require_mission(workdir, mission_id)
     projection = project_mission_from_ledger(
@@ -413,6 +430,7 @@ def mission_digest_show_cmd(mission_id: str, fire_time: int, workdir: Path | Non
     Exit codes:
         0  digest computed
         1  no ledger declaring this mission id
+        2  the ledger chain does not verify (tampered entry)
     """
     from bernstein.core.orchestration.mission_digest import render_digest_message
 
@@ -459,6 +477,7 @@ def mission_digest_send_cmd(
     Exit codes:
         0  digest posted, or already delivered (idempotent no-op)
         1  no ledger declaring this mission id
+        2  the ledger chain does not verify (tampered entry)
     """
     import asyncio
 

@@ -1,10 +1,13 @@
 # Mission timeline and signed daily progress digests
 
 A **mission** is a multi-day goal decomposed into ordered phases, each with a
-verification gate and a budget envelope. Mission status is never stored: it is a
-pure deterministic projection over the mission's work-ledger chain plus the
-evidence bundles its phase receipts reference (see the
-[work ledger](work-ledger.md) and the review board's projection discipline).
+verification gate and its own budget envelope. The order fixes how phases are
+declared and reported, not a single-file execution lock: envelopes are
+per-phase, so one phase halting on an exhausted envelope leaves its siblings
+runnable. Mission status is never stored: it is a pure deterministic projection
+over the mission's work-ledger chain plus the evidence bundles its phase
+receipts reference (see the [work ledger](work-ledger.md) and the review
+board's projection discipline).
 
 Two surfaces render that projection so operators do not have to reverse-engineer
 overnight progress from task lists and logs.
@@ -34,7 +37,13 @@ The web UI route `Missions` renders the deterministic mission projection:
 - **Phase isolation.** Phases run under isolated envelopes, so a halted phase
   is terminal for itself alone. Sibling phases keep running, the reported
   active phase is the first one still runnable, and the mission reports
-  `halted` only once no phase remains runnable.
+  `halted` only once no phase remains runnable. These rules landed with
+  `schema_version` 2 of the status projection: a ledger carrying a halt beside
+  a runnable phase folds to a different `mission_status_hash` than it did under
+  version 1. The version travels inside the hashed status, so a verifier
+  holding a pre-upgrade digest can tell a rules change from a tampered chain.
+  Digests computed under version 1 do not re-verify against a version 2
+  projection of the same ledger; recompute them from the ledger.
 
 The read-only projection routes back this screen:
 

@@ -85,8 +85,15 @@ if TYPE_CHECKING:
 MISSION_SPEC_SCHEMA_VERSION = 1
 
 #: Mission status projection schema version. Bump on any change to the
-#: canonical status shape (the byte-identity witness across hosts).
-MISSION_STATUS_SCHEMA_VERSION = 1
+#: canonical status shape *or* to the rules that derive it -- both move
+#: :meth:`MissionStatus.status_hash`, and this field is how a verifier tells
+#: "folded under different projection rules" apart from "tampered with".
+#:
+#: v2: phase isolation for halts. ``active_phase`` skips halted phases and the
+#: mission reports halted only when no phase remains runnable, so an honest
+#: ledger carrying a halt beside a runnable phase folds to a different hash
+#: than it did under v1.
+MISSION_STATUS_SCHEMA_VERSION = 2
 
 #: Phase states the projection can assign, in lifecycle order.
 PHASE_PENDING = "pending"
@@ -398,11 +405,28 @@ class PhaseReceipt:
             "reason": self.reason,
         }
 
+    def _sealed_binding(self) -> dict[str, Any]:
+        """Return the binding in the exact form the ledger persists.
+
+        The ledger redacts every payload string before hashing and writing, so
+        a receipt that binds its own content hash must hash the redacted form.
+        Hashing the raw binding instead would make an honest receipt whose
+        envelope or task id the redactor rewrites (a ``$HOME`` path, a
+        ``key=value`` secret) disagree with itself on read back, and the phase
+        would project unverified forever on an append-only chain. Redaction is
+        idempotent, so a receipt reconstructed from a persisted payload seals
+        to the identical hash.
+        """
+        from bernstein.core.persistence.work_ledger import redact_ledger_payload
+
+        return redact_ledger_payload(self._binding())
+
     def receipt_hash(self) -> str:
-        return _sha256_hex(_canonical_bytes(self._binding()))
+        """Return the sealed identity: SHA-256 over the persisted binding."""
+        return _sha256_hex(_canonical_bytes(self._sealed_binding()))
 
     def to_payload(self) -> dict[str, Any]:
-        return self._binding() | {"receipt_hash": self.receipt_hash()}
+        return self._sealed_binding() | {"receipt_hash": self.receipt_hash()}
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +572,28 @@ class _PhaseAccum:
     halted: _SealedReceipt | None = None
 
 
+def _payload_float(payload: Mapping[str, Any], key: str) -> float:
+    """Read a float from a persisted payload without losing its value.
+
+    The obvious ``float(payload.get(key, 0.0) or 0.0)`` silently maps every
+    falsy number to ``+0.0``, and ``-0.0`` is falsy. Since the receipt hash is
+    recomputed from these values, that coercion would turn an honest ``-0.0``
+    spend into a permanent hash mismatch. This parse is value-preserving.
+    """
+    value = payload.get(key, 0.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def _payload_int(payload: Mapping[str, Any], key: str) -> int:
+    """Read an int from a persisted payload without losing its value."""
+    value = payload.get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
 def _receipt_from_payload(payload: Mapping[str, Any]) -> _SealedReceipt:
     task_ids = payload.get("evidence_task_ids", [])
     hashes = payload.get("evidence_bundle_hashes", [])
@@ -561,9 +607,9 @@ def _receipt_from_payload(payload: Mapping[str, Any]) -> _SealedReceipt:
         evidence_bundle_hashes=(
             tuple(str(h) for h in cast("Sequence[object]", hashes)) if isinstance(hashes, (list, tuple)) else ()
         ),
-        ledger_seq=int(payload.get("ledger_seq", 0) or 0),
+        ledger_seq=_payload_int(payload, "ledger_seq"),
         envelope=str(payload.get("envelope", "")),
-        spend_usd=float(payload.get("spend_usd", 0.0) or 0.0),
+        spend_usd=_payload_float(payload, "spend_usd"),
         reason=str(payload.get("reason", "")),
     )
     return _SealedReceipt(receipt=receipt, stored_hash=str(payload.get("receipt_hash", "")))
@@ -971,7 +1017,10 @@ def _validated_spend(phase: PhaseSpec, spend_usd: object, *, enforce_budget: boo
     if enforce_budget and phase.budget_usd > 0.0 and spend_usd > phase.budget_usd:
         msg = f"phase {phase.phase_id!r} spend {spend_usd} exceeds its budget envelope of {phase.budget_usd}"
         raise MissionSpecError(msg)
-    return float(spend_usd)
+    # Normalise -0.0 to +0.0. It passes the >= 0 test (-0.0 < 0.0 is False) but
+    # serialises as the distinct JSON token "-0.0", so sealing it would bind a
+    # hash over a value that no round trip through the ledger can reproduce.
+    return float(spend_usd) + 0.0
 
 
 def enter_phase(*, ledger: WorkLedger, mission_id: str, phase_id: str) -> LedgerEntry:

@@ -207,3 +207,64 @@ def test_define_refuses_to_redefine_an_existing_mission(tmp_path: Path) -> None:
 
     second = runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
     assert second.exit_code == EXIT_BAD_SPEC, second.output
+
+
+# ---------------------------------------------------------------------------
+# Review hardening (#2680) -- a tamper must not be downgraded to not-found
+# ---------------------------------------------------------------------------
+
+
+def _tamper_mission_id(tmp_path: Path, new_id: str) -> None:
+    """Rewrite the declared mission id in place, leaving entry_hash stale."""
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+
+    bucket = mission_ledger_dir(tmp_path / ".sdd", "m-cli") / "000000.jsonl"
+    lines = bucket.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[0])
+    row["payload"]["mission_id"] = new_id
+    lines[0] = json.dumps(row, separators=(",", ":"))
+    bucket.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_verify_reports_a_tampered_mission_id_as_verification_failure(tmp_path: Path) -> None:
+    """#2680: editing the declared id tears the chain -- that is exit 2, not 1.
+
+    ``LedgerReader.entries`` yields unverified rows, so the identity pre-check
+    reads an attacker-controlled value. Reporting the mismatch as "no such
+    mission" would let a real tamper pass as a benign not-found and defeat any
+    operator script keying on the verification-failed code.
+    """
+    from bernstein.cli.commands.mission_cmd import EXIT_VERIFY_FAILED
+
+    spec_path = _write_spec(tmp_path)
+    runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    _tamper_mission_id(tmp_path, "m-evil")
+
+    res = runner_invoke(["verify", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_VERIFY_FAILED, res.output
+
+
+def test_status_reports_a_tampered_mission_id_as_verification_failure(tmp_path: Path) -> None:
+    """#2680: the same downgrade must not happen on the status path."""
+    from bernstein.cli.commands.mission_cmd import EXIT_VERIFY_FAILED
+
+    spec_path = _write_spec(tmp_path)
+    runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    _tamper_mission_id(tmp_path, "m-evil")
+
+    res = runner_invoke(["status", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_VERIFY_FAILED, res.output
+
+
+def test_intact_non_mission_ledger_is_still_a_plain_not_found(tmp_path: Path) -> None:
+    """The tamper escalation must not swallow the honest not-a-mission case."""
+    from bernstein.cli.commands.mission_cmd import EXIT_NO_MISSION
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "plain-run"))
+    ledger.append(kind="task.scheduled", task_id="t1", payload={"task_id": "t1"})
+    ledger.close()
+
+    res = runner_invoke(["verify", "plain-run", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_NO_MISSION, res.output
