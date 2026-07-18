@@ -7,53 +7,56 @@ Implements Google's A2A protocol for agent interoperability. Provides:
 - External agent federation
 
 # -----------------------------------------------------------------------
-# Practical assessment (2026-04-03)
+# Status
 # -----------------------------------------------------------------------
 #
-# 1. Is A2A currently used by any agent or external system?
-#    No. The A2A routes are registered on the task server, and there are
-#    unit/integration tests, but no Bernstein adapter, CLI command, spawner
-#    path, or external system ever calls the /a2a/* endpoints in production.
-#    The only callers are tests (test_a2a.py, test_a2a_messages.py) and the
-#    protocol compatibility matrix. No agent system prompt mentions A2A.
+# The inbound surface is a callable, discoverable node:
 #
-# 2. What would a practical A2A use case look like?
-#    Federation: an external Bernstein instance (or a third-party A2A-
-#    compatible orchestrator) sends tasks into this instance via
-#    POST /a2a/tasks/send. This lets two orchestrators delegate work to
-#    each other - e.g. a "backend" Bernstein farms out a design task to
-#    a "frontend" Bernstein running elsewhere.
-#    Another use case: a VS Code extension or external dashboard that
-#    speaks A2A instead of the native Bernstein API.
+# * Identity - ``/.well-known/agent.json`` serves a JWS-signed capability
+#   card (``a2a-capability+jws``) alongside the A2A v1.0 card, with the
+#   verifying JWK set at ``/.well-known/agent.json/keys``. A peer confirms
+#   who we are and what we accept work under *before* sending anything,
+#   offline.
+# * Execution evidence - every inbound ``POST /a2a/tasks/send`` response
+#   carries a lineage receipt (see :mod:`.receipt`). A caller proves the
+#   answer it received is the answer we recorded, without trusting us to
+#   summarise our own behaviour. Identity evidence and execution evidence
+#   are deliberately separate claims.
+# * Durability - handler state persists when ``state_path`` is set, so an
+#   inbound task and its receipt survive a restart. The default backend
+#   remains in-memory.
+# * Publication - ``bernstein a2a publish`` projects the signed card into
+#   agent-registry manifests; ``bernstein a2a verify`` checks a receipt
+#   offline.
 #
-# 3. Is the HTTP overhead justified vs file-based coordination?
-#    For cross-machine federation, yes - HTTP is the only option. For
-#    same-machine agents, no - Bernstein already coordinates through the
-#    task server API + .sdd/ files, and A2A adds a redundant translation
-#    layer. The in-memory A2AHandler is also not persisted, so A2A tasks
-#    are lost on server restart.
-#
-# 4. Recommendation: KEEP but mark as experimental / opt-in.
-#    The code is clean, well-tested, and low-maintenance. Removing it
-#    saves nothing. But it should not be on the critical path - the
-#    routes should stay registered (free discovery via /.well-known/
-#    agent.json) but documented as experimental until there is a real
-#    external consumer. No further investment until federation is needed.
+# For same-machine agents, file-based coordination through the task server
+# API + .sdd/ files remains the cheaper path; A2A earns its HTTP overhead
+# for cross-machine federation and third-party callers.
 # -----------------------------------------------------------------------
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+logger = logging.getLogger(__name__)
+
+#: Version stamped into the persisted handler state. Bumping requires a
+#: parallel reader.
+_A2A_STATE_SCHEMA_VERSION: int = 1
 
 
 class A2ATaskStatus(Enum):
@@ -287,6 +290,48 @@ class A2ATask:
         }
 
 
+def _artifact_from_dict(data: dict[str, Any]) -> A2AArtifact:
+    """Rebuild an artifact from its persisted form."""
+    return A2AArtifact(
+        name=str(data["name"]),
+        content_type=str(data.get("content_type", "text/plain")),
+        data=str(data.get("data", "")),
+        created_at=float(data.get("created_at", 0.0)),
+    )
+
+
+def _task_from_dict(data: dict[str, Any]) -> A2ATask:
+    """Rebuild a task from its persisted form."""
+    bernstein_task_id = data.get("bernstein_task_id")
+    return A2ATask(
+        id=str(data["id"]),
+        bernstein_task_id=str(bernstein_task_id) if bernstein_task_id else None,
+        sender=str(data.get("sender", "")),
+        message=str(data.get("message", "")),
+        status=A2ATaskStatus(str(data.get("status", A2ATaskStatus.SUBMITTED.value))),
+        artifacts=[_artifact_from_dict(a) for a in data.get("artifacts", [])],
+        created_at=float(data.get("created_at", 0.0)),
+        updated_at=float(data.get("updated_at", 0.0)),
+    )
+
+
+def _message_from_dict(data: dict[str, Any]) -> A2AMessage:
+    """Rebuild a message from its persisted form."""
+    endpoint = data.get("external_endpoint")
+    direction = str(data.get("direction", "inbound"))
+    return A2AMessage(
+        id=str(data["id"]),
+        sender=str(data.get("sender", "")),
+        recipient=str(data.get("recipient", "")),
+        content=str(data.get("content", "")),
+        task_id=str(data.get("task_id", "")),
+        direction=cast("Literal['inbound', 'outbound']", direction),
+        external_endpoint=str(endpoint) if endpoint else None,
+        delivered=bool(data.get("delivered", False)),
+        created_at=float(data.get("created_at", 0.0)),
+    )
+
+
 class A2AHandler:
     """Manages A2A protocol interactions for the Bernstein orchestrator.
 
@@ -297,12 +342,106 @@ class A2AHandler:
     - Tracks A2A task lifecycle alongside Bernstein task state.
     """
 
-    def __init__(self, server_url: str = "http://localhost:8052") -> None:
+    def __init__(
+        self,
+        server_url: str = "http://localhost:8052",
+        *,
+        state_path: Path | None = None,
+    ) -> None:
         self._server_url = server_url
         self._tasks: dict[str, A2ATask] = {}
         # Reverse index: bernstein task id -> a2a task id
         self._by_bernstein_id: dict[str, str] = {}
         self._messages: dict[str, A2AMessage] = {}
+        # Lineage receipts keyed by A2A task id, kept alongside the task so a
+        # restart recovers both the task and the proof of what was answered.
+        self._receipts: dict[str, dict[str, Any]] = {}
+        self._state_path: Path | None = Path(state_path) if state_path is not None else None
+        self._state_lock = threading.RLock()
+        if self._state_path is not None:
+            self._load_state()
+
+    # -- Persistence ------------------------------------------------------
+    #
+    # Opt-in by design: with no ``state_path`` the handler is exactly the
+    # in-memory object it always was, so existing callers and tests keep
+    # their behaviour. When a path is supplied, every mutation is flushed
+    # atomically, which closes the loss-on-restart gap for inbound tasks and
+    # their receipts.
+
+    @property
+    def state_path(self) -> Path | None:
+        """Return the backing state file, or ``None`` when in-memory only."""
+        return self._state_path
+
+    def _load_state(self) -> None:
+        """Restore handler state from disk, tolerating a damaged file.
+
+        A corrupt or truncated state file must not prevent the server from
+        booting - losing A2A history is recoverable, refusing to start is
+        not. The failure is logged and the handler starts empty.
+        """
+        path = self._state_path
+        if path is None or not path.exists():
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("A2A state at %s is unreadable, starting empty: %s", path, exc)
+            return
+        if not isinstance(raw, dict):
+            logger.warning("A2A state at %s is not an object, starting empty", path)
+            return
+
+        try:
+            for row in raw.get("tasks", []):
+                task = _task_from_dict(row)
+                self._tasks[task.id] = task
+                if task.bernstein_task_id:
+                    self._by_bernstein_id[task.bernstein_task_id] = task.id
+            for row in raw.get("messages", []):
+                message = _message_from_dict(row)
+                self._messages[message.id] = message
+            receipts = raw.get("receipts", {})
+            if isinstance(receipts, dict):
+                self._receipts = {str(k): v for k, v in receipts.items() if isinstance(v, dict)}
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("A2A state at %s is malformed, starting empty: %s", path, exc)
+            self._tasks.clear()
+            self._by_bernstein_id.clear()
+            self._messages.clear()
+            self._receipts.clear()
+
+    def _save_state(self) -> None:
+        """Atomically flush handler state when persistence is enabled."""
+        path = self._state_path
+        if path is None:
+            return
+        payload = {
+            "schema_version": _A2A_STATE_SCHEMA_VERSION,
+            "tasks": [t.to_dict() for t in self._tasks.values()],
+            "messages": [m.to_dict() for m in self._messages.values()],
+            "receipts": self._receipts,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            # Losing durability is bad; taking the request down with it is
+            # worse. Surface it loudly and let the response proceed.
+            logger.warning("could not persist A2A state to %s: %s", path, exc)
+
+    def attach_receipt(self, a2a_task_id: str, receipt: dict[str, Any]) -> None:
+        """Store the lineage receipt minted for ``a2a_task_id``."""
+        with self._state_lock:
+            self._receipts[a2a_task_id] = receipt
+            self._save_state()
+
+    def get_receipt(self, a2a_task_id: str) -> dict[str, Any] | None:
+        """Return the stored lineage receipt for a task, if any."""
+        return self._receipts.get(a2a_task_id)
 
     def orchestrator_card(self) -> AgentCard:
         """Return the Agent Card for the Bernstein orchestrator."""
@@ -334,7 +473,9 @@ class A2AHandler:
             sender=sender,
             message=message,
         )
-        self._tasks[task.id] = task
+        with self._state_lock:
+            self._tasks[task.id] = task
+            self._save_state()
         return task
 
     def link_bernstein_task(self, a2a_task_id: str, bernstein_task_id: str) -> None:
@@ -350,8 +491,10 @@ class A2AHandler:
         task = self._tasks.get(a2a_task_id)
         if task is None:
             raise KeyError(a2a_task_id)
-        task.bernstein_task_id = bernstein_task_id
-        self._by_bernstein_id[bernstein_task_id] = a2a_task_id
+        with self._state_lock:
+            task.bernstein_task_id = bernstein_task_id
+            self._by_bernstein_id[bernstein_task_id] = a2a_task_id
+            self._save_state()
 
     def get_task(self, a2a_task_id: str) -> A2ATask | None:
         """Look up an A2A task by its ID."""
@@ -381,8 +524,10 @@ class A2AHandler:
         if task is None:
             raise KeyError(a2a_task_id)
         new_status = _BERNSTEIN_TO_A2A.get(bernstein_status, A2ATaskStatus.SUBMITTED)
-        task.status = new_status
-        task.updated_at = time.time()
+        with self._state_lock:
+            task.status = new_status
+            task.updated_at = time.time()
+            self._save_state()
         return new_status
 
     def add_artifact(
@@ -415,7 +560,9 @@ class A2AHandler:
             data=data,
             created_at=time.time(),
         )
-        task.artifacts.append(artifact)
+        with self._state_lock:
+            task.artifacts.append(artifact)
+            self._save_state()
         return artifact
 
     def list_tasks(self, sender: str | None = None) -> list[A2ATask]:
@@ -444,7 +591,9 @@ class A2AHandler:
             direction="inbound",
             delivered=True,
         )
-        self._messages[message.id] = message
+        with self._state_lock:
+            self._messages[message.id] = message
+            self._save_state()
         return message
 
     async def send_message(
@@ -485,7 +634,9 @@ class A2AHandler:
             external_endpoint=base_url,
             delivered=True,
         )
-        self._messages[message.id] = message
+        with self._state_lock:
+            self._messages[message.id] = message
+            self._save_state()
         return message
 
     def list_messages(self, task_id: str | None = None) -> Sequence[A2AMessage]:

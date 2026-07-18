@@ -958,7 +958,15 @@ class A2AMessageResponse(BaseModel):
 
 
 class A2ATaskResponse(BaseModel):
-    """Serialised A2A task in responses."""
+    """Serialised A2A task in responses.
+
+    ``receipt`` carries the lineage receipt for an inbound task (#2609): the
+    execution evidence a caller verifies offline with ``bernstein a2a verify
+    --receipt``. It is ``None`` on read paths, and on write paths when the
+    node could not provision receipt key material - an absent receipt means
+    "unattested", which a caller should treat as unverified rather than
+    trusted.
+    """
 
     id: str
     bernstein_task_id: str | None
@@ -968,10 +976,16 @@ class A2ATaskResponse(BaseModel):
     artifacts: list[A2AArtifactResponse]
     created_at: float
     updated_at: float
+    receipt: dict[str, Any] | None = None
 
 
 class A2AAgentCardResponse(BaseModel):
-    """Agent Card response for /.well-known/agent.json."""
+    """Agent Card response for the ``/a2a/agent-card`` discovery endpoint.
+
+    The A2A v1.0 card served at ``/.well-known/agent.json`` is built and
+    signed in :mod:`bernstein.core.routes.well_known` and does not use this
+    model.
+    """
 
     name: str
     description: str

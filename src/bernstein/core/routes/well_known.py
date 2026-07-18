@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from bernstein import __version__ as _BERNSTEIN_VERSION
+from bernstein.core.interop.a2a_card import (
+    CardPolicies,
+    SignedCapabilityCard,
+    issue_capability_card,
+)
 from bernstein.core.security.agent_card_keystore import (
     DEFAULT_KEY_DIR,
     AgentCardKeystore,
@@ -158,6 +164,11 @@ _SKILLS: tuple[dict[str, object], ...] = (
 _KEY_LOCK = threading.RLock()
 _KEYSTORES: dict[str, AgentCardKeystore] = {}
 _KEYPAIRS: dict[str, tuple[bytes, bytes]] = {}
+#: Per-tenant cache of the issued capability card (#2609). Cards carry
+#: ``created_at`` / ``expires_at``, so re-issuing per request would make the
+#: identity surface churn and defeat the route's ``Cache-Control``. The card
+#: is minted once per tenant and re-minted only once it nears expiry.
+_CAPABILITY_CARDS: dict[str, SignedCapabilityCard] = {}
 #: Test-only override for the base key directory (set by
 #: ``_reset_signing_keypair_for_tests``). ``None`` means "use the resolved
 #: production directory".
@@ -254,6 +265,7 @@ def _reset_signing_keypair_for_tests(key_dir: Path | None = None) -> None:
         _KEY_DIR_OVERRIDE = key_dir
         _KEYSTORES.clear()
         _KEYPAIRS.clear()
+        _CAPABILITY_CARDS.clear()
 
 
 def rotate_agent_card_keys(tenant_id: str = DEFAULT_TENANT_ID) -> tuple[bytes, bytes]:
@@ -274,6 +286,9 @@ def rotate_agent_card_keys(tenant_id: str = DEFAULT_TENANT_ID) -> tuple[bytes, b
     with _KEY_LOCK:
         priv, pub = _get_keystore(tenant_id).rotate()
         _KEYPAIRS[tenant_id] = (priv, pub)
+        # The cached capability card is signed with the retired key; drop it
+        # so the next fetch re-issues under the new ``kid``.
+        _CAPABILITY_CARDS.pop(tenant_id, None)
         return priv, pub
 
 
@@ -395,6 +410,69 @@ def _sign_canonical_body(canonical_body: bytes, private_pem: bytes, *, kid: str)
     return f"{header_b64}..{sig_b64}"
 
 
+#: Tools the node advertises as delegable over A2A. These are the coarse
+#: capability names a peer matches against before it sends work; the
+#: fine-grained endpoint list stays in ``_ENDPOINTS``.
+_ADVERTISED_TOOLS: tuple[str, ...] = (
+    "task_orchestration",
+    "agent_spawning",
+    "code_review",
+    "a2a_message",
+)
+
+#: Policies the node enforces on delegated work. Advertised so a peer can
+#: decide *before* delegating whether our ceiling is acceptable to it.
+_CARD_COST_CAP_USD = 0.0
+_CARD_REDACTION_TIER = "standard"
+_CARD_SANDBOX_PROFILE = "container"
+
+#: Re-issue the cached card once it is within this many seconds of expiry, so
+#: a peer never fetches a card that expires mid-verification.
+_CARD_REISSUE_MARGIN_SECONDS = 5 * 60
+
+
+def _capability_card(tenant_id: str = DEFAULT_TENANT_ID) -> SignedCapabilityCard:
+    """Return the tenant's signed capability card, minting it on demand.
+
+    The card is signed with the same keypair that signs the A2A v1.0 card and
+    carries the same ``kid``, so a peer resolves both claims against the one
+    JWK set published at ``/.well-known/agent.json/keys``.
+
+    The two claims stay separate on purpose. The v1.0 ``signatures[]`` block
+    attests to the *card body* (who this server is and what it exposes); the
+    capability card attests to the *terms of delegation* (which tools, under
+    which cost / redaction / sandbox policy). A verifier that only understands
+    v1.0 keeps working; one that understands capability cards gets a signed
+    policy statement it can gate on before sending work.
+    """
+    tenant_id = _normalize_tenant(tenant_id)
+    cached = _CAPABILITY_CARDS.get(tenant_id)
+    if cached is not None and not cached.card.is_expired(now=time.time() + _CARD_REISSUE_MARGIN_SECONDS):
+        return cached
+
+    with _KEY_LOCK:
+        cached = _CAPABILITY_CARDS.get(tenant_id)
+        if cached is not None and not cached.card.is_expired(now=time.time() + _CARD_REISSUE_MARGIN_SECONDS):
+            return cached
+        private_pem, public_pem = _get_signing_keypair(tenant_id)
+        signed, _private = issue_capability_card(
+            issuer=_AGENT_NAME if tenant_id == DEFAULT_TENANT_ID else f"{_AGENT_NAME}-{tenant_id}",
+            name=_AGENT_NAME,
+            description=_AGENT_DESCRIPTION,
+            advertised_tools=list(_ADVERTISED_TOOLS),
+            policies=CardPolicies(
+                cost_cap_usd=_CARD_COST_CAP_USD,
+                redaction_tier=_CARD_REDACTION_TIER,
+                sandbox_profile=_CARD_SANDBOX_PROFILE,
+            ),
+            private_key_pem=private_pem,
+            public_key_pem=public_pem,
+            kid=_tenant_kid(tenant_id),
+        )
+        _CAPABILITY_CARDS[tenant_id] = signed
+        return signed
+
+
 def _resolve_base_url() -> str:
     """Return the base URL to advertise in the card.
 
@@ -423,6 +501,14 @@ def _agent_card_payload(base_url: str = _DEFAULT_BASE_URL, *, tenant_id: str = D
     """
     tenant_id = _normalize_tenant(tenant_id)
     body = _agent_card_body(base_url, tenant_id=tenant_id)
+    # The capability card joins the body *before* canonicalisation, so the
+    # v1.0 JWS covers it too. The v1.0 verifier contract is "strip
+    # ``signatures``, canonicalise the rest, verify" - appending an extension
+    # field afterwards would break every verifier that follows it, including
+    # third-party ones we do not control. Signing it inside the body keeps
+    # that contract intact and gives the card two independent signatures:
+    # its own (``a2a-capability+jws``) and the enclosing v1.0 card's.
+    body["capabilityCard"] = _capability_card(tenant_id).to_dict()
     canonical = canonicalize_jcs(body)
     private_pem, _public_pem = _get_signing_keypair(tenant_id)
     kid = _tenant_kid(tenant_id)

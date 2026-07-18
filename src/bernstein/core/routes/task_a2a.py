@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,6 +29,9 @@ from bernstein.core.tenanting import request_tenant_id
 if TYPE_CHECKING:
     from bernstein.core.a2a import A2AHandler
     from bernstein.core.a2a_federation import A2AFederation
+    from bernstein.core.protocols.a2a.receipt import A2AReceiptIssuer
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -46,6 +50,44 @@ def _get_a2a_handler(request: Request) -> A2AHandler:
 
 def _get_a2a_federation(request: Request) -> A2AFederation:
     return request.app.state.a2a_federation  # type: ignore[no-any-return]
+
+
+def _get_a2a_receipt_issuer(request: Request) -> A2AReceiptIssuer | None:
+    """Return the receipt issuer, or ``None`` when the node cannot attest."""
+    return getattr(request.app.state, "a2a_receipt_issuer", None)
+
+
+def _attest(
+    request: Request,
+    *,
+    a2a_task_id: str,
+    response: A2ATaskResponse,
+) -> dict[str, Any] | None:
+    """Mint and persist the lineage receipt for an inbound A2A response.
+
+    The receipt attests to the response body *excluding* the receipt itself -
+    a receipt cannot cover its own bytes. Callers reconstruct the attested
+    payload by dropping the ``receipt`` field, which is what
+    ``bernstein a2a verify --receipt`` does.
+
+    Returns ``None`` when the node has no issuer, in which case the response
+    goes out unattested rather than failing.
+    """
+    issuer = _get_a2a_receipt_issuer(request)
+    if issuer is None:
+        return None
+    try:
+        receipt = issuer.issue(
+            task_id=a2a_task_id,
+            response=response.model_dump(exclude={"receipt"}),
+        )
+    except (OSError, ValueError) as exc:
+        # An unattested answer is degraded but usable; a 500 is not.
+        logger.warning("could not mint A2A receipt for %s: %s", a2a_task_id, exc)
+        return None
+    payload = receipt.to_dict()
+    _get_a2a_handler(request).attach_receipt(a2a_task_id, payload)
+    return payload
 
 
 def _require_task_access(task: object, request: Request) -> None:
@@ -138,7 +180,11 @@ async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskRe
         )
     )
     a2a_handler.link_bernstein_task(a2a_task.id, bernstein_task.id)
-    return a2a_task_to_response(a2a_task)
+    response = a2a_task_to_response(a2a_task)
+    receipt = _attest(request, a2a_task_id=a2a_task.id, response=response)
+    if receipt is not None:
+        response = response.model_copy(update={"receipt": receipt})
+    return response
 
 
 @router.get(
