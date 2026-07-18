@@ -124,18 +124,16 @@ def gate_report_findings(report: QualityGatesResult | None) -> tuple[dict[str, A
     """
     if report is None:
         return ()
-    findings: list[dict[str, Any]] = []
-    for check in report.gate_results:
-        findings.append(
-            {
-                "gate": check.gate,
-                "passed": bool(check.passed),
-                "blocked": bool(check.blocked),
-                "status": check.status,
-                "detail": (check.detail or "")[:2000],
-            }
-        )
-    return tuple(findings)
+    return tuple(
+        {
+            "gate": check.gate,
+            "passed": bool(check.passed),
+            "blocked": bool(check.blocked),
+            "status": check.status,
+            "detail": (check.detail or "")[:2000],
+        }
+        for check in report.gate_results
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,14 +230,11 @@ class RecoveryReceipt:
         ]
         if self.spine_entry_hash:
             lines.append(f"- Lineage spine entry: `{self.spine_entry_hash}`")
-        lines.append(f"- Receipt content hash: `{self.content_hash()}`")
-        lines.append("")
+        lines.extend((f"- Receipt content hash: `{self.content_hash()}`", ""))
 
         result = str(self.condition_context.get("result", "") or "")
         if result:
-            lines.append("### Failing task result")
-            lines.append(result[:2000])
-            lines.append("")
+            lines.extend(("### Failing task result", result[:2000], ""))
 
         failed = [g for g in self.gate_report if not g.get("passed")]
         if failed:

@@ -373,9 +373,13 @@ def render_digest_message(digest: MissionDigest) -> str:
             lines.append(f"  - {blocker.phase_id}: {blocker.reason}")
     else:
         lines.append("blockers: none")
-    lines.append(f"mission_status_hash: {d.mission_status_hash}")
-    lines.append(f"digest_hash: {d.digest_hash()}")
-    lines.append(f"receipt_id: {d.receipt_id()}")
+    lines.extend(
+        (
+            f"mission_status_hash: {d.mission_status_hash}",
+            f"digest_hash: {d.digest_hash()}",
+            f"receipt_id: {d.receipt_id()}",
+        )
+    )
     return "\n".join(lines)
 
 

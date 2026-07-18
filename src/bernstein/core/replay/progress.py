@@ -143,8 +143,7 @@ class ProgressVector:
 
     def to_wire(self) -> dict[str, Any]:
         """Return the API/SSE body: the canonical vector plus its hash."""
-        return {
-            **self.to_canonical_dict(),
+        return self.to_canonical_dict() | {
             "earned_steps": self.earned_steps,
             "phase_ordinal": self.phase_ordinal,
             "vector_hash": self.vector_hash(),

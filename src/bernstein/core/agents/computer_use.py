@@ -138,8 +138,7 @@ def compute_observation_hash(*, screenshot_bytes: bytes, dom_digest: str) -> str
     then the UTF-8 bytes of the accessibility digest) so the value is stable
     and reproducible from the stored bytes on replay.
     """
-    h = hashlib.sha256()
-    h.update(screenshot_bytes)
+    h = hashlib.sha256(screenshot_bytes)
     h.update(dom_digest.encode("utf-8"))
     return h.hexdigest()
 
