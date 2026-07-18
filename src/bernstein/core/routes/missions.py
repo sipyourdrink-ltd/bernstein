@@ -41,6 +41,7 @@ from fastapi.responses import JSONResponse
 from bernstein.core.evidence.bundle import read_evidence_bundle
 from bernstein.core.orchestration.mission_digest import build_mission_digest, render_digest_message
 from bernstein.core.orchestration.missions import (
+    KIND_MISSION_DEFINED,
     LedgerReader,
     list_missions,
     mission_ledger_dir,
@@ -84,8 +85,27 @@ def _validate_task_id(task_id: str) -> str:
 
 
 def _require_mission(sdd_dir: Path, mission_id: str) -> None:
-    if not LedgerReader(mission_ledger_dir(sdd_dir, mission_id)).exists():
+    """Reject anything that is not a ledger declaring exactly this mission.
+
+    Missions share the ledger root with plain run ledgers, so directory
+    existence proves nothing: a run ledger carries no ``mission.defined`` entry
+    and would project as an empty pending mission with ``ledger_verified`` true,
+    which is a non-mission served as a healthy one. This mirrors the CLI's
+    ``_require_mission`` -- both guard the same
+    :func:`project_mission_from_ledger` sink, so they have to agree.
+    """
+    reader = LedgerReader(mission_ledger_dir(sdd_dir, mission_id))
+    if not reader.exists():
         raise HTTPException(status_code=404, detail=f"no mission ledger for: {mission_id}")
+
+    defined = [entry for entry in reader.entries() if entry.kind == KIND_MISSION_DEFINED]
+    if len(defined) == 1 and str(defined[0].payload.get("mission_id", "")) == mission_id:
+        return
+    # A ledger declaring more than one mission is left to the projection, which
+    # forces MISSION_UNVERIFIED and is served with that verdict intact.
+    if len(defined) > 1:
+        return
+    raise HTTPException(status_code=404, detail=f"no mission ledger for: {mission_id}")
 
 
 @router.get("/missions")

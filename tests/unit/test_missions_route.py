@@ -208,3 +208,72 @@ def test_evidence_endpoint_404_for_missing_bundle(tmp_path: Path) -> None:
     _build_mission(tmp_path)
     client = TestClient(_make_app(tmp_path))
     assert client.get("/missions/m-1/evidence/task-z").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Review hardening (#2680) -- the route guards the same sink as the CLI
+# ---------------------------------------------------------------------------
+
+
+def test_route_refuses_a_non_mission_ledger(tmp_path: Path) -> None:
+    """#2680: a plain run ledger must not be served as a healthy mission.
+
+    Missions share the ledger root with run ledgers, so directory existence
+    proves nothing. Without a definition the projection renders an empty
+    pending mission with ledger_verified true -- a non-mission served as fine.
+    The CLI already refuses this input; the route reaches the same sink and
+    has to agree.
+    """
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "plain-run"))
+    ledger.append(kind="task.scheduled", task_id="t1", payload={"task_id": "t1"})
+    ledger.close()
+
+    client = TestClient(_make_app(tmp_path))
+    assert client.get("/missions/plain-run").status_code == 404
+
+
+def test_route_refuses_a_ledger_declaring_a_different_mission(tmp_path: Path) -> None:
+    """#2680: the ledger must declare the mission the caller asked for."""
+    from bernstein.core.orchestration.missions import (
+        MissionSpec,
+        PhaseSpec,
+        define_mission,
+        mission_ledger_dir,
+    )
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    spec = MissionSpec(
+        mission_id="m-other",
+        goal="g",
+        phases=(PhaseSpec(phase_id="p1", name="p", gate=(), envelope="e", budget_usd=1.0),),
+    )
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "m-cli"))
+    define_mission(ledger=ledger, spec=spec)
+    ledger.close()
+
+    client = TestClient(_make_app(tmp_path))
+    assert client.get("/missions/m-cli").status_code == 404
+
+
+def test_route_digest_and_evidence_also_refuse_a_non_mission_ledger(tmp_path: Path) -> None:
+    """#2680: all three guarded endpoints agree, not just the projection one."""
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "plain-run"))
+    ledger.append(kind="task.scheduled", task_id="t1", payload={"task_id": "t1"})
+    ledger.close()
+
+    client = TestClient(_make_app(tmp_path))
+    assert client.get("/missions/plain-run/digest?fire_time=1750000000").status_code == 404
+    assert client.get("/missions/plain-run/evidence/task-a").status_code == 404
+
+
+def test_route_still_serves_a_real_mission(tmp_path: Path) -> None:
+    """Guard: the new check must not reject the honest case."""
+    _build_mission(tmp_path)
+    client = TestClient(_make_app(tmp_path))
+    assert client.get("/missions/m-1").status_code == 200

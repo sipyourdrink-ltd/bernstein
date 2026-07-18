@@ -18,7 +18,10 @@ same fold discipline as the review-board projection
 * **Determinism** -- the fold reads no wall clock and no host state, so two
   operators holding byte-identical ledgers render byte-identical
   :meth:`MissionStatus.canonical_bytes` with the same
-  :meth:`MissionStatus.status_hash`.
+  :meth:`MissionStatus.status_hash`. Every value the fold hashes, including
+  :meth:`PhaseReceipt.receipt_hash`, must stay a pure function of ledger and
+  evidence bytes: reading the environment anywhere in a hashed preimage makes
+  an untampered mission verify on one host and fail on another.
 * **Verifiability** -- a phase advances only by a *mission phase receipt*
   (a ``mission.phase_passed`` ledger entry, mirrored onto the HMAC audit chain
   via :func:`bernstein.core.security.audit_chain.record_mission_phase_receipt`)
@@ -26,10 +29,11 @@ same fold discipline as the review-board projection
   ledger position, and the envelope spend at gate time. A phase without a
   receipt is by definition not passed, and a receipt that does not bind the
   exact gate its phase declares -- a failed verdict, a different or empty set
-  of task ids, a ragged evidence binding, a hash that disagrees with its own
-  contents, or a bundle since deleted or altered -- projects the phase as
-  :data:`PHASE_UNVERIFIED` rather than best-effort ``passed``. Evidence for an
-  unrelated task therefore proves nothing about a gate it does not name.
+  of task ids, a ragged evidence binding, or a bundle since deleted or altered
+  -- projects the phase as :data:`PHASE_UNVERIFIED` rather than best-effort
+  ``passed``. Evidence for an unrelated task therefore proves nothing about a
+  gate it does not name. Tampering with a persisted receipt is caught a layer
+  down, by the ledger's own chain walk, not by re-deriving the receipt hash.
 
 Strip the ledger and a mission collapses to a stored status row with a log:
 there is no mission state on disk other than the hash-chained transitions, and
@@ -398,28 +402,19 @@ class PhaseReceipt:
             "reason": self.reason,
         }
 
-    def _sealed_binding(self) -> dict[str, Any]:
-        """Return the binding in the exact form the ledger persists.
-
-        The ledger redacts every payload string before hashing and writing, so
-        a receipt that binds its own content hash must hash the redacted form.
-        Hashing the raw binding instead would make an honest receipt whose
-        envelope or task id the redactor rewrites (a ``$HOME`` path, a
-        ``key=value`` secret) disagree with itself on read back, and the phase
-        would project unverified forever on an append-only chain. Redaction is
-        idempotent, so a receipt reconstructed from a persisted payload seals
-        to the identical hash.
-        """
-        from bernstein.core.persistence.work_ledger import redact_ledger_payload
-
-        return redact_ledger_payload(self._binding())
-
     def receipt_hash(self) -> str:
-        """Return the sealed identity: SHA-256 over the persisted binding."""
-        return _sha256_hex(_canonical_bytes(self._sealed_binding()))
+        """Return the SHA-256 hex digest of the canonical binding.
+
+        Pure function of the receipt's own fields: no clock, no filesystem, no
+        environment. The projection folds this value into
+        :meth:`MissionStatus.status_hash` and mirrors it onto the audit chain,
+        so anything host-dependent in this preimage would make two operators
+        holding identical ledgers disagree about an untampered mission.
+        """
+        return _sha256_hex(_canonical_bytes(self._binding()))
 
     def to_payload(self) -> dict[str, Any]:
-        return self._sealed_binding() | {"receipt_hash": self.receipt_hash()}
+        return self._binding() | {"receipt_hash": self.receipt_hash()}
 
 
 # ---------------------------------------------------------------------------
@@ -542,41 +537,29 @@ class MissionProjection:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _SealedReceipt:
-    """A receipt read back from the chain, plus the hash its writer sealed.
-
-    ``stored_hash`` is kept apart from the receipt because it is a *claim* about
-    the binding, not part of it: the projection re-derives the hash from the
-    binding and compares, so a receipt that does not hash to what it claims is
-    self-inconsistent and cannot advance a phase.
-    """
-
-    receipt: PhaseReceipt
-    stored_hash: str
-
-
 @dataclass
 class _PhaseAccum:
     """Running fold state for one phase."""
 
     entered_seq: int = -1
-    passed: _SealedReceipt | None = None
-    halted: _SealedReceipt | None = None
+    passed: PhaseReceipt | None = None
+    halted: PhaseReceipt | None = None
 
 
 def _payload_float(payload: Mapping[str, Any], key: str) -> float:
-    """Read a float from a persisted payload without losing its value.
+    """Read a float from a persisted payload, normalising negative zero.
 
-    The obvious ``float(payload.get(key, 0.0) or 0.0)`` silently maps every
-    falsy number to ``+0.0``, and ``-0.0`` is falsy. Since the receipt hash is
-    recomputed from these values, that coercion would turn an honest ``-0.0``
-    spend into a permanent hash mismatch. This parse is value-preserving.
+    ``-0.0`` and ``+0.0`` compare equal but serialise as different JSON tokens,
+    so letting ``-0.0`` through would give two byte-identical ledgers different
+    canonical status bytes. Adding ``0.0`` collapses it, which reproduces what
+    the previous ``float(value or 0.0)`` did for every numeric input -- so an
+    existing ledger that sealed ``-0.0`` still projects the hash it always did
+    -- while no longer turning a non-numeric payload into a crash.
     """
     value = payload.get(key, 0.0)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0.0
-    return float(value)
+    return float(value) + 0.0
 
 
 def _payload_int(payload: Mapping[str, Any], key: str) -> int:
@@ -587,10 +570,10 @@ def _payload_int(payload: Mapping[str, Any], key: str) -> int:
     return value
 
 
-def _receipt_from_payload(payload: Mapping[str, Any]) -> _SealedReceipt:
+def _receipt_from_payload(payload: Mapping[str, Any]) -> PhaseReceipt:
     task_ids = payload.get("evidence_task_ids", [])
     hashes = payload.get("evidence_bundle_hashes", [])
-    receipt = PhaseReceipt(
+    return PhaseReceipt(
         mission_id=str(payload.get("mission_id", "")),
         phase_id=str(payload.get("phase_id", "")),
         gate_passed=bool(payload.get("gate_passed", False)),
@@ -605,7 +588,6 @@ def _receipt_from_payload(payload: Mapping[str, Any]) -> _SealedReceipt:
         spend_usd=_payload_float(payload, "spend_usd"),
         reason=str(payload.get("reason", "")),
     )
-    return _SealedReceipt(receipt=receipt, stored_hash=str(payload.get("receipt_hash", "")))
 
 
 def _spec_skeleton_from_defined(
@@ -719,39 +701,43 @@ def project_mission(
 
 def _receipt_binds_gate(
     spec: PhaseSpec,
-    sealed: _SealedReceipt,
+    receipt: PhaseReceipt,
     evidence_hashes: Mapping[str, str],
 ) -> bool:
-    """Return True only when *sealed* proves the gate *spec* declares.
+    """Return True only when *receipt* proves the gate *spec* declares.
 
     A pass is the strongest claim the projection can make, so it is granted
-    only when every link in the chain holds:
+    only when every link holds:
 
     1. the receipt asserts a passing gate verdict at all;
     2. it binds exactly the task ids the phase gates on -- no more, no fewer,
        so evidence for an unrelated task can never stand in for the gate;
     3. it binds one bundle hash per task id (a ragged binding is malformed);
-    4. it hashes to the value its writer sealed, so the binding is
-       self-consistent; and
-    5. every bound bundle still hashes to what the receipt recorded.
+    4. every bound bundle still hashes to what the receipt recorded.
 
     Any other shape is a refusal (:data:`PHASE_UNVERIFIED`), never a pass.
+
+    Deliberately absent: a comparison of the payload's own ``receipt_hash``
+    against a recomputation. It would catch nobody. Editing a persisted payload
+    breaks its ``entry_hash`` and the chain walk already refuses the whole
+    ledger; an attacker able to rewrite the chain simply seals a consistent
+    hash, and one who leaves it inconsistent has gained nothing. Reintroducing
+    it also cost the projection its purity once (the persisted preimage is
+    redacted, and redaction reads ``$HOME``), so the check bought no
+    adversarial value at the price of the substrate's determinism guarantee.
     """
-    receipt = sealed.receipt
     if not receipt.gate_passed:
         return False
     if set(receipt.evidence_task_ids) != set(spec.gate):
         return False
     if len(receipt.evidence_task_ids) != len(receipt.evidence_bundle_hashes):
         return False
-    if sealed.stored_hash != receipt.receipt_hash():
-        return False
     return _evidence_matches(receipt, evidence_hashes)
 
 
 def _project_phase(spec: PhaseSpec, accum: _PhaseAccum, evidence_hashes: Mapping[str, str]) -> PhaseStatus:
     if accum.halted is not None:
-        receipt = accum.halted.receipt
+        receipt = accum.halted
         return PhaseStatus(
             phase_id=spec.phase_id,
             name=spec.name,
@@ -766,8 +752,8 @@ def _project_phase(spec: PhaseSpec, accum: _PhaseAccum, evidence_hashes: Mapping
             ledger_seq=receipt.ledger_seq,
         )
     if accum.passed is not None:
-        receipt = accum.passed.receipt
-        gate_bound = _receipt_binds_gate(spec, accum.passed, evidence_hashes)
+        receipt = accum.passed
+        gate_bound = _receipt_binds_gate(spec, receipt, evidence_hashes)
         return PhaseStatus(
             phase_id=spec.phase_id,
             name=spec.name,
