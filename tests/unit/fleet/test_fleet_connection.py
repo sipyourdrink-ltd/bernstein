@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.fleet.connection import (
+    ConnectionDocument,
     ConnectionDocumentStore,
     ConnectionRefused,
     create_document,
@@ -78,7 +79,7 @@ def test_create_document_is_signed_and_recorded(tmp_path: Path) -> None:
 
     doc = create_document(
         name="prod-github",
-        secret_name="github_pat",
+        broker_ref="github_pat",
         scope="repo:read",
         connector_defaults={"base_url": "https://api.github.com"},
         identity_dir=identity,
@@ -87,7 +88,7 @@ def test_create_document_is_signed_and_recorded(tmp_path: Path) -> None:
     )
 
     assert doc.name == "prod-github"
-    assert doc.secret_name == "github_pat"
+    assert doc.broker_ref == "github_pat"
     assert doc.signature
     # The document carries no secret material.
     assert "github_pat" not in doc.signer_public_key_pem
@@ -110,7 +111,7 @@ def test_document_persisted_without_secret_value(tmp_path: Path) -> None:
     # defaults, references a broker secret by name, and never a secret value.
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={"base_url": "https://slack.com/api", "timeout_s": 30},
         identity_dir=identity,
@@ -125,7 +126,7 @@ def test_document_persisted_without_secret_value(tmp_path: Path) -> None:
     # broker secret *reference*. A secret is resolved solely through the broker
     # mint path, never persisted here.
     doc = store.get("team-slack")
-    assert doc.secret_name == "slack_token"
+    assert doc.broker_ref == "slack_token"
     assert not hasattr(doc, "secret_value")
 
 
@@ -136,7 +137,7 @@ def test_resolve_goes_through_broker_and_emits_receipt(tmp_path: Path) -> None:
     broker = _broker({"slack_token": "xoxb-super-secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity,
@@ -172,7 +173,7 @@ def test_conn_audit_reconstructs_resolving_tasks_offline(tmp_path: Path) -> None
     broker = _broker({"slack_token": "xoxb-secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity,
@@ -207,7 +208,7 @@ def test_copied_document_refuses_and_records_refusal(tmp_path: Path) -> None:
     broker = _broker({"slack_token": "secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity_a,
@@ -246,7 +247,7 @@ def test_rotation_is_signed_event_and_repoints_consumers(tmp_path: Path) -> None
     broker = _broker({"slack_token_v1": "old", "slack_token_v2": "new-secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token_v1",
+        broker_ref="slack_token_v1",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity,
@@ -257,12 +258,12 @@ def test_rotation_is_signed_event_and_repoints_consumers(tmp_path: Path) -> None
 
     rotated = rotate_document(
         "team-slack",
-        new_secret_name="slack_token_v2",
+        new_broker_ref="slack_token_v2",
         identity_dir=identity,
         chain=chain,
         store=store,
     )
-    assert rotated.secret_name == "slack_token_v2"
+    assert rotated.broker_ref == "slack_token_v2"
     assert rotated.version == old_doc.version + 1
     assert verify_document_local(rotated, identity_dir=identity)
 
@@ -283,3 +284,84 @@ def test_rotation_is_signed_event_and_repoints_consumers(tmp_path: Path) -> None
     )
     assert broker.resolve(token.value) == "new-secret"
     assert "new-secret" in get_redactable_values()
+
+
+class TestNoSecretMaterialOnDisk:
+    """The document is signed and persisted in the clear, so the invariant that
+    it *names* a secret rather than carrying one has to be enforced, not just
+    documented."""
+
+    _CREDENTIAL_SHAPES = [
+        "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN\n-----END PRIVATE KEY-----",
+        '{"type": "service_account", "private_key": "abc"}',
+        "token with spaces",
+        "trailing-newline\n",
+        "tab\tseparated",
+        "x" * 257,
+        "",
+    ]
+
+    @pytest.mark.parametrize("material", _CREDENTIAL_SHAPES)
+    def test_credential_shaped_reference_is_refused(self, material: str) -> None:
+        with pytest.raises(ValueError, match="broker reference"):
+            ConnectionDocument(name="c", broker_ref=material, scope="")
+
+    @pytest.mark.parametrize("material", _CREDENTIAL_SHAPES)
+    def test_credential_shaped_reference_never_reaches_disk(self, tmp_path: Path, material: str) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        with pytest.raises(ValueError, match="broker reference"):
+            create_document(
+                name="prod-github",
+                broker_ref=material,
+                scope="repo:read",
+                connector_defaults={},
+                identity_dir=tmp_path / "identity",
+                chain=chain,
+                store=store,
+            )
+        assert store.list_names() == []
+        written = [p for p in (tmp_path / "conns").rglob("*") if p.is_file()] if (tmp_path / "conns").exists() else []
+        assert written == []
+
+    def test_persisted_bytes_hold_the_reference_never_the_value(self, tmp_path: Path) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        secret_value = "ghp_this_is_the_actual_token_value"
+        create_document(
+            name="prod-github",
+            broker_ref="GITHUB_TOKEN",
+            scope="repo:read",
+            connector_defaults={"base_url": "https://api.github.com"},
+            identity_dir=tmp_path / "identity",
+            chain=chain,
+            store=store,
+        )
+        on_disk = (tmp_path / "conns" / "prod-github.json").read_text(encoding="utf-8")
+        assert "GITHUB_TOKEN" in on_disk
+        assert secret_value not in on_disk
+
+        # Nothing anywhere under the store or the chain carries the value.
+        for path in tmp_path.rglob("*"):
+            if path.is_file():
+                assert secret_value not in path.read_bytes().decode("utf-8", "replace")
+
+    def test_wire_key_is_stable_so_signed_documents_still_verify(self, tmp_path: Path) -> None:
+        """The wire key is inside the signed preimage and the document hash.
+
+        Renaming the attribute must not move the key, or every document ever
+        signed would fail to verify and every recorded hash would dangle.
+        """
+        import json as _json
+
+        doc = ConnectionDocument(
+            name="prod-github",
+            broker_ref="GITHUB_TOKEN",
+            scope="repo:read",
+            connector_defaults={"base_url": "https://api.github.com"},
+        )
+        payload = _json.loads(doc.to_json())
+        assert payload["secret_name"] == "GITHUB_TOKEN"
+        assert "broker_ref" not in payload
+        assert doc.document_hash() == "sha256:4a34c5e7682f18ada746b01aa6595edd190c1e59b53704eae7c8e6e4d7e341a6"
+        assert ConnectionDocument.from_json(doc.to_json()) == doc

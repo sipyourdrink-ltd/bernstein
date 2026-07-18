@@ -2,11 +2,15 @@
 
 A connection document is a typed, named record - ``prod-github``,
 ``team-slack`` - that task specs, routines, and triggers reference by name.
-It carries **no secret material**: it names a broker-managed secret, a
-scope, and connector defaults, and it is signed with the local Ed25519
-install identity. The naming and reuse layer sits *above* the secrets
-broker's mint / resolve / revoke lifecycle and changes nothing that lifecycle
-owns.
+It carries **no secret material**: it holds a *reference* to a
+broker-managed secret (``broker_ref`` - an environment variable name, a Vault
+path, an AWS secret id), a scope, and connector defaults, and it is signed
+with the local Ed25519 install identity. The reference is validated at
+construction so a pasted credential cannot be signed and written in its
+place, and the value behind the reference is read only inside
+:meth:`SecretsBroker.mint`. The naming and reuse layer sits *above* the
+secrets broker's mint / resolve / revoke lifecycle and changes nothing that
+lifecycle owns.
 
 Three substrate-coupled properties make it more than a config file:
 
@@ -89,10 +93,18 @@ class ConnectionRefused(Exception):
 
 @dataclass(frozen=True)
 class ConnectionDocument:
-    """A signed, named connection document. Carries no secret material."""
+    """A signed, named connection document. Carries no secret material.
+
+    :attr:`broker_ref` is a *lookup reference* into the secrets broker - an
+    environment variable name, a Vault path, an AWS secret id - and never the
+    value behind it. Only :meth:`SecretsBroker.mint` ever holds the value, and
+    only for the lifetime of a mint. The field is named for what it holds so
+    the on-disk document is not mistaken for a credential store; the wire key
+    stays ``secret_name`` because it is inside the signed preimage.
+    """
 
     name: str
-    secret_name: str
+    broker_ref: str
     scope: str
     connector_defaults: dict[str, Any] = field(default_factory=dict)
     signer_public_key_pem: str = ""
@@ -105,11 +117,14 @@ class ConnectionDocument:
         # would otherwise desync the persisted bytes from the recorded
         # document hash.
         object.__setattr__(self, "connector_defaults", copy.deepcopy(self.connector_defaults))
+        _validate_broker_ref(self.broker_ref)
 
     def _payload(self, *, include_signature: bool) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": self.name,
-            "secret_name": self.secret_name,
+            # Wire key is load-bearing: it is inside the signed preimage and
+            # the document hash, so it is fixed for every document ever signed.
+            "secret_name": self.broker_ref,
             "scope": self.scope,
             "connector_defaults": self.connector_defaults,
             "signer_public_key_pem": self.signer_public_key_pem,
@@ -147,7 +162,7 @@ class ConnectionDocument:
         data = json.loads(raw)
         return cls(
             name=data["name"],
-            secret_name=data["secret_name"],
+            broker_ref=data["secret_name"],
             scope=data.get("scope", ""),
             connector_defaults=data.get("connector_defaults", {}),
             signer_public_key_pem=data.get("signer_public_key_pem", ""),
@@ -170,7 +185,9 @@ class ConnectionDocumentStore:
     """Filesystem-backed store of connection documents, keyed by name.
 
     Conventionally rooted at ``<sdd>/fleet/connections``. Documents are stored
-    one JSON file per name; the raw backing secret is never written here.
+    one JSON file per name. What lands on disk is the signed document: a name,
+    a broker *reference*, a scope, and connector defaults. The value behind the
+    reference is never read on this path, so it can never be written here.
     """
 
     def __init__(self, root: Path) -> None:
@@ -224,19 +241,59 @@ def _validate_name(name: str) -> None:
         raise ValueError(f"invalid connection document name: {name!r}")
 
 
-def _digest_secret_name(secret_name: str) -> str:
-    """Return an install-keyed digest of *secret_name* for chain records.
+#: Upper bound on a broker lookup reference. Real references are short - an
+#: environment variable name, a Vault path, an AWS secret id. The cap is
+#: generous for those and well under the size of a key blob.
+_MAX_BROKER_REF_LEN = 256
 
-    The raw reference name never lands in the audit chain; only a keyed
-    digest. A plain hash would let a chain reader enumerate likely names by
-    hashing candidates, so the digest is an HMAC under the local install
-    audit key: reproducible on this install (so ``conn audit`` can correlate)
-    but not precomputable by a reader who lacks the key.
+
+def _validate_broker_ref(broker_ref: str) -> None:
+    """Reject a broker reference that does not look like a lookup reference.
+
+    The document is signed and persisted in the clear, so the invariant that
+    it names a secret rather than carrying one has to hold at construction,
+    not only in the docstring. A reference is a single line of printable
+    characters with no whitespace and a bounded length; pasted key material -
+    a PEM block, a JSON service-account blob, a wrapped token - carries
+    newlines, spaces, or length and is refused here rather than being signed
+    and written to disk.
+
+    This is a shape check, not a proof of non-secrecy: a short opaque token
+    is indistinguishable from a short opaque reference. It removes the
+    accidents (a pasted multi-line credential) and pins the documented
+    contract to an assertion the type actually enforces.
+
+    Raises:
+        ValueError: If *broker_ref* is empty, over-long, or not a single
+            whitespace-free printable line.
+    """
+    if not broker_ref:
+        raise ValueError("connection document broker reference must not be empty")
+    if len(broker_ref) > _MAX_BROKER_REF_LEN:
+        raise ValueError(
+            f"connection document broker reference is {len(broker_ref)} chars, "
+            f"over the {_MAX_BROKER_REF_LEN}-char cap; it must name a secret, not carry one"
+        )
+    if any(ch.isspace() or not ch.isprintable() for ch in broker_ref):
+        raise ValueError(
+            "connection document broker reference must be a single printable line "
+            "with no whitespace; it must name a secret, not carry one"
+        )
+
+
+def _digest_broker_ref(broker_ref: str) -> str:
+    """Return an install-keyed digest of *broker_ref* for chain records.
+
+    The raw reference never lands in the audit chain; only a keyed digest. A
+    plain hash would let a chain reader enumerate likely references by hashing
+    candidates, so the digest is an HMAC under the local install audit key:
+    reproducible on this install (so ``conn audit`` can correlate) but not
+    precomputable by a reader who lacks the key.
     """
     from bernstein.core.security.audit import load_or_create_audit_key
 
     key = load_or_create_audit_key()
-    return "hmac-sha256:" + hmac.new(key, secret_name.encode("utf-8"), hashlib.sha256).hexdigest()
+    return "hmac-sha256:" + hmac.new(key, broker_ref.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _local_identity(identity_dir: Path) -> tuple[str, str]:
@@ -271,7 +328,7 @@ def verify_document_local(doc: ConnectionDocument, *, identity_dir: Path) -> boo
 def create_document(
     *,
     name: str,
-    secret_name: str,
+    broker_ref: str,
     scope: str,
     connector_defaults: dict[str, Any] | None,
     identity_dir: Path,
@@ -285,8 +342,12 @@ def create_document(
     persisted, so a document can never exist on disk without its create
     receipt on the chain.
 
+    ``broker_ref`` names a broker-managed secret; the value behind it is never
+    read, signed, or persisted here.
+
     Raises:
         FileExistsError: If a document already exists under *name*.
+        ValueError: If *name* or *broker_ref* is malformed.
     """
     _validate_name(name)
     if store.exists(name):
@@ -294,7 +355,7 @@ def create_document(
     private_key_pem, public_key_pem = _local_identity(identity_dir)
     unsigned = ConnectionDocument(
         name=name,
-        secret_name=secret_name,
+        broker_ref=broker_ref,
         scope=scope,
         connector_defaults=dict(connector_defaults or {}),
         signer_public_key_pem=public_key_pem,
@@ -305,7 +366,7 @@ def create_document(
         chain=chain,
         name=name,
         document_hash=doc.document_hash(),
-        secret_name_digest=_digest_secret_name(secret_name),
+        secret_name_digest=_digest_broker_ref(broker_ref),
     )
     store.put(doc)
     return doc
@@ -317,7 +378,7 @@ def rotate_document(
     identity_dir: Path,
     chain: AuditChainStore,
     store: ConnectionDocumentStore,
-    new_secret_name: str | None = None,
+    new_broker_ref: str | None = None,
     new_scope: str | None = None,
     new_connector_defaults: dict[str, Any] | None = None,
 ) -> ConnectionDocument:
@@ -346,7 +407,7 @@ def rotate_document(
     private_key_pem, public_key_pem = _local_identity(identity_dir)
     unsigned = ConnectionDocument(
         name=name,
-        secret_name=new_secret_name if new_secret_name is not None else current.secret_name,
+        broker_ref=new_broker_ref if new_broker_ref is not None else current.broker_ref,
         scope=new_scope if new_scope is not None else current.scope,
         connector_defaults=(
             dict(new_connector_defaults) if new_connector_defaults is not None else current.connector_defaults
@@ -360,7 +421,7 @@ def rotate_document(
         name=name,
         old_document_hash=current.document_hash(),
         new_document_hash=rotated.document_hash(),
-        secret_name_digest=_digest_secret_name(rotated.secret_name),
+        secret_name_digest=_digest_broker_ref(rotated.broker_ref),
     )
     store.put(rotated)
     return rotated
@@ -394,7 +455,7 @@ def resolve_document(
         )
         raise ConnectionRefused(f"connection document {name!r} is not signed by the local install identity")
 
-    token = broker.mint(secret_name=doc.secret_name, task_id=task_id, ttl_seconds=ttl_seconds)
+    token = broker.mint(secret_name=doc.broker_ref, task_id=task_id, ttl_seconds=ttl_seconds)
     record_fleet_conn_resolve(
         chain=chain,
         name=name,

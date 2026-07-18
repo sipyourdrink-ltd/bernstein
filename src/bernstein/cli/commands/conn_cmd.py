@@ -83,18 +83,18 @@ def conn_group() -> None:
 
 @conn_group.command("create")
 @click.argument("name")
-@click.option("--secret", "secret_name", required=True, help="Broker-managed secret name to reference.")
+@click.option("--secret", "broker_ref", required=True, help="Broker-managed secret name to reference.")
 @click.option("--scope", default="", help="Connector scope (e.g. repo:read).")
 @click.option("--default", "defaults", multiple=True, help="Connector default k=value (repeatable).")
 @_WORKDIR_OPTION
-def conn_create_cmd(name: str, secret_name: str, scope: str, defaults: tuple[str, ...], workdir: str) -> None:
+def conn_create_cmd(name: str, broker_ref: str, scope: str, defaults: tuple[str, ...], workdir: str) -> None:
     """Create and sign a new connection document under NAME."""
     from bernstein.core.fleet.connection import create_document
 
     wd = Path(workdir)
     doc = create_document(
         name=name,
-        secret_name=secret_name,
+        broker_ref=broker_ref,
         scope=scope,
         connector_defaults=_parse_defaults(defaults),
         identity_dir=_identity_dir(wd),
@@ -115,28 +115,28 @@ def conn_list_cmd(workdir: str) -> None:
         return
     for name in names:
         doc = store.get(name)
-        console.print(f"{name} -> secret {doc.secret_name} (scope {doc.scope or '-'}, v{doc.version})")
+        console.print(f"{name} -> secret {doc.broker_ref} (scope {doc.scope or '-'}, v{doc.version})")
 
 
 @conn_group.command("rotate")
 @click.argument("name")
-@click.option("--secret", "secret_name", default=None, help="New broker-managed secret name.")
+@click.option("--secret", "broker_ref", default=None, help="New broker-managed secret name.")
 @click.option("--scope", default=None, help="New connector scope.")
 @_WORKDIR_OPTION
-def conn_rotate_cmd(name: str, secret_name: str | None, scope: str | None, workdir: str) -> None:
+def conn_rotate_cmd(name: str, broker_ref: str | None, scope: str | None, workdir: str) -> None:
     """Rotate NAME; consumers re-point at next mint with zero spec edits."""
     from bernstein.core.fleet.connection import rotate_document
 
     wd = Path(workdir)
     rotated = rotate_document(
         name,
-        new_secret_name=secret_name,
+        new_broker_ref=broker_ref,
         new_scope=scope,
         identity_dir=_identity_dir(wd),
         chain=_chain(wd),
         store=_store(wd),
     )
-    console.print(f"[green]rotated[/green] {name} -> v{rotated.version} (secret {rotated.secret_name})")
+    console.print(f"[green]rotated[/green] {name} -> v{rotated.version} (secret {rotated.broker_ref})")
 
 
 @conn_group.command("audit")

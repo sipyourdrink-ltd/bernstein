@@ -266,7 +266,28 @@ def _validate_ids(task_id: str, key: str) -> None:
 
 
 def _artifact_journal_path(sdd_dir: Path, task_id: str) -> Path:
-    return sdd_dir / "runs" / _task_run_id(task_id) / "journal.jsonl"
+    """Return the task's journal path, refusing any id that escapes ``runs/``.
+
+    Every reader here derives a filesystem path from a task id that reached it
+    from a request path, a CLI argument, or a journal row. ``task_run_id`` maps
+    separators to ``-`` and prefixes the segment, which makes traversal
+    unreachable today, but that is an incidental property of a helper in
+    another module and nothing pins it. The reader therefore holds the property
+    on its own terms: the id must match the same alphabet ``post_run_artifact``
+    enforces, and the resolved path must still sit inside the resolved runs
+    directory.
+
+    Raises:
+        ArtifactValidationError: If the id is not a valid task identifier, or
+            if it resolves outside the runs directory.
+    """
+    if not _TASK_ID_RE.match(task_id):
+        raise ArtifactValidationError(f"task id {task_id!r} is not a valid task identifier")
+    base = (sdd_dir / "runs").resolve()
+    path = (base / _task_run_id(task_id) / "journal.jsonl").resolve()
+    if not path.is_relative_to(base):
+        raise ArtifactValidationError(f"task id {task_id!r} resolves outside the runs directory")
+    return path
 
 
 def _row_to_record(row: dict[str, Any]) -> RunArtifactRecord:
@@ -541,7 +562,31 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
             continue
         task_id = _task_id_from_rows(journal_path)
         if task_id is not None:
-            results.extend(verify_run_artifacts(sdd_dir, task_id, hmac_key=hmac_key))
+            # The row's task id must map back to the journal it was read from.
+            # An id that fails validation, or that resolves to some other
+            # journal, means the row was rewritten: verifying under it would
+            # read a different (or absent) journal and report a clean result
+            # for a tampered run.
+            try:
+                derived = _artifact_journal_path(sdd_dir, task_id)
+            except ArtifactValidationError:
+                derived = None
+            if derived == journal_path.resolve():
+                results.extend(verify_run_artifacts(sdd_dir, task_id, hmac_key=hmac_key))
+            else:
+                results.append(
+                    ArtifactVerifyResult(
+                        ok=False,
+                        task_id=run_dir.name.removeprefix("task-"),
+                        key="",
+                        version=0,
+                        journal_index=-1,
+                        reason=(
+                            f"artifact row task id does not resolve to its own journal ({run_dir.name}); "
+                            "the journal has been tampered with"
+                        ),
+                    )
+                )
             continue
         # No identifiable artifact rows. If this is an artifact journal
         # (``task-*``) whose Merkle chain does not verify, tampering may have
