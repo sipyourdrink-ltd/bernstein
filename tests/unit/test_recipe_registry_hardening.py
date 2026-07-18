@@ -335,7 +335,15 @@ class TestLineageForkFailsClosed:
         assert ok is False
         assert any("fork" in e.lower() for e in errors)
 
-    def test_unreachable_receipt_is_rejected(self, tmp_path: Path) -> None:
+    def test_unreachable_receipt_degrades_rather_than_refusing(self, tmp_path: Path) -> None:
+        """An unreachable predecessor is absence, not contradiction.
+
+        With the chain intact the receipts are authentic and the predecessor
+        is simply not in the queryable window - the steady state after audit
+        retention. Refusing there would brick honest data permanently, so the
+        projection degrades and reports why. The tampering case (chain fails
+        to verify) is covered in test_recipe_lineage_retention.py.
+        """
         reg = _registry(tmp_path / ".sdd")
         reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
         record_recipe_supersede(
@@ -344,11 +352,14 @@ class TestLineageForkFailsClosed:
             old_hash="a" * 64,
             new_hash="b" * 64,
             spine_anchor="",
-            prev_receipt_digest="f" * 64,  # links to a receipt that does not exist
+            prev_receipt_digest="f" * 64,  # links to a receipt query() cannot see
             actor="operator",
         )
-        with pytest.raises(RecipeRegistryError):
-            reg.live_hash("nightly-triage")
+        assert reg.live_hash("nightly-triage")
+        assert reg.lineage_note("nightly-triage")
+        ok, errors = reg.verify_history("nightly-triage")
+        assert ok is False
+        assert any("not a chain defect" in e for e in errors)
 
     def test_intact_lineage_still_projects(self, tmp_path: Path) -> None:
         reg = _registry(tmp_path / ".sdd")
@@ -550,7 +561,7 @@ class TestForkRecovery:
     def test_repair_without_a_fork_is_refused(self, tmp_path: Path) -> None:
         reg = _registry(tmp_path / ".sdd")
         reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
-        with pytest.raises(RecipeRegistryError, match="no unresolved"):
+        with pytest.raises(RecipeRegistryError, match="no definition-lineage fork"):
             reg.repair_lineage("nightly-triage", "a" * 64)
 
     def test_pause_and_rollback_serialise_against_register(self, tmp_path: Path) -> None:

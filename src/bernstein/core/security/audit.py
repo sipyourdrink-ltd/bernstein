@@ -737,6 +737,7 @@ class AuditLog:
         actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        include_archived: bool = False,
     ) -> list[AuditEvent]:
         """Filter audit events by type, actor, and/or time range.
 
@@ -745,16 +746,34 @@ class AuditLog:
             actor: If set, only return events from this actor.
             since: ISO 8601 lower bound (inclusive).
             until: ISO 8601 upper bound (inclusive).
+            include_archived: Also read archived ``*.jsonl.gz`` segments,
+                replayed in chronological order *before* the live files, the
+                same way :meth:`verify` walks them (#1835). Default False
+                keeps the hot path reading only live segments.
+
+                Callers that reason about *linkage* between events - rather
+                than about individual events - need this: after retention an
+                event's predecessor commonly lives in an archived segment, so
+                a live-only read makes an intact chain look broken. Reading
+                archives costs a decompress per segment, so it belongs on the
+                paths that need completeness, not on every query.
 
         Returns:
             List of matching AuditEvent instances (chronological order).
         """
         results: list[AuditEvent] = []
-        log_files = sorted(self._audit_dir.glob(_JSONL_GLOB))
+        sources: list[bytes | None] = []
+        if include_archived:
+            discard: list[str] = []
+            sources.extend(_read_archived_segment(gz, discard) for gz in _archived_segment_paths(self._audit_dir))
+        sources.extend(path.read_bytes() for path in sorted(self._audit_dir.glob(_JSONL_GLOB)))
 
-        for log_path in log_files:
-            for raw in log_path.read_text().splitlines():
-                raw = raw.strip()
+        for blob in sources:
+            if blob is None:
+                # Unreadable archive segment; verify() reports it properly.
+                continue
+            for raw_line in blob.decode("utf-8", errors="replace").splitlines():
+                raw = raw_line.strip()
                 if not raw:
                     continue
                 try:

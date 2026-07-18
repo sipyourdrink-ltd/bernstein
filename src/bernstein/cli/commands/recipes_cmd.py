@@ -188,8 +188,12 @@ def _show_registered(name: str, console: Console) -> None:
         console.print(f"[bold red]Definition lineage does not reconstruct:[/bold red] {exc}")
         console.print(f"[dim]Run 'bernstein recipes history {name} --verify' for the full report.[/dim]")
         raise SystemExit(1) from exc
+    note = registry.lineage_note(name)
     console.print(f"[bold]{name}[/bold]  [cyan]recipe_{live[:12]}[/cyan]")
     console.print(f"  recipe_hash: {live}")
+    if note:
+        # Usable, just not fully re-walkable. A caveat, not a failure.
+        console.print(f"  [yellow]lineage: incomplete[/yellow] - {note}")
     console.print(f"  state: {'[yellow]paused[/yellow]' if paused else '[green]active[/green]'}")
     console.print(f"  lifecycle receipts: {len(receipts)}")
 
@@ -731,7 +735,7 @@ def repair_lineage_cmd(name: str, pick: str) -> None:
         console.print(f"[green]No unresolved lineage fork for {name!r}.[/green]")
         return
 
-    if not pick:
+    if not pick.strip():
         console.print(f"[yellow]Forked definition lineage for {name!r}.[/yellow] Competing branches:")
         for predecessor, candidates in sorted(forks.items()):
             console.print(f"  after {predecessor[:16] or '(genesis)'}:")
@@ -750,6 +754,7 @@ def repair_lineage_cmd(name: str, pick: str) -> None:
         raise SystemExit(1) from exc
     console.print(f"[bold green]Resolved[/bold green] {name} -> following {chosen[:16]}")
     console.print("[dim]The other branch is retained on the chain and in 'recipes history'.[/dim]")
+    console.print("[dim]Wrong branch? Re-run with the other hmac - the latest resolution wins.[/dim]")
 
 
 @recipes_group.command("history")
