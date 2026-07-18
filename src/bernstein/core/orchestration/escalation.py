@@ -51,7 +51,7 @@ from bernstein.core.orchestration.supervisor_receipt import (
     recommend_action,
 )
 from bernstein.core.replay.fork import SNAPSHOT_EVENT
-from bernstein.core.replay.journal import JOURNAL_FILENAME, load_events, verify_journal
+from bernstein.core.replay.journal import load_events, run_journal_path, verify_journal
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -182,7 +182,8 @@ class ForkRef:
 
 
 def _journal_path(sdd_dir: Path, run_id: str) -> Path:
-    return sdd_dir / "runs" / run_id / JOURNAL_FILENAME
+    """Return the run journal path via the shared containment barrier."""
+    return run_journal_path(sdd_dir, run_id)
 
 
 def _resolve_fork_ref(events: list[dict[str, Any]], run_id: str, fork_step: int) -> ForkRef:

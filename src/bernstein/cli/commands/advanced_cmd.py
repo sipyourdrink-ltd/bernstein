@@ -1443,9 +1443,9 @@ _OTEL_PROJECTION_SUFFIX = ".otel.json"
 
 
 def _journal_path_for_run(root: Path, run_id: str) -> Path:
-    from bernstein.core.replay.journal import JOURNAL_FILENAME
+    from bernstein.core.replay.journal import run_journal_path
 
-    return root / ".sdd" / "runs" / run_id / JOURNAL_FILENAME
+    return run_journal_path(root / ".sdd", run_id)
 
 
 def _projection_dest(root: Path, run_id: str) -> Path:
@@ -1752,8 +1752,19 @@ def _replay_resolve_latest(runs_dir: Path) -> str:
 
 
 def _should_use_run_replay(run_id: str, runs_dir: Path) -> bool:
-    """Return whether replay should use the legacy run-event mode."""
-    return run_id in {"list", "latest"} or (runs_dir / run_id / _REPLAY_JSONL).exists()
+    """Return whether replay should use the legacy run-event mode.
+
+    A run id that escapes ``runs_dir`` is reported as absent rather than
+    probed, so the traversal never reaches the filesystem.
+    """
+    from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
+    if run_id in {"list", "latest"}:
+        return True
+    try:
+        return contained_path(runs_dir, run_id, _REPLAY_JSONL, label="run id").exists()
+    except PathContainmentError:
+        return False
 
 
 def _wait_for_replay_completion(
@@ -1839,7 +1850,7 @@ def _replay_run_impl(
     if run_id == "latest":
         run_id = _replay_resolve_latest(runs_dir)
 
-    replay_path = runs_dir / run_id / _REPLAY_JSONL
+    replay_path = _resolve_journal_path(run_id, runs_dir)
     if not replay_path.exists():
         console.print(f"[red]Replay log not found:[/red] {replay_path}")
         console.print("[dim]Use 'bernstein replay list' to see available runs.[/dim]")
@@ -1948,10 +1959,15 @@ def _replay_run_impl(
 
 
 def _resolve_journal_path(run_id: str, runs_dir: Path) -> Path:
-    """Resolve a run id (or ``latest``) to its canonical journal path."""
+    """Resolve a run id (or ``latest``) to its canonical journal path.
+
+    Contained under ``runs_dir``: the id reaches here straight from argv.
+    """
+    from bernstein.core.security.path_containment import contained_path
+
     if run_id == "latest":
         run_id = _replay_resolve_latest(runs_dir)
-    return runs_dir / run_id / _REPLAY_JSONL
+    return contained_path(runs_dir, run_id, _REPLAY_JSONL, label="run id")
 
 
 def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:

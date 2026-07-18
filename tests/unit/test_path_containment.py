@@ -15,7 +15,9 @@ still round-trips unchanged.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -86,6 +88,39 @@ def test_validate_path_segment_refuses_unsafe_ids(bad_id: str) -> None:
 def test_validate_path_segment_accepts_ordinary_ids(good_id: str) -> None:
     """A plain identifier passes through unchanged."""
     assert validate_path_segment(good_id) == good_id
+
+
+def test_max_segment_bytes_matches_posix_name_max() -> None:
+    """The bound must be NAME_MAX, not merely "some large number".
+
+    Widening it silently reintroduces the ENAMETOOLONG crash this bound was
+    added to stop, so the value itself is the contract, not just the
+    presence of a check.
+    """
+    assert MAX_SEGMENT_BYTES == 255
+
+
+def test_segment_at_name_max_is_accepted_and_one_over_is_refused() -> None:
+    """Pins the exact boundary, so widening or narrowing the bound fails."""
+    assert validate_path_segment("A" * MAX_SEGMENT_BYTES) == "A" * MAX_SEGMENT_BYTES
+    with pytest.raises(PathTooLongError):
+        validate_path_segment("A" * (MAX_SEGMENT_BYTES + 1))
+
+
+def test_derived_task_run_id_over_name_max_is_refused_by_the_bound() -> None:
+    """The real derivation that motivated the bound trips it deterministically.
+
+    ``_TASK_ID_RE`` accepts 256 characters and ``task_run_id`` adds a
+    ``task-`` prefix, giving a 261-byte component. This asserts the barrier
+    itself rejects it rather than relying on a filesystem probe, which
+    returns False on macOS but raises ENAMETOOLONG on Linux.
+    """
+    from bernstein.core.tasks.checkpoint_retry import task_run_id
+
+    segment = task_run_id("T" * 256)
+    assert len(segment.encode()) > MAX_SEGMENT_BYTES
+    with pytest.raises(PathTooLongError):
+        validate_path_segment(segment)
 
 
 def test_validate_path_segment_refuses_segment_over_name_max() -> None:
@@ -590,3 +625,159 @@ def test_no_stray_writes_outside_base(tmp_path: Path) -> None:
     assert [p.name for p in tmp_path.iterdir()] == [".sdd"]
     created = sorted(str(p.relative_to(sdd_dir)) for p in sdd_dir.rglob("*"))
     assert created == ["runtime", str(Path("runtime") / "ledger")]
+
+
+# ---------------------------------------------------------------------------
+# Sink closure: the set of journal readers must stay routed
+# ---------------------------------------------------------------------------
+#
+# The barrier tests above prove the barrier works. These prove the ROUTING:
+# that every reader actually goes through it. Without them a new call site
+# can join a journal path by hand and silently reopen the escape, which is
+# exactly what happened twice on this branch.
+
+
+def _source_files() -> list[Path]:
+    src = Path(__file__).resolve().parents[2] / "src" / "bernstein"
+    return sorted(src.rglob("*.py"))
+
+
+#: Sites that join a runs-root path from a name obtained by iterating the
+#: directory itself. The name comes from the filesystem, never from a caller,
+#: so there is no external identifier to contain. Each entry must stay
+#: justified; adding to this list is how a reviewer sees the exception.
+_ITERATION_DERIVED_ALLOWLIST = {
+    "core/evidence/run_artifacts.py",
+    "core/orchestration/schedule_fire_record.py",
+    "core/replay/review_board.py",
+    "cli/commands/advanced_cmd.py",
+}
+
+
+def test_no_unrouted_journal_path_construction() -> None:
+    """No source file may build a journal path by hand.
+
+    The escape this PR closes is reachable from any raw
+    ``<base> / <run_id> / journal.jsonl`` join, so the guarantee is only as
+    good as the claim that no such join remains. This asserts that claim
+    mechanically instead of trusting a hand-kept list: a new unrouted reader
+    fails here the moment it is added.
+    """
+    pattern = re.compile(
+        r"/\s*(?:run_id|task_id|_task_run_id\(|task_run_id\()[^\n]*?/\s*(?:JOURNAL_FILENAME|\"journal\.jsonl\"|_REPLAY_JSONL)"
+    )
+    offenders: list[str] = []
+    for path in _source_files():
+        rel = path.relative_to(path.parents[1]).as_posix()
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if pattern.search(line) and rel not in _ITERATION_DERIVED_ALLOWLIST:
+                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+
+    assert not offenders, (
+        "these sites build a journal path from an identifier without the "
+        "containment barrier; route them through run_journal_path / "
+        "task_journal_path / contained_path:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_every_run_journal_reader_refuses_a_planted_journal(tmp_path: Path) -> None:
+    """Enumerate the run-journal readers; each must refuse a planted journal.
+
+    One planted symlink, every reader. A reader that starts following it
+    again fails here even if its own dedicated test is removed.
+    """
+    from bernstein.cli.commands import thread_cmd
+    from bernstein.core.orchestration import escalation
+    from bernstein.core.orchestration.activity_modalities import verify_run_activities
+    from bernstein.core.replay import review_board
+    from bernstein.core.replay.fork import ForkError, fork_run
+    from bernstein.core.replay.journal import run_journal_path
+
+    sdd_dir = tmp_path / ".sdd"
+    runs_root = sdd_dir / "runs"
+    runs_root.mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    planted = EventJournal("planted", elsewhere)
+    planted.record("activity.result", stage="s1")
+    _symlink_or_skip(runs_root / "planted", planted.path.parent)
+    assert planted.path.is_file()
+
+    # Each entry: (name, call, predicate that the planted journal was refused).
+    checks: list[tuple[str, Any]] = [
+        ("run_journal_path", lambda: run_journal_path(sdd_dir, "planted")),
+        ("escalation._journal_path", lambda: escalation._journal_path(sdd_dir, "planted")),
+        ("review_board.project_run", lambda: review_board.project_run(sdd_dir, "planted")),
+        ("thread_cmd.thread_verify", lambda: thread_cmd.thread_verify(run_id="planted", sdd_dir=sdd_dir, as_json=True)),
+        ("verify_run_activities", lambda: verify_run_activities(sdd_dir, run_id="planted")),
+        ("fork_run", lambda: fork_run(sdd_dir, "planted", from_step=0, repo_root=tmp_path)),
+    ]
+
+    followed: list[str] = []
+    for name, call in checks:
+        try:
+            result = call()
+        except (PathContainmentError, ForkError):
+            continue
+        # A reader may report rather than raise, but it must not report a
+        # pass or hand back a projection built from the planted journal.
+        if name == "review_board.project_run" and result is None:
+            continue
+        if name == "thread_cmd.thread_verify" and result != 0:
+            continue
+        if name == "verify_run_activities" and not result.found:
+            continue
+        followed.append(f"{name} -> {result!r}")
+
+    assert not followed, "these readers followed a journal planted outside the runs root:\n  " + "\n  ".join(followed)
+
+
+# ---------------------------------------------------------------------------
+# A verifier reports; it does not raise
+# ---------------------------------------------------------------------------
+
+
+def _tampered_audit_chain(root: Path) -> None:
+    """Build a real audit chain under *root* and tamper one record in place."""
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    audit_dir = root / ".sdd" / "audit"
+    audit_dir.mkdir(parents=True)
+    chain = AuditChainStore(audit_dir)
+    for transition in ("submitted", "done"):
+        chain.log(
+            event_type="run.lifecycle",
+            resource_type="run",
+            resource_id="r",
+            details={"run_id": "r", "transition": transition},
+            actor="tester",
+        )
+    log_file = sorted(audit_dir.glob("*.jsonl"))[0]
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    lines[1] = lines[1].replace("done", "TAMPERED")
+    log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("bad_run_id", ["r:1", "..", "", "../escape"])
+def test_verify_run_reports_an_unusable_run_id_without_losing_the_audit_finding(
+    tmp_path: Path,
+    bad_run_id: str,
+) -> None:
+    """An identifier check must not destroy a computed audit-tamper finding.
+
+    ``verify_run`` verifies the audit chain first and the ledger second. If
+    the ledger step raises on a bad run id, the tamper finding it already
+    computed is thrown away and the operator gets a traceback instead of the
+    verdict - strictly worse than not having checked at all.
+    """
+    from bernstein.core.run_service.verify import verify_run
+
+    _tampered_audit_chain(tmp_path)
+
+    result = verify_run(tmp_path, bad_run_id)
+
+    assert result.audit_ok is False, "the audit-tamper finding must survive"
+    assert any(e.startswith("audit:") for e in result.errors)
+    assert result.ledger_ok is False
+    assert any("unusable run id" in e for e in result.errors)
+    assert result.ok is False

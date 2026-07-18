@@ -60,7 +60,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.replay.journal import (
     JOURNAL_FILENAME,
+    JournalPathError,
     load_events,
+    run_journal_path,
     verify_journal,
 )
 
@@ -337,7 +339,14 @@ def project_run(sdd_dir: Path, run_id: str) -> BoardProjection | None:
         A :class:`BoardProjection`, or ``None`` when no journal exists for
         ``run_id``.
     """
-    journal_path = sdd_dir / "runs" / run_id / JOURNAL_FILENAME
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError:
+        # A run id that escapes the runs root names no run of ours, which is
+        # the documented "no projection" case. Never project a journal that
+        # is not ours: verify_journal is an unkeyed recompute and a planted
+        # chain satisfies it.
+        return None
     if not journal_path.is_file():
         return None
     events = load_events(journal_path)
