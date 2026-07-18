@@ -168,14 +168,26 @@ def show_cmd(name: str, registered: bool) -> None:
 
 
 def _show_registered(name: str, console: Console) -> None:
-    """Print the live registered definition for ``name`` (content hash + state)."""
+    """Print the live registered definition for ``name`` (content hash + state).
+
+    A lineage that does not reconstruct is reported as such and exits
+    non-zero. The projection refuses to serve a live hash it cannot derive,
+    so there is nothing honest to print in that case.
+    """
+    from bernstein.core.workflows.recipe_registry import RecipeRegistryError
+
     registry = _open_registry()
-    live = registry.live_hash(name)
-    if live is None:
-        console.print(f"[yellow]{name!r} is not registered.[/yellow] Run 'bernstein recipes register {name}'.")
-        raise SystemExit(1)
-    paused = registry.is_paused(name)
-    receipts = registry.history(name)
+    try:
+        live = registry.live_hash(name)
+        if live is None:
+            console.print(f"[yellow]{name!r} is not registered.[/yellow] Run 'bernstein recipes register {name}'.")
+            raise SystemExit(1)
+        paused = registry.is_paused(name)
+        receipts = registry.history(name)
+    except RecipeRegistryError as exc:
+        console.print(f"[bold red]Definition lineage does not reconstruct:[/bold red] {exc}")
+        console.print(f"[dim]Run 'bernstein recipes history {name} --verify' for the full report.[/dim]")
+        raise SystemExit(1) from exc
     console.print(f"[bold]{name}[/bold]  [cyan]recipe_{live[:12]}[/cyan]")
     console.print(f"  recipe_hash: {live}")
     console.print(f"  state: {'[yellow]paused[/yellow]' if paused else '[green]active[/green]'}")
@@ -579,12 +591,20 @@ def register_cmd(name: str, collision_policy: str, concurrency_cap: int, sandbox
 @click.argument("name")
 @click.option("--at", type=int, default=None, help="Fire instant as an integer Unix epoch (default: now).")
 @click.option("-g", "--goal", default="", help="Free-text goal folded into the fire projection.")
-def fire_cmd(name: str, at: int | None, goal: str) -> None:
+@click.option(
+    "--schedule",
+    "schedule",
+    default="",
+    help="Id of the declared schedule that triggered this fire (default: a schedule-neutral manual fire).",
+)
+def fire_cmd(name: str, at: int | None, goal: str, schedule: str) -> None:
     """Fire a registered recipe by name; the receipt is the response.
 
-    A paused recipe fires nothing. Otherwise the fire is a deterministic
-    projection whose hash plus chain anchor is the reply - not an opaque job
-    id.
+    A paused recipe fires nothing and exits 0 (a deliberate operator state).
+    A fire that could not submit work exits 2, so a script never reads a
+    failed submission as a successful run. A dispatched fire prints the
+    projection hash and the chain anchor of its fire receipt - not an opaque
+    job id.
     """
     import time
 
@@ -596,16 +616,20 @@ def fire_cmd(name: str, at: int | None, goal: str) -> None:
     registry = _open_registry()
     fire_time = at if at is not None else int(time.time())
     try:
-        result = registry.fire(name, fire_time=fire_time, goal=goal)
+        result = registry.fire(name, fire_time=fire_time, goal=goal, schedule_id=schedule)
     except RecipeRegistryError as exc:
         console.print(f"[bold red]Fire failed:[/bold red] {exc}")
         raise SystemExit(1) from exc
     if not result.dispatched:
-        console.print(f"[yellow]Not fired:[/yellow] {result.reason or 'recipe is paused'}")
+        reason = result.reason or "recipe is paused"
+        console.print(f"[yellow]Not fired:[/yellow] {reason}")
+        if "paused" not in reason:
+            raise SystemExit(2)
         return
     console.print(f"[bold green]Fired[/bold green] {result.name} @ {result.fire_time}")
     console.print(f"  projection_hash: {result.projection_hash}")
     console.print(f"  chain_anchor: {result.chain_anchor[:16]}")
+    console.print(f"  submitted: {result.submitted}")
 
 
 @recipes_group.command("history")
@@ -615,14 +639,22 @@ def history_cmd(name: str, verify: bool) -> None:
     """Walk a recipe's definition-lineage receipts (register/supersede/rollback/pause).
 
     With ``--verify`` the receipts are checked against the HMAC audit chain
-    with no server running; a broken or reordered link exits non-zero.
+    with no server running; a broken or reordered link exits non-zero. A
+    lineage that does not reconstruct at all (forked, orphaned, or cyclic)
+    is reported here rather than rendered as if it were a chain.
     """
     from rich.console import Console
     from rich.table import Table
 
+    from bernstein.core.workflows.recipe_registry import RecipeRegistryError
+
     console = Console()
     registry = _open_registry()
-    receipts = registry.history(name)
+    try:
+        receipts = registry.history(name)
+    except RecipeRegistryError as exc:
+        console.print(f"[bold red]verification failed:[/bold red] {exc}")
+        raise SystemExit(1) from exc
     if not receipts:
         console.print(f"[dim]No lifecycle receipts for {name!r}.[/dim]")
         raise SystemExit(1)

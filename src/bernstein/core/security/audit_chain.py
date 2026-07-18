@@ -5233,6 +5233,12 @@ EVENT_SCHEDULE_COLLISION = "schedule.collision_receipt"
 #: the apply receipt binds the reviewed plan to the registry mutation.
 EVENT_RECIPE_FLEET_APPLY = "recipe.fleet_apply"
 
+#: A registered recipe actually submitted work. Written only after the task
+#: graph was handed to the dispatcher and the dispatcher reported at least
+#: one submitted work item, so the presence of this receipt is the evidence
+#: that the fire happened; its absence means nothing was submitted.
+EVENT_RECIPE_FIRE = "recipe.fire"
+
 #: Issue #2518 -- emitted once per sovereign-profile activation. The active
 #: residency posture (deny-all egress, offline catalog, local storage, strict
 #: EU residency, compliance pack, and the config-derived declared endpoints /
@@ -5405,6 +5411,54 @@ def record_schedule_collision(
             "running_fire_id": running_fire_id,
             "resume_from_checkpoint": resume_from_checkpoint,
             "warm_resume": warm_resume,
+        },
+    )
+
+
+def record_recipe_fire(
+    *,
+    chain: AuditChainStore,
+    name: str,
+    recipe_hash: str,
+    fire_time: int,
+    projection_hash: str,
+    schedule_id: str,
+    submitted: int,
+    actor: str = "recipe_registry",
+) -> AuditEvent:
+    """Append a ``recipe.fire`` event for a fire that submitted work (#2654).
+
+    The caller appends this only after the dispatcher reported at least one
+    submitted work item, so the receipt is the evidence that the fire ran.
+    A fire whose submission failed appends nothing and reports the failure
+    to its caller instead.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        name: Operator-facing recipe name that fired.
+        recipe_hash: The live content-addressed definition identity.
+        fire_time: Unix epoch of the fire instant.
+        projection_hash: Deterministic fire-projection hash.
+        schedule_id: Content-derived id of the declared schedule that
+            triggered the fire, or ``""`` for a schedule-neutral manual fire.
+        submitted: Number of work items the dispatcher reported submitting.
+        actor: Recorded actor; defaults to ``"recipe_registry"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RECIPE_FIRE,
+        actor=actor,
+        resource_type="registered_recipe",
+        resource_id=recipe_hash,
+        details={
+            "name": name,
+            "recipe_hash": recipe_hash,
+            "fire_time": fire_time,
+            "projection_hash": projection_hash,
+            "schedule_id": schedule_id,
+            "submitted": submitted,
         },
     )
 
@@ -6550,6 +6604,7 @@ __all__ = [
     "EVENT_PROVENANCE_QUARANTINE",
     "EVENT_PROVENANCE_TAINT_DECISION",
     "EVENT_PROVIDER_STATE_MUTATION",
+    "EVENT_RECIPE_FIRE",
     "EVENT_RECIPE_FLEET_APPLY",
     "EVENT_RECIPE_PAUSE",
     "EVENT_RECIPE_REGISTER",
@@ -6662,6 +6717,7 @@ __all__ = [
     "record_process_reap_receipt",
     "record_provenance_quarantine",
     "record_provider_state_mutation",
+    "record_recipe_fire",
     "record_recipe_fleet_apply",
     "record_recipe_pause",
     "record_recipe_register",

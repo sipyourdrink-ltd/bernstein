@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -48,13 +50,17 @@ from bernstein.core.orchestration.schedule_kinds import (
 )
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.workflows.recipe_spec import RecipeSpec
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "CANONICAL_RECIPE_REV",
+    "RecipeDispatch",
     "RecipeFireResult",
     "RecipePins",
     "RecipeRegistry",
@@ -68,6 +74,13 @@ __all__ = [
     "recipe_id",
     "recipe_run_id",
 ]
+
+#: Task-graph dispatcher for a recipe fire. Receives the normalised trigger
+#: event and returns **how many work items it submitted**. The return value is
+#: the evidence ``fire`` relies on, so a dispatcher that returns 0 (or
+#: anything non-integer) is read as "nothing was submitted" and the fire
+#: reports failure rather than claiming a dispatch it cannot back up.
+RecipeDispatch = Callable[[Any], int]
 
 #: Schema rev baked into the canonical recipe body. Bumping it changes every
 #: recipe_hash and is the single lever for evolving the canonical encoding.
@@ -132,6 +145,19 @@ class RecipeSchedule:
             "timezone": self.timezone,
             "dst_policy": self.dst_policy,
         }
+
+    @property
+    def schedule_id(self) -> str:
+        """Content-derived identity of this schedule, ``sched_<12hex>``.
+
+        Derived from the canonical fields alone, so the id is stable across
+        hosts and processes and two distinct schedules on one recipe get
+        distinct ids. A fire names the schedule that triggered it by this
+        id, which is what keeps a multi-schedule recipe from projecting
+        every fire under one of its schedules.
+        """
+        payload = json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":")).encode()
+        return "sched_" + hashlib.sha256(payload).hexdigest()[:12]
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> RecipeSchedule:
@@ -212,9 +238,19 @@ class RegisteredRecipe:
 class RecipeFireResult:
     """Outcome of firing a registered recipe by name.
 
-    ``dispatched`` is False when the recipe is paused (it fires nothing).
-    ``projection_hash`` is the deterministic fire projection hash plus its
-    chain anchor - the fire is a hash rather than an opaque job id.
+    ``dispatched`` is True only when the task-graph dispatcher reported
+    submitted work *and* a ``recipe.fire`` receipt was appended; every other
+    outcome (paused, no dispatcher, dispatcher error, nothing submitted) is
+    False and carries a ``reason``.
+
+    ``projection_hash`` is the deterministic fire projection hash and
+    ``chain_anchor`` is the hmac of the fire receipt - the fire is a hash
+    rather than an opaque job id.
+
+    Attributes:
+        schedule_id: Content-derived id of the schedule that triggered the
+            fire, or ``""`` for a schedule-neutral manual fire.
+        submitted: Number of work items the dispatcher reported submitting.
     """
 
     name: str
@@ -224,6 +260,8 @@ class RecipeFireResult:
     projection_hash: str = ""
     chain_anchor: str = ""
     reason: str = ""
+    schedule_id: str = ""
+    submitted: int = 0
 
 
 def recipe_content_hash(canonical_bytes: bytes) -> str:
@@ -351,10 +389,25 @@ def _canonical_json_value(value: Any) -> Any:
     Dicts sort by key; lists preserve order (node/schedule order is
     semantic). Scalars pass through. Guards against a manifest smuggling a
     non-JSON scalar into the hash by stringifying unknown types.
+
+    Non-string dict keys are rejected rather than coerced. Coercing them
+    would let two distinct keys (``1`` and ``"1"``, ``True`` and ``"True"``)
+    stringify onto the same entry, silently dropping one value and folding
+    two different definitions into one hash - the exact failure the
+    content-addressing exists to make impossible.
+
+    Raises:
+        RecipeRegistryError: When any nested mapping has a non-string key.
     """
     if isinstance(value, dict):
         mapping: dict[Any, Any] = value
-        return {str(k): _canonical_json_value(mapping[k]) for k in sorted(mapping, key=str)}
+        offending = [k for k in mapping if not isinstance(k, str)]
+        if offending:
+            rendered = ", ".join(sorted(repr(k) for k in offending))
+            raise RecipeRegistryError(
+                f"canonical recipe body requires string keys; got non-string key(s) {rendered}",
+            )
+        return {k: _canonical_json_value(mapping[k]) for k in sorted(mapping)}
     if isinstance(value, (list, tuple)):
         return [_canonical_json_value(v) for v in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
@@ -370,6 +423,31 @@ class _NameState:
     paused: bool = False
     last_receipt_hmac: str = ""
     receipts: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _StagedRegistration:
+    """A registration whose fallible work is done but whose receipt is not written.
+
+    ``existing`` is set when the definition is already live under the name
+    (idempotent re-registration): committing it is a no-op. Otherwise
+    ``recipe`` carries the sealed registration and ``prev_receipt_digest``
+    the lineage predecessor its receipt will link to.
+    """
+
+    recipe: RegisteredRecipe | None = None
+    existing: RegisteredRecipe | None = None
+    prev_receipt_digest: str = ""
+
+
+def _lineage_hashes(receipts: list[dict[str, Any]]) -> set[str]:
+    """Return every definition hash named by a name's own lifecycle receipts."""
+    fields = ("recipe_hash", "new_hash", "old_hash", "to_hash", "from_hash")
+    known: set[str] = set()
+    for ev in receipts:
+        details = ev.get("details", {})
+        known.update(str(details[key]) for key in fields if details.get(key))
+    return known
 
 
 class RecipeRegistry:
@@ -390,6 +468,7 @@ class RecipeRegistry:
         chain: AuditChainStore | None = None,
         hmac_key: bytes | None = None,
         lineage_key: bytes | None = None,
+        dispatch: RecipeDispatch | None = None,
     ) -> None:
         self._sdd_dir = sdd_dir
         self._dir = sdd_dir / "runtime" / "recipes"
@@ -398,6 +477,28 @@ class RecipeRegistry:
         self._hmac_key = hmac_key
         self._lineage_key = lineage_key if lineage_key is not None else hmac_key
         self._chain = chain
+        # Task-graph dispatcher invoked by ``fire``. Resolved lazily from the
+        # trigger pipeline when not injected; tests inject a spy.
+        self._dispatch = dispatch
+        self._dispatch_resolved = dispatch is not None
+
+    # -- write serialisation ------------------------------------------------
+
+    @property
+    def _lock_path(self) -> Path:
+        return self._dir / "locks" / "registry.lock"
+
+    def write_lock(self) -> AbstractContextManager[None]:
+        """Return an exclusive cross-process lock over registry writes.
+
+        Every mutation that must be seen as one step - a fleet apply's
+        base-state recheck, its registrations, and its aggregate receipt -
+        is held inside a single acquisition, so a concurrent writer cannot
+        interleave a registration between the recheck and the receipt.
+        """
+        from bernstein.core.persistence.file_locks import cross_process_lock
+
+        return cross_process_lock(self._lock_path)
 
     # -- chain access -------------------------------------------------------
 
@@ -456,7 +557,14 @@ class RecipeRegistry:
         return out
 
     def _project_name(self, name: str) -> _NameState:
-        """Replay this name's receipts into its live state."""
+        """Replay this name's receipts into its live state.
+
+        Raises:
+            RecipeRegistryError: When the name's receipt lineage is forked,
+                orphaned, or cyclic. The projection fails closed rather than
+                serving a live hash derived from a history that does not
+                reconstruct.
+        """
         from bernstein.core.security.audit_chain import (
             EVENT_RECIPE_PAUSE,
             EVENT_RECIPE_REGISTER,
@@ -469,7 +577,7 @@ class RecipeRegistry:
         # Order the name's receipts by their per-name lineage linkage: each
         # receipt names the hmac of its predecessor, so a linked list rebuild
         # is order-independent of how query() grouped them.
-        ordered = _order_by_lineage(events)
+        ordered = _order_by_lineage(events, name)
         state = _NameState()
         for ev in ordered:
             details = ev["details"]
@@ -535,6 +643,36 @@ class RecipeRegistry:
         existing registration without a new receipt. Registering a changed
         body under a live name writes an operator-signed supersede receipt.
         """
+        with self.write_lock():
+            staged = self.prepare_registration(
+                spec=spec,
+                pins=pins,
+                collision_policy=collision_policy,
+                concurrency_cap=concurrency_cap,
+                sandbox_pool=sandbox_pool,
+                now=now,
+            )
+            return self.commit_registration(staged, actor=actor)
+
+    def prepare_registration(
+        self,
+        *,
+        spec: RecipeSpec,
+        pins: RecipePins | None = None,
+        collision_policy: CollisionPolicy | str = CollisionPolicy.CANCEL_NEW,
+        concurrency_cap: int = 1,
+        sandbox_pool: str = "",
+        now: float | None = None,
+    ) -> _StagedRegistration:
+        """Do every fallible part of a registration without touching the chain.
+
+        Canonicalisation, the lineage seal, and the blob write all happen
+        here; :meth:`commit_registration` then only appends the receipt.
+        Splitting the two is what lets a multi-recipe apply be all-or-nothing:
+        the live ``name -> hash`` mapping is projected from chain receipts
+        alone, so a preparation that fails part-way leaves content-addressed
+        bytes on disk that no receipt points at - inert, not half-registered.
+        """
         (
             canonical_bytes,
             digest,
@@ -556,11 +694,34 @@ class RecipeRegistry:
         if state.live_hash == digest:
             existing = self._load_registered(spec.name, digest)
             if existing is not None:
-                return existing
+                return _StagedRegistration(existing=existing)
 
         # Seal canonical bytes into the lineage spine (ungated, deterministic).
         spine_anchor = self._seal(canonical_bytes, digest)
         self._blob_path(digest).write_bytes(canonical_bytes)
+        return _StagedRegistration(
+            recipe=RegisteredRecipe(
+                name=spec.name,
+                recipe_hash=digest,
+                canonical_bytes=canonical_bytes,
+                spine_anchor=spine_anchor,
+                schedules=schedules,
+                collision_policy=policy,
+                concurrency_cap=cap,
+                pins=resolved_pins,
+                superseded_hash=state.live_hash if state.live_hash and state.live_hash != digest else "",
+                registered_at=float(now) if now is not None else time.time(),
+            ),
+            prev_receipt_digest=state.last_receipt_hmac,
+        )
+
+    def commit_registration(self, staged: _StagedRegistration, *, actor: str = "operator") -> RegisteredRecipe:
+        """Append the lifecycle receipt for a prepared registration."""
+        if staged.existing is not None:
+            return staged.existing
+        recipe = staged.recipe
+        if recipe is None:  # pragma: no cover - defensive
+            raise RecipeRegistryError("staged registration carries neither an existing nor a new recipe")
 
         chain = self._get_chain()
         from bernstein.core.security.audit_chain import (
@@ -568,56 +729,55 @@ class RecipeRegistry:
             record_recipe_supersede,
         )
 
-        prev_receipt = state.last_receipt_hmac
-        superseded = ""
-        if state.live_hash and state.live_hash != digest:
-            superseded = state.live_hash
+        if recipe.superseded_hash:
             record_recipe_supersede(
                 chain=chain,
-                name=spec.name,
-                old_hash=state.live_hash,
-                new_hash=digest,
-                spine_anchor=spine_anchor,
-                prev_receipt_digest=prev_receipt,
+                name=recipe.name,
+                old_hash=recipe.superseded_hash,
+                new_hash=recipe.recipe_hash,
+                spine_anchor=recipe.spine_anchor,
+                prev_receipt_digest=staged.prev_receipt_digest,
                 actor=actor,
             )
         else:
             record_recipe_register(
                 chain=chain,
-                name=spec.name,
-                recipe_hash=digest,
-                spine_anchor=spine_anchor,
-                prev_receipt_digest=prev_receipt,
+                name=recipe.name,
+                recipe_hash=recipe.recipe_hash,
+                spine_anchor=recipe.spine_anchor,
+                prev_receipt_digest=staged.prev_receipt_digest,
                 actor=actor,
             )
-
-        return RegisteredRecipe(
-            name=spec.name,
-            recipe_hash=digest,
-            canonical_bytes=canonical_bytes,
-            spine_anchor=spine_anchor,
-            schedules=schedules,
-            collision_policy=policy,
-            concurrency_cap=cap,
-            pins=resolved_pins,
-            superseded_hash=superseded,
-            registered_at=float(now) if now is not None else time.time(),
-        )
+        return recipe
 
     def rollback(self, name: str, target_hash: str, *, actor: str = "operator") -> str:
         """Re-point *name* at a prior *target_hash* via a rollback receipt.
 
         Nothing is deleted; the rollback is itself a chain record.
 
+        The target must appear in *this name's own* lifecycle receipts. The
+        blob store is global and content-addressed, so a hash being present
+        on disk only proves some recipe once had that body - rolling a name
+        onto another recipe's definition would re-point it at a body it
+        never ran, and the rollback receipt would attest to a lineage that
+        does not exist.
+
         Raises:
-            RecipeRegistryError: When the name has no live hash or the
-                target hash was never registered under the name.
+            RecipeRegistryError: When the name has no live hash, when the
+                target hash is absent from the name's own lineage, or when
+                its canonical bytes are missing from the blob store.
         """
         state = self._project_name(name)
         if not state.live_hash:
             raise RecipeRegistryError(f"recipe {name!r} is not registered")
+        known = _lineage_hashes(state.receipts)
+        if target_hash not in known:
+            raise RecipeRegistryError(
+                f"target hash {target_hash[:16]!r} does not appear in the definition lineage of {name!r}; "
+                f"rollback is confined to hashes this name itself registered",
+            )
         if self.get_canonical_bytes(target_hash) is None:
-            raise RecipeRegistryError(f"target hash {target_hash!r} is not a known definition of {name!r}")
+            raise RecipeRegistryError(f"target hash {target_hash!r} has no canonical bytes on disk")
         from bernstein.core.security.audit_chain import record_recipe_rollback
 
         record_recipe_rollback(
@@ -653,18 +813,57 @@ class RecipeRegistry:
             actor=actor,
         )
 
+    def declared_schedules(self, name: str) -> dict[str, RecipeSchedule]:
+        """Return the live definition's schedules keyed by content-derived id.
+
+        The ids are what :meth:`fire` accepts to attribute a fire to the
+        schedule that triggered it.
+        """
+        state = self._project_name(name)
+        if not state.live_hash:
+            raise RecipeRegistryError(f"recipe {name!r} is not registered")
+        return {s.schedule_id: s for s in self._registered_schedules(name, state.live_hash)}
+
     def fire(
         self,
         name: str,
         *,
         fire_time: int,
         goal: str = "",
+        schedule_id: str = "",
+        dispatch: RecipeDispatch | None = None,
     ) -> RecipeFireResult:
-        """Fire *name* as a deterministic projection; refuse when paused.
+        """Fire *name*: submit the task graph, then receipt what was submitted.
 
         A paused recipe fires nothing (AC6). Otherwise the fire is a pure
-        projection of ``(recipe_hash, fire_time)`` with the declared
-        timezone folded in, returning the projection hash as the response.
+        projection of ``(recipe_hash, fire_time)``, handed to the task-graph
+        dispatcher and - only if the dispatcher reports submitted work -
+        anchored with a ``recipe.fire`` receipt on the audit chain.
+
+        ``dispatched=True`` is therefore a claim backed by two facts: work
+        was submitted and a receipt records it. A dispatcher that raises,
+        that is unavailable, or that submits nothing yields
+        ``dispatched=False`` with a reason and appends no receipt, so the
+        chain never carries a fire that did not happen.
+
+        Schedule attribution: ``schedule_id`` names which declared schedule
+        triggered this fire, and its recurrence / timezone / DST policy are
+        folded into the projection. A manual fire leaves it empty and stays
+        schedule-neutral rather than borrowing the semantics of whichever
+        schedule happens to be declared first.
+
+        Args:
+            name: Registered recipe name.
+            fire_time: Unix epoch of the fire instant.
+            goal: Free-text goal folded into the projection.
+            schedule_id: Content-derived id of the triggering schedule (see
+                :meth:`declared_schedules`), or ``""`` for a manual fire.
+            dispatch: Per-call dispatcher override; defaults to the one the
+                registry was constructed with, then to the trigger pipeline.
+
+        Raises:
+            RecipeRegistryError: When the name is unregistered or
+                ``schedule_id`` names no schedule of the live definition.
         """
         state = self._project_name(name)
         if not state.live_hash:
@@ -679,18 +878,47 @@ class RecipeRegistry:
             )
         from bernstein.core.orchestration.schedule_projection import project_schedule_fire
 
-        schedules = self._registered_schedules(name, state.live_hash)
-        tz = schedules[0].timezone if schedules else ""
-        dst = schedules[0].dst_policy if schedules else ""
-        recurrence = schedules[0].recurrence if schedules else ""
+        schedule = self._resolve_schedule(name, state.live_hash, schedule_id)
         projection = project_schedule_fire(
             schedule_id=state.live_hash,
             fire_time=fire_time,
             last_state=None,
             goal=goal,
-            recurrence=recurrence,
-            timezone=tz,
-            dst_policy=dst if tz else "",
+            recurrence=schedule.recurrence if schedule is not None else "",
+            timezone=schedule.timezone if schedule is not None else "",
+            dst_policy=(schedule.dst_policy if schedule is not None and schedule.timezone else ""),
+        )
+
+        submitted, reason = self._submit(
+            name=name,
+            recipe_hash=state.live_hash,
+            fire_time=fire_time,
+            goal=goal,
+            schedule_id=schedule_id,
+            projection_hash=projection.projection_hash,
+            dispatch=dispatch,
+        )
+        if submitted <= 0:
+            return RecipeFireResult(
+                name=name,
+                recipe_hash=state.live_hash,
+                dispatched=False,
+                fire_time=fire_time,
+                projection_hash=projection.projection_hash,
+                schedule_id=schedule_id,
+                reason=reason or "the dispatcher submitted no work",
+            )
+
+        from bernstein.core.security.audit_chain import record_recipe_fire
+
+        event = record_recipe_fire(
+            chain=self._get_chain(),
+            name=name,
+            recipe_hash=state.live_hash,
+            fire_time=fire_time,
+            projection_hash=projection.projection_hash,
+            schedule_id=schedule_id,
+            submitted=submitted,
         )
         return RecipeFireResult(
             name=name,
@@ -698,8 +926,102 @@ class RecipeRegistry:
             dispatched=True,
             fire_time=fire_time,
             projection_hash=projection.projection_hash,
-            chain_anchor=self._get_chain().prev_chain_digest,
+            chain_anchor=str(getattr(event, "hmac", "")),
+            schedule_id=schedule_id,
+            submitted=submitted,
         )
+
+    def _resolve_schedule(self, name: str, recipe_hash: str, schedule_id: str) -> RecipeSchedule | None:
+        """Return the declared schedule *schedule_id* names, or None if manual.
+
+        Raises:
+            RecipeRegistryError: When *schedule_id* is non-empty but names
+                no schedule of the live definition. Falling back to a
+                default schedule here would attribute the fire to a
+                recurrence the caller did not ask for.
+        """
+        if not schedule_id:
+            return None
+        declared = {s.schedule_id: s for s in self._registered_schedules(name, recipe_hash)}
+        schedule = declared.get(schedule_id)
+        if schedule is None:
+            known = ", ".join(sorted(declared)) or "(none declared)"
+            raise RecipeRegistryError(
+                f"recipe {name!r} declares no schedule {schedule_id!r}; declared schedules: {known}",
+            )
+        return schedule
+
+    def _submit(
+        self,
+        *,
+        name: str,
+        recipe_hash: str,
+        fire_time: int,
+        goal: str,
+        schedule_id: str,
+        projection_hash: str,
+        dispatch: RecipeDispatch | None,
+    ) -> tuple[int, str]:
+        """Hand the fire to the dispatcher; return ``(submitted, reason)``.
+
+        ``submitted <= 0`` always carries a non-empty reason. Every failure
+        mode - no dispatcher resolvable, the dispatcher raising, or the
+        dispatcher reporting nothing submitted - lands here rather than
+        being swallowed, because the caller uses this count to decide
+        whether it may claim the fire happened.
+        """
+        from bernstein.core.trigger_sources.schedule import normalize_schedule_fire
+
+        dispatcher = dispatch if dispatch is not None else self._resolve_dispatch()
+        if dispatcher is None:
+            return 0, "no task-graph dispatcher is available; nothing was submitted"
+
+        event = normalize_schedule_fire(
+            schedule_id=recipe_hash,
+            fire_time=float(fire_time),
+            goal=goal,
+            projection_hash=projection_hash,
+            extra={
+                "recipe_name": name,
+                "recipe_hash": recipe_hash,
+                "recipe_schedule_id": schedule_id,
+            },
+        )
+        try:
+            submitted = dispatcher(event)
+        except Exception as exc:
+            return 0, f"dispatch failed: {exc}"
+        count = int(submitted) if isinstance(submitted, int) and not isinstance(submitted, bool) else 0
+        if count <= 0:
+            return 0, "the task-graph dispatcher submitted no work for this fire"
+        return count, ""
+
+    def _resolve_dispatch(self) -> RecipeDispatch | None:
+        """Resolve the default task-graph dispatcher, or None when unavailable.
+
+        The default routes the fire through the same trigger pipeline the
+        schedule supervisor uses and reports how many task payloads it
+        produced. Zero payloads is a real answer, not an error: it means the
+        fire matched no trigger and therefore submitted nothing.
+        """
+        if self._dispatch_resolved:
+            return self._dispatch
+        self._dispatch_resolved = True
+        try:
+            from bernstein.core.orchestration.trigger_manager import TriggerManager
+
+            manager = TriggerManager(self._sdd_dir)
+        except Exception:
+            logger.exception("Recipe fire could not resolve the trigger pipeline for %s", self._sdd_dir)
+            self._dispatch = None
+            return None
+
+        def _dispatch(event: Any) -> int:
+            payloads, _suppressed = manager.evaluate(event)
+            return len(payloads)
+
+        self._dispatch = _dispatch
+        return self._dispatch
 
     # -- verification -------------------------------------------------------
 
@@ -718,7 +1040,13 @@ class RecipeRegistry:
         if not chain_ok:
             errors.extend(chain_errors)
 
-        state = self._project_name(name)
+        try:
+            state = self._project_name(name)
+        except RecipeRegistryError as exc:
+            # The lineage does not reconstruct. Report it rather than
+            # raising: ``history --verify`` exists to name this failure.
+            errors.append(str(exc))
+            return (False, errors)
         if not state.receipts:
             errors.append(f"recipe {name!r} has no lifecycle receipts")
             return (not errors, errors)
@@ -800,34 +1128,72 @@ class RecipeRegistry:
         )
 
 
-def _order_by_lineage(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _order_by_lineage(events: list[dict[str, Any]], name: str = "") -> list[dict[str, Any]]:
     """Order a name's receipts by their prev_receipt_digest linkage.
 
     Each receipt names the hmac of its predecessor (``""`` for genesis).
     Rebuilding the linked list makes the projection independent of how the
-    chain query grouped events by type. On a broken or forked linkage the
-    reachable prefix is returned (verify_history reports the break).
+    chain query grouped events by type.
+
+    Fails closed. A definition lineage is a chain, so every anomaly here is
+    evidence that the receipt history is not what it claims to be:
+
+    - two receipts naming the same predecessor is a **fork**: the name has
+      two competing successors and there is no honest way to pick one, so
+      picking the first-seen silently resolves a conflict in favour of
+      whatever order the chain query happened to return;
+    - a receipt whose predecessor is unreachable is an **orphan**: its
+      position in the lineage is unproven, so appending it to the tail
+      fabricates an ordering the chain never attested;
+    - a cycle is impossible in an append-only chain and means tampering.
+
+    Every one of those raises rather than degrading to a best guess.
+
+    Args:
+        events: The name's lifecycle receipts, in any order.
+        name: Recipe name, used only for the error message.
+
+    Returns:
+        The receipts in definition-lineage order.
+
+    Raises:
+        RecipeRegistryError: On a forked, orphaned, or cyclic lineage.
     """
-    by_prev: dict[str, dict[str, Any]] = {}
+    label = f"recipe {name!r}" if name else "recipe"
+    by_prev: dict[str, list[dict[str, Any]]] = {}
     for ev in events:
         prev = str(ev["details"].get("prev_receipt_digest", ""))
-        by_prev.setdefault(prev, ev)
+        by_prev.setdefault(prev, []).append(ev)
+
+    forked = {prev: evs for prev, evs in by_prev.items() if len(evs) > 1}
+    if forked:
+        prev = sorted(forked)[0]
+        successors = ", ".join(sorted(str(e["hmac"])[:16] for e in forked[prev]))
+        raise RecipeRegistryError(
+            f"forked definition lineage for {label}: predecessor "
+            f"{prev[:16] or '(genesis)'} has {len(forked[prev])} successors ({successors})",
+        )
+
     ordered: list[dict[str, Any]] = []
     cursor = ""
     seen: set[str] = set()
     while cursor in by_prev:
-        ev = by_prev[cursor]
+        ev = by_prev[cursor][0]
         hmac = str(ev["hmac"])
         if hmac in seen:
-            break
+            raise RecipeRegistryError(
+                f"cyclic definition lineage for {label}: receipt {hmac[:16]} is reachable twice",
+            )
         seen.add(hmac)
         ordered.append(ev)
         cursor = hmac
-    # Fall back to input order for any receipts not reachable through the
-    # linkage (e.g. a genesis-less legacy receipt), so nothing is dropped.
+
     if len(ordered) != len(events):
-        reached = {str(e["hmac"]) for e in ordered}
-        ordered.extend(e for e in events if str(e["hmac"]) not in reached)
+        unreachable = sorted(str(e["hmac"])[:16] for e in events if str(e["hmac"]) not in seen)
+        raise RecipeRegistryError(
+            f"unreachable definition-lineage receipt(s) for {label}: {', '.join(unreachable)}; "
+            "the receipt chain does not link back to the first registration",
+        )
     return ordered
 
 

@@ -27,6 +27,7 @@ Lifecycle: this class is callable from either a long-running
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from bernstein.core.orchestration.collision import (
+    CollisionAction,
     CollisionPolicy,
     RunningFireState,
     decide_collision,
@@ -75,6 +77,56 @@ AUDIT_EVENT_TYPE = "schedule.fire"
 #: concurrency collision (#2546). Matches
 #: :data:`bernstein.core.security.audit_chain.EVENT_SCHEDULE_COLLISION`.
 COLLISION_EVENT_TYPE = "schedule.collision_receipt"
+
+#: Schema rev of the collision decision-input digest. Bumping it changes
+#: every ``decision_inputs_hash`` and is the single lever for evolving the
+#: recorded input contract.
+COLLISION_INPUTS_REV = "1"
+
+
+def collision_inputs_hash(
+    *,
+    schedule_id: str,
+    fire_time: int,
+    running_count: int,
+    concurrency_cap: int,
+    fire_id: str,
+    resume_from_checkpoint: str,
+) -> str:
+    """Return the canonical digest of the inputs a collision decision used.
+
+    Pure function of the arguments, so an auditor holding a collision event
+    can recompute the digest offline and prove the recorded decision was
+    taken over exactly these inputs. Recorded alongside the decision in the
+    chain event, which makes a collision receipt reproducible rather than
+    merely present.
+
+    Args:
+        schedule_id: The schedule whose fire collided.
+        fire_time: Unix epoch of the contended fire window.
+        running_count: How many fires of the schedule were in flight.
+        concurrency_cap: The cap the count was compared against.
+        fire_id: Identifier of the running fire.
+        resume_from_checkpoint: Checkpoint reference a supersede handoff
+            would resume from, or ``""``.
+
+    Returns:
+        Hex SHA-256 of the canonical JSON encoding of the inputs.
+    """
+    canonical = json.dumps(
+        {
+            "rev": COLLISION_INPUTS_REV,
+            "schedule_id": schedule_id,
+            "fire_time": int(fire_time),
+            "running_count": int(running_count),
+            "concurrency_cap": int(concurrency_cap),
+            "fire_id": fire_id,
+            "resume_from_checkpoint": resume_from_checkpoint,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -621,12 +673,16 @@ class ScheduleSupervisor:
         :func:`decide_collision` outcome:
 
         - ``DISPATCH`` / ``SUPERSEDE`` -> fire (supersede resumes from the
-          running fire's recorded checkpoint reference);
-        - ``ENQUEUE`` / ``CANCEL`` -> never dispatch a second task graph;
-          only a collision receipt is written.
+          running fire's recorded checkpoint reference, which is threaded
+          into the dispatched event so the handoff survives the dispatch);
+        - ``ENQUEUE`` -> defer the window; it is re-evaluated next tick;
+        - ``CANCEL`` -> drop the window for good, advancing ``last_fire_at``
+          so a later idle tick cannot resurrect what was already canceled.
 
         A collision receipt is emitted for every overlap considered, so a
-        double-fire is a recorded, offline-verifiable decision.
+        double-fire is a recorded, offline-verifiable decision. The receipt
+        carries the chain digest of the collision event it rode on and its
+        real predecessor, so it is anchored rather than free-floating.
         """
         if self._running_probe is None:
             return self._fire(schedule, fire_epoch, counterfactual=False)
@@ -641,19 +697,26 @@ class ScheduleSupervisor:
             # fire's own audit entry already records it).
             return self._fire(schedule, fire_epoch, counterfactual=False)
 
-        self._append_collision(schedule, fire_epoch, decision)
+        prev_chain = self._chain.chain_tail if self._chain is not None else ""
+        chain_digest = self._append_collision(schedule, fire_epoch, decision, running)
         if decision.dispatch:
             # SUPERSEDE_WITH_HANDOFF: the stale run is checkpointed elsewhere;
             # the new fire proceeds, resuming from the recorded checkpoint.
-            return self._fire(schedule, fire_epoch, counterfactual=False)
+            return self._fire(
+                schedule,
+                fire_epoch,
+                counterfactual=False,
+                resume_from_checkpoint=decision.resume_from_checkpoint,
+                warm_resume=decision.warm_resume,
+            )
         # ENQUEUE / CANCEL_NEW: record the decision, dispatch nothing.
         receipt = FireReceipt(
             schedule_id=schedule.id,
             fire_time=fire_epoch,
             projection_hash="",
             rev="",
-            prev_chain_digest="",
-            chain_digest=decision.receipt_hash,
+            prev_chain_digest=prev_chain,
+            chain_digest=chain_digest,
             misfire_policy=schedule.misfire_policy,
             dispatched=False,
             skipped_windows=(),
@@ -662,14 +725,34 @@ class ScheduleSupervisor:
             scenario_id=schedule.scenario_id,
         )
         self._persist_receipt(receipt)
+        if decision.action is CollisionAction.CANCEL:
+            # CANCEL_NEW drops the window permanently. Persisting it as
+            # processed is what makes that permanent: without it the window
+            # is still "due" and the next idle tick dispatches the very fire
+            # the policy canceled. ENQUEUE deliberately does not advance, so
+            # its deferral is retried while the previous fire drains.
+            self._store.update_last_fire(schedule.id, float(fire_epoch))
+            self._last_fire_at = max(self._last_fire_at, float(fire_epoch))
         return receipt
 
-    def _append_collision(self, schedule: Schedule, fire_epoch: int, decision: Any) -> str:
+    def _append_collision(
+        self,
+        schedule: Schedule,
+        fire_epoch: int,
+        decision: Any,
+        running: RunningFireState,
+    ) -> str:
         """Append a ``schedule.collision_receipt`` entry to the audit chain.
 
         Mirrors :meth:`_append_audit` so the collision decision rides the
         same HMAC chain as the fires it guards. Returns the new chain digest
         (or the stable receipt hash when no chain is wired).
+
+        The entry also carries ``decision_inputs_hash``: a canonical digest
+        of the running count, the cap, the running fire id, and the
+        checkpoint reference. An auditor can recompute it with
+        :func:`collision_inputs_hash` and prove the recorded decision was
+        taken over exactly those inputs.
         """
         if self._chain is None:
             return decision.receipt_hash
@@ -686,6 +769,17 @@ class ScheduleSupervisor:
                 "receipt_hash": decision.receipt_hash,
                 "resume_from_checkpoint": decision.resume_from_checkpoint,
                 "warm_resume": decision.warm_resume,
+                "running_count": running.running_count,
+                "concurrency_cap": self._concurrency_cap,
+                "running_fire_id": running.fire_id,
+                "decision_inputs_hash": collision_inputs_hash(
+                    schedule_id=schedule.id,
+                    fire_time=fire_epoch,
+                    running_count=running.running_count,
+                    concurrency_cap=self._concurrency_cap,
+                    fire_id=running.fire_id,
+                    resume_from_checkpoint=decision.resume_from_checkpoint,
+                ),
             },
         )
 
@@ -695,6 +789,8 @@ class ScheduleSupervisor:
         fire_epoch: int,
         *,
         counterfactual: bool,
+        resume_from_checkpoint: str | None = None,
+        warm_resume: bool = False,
     ) -> FireReceipt:
         """Build the projection, dispatch the trigger event, and chain it.
 
@@ -702,6 +798,13 @@ class ScheduleSupervisor:
         refused with a signed receipt and returns before any projection or
         dispatch, so it costs zero adapter spawns. A valid fire folds the
         validated params hash into the deterministic projection.
+
+        ``resume_from_checkpoint`` / ``warm_resume`` carry a supersede
+        handoff into the dispatched event; ``None`` means the fire is not a
+        handoff at all and the keys stay off the event, keeping an ordinary
+        fire byte-identical to prior revs. Dropping a real handoff would
+        hand the new fire a cold start while the collision receipt still
+        claimed a warm resume, so the two surfaces must agree.
         """
         params_hash, refusal = self._validate_fire_params(schedule, fire_epoch)
         if refusal is not None:
@@ -730,6 +833,14 @@ class ScheduleSupervisor:
             # existing receipt chains re-derive byte-identically).
             recurrence = f"cron:{schedule.cron}" if schedule.cron else ""
             self._record_fire_projection(schedule, fire_epoch, recurrence)
+            extra: dict[str, Any] = {"chain_digest": chain_digest}
+            if resume_from_checkpoint is not None:
+                # A supersede handoff. ``""`` is a real answer here (the
+                # checkpoint failed verification, so the resume is cold);
+                # recording it keeps the dispatched event honest instead of
+                # letting the consumer guess.
+                extra["resume_from_checkpoint"] = resume_from_checkpoint
+                extra["warm_resume"] = warm_resume
             event = normalize_schedule_fire(
                 schedule_id=schedule.id,
                 fire_time=float(fire_epoch),
@@ -737,7 +848,7 @@ class ScheduleSupervisor:
                 scenario_id=schedule.scenario_id,
                 projection_hash=projection.projection_hash,
                 misfire_policy=schedule.misfire_policy,
-                extra={"chain_digest": chain_digest},
+                extra=extra,
             )
             try:
                 self._dispatch(event)

@@ -51,6 +51,27 @@ def _run(args: list[str]) -> object:
     return CliRunner().invoke(recipes_group, args)
 
 
+def _write_schedule_trigger(workdir: Path) -> None:
+    """Wire a trigger that consumes schedule fires.
+
+    ``recipes fire`` reports a dispatch only when the task-graph dispatcher
+    submits work, so a test that expects a dispatched fire has to give the
+    pipeline something to match.
+    """
+    config_dir = workdir / ".sdd" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "triggers.yaml").write_text(
+        "triggers:\n"
+        "  - name: recipe-fire\n"
+        "    source: schedule\n"
+        "    enabled: true\n"
+        "    task:\n"
+        '      title: "Recipe fire"\n'
+        "      role: backend\n",
+        encoding="utf-8",
+    )
+
+
 class TestRegisterFlow:
     def test_register_then_show_registered(self, workdir: Path) -> None:
         result = _run(["register", "nightly-triage"])
@@ -69,6 +90,7 @@ class TestRegisterFlow:
         assert "verified" in result.output
 
     def test_pause_blocks_fire_then_resume(self, workdir: Path) -> None:
+        _write_schedule_trigger(workdir)
         assert _run(["register", "nightly-triage"]).exit_code == 0
         assert _run(["pause", "nightly-triage"]).exit_code == 0
         fired = _run(["fire", "nightly-triage", "--at", "1800000000"])
@@ -77,8 +99,18 @@ class TestRegisterFlow:
 
         assert _run(["resume", "nightly-triage"]).exit_code == 0
         fired2 = _run(["fire", "nightly-triage", "--at", "1800000000"])
-        assert fired2.exit_code == 0
+        assert fired2.exit_code == 0, fired2.output
         assert "projection_hash:" in fired2.output
+        assert "submitted: 1" in fired2.output
+
+    def test_fire_that_submits_nothing_exits_nonzero(self, workdir: Path) -> None:
+        # No trigger consumes the fire, so nothing is submitted. The command
+        # must report that instead of claiming a successful run.
+        assert _run(["register", "nightly-triage"]).exit_code == 0
+        fired = _run(["fire", "nightly-triage", "--at", "1800000000"])
+        assert fired.exit_code == 2, fired.output
+        assert "Not fired" in fired.output
+        assert "projection_hash:" not in fired.output
 
     def test_fire_unregistered_exits_nonzero(self, workdir: Path) -> None:
         result = _run(["fire", "does-not-exist", "--at", "1"])
