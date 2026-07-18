@@ -349,6 +349,101 @@ class TestGenerateBOMDeterminism:
 
 
 # ---------------------------------------------------------------------------
+# 3b. Dedupe identity coverage: every recorded field is either part of the
+#     identity key or merged commutatively. A field that is neither makes
+#     the survivor of a collision depend on input order.
+# ---------------------------------------------------------------------------
+
+
+# Fields the deduper deliberately folds together instead of distinguishing.
+# Folding must be commutative (summation) so it stays order-independent.
+_MERGED_FIELDS: dict[str, frozenset[str]] = {
+    "models": frozenset({"invocation_count"}),
+    "prompts": frozenset(),
+    "adapters": frozenset(),
+    "tools": frozenset(),
+    "data_sources": frozenset(),
+}
+
+_BASE_ENTRY: dict[str, dict[str, Any]] = {
+    "models": {
+        "name": "m",
+        "provider": "p",
+        "version": "1",
+        "sha256": _sha("model-base"),
+        "invocation_count": 1,
+    },
+    "prompts": {"name": "p", "role": "r", "sha256": _sha("prompt-base")},
+    "adapters": {"name": "a", "version": "1", "sha256": _sha("adapter-base"), "binary": "bin"},
+    "tools": {"name": "t", "kind": "k", "sha256": _sha("tool-base")},
+    "data_sources": {"uri": "u", "kind": "k", "sha256": _sha("source-base")},
+}
+
+
+def _variant(field: str, value: Any) -> Any:
+    """Return a value for ``field`` distinct from ``value`` but still valid."""
+    if field == "sha256":
+        return _sha("variant")
+    return str(value) + "-variant"
+
+
+def _distinguishing_cases() -> list[tuple[str, str]]:
+    return [
+        (list_key, field)
+        for list_key, base in _BASE_ENTRY.items()
+        for field in base
+        if field not in _MERGED_FIELDS[list_key]
+    ]
+
+
+class TestDedupeIdentityCoverage:
+    """Guards the whole class of order-dependent-survivor bugs.
+
+    A field that is recorded on an entry but absent from the dedupe key
+    is silently dropped on collision, and *which* value survives depends
+    on input order. Parametrising over every field of every entry type
+    means a newly added field cannot reintroduce the defect unnoticed.
+    """
+
+    @pytest.mark.parametrize(("list_key", "field"), _distinguishing_cases())
+    def test_entries_differing_in_one_field_stay_distinct(self, list_key: str, field: str) -> None:
+        base = dict(_BASE_ENTRY[list_key])
+        other = dict(base, **{field: _variant(field, base[field])})
+        bom = generate_bom(_minimal_snapshot(**{list_key: [base, other]}))
+        assert len(getattr(bom, list_key)) == 2, (
+            f"{list_key} entries differing only in {field!r} were collapsed; {field!r} is missing from the identity key"
+        )
+
+    @pytest.mark.parametrize(("list_key", "field"), _distinguishing_cases())
+    def test_permutation_invariant_for_one_field_difference(self, list_key: str, field: str) -> None:
+        base = dict(_BASE_ENTRY[list_key])
+        other = dict(base, **{field: _variant(field, base[field])})
+        forward = generate_bom(_minimal_snapshot(**{list_key: [base, other]}))
+        reverse = generate_bom(_minimal_snapshot(**{list_key: [other, base]}))
+        assert forward == reverse
+
+    def test_adapters_differing_only_in_binary_are_distinct(self) -> None:
+        """Regression: the survivor used to depend on input order."""
+        sha = _sha("adapter-shared")
+        first = {"name": "a", "version": "1", "sha256": sha, "binary": "bin-a"}
+        second = {"name": "a", "version": "1", "sha256": sha, "binary": "bin-b"}
+        forward = generate_bom(_minimal_snapshot(adapters=[first, second]))
+        reverse = generate_bom(_minimal_snapshot(adapters=[second, first]))
+        assert forward == reverse
+        assert [a.binary for a in forward.adapters] == ["bin-a", "bin-b"]
+
+    def test_binary_participates_in_canonical_ordering(self) -> None:
+        """Ordering must be total, so the tamper check can spot a swap."""
+        sha = _sha("adapter-shared")
+        entries = [{"name": "a", "version": "1", "sha256": sha, "binary": b} for b in ("b3", "b1", "b2")]
+        bom = generate_bom(_minimal_snapshot(adapters=entries))
+        assert [a.binary for a in bom.adapters] == ["b1", "b2", "b3"]
+        doc = json.loads(encode_bom(bom, fmt="json"))
+        doc["adapters"][0], doc["adapters"][1] = doc["adapters"][1], doc["adapters"][0]
+        assert verify_bom(json.dumps(doc)).ok is False
+
+
+# ---------------------------------------------------------------------------
 # 4. Pure projection: no I/O during generate
 # ---------------------------------------------------------------------------
 

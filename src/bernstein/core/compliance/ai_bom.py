@@ -358,6 +358,17 @@ def verify_bom(payload: object) -> BOMVerificationReport:
 
 # ---------------------------------------------------------------------------
 # Internal helpers - dedupe + sort
+#
+# Invariant: every field of an entry dataclass is either part of that
+# entry's sort key (which doubles as its dedupe identity) or folded by a
+# commutative merge - today only ``ModelEntry.invocation_count``, which
+# is summed. A field that is neither is silently dropped when two
+# entries collide, and *which* value survives depends on the input
+# ordering, so the BOM stops being a pure function of the run. Adding a
+# field to an entry means adding it to the matching ``_*_sort_key`` and
+# ``_*_dict_sort_key`` pair; the latter keeps ``verify_bom``'s ordering
+# check total, so a reordering of two otherwise-equal entries is still
+# detectable. ``TestDedupeIdentityCoverage`` enforces this per field.
 # ---------------------------------------------------------------------------
 
 
@@ -401,8 +412,8 @@ def _prompt_sort_key(entry: PromptEntry) -> tuple[str, str, str]:
     return (entry.role, entry.name, entry.sha256)
 
 
-def _adapter_sort_key(entry: AdapterEntry) -> tuple[str, str, str]:
-    return (entry.name, entry.version, entry.sha256)
+def _adapter_sort_key(entry: AdapterEntry) -> tuple[str, str, str, str]:
+    return (entry.name, entry.version, entry.sha256, entry.binary)
 
 
 def _tool_sort_key(entry: ToolEntry) -> tuple[str, str, str]:
@@ -431,6 +442,7 @@ def _adapter_dict_sort_key(item: dict[str, Any]) -> tuple[str, ...]:
         str(item.get("name", "")),
         str(item.get("version", "")),
         str(item.get("sha256", "")),
+        str(item.get("binary", "")),
     )
 
 
