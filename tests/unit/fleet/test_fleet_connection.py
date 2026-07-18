@@ -10,6 +10,7 @@ event) any document not signed by the local install identity.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -303,18 +304,30 @@ class TestNoSecretMaterialOnDisk:
     ]
 
     @pytest.mark.parametrize("material", _CREDENTIAL_SHAPES)
-    def test_credential_shaped_reference_is_refused(self, material: str) -> None:
+    def test_put_refuses_a_credential_shaped_reference(self, tmp_path: Path, material: str) -> None:
+        """The write sink is where the shape is enforced, so nothing unshaped
+        can reach disk by any route that persists a document."""
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = ConnectionDocument(name="c", broker_ref=material, scope="")
         with pytest.raises(ConnectionReferenceError, match="broker reference"):
-            ConnectionDocument(name="c", broker_ref=material, scope="")
+            store.put(doc)
+        assert store.list_names() == []
 
-    def test_refusal_is_narrow_enough_to_distinguish_from_other_failures(self) -> None:
+    def test_construction_does_not_enforce_the_shape(self) -> None:
+        """Construction must stay permissive so a document written by an
+        earlier release can still be parsed. Enforcement lives on the write
+        path; see the back-compat class below."""
+        doc = ConnectionDocument(name="c", broker_ref="my secret name", scope="")
+        assert doc.broker_ref == "my secret name"
+
+    def test_refusal_is_narrow_enough_to_distinguish_from_other_failures(self, tmp_path: Path) -> None:
         """The refusal is its own type so a caller can report it as operator
         input error without also swallowing an unrelated failure."""
         assert issubclass(ConnectionReferenceError, ValueError)
+        store = ConnectionDocumentStore(tmp_path / "conns")
         with pytest.raises(ConnectionReferenceError):
-            ConnectionDocument(name="c", broker_ref="has spaces", scope="")
+            store.put(ConnectionDocument(name="c", broker_ref="has spaces", scope=""))
         # A malformed *name* is a different failure and keeps the plain type.
-        store = ConnectionDocumentStore(Path("/tmp/never-written"))
         with pytest.raises(ValueError) as seen:
             store._path("../escape")
         assert not isinstance(seen.value, ConnectionReferenceError)
@@ -378,3 +391,111 @@ class TestNoSecretMaterialOnDisk:
         assert "broker_ref" not in payload
         assert doc.document_hash() == "sha256:4a34c5e7682f18ada746b01aa6595edd190c1e59b53704eae7c8e6e4d7e341a6"
         assert ConnectionDocument.from_json(doc.to_json()) == doc
+
+
+class TestLegacyDocumentCompatibility:
+    """A document written before the reference shape was enforced must stay
+    usable and remediable.
+
+    Enforcing the shape on the read path would strand an operator mid-upgrade:
+    refusing to parse a document already on disk cannot un-write it, and
+    rotation - the only remedy - has to load the old document first.
+    """
+
+    @staticmethod
+    def _write_legacy(tmp_path: Path, broker_ref: str = "my secret name") -> ConnectionDocumentStore:
+        """Write a document exactly as an earlier release did.
+
+        Signed by the local install identity, but with a reference the current
+        shape check rejects, and written straight to disk rather than through
+        ``put`` (which is where the check now lives).
+        """
+        from bernstein.core.fleet.connection import _local_identity, _sign
+
+        root = tmp_path / ".sdd" / "fleet" / "connections"
+        root.mkdir(parents=True)
+        private_key_pem, public_key_pem = _local_identity(tmp_path / ".sdd" / "identity")
+        doc = _sign(
+            ConnectionDocument(name="legacy", broker_ref=broker_ref, scope="", signer_public_key_pem=public_key_pem),
+            private_key_pem,
+        )
+        (root / "legacy.json").write_text(doc.to_json(), encoding="utf-8")
+        return ConnectionDocumentStore(root)
+
+    def test_legacy_document_still_loads(self, tmp_path: Path) -> None:
+        store = self._write_legacy(tmp_path)
+        assert store.get("legacy").broker_ref == "my secret name"
+
+    def test_one_legacy_document_does_not_break_the_whole_listing(self, tmp_path: Path) -> None:
+        """`conn list` iterates get() with no handler, so a refusal on load
+        would take out the entire store, not just the one document."""
+        store = self._write_legacy(tmp_path)
+        assert [store.get(n).name for n in store.list_names()] == ["legacy"]
+
+    def test_load_warns_with_the_remediating_command(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        store = self._write_legacy(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.fleet.connection"):
+            store.get("legacy")
+        assert caplog.records, "a legacy reference must be reported, not silently accepted"
+        assert "conn rotate" in caplog.records[0].getMessage()
+
+    def test_warning_never_reveals_the_reference_value(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """An unshaped reference may BE a pasted credential, so the warning
+        describes its shape and must never reproduce it."""
+        secret = "ghp_actual_token_value_pasted_by_mistake with spaces"
+        store = self._write_legacy(tmp_path, broker_ref=secret)
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.fleet.connection"):
+            store.get("legacy")
+        rendered = caplog.records[0].getMessage()
+        assert secret not in rendered
+        assert "ghp_actual_token_value" not in rendered
+        assert str(len(secret)) in rendered
+
+    def test_rotation_remediates_a_legacy_document(self, tmp_path: Path) -> None:
+        store = self._write_legacy(tmp_path)
+        rotated = rotate_document(
+            "legacy",
+            new_broker_ref="GOOD_NAME",
+            identity_dir=tmp_path / ".sdd" / "identity",
+            chain=_chain(tmp_path),
+            store=store,
+        )
+        assert rotated.broker_ref == "GOOD_NAME"
+        assert store.get("legacy").broker_ref == "GOOD_NAME"
+
+    def test_rotating_without_a_new_reference_names_the_remedy(self, tmp_path: Path) -> None:
+        """Carrying the legacy reference forward would re-persist it. The
+        refusal must point at the missing --secret, not blame an argument the
+        operator never passed."""
+        store = self._write_legacy(tmp_path)
+        with pytest.raises(ConnectionReferenceError) as seen:
+            rotate_document(
+                "legacy",
+                new_scope="repo:write",
+                identity_dir=tmp_path / ".sdd" / "identity",
+                chain=_chain(tmp_path),
+                store=store,
+            )
+        assert "--secret" in str(seen.value)
+        assert "my secret name" not in str(seen.value)
+
+    def test_a_refused_create_leaves_no_chain_receipt(self, tmp_path: Path) -> None:
+        """The create receipt is recorded before the document is written, so
+        the reference must be refused before the chain is touched or the chain
+        would carry a receipt for a document that never reached disk."""
+        from bernstein.core.security.audit_chain import EVENT_FLEET_CONN_CREATE
+
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        with pytest.raises(ConnectionReferenceError):
+            create_document(
+                name="pasted",
+                broker_ref="-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----",
+                scope="",
+                connector_defaults={},
+                identity_dir=tmp_path / "identity",
+                chain=chain,
+                store=store,
+            )
+        assert chain.query(event_type=EVENT_FLEET_CONN_CREATE) == []
+        assert store.list_names() == []

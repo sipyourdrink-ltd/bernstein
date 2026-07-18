@@ -374,22 +374,46 @@ class TestTaskIdPathContainment:
             "task\r\nid",
         ],
     )
-    def test_traversal_task_id_is_refused_by_every_reader(self, tmp_path: Path, task_id: str) -> None:
+    def test_traversal_task_id_reads_as_empty_and_touches_nothing_outside(self, tmp_path: Path, task_id: str) -> None:
+        """Readers absorb an id that names no task; nothing outside is touched.
+
+        The readers are called with arbitrary CLI arguments, so an id they
+        cannot resolve reads as "no artifacts" rather than raising. The
+        security property is unchanged and asserted here directly: no path
+        outside the runs directory is read, created, or removed.
+        """
         sdd = _sdd(tmp_path)
         canary = tmp_path / "outside.jsonl"
         canary.write_text('{"event":"artifact_posted"}\n', encoding="utf-8")
+        before = sorted(p.name for p in tmp_path.iterdir())
 
-        for call in (
-            lambda: read_artifact_rows(sdd, task_id),
-            lambda: verify_run_artifacts(sdd, task_id, hmac_key=_KEY),
-            lambda: latest_versions(sdd, task_id),
-        ):
-            with pytest.raises(ArtifactValidationError):
-                call()
+        assert read_artifact_rows(sdd, task_id) == []
+        assert verify_run_artifacts(sdd, task_id, hmac_key=_KEY) == []
+        assert latest_versions(sdd, task_id) == {}
 
-        # Nothing outside the runs directory was created, read into, or removed.
         assert canary.read_text(encoding="utf-8") == '{"event":"artifact_posted"}\n'
         assert not (tmp_path / "etc").exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+    @pytest.mark.parametrize(
+        "task_id",
+        [
+            "../../../../etc/passwd",
+            "../outside",
+            "task/../../escape",
+            "/absolute/path",
+            "task\x00null",
+            "task\r\nid",
+            "task-1\n",
+        ],
+    )
+    def test_the_path_helper_refuses_a_traversal_id_with_a_typed_error(self, tmp_path: Path, task_id: str) -> None:
+        """The typed refusal still exists at the boundary; the public readers
+        choose to absorb it, and the writer lets it propagate."""
+        from bernstein.core.evidence.run_artifacts import _artifact_journal_path
+
+        with pytest.raises(ArtifactValidationError):
+            _artifact_journal_path(_sdd(tmp_path), task_id)
 
     @pytest.mark.parametrize("task_id", ["..", ".", "..."])
     def test_dot_segment_task_id_stays_inside_the_runs_dir(self, tmp_path: Path, task_id: str) -> None:
@@ -407,21 +431,40 @@ class TestTaskIdPathContainment:
         assert resolved.is_relative_to((sdd / "runs").resolve())
         assert read_artifact_rows(sdd, task_id) == []
 
-    def test_validation_is_lexical_not_filesystem_dependent(self, tmp_path: Path) -> None:
-        """Containment is decided before anything touches disk, so a symlink
-        planted under runs/ cannot be walked during validation."""
+    def test_validation_performs_no_filesystem_access(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression guard against reintroducing ``Path.resolve()``.
+
+        Not evidence that containment works - the sibling tests carry that and
+        fail when `_artifact_journal_path` is reverted. This guards the
+        narrower property that containment is decided without touching disk,
+        which an earlier revision of this fix got wrong. Asserted by making
+        filesystem access explode, because a planted-symlink test passes on any
+        implementation that happens not to resolve.
+        """
+        import os.path
+
+        from bernstein.core.evidence.run_artifacts import _artifact_journal_path
+
+        def _boom(*_args: object, **_kwargs: object) -> Path:
+            raise AssertionError("_artifact_journal_path must not touch the filesystem to decide containment")
+
+        monkeypatch.setattr(Path, "resolve", _boom)
+        monkeypatch.setattr(os.path, "realpath", _boom)
+
+        sdd = _sdd(tmp_path)
+        assert _artifact_journal_path(sdd, "task-1").name == "journal.jsonl"
+        with pytest.raises(ArtifactValidationError):
+            _artifact_journal_path(sdd, "../../escape")
+
+    @pytest.mark.parametrize("task_id", ["task-1\n", "report\n", "t\n"])
+    def test_trailing_newline_task_id_is_refused(self, tmp_path: Path, task_id: str) -> None:
+        """Python's `$` also matches before a trailing newline, so this shape
+        passed the alphabet check until the anchor became `\\Z`."""
         from bernstein.core.evidence.run_artifacts import _artifact_journal_path
 
         sdd = _sdd(tmp_path)
-        runs = sdd / "runs"
-        runs.mkdir()
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        (runs / "task-linked").symlink_to(outside)
-
-        path = _artifact_journal_path(sdd, "linked")
-        assert str(path).startswith(str(runs))
-        assert "outside" not in str(path)
+        with pytest.raises(ArtifactValidationError):
+            _artifact_journal_path(sdd, task_id)
 
     def test_traversal_task_id_writes_nothing_outside_the_runs_dir(self, tmp_path: Path) -> None:
         sdd = _sdd(tmp_path)

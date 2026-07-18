@@ -5,12 +5,13 @@ A connection document is a typed, named record - ``prod-github``,
 It carries **no secret material**: it holds a *reference* to a
 broker-managed secret (``broker_ref`` - an environment variable name, a Vault
 path, an AWS secret id), a scope, and connector defaults, and it is signed
-with the local Ed25519 install identity. The reference is validated at
-construction so a pasted credential cannot be signed and written in its
-place, and the value behind the reference is read only inside
-:meth:`SecretsBroker.mint`. The naming and reuse layer sits *above* the
-secrets broker's mint / resolve / revoke lifecycle and changes nothing that
-lifecycle owns.
+with the local Ed25519 install identity. The reference shape is enforced
+where the document is written, so a pasted credential cannot be signed and
+persisted in its place, and the value behind the reference is read only
+inside :meth:`SecretsBroker.mint`. Documents written before that check
+existed still load, with a warning naming the command that rotates them.
+The naming and reuse layer sits *above* the secrets broker's mint / resolve
+/ revoke lifecycle and changes nothing that lifecycle owns.
 
 Three substrate-coupled properties make it more than a config file:
 
@@ -41,6 +42,7 @@ import copy
 import hashlib
 import hmac
 import json
+import logging
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -77,6 +79,8 @@ __all__ = [
     "verify_document_local",
 ]
 
+logger = logging.getLogger(__name__)
+
 #: Domain-separation tag folded into every signing preimage so a connection
 #: document signature can never be replayed as some other install artifact.
 _SIGN_DOMAIN = b"bernstein.fleet.conn.v1\x00"
@@ -111,6 +115,12 @@ class ConnectionDocument:
     only for the lifetime of a mint. The field is named for what it holds so
     the on-disk document is not mistaken for a credential store; the wire key
     stays ``secret_name`` because it is inside the signed preimage.
+
+    Construction does **not** enforce the reference shape. The shape is
+    enforced where the bytes are written (:meth:`ConnectionDocumentStore.put`),
+    not where they are read: refusing to parse a document that is already on
+    disk cannot un-write it, and would strand a document an earlier release
+    accepted. See :func:`_validate_broker_ref`.
     """
 
     name: str
@@ -127,7 +137,6 @@ class ConnectionDocument:
         # would otherwise desync the persisted bytes from the recorded
         # document hash.
         object.__setattr__(self, "connector_defaults", copy.deepcopy(self.connector_defaults))
-        _validate_broker_ref(self.broker_ref)
 
     def _payload(self, *, include_signature: bool) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -208,7 +217,17 @@ class ConnectionDocumentStore:
         return self._root / f"{name}.json"
 
     def put(self, doc: ConnectionDocument) -> None:
-        """Persist *doc* under its name (atomic write)."""
+        """Persist *doc* under its name (atomic write).
+
+        This is the write sink, so it is where the reference shape is
+        enforced: nothing that fails :func:`_validate_broker_ref` reaches
+        disk, and the check runs before the file is created.
+
+        Raises:
+            ConnectionReferenceError: If the document's broker reference does
+                not have reference shape.
+        """
+        _validate_broker_ref(doc.broker_ref)
         self._root.mkdir(parents=True, exist_ok=True)
         path = self._path(doc.name)
         tmp = path.with_suffix(".json.tmp")
@@ -222,6 +241,12 @@ class ConnectionDocumentStore:
         file renamed or swapped on disk cannot resolve under a name it was not
         signed for.
 
+        A document written before the reference shape was enforced still
+        loads. It is reported once per read at warning level with the exact
+        command that remediates it, because refusing to parse it would strand
+        an operator on an upgrade with no way back: rotation is the only fix
+        and rotation has to load the old document first.
+
         Raises:
             KeyError: If no document is stored under *name*.
             ValueError: If the stored document's embedded name differs from
@@ -233,6 +258,16 @@ class ConnectionDocumentStore:
         doc = ConnectionDocument.from_json(path.read_text(encoding="utf-8"))
         if doc.name != name:
             raise ValueError(f"connection document name mismatch: requested {name!r}, embedded {doc.name!r}")
+        if not _is_reference_shaped(doc.broker_ref):
+            # %r so a name or reference carrying CR/LF cannot forge a record.
+            logger.warning(
+                "connection document %r holds a broker reference that is not reference-shaped (%r). It was "
+                "written before the shape was enforced and still resolves, but it should name a secret, not "
+                "carry one. Remediate with: bernstein conn rotate %r --secret <name>",
+                doc.name,
+                _describe_ref(doc.broker_ref),
+                doc.name,
+            )
         return doc
 
     def exists(self, name: str) -> bool:
@@ -257,16 +292,53 @@ def _validate_name(name: str) -> None:
 _MAX_BROKER_REF_LEN = 256
 
 
+def _is_reference_shaped(broker_ref: str) -> bool:
+    """Return True when *broker_ref* has the shape of a lookup reference.
+
+    A reference is a single line of printable characters with no whitespace
+    and a bounded length. This is the predicate; :func:`_validate_broker_ref`
+    is the enforcing form that raises with a specific message.
+    """
+    if not broker_ref or len(broker_ref) > _MAX_BROKER_REF_LEN:
+        return False
+    return not any(ch.isspace() or not ch.isprintable() for ch in broker_ref)
+
+
+def _describe_ref(broker_ref: str) -> str:
+    """Return a shape summary of *broker_ref* that never reveals its value.
+
+    A reference that fails the shape check may be a pasted credential, so the
+    operator warning has to describe it without reproducing it - logging the
+    value would be the exact leak the check exists to prevent.
+    """
+    if not broker_ref:
+        return "<empty>"
+    traits: list[str] = []
+    if len(broker_ref) > _MAX_BROKER_REF_LEN:
+        traits.append("over length cap")
+    if any(ch == "\n" or ch == "\r" for ch in broker_ref):
+        traits.append("multi-line")
+    elif any(ch.isspace() for ch in broker_ref):
+        traits.append("contains whitespace")
+    if any(not ch.isprintable() and not ch.isspace() for ch in broker_ref):
+        traits.append("contains control characters")
+    return f"<{len(broker_ref)} chars, {', '.join(traits) or 'unrecognised shape'}>"
+
+
 def _validate_broker_ref(broker_ref: str) -> None:
     """Reject a broker reference that does not look like a lookup reference.
 
     The document is signed and persisted in the clear, so the invariant that
-    it names a secret rather than carrying one has to hold at construction,
-    not only in the docstring. A reference is a single line of printable
-    characters with no whitespace and a bounded length; pasted key material -
-    a PEM block, a JSON service-account blob, a wrapped token - carries
-    newlines, spaces, or length and is refused here rather than being signed
-    and written to disk.
+    it names a secret rather than carrying one is enforced where the bytes are
+    written (:meth:`ConnectionDocumentStore.put`). Pasted key material - a PEM
+    block, a JSON service-account blob, a wrapped token - carries newlines,
+    spaces, or length and is refused before it can reach disk.
+
+    Deliberately *not* enforced on the read path. A document written by an
+    earlier release may hold a reference this check would reject; refusing to
+    parse it cannot un-write it, and would leave the operator unable to load,
+    list, or rotate it. :meth:`ConnectionDocumentStore.get` accepts such a
+    document and warns instead.
 
     This is a shape check, not a proof of non-secrecy: a short opaque token
     is indistinguishable from a short opaque reference. It removes the
@@ -361,6 +433,11 @@ def create_document(
         ConnectionReferenceError: If *broker_ref* is malformed.
     """
     _validate_name(name)
+    # Validate before the chain record is written. `store.put` enforces this
+    # too, but the create receipt is recorded first, so refusing only at the
+    # write sink would leave a receipt on the chain for a document that never
+    # reached disk.
+    _validate_broker_ref(broker_ref)
     if store.exists(name):
         raise FileExistsError(f"connection document {name!r} already exists; use rotate to change it")
     private_key_pem, public_key_pem = _local_identity(identity_dir)
@@ -407,6 +484,20 @@ def rotate_document(
             install identity.
     """
     current = store.get(name)
+    # The reference the rotation will persist: the new one when given, else
+    # the current one carried forward. Validated before the rotate receipt is
+    # recorded, for the same reason as create.
+    if new_broker_ref is not None:
+        _validate_broker_ref(new_broker_ref)
+    elif not _is_reference_shaped(current.broker_ref):
+        # Rotating a legacy document without supplying a new reference would
+        # re-persist the unshaped one. Name the remedy instead of reporting
+        # this against a --secret argument the operator never passed.
+        raise ConnectionReferenceError(
+            f"connection document {name!r} holds a broker reference written before the shape was "
+            f"enforced ({_describe_ref(current.broker_ref)}); rotating it forward would persist it "
+            f"again. Pass a new reference: bernstein conn rotate {name!r} --secret <name>"
+        )
     if not verify_document_local(current, identity_dir=identity_dir):
         record_fleet_conn_refuse(
             chain=chain,

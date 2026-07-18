@@ -68,12 +68,15 @@ AXIS_FREQUENCY = "fire_frequency"
 AXIS_FRESHNESS = "artifact_freshness"
 AXIS_SPEND_RATE = "spend_rate"
 
-_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,256}$")
+#: Anchored with ``\Z``, not ``$``: in Python ``$`` also matches immediately
+#: before a trailing newline, so ``$`` would admit a trailing control character
+#: into a value that reaches log records.
+_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,256}\Z")
 
 #: A contract id is derived from the body digest, so the only well-formed shape
 #: is the prefix plus lowercase hex. Every id that addresses a file on disk is
 #: matched against this before it is joined onto the store directory.
-_CONTRACT_ID_RE = re.compile(rf"^{re.escape(_SLA_ID_PREFIX)}[0-9a-f]{{{_SLA_ID_HEX_LEN}}}$")
+_CONTRACT_ID_RE = re.compile(rf"^{re.escape(_SLA_ID_PREFIX)}[0-9a-f]{{{_SLA_ID_HEX_LEN}}}\Z")
 
 
 class SLAContractError(ValueError):

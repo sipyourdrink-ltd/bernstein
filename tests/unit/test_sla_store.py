@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os.path
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,10 @@ class TestContractIdPathContainment:
             "sla_deadbeefdeadbeef",
             "contract\x00null",
             "sla_deadbeefdead\r\ninjected",
+            # Python's `$` also matches immediately before a trailing newline,
+            # so this shape passed the id check until the anchor became `\Z`.
+            "sla_deadbeefdead\n",
+            "sla_aaaaaaaaaaaa\n",
             "",
         ],
     )
@@ -121,25 +126,31 @@ class TestContractIdPathContainment:
         with pytest.raises(SLAContractError):
             store.get("../escape")
 
-    def test_validation_does_not_walk_a_symlink(self, tmp_path: Path) -> None:
-        """Containment is decided lexically, before anything touches disk.
+    def test_validation_performs_no_filesystem_access(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression guard against reintroducing ``Path.resolve()``.
 
-        A symlink planted in the store must not be followed while the id is
-        being validated, or the check would be deciding containment from
-        whatever an attacker arranged on disk.
+        This is NOT evidence that containment works - the sibling tests in
+        this class carry that, and they fail when `_path_for` is reverted.
+        This one guards the narrower property that the containment decision is
+        reached without touching disk, which an earlier revision of this fix
+        got wrong: it called `.resolve()`, so the untrusted id reached a
+        symlink-walking call before anything had validated where it pointed.
+
+        Asserted by making any filesystem access explode rather than by
+        planting a symlink and hoping - a symlink test passes trivially on any
+        implementation that happens not to resolve.
         """
-        store = SLAStore(tmp_path / ".sdd")
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        (outside / "sla_aaaaaaaaaaaa.json").write_text("planted", encoding="utf-8")
-        link = store.directory / "sla_aaaaaaaaaaaa.json"
-        link.symlink_to(outside / "sla_aaaaaaaaaaaa.json")
 
-        # The id is well-formed, so it resolves - to the path inside the store,
-        # named lexically, not to wherever the symlink points.
-        path = store._path_for("sla_aaaaaaaaaaaa")
-        assert path.parent == Path(str(store.directory))
-        assert str(path).startswith(str(tmp_path / ".sdd"))
+        def _boom(*_args: object, **_kwargs: object) -> Path:
+            raise AssertionError("_path_for must decide containment without touching the filesystem")
+
+        monkeypatch.setattr(Path, "resolve", _boom)
+        monkeypatch.setattr(os.path, "realpath", _boom)
+
+        store = SLAStore(tmp_path / ".sdd")
+        assert store._path_for("sla_aaaaaaaaaaaa").name == "sla_aaaaaaaaaaaa.json"
+        with pytest.raises(SLAContractIdError):
+            store._path_for("../../escape")
 
     def test_derived_ids_still_round_trip(self, tmp_path: Path) -> None:
         store = SLAStore(tmp_path / ".sdd")

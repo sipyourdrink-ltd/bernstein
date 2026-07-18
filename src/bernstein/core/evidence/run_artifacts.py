@@ -83,10 +83,13 @@ LINK_KINDS: frozenset[str] = frozenset({"preview", "dashboard", "document"})
 
 #: Artifact key alphabet: a single safe path-ish segment, no leading dot, no
 #: separators, so it can be embedded in a spine artifact path unescaped.
-_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+#: Anchored with ``\Z``, not ``$``: in Python ``$`` also matches immediately
+#: before a trailing newline, which would let a control character through an
+#: alphabet that exists precisely to exclude them.
+_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 #: Task id alphabet accepted for artifact posting (matches the MCP tool schema).
-_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,256}$")
+_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,256}\Z")
 
 
 class ArtifactError(ValueError):
@@ -318,10 +321,19 @@ def read_artifact_rows(sdd_dir: Path, task_id: str, *, verify: bool = True) -> l
         task_id: The task whose artifacts to read.
         verify: When True (default), a task journal that fails Merkle
             verification yields no records (fail-closed).
+
+    An id that cannot name any task has no artifacts, so it reads as empty
+    rather than raising: this is a reader, and every caller (the CLI listing,
+    the dashboard projection) already treats "addresses nothing" as "nothing
+    to show". The typed refusal belongs on the write path, where
+    :func:`post_run_artifact` validates before it anchors anything.
     """
     from bernstein.core.replay.journal import load_events, verify_journal
 
-    path = _artifact_journal_path(sdd_dir, task_id)
+    try:
+        path = _artifact_journal_path(sdd_dir, task_id)
+    except ArtifactValidationError:
+        return []
     if not path.is_file():
         return []
     if verify and not verify_journal(path).ok:
@@ -474,10 +486,16 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
     row's ``content_hash`` (a flipped blob byte is caught), and the row's spine
     entry hash must appear in a verified lineage spine binding the same content.
     A failure names the artifact key and its exact journal position.
+
+    An id that cannot name any task has nothing to verify, so it reads as
+    empty rather than raising, matching :func:`read_artifact_rows`.
     """
     from bernstein.core.replay.journal import verify_journal
 
-    path = _artifact_journal_path(sdd_dir, task_id)
+    try:
+        path = _artifact_journal_path(sdd_dir, task_id)
+    except ArtifactValidationError:
+        return []
     if not path.is_file():
         return []
 
