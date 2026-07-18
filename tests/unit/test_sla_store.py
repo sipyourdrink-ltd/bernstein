@@ -121,6 +121,26 @@ class TestContractIdPathContainment:
         with pytest.raises(SLAContractError):
             store.get("../escape")
 
+    def test_validation_does_not_walk_a_symlink(self, tmp_path: Path) -> None:
+        """Containment is decided lexically, before anything touches disk.
+
+        A symlink planted in the store must not be followed while the id is
+        being validated, or the check would be deciding containment from
+        whatever an attacker arranged on disk.
+        """
+        store = SLAStore(tmp_path / ".sdd")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "sla_aaaaaaaaaaaa.json").write_text("planted", encoding="utf-8")
+        link = store.directory / "sla_aaaaaaaaaaaa.json"
+        link.symlink_to(outside / "sla_aaaaaaaaaaaa.json")
+
+        # The id is well-formed, so it resolves - to the path inside the store,
+        # named lexically, not to wherever the symlink points.
+        path = store._path_for("sla_aaaaaaaaaaaa")
+        assert path.parent == Path(str(store.directory))
+        assert str(path).startswith(str(tmp_path / ".sdd"))
+
     def test_derived_ids_still_round_trip(self, tmp_path: Path) -> None:
         store = SLAStore(tmp_path / ".sdd")
         stored = store.add(build_contract(subject_type="schedule", subject_id="s", fire_frequency_s=60))

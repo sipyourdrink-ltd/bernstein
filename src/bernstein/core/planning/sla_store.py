@@ -36,13 +36,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import os.path
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any, Literal, cast
 
 logger = logging.getLogger(__name__)
 
@@ -382,20 +382,25 @@ class SLAStore:
         unchecked id would read or unlink a file anywhere the process can
         reach. Two independent checks stand between the id and the filesystem:
         the id must match the derived-id shape (which admits no separator, dot
-        segment, or control character), and the resolved path must still be
-        inside the resolved store directory.
+        segment, or control character), and the normalised path must sit
+        directly in the store directory.
+
+        Normalisation is lexical (``os.path.normpath``, not ``Path.resolve``)
+        and both checks complete before anything touches the filesystem, so a
+        symlink planted in the store cannot be walked during validation and
+        the check cannot be subverted by what is on disk.
 
         Raises:
             SLAContractIdError: If the id is not a well-formed derived id, or
-                if it resolves outside the store directory.
+                if it does not land directly in the store directory.
         """
         if not _CONTRACT_ID_RE.match(contract_id):
             raise SLAContractIdError(f"invalid SLA contract id '{_single_line(contract_id)}'")
-        base = self._dir.resolve()
-        path = (base / f"{contract_id}.json").resolve()
-        if not path.is_relative_to(base):
+        base = os.path.normpath(str(self._dir))
+        candidate = os.path.normpath(os.path.join(base, f"{contract_id}.json"))
+        if not candidate.startswith(base + os.sep) or os.path.dirname(candidate) != base:
             raise SLAContractIdError(f"SLA contract id '{_single_line(contract_id)}' escapes the contract store")
-        return path
+        return Path(candidate)
 
     def add(self, contract: SLAContract, *, now: float | None = None) -> SLAContract:
         """Persist a contract; idempotent by derived id."""

@@ -407,6 +407,22 @@ class TestTaskIdPathContainment:
         assert resolved.is_relative_to((sdd / "runs").resolve())
         assert read_artifact_rows(sdd, task_id) == []
 
+    def test_validation_is_lexical_not_filesystem_dependent(self, tmp_path: Path) -> None:
+        """Containment is decided before anything touches disk, so a symlink
+        planted under runs/ cannot be walked during validation."""
+        from bernstein.core.evidence.run_artifacts import _artifact_journal_path
+
+        sdd = _sdd(tmp_path)
+        runs = sdd / "runs"
+        runs.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (runs / "task-linked").symlink_to(outside)
+
+        path = _artifact_journal_path(sdd, "linked")
+        assert str(path).startswith(str(runs))
+        assert "outside" not in str(path)
+
     def test_traversal_task_id_writes_nothing_outside_the_runs_dir(self, tmp_path: Path) -> None:
         sdd = _sdd(tmp_path)
         before = sorted(p.name for p in tmp_path.iterdir())

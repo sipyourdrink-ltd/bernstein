@@ -29,10 +29,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import os.path
 import re
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.evidence.bundle import DEFAULT_MAX_BLOB_BYTES, EvidenceStore
@@ -40,7 +43,6 @@ from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -274,20 +276,23 @@ def _artifact_journal_path(sdd_dir: Path, task_id: str) -> Path:
     unreachable today, but that is an incidental property of a helper in
     another module and nothing pins it. The reader therefore holds the property
     on its own terms: the id must match the same alphabet ``post_run_artifact``
-    enforces, and the resolved path must still sit inside the resolved runs
-    directory.
+    enforces, and the normalised path must still sit inside the runs directory.
+
+    Normalisation is lexical (``os.path.normpath``, not ``Path.resolve``) and
+    both checks complete before anything touches the filesystem, so a symlink
+    planted under ``runs/`` cannot be walked during validation.
 
     Raises:
         ArtifactValidationError: If the id is not a valid task identifier, or
-            if it resolves outside the runs directory.
+            if it lands outside the runs directory.
     """
     if not _TASK_ID_RE.match(task_id):
         raise ArtifactValidationError(f"task id {task_id!r} is not a valid task identifier")
-    base = (sdd_dir / "runs").resolve()
-    path = (base / _task_run_id(task_id) / "journal.jsonl").resolve()
-    if not path.is_relative_to(base):
+    base = os.path.normpath(str(sdd_dir / "runs"))
+    candidate = os.path.normpath(os.path.join(base, _task_run_id(task_id), "journal.jsonl"))
+    if not candidate.startswith(base + os.sep):
         raise ArtifactValidationError(f"task id {task_id!r} resolves outside the runs directory")
-    return path
+    return Path(candidate)
 
 
 def _row_to_record(row: dict[str, Any]) -> RunArtifactRecord:
@@ -571,7 +576,9 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
                 derived = _artifact_journal_path(sdd_dir, task_id)
             except ArtifactValidationError:
                 derived = None
-            if derived == journal_path.resolve():
+            # Compare under the same lexical normalisation the deriver uses,
+            # so the equality is not decided by symlinks on either side.
+            if derived is not None and str(derived) == os.path.normpath(str(journal_path)):
                 results.extend(verify_run_artifacts(sdd_dir, task_id, hmac_key=hmac_key))
             else:
                 results.append(
