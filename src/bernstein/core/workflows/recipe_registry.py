@@ -991,7 +991,9 @@ class RecipeRegistry:
             submitted = dispatcher(event)
         except Exception as exc:
             return 0, f"dispatch failed: {exc}"
-        count = int(submitted) if isinstance(submitted, int) and not isinstance(submitted, bool) else 0
+        # bool is an int subclass; a dispatcher returning True would otherwise
+        # read as "one item submitted" on no evidence at all.
+        count = submitted if isinstance(submitted, int) and not isinstance(submitted, bool) else 0
         if count <= 0:
             return 0, "the task-graph dispatcher submitted no work for this fire"
         return count, ""
@@ -1167,7 +1169,7 @@ def _order_by_lineage(events: list[dict[str, Any]], name: str = "") -> list[dict
 
     forked = {prev: evs for prev, evs in by_prev.items() if len(evs) > 1}
     if forked:
-        prev = sorted(forked)[0]
+        prev = min(forked)
         successors = ", ".join(sorted(str(e["hmac"])[:16] for e in forked[prev]))
         raise RecipeRegistryError(
             f"forked definition lineage for {label}: predecessor "

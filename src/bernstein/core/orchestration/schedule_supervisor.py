@@ -117,9 +117,9 @@ def collision_inputs_hash(
         {
             "rev": COLLISION_INPUTS_REV,
             "schedule_id": schedule_id,
-            "fire_time": int(fire_time),
-            "running_count": int(running_count),
-            "concurrency_cap": int(concurrency_cap),
+            "fire_time": fire_time,
+            "running_count": running_count,
+            "concurrency_cap": concurrency_cap,
             "fire_id": fire_id,
             "resume_from_checkpoint": resume_from_checkpoint,
         },
