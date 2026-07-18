@@ -105,6 +105,12 @@ ADAPTIVE_CARD_VERSION: str = "1.4"
 #: Adaptive Card content type used for the message attachment.
 ADAPTIVE_CARD_CONTENT_TYPE: str = "application/vnd.microsoft.card.adaptive"
 
+#: ``$schema`` identifier stamped on every emitted Adaptive Card. The driver
+#: never dereferences it -- renderers treat it as an opaque identifier -- but
+#: it is published in the card payload, so it is pinned to TLS rather than
+#: advertising a clear-text URL to anything that does follow it.
+ADAPTIVE_CARD_SCHEMA_URL: str = "https://adaptivecards.io/schemas/adaptive-card.json"
+
 
 class TeamsDependencyError(RuntimeError):
     """Raised when the Bot Framework SDK is not installed."""
@@ -332,7 +338,7 @@ class TeamsBridge(BridgeProtocol):
         return {
             "type": "AdaptiveCard",
             "version": ADAPTIVE_CARD_VERSION,
-            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "$schema": ADAPTIVE_CARD_SCHEMA_URL,
             "body": [
                 {"type": "TextBlock", "text": title, "weight": "Bolder", "wrap": True},
                 {"type": "TextBlock", "text": body_text, "wrap": True},

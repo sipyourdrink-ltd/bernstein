@@ -117,8 +117,14 @@ def canonical_round(value: float, places: int = CANON_PLACES) -> float:
     quantum = _CANON_QUANTUM if places == CANON_PLACES else Decimal(1).scaleb(-places)
     quantised = Decimal(value).quantize(quantum, rounding=ROUND_HALF_EVEN)
     # Normalise negative zero so ``-0.0`` never reaches a receipt.
-    result = float(quantised)
-    return 0.0 if result == 0.0 else result
+    #
+    # Adding positive zero is the sign fix, not a tolerance comparison: under
+    # IEEE-754 round-to-nearest ``(-0.0) + 0.0`` is ``+0.0``, while for every
+    # other finite value ``x + 0.0`` is exactly ``x`` (the addition is exact,
+    # so no bit changes). A magnitude test such as :func:`math.isclose` would
+    # be wrong here -- it would flatten genuinely small quantised p-values to
+    # zero and change the statistical result.
+    return float(quantised) + 0.0
 
 
 # ---------------------------------------------------------------------------
