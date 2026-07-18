@@ -158,8 +158,7 @@ def list_cmd(workdir: Path, as_json: bool) -> None:
 def show_cmd(name: str, workdir: Path) -> None:
     """Show the canonical manifest and hash for an active pool NAME."""
     workdir = workdir.resolve()
-    active = project_pool_registry(_pool_events(workdir))
-    pool_hash = active.get(name)
+    pool_hash = project_pool_registry(_pool_events(workdir)).get(name)
     if pool_hash is None:
         console.print(f"[yellow]No active pool named[/yellow] {name!r}.")
         raise SystemExit(1)

@@ -191,8 +191,7 @@ def evict_cache_key(key: str, reason: str, workdir: Path, as_json: bool) -> None
     """
     root = workdir.resolve()
     ledger = open_ledger(root)
-    tombstones = open_tombstones(root)
-    recall = tombstones.evict(key, reason, ledger=ledger, ts=int(time.time()))
+    recall = open_tombstones(root).evict(key, reason, ledger=ledger, ts=int(time.time()))
 
     report_path = cache_dir(root) / f"recall-{key[:16]}.json"
     write_recall_report(report_path, recall)

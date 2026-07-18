@@ -290,8 +290,7 @@ class ContextStore:
         the pointer write is atomic, so an effective config resolution sees
         the context layer entirely or not at all.
         """
-        context = self.get(name)
-        receipt = context.run_receipt()
+        receipt = self.get(name).run_receipt()
         if self._chain is not None:
             record_fleet_context_activate(
                 chain=self._chain,
