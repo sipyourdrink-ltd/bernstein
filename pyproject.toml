@@ -185,6 +185,12 @@ k8s = ["kubernetes>=35.0.0"]
 #   pip install 'bernstein[spiffe]'
 spiffe = ["spiffe>=0.2"]
 ml = ["scikit-learn>=1.5"]
+# Browser activity driver (src/bernstein/core/orchestration/browser_driver.py).
+# Optional so a default install stays lean and dependency-free: without it the
+# recorded-tape driver still runs every offline replay and verification path,
+# and asking for a live driver raises a typed refusal naming this extra.
+# Enable with: pip install 'bernstein[browser]'.
+browser = ["browser-use>=0.7"]
 graphics = []  # term-image disabled: caps pillow<11, conflicts with CVE-2026-25990 fix
 # OpenAI Agents SDK v2 integration (src/bernstein/adapters/openai_agents.py).
 # Declared as an optional extra so users who don't spawn OpenAI Agents agents
