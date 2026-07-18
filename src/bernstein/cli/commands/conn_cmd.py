@@ -92,15 +92,21 @@ def conn_create_cmd(name: str, broker_ref: str, scope: str, defaults: tuple[str,
     from bernstein.core.fleet.connection import create_document
 
     wd = Path(workdir)
-    doc = create_document(
-        name=name,
-        broker_ref=broker_ref,
-        scope=scope,
-        connector_defaults=_parse_defaults(defaults),
-        identity_dir=_identity_dir(wd),
-        chain=_chain(wd),
-        store=_store(wd),
-    )
+    try:
+        doc = create_document(
+            name=name,
+            broker_ref=broker_ref,
+            scope=scope,
+            connector_defaults=_parse_defaults(defaults),
+            identity_dir=_identity_dir(wd),
+            chain=_chain(wd),
+            store=_store(wd),
+        )
+    except ValueError as exc:
+        # --secret takes the name of a broker-managed secret, so pasting the
+        # value itself is the likely operator mistake. Report it as usage,
+        # not as a traceback.
+        raise click.UsageError(str(exc)) from exc
     console.print(f"[green]created[/green] {name} (document {doc.document_hash()[:19]}...)")
 
 
@@ -128,14 +134,17 @@ def conn_rotate_cmd(name: str, broker_ref: str | None, scope: str | None, workdi
     from bernstein.core.fleet.connection import rotate_document
 
     wd = Path(workdir)
-    rotated = rotate_document(
-        name,
-        new_broker_ref=broker_ref,
-        new_scope=scope,
-        identity_dir=_identity_dir(wd),
-        chain=_chain(wd),
-        store=_store(wd),
-    )
+    try:
+        rotated = rotate_document(
+            name,
+            new_broker_ref=broker_ref,
+            new_scope=scope,
+            identity_dir=_identity_dir(wd),
+            chain=_chain(wd),
+            store=_store(wd),
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     console.print(f"[green]rotated[/green] {name} -> v{rotated.version} (secret {rotated.broker_ref})")
 
 
