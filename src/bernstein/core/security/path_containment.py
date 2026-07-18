@@ -101,16 +101,22 @@ def contained_path(base: Path | str, *segments: str, label: str = "identifier") 
     for segment in segments:
         validate_path_segment(segment, label=label)
     base_real = os.path.realpath(base)
+    # ``os.path.join(x, "")`` appends the separator without doubling it on a
+    # drive root such as ``C:\``, so the prefix test below stays correct for
+    # every base. The trailing separator is what stops a sibling directory
+    # like ``<base>-evil`` from passing a bare prefix comparison.
+    base_prefix = os.path.join(base_real, "")
     # ``realpath`` resolves symlinks and normalises ``..`` even for a path
-    # that does not exist yet, so the containment test below sees exactly
-    # the location a later open() would reach. Every segment is a plain
-    # name, so a contained result is always a strict descendant of the
-    # base: a single prefix test is the whole check, and ``+ os.sep``
-    # stops a sibling like ``<base>-evil`` from passing it.
+    # that does not exist yet, so the containment test sees exactly the
+    # location a later open() would reach. Every segment is a plain name, so
+    # a contained result is always a strict descendant of the base and a
+    # single prefix test is the whole check.
     candidate = os.path.realpath(os.path.join(base_real, *segments))
-    if not candidate.startswith(base_real + os.sep):
+    if not candidate.startswith(base_prefix):
+        # The base is deliberately left out of the message: these errors can
+        # surface to an API caller, and the absolute layout is not theirs.
         joined = "/".join(segments)
-        msg = f"{label} {joined!r} resolves outside {base_real}"
+        msg = f"{label} {joined!r} resolves outside its base directory"
         raise PathContainmentError(msg)
     return Path(candidate)
 
