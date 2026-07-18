@@ -313,12 +313,16 @@ class MissionSpec:
                 msg = f"phase {phase.phase_id!r} budget must be >= 0 (got {phase.budget_usd})"
                 raise MissionSpecError(msg)
             if not phase.gate:
-                # A phase is a verification gate plus an envelope; one with no
-                # gate has nothing to verify, so its receipt would bind no
-                # evidence and the phase would project as passed on the
-                # strength of nothing. That is what a half-written spec looks
-                # like, so it is refused at the boundary rather than sealed.
-                msg = f"phase {phase.phase_id!r} must gate on at least one evidence task id"
+                # Refused at the boundary, not in the projection: flipping an
+                # already-sealed gateless phase to unverified would accuse an
+                # honest historical record that an append-only chain gives the
+                # operator no way to repair. Existing ledgers are untouched;
+                # only new definitions are refused.
+                msg = (
+                    f"phase {phase.phase_id!r} declares an empty gate: a phase is a verification gate "
+                    f"plus a budget envelope, so a phase with no gate has nothing to verify and would "
+                    f"pass on no evidence at all. List at least one evidence task id in 'gate'."
+                )
                 raise MissionSpecError(msg)
             for task_id in phase.gate:
                 if not task_id:
