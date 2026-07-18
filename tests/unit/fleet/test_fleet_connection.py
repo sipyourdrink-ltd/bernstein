@@ -499,3 +499,111 @@ class TestLegacyDocumentCompatibility:
             )
         assert chain.query(event_type=EVENT_FLEET_CONN_CREATE) == []
         assert store.list_names() == []
+
+
+class TestHashCoversWhatIsPersisted:
+    """The document hash must be computed over what actually lands on disk.
+
+    A self-consistency check that recomputes a hash from persisted data breaks
+    on honest records if anything lossy sits between the in-memory object and
+    the stored bytes: a redaction applied on write but not before hashing, a
+    falsy value coerced on read, or a second serialiser with different
+    canonicalisation. The hash, the signed preimage, and the file all derive
+    from one `_payload`, and these tests hold that.
+    """
+
+    _SHAPES = {
+        "plain": ("repo:read", {"base_url": "https://api.github.com"}),
+        # Falsy values are the direct analogue of an `or`-coercion bug: they
+        # must survive as themselves, not be replaced by a default on read.
+        "falsy_empty": ("", {}),
+        "falsy_nested": ("", {"a": 0, "b": "", "c": False, "d": None, "e": [], "f": {}}),
+        "non_ascii": ("portée", {"note": "naïve café"}),
+        "numeric": ("s", {"i": 1, "f": 1.0, "big": 2**53 + 1}),
+        "nested": ("s", {"x": {"y": ["z", {"w": 1}]}}),
+    }
+
+    @pytest.mark.parametrize("shape", sorted(_SHAPES))
+    def test_hash_agrees_across_memory_disk_and_chain(self, tmp_path: Path, shape: str) -> None:
+        scope, defaults = self._SHAPES[shape]
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = create_document(
+            name="c",
+            broker_ref="GITHUB_TOKEN",
+            scope=scope,
+            connector_defaults=defaults,
+            identity_dir=tmp_path / "id",
+            chain=chain,
+            store=store,
+        )
+        recorded = chain.query(event_type=EVENT_FLEET_CONN_CREATE)[0].details["document_hash"]
+        from_disk = store.get("c")
+
+        assert doc.document_hash() == from_disk.document_hash() == recorded
+        assert from_disk == doc
+        assert verify_document_local(from_disk, identity_dir=tmp_path / "id")
+
+    @pytest.mark.parametrize("shape", sorted(_SHAPES))
+    def test_signed_preimage_is_the_written_bytes_minus_the_signature(self, tmp_path: Path, shape: str) -> None:
+        """The one relationship that makes the hash meaningful: what is signed
+        is exactly what is stored, less the signature that cannot cover itself."""
+        import json as _json
+
+        scope, defaults = self._SHAPES[shape]
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = create_document(
+            name="c",
+            broker_ref="GITHUB_TOKEN",
+            scope=scope,
+            connector_defaults=defaults,
+            identity_dir=tmp_path / "id",
+            chain=_chain(tmp_path),
+            store=store,
+        )
+        raw = (tmp_path / "conns" / "c.json").read_text(encoding="utf-8")
+        # The writer must apply no normalisation of its own.
+        assert raw == doc.to_json()
+
+        written = _json.loads(raw)
+        written.pop("signature")
+        rebuilt = _json.dumps(written, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        assert rebuilt == doc.unsigned_canonical_bytes()
+        assert rebuilt == store.get("c").unsigned_canonical_bytes()
+
+    def test_rotation_hash_survives_the_storage_round_trip(self, tmp_path: Path) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        create_document(
+            name="c",
+            broker_ref="TOK",
+            scope="s",
+            connector_defaults={"a": 1},
+            identity_dir=tmp_path / "id",
+            chain=chain,
+            store=store,
+        )
+        rotated = rotate_document("c", new_broker_ref="TOK_V2", identity_dir=tmp_path / "id", chain=chain, store=store)
+        recorded = chain.query(event_type=EVENT_FLEET_CONN_ROTATE)[0].details["new_document_hash"]
+        from_disk = store.get("c")
+        assert rotated.document_hash() == from_disk.document_hash() == recorded
+        assert from_disk.version == 2
+        assert verify_document_local(from_disk, identity_dir=tmp_path / "id")
+
+    def test_put_does_not_mutate_the_document_it_persists(self, tmp_path: Path) -> None:
+        """`put` validates before writing; validation must stay a pure check.
+        A redaction here would make every recorded hash unverifiable."""
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = create_document(
+            name="c",
+            broker_ref="TOK",
+            scope="s",
+            connector_defaults={"a": 1},
+            identity_dir=tmp_path / "id",
+            chain=_chain(tmp_path),
+            store=store,
+        )
+        before = doc.document_hash()
+        store.put(doc)
+        assert doc.document_hash() == before
+        assert store.get("c").document_hash() == before
