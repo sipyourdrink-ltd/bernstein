@@ -500,11 +500,14 @@ class TestClearTextCORSOrigins:
             "http://localhost:*",
             "http://127.0.0.1:8053",
             "http://[::1]:*",
+            "http://[::1]",
             "http://localhost",
             # Scheme and host are case-insensitive, so this is still loopback.
             "HTTP://LOCALHOST:*",
             "https://example.com",
             "https://app.example.com:443",
+            # TLS is accepted regardless of how far off-box the host is.
+            "https://[2001:db8::1]:8053",
         ],
     )
     def test_loopback_plaintext_and_tls_origins_are_accepted(
@@ -524,6 +527,12 @@ class TestClearTextCORSOrigins:
             # A loopback-looking prefix that is really a different host.
             "http://localhost.evil.test",
             "HTTP://Example.COM",
+            # Bracketed IPv6 literals are unwrapped before the loopback test,
+            # so an off-box IPv6 host is refused with or without a port.
+            "http://[2001:db8::1]:8053",
+            "http://[2001:db8::1]",
+            # ::1 is loopback, ::2 is not; the whole literal has to match.
+            "http://[::2]:*",
         ],
     )
     def test_non_loopback_plaintext_origin_is_refused(
