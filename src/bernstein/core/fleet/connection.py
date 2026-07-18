@@ -67,6 +67,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ConnectionDocument",
     "ConnectionDocumentStore",
+    "ConnectionReferenceError",
     "ConnectionRefused",
     "ResolutionReceipt",
     "audit_resolutions",
@@ -89,6 +90,15 @@ _IDENTITY_PUBLIC_NAME = "fleet_conn_signing.pub"
 
 class ConnectionRefused(Exception):
     """Raised when a connection document refuses to resolve."""
+
+
+class ConnectionReferenceError(ValueError):
+    """Raised when a broker reference does not look like a lookup reference.
+
+    Subclasses :class:`ValueError` so existing callers keep working, while
+    giving a caller something narrow enough to report as operator input error
+    without also swallowing an unrelated failure from the same call.
+    """
 
 
 @dataclass(frozen=True)
@@ -264,18 +274,18 @@ def _validate_broker_ref(broker_ref: str) -> None:
     contract to an assertion the type actually enforces.
 
     Raises:
-        ValueError: If *broker_ref* is empty, over-long, or not a single
-            whitespace-free printable line.
+        ConnectionReferenceError: If *broker_ref* is empty, over-long, or not
+            a single whitespace-free printable line.
     """
     if not broker_ref:
-        raise ValueError("connection document broker reference must not be empty")
+        raise ConnectionReferenceError("connection document broker reference must not be empty")
     if len(broker_ref) > _MAX_BROKER_REF_LEN:
-        raise ValueError(
+        raise ConnectionReferenceError(
             f"connection document broker reference is {len(broker_ref)} chars, "
             f"over the {_MAX_BROKER_REF_LEN}-char cap; it must name a secret, not carry one"
         )
     if any(ch.isspace() or not ch.isprintable() for ch in broker_ref):
-        raise ValueError(
+        raise ConnectionReferenceError(
             "connection document broker reference must be a single printable line "
             "with no whitespace; it must name a secret, not carry one"
         )
@@ -347,7 +357,8 @@ def create_document(
 
     Raises:
         FileExistsError: If a document already exists under *name*.
-        ValueError: If *name* or *broker_ref* is malformed.
+        ValueError: If *name* is malformed.
+        ConnectionReferenceError: If *broker_ref* is malformed.
     """
     _validate_name(name)
     if store.exists(name):

@@ -17,6 +17,7 @@ import pytest
 from bernstein.core.fleet.connection import (
     ConnectionDocument,
     ConnectionDocumentStore,
+    ConnectionReferenceError,
     ConnectionRefused,
     create_document,
     resolve_document,
@@ -303,8 +304,20 @@ class TestNoSecretMaterialOnDisk:
 
     @pytest.mark.parametrize("material", _CREDENTIAL_SHAPES)
     def test_credential_shaped_reference_is_refused(self, material: str) -> None:
-        with pytest.raises(ValueError, match="broker reference"):
+        with pytest.raises(ConnectionReferenceError, match="broker reference"):
             ConnectionDocument(name="c", broker_ref=material, scope="")
+
+    def test_refusal_is_narrow_enough_to_distinguish_from_other_failures(self) -> None:
+        """The refusal is its own type so a caller can report it as operator
+        input error without also swallowing an unrelated failure."""
+        assert issubclass(ConnectionReferenceError, ValueError)
+        with pytest.raises(ConnectionReferenceError):
+            ConnectionDocument(name="c", broker_ref="has spaces", scope="")
+        # A malformed *name* is a different failure and keeps the plain type.
+        store = ConnectionDocumentStore(Path("/tmp/never-written"))
+        with pytest.raises(ValueError) as seen:
+            store._path("../escape")
+        assert not isinstance(seen.value, ConnectionReferenceError)
 
     @pytest.mark.parametrize("material", _CREDENTIAL_SHAPES)
     def test_credential_shaped_reference_never_reaches_disk(self, tmp_path: Path, material: str) -> None:

@@ -89,7 +89,7 @@ def conn_group() -> None:
 @_WORKDIR_OPTION
 def conn_create_cmd(name: str, broker_ref: str, scope: str, defaults: tuple[str, ...], workdir: str) -> None:
     """Create and sign a new connection document under NAME."""
-    from bernstein.core.fleet.connection import create_document
+    from bernstein.core.fleet.connection import ConnectionReferenceError, create_document
 
     wd = Path(workdir)
     try:
@@ -102,10 +102,11 @@ def conn_create_cmd(name: str, broker_ref: str, scope: str, defaults: tuple[str,
             chain=_chain(wd),
             store=_store(wd),
         )
-    except ValueError as exc:
+    except ConnectionReferenceError as exc:
         # --secret takes the name of a broker-managed secret, so pasting the
-        # value itself is the likely operator mistake. Report it as usage,
-        # not as a traceback.
+        # value itself is the likely operator mistake. Only the reference
+        # refusal is reported as usage; any other failure keeps its traceback
+        # rather than being disguised as operator error.
         raise click.UsageError(str(exc)) from exc
     console.print(f"[green]created[/green] {name} (document {doc.document_hash()[:19]}...)")
 
@@ -131,7 +132,7 @@ def conn_list_cmd(workdir: str) -> None:
 @_WORKDIR_OPTION
 def conn_rotate_cmd(name: str, broker_ref: str | None, scope: str | None, workdir: str) -> None:
     """Rotate NAME; consumers re-point at next mint with zero spec edits."""
-    from bernstein.core.fleet.connection import rotate_document
+    from bernstein.core.fleet.connection import ConnectionReferenceError, rotate_document
 
     wd = Path(workdir)
     try:
@@ -143,7 +144,7 @@ def conn_rotate_cmd(name: str, broker_ref: str | None, scope: str | None, workdi
             chain=_chain(wd),
             store=_store(wd),
         )
-    except ValueError as exc:
+    except ConnectionReferenceError as exc:
         raise click.UsageError(str(exc)) from exc
     console.print(f"[green]rotated[/green] {name} -> v{rotated.version} (secret {rotated.broker_ref})")
 
