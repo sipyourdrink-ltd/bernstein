@@ -5,14 +5,16 @@ cached value that other runs consumed has to be revocable together with
 everything derived from it, and the operator needs a forensic recall set of the
 runs that consumed the revoked value.
 
-Two append-only artefacts back this:
+Two journals back this:
 
 * :class:`ServedFromLedger` - one row per ``served_from`` edge: a consuming run
   read a value from a cache key. The ledger is the by-artefact projection this
   module walks; it is append-only so an edge can never be silently rewritten.
-* :class:`TombstoneStore` - append-only tombstone journal. A tombstoned key is
-  always a miss, even when its drift verdict is fresh, so an evicted key can
-  never serve again.
+* :class:`TombstoneStore` - tombstone journal. A tombstoned key is always a
+  miss, even when its drift verdict is fresh, so an evicted key can never serve
+  again. Rows are only ever added, but a revocation rewrites the journal whole
+  under its lock rather than appending row by row, so that the whole reachable
+  set lands in one atomic transition (see below).
 
 :meth:`TombstoneStore.evict` walks the ledger transitively from the evicted key
 over ``served_from`` edges, tombstones every reachable key, and returns the full
@@ -215,10 +217,18 @@ class RecallSet:
 
 
 class TombstoneStore:
-    """Append-only tombstone journal with transitive eviction.
+    """Tombstone journal with crash-consistent transitive eviction.
 
     A tombstoned key is a hard miss forever - :meth:`is_tombstoned` short
     circuits any lookup regardless of the drift verdict.
+
+    The journal only ever grows - no code path removes or edits a row - but it
+    is not written by appending. Each revocation rewrites the file whole, prior
+    rows plus the new ones, via ``temp + fsync + os.replace`` under the journal
+    lock, so an interrupted eviction cannot publish a prefix of the reachable
+    set. The trade is deliberate: a rewrite could in principle drop history that
+    a pure append could not, so the rewrite is confined to :meth:`_commit`,
+    which never filters or reorders the rows it read.
     """
 
     def __init__(self, path: Path) -> None:

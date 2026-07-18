@@ -401,14 +401,19 @@ def cache_key_slug(key: str, *, length: int = 16) -> str:
 def resolve_cached_path(base: Path, name: str) -> Path:
     """Return ``base/name`` resolved, proven to live strictly inside ``base``.
 
-    Containment is asserted on the *resolved* paths, so a symlinked base
-    directory or a name that survives component validation but still escapes
-    (for example through an intermediate symlink) is refused rather than
-    written to.
+    ``base`` is canonicalised first, so a base directory that is itself a
+    symlink is *followed*, not refused: containment is then asserted against
+    that canonical target. What the check refuses is a ``name`` that resolves
+    outside the canonical base - including the case where ``base/name`` is a
+    symlink pointing elsewhere, since the candidate is resolved too.
+
+    Callers pass a ``name`` built from an already validated key, so it carries
+    no separators; this resolution step is the second, independent barrier
+    rather than the primary one.
 
     Raises:
         UnsafeCacheKeyError: When the resolved candidate is not strictly inside
-            the resolved base directory.
+            the canonical base directory.
     """
     resolved_base = Path(base).resolve()
     candidate = (resolved_base / name).resolve()

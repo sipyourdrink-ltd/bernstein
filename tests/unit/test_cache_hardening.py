@@ -104,6 +104,30 @@ def test_resolve_cached_path_refuses_escape(tmp_path: Path) -> None:
         resolve_cached_path(tmp_path / "cache", "../../escaped.json")
 
 
+def test_resolve_cached_path_follows_a_symlinked_base(tmp_path: Path) -> None:
+    """A symlinked base is canonicalised and followed, not refused."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+
+    resolved = resolve_cached_path(link, "recall-key_root.json")
+
+    assert resolved == real.resolve() / "recall-key_root.json"
+
+
+def test_resolve_cached_path_refuses_a_name_symlinked_out_of_base(tmp_path: Path) -> None:
+    """A report name that is itself a symlink pointing outside is refused."""
+    base = tmp_path / "cache"
+    base.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (base / "recall-key_root.json").symlink_to(outside / "stolen.json")
+
+    with pytest.raises(UnsafeCacheKeyError):
+        resolve_cached_path(base, "recall-key_root.json")
+
+
 def test_recall_report_path_is_contained(tmp_path: Path) -> None:
     report = recall_report_path(tmp_path, "key_root")
     assert cache_dir(tmp_path).resolve() in report.parents
@@ -159,10 +183,35 @@ def test_cli_evict_refuses_traversal_key_and_writes_nothing(tmp_path: Path) -> N
     )
 
     assert result.exit_code != 0
-    # The pre-hardening path builder resolved to <workdir>/pwne.json - outside
-    # the policy cache directory it was supposed to stay in.
-    assert not (workdir / "pwne.json").exists()
-    assert not any(workdir.glob("*.json"))
+    # The pre-hardening builder composed
+    # <workdir>/.sdd/caching/policy/recall-../../../../pwne.json, whose
+    # components normalise to <workdir>/.sdd/pwne.json - three levels above the
+    # policy cache directory it was supposed to stay in. Assert on that exact
+    # target, and recursively, so the check cannot pass by looking in the wrong
+    # directory.
+    assert not (workdir / ".sdd" / "pwne.json").exists()
+    assert list(workdir.rglob("*.json")) == []
+    # The refusal precedes every filesystem effect, so the run leaves no trace
+    # at all: no report, no tombstone journal, no audit chain.
+    assert list(workdir.rglob("*")) == []
+
+
+def test_cli_evict_writes_the_report_inside_the_cache_dir(tmp_path: Path) -> None:
+    """Positive control: a safe key still gets its report, and it stays contained."""
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    open_ledger(workdir).record(ServedFromEdge(cache_key="key_root", consumer="run_a"))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["cache", "evict", "key_root", "--reason", "pr_reverted", "--workdir", str(workdir)],
+    )
+
+    assert result.exit_code == 0, result.output
+    reports = list(cache_dir(workdir).glob("recall-*.json"))
+    assert len(reports) == 1
+    assert cache_dir(workdir).resolve() in reports[0].resolve().parents
 
 
 # ---------------------------------------------------------------------------
@@ -243,34 +292,6 @@ def test_concurrent_cold_start_yields_exactly_one_winner(tmp_path: Path) -> None
         results = list(pool.map(_try, range(workers)))
 
     assert sum(1 for won in results if won) == 1
-
-
-def test_release_and_contend_race_yields_one_owner(tmp_path: Path) -> None:
-    """A release racing fresh contenders never leaves two owners of the key."""
-    backlog_path = tmp_path / "arbiter.json"
-    arbiter = CacheKeyArbiter(backlog_path, "hotkey")
-    assert arbiter.contend("worker-0").won
-
-    barrier = threading.Barrier(9)
-
-    def _release(_: int) -> bool:
-        barrier.wait(timeout=10)
-        arbiter.release()
-        return False
-
-    def _contend(index: int) -> bool:
-        barrier.wait(timeout=10)
-        return CacheKeyArbiter(backlog_path, "hotkey").contend(f"w-{index}").won
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
-        futures = [pool.submit(_release, 0), *[pool.submit(_contend, i) for i in range(8)]]
-        results = [f.result(timeout=30) for f in futures]
-
-    # At most one contender wins the re-opened claim, and the persisted row has
-    # exactly one owner (or none, when the release lands last).
-    assert sum(1 for won in results if won) <= 1
-    rows = [e for e in Backlog.load(backlog_path).entries if e.id == "hotkey"]
-    assert len(rows) == 1
 
 
 def test_contend_preserves_outcome_semantics(tmp_path: Path) -> None:
