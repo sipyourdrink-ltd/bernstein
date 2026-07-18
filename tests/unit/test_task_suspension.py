@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -50,6 +51,7 @@ from bernstein.core.tasks.suspension import (
     CONTINUITY_FAILED,
     CONTINUITY_PENDING,
     CONTINUITY_VERIFIED,
+    JOURNAL_EVENT_RESUME,
     RESOURCE_BUDGET,
     RESOURCE_PROCESS,
     RESOURCE_SANDBOX,
@@ -64,6 +66,7 @@ from bernstein.core.tasks.suspension import (
     UnsafeTaskIdError,
     approval_decision_ref,
     decide_resume,
+    find_settlements,
     find_suspension_receipt,
     latest_suspension,
     park_task,
@@ -1078,7 +1081,7 @@ def test_verify_continuity_rejects_a_resume_bound_to_a_foreign_receipt(tmp_path:
     assert not result.ok
     # Assert *which* guard fired. Without this the test passes on the phantom
     # journal-row check alone and the binding filter ships uncovered.
-    assert any("no resume receipt continued from the parked suspend row" in err for err in result.errors), result.errors
+    assert any("settlement record is inconsistent" in err for err in result.errors), result.errors
     assert not result.resumed
 
 
@@ -1296,13 +1299,15 @@ def test_verify_continuity_flags_a_park_settled_more_than_once(tmp_path: Path) -
     assert any("settled 2 times" in err for err in result.errors), result.errors
 
 
-def test_verify_continuity_ignores_a_resume_receipt_bound_to_another_park(tmp_path: Path) -> None:
+def test_reported_state_comes_from_the_genuine_settlement_not_the_forgery(tmp_path: Path) -> None:
     """Binding selection, pinned independently of the journal-row check.
 
     The forged receipt names a resume row the journal really holds, so the
-    ``_row_present`` guard cannot reject it. Only the binding filter can, and
-    reverting that filter makes the verifier read the forged receipt (warm with
-    no workspace match) and fail.
+    ``_row_present`` guard cannot reject it. Two things must hold at once: the
+    forgery is *surfaced* as inconsistent evidence (it names this park's row
+    but hangs off another park's receipt), and the *reported* continuation
+    state is still read from the genuine settlement rather than from whichever
+    receipt happens to be last on the chain.
     """
     from bernstein.core.security.audit_chain import record_task_resume
 
@@ -1336,9 +1341,13 @@ def test_verify_continuity_ignores_a_resume_receipt_bound_to_another_park(tmp_pa
     )
 
     result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-bind", chain=chain)
-    # The genuine settlement is read; the foreign-bound receipt is not this
-    # park's evidence and must not be selected by recency.
-    assert result.ok, result.errors
+    # The forgery is surfaced rather than silently ignored...
+    assert not result.ok
+    assert any("settlement record is inconsistent" in err for err in result.errors), result.errors
+    # ...and the reported state still comes from the genuine settlement. If
+    # selection fell back to recency, these would carry the forgery's values
+    # (workspace_match=False, new_workspace_hash="deadbeef").
+    assert result.resumed
     assert result.workspace_match
     assert result.effective_mode == "warm"
 
@@ -1451,3 +1460,409 @@ def test_approval_paths_refuse_a_symlinked_decision_file(tmp_path: Path) -> None
 
     # The outside file was neither read into a digest nor overwritten.
     assert target.read_text(encoding="utf-8") == "original"
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review: the writer and the verifier must share one definition of
+# "settled", one scope (every park), and one id-validation rule.
+# ---------------------------------------------------------------------------
+
+
+def _forge_settlement(chain: AuditChainStore, task_id: str, park: Any, resume_event_hash: str, count: int = 1) -> None:
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    for _ in range(count):
+        record_task_resume(
+            chain=chain,
+            task_id=task_id,
+            suspend_receipt_hash=park.suspend_receipt_hash,
+            suspend_event_hash=park.suspend_row.event_hash,
+            resume_event_hash=resume_event_hash,
+            journal_index=1,
+            effective_mode="warm",
+            requested_mode="warm",
+            workspace_match=True,
+            new_workspace_hash=park.suspend_row.workspace_hash,
+            downgrade_reason="",
+            decision_hash="x" * 64,
+        )
+
+
+def test_parking_again_does_not_erase_multi_settlement_detection(tmp_path: Path) -> None:
+    """The proof covers every park, not just the latest one.
+
+    Scoping to the newest suspend receipt meant an ordinary 'park again' -- the
+    remediation documented for a spent park -- stopped the verifier looking at
+    earlier parks, so replay damage already on the chain laundered itself.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    first = _park(tmp_path, chain, "T-relaunder", wt)
+    resume = resume_task(
+        sdd_dir=sdd,
+        suspend_row=first.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=first.suspend_receipt_hash,
+    )
+    _forge_settlement(chain, "T-relaunder", first, resume.resume_event_hash, count=2)
+
+    before = verify_suspension_continuity(sdd_dir=sdd, task_id="T-relaunder", chain=chain)
+    assert before.status == CONTINUITY_FAILED
+    assert any("settled 3 times" in err for err in before.errors), before.errors
+
+    # Park again: an ordinary, unprivileged operation.
+    _park(tmp_path, chain, "T-relaunder", wt)
+
+    after = verify_suspension_continuity(sdd_dir=sdd, task_id="T-relaunder", chain=chain)
+    assert after.status == CONTINUITY_FAILED, after.to_dict()
+    assert any("settled 3 times" in err for err in after.errors), after.errors
+
+
+def test_writer_and_verifier_agree_that_a_half_matching_receipt_is_evidence(tmp_path: Path) -> None:
+    """A receipt matching one identifier but not the other must not vanish.
+
+    The guard treats such a receipt as a settlement and refuses to resume
+    forever. If the proof ignores it, an operator sees a healthy 'pending' for
+    a park that can never move again, and a real replay attempt leaves no
+    trace in the proof at all.
+    """
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-half", wt)
+
+    # Genuine receipt hash, but names a suspend row that is not this park's.
+    record_task_resume(
+        chain=chain,
+        task_id="T-half",
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        suspend_event_hash="0" * 64,
+        resume_event_hash="0" * 64,
+        journal_index=99,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=True,
+        new_workspace_hash=park.suspend_row.workspace_hash,
+        downgrade_reason="",
+        decision_hash="0" * 64,
+    )
+
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-half", chain=chain)
+    # The verifier surfaces it rather than reporting a clean pending...
+    assert result.status == CONTINUITY_FAILED, result.to_dict()
+    assert any("inconsistent" in err for err in result.errors), result.errors
+    # ...and the writer agrees it is a settlement.
+    with pytest.raises(SuspensionAlreadySettledError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=park.suspend_row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=park.suspend_receipt_hash,
+        )
+
+
+def test_settlement_survives_deletion_of_the_audit_chain_tail(tmp_path: Path) -> None:
+    """The guard consults the journal too, not only the audit chain.
+
+    HMAC chaining detects modification and removal of a *non-terminal* entry,
+    so dropping the last line of the audit file leaves ``chain.verify()``
+    returning True while erasing the receipt. The journal independently
+    recorded the settlement, so the replay is still refused.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = park_task(
+        sdd_dir=sdd,
+        task_id="T-tail",
+        adapter="claude",
+        session_id="s",
+        worktree_path=wt,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        chain=chain,
+        wake_condition=WAKE_APPROVAL,
+    )
+    approvals = sdd / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    (approvals / "T-tail.approved").write_text("approved", encoding="utf-8")
+    approval_ref = approval_decision_ref(tmp_path, "T-tail")
+    resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        approval_ref=approval_ref,
+    )
+    journal_resumes = sum(1 for r in _journal_rows(sdd, "T-tail") if r.get("event") == JOURNAL_EVENT_RESUME)
+    assert journal_resumes == 1
+
+    # Drop the terminal audit entry; the chain still verifies.
+    log = sorted((tmp_path / "audit").glob("*.jsonl"))[0]
+    lines = log.read_text(encoding="utf-8").splitlines()
+    log.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    reopened = AuditChainStore(tmp_path / "audit", key=_KEY)
+    assert reopened.verify()[0]
+    assert reopened.query(event_type=EVENT_TASK_RESUMED) == []
+
+    with pytest.raises(SuspensionAlreadySettledError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=park.suspend_row,
+            new_worktree_path=wt,
+            chain=reopened,
+            suspend_receipt_hash=park.suspend_receipt_hash,
+            approval_ref=approval_ref,
+        )
+    # No second resume row landed.
+    assert sum(1 for r in _journal_rows(sdd, "T-tail") if r.get("event") == JOURNAL_EVENT_RESUME) == 1
+
+
+def test_find_settlements_reads_both_stores(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-both", wt)
+    assert (
+        find_settlements(
+            sdd_dir=sdd,
+            task_id="T-both",
+            chain=chain,
+            suspend_receipt_hash=park.suspend_receipt_hash,
+            suspend_event_hash=park.suspend_row.event_hash,
+        )
+        == []
+    )
+    resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+    )
+    found = find_settlements(
+        sdd_dir=sdd,
+        task_id="T-both",
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        suspend_event_hash=park.suspend_row.event_hash,
+    )
+    assert {s.source for s in found} == {"chain", "journal"}
+    assert all(s.consistent for s in found)
+
+
+@pytest.mark.parametrize("command_name", ["approve", "reject"])
+def test_decision_commands_refuse_a_traversing_task_id(tmp_path: Path, command_name: str) -> None:
+    """The write side of the approvals sink obeys the same rule as the read side."""
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.approve_cmd import approve
+    from bernstein.cli.commands.reject_cmd import reject
+
+    proj = tmp_path / "proj"
+    (proj / ".sdd").mkdir(parents=True)
+    command = approve if command_name == "approve" else reject
+    args = ["../../../../pwned", "--workdir", str(proj)]
+    if command_name == "approve":
+        args.append("--no-prompt")
+
+    result = CliRunner().invoke(command, args)
+    assert result.exit_code == 1, result.output
+    assert "refusing" in " ".join(result.output.split()).lower()
+    # Nothing was written anywhere outside the approvals directory.
+    assert list(tmp_path.rglob("pwned.*")) == []
+
+
+def test_decision_commands_still_work_for_ordinary_task_ids(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.approve_cmd import approve
+
+    proj = tmp_path / "proj"
+    (proj / ".sdd").mkdir(parents=True)
+    result = CliRunner().invoke(approve, ["T-ok_1.2", "--workdir", str(proj), "--no-prompt"])
+    assert result.exit_code == 0, result.output
+    assert (proj / ".sdd" / "runtime" / "approvals" / "T-ok_1.2.approved").exists()
+
+
+# ---------------------------------------------------------------------------
+# Convergence: every entry point must reach the SAME rule. These tests fail if
+# any sink grows its own copy of the identifier rule or of "settled", which is
+# the drift that produced the findings above.
+# ---------------------------------------------------------------------------
+
+#: Every id that must be refused, and every id that must be accepted, by every
+#: approvals sink. One table, asserted against all entry points, so a sink
+#: cannot quietly diverge.
+_UNSAFE_IDS = ["../../../../pwned", "..", ".", "a/b", "/abs", "with space", "", "back\\slash", "T" + "a" * 59]
+_SAFE_IDS = ["T-abc123", "T_1.2-x", "T" + "a" * 58]
+
+
+def _approvals_sinks() -> dict[str, Any]:
+    """Return ``{name: callable(workdir, task_id)}`` for every approvals sink.
+
+    Any new sink under ``.sdd/runtime/approvals`` belongs in this table.
+    """
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.approve_cmd import approve
+    from bernstein.cli.commands.chat_cmd import _write_approval_decision
+    from bernstein.cli.commands.reject_cmd import reject
+    from bernstein.core.orchestration.approval_gate import approval_path
+
+    def _cli(command: Any, extra: list[str]) -> Any:
+        def run(workdir: Path, task_id: str) -> None:
+            result = CliRunner().invoke(command, [task_id, "--workdir", str(workdir), *extra])
+            if result.exit_code != 0:
+                raise UnsafeTaskIdError(result.output)
+
+        return run
+
+    from bernstein.core.orchestration.approval_gate import approval_path_in
+
+    return {
+        "approval_gate.approval_path": lambda wd, tid: approval_path(wd, tid, ".approved"),
+        "approval_gate.approval_path_in": lambda wd, tid: approval_path_in(
+            wd / ".sdd" / "runtime" / "approvals", tid, ".approved"
+        ),
+        "suspension.approval_decision_ref": approval_decision_ref,
+        "suspension.write_resume_marker": lambda wd, tid: write_resume_marker(wd, tid, "hash"),
+        "cli.approve": _cli(approve, ["--no-prompt"]),
+        "cli.reject": _cli(reject, []),
+        "chat._write_approval_decision": lambda wd, tid: _write_approval_decision(wd, tid, "approve"),
+    }
+
+
+@pytest.mark.parametrize("unsafe_id", _UNSAFE_IDS)
+def test_every_approvals_sink_refuses_the_same_unsafe_ids(tmp_path: Path, unsafe_id: str) -> None:
+    """One identifier rule, enforced at every entry point.
+
+    Finding: the read side was hardened and its write-side siblings were not,
+    so the documented invariant was false. This asserts the rule at all of
+    them against one table, so hardening one sink can no longer leave another
+    behind.
+    """
+    for name, sink in _approvals_sinks().items():
+        workdir = tmp_path / f"wd-{abs(hash(name)) % 10000}"
+        (workdir / ".sdd").mkdir(parents=True, exist_ok=True)
+        with pytest.raises(UnsafeTaskIdError):
+            sink(workdir, unsafe_id)
+        # Nothing escaped, at any sink.
+        assert list(tmp_path.rglob("pwned*")) == []
+
+
+@pytest.mark.parametrize("safe_id", _SAFE_IDS)
+def test_every_approvals_sink_accepts_the_same_safe_ids(tmp_path: Path, safe_id: str) -> None:
+    """The shared rule must not be so strict that ordinary ids break."""
+    for name, sink in _approvals_sinks().items():
+        workdir = tmp_path / f"wd-{abs(hash(name)) % 10000}"
+        (workdir / ".sdd" / "runtime" / "approvals").mkdir(parents=True, exist_ok=True)
+        sink(workdir, safe_id)  # must not raise
+
+
+def test_writer_and_proof_agree_on_settled_for_every_shape(tmp_path: Path) -> None:
+    """One definition of settled, shared by the mutation path and the proof.
+
+    For each way a settlement can be recorded, the writer's answer ("is this
+    park spent?") and the proof's answer ("does this park report a clean
+    continuity?") must not contradict each other. The findings were exactly
+    the cases where they did.
+    """
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    def fresh(name: str) -> tuple[Path, AuditChainStore, Path, Any]:
+        base = tmp_path / name
+        base.mkdir()
+        wt = _worktree(base, "wt", {"a.py": "x = 1\n"})
+        chain = AuditChainStore(base / "audit", key=_KEY)
+        park = park_task(
+            sdd_dir=base / ".sdd",
+            task_id=name,
+            adapter="claude",
+            session_id="s",
+            worktree_path=wt,
+            envelope="subscription",
+            reserved_usd=5.0,
+            spent_usd=0.0,
+            chain=chain,
+        )
+        return base / ".sdd", chain, wt, park
+
+    def writer_says_spent(sdd: Path, chain: AuditChainStore, wt: Path, park: Any) -> bool:
+        try:
+            resume_task(
+                sdd_dir=sdd,
+                suspend_row=park.suspend_row,
+                new_worktree_path=wt,
+                chain=chain,
+                suspend_receipt_hash=park.suspend_receipt_hash,
+            )
+        except SuspensionAlreadySettledError:
+            return True
+        return False
+
+    # Shape A: untouched park. Writer: not spent. Proof: pending, no errors.
+    sdd, chain, wt, park = fresh("shape-a")
+    proof = verify_suspension_continuity(sdd_dir=sdd, task_id="shape-a", chain=chain)
+    assert proof.status == CONTINUITY_PENDING
+    assert not writer_says_spent(sdd, chain, wt, park)
+
+    # Shape B: genuinely settled. Writer: spent. Proof: verified.
+    sdd, chain, wt, park = fresh("shape-b")
+    resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+    )
+    assert verify_suspension_continuity(sdd_dir=sdd, task_id="shape-b", chain=chain).status == CONTINUITY_VERIFIED
+    assert writer_says_spent(sdd, chain, wt, park)
+
+    # Shape C: receipt matches the park's receipt but names another row.
+    # Writer: spent. Proof must NOT report a clean pending.
+    sdd, chain, wt, park = fresh("shape-c")
+    record_task_resume(
+        chain=chain,
+        task_id="shape-c",
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        suspend_event_hash="0" * 64,
+        resume_event_hash="0" * 64,
+        journal_index=99,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=True,
+        new_workspace_hash=park.suspend_row.workspace_hash,
+        downgrade_reason="",
+        decision_hash="0" * 64,
+    )
+    assert verify_suspension_continuity(sdd_dir=sdd, task_id="shape-c", chain=chain).status == CONTINUITY_FAILED
+    assert writer_says_spent(sdd, chain, wt, park)
+
+    # Shape D: receipt names the park's row but hangs off another receipt.
+    # Writer: spent. Proof must NOT report a clean pending.
+    sdd, chain, wt, park = fresh("shape-d")
+    record_task_resume(
+        chain=chain,
+        task_id="shape-d",
+        suspend_receipt_hash="f" * 64,
+        suspend_event_hash=park.suspend_row.event_hash,
+        resume_event_hash="0" * 64,
+        journal_index=99,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=True,
+        new_workspace_hash=park.suspend_row.workspace_hash,
+        downgrade_reason="",
+        decision_hash="0" * 64,
+    )
+    assert verify_suspension_continuity(sdd_dir=sdd, task_id="shape-d", chain=chain).status == CONTINUITY_FAILED
+    assert writer_says_spent(sdd, chain, wt, park)
