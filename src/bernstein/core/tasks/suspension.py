@@ -192,20 +192,41 @@ class ResumeApprovalRequiredError(RuntimeError):
     """
 
 
-def validate_task_id(task_id: str) -> str:
-    """Return ``task_id`` if it is a safe single path segment, else refuse.
+#: Longest ``task_id`` that still fits the task journal's run-id budget.
+#:
+#: The park derives the journal run id as ``task_run_id(task_id)``, which is
+#: ``"task-" + task_id``, and :mod:`bernstein.core.replay.journal` caps a run id
+#: at 64 characters. This bound belongs here, at the boundary that actually has
+#: the constraint, rather than in the shared approvals rule: an approval id from
+#: the chat bridge or the pre-spawn gate never becomes a journal run id, so
+#: tightening the shared rule to 59 would refuse ids no downstream sink objects
+#: to. A task id between 60 and 64 characters is therefore approvable and
+#: rejectable as normal; it simply cannot be durably parked, and says so with a
+#: typed refusal instead of a bare ValueError from the journal.
+_MAX_PARKABLE_TASK_ID_LEN = 64 - len("task-")
 
-    Thin delegation to the one rule in
-    :func:`~bernstein.core.orchestration.approval_gate.validate_approval_id`,
-    kept here as the name the task-side callers use.
+
+def validate_task_id(task_id: str) -> str:
+    """Return ``task_id`` if it is safe for the park/resume path, else refuse.
+
+    The shared approvals rule
+    (:func:`~bernstein.core.orchestration.approval_gate.validate_approval_id`)
+    plus the narrower journal run-id budget this path additionally needs.
 
     Raises:
-        UnsafeTaskIdError: The identifier is empty, longer than 59 characters
-            (the journal run-id budget), or contains any character outside
-            ``[A-Za-z0-9._-]`` (and it must not start with a dot, which rules
-            out ``.`` and ``..``).
+        UnsafeTaskIdError: The identifier is empty, contains any character
+            outside ``[A-Za-z0-9._-]``, does not start with an alphanumeric
+            (which rules out ``.`` and ``..``), or is longer than
+            :data:`_MAX_PARKABLE_TASK_ID_LEN`.
     """
-    return validate_approval_id(task_id)
+    validate_approval_id(task_id)
+    if len(task_id) > _MAX_PARKABLE_TASK_ID_LEN:
+        msg = (
+            f"refusing to park task id {task_id!r}: {len(task_id)} characters exceeds the "
+            f"{_MAX_PARKABLE_TASK_ID_LEN}-character journal run-id budget"
+        )
+        raise UnsafeTaskIdError(msg)
+    return task_id
 
 
 def _contained_approval_path(workdir: Path, task_id: str, suffix: str) -> Path:
@@ -1165,16 +1186,18 @@ def write_resume_marker(workdir: Path, task_id: str, resume_receipt_hash: str) -
 
     The marker name is derived from ``task_id``, so the identifier is validated
     and the resolved path is confirmed to stay inside the approvals directory
-    before the directory is created or anything is written.
+    before the directory is created or anything is written. This is an
+    approvals sink, so it applies the shared approvals rule rather than the
+    narrower parkable-id budget: the budget is a constraint of the journal run
+    id, and a marker file is not one.
 
     Raises:
         UnsafeTaskIdError: ``task_id`` is not a safe single path segment, or
             the derived path escapes the approvals directory.
     """
-    validate_task_id(task_id)
-    approvals = workdir / _APPROVALS_REL
-    approvals.mkdir(parents=True, exist_ok=True)
+    # Resolve (and therefore validate) before creating any directory.
     marker = _contained_approval_path(workdir, task_id, ".resumed")
+    marker.parent.mkdir(parents=True, exist_ok=True)
     try:
         marker.write_text(resume_receipt_hash, encoding="utf-8")
     except OSError as exc:  # pragma: no cover -- defensive

@@ -1702,8 +1702,19 @@ def test_decision_commands_still_work_for_ordinary_task_ids(tmp_path: Path) -> N
 #: Every id that must be refused, and every id that must be accepted, by every
 #: approvals sink. One table, asserted against all entry points, so a sink
 #: cannot quietly diverge.
-_UNSAFE_IDS = ["../../../../pwned", "..", ".", "a/b", "/abs", "with space", "", "back\\slash", "T" + "a" * 59]
-_SAFE_IDS = ["T-abc123", "T_1.2-x", "T" + "a" * 58]
+_UNSAFE_IDS = [
+    "../../../../pwned",
+    "..",
+    ".",
+    "a/b",
+    "/abs",
+    "with space",
+    "",
+    "back\\slash",
+    "auth:oauth-flow",  # colon: drive-relative on Windows, ADS on NTFS
+    "T" + "a" * 64,  # 65 chars: over the shared 64 bound
+]
+_SAFE_IDS = ["T-abc123", "T_1.2-x", "T" + "a" * 63]
 
 
 def _approvals_sinks() -> dict[str, Any]:
@@ -1866,3 +1877,160 @@ def test_writer_and_proof_agree_on_settled_for_every_shape(tmp_path: Path) -> No
     )
     assert verify_suspension_continuity(sdd_dir=sdd, task_id="shape-d", chain=chain).status == CONTINUITY_FAILED
     assert writer_says_spent(sdd, chain, wt, park)
+
+
+# ---------------------------------------------------------------------------
+# Cross-boundary id rules: pin the RELATIONSHIP between the approvals rule and
+# the artifact-posting rule, not their current literal values.
+# ---------------------------------------------------------------------------
+
+#: Ids that ``evidence.run_artifacts`` accepts but the approvals sink refuses,
+#: each with the reason it cannot be admitted. Anything accepted by
+#: run_artifacts and not listed here MUST be accepted by the approvals sink.
+#:
+#: These are deliberate divergences, not oversights. A colon cannot be made
+#: safe for a path that is joined then written: on Windows ``C:evil`` parses as
+#: drive-relative so the join discards the base, and ``file:stream`` addresses
+#: an NTFS alternate data stream that a containment check cannot see. The
+#: length and leading-character cases are the shared rule being stricter than a
+#: surface that never joins the value onto a directory.
+_DELIBERATE_DIVERGENCES = {
+    "colon is a drive separator and an NTFS ADS separator",
+    "longer than the 64-character identifier budget",
+    "does not start with an alphanumeric (would admit '.' and '..')",
+}
+
+
+def _divergence_reason(candidate: str) -> str | None:
+    """Return why the approvals rule refuses an id run_artifacts accepts."""
+    if ":" in candidate:
+        return "colon is a drive separator and an NTFS ADS separator"
+    if len(candidate) > 64:
+        return "longer than the 64-character identifier budget"
+    if not candidate[:1].isalnum():
+        return "does not start with an alphanumeric (would admit '.' and '..')"
+    return None
+
+
+def test_every_artifact_accepted_id_is_approvable_or_a_documented_divergence(tmp_path: Path) -> None:
+    """Pin the relationship between the two id rules.
+
+    ``evidence.run_artifacts`` accepts a wider alphabet than the approvals
+    sink. Every id it admits must therefore be either approvable or a
+    *documented* refusal -- otherwise a task can post artifacts but can never
+    be approved or rejected, which strands it with no operator remedy.
+    """
+    from bernstein.core.evidence.run_artifacts import _TASK_ID_RE as ARTIFACT_ID_RE
+    from bernstein.core.orchestration.approval_gate import approval_path_in
+
+    approvals = tmp_path / ".sdd" / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+
+    candidates = [
+        "T-abc123",
+        "T_1.2-x",
+        "task.with.dots",
+        "UPPER-lower_9",
+        "a",
+        "T" + "a" * 63,  # 64: the shared bound
+        "auth:oauth-flow",  # accepted by run_artifacts, refused here
+        "C:evil",
+        "file:stream",
+        "T" + "a" * 64,  # 65: over the shared bound
+        ".hidden",  # leading dot
+        "T" + "a" * 255,  # 256: run_artifacts' own ceiling
+    ]
+
+    for candidate in candidates:
+        if not ARTIFACT_ID_RE.match(candidate):
+            continue  # run_artifacts refuses it too; no relationship to pin
+        reason = _divergence_reason(candidate)
+        if reason is None:
+            # run_artifacts accepts it and there is no documented reason to
+            # refuse, so the approvals sink must accept it.
+            approval_path_in(approvals, candidate, ".approved")
+        else:
+            assert reason in _DELIBERATE_DIVERGENCES, f"undocumented divergence for {candidate!r}: {reason}"
+            with pytest.raises(UnsafeTaskIdError):
+                approval_path_in(approvals, candidate, ".approved")
+
+
+def test_approvals_rule_matches_the_prevailing_identifier_length(tmp_path: Path) -> None:
+    """The shared bound tracks the codebase's prevailing rule, not a magic number.
+
+    ``replay.journal`` and ``run_service.paths`` both cap identifiers at 64. If
+    one of those moves, this fails rather than silently leaving the approvals
+    sink stricter and stranding ids the rest of the tree accepts.
+    """
+    import re as _re
+
+    from bernstein.core.orchestration.approval_gate import approval_path_in
+    from bernstein.core.replay.journal import _RUN_ID_RE
+    from bernstein.core.run_service.paths import _RUN_ID_RE as PATHS_RUN_ID_RE
+
+    def _upper_bound(pattern: _re.Pattern[str]) -> int:
+        match = _re.search(r"\{\d+,(\d+)\}", pattern.pattern)
+        assert match, f"cannot read bound from {pattern.pattern!r}"
+        return int(match.group(1))
+
+    prevailing = {_upper_bound(_RUN_ID_RE), _upper_bound(PATHS_RUN_ID_RE)}
+    assert prevailing == {64}, prevailing
+
+    approvals = tmp_path / ".sdd" / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    approval_path_in(approvals, "T" + "a" * 63, ".approved")  # 64: accepted
+    with pytest.raises(UnsafeTaskIdError):
+        approval_path_in(approvals, "T" + "a" * 64, ".approved")  # 65: refused
+
+
+def test_a_task_too_long_to_park_is_still_approvable(tmp_path: Path) -> None:
+    """The narrower park budget must not strand a task at the approvals surface.
+
+    A 60-64 character id cannot be durably parked (the journal run id would
+    exceed 64), but it must still be approvable and rejectable, and the park
+    refusal must be the typed one rather than a bare ValueError from the
+    journal.
+    """
+    from bernstein.core.orchestration.approval_gate import approval_path_in
+
+    long_id = "T" + "a" * 62  # 63 chars: fine for approvals, too long to park
+    approvals = tmp_path / ".sdd" / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+
+    # Approvable.
+    assert approval_path_in(approvals, long_id, ".approved").parent == approvals.resolve()
+
+    # Not parkable, with the typed refusal.
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    with pytest.raises(UnsafeTaskIdError):
+        park_task(
+            sdd_dir=tmp_path / ".sdd",
+            task_id=long_id,
+            adapter="claude",
+            session_id="s",
+            worktree_path=wt,
+            envelope="subscription",
+            reserved_usd=1.0,
+            spent_usd=0.0,
+            chain=chain,
+        )
+
+
+def test_colon_id_escapes_containment_under_windows_semantics() -> None:
+    """Evidence for the colon divergence, so the reason is checkable not asserted.
+
+    This is why a colon cannot simply be admitted to match ``run_artifacts``.
+    Uses pure path semantics so it holds on any host.
+    """
+    from pathlib import PureWindowsPath
+
+    base = PureWindowsPath(r"D:\proj\.sdd\runtime\approvals")
+    # A drive-letter shaped id discards the base entirely on Windows.
+    escaped = base / "C:evil.approved"
+    assert not escaped.is_relative_to(base)
+    assert str(escaped) == "C:evil.approved"
+    # An ADS-shaped id stays "contained" by path inspection, which is exactly
+    # why a containment check alone cannot make a colon safe.
+    ads = base / "file:stream.approved"
+    assert ads.is_relative_to(base)

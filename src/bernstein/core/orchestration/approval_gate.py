@@ -58,16 +58,32 @@ _RUNTIME_REL = Path(".sdd") / "runtime" / "approvals"
 #:
 #: Every sink under :data:`_RUNTIME_REL` derives its name from a caller-supplied
 #: id (``<id>.pending`` / ``.approved`` / ``.rejected`` / ``.resumed``), so the
-#: id is an identifier and never a path fragment: no separator, no traversal
-#: segment, no NUL, no leading dot. If two call sites can disagree about this
-#: rule they eventually will, so all of them go through :func:`approval_path`.
+#: id is an identifier and never a path fragment. If two call sites can disagree
+#: about this rule they eventually will, so all of them go through
+#: :func:`approval_path_in`.
 #:
-#: The 59-character bound is set by the narrowest downstream sink rather than
-#: chosen freely: a parked task's journal run id is ``"task-" + task_id`` and
-#: ``EventJournal`` caps that at 64 characters. A looser bound here would let an
-#: over-long id past this typed refusal only to abort with a bare ``ValueError``
-#: deeper in the stack.
-_APPROVAL_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,58}\Z")
+#: **Length is 64**, matching the prevailing identifier rule in this codebase
+#: (``replay.journal``, ``run_service.paths``, ``orchestration.missions``,
+#: ``persistence.work_ledger``). A tighter bound here would refuse ids those
+#: surfaces accept and strand them with no operator remedy. A caller with a
+#: narrower downstream budget enforces that budget at its own boundary rather
+#: than tightening this shared rule (see
+#: :func:`bernstein.core.tasks.suspension.validate_task_id`, which additionally
+#: caps at 59 because a parked task's journal run id is ``"task-" + task_id``).
+#:
+#: **The first character must be alphanumeric.** This is deliberately stricter
+#: than the prevailing rule, which admits a leading dot and therefore matches
+#: ``.`` and ``..``. Those surfaces are not always joined onto a directory; this
+#: one always is, so traversal segments must be impossible here.
+#:
+#: **A colon is refused**, unlike ``evidence.run_artifacts`` which admits it for
+#: MCP-supplied ids. A colon cannot be made safe for a path that is joined and
+#: then written: on Windows ``C:evil`` parses as a drive-relative path, so
+#: ``base / "C:evil.approved"`` discards the base entirely, and ``file:stream``
+#: addresses an NTFS alternate data stream, which a containment check cannot
+#: see because the path itself still looks contained. Verified for both shapes;
+#: see the mismatch test in ``tests/unit/test_task_suspension.py``.
+_APPROVAL_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 
 
 class UnsafeApprovalIdError(ValueError):
@@ -83,9 +99,9 @@ def validate_approval_id(approval_id: str) -> str:
     """Return *approval_id* if it is a safe single path segment, else refuse.
 
     Raises:
-        UnsafeApprovalIdError: The id is empty, longer than 59 characters, or
-            contains any character outside ``[A-Za-z0-9._-]`` (and it must not
-            start with a dot, which rules out ``.`` and ``..``).
+        UnsafeApprovalIdError: The id is empty, longer than 64 characters, or
+            contains any character outside ``[A-Za-z0-9._-]`` (and it must
+            start with an alphanumeric, which rules out ``.`` and ``..``).
     """
     if not _APPROVAL_ID_RE.match(approval_id):
         msg = f"refusing to derive an approvals path from unsafe id {approval_id!r}"
