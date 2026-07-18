@@ -48,10 +48,18 @@ def reject(task_id: str, workdir: str, prompt: bool) -> None:
     Example:
       bernstein reject T-abc123
     """
-    approvals_dir = Path(workdir) / ".sdd" / "runtime" / "approvals"
+    from bernstein.core.orchestration.approval_gate import UnsafeApprovalIdError, approval_path
+
+    # Same rule as the approve and read sides; validated before mkdir.
+    try:
+        decision_file = approval_path(Path(workdir), task_id, ".rejected")
+        approved_file = approval_path(Path(workdir), task_id, ".approved")
+    except UnsafeApprovalIdError as exc:
+        console.print(f"[red]Refusing to reject:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    approvals_dir = decision_file.parent
     approvals_dir.mkdir(parents=True, exist_ok=True)
-    decision_file = approvals_dir / f"{task_id}.rejected"
-    approved_file = approvals_dir / f"{task_id}.approved"
 
     if approved_file.exists():
         console.print(

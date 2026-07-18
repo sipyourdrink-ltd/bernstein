@@ -34,7 +34,6 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.evidence.bundle import DEFAULT_MAX_BLOB_BYTES, EvidenceStore
@@ -42,6 +41,7 @@ from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -270,31 +270,33 @@ def _validate_ids(task_id: str, key: str) -> None:
 
 
 def _artifact_journal_path(sdd_dir: Path, task_id: str) -> Path:
-    """Return the task's journal path, refusing any id that escapes ``runs/``.
+    """Return the task journal path, proven to sit under ``<sdd>/runs``.
 
-    Every reader here derives a filesystem path from a task id that reached it
-    from a request path, a CLI argument, or a journal row. ``task_run_id`` maps
-    separators to ``-`` and prefixes the segment, which makes traversal
-    unreachable today, but that is an incidental property of a helper in
-    another module and nothing pins it. The reader therefore holds the property
-    on its own terms: the id must match the same alphabet ``post_run_artifact``
-    enforces, and the normalised path must still sit inside the runs directory.
+    Two checks, in order, because they answer different questions.
 
-    Normalisation is lexical (``os.path.normpath``, not ``Path.resolve``) and
-    both checks complete before anything touches the filesystem, so a symlink
-    planted under ``runs/`` cannot be walked during validation.
+    First the id must match the alphabet ``post_run_artifact`` enforces.
+    ``task_run_id`` maps every separator and control character to ``-``, so a
+    malformed id is not a traversal risk - but it is a COLLISION risk: ``a/b``,
+    ``a\\nb`` and ``a-b`` all normalise to the same run directory, and two
+    tasks that address the same journal can read each other's artifacts.
+    Refusing the id keeps distinct tasks distinct, which sanitising alone
+    cannot do.
+
+    Then the derived run id goes through the shared containment barrier and the
+    *returned* value is the normalised, checked path. Readers open that value
+    rather than the raw join, so a crafted id or a symlinked run directory
+    cannot address a journal outside the runs root. The barrier is shared on
+    purpose: a local copy of this check drifted from it once already.
 
     Raises:
-        ArtifactValidationError: If the id is not a valid task identifier, or
-            if it lands outside the runs directory.
+        ArtifactValidationError: The id is not a valid task identifier.
+        PathContainmentError: The derived run id escapes the runs root.
     """
+    from bernstein.core.tasks.checkpoint_retry import task_journal_path
+
     if not _TASK_ID_RE.match(task_id):
         raise ArtifactValidationError(f"task id {task_id!r} is not a valid task identifier")
-    base = os.path.normpath(str(sdd_dir / "runs"))
-    candidate = os.path.normpath(os.path.join(base, _task_run_id(task_id), "journal.jsonl"))
-    if not candidate.startswith(base + os.sep):
-        raise ArtifactValidationError(f"task id {task_id!r} resolves outside the runs directory")
-    return Path(candidate)
+    return task_journal_path(sdd_dir, task_id)
 
 
 def _row_to_record(row: dict[str, Any]) -> RunArtifactRecord:
@@ -322,17 +324,24 @@ def read_artifact_rows(sdd_dir: Path, task_id: str, *, verify: bool = True) -> l
         verify: When True (default), a task journal that fails Merkle
             verification yields no records (fail-closed).
 
-    An id that cannot name any task has no artifacts, so it reads as empty
-    rather than raising: this is a reader, and every caller (the CLI listing,
-    the dashboard projection) already treats "addresses nothing" as "nothing
-    to show". The typed refusal belongs on the write path, where
+    A task id too long to name a file reads as empty, matching the
+    "no journal" case: ``_TASK_ID_RE`` accepts 256 characters and
+    ``task_run_id`` adds a prefix, so the derived component can exceed
+    ``NAME_MAX``. An id that is not a valid task identifier reads as empty for
+    the same reason: it addresses no task, and every caller here (the CLI
+    listing, the dashboard projection) already treats "addresses nothing" as
+    "nothing to show". The typed refusal belongs on the write path, where
     :func:`post_run_artifact` validates before it anchors anything.
+
+    A *containment* failure is deliberately not caught - a traversal or symlink
+    escape must surface, never read as empty.
     """
     from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.security.path_containment import PathTooLongError
 
     try:
         path = _artifact_journal_path(sdd_dir, task_id)
-    except ArtifactValidationError:
+    except (ArtifactValidationError, PathTooLongError):
         return []
     if not path.is_file():
         return []
@@ -571,7 +580,7 @@ def _verify_one_artifact(
 
 def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[ArtifactVerifyResult]:
     """Verify every task's artifacts under ``workdir/.sdd`` (for ``audit verify``)."""
-    from bernstein.core.replay.journal import verify_journal
+    from bernstein.core.replay.journal import contained_run_journal, verify_journal
 
     sdd_dir = workdir / ".sdd"
     runs_root = sdd_dir / "runs"
@@ -579,8 +588,8 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
         return []
     results: list[ArtifactVerifyResult] = []
     for run_dir in sorted(p for p in runs_root.iterdir() if p.is_dir()):
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         task_id = _task_id_from_rows(journal_path)
         if task_id is not None:
@@ -653,12 +662,12 @@ def live_artifact_content_hashes(sdd_dir: Path) -> set[str]:
     runs_root = sdd_dir / "runs"
     if not runs_root.is_dir():
         return set()
-    from bernstein.core.replay.journal import load_events
+    from bernstein.core.replay.journal import contained_run_journal, load_events
 
     live: set[str] = set()
     for run_dir in runs_root.iterdir():
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         for row in load_events(journal_path):
             if str(row.get("event", "")) == JOURNAL_EVENT_ARTIFACT_POSTED:

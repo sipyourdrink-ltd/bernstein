@@ -16,7 +16,7 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
-from bernstein.core.replay.journal import JOURNAL_FILENAME
+from bernstein.core.replay.journal import JournalPathError, run_journal_path
 from bernstein.core.replay.thread_projection import verify_thread_against_journal
 
 
@@ -32,7 +32,17 @@ def thread_verify(*, run_id: str, sdd_dir: Path, as_json: bool) -> int:
         ``0`` when the projected thread equals the journal, ``1`` on a
         divergence, ``2`` when the run journal is missing.
     """
-    journal_path = sdd_dir / "runs" / run_id / JOURNAL_FILENAME
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        # This command's whole purpose is proving the streamed thread equals
+        # the executed journal, so it must never report a pass on a journal
+        # that is not ours. Treated as the documented missing-journal case.
+        if as_json:
+            console.print_json(json.dumps({"ok": False, "run_id": run_id, "error": f"invalid run id: {exc}"}))
+        else:
+            console.print(f"[red]Invalid run id[/red] {run_id}: {exc}")
+        return 2
     if not journal_path.exists():
         if as_json:
             console.print_json(json.dumps({"ok": False, "run_id": run_id, "error": "run journal not found"}))

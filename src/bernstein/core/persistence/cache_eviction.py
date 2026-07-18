@@ -5,14 +5,16 @@ cached value that other runs consumed has to be revocable together with
 everything derived from it, and the operator needs a forensic recall set of the
 runs that consumed the revoked value.
 
-Two append-only artefacts back this:
+Two journals back this:
 
 * :class:`ServedFromLedger` - one row per ``served_from`` edge: a consuming run
   read a value from a cache key. The ledger is the by-artefact projection this
   module walks; it is append-only so an edge can never be silently rewritten.
-* :class:`TombstoneStore` - append-only tombstone journal. A tombstoned key is
-  always a miss, even when its drift verdict is fresh, so an evicted key can
-  never serve again.
+* :class:`TombstoneStore` - tombstone journal. A tombstoned key is always a
+  miss, even when its drift verdict is fresh, so an evicted key can never serve
+  again. Rows are only ever added, but a revocation rewrites the journal whole
+  under its lock rather than appending row by row, so that the whole reachable
+  set lands in one atomic transition (see below).
 
 :meth:`TombstoneStore.evict` walks the ledger transitively from the evicted key
 over ``served_from`` edges, tombstones every reachable key, and returns the full
@@ -21,6 +23,14 @@ over ``served_from`` edges, tombstones every reachable key, and returns the full
 Determinism: the recall set is computed by a breadth-first walk in sorted order,
 so the same ledger + eviction produces the byte-identical recall set and
 tombstone order across processes.
+
+Crash consistency: a transitive revocation is one journal transition, not N
+appends. Every tombstone the walk produces is serialised first, then the whole
+journal is replaced with ``temp + fsync + os.replace`` under the journal lock,
+so a reader observes either the pre-eviction journal or the fully revoked one.
+An eviction interrupted part-way therefore never leaves the served-from graph
+partially revoked, which would otherwise let a derived key keep serving a value
+whose root had already been recalled.
 """
 
 from __future__ import annotations
@@ -30,7 +40,13 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.persistence.atomic_write import write_atomic_json
+from bernstein.core.persistence.atomic_write import write_atomic_bytes, write_atomic_json
+from bernstein.core.persistence.cache_policy import (
+    cache_key_slug,
+    resolve_cached_path,
+    validate_cache_key,
+)
+from bernstein.core.persistence.file_locks import cross_process_lock
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -38,6 +54,16 @@ if TYPE_CHECKING:
 
 _LEDGER_NAME = "served_from.jsonl"
 _TOMBSTONE_NAME = "tombstones.jsonl"
+
+
+def _canonical_row(payload: Mapping[str, Any]) -> str:
+    """Return one canonical JSONL row for ``payload``."""
+    return json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _lock_path_for(path: Path) -> Path:
+    """Return the sibling advisory lock path guarding ``path``."""
+    return path.with_name(path.name + ".lock")
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +120,18 @@ class ServedFromLedger:
         return self._path
 
     def record(self, edge: ServedFromEdge) -> None:
-        """Append one served-from edge as a canonical JSONL row."""
+        """Append one served-from edge as a canonical JSONL row.
+
+        The edge's cache key is validated before the row is written, so a key
+        that could never address a cache artefact safely never enters the graph
+        the eviction walk later treats as authoritative.
+
+        Raises:
+            UnsafeCacheKeyError: When ``edge.cache_key`` is not a safe key.
+        """
+        validate_cache_key(edge.cache_key)
+        row = _canonical_row(edge.to_dict())
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        row = json.dumps(edge.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         with self._path.open("a", encoding="utf-8") as fh:
             fh.write(row + "\n")
 
@@ -182,10 +217,18 @@ class RecallSet:
 
 
 class TombstoneStore:
-    """Append-only tombstone journal with transitive eviction.
+    """Tombstone journal with crash-consistent transitive eviction.
 
     A tombstoned key is a hard miss forever - :meth:`is_tombstoned` short
     circuits any lookup regardless of the drift verdict.
+
+    The journal only ever grows - no code path removes or edits a row - but it
+    is not written by appending. Each revocation rewrites the file whole, prior
+    rows plus the new ones, via ``temp + fsync + os.replace`` under the journal
+    lock, so an interrupted eviction cannot publish a prefix of the reachable
+    set. The trade is deliberate: a rewrite could in principle drop history that
+    a pure append could not, so the rewrite is confined to :meth:`_commit`,
+    which never filters or reorders the rows it read.
     """
 
     def __init__(self, path: Path) -> None:
@@ -212,12 +255,28 @@ class TombstoneStore:
         """Return whether ``key`` has been revoked."""
         return key in self.all()
 
-    def _append(self, tombstones: Iterable[Tombstone]) -> None:
+    def _commit(self, tombstones: Iterable[Tombstone]) -> None:
+        """Persist ``tombstones`` as one all-or-nothing journal transition.
+
+        Every row is serialised before any byte is written, then the journal is
+        rewritten with ``temp + fsync + os.replace`` while the journal lock is
+        held. A failure while serialising leaves the journal untouched; a
+        failure during the write leaves the previous journal in place, because
+        the rename is the only step that publishes the new contents. Either way
+        the revocation is atomic: never a prefix of the reachable set.
+        """
+        rows = [_canonical_row(tombstone.to_dict()) for tombstone in tombstones]
+        if not rows:
+            return
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as fh:
-            for ts in tombstones:
-                row = json.dumps(ts.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-                fh.write(row + "\n")
+        # The lock makes the read-modify-replace cycle safe against a concurrent
+        # eviction, which would otherwise lose one writer's rows entirely.
+        with cross_process_lock(_lock_path_for(self._path)):
+            existing = self._path.read_text(encoding="utf-8") if self._path.exists() else ""
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            payload = existing + "".join(row + "\n" for row in rows)
+            write_atomic_bytes(self._path, payload.encode("utf-8"))
 
     def evict(
         self,
@@ -239,7 +298,15 @@ class TombstoneStore:
         pure function of ``(key, ledger)`` - the BFS visits neighbours in sorted
         order, so two operators evicting the same key against the same ledger
         produce identical output.
+
+        Crash consistency (issue #2637): the whole reachable set is committed in
+        one journal transition, so an interrupted eviction revokes nothing
+        rather than a prefix of the graph.
+
+        Raises:
+            UnsafeCacheKeyError: When ``key`` is not a safe cache key.
         """
+        validate_cache_key(key)
         adjacency = ledger.adjacency()
         graph_keys = set(adjacency)
 
@@ -273,7 +340,7 @@ class TombstoneStore:
             tombstoned=tombstoned_order,
             consumers=sorted(c for c in consumers_seen if c not in graph_keys),
         )
-        self._append(Tombstone(key=k, reason=reason, root_key=key, ts=ts) for k in tombstoned_order)
+        self._commit(Tombstone(key=k, reason=reason, root_key=key, ts=ts) for k in tombstoned_order)
         return recall
 
 
@@ -292,6 +359,20 @@ def open_tombstones(workdir: Path) -> TombstoneStore:
     return TombstoneStore(cache_dir(workdir) / _TOMBSTONE_NAME)
 
 
+def recall_report_path(workdir: Path, key: str) -> Path:
+    """Return the recall-report path for ``key``, contained in the cache dir.
+
+    The key is validated as a single path component and the composed path is
+    resolved and proven to live inside :func:`cache_dir`, so an operator-supplied
+    key can never steer the report onto a file outside the cache directory.
+
+    Raises:
+        UnsafeCacheKeyError: When ``key`` is not a safe cache key or the
+            composed path would escape the cache directory.
+    """
+    return resolve_cached_path(cache_dir(workdir), f"recall-{cache_key_slug(key)}.json")
+
+
 def write_recall_report(path: Path, recall: RecallSet) -> None:
     """Persist a recall report as pretty JSON for the operator."""
     write_atomic_json(path, recall.to_dict())
@@ -306,5 +387,6 @@ __all__ = [
     "cache_dir",
     "open_ledger",
     "open_tombstones",
+    "recall_report_path",
     "write_recall_report",
 ]

@@ -431,28 +431,35 @@ class TestTaskIdPathContainment:
         assert resolved.is_relative_to((sdd / "runs").resolve())
         assert read_artifact_rows(sdd, task_id) == []
 
-    def test_validation_performs_no_filesystem_access(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Regression guard against reintroducing ``Path.resolve()``.
+    def test_a_malformed_id_is_refused_before_the_filesystem_is_touched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unsafe id must be rejected lexically, before anything resolves.
 
-        Not evidence that containment works - the sibling tests carry that and
-        fail when `_artifact_journal_path` is reverted. This guards the
-        narrower property that containment is decided without touching disk,
-        which an earlier revision of this fix got wrong. Asserted by making
-        filesystem access explode, because a planted-symlink test passes on any
-        implementation that happens not to resolve.
+        This originally asserted that containment never touched disk at all.
+        That is too strong, and buying it would cost a real detection: only
+        resolution catches a run directory that is a *symlink* out of the runs
+        root, and ``verify_journal`` cannot cover that gap because it is an
+        unkeyed Merkle recompute - whoever plants the symlink can satisfy it.
+
+        The property worth guarding is the ORDER. A hostile id is screened
+        against the alphabet first and never reaches ``realpath``; a well-formed
+        id resolves, which is what makes the symlink case detectable. Asserted
+        by making filesystem access explode and checking which of the two ids
+        gets that far.
         """
         import os.path
 
         from bernstein.core.evidence.run_artifacts import _artifact_journal_path
 
         def _boom(*_args: object, **_kwargs: object) -> Path:
-            raise AssertionError("_artifact_journal_path must not touch the filesystem to decide containment")
+            raise AssertionError("a malformed id must be refused before the filesystem is touched")
 
         monkeypatch.setattr(Path, "resolve", _boom)
         monkeypatch.setattr(os.path, "realpath", _boom)
 
         sdd = _sdd(tmp_path)
-        assert _artifact_journal_path(sdd, "task-1").name == "journal.jsonl"
+        # Refused on the alphabet alone - never reaches the patched realpath.
         with pytest.raises(ArtifactValidationError):
             _artifact_journal_path(sdd, "../../escape")
 

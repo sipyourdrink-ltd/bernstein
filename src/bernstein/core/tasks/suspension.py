@@ -37,7 +37,19 @@ there is no suspension, only a dead process:
   :func:`verify_suspension_continuity` checks, offline from a copied chain,
   that a resumed task continued from exactly the parked workspace hash, or
   reads the recorded fork/cold downgrade with its reason. Mutating the suspend
-  row after the fact fails journal verification at that exact chain position.
+  row after the fact fails journal verification at that exact chain position,
+  and unrelated evidence (a resume receipt hanging off another park, a receipt
+  naming a row the journal never held, a park settled twice) is refused rather
+  than reported as verified. A park that has not settled yet reports
+  ``pending`` rather than failing: a live park is an incomplete lifecycle, not
+  a broken proof.
+* **A receipt only counts for the park it binds.** Every release and every
+  resume resolves the claimed ``task.suspend_receipt`` on the chain and checks
+  it names this task and this suspend row (:func:`verify_suspension_receipt`)
+  before it mutates anything, so a substituted receipt cannot drive a state
+  change. The approval wake gate is enforced in :func:`resume_task` itself,
+  and a ``task_id`` that is not a plain identifier never reaches a filesystem
+  name.
 
 Scope relative to steer.pause (#2508): steer.pause is the momentary in-place
 halt for quick correction; this is the durable variant that frees
@@ -53,6 +65,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.orchestration.approval_gate import (
+    UnsafeApprovalIdError,
+    approval_path,
+    validate_approval_id,
+)
 from bernstein.core.replay.journal import (
     EventJournal,
     JournalVerifyResult,
@@ -72,7 +89,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bernstein.core.persistence.work_ledger import LedgerEntry, WorkLedger
-    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.audit_chain import AuditChainStore, AuditEvent
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +116,32 @@ RESOURCE_BUDGET = "budget"
 #: file (see :func:`approval_decision_ref`).
 WAKE_APPROVAL = "approval"
 
+#: Machine-readable outcomes of :func:`verify_suspension_continuity`. A caller
+#: branches on these rather than parsing an error string.
+#:
+#: A live park and a broken proof are different things and must not collapse
+#: into one signal: an operator sweeping a fleet with parked tasks would see
+#: every live park as a failure and the real breaks would drown. ``pending``
+#: therefore means "this park has not settled yet, so there is nothing to
+#: verify", while ``failed`` is reserved for a settlement that actually
+#: happened against evidence that does not hold.
+CONTINUITY_VERIFIED = "verified"
+CONTINUITY_PENDING = "pending"
+CONTINUITY_FAILED = "failed"
+
+#: Approvals live under ``<workdir>/.sdd/runtime/approvals``; the same relative
+#: root the pre-spawn approval gate writes its sentinels into.
+_APPROVALS_REL = Path(".sdd") / "runtime" / "approvals"
+
+#: The identifier rule and the contained-path builder are owned by
+#: :mod:`bernstein.core.orchestration.approval_gate`, the module that owns the
+#: approvals directory. This module deliberately does not keep its own copy:
+#: ``bernstein approve`` / ``reject``, the pre-spawn gate, and the park/resume
+#: path all write into the same directory, and a second copy of the rule is a
+#: second thing to drift. :class:`UnsafeTaskIdError` is an alias, not a
+#: subclass, so a refusal raised by any sink is the same type everywhere.
+UnsafeTaskIdError = UnsafeApprovalIdError
+
 
 class ReleaseWithoutReceiptError(RuntimeError):
     """Raised when an infrastructure release runs without a suspend receipt.
@@ -108,6 +151,96 @@ class ReleaseWithoutReceiptError(RuntimeError):
     ``task.suspend_receipt`` hash. A release with no matching receipt is a
     dead process, not a suspension, so it is rejected before any effect runs.
     """
+
+
+class SuspendReceiptMismatchError(RuntimeError):
+    """Raised when a suspend receipt does not bind the park it is used for.
+
+    A non-empty hash is not evidence. The receipt must exist on the HMAC chain
+    as a ``task.suspend_receipt``, name this ``task_id``, and -- when the caller
+    knows which park it is continuing -- bind exactly that suspend row's
+    ``event_hash`` and journal index. A receipt from a different row, a
+    different task, or no row at all is refused before any effect or mutation,
+    so a substituted receipt can never drive a state change.
+    """
+
+
+class SuspensionAlreadySettledError(RuntimeError):
+    """Raised when a park that already carries a resume receipt is resumed again.
+
+    A suspend receipt settles exactly once. The chain is the record of that
+    settlement: if a ``task.resume_receipt`` already hangs off this suspend
+    receipt, the park is spent, and a second resume would append another resume
+    row for a decision that was already made. That is the replay of a settled
+    decision, so it is refused before the journal is touched.
+
+    This is what makes an ``--until approval`` wake gate single-use. The
+    approval decision file records *that* the operator approved, not how many
+    times the approval may be spent; the settlement record on the chain is what
+    bounds it to one. Parking the task again mints a new suspend row and a new
+    receipt, which settles once in its own right.
+    """
+
+
+class ResumeApprovalRequiredError(RuntimeError):
+    """Raised when an ``--until approval`` park is resumed with no decision.
+
+    The wake gate is part of the parked state, so it is enforced where the
+    mutation happens rather than only at the call site: a park recorded with
+    :data:`WAKE_APPROVAL` refuses to append a resume row until the approval
+    decision digest is supplied.
+    """
+
+
+#: Longest ``task_id`` that still fits the task journal's run-id budget.
+#:
+#: The park derives the journal run id as ``task_run_id(task_id)``, which is
+#: ``"task-" + task_id``, and :mod:`bernstein.core.replay.journal` caps a run id
+#: at 64 characters. This bound belongs here, at the boundary that actually has
+#: the constraint, rather than in the shared approvals rule: an approval id from
+#: the chat bridge or the pre-spawn gate never becomes a journal run id, so
+#: tightening the shared rule to 59 would refuse ids no downstream sink objects
+#: to. A task id between 60 and 64 characters is therefore approvable and
+#: rejectable as normal; it simply cannot be durably parked, and says so with a
+#: typed refusal instead of a bare ValueError from the journal.
+_MAX_PARKABLE_TASK_ID_LEN = 64 - len("task-")
+
+
+def validate_task_id(task_id: str) -> str:
+    """Return ``task_id`` if it is safe for the park/resume path, else refuse.
+
+    The shared approvals rule
+    (:func:`~bernstein.core.orchestration.approval_gate.validate_approval_id`)
+    plus the narrower journal run-id budget this path additionally needs.
+
+    Raises:
+        UnsafeTaskIdError: The identifier is empty, contains any character
+            outside ``[A-Za-z0-9._-]``, does not start with an alphanumeric
+            (which rules out ``.`` and ``..``), or is longer than
+            :data:`_MAX_PARKABLE_TASK_ID_LEN`.
+    """
+    validate_approval_id(task_id)
+    if len(task_id) > _MAX_PARKABLE_TASK_ID_LEN:
+        msg = (
+            f"refusing to park task id {task_id!r}: {len(task_id)} characters exceeds the "
+            f"{_MAX_PARKABLE_TASK_ID_LEN}-character journal run-id budget"
+        )
+        raise UnsafeTaskIdError(msg)
+    return task_id
+
+
+def _contained_approval_path(workdir: Path, task_id: str, suffix: str) -> Path:
+    """Return the contained ``<approvals>/<task_id><suffix>`` path.
+
+    Delegates to :func:`~bernstein.core.orchestration.approval_gate.approval_path`
+    so this module and the CLI decision commands cannot disagree about either
+    the identifier rule or the containment check.
+
+    Raises:
+        UnsafeTaskIdError: The identifier is unsafe, or the resolved path
+            escapes the approvals directory.
+    """
+    return approval_path(workdir, task_id, suffix)
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +322,10 @@ class SuspendRow:
 
 
 def _journal_path(sdd_dir: Path, task_id: str) -> Path:
-    return sdd_dir / "runs" / task_run_id(task_id) / "journal.jsonl"
+    """Return the task journal path via the shared containment barrier."""
+    from bernstein.core.tasks.checkpoint_retry import task_journal_path
+
+    return task_journal_path(sdd_dir, task_id)
 
 
 def record_task_suspension_row(
@@ -298,6 +434,229 @@ def latest_suspension(sdd_dir: Path, task_id: str) -> SuspendRow | None:
 
 
 # ---------------------------------------------------------------------------
+# Receipt identity (the receipt must bind the park it is used for)
+# ---------------------------------------------------------------------------
+
+
+def _as_index(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def find_suspension_receipt(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    suspend_row: SuspendRow,
+) -> AuditEvent | None:
+    """Return the ``task.suspend_receipt`` bound to exactly ``suspend_row``.
+
+    Selection is by identity, not recency: the receipt must name ``task_id``
+    and bind the row's ``event_hash`` and journal index. A task parked more
+    than once therefore resolves to the receipt for the row being resumed
+    rather than to whichever receipt happens to be last on the chain.
+
+    Returns:
+        The matching :class:`AuditEvent`, or ``None`` when the chain holds no
+        receipt for this row.
+    """
+    from bernstein.core.security.audit_chain import EVENT_TASK_SUSPENDED
+
+    for event in reversed(chain.query(event_type=EVENT_TASK_SUSPENDED)):
+        details = event.details
+        if str(details.get("task_id", "")) != task_id:
+            continue
+        if str(details.get("suspend_event_hash", "")) != suspend_row.event_hash:
+            continue
+        if _as_index(details.get("journal_index")) != suspend_row.journal_index:
+            continue
+        return event
+    return None
+
+
+@dataclass(frozen=True)
+class Settlement:
+    """One record claiming that a park was settled.
+
+    A settlement is recorded twice, in two independent stores: the HMAC audit
+    chain (``task.resume_receipt``) and the task's own event journal
+    (``task.resume`` row). Both are represented here so the mutation guard and
+    the offline proof can share one definition instead of each inventing its
+    own.
+
+    Attributes:
+        source: ``"chain"`` or ``"journal"``.
+        identifier: The receipt HMAC, or the journal row's ``event_hash``.
+        binds_receipt: Whether it references the park's suspend receipt hash.
+        binds_row: Whether it references the park's suspend row hash.
+    """
+
+    source: str
+    identifier: str
+    binds_receipt: bool
+    binds_row: bool
+
+    @property
+    def consistent(self) -> bool:
+        """Whether it references *both* identifiers of the same park."""
+        return self.binds_receipt and self.binds_row
+
+
+def find_settlements(
+    *,
+    sdd_dir: Path,
+    task_id: str,
+    chain: AuditChainStore,
+    suspend_receipt_hash: str,
+    suspend_event_hash: str,
+) -> list[Settlement]:
+    """Return every record claiming to settle this park, from **both** stores.
+
+    This is the single definition of "settled" that the resume guard and the
+    continuity proof both use. Two properties matter:
+
+    * **Both stores are consulted.** A settlement is written to the audit chain
+      *and* to the task journal. HMAC chaining only detects modification or
+      removal of a non-terminal entry, so dropping the last line of the audit
+      file leaves ``chain.verify()`` returning ``True`` while erasing the
+      receipt. The journal still holds the resume row, so the union of the two
+      stores is what an attacker would have to defeat, not either one alone.
+    * **A claim is either identifier, not both.** A record that references the
+      park's suspend receipt *or* its suspend row is claiming this park. A
+      record matching only one is inconsistent evidence: it must not be
+      silently ignored by the proof while the guard treats it as settled, which
+      is exactly how the two paths drifted apart before.
+
+    Args:
+        sdd_dir: Project ``.sdd`` directory (for the task journal).
+        task_id: The parked task.
+        chain: Audit chain store holding the receipts.
+        suspend_receipt_hash: HMAC of the park's suspend receipt.
+        suspend_event_hash: Merkle hash of the park's suspend row.
+
+    Returns:
+        Every claiming record, in chain-then-journal order.
+    """
+    from bernstein.core.security.audit_chain import EVENT_TASK_RESUMED
+
+    found: list[Settlement] = []
+
+    for event in chain.query(event_type=EVENT_TASK_RESUMED):
+        details = event.details
+        if str(details.get("task_id", "")) != task_id:
+            continue
+        binds_receipt = (
+            bool(suspend_receipt_hash) and str(details.get("suspend_receipt_hash", "")) == suspend_receipt_hash
+        )
+        binds_row = bool(suspend_event_hash) and str(details.get("suspend_event_hash", "")) == suspend_event_hash
+        if binds_receipt or binds_row:
+            found.append(
+                Settlement(
+                    source="chain",
+                    identifier=event.hmac,
+                    binds_receipt=binds_receipt,
+                    binds_row=binds_row,
+                )
+            )
+
+    for row in _journal_rows(sdd_dir, task_id):
+        if row.get("event") != JOURNAL_EVENT_RESUME:
+            continue
+        if str(row.get("task_id", "")) != task_id:
+            continue
+        binds_receipt = bool(suspend_receipt_hash) and str(row.get("suspend_receipt_hash", "")) == suspend_receipt_hash
+        binds_row = bool(suspend_event_hash) and str(row.get("continued_from_event_hash", "")) == suspend_event_hash
+        if binds_receipt or binds_row:
+            found.append(
+                Settlement(
+                    source="journal",
+                    identifier=str(row.get("event_hash", "")),
+                    binds_receipt=binds_receipt,
+                    binds_row=binds_row,
+                )
+            )
+
+    return found
+
+
+def verify_suspension_receipt(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    suspend_receipt_hash: str,
+    suspend_event_hash: str = "",
+    journal_index: int | None = None,
+) -> AuditEvent:
+    """Return the suspend receipt for ``suspend_receipt_hash``, or refuse.
+
+    The identity check every release and every resume runs *before* it mutates
+    anything: the hash must resolve to a real ``task.suspend_receipt`` on the
+    HMAC chain, that receipt must belong to ``task_id``, and -- when the caller
+    supplies them -- it must bind the given suspend row hash and journal index.
+
+    Args:
+        chain: The audit chain store holding the receipt.
+        task_id: The task the caller is acting on.
+        suspend_receipt_hash: HMAC of the receipt being claimed.
+        suspend_event_hash: Optional suspend row hash the receipt must bind.
+        journal_index: Optional journal index the receipt must bind.
+
+    Returns:
+        The validated :class:`AuditEvent`.
+
+    Raises:
+        ReleaseWithoutReceiptError: ``suspend_receipt_hash`` is empty.
+        SuspendReceiptMismatchError: The hash names no receipt on the chain, or
+            the receipt it names binds a different task or a different row.
+    """
+    from bernstein.core.security.audit_chain import EVENT_TASK_SUSPENDED
+
+    if not suspend_receipt_hash:
+        raise ReleaseWithoutReceiptError(f"refusing to act on task {task_id!r}: no suspend receipt (fail closed)")
+
+    matches = [e for e in chain.query(event_type=EVENT_TASK_SUSPENDED) if e.hmac == suspend_receipt_hash]
+    if not matches:
+        msg = (
+            f"refusing to act on task {task_id!r}: no task.suspend_receipt on the chain "
+            f"with hmac {suspend_receipt_hash[:16]}..."
+        )
+        raise SuspendReceiptMismatchError(msg)
+
+    receipt = matches[-1]
+    receipt_task = str(receipt.details.get("task_id", ""))
+    if receipt_task != task_id:
+        msg = (
+            f"refusing to act on task {task_id!r}: suspend receipt "
+            f"{suspend_receipt_hash[:16]}... belongs to task {receipt_task!r}"
+        )
+        raise SuspendReceiptMismatchError(msg)
+
+    if suspend_event_hash:
+        bound = str(receipt.details.get("suspend_event_hash", ""))
+        if bound != suspend_event_hash:
+            msg = (
+                f"refusing to act on task {task_id!r}: suspend receipt "
+                f"{suspend_receipt_hash[:16]}... binds suspend row {bound[:16]}..., "
+                f"not the selected row {suspend_event_hash[:16]}..."
+            )
+            raise SuspendReceiptMismatchError(msg)
+
+    if journal_index is not None:
+        bound_index = _as_index(receipt.details.get("journal_index"))
+        if bound_index != journal_index:
+            msg = (
+                f"refusing to act on task {task_id!r}: suspend receipt "
+                f"{suspend_receipt_hash[:16]}... binds journal index {bound_index}, "
+                f"not the selected index {journal_index}"
+            )
+            raise SuspendReceiptMismatchError(msg)
+
+    return receipt
+
+
+# ---------------------------------------------------------------------------
 # Infrastructure release (receipt-before-effect, fail closed)
 # ---------------------------------------------------------------------------
 
@@ -345,14 +704,17 @@ def release_resources(
     reserved_usd: float,
     spent_usd: float,
     handles: ResourceHandles | None = None,
+    suspend_event_hash: str = "",
 ) -> ReleaseResult:
     """Release the seat, sandbox, process, and envelope headroom for a park.
 
-    Every release hangs off ``suspend_receipt_hash``; the hash is validated
-    *before any physical effect runs*, so a release with no matching receipt is
-    rejected and no seat, sandbox, or process is touched. Each release appends a
-    ``task.suspend_resource_release`` row to the audit chain referencing the
-    receipt, and the budget release additionally emits a chained budget event.
+    Every release hangs off ``suspend_receipt_hash``; the receipt's *identity*
+    is validated *before any physical effect runs*, so a release with no
+    matching receipt -- absent, or belonging to a different task or a different
+    suspend row -- is rejected and no seat, sandbox, or process is touched. Each
+    release appends a ``task.suspend_resource_release`` row to the audit chain
+    referencing the receipt, and the budget release additionally emits a chained
+    budget event.
 
     Args:
         chain: The audit chain store accepting the release rows.
@@ -363,14 +725,26 @@ def release_resources(
         reserved_usd: Reservation held at park time.
         spent_usd: Spend recorded against the reservation at park time.
         handles: Physical release effects; ``None`` releases only budget.
+        suspend_event_hash: Optional suspend row hash the receipt must bind, so
+            a park that ran twice cannot release against the wrong row.
 
     Raises:
         ReleaseWithoutReceiptError: ``suspend_receipt_hash`` is empty.
+        SuspendReceiptMismatchError: The hash names no receipt on the chain, or
+            the receipt it names binds a different task or suspend row.
     """
     if not suspend_receipt_hash:
         raise ReleaseWithoutReceiptError(
             f"refusing to release resources for task {task_id!r}: no suspend receipt (fail closed)"
         )
+    # Receipt identity before effect: a non-empty hash is not evidence on its
+    # own, so the receipt is resolved and checked against this park first.
+    verify_suspension_receipt(
+        chain=chain,
+        task_id=task_id,
+        suspend_receipt_hash=suspend_receipt_hash,
+        suspend_event_hash=suspend_event_hash,
+    )
 
     from bernstein.core.cost.budget_actions import build_headroom_release_event
     from bernstein.core.security.audit_chain import record_task_resource_release
@@ -485,11 +859,17 @@ def park_task(
     Returns:
         A :class:`ParkResult` with the row, receipt hash, release outcome, and
         ledger anchor.
+
+    Raises:
+        UnsafeTaskIdError: ``task_id`` is not a safe identifier. Checked at the
+            park boundary so a task can never be parked under an id the resume
+            path would later refuse.
     """
     from bernstein.core.cost.budget_actions import compute_released_headroom
     from bernstein.core.persistence.work_ledger import KIND_TASK_SUSPENDED
     from bernstein.core.security.audit_chain import record_task_suspension
 
+    validate_task_id(task_id)
     ws_hash = workspace_hash(Path(worktree_path))
     released_usd = compute_released_headroom(reserved_usd, spent_usd)
 
@@ -531,6 +911,7 @@ def park_task(
         reserved_usd=reserved_usd,
         spent_usd=spent_usd,
         handles=handles,
+        suspend_event_hash=suspend_row.event_hash,
     )
 
     ledger_entry_hash = ""
@@ -645,9 +1026,55 @@ def resume_task(
 
     Returns:
         A :class:`ResumeResult` with the decision and both continuity anchors.
+
+    Raises:
+        UnsafeTaskIdError: The row's ``task_id`` is not a safe identifier.
+        ReleaseWithoutReceiptError: ``suspend_receipt_hash`` is empty.
+        SuspendReceiptMismatchError: The receipt does not bind this suspend row.
+        SuspensionAlreadySettledError: This park already carries a resume
+            receipt. A park settles once, so one approval cannot be spent
+            twice; park again for a fresh suspend receipt.
+        ResumeApprovalRequiredError: The park is gated on approval and no
+            approval decision digest was supplied.
     """
     from bernstein.core.persistence.work_ledger import KIND_TASK_RESUMED
     from bernstein.core.security.audit_chain import record_task_resume
+
+    # Every precondition is checked before the journal is touched, so a refused
+    # resume leaves the task's Merkle chain byte-identical to the parked state.
+    validate_task_id(suspend_row.task_id)
+    verify_suspension_receipt(
+        chain=chain,
+        task_id=suspend_row.task_id,
+        suspend_receipt_hash=suspend_receipt_hash,
+        suspend_event_hash=suspend_row.event_hash,
+        journal_index=suspend_row.journal_index,
+    )
+    # A park settles once. Without this the approval gate below would be a
+    # presence check that one decision file could satisfy repeatedly, so a
+    # single operator approval would authorise an unbounded number of resumes.
+    # The same definition the offline proof uses, over the same two stores, so
+    # the two cannot disagree about whether this park is spent.
+    settlements = find_settlements(
+        sdd_dir=sdd_dir,
+        task_id=suspend_row.task_id,
+        chain=chain,
+        suspend_receipt_hash=suspend_receipt_hash,
+        suspend_event_hash=suspend_row.event_hash,
+    )
+    if settlements:
+        sources = ", ".join(sorted({f"{s.source}:{s.identifier[:16]}" for s in settlements}))
+        msg = (
+            f"refusing to resume task {suspend_row.task_id!r}: this park was already settled "
+            f"({sources}) (park again to obtain a fresh suspend receipt)"
+        )
+        raise SuspensionAlreadySettledError(msg)
+    if suspend_row.wake_condition == WAKE_APPROVAL and not approval_ref:
+        msg = (
+            f"refusing to resume task {suspend_row.task_id!r}: parked until approval and "
+            "no approval decision has landed (fail closed)"
+        )
+        raise ResumeApprovalRequiredError(msg)
 
     new_ws_hash = workspace_hash(Path(new_worktree_path))
     decision = decide_resume(
@@ -732,8 +1159,16 @@ def approval_decision_ref(workdir: Path, task_id: str) -> str:
     approval can refuse to proceed until the operator lands the decision. The
     same digest is written into the resume receipt, so the approval record and
     the resume receipt reference each other.
+
+    The decision file name is derived from ``task_id``, so the identifier is
+    validated and the resolved path is confirmed to stay inside the approvals
+    directory before anything is read.
+
+    Raises:
+        UnsafeTaskIdError: ``task_id`` is not a safe single path segment, or
+            the derived path escapes the approvals directory.
     """
-    approved = workdir / ".sdd" / "runtime" / "approvals" / f"{task_id}.approved"
+    approved = _contained_approval_path(workdir, task_id, ".approved")
     if not approved.exists():
         return ""
     try:
@@ -751,10 +1186,21 @@ def write_resume_marker(workdir: Path, task_id: str, resume_receipt_hash: str) -
     ``.approved`` decision the resume receipt binds, and this marker lands the
     resume receipt hash the approval record can be checked against. Best-effort;
     a write failure is logged and the marker path returned regardless.
+
+    The marker name is derived from ``task_id``, so the identifier is validated
+    and the resolved path is confirmed to stay inside the approvals directory
+    before the directory is created or anything is written. This is an
+    approvals sink, so it applies the shared approvals rule rather than the
+    narrower parkable-id budget: the budget is a constraint of the journal run
+    id, and a marker file is not one.
+
+    Raises:
+        UnsafeTaskIdError: ``task_id`` is not a safe single path segment, or
+            the derived path escapes the approvals directory.
     """
-    approvals = workdir / ".sdd" / "runtime" / "approvals"
-    approvals.mkdir(parents=True, exist_ok=True)
-    marker = approvals / f"{task_id}.resumed"
+    # Resolve (and therefore validate) before creating any directory.
+    marker = _contained_approval_path(workdir, task_id, ".resumed")
+    marker.parent.mkdir(parents=True, exist_ok=True)
     try:
         marker.write_text(resume_receipt_hash, encoding="utf-8")
     except OSError as exc:  # pragma: no cover -- defensive
@@ -772,12 +1218,22 @@ class ContinuityResult:
     """Outcome of :func:`verify_suspension_continuity`.
 
     Attributes:
-        ok: ``True`` only when every check passed: audit HMAC chain intact,
-            task journal Merkle chain intact, and a resume receipt that
-            continued from exactly the parked suspend row.
+        status: The machine-readable outcome, one of
+            :data:`CONTINUITY_VERIFIED`, :data:`CONTINUITY_PENDING`, or
+            :data:`CONTINUITY_FAILED`. Branch on this. ``verified`` means a
+            settlement happened and its proof holds; ``pending`` means the park
+            has not settled yet, so there is nothing to prove; ``failed`` means
+            a settlement is claimed but its evidence does not hold.
+        ok: ``True`` when no integrity failure was found, which covers both
+            ``verified`` and ``pending``. This is deliberately *not* "a resume
+            was verified" -- a live park is not a broken proof, and collapsing
+            the two would make every parked task in a fleet sweep look like a
+            failure. Test ``status == CONTINUITY_VERIFIED`` (or ``resumed``)
+            when you need a settled, proven continuity.
         chain_ok: Whether the HMAC audit chain verified.
         journal_ok: Whether the task journal Merkle chain verified.
-        resumed: Whether a resume receipt for the task was found.
+        resumed: Whether a resume receipt *bound to the parked suspend receipt*
+            was found. A resume receipt for some other park does not count.
         effective_mode: The recorded continuation mode (``warm`` / ``fork`` /
             ``cold``), or ``""`` when not resumed.
         workspace_match: Whether the resume continued from the parked
@@ -794,9 +1250,21 @@ class ContinuityResult:
     workspace_match: bool
     downgrade_reason: str
     errors: list[str] = field(default_factory=list)
+    status: str = CONTINUITY_FAILED
+
+    @property
+    def pending(self) -> bool:
+        """Whether the park simply has not settled yet (nothing to prove)."""
+        return self.status == CONTINUITY_PENDING
+
+    @property
+    def verified(self) -> bool:
+        """Whether a settlement happened *and* its continuity proof holds."""
+        return self.status == CONTINUITY_VERIFIED
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "status": self.status,
             "ok": self.ok,
             "chain_ok": self.chain_ok,
             "journal_ok": self.journal_ok,
@@ -810,6 +1278,23 @@ class ContinuityResult:
 
 def _journal_verify(sdd_dir: Path, task_id: str) -> JournalVerifyResult:
     return verify_journal(_journal_path(sdd_dir, task_id))
+
+
+def _journal_rows(sdd_dir: Path, task_id: str) -> list[dict[str, Any]]:
+    path = _journal_path(sdd_dir, task_id)
+    if not path.exists():
+        return []
+    return list(load_events(path))
+
+
+def _row_present(rows: list[dict[str, Any]], event: str, task_id: str, event_hash: str) -> bool:
+    """Return whether ``rows`` holds a row of ``event`` with that exact hash."""
+    return any(
+        row.get("event") == event
+        and str(row.get("task_id", "")) == task_id
+        and str(row.get("event_hash", "")) == event_hash
+        for row in rows
+    )
 
 
 def verify_suspension_continuity(
@@ -826,11 +1311,28 @@ def verify_suspension_continuity(
     1. the HMAC audit chain verifies (a mutated receipt fails at its position);
     2. the task journal Merkle chain verifies (a mutated suspend row fails at
        its exact index);
-    3. a ``task.resume_receipt`` exists that references the ``suspend_receipt``
-       whose ``suspend_event_hash`` equals the parked suspend row's identity,
+    3. a ``task.resume_receipt`` exists that hangs off the parked
+       ``suspend_receipt`` *and* references the parked suspend row's identity,
        and the recorded continuation mode / workspace match / downgrade reason
        describe how it continued (warm from the parked hash, or a recorded fork
-       or cold downgrade with its reason).
+       or cold downgrade with its reason);
+    4. both receipts name rows the task journal actually holds.
+
+    The outcome is a tri-state on :attr:`ContinuityResult.status`:
+
+    * ``verified`` -- a settlement happened and its proof holds.
+    * ``pending`` -- the park has not settled yet, so there is nothing to
+      prove. Not a failure: a live park is an incomplete lifecycle, and
+      reporting it as broken would bury real breaks in a fleet sweep.
+    * ``failed`` -- a settlement is claimed but its evidence does not hold: a
+      resume receipt hanging off another park's suspend receipt, a receipt
+      naming a suspend or resume row the journal does not hold, more than one
+      settlement of a single park, or a broken chain or journal.
+
+    The distinction between ``pending`` and ``failed`` is which suspend row a
+    resume receipt *claims*, not merely whether any resume exists: a task
+    parked twice with only the first park settled leaves the second park
+    ``pending``, because those receipts claim a different row.
 
     No worker, no network, no live worktree is required -- everything is read
     from the chain and the journal.
@@ -865,25 +1367,79 @@ def verify_suspension_continuity(
             workspace_match=False,
             downgrade_reason="",
             errors=errors,
+            status=CONTINUITY_FAILED,
         )
+
+    journal_rows = _journal_rows(sdd_dir, task_id)
+
+    # Scope is every park on the task, not just the latest. Scoping the proof
+    # to suspend_events[-1] meant an ordinary "park again" -- the very
+    # remediation documented for a spent park -- stopped the verifier looking
+    # at earlier parks, so replay damage already on the chain self-laundered.
+    # An attacker never has to defeat the check; they just add a park.
+    for earlier in suspend_events:
+        earlier_hash = str(earlier.details.get("suspend_event_hash", ""))
+        earlier_settlements = find_settlements(
+            sdd_dir=sdd_dir,
+            task_id=task_id,
+            chain=chain,
+            suspend_receipt_hash=earlier.hmac,
+            suspend_event_hash=earlier_hash,
+        )
+        chain_consistent = [s for s in earlier_settlements if s.source == "chain" and s.consistent]
+        if len(chain_consistent) > 1:
+            errors.append(
+                f"park {earlier_hash[:16]}... was settled {len(chain_consistent)} times: "
+                "a suspend receipt must carry exactly one resume receipt"
+            )
+        # A record that matches one identifier of a park but not the other is
+        # inconsistent evidence about that park. The writer treats it as a
+        # settlement (it will refuse to resume), so the proof must surface it
+        # rather than reporting nothing at all.
+        for inconsistent in (s for s in earlier_settlements if s.source == "chain" and not s.consistent):
+            which = "suspend receipt" if inconsistent.binds_receipt else "suspend row"
+            errors.append(
+                f"resume receipt {inconsistent.identifier[:16]}... references the {which} of park "
+                f"{earlier_hash[:16]}... but not its counterpart: the settlement record is inconsistent"
+            )
 
     suspend_event = suspend_events[-1]
     parked_hash = str(suspend_event.details.get("suspend_event_hash", ""))
+    if not parked_hash:
+        errors.append(f"suspend receipt for task {task_id!r} binds no suspend row hash")
 
-    resumed = bool(resume_events)
+    # The receipt must reference a suspend row that actually exists in this
+    # task's journal: a receipt naming a row no journal holds is unrelated
+    # evidence, not a proof of this park.
+    if parked_hash and not _row_present(journal_rows, JOURNAL_EVENT_SUSPEND, task_id, parked_hash):
+        errors.append(
+            f"suspend receipt references suspend row {parked_hash[:16]}... which is absent from the task journal"
+        )
+
+    # The reported lifecycle state describes the current (latest) park, using
+    # the same settlement definition as the guard: a record consistent on both
+    # identifiers of this park.
+    bound_resumes = [
+        e
+        for e in resume_events
+        if parked_hash
+        and str(e.details.get("suspend_event_hash", "")) == parked_hash
+        and str(e.details.get("suspend_receipt_hash", "")) == suspend_event.hmac
+    ]
+
+    resumed = bool(bound_resumes)
     effective_mode = ""
     workspace_match = False
     downgrade_reason = ""
-    if resumed:
-        resume_event = resume_events[-1]
+    if bound_resumes:
+        resume_event = bound_resumes[-1]
         effective_mode = str(resume_event.details.get("effective_mode", ""))
         workspace_match = bool(resume_event.details.get("workspace_match", False))
         downgrade_reason = str(resume_event.details.get("downgrade_reason", ""))
-        continued_from = str(resume_event.details.get("suspend_event_hash", ""))
-        if continued_from != parked_hash:
+        resume_row_hash = str(resume_event.details.get("resume_event_hash", ""))
+        if not resume_row_hash or not _row_present(journal_rows, JOURNAL_EVENT_RESUME, task_id, resume_row_hash):
             errors.append(
-                "resume receipt did not continue from the parked suspend row "
-                f"(continued_from={continued_from[:16]}..., parked={parked_hash[:16]}...)"
+                f"resume receipt references resume row {resume_row_hash[:16]}... which is absent from the task journal"
             )
         # A warm continuation asserts it resumed the parked native session from
         # the parked workspace hash, so the hashes must have matched -- a warm
@@ -895,7 +1451,17 @@ def verify_suspension_continuity(
         if effective_mode == str(RetryMode.WARM) and not workspace_match:
             errors.append("warm resume recorded without a workspace-hash match")
 
+    # No failure found: the park is either settled and proven, or still live.
+    # A live park keeps ok=True so a fleet sweep is not flooded with false
+    # failures and so the CLI's exit code for the ordinary parked case is
+    # unchanged; ``status`` is what tells the two apart.
     ok = chain_ok and journal_ok and not errors
+    if not ok:
+        status = CONTINUITY_FAILED
+    elif resumed:
+        status = CONTINUITY_VERIFIED
+    else:
+        status = CONTINUITY_PENDING
     return ContinuityResult(
         ok=ok,
         chain_ok=chain_ok,
@@ -905,10 +1471,14 @@ def verify_suspension_continuity(
         workspace_match=workspace_match,
         downgrade_reason=downgrade_reason,
         errors=errors,
+        status=status,
     )
 
 
 __all__ = [
+    "CONTINUITY_FAILED",
+    "CONTINUITY_PENDING",
+    "CONTINUITY_VERIFIED",
     "JOURNAL_EVENT_RESUME",
     "JOURNAL_EVENT_SUSPEND",
     "RESOURCE_BUDGET",
@@ -921,15 +1491,24 @@ __all__ = [
     "ReleaseResult",
     "ReleaseWithoutReceiptError",
     "ResourceHandles",
+    "ResumeApprovalRequiredError",
     "ResumeResult",
+    "Settlement",
+    "SuspendReceiptMismatchError",
     "SuspendRow",
+    "SuspensionAlreadySettledError",
+    "UnsafeTaskIdError",
     "approval_decision_ref",
     "decide_resume",
+    "find_settlements",
+    "find_suspension_receipt",
     "latest_suspension",
     "park_task",
     "record_task_suspension_row",
     "release_resources",
     "resume_task",
+    "validate_task_id",
     "verify_suspension_continuity",
+    "verify_suspension_receipt",
     "write_resume_marker",
 ]

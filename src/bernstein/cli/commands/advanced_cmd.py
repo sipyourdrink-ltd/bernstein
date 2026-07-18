@@ -1443,9 +1443,9 @@ _OTEL_PROJECTION_SUFFIX = ".otel.json"
 
 
 def _journal_path_for_run(root: Path, run_id: str) -> Path:
-    from bernstein.core.replay.journal import JOURNAL_FILENAME
+    from bernstein.core.replay.journal import run_journal_path
 
-    return root / ".sdd" / "runs" / run_id / JOURNAL_FILENAME
+    return run_journal_path(root / ".sdd", run_id)
 
 
 def _projection_dest(root: Path, run_id: str) -> Path:
@@ -1699,8 +1699,14 @@ def _replay_find_run_dirs(runs_dir: Path) -> list[Path]:
     """Return sorted list of run directories that contain replay logs."""
     if not runs_dir.exists():
         return []
+    from bernstein.core.replay.journal import contained_run_journal
+
+    def _has_journal(d: Path) -> bool:
+        journal = contained_run_journal(runs_dir, d.name, _REPLAY_JSONL)
+        return journal is not None and journal.exists()
+
     return sorted(
-        (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
+        (d for d in runs_dir.iterdir() if d.is_dir() and _has_journal(d)),
         key=lambda d: d.name,
         reverse=True,
     )
@@ -1724,8 +1730,12 @@ def _replay_list_runs(runs_dir: Path) -> None:
     table.add_column("SHA")
     table.add_column("Events", justify="right")
     table.add_column("Size", justify="right")
+    from bernstein.core.replay.journal import contained_run_journal
+
     for d in run_dirs:
-        replay_file = d / _REPLAY_JSONL
+        replay_file = contained_run_journal(runs_dir, d.name, _REPLAY_JSONL)
+        if replay_file is None:
+            continue
         event_count = sum(1 for line in replay_file.read_text().splitlines() if line.strip())
         size_kb = replay_file.stat().st_size / 1024
         metadata = read_session_replay_metadata(d)
@@ -1752,8 +1762,19 @@ def _replay_resolve_latest(runs_dir: Path) -> str:
 
 
 def _should_use_run_replay(run_id: str, runs_dir: Path) -> bool:
-    """Return whether replay should use the legacy run-event mode."""
-    return run_id in {"list", "latest"} or (runs_dir / run_id / _REPLAY_JSONL).exists()
+    """Return whether replay should use the legacy run-event mode.
+
+    A run id that escapes ``runs_dir`` is reported as absent rather than
+    probed, so the traversal never reaches the filesystem.
+    """
+    from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
+    if run_id in {"list", "latest"}:
+        return True
+    try:
+        return contained_path(runs_dir, run_id, _REPLAY_JSONL, label="run id").exists()
+    except PathContainmentError:
+        return False
 
 
 def _wait_for_replay_completion(
@@ -1839,7 +1860,7 @@ def _replay_run_impl(
     if run_id == "latest":
         run_id = _replay_resolve_latest(runs_dir)
 
-    replay_path = runs_dir / run_id / _REPLAY_JSONL
+    replay_path = _resolve_journal_path(run_id, runs_dir)
     if not replay_path.exists():
         console.print(f"[red]Replay log not found:[/red] {replay_path}")
         console.print("[dim]Use 'bernstein replay list' to see available runs.[/dim]")
@@ -1948,10 +1969,15 @@ def _replay_run_impl(
 
 
 def _resolve_journal_path(run_id: str, runs_dir: Path) -> Path:
-    """Resolve a run id (or ``latest``) to its canonical journal path."""
+    """Resolve a run id (or ``latest``) to its canonical journal path.
+
+    Contained under ``runs_dir``: the id reaches here straight from argv.
+    """
+    from bernstein.core.security.path_containment import contained_path
+
     if run_id == "latest":
         run_id = _replay_resolve_latest(runs_dir)
-    return runs_dir / run_id / _REPLAY_JSONL
+    return contained_path(runs_dir, run_id, _REPLAY_JSONL, label="run id")
 
 
 def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:

@@ -92,9 +92,13 @@ def _default_poll_decision(
     Returns:
         ``"approved"`` or ``"rejected"``.
     """
+    from bernstein.core.orchestration.approval_gate import approval_path_in
+
+    # The same single implementation every other approvals sink resolves to,
+    # in the variant that takes the directory rather than a project root.
     deadline = time.monotonic() + max_wait_s
-    approved_path = approvals_dir / f"{task_id}.approved"
-    rejected_path = approvals_dir / f"{task_id}.rejected"
+    approved_path = approval_path_in(approvals_dir, task_id, ".approved")
+    rejected_path = approval_path_in(approvals_dir, task_id, ".rejected")
 
     while time.monotonic() < deadline:
         if approved_path.exists():
