@@ -306,10 +306,20 @@ def read_artifact_rows(sdd_dir: Path, task_id: str, *, verify: bool = True) -> l
         task_id: The task whose artifacts to read.
         verify: When True (default), a task journal that fails Merkle
             verification yields no records (fail-closed).
+
+    A task id too long to name a file reads as empty, matching the
+    "no journal" case: ``_TASK_ID_RE`` accepts 256 characters and
+    ``task_run_id`` adds a prefix, so the derived component can exceed
+    ``NAME_MAX``. A *containment* failure is deliberately not caught - a
+    traversal or symlink escape must surface, never read as empty.
     """
     from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.security.path_containment import PathTooLongError
 
-    path = _artifact_journal_path(sdd_dir, task_id)
+    try:
+        path = _artifact_journal_path(sdd_dir, task_id)
+    except PathTooLongError:
+        return []
     if not path.is_file():
         return []
     if verify and not verify_journal(path).ok:

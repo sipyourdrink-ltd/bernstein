@@ -266,9 +266,15 @@ def project_task_progress(sdd_dir: Path, task_id: str, *, run_id: str = "") -> P
 def _load_task_journal_rows(sdd_dir: Path, task_id: str) -> list[dict[str, Any]]:
     """Return the task journal rows, or ``[]`` when absent or tampered."""
     from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.security.path_containment import PathTooLongError
     from bernstein.core.tasks.checkpoint_retry import task_journal_path
 
-    path = task_journal_path(sdd_dir, task_id)
+    try:
+        path = task_journal_path(sdd_dir, task_id)
+    except PathTooLongError:
+        # Cannot name a file here, so there is no journal to read. A
+        # containment failure is not caught: an escape must surface.
+        return []
     if not path.is_file():
         return []
     # Fail-closed: a journal whose Merkle chain does not verify is not a

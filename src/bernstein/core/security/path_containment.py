@@ -36,13 +36,9 @@ from pathlib import Path
 #: A safe path segment: the git-ref-safe alphabet the persistence layer
 #: already uses for run, worktree, task, and ledger ids.
 #:
-#: The length bound is a sanity limit, not the security control - containment
-#: below is. It is deliberately above the repo-wide 256-character task id
-#: convention (``_TASK_ID_RE``, the MCP tool schemas) plus room for a derived
-#: prefix such as ``task-``, so an identifier this codebase already blesses
-#: never trips it. A segment past the filesystem's ``NAME_MAX`` still
-#: normalises and contains correctly, and the read degrades to "not found"
-#: the same way it did before this barrier existed, rather than raising.
+#: Length is deliberately NOT bounded here. :data:`MAX_SEGMENT_BYTES` owns it,
+#: measured in encoded bytes, because ``NAME_MAX`` is a byte limit and a
+#: character count would let a multi-byte name through.
 #:
 #: The tail anchor is ``\Z``, not ``$``: in Python ``$`` also matches just
 #: before a trailing newline, so ``$`` would accept ``"..\n"`` - which the
@@ -50,10 +46,19 @@ from pathlib import Path
 #: ``".."``. Containment would still hold (a newline is a literal character,
 #: not a parent reference), but the id would carry a control character into
 #: a directory name and into operator-facing log and ledger listings.
-SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,512}\Z")
+SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+\Z")
 
 #: Segments that match the alphabet but name the current/parent directory.
 _RESERVED_SEGMENTS = frozenset({".", ".."})
+
+
+#: Longest single path component, in encoded bytes. ``NAME_MAX`` is 255 on
+#: every filesystem this project supports.
+MAX_SEGMENT_BYTES = 255
+
+#: Longest composed path, in encoded bytes. ``PATH_MAX`` is 4096 on Linux;
+#: a legal-length segment under an already-deep base can still exceed it.
+MAX_PATH_BYTES = 4096
 
 
 class PathContainmentError(ValueError):
@@ -61,6 +66,23 @@ class PathContainmentError(ValueError):
 
     Subclasses :class:`ValueError` so existing callers that already guard
     identifier handling with ``except ValueError`` keep working.
+    """
+
+
+class PathTooLongError(PathContainmentError):
+    """Raised when an identifier cannot name a file on this filesystem.
+
+    Distinct from its parent on purpose. A containment violation (traversal,
+    or a symlinked child pointing out of the tree) is an attack signal and
+    must never be swallowed - readers let it propagate. An over-long name is
+    a *capacity* failure: the identifier is contained, it simply cannot exist
+    on disk, which is indistinguishable from "no such journal". Readers that
+    already degrade to an empty result for a missing file may catch this one,
+    and only this one.
+
+    Without the bound the filesystem raises ``OSError(ENAMETOOLONG)`` at
+    ``open()`` instead, which escapes the ``ValueError`` hierarchy every
+    caller guards on and turns a rejected identifier into a crash.
     """
 
 
@@ -77,10 +99,19 @@ def validate_path_segment(segment: str, *, label: str = "identifier") -> str:
     Raises:
         PathContainmentError: If the segment is empty, is ``.`` or ``..``,
             or contains anything outside :data:`SAFE_SEGMENT_RE`.
+        PathTooLongError: If the segment exceeds :data:`MAX_SEGMENT_BYTES`
+            once encoded.
     """
     if segment in _RESERVED_SEGMENTS or not SAFE_SEGMENT_RE.match(segment):
         msg = f"unsafe {label} {segment!r}: must match {SAFE_SEGMENT_RE.pattern} and must not be '.' or '..'"
         raise PathContainmentError(msg)
+    # Measured in encoded bytes, not characters: NAME_MAX is a byte limit, so
+    # a character count would let a multi-byte name through and hand the
+    # filesystem a component it cannot store.
+    encoded = len(segment.encode("utf-8", errors="surrogatepass"))
+    if encoded > MAX_SEGMENT_BYTES:
+        msg = f"{label} is {encoded} bytes, over the {MAX_SEGMENT_BYTES}-byte filesystem limit for one path component"
+        raise PathTooLongError(msg)
     return segment
 
 
@@ -105,6 +136,8 @@ def contained_path(base: Path | str, *segments: str, label: str = "identifier") 
         PathContainmentError: If no segment is given, if a segment is
             unsafe, or if the resolved candidate falls outside the
             resolved base (for example via a symlinked child).
+        PathTooLongError: If a segment, or the composed path, exceeds what
+            the filesystem can represent.
     """
     if not segments:
         msg = f"contained_path requires at least one {label} segment"
@@ -129,12 +162,23 @@ def contained_path(base: Path | str, *segments: str, label: str = "identifier") 
         joined = "/".join(segments)
         msg = f"{label} {joined!r} resolves outside its base directory"
         raise PathContainmentError(msg)
+    # A legal-length segment under an already-deep base can still exceed
+    # PATH_MAX, which would surface as OSError(ENAMETOOLONG) at open() -
+    # outside the ValueError hierarchy callers guard on. Checked after
+    # containment so an escape attempt is never reported as a length problem.
+    encoded_path = len(candidate.encode("utf-8", errors="surrogatepass"))
+    if encoded_path > MAX_PATH_BYTES:
+        msg = f"path for {label} is {encoded_path} bytes, over the {MAX_PATH_BYTES}-byte filesystem limit"
+        raise PathTooLongError(msg)
     return Path(candidate)
 
 
 __all__ = [
+    "MAX_PATH_BYTES",
+    "MAX_SEGMENT_BYTES",
     "SAFE_SEGMENT_RE",
     "PathContainmentError",
+    "PathTooLongError",
     "contained_path",
     "validate_path_segment",
 ]

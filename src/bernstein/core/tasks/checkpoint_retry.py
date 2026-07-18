@@ -314,8 +314,18 @@ def latest_checkpoint(sdd_dir: Path, task_id: str) -> CheckpointRef | None:
     absence of any checkpoint row all return ``None`` -- the caller then
     restarts cold. A tampered checkpoint reference can therefore never fuel
     a warm resume.
+
+    A task id too long to name a file is treated as "no checkpoint" (cold
+    restart), the same as a missing journal. A containment failure is not
+    caught: a run directory that escapes the runs root must surface rather
+    than silently degrade to a cold start.
     """
-    path = task_journal_path(sdd_dir, task_id)
+    from bernstein.core.security.path_containment import PathTooLongError
+
+    try:
+        path = task_journal_path(sdd_dir, task_id)
+    except PathTooLongError:
+        return None
     if not path.exists():
         return None
     result = verify_journal(path)
