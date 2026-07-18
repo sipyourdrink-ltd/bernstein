@@ -76,6 +76,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.journal import GENESIS_HASH
+from bernstein.core.security.path_containment import contained_path
 from bernstein.core.security.redactor import redact_text
 
 if TYPE_CHECKING:
@@ -143,6 +144,22 @@ _TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{0,64}$")
 
 class LedgerError(RuntimeError):
     """Raised for unrecoverable ledger read/write/verify errors."""
+
+
+def _contained_bucket_path(ledger_dir: Path) -> Path:
+    """Return the bucket file path, proven to sit inside *ledger_dir*.
+
+    Path-injection barrier (py/path-injection) for the reader and writer
+    below. The bucket filename is a constant, but the *directory* is
+    caller-supplied, and a bucket file that is itself a symlink would
+    otherwise let a read or an append land outside the ledger directory.
+    The returned value is the normalised, containment-checked path, and it
+    is the only path the filesystem sinks are built from.
+
+    Raises:
+        PathContainmentError: The bucket resolves outside *ledger_dir*.
+    """
+    return contained_path(ledger_dir, _DEFAULT_BUCKET, label="ledger bucket")
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +502,7 @@ class WorkLedger:
 
     def __init__(self, ledger_dir: Path) -> None:
         self._dir = ledger_dir
-        self._bucket_path = ledger_dir / _DEFAULT_BUCKET
+        self._bucket_path = _contained_bucket_path(ledger_dir)
         self._lock = threading.Lock()
         self._tip_hash = GENESIS_HASH
         self._seq = 0
@@ -636,7 +653,7 @@ class LedgerReader:
 
     def __init__(self, ledger_dir: Path) -> None:
         self._dir = ledger_dir
-        self._bucket_path = ledger_dir / _DEFAULT_BUCKET
+        self._bucket_path = _contained_bucket_path(ledger_dir)
 
     @property
     def ledger_dir(self) -> Path:
@@ -959,8 +976,28 @@ def default_ledger_root(sdd_dir: Path) -> Path:
 
 
 def run_ledger_dir(sdd_dir: Path, run_id: str) -> Path:
-    """Return the per-run ledger directory under the default root."""
-    return default_ledger_root(sdd_dir) / run_id
+    """Return the per-run ledger directory under the default root.
+
+    ``run_id`` reaches this function from the dashboard API, the MCP
+    surface, and the CLI, and it names a directory. It therefore goes
+    through the containment barrier: the id must be a single safe path
+    segment and the resolved directory must stay under the ledger root.
+    The *returned* value is the checked path, so readers and writers built
+    from it cannot address a ledger outside the root - including through a
+    symlinked run directory.
+
+    Args:
+        sdd_dir: The install's ``.sdd`` directory.
+        run_id: Run (or mission) identifier naming the ledger directory.
+
+    Returns:
+        The containment-checked per-run ledger directory.
+
+    Raises:
+        PathContainmentError: ``run_id`` is not a safe path segment, or the
+            resolved directory escapes the ledger root.
+    """
+    return contained_path(default_ledger_root(sdd_dir), run_id, label="run id")
 
 
 __all__ = [

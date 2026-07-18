@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.evidence.bundle import DEFAULT_MAX_BLOB_BYTES, EvidenceStore
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.security.path_containment import contained_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -266,7 +267,18 @@ def _validate_ids(task_id: str, key: str) -> None:
 
 
 def _artifact_journal_path(sdd_dir: Path, task_id: str) -> Path:
-    return sdd_dir / "runs" / _task_run_id(task_id) / "journal.jsonl"
+    """Return the task journal path, proven to sit under ``<sdd>/runs``.
+
+    ``task_id`` arrives from the dashboard API, so the derived run id goes
+    through the containment barrier and the *returned* value is the
+    normalised, checked path. Readers open that value rather than the raw
+    join, so a crafted id (or a symlinked run directory) cannot address a
+    journal outside the runs root.
+
+    Raises:
+        PathContainmentError: The derived run id escapes the runs root.
+    """
+    return contained_path(sdd_dir / "runs", _task_run_id(task_id), "journal.jsonl", label="task run id")
 
 
 def _row_to_record(row: dict[str, Any]) -> RunArtifactRecord:

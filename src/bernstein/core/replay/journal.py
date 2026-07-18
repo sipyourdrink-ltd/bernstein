@@ -45,10 +45,23 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class JournalPathError(PathContainmentError):
+    """Raised for a run id that cannot safely name a journal directory.
+
+    Subclasses :class:`ValueError` (through
+    :class:`~bernstein.core.security.path_containment.PathContainmentError`)
+    so callers that already handle a bad run id with ``except ValueError``
+    keep working unchanged.
+    """
+
 
 #: Name of the canonical per-run event journal inside ``.sdd/runs/<id>/``.
 JOURNAL_FILENAME = "journal.jsonl"
@@ -68,17 +81,19 @@ _GENESIS_HASH = ""
 
 #: A run_id names exactly one journal directory and must be a single safe path
 #: segment. This mirrors ``run_service.paths.validate_run_id``: an anchored
-#: allowlist match then a return of the checked value, the shape CodeQL credits
-#: as a path-injection barrier. The journal path is derived only from the value
-#: :func:`_validated_run_id` returns, so no attacker-controlled character reaches
-#: the filesystem sinks below.
+#: allowlist match then a return of the checked value.
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
 def _validated_run_id(run_id: str) -> str:
-    """Return *run_id* unchanged when it is a safe path segment, else raise."""
-    if not _RUN_ID_RE.match(run_id):
-        raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
+    """Return *run_id* unchanged when it is a safe path segment, else raise.
+
+    Raises:
+        JournalPathError: The id is ``.``, ``..``, or falls outside the
+            allowlisted alphabet.
+    """
+    if run_id in {".", ".."} or not _RUN_ID_RE.match(run_id):
+        raise JournalPathError(f"unsafe run_id for journal path: {run_id!r}")
     return run_id
 
 
@@ -156,21 +171,17 @@ class EventJournal:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
         # Path-injection barrier (py/path-injection). A run_id names one journal
-        # directory and must be a single safe path segment. ``.``/``..`` pass the
-        # id alphabet but are the current/parent directory, so reject them first;
-        # then ``_validated_run_id`` -- an anchored allowlist match that returns
-        # the checked value, mirroring run_service.paths.validate_run_id -- is the
-        # sanitizer the filesystem sinks below are built from. The path is derived
-        # only from the value that flows out of that barrier.
-        if run_id in {".", ".."}:
-            raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
+        # directory and must be a single safe path segment, so it goes through
+        # the allowlist first and the runs-root containment check second. The
+        # journal path is the value ``contained_path`` returns -- the normalised,
+        # containment-checked path -- never the raw join, so every filesystem
+        # sink below is built from a location proven to sit under the runs root
+        # even when the run directory is a symlink pointing elsewhere.
         safe_run_id = _validated_run_id(run_id)
-        self._path = self._runs_root / safe_run_id / JOURNAL_FILENAME
-        # Defence in depth: refuse a resolved path that still escapes the runs
-        # root, e.g. through a symlinked run directory.
-        runs_root_real = os.path.realpath(self._runs_root)
-        if os.path.commonpath((runs_root_real, os.path.realpath(self._path))) != runs_root_real:
-            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
+        try:
+            self._path = contained_path(self._runs_root, safe_run_id, JOURNAL_FILENAME, label="run id")
+        except PathContainmentError as exc:
+            raise JournalPathError(f"run_id escapes the journal runs root: {run_id!r}") from exc
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0
@@ -550,6 +561,7 @@ __all__ = [
     "JOURNAL_FILENAME",
     "RETENTION_ENV_VAR",
     "EventJournal",
+    "JournalPathError",
     "JournalVerifyResult",
     "compute_event_hash",
     "load_events",
