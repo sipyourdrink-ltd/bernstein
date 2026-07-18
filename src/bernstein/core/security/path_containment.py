@@ -80,7 +80,9 @@ def contained_path(base: Path | str, *segments: str, label: str = "identifier") 
         base: The intended containing directory. Trusted by configuration;
             it need not exist yet.
         *segments: Path segments to append, each checked by
-            :func:`validate_path_segment`.
+            :func:`validate_path_segment`. At least one is required - the
+            result must be a strict descendant of *base*, never *base*
+            itself.
         label: Noun used in error messages (e.g. ``"mission id"``).
 
     Returns:
@@ -89,18 +91,24 @@ def contained_path(base: Path | str, *segments: str, label: str = "identifier") 
         to be inside *base*.
 
     Raises:
-        PathContainmentError: If a segment is unsafe, or if the resolved
-            candidate falls outside the resolved base (for example via a
-            symlinked child).
+        PathContainmentError: If no segment is given, if a segment is
+            unsafe, or if the resolved candidate falls outside the
+            resolved base (for example via a symlinked child).
     """
+    if not segments:
+        msg = f"contained_path requires at least one {label} segment"
+        raise PathContainmentError(msg)
     for segment in segments:
         validate_path_segment(segment, label=label)
     base_real = os.path.realpath(base)
     # ``realpath`` resolves symlinks and normalises ``..`` even for a path
     # that does not exist yet, so the containment test below sees exactly
-    # the location a later open() would reach.
+    # the location a later open() would reach. Every segment is a plain
+    # name, so a contained result is always a strict descendant of the
+    # base: a single prefix test is the whole check, and ``+ os.sep``
+    # stops a sibling like ``<base>-evil`` from passing it.
     candidate = os.path.realpath(os.path.join(base_real, *segments))
-    if candidate != base_real and not candidate.startswith(base_real + os.sep):
+    if not candidate.startswith(base_real + os.sep):
         joined = "/".join(segments)
         msg = f"{label} {joined!r} resolves outside {base_real}"
         raise PathContainmentError(msg)

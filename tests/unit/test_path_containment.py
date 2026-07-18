@@ -106,6 +106,24 @@ def test_contained_path_refuses_symlink_escape(tmp_path: Path) -> None:
         contained_path(base, "escape")
 
 
+def test_contained_path_requires_a_segment(tmp_path: Path) -> None:
+    """The result must be a strict descendant, so a bare base is refused."""
+    with pytest.raises(PathContainmentError):
+        contained_path(tmp_path)
+
+
+def test_contained_path_refuses_sibling_prefix(tmp_path: Path) -> None:
+    """A sibling sharing the base's name prefix must not pass containment."""
+    base = tmp_path / "base"
+    base.mkdir()
+    sibling = tmp_path / "base-evil"
+    sibling.mkdir()
+    (base / "link").symlink_to(sibling, target_is_directory=True)
+
+    with pytest.raises(PathContainmentError):
+        contained_path(base, "link")
+
+
 def test_contained_path_allows_symlink_inside_base(tmp_path: Path) -> None:
     """A symlink that stays inside the base is fine - containment, not a ban."""
     base = tmp_path / "base"
