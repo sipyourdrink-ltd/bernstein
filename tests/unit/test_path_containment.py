@@ -9,6 +9,10 @@ nothing on disk outside the intended base, while an ordinary identifier
 still round-trips unchanged.
 """
 
+# The task journal path helper is module-private but is the exact barrier
+# under test, so it is exercised directly rather than through a caller.
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 from pathlib import Path
