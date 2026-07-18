@@ -44,6 +44,7 @@ import hmac
 import json
 import logging
 import os
+import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -121,11 +122,18 @@ class ConnectionDocument:
     not where they are read: refusing to parse a document that is already on
     disk cannot un-write it, and would strand a document an earlier release
     accepted. See :func:`_validate_broker_ref`.
+
+    ``secret_name`` remains accepted as a deprecated constructor keyword and
+    readable as a deprecated attribute, both forwarding to
+    :attr:`broker_ref`. The field was renamed to say what it holds, but the
+    old name was public API and this is a patch release, so code written
+    against it keeps working. Only the Python surface was renamed; the wire
+    key is unchanged.
     """
 
     name: str
-    broker_ref: str
-    scope: str
+    broker_ref: str = ""
+    scope: str = ""
     connector_defaults: dict[str, Any] = field(default_factory=dict)
     signer_public_key_pem: str = ""
     signature: str = ""
@@ -188,6 +196,51 @@ class ConnectionDocument:
             signature=data.get("signature", ""),
             version=int(data.get("version", 1)),
         )
+
+
+def _deprecated_secret_name(self: ConnectionDocument) -> str:
+    """Deprecated read alias for :attr:`ConnectionDocument.broker_ref`."""
+    warnings.warn(
+        "ConnectionDocument.secret_name is deprecated; use .broker_ref instead. The on-disk wire key is unchanged.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return self.broker_ref
+
+
+ConnectionDocument.secret_name = property(_deprecated_secret_name)  # type: ignore[attr-defined]
+
+_generated_init = ConnectionDocument.__init__
+
+
+def _init_accepting_deprecated_alias(self: ConnectionDocument, *args: Any, **kwargs: Any) -> None:
+    """Accept the pre-rename ``secret_name=`` keyword and forward it.
+
+    Deliberately a wrapper around the generated ``__init__`` rather than an
+    ``InitVar`` field. ``dataclasses.replace`` reads every init field off the
+    instance, so an ``InitVar`` named ``secret_name`` would make ``replace``
+    - which :func:`_sign` calls for every signature - go through the
+    deprecated read alias and emit a warning no caller asked for.
+    """
+    legacy = kwargs.pop("secret_name", None)
+    if legacy is not None:
+        existing = kwargs.get("broker_ref", "")
+        if existing and existing != legacy:
+            raise ValueError(
+                "pass either broker_ref or secret_name, not both with different values "
+                f"(broker_ref={existing!r}, secret_name={legacy!r})"
+            )
+        warnings.warn(
+            "ConnectionDocument(secret_name=...) is deprecated; use broker_ref=... instead. "
+            "The on-disk wire key is unchanged.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        kwargs["broker_ref"] = legacy
+    _generated_init(self, *args, **kwargs)
+
+
+ConnectionDocument.__init__ = _init_accepting_deprecated_alias  # type: ignore[method-assign]
 
 
 @dataclass(frozen=True)
@@ -290,6 +343,29 @@ def _validate_name(name: str) -> None:
 #: environment variable name, a Vault path, an AWS secret id. The cap is
 #: generous for those and well under the size of a key blob.
 _MAX_BROKER_REF_LEN = 256
+
+
+def _coalesce_deprecated_ref(broker_ref: str | None, legacy: str | None, *, where: str, old_name: str) -> str | None:
+    """Return the effective reference, honouring the deprecated keyword.
+
+    The field was renamed to say what it holds, but the old keyword was public
+    API and this is a patch release, so it keeps working and warns rather than
+    forcing a code change on anyone.
+    """
+    if legacy is None:
+        return broker_ref
+    if broker_ref and broker_ref != legacy:
+        raise ValueError(
+            f"pass either broker_ref or {old_name} to {where}, not both with different values "
+            f"(broker_ref={broker_ref!r}, {old_name}={legacy!r})"
+        )
+    warnings.warn(
+        f"{where}({old_name}=...) is deprecated; use the broker_ref keyword instead. "
+        "The on-disk wire key is unchanged.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return legacy
 
 
 def _is_reference_shaped(broker_ref: str) -> bool:
@@ -410,12 +486,13 @@ def verify_document_local(doc: ConnectionDocument, *, identity_dir: Path) -> boo
 def create_document(
     *,
     name: str,
-    broker_ref: str,
+    broker_ref: str = "",
     scope: str,
     connector_defaults: dict[str, Any] | None,
     identity_dir: Path,
     chain: AuditChainStore,
     store: ConnectionDocumentStore,
+    secret_name: str | None = None,
 ) -> ConnectionDocument:
     """Create, sign, record, and persist a new connection document.
 
@@ -432,6 +509,9 @@ def create_document(
         ValueError: If *name* is malformed.
         ConnectionReferenceError: If *broker_ref* is malformed.
     """
+    broker_ref = (
+        _coalesce_deprecated_ref(broker_ref, secret_name, where="create_document", old_name="secret_name") or ""
+    )
     _validate_name(name)
     # Validate before the chain record is written. `store.put` enforces this
     # too, but the create receipt is recorded first, so refusing only at the
@@ -469,6 +549,7 @@ def rotate_document(
     new_broker_ref: str | None = None,
     new_scope: str | None = None,
     new_connector_defaults: dict[str, Any] | None = None,
+    new_secret_name: str | None = None,
 ) -> ConnectionDocument:
     """Rotate the document named *name* and record a signed rotation event.
 
@@ -483,6 +564,9 @@ def rotate_document(
         ConnectionRefused: If the current document is not signed by the local
             install identity.
     """
+    new_broker_ref = _coalesce_deprecated_ref(
+        new_broker_ref, new_secret_name, where="rotate_document", old_name="new_secret_name"
+    )
     current = store.get(name)
     # The reference the rotation will persist: the new one when given, else
     # the current one carried forward. Validated before the rotate receipt is

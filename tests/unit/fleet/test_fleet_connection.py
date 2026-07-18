@@ -11,6 +11,7 @@ event) any document not signed by the local install identity.
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 import pytest
@@ -607,3 +608,120 @@ class TestHashCoversWhatIsPersisted:
         store.put(doc)
         assert doc.document_hash() == before
         assert store.get("c").document_hash() == before
+
+
+class TestDeprecatedSecretNameAlias:
+    """`secret_name` was public API before the rename, and this is a patch
+    release, so it keeps working.
+
+    Only the Python surface was renamed - the wire key, signed preimage and
+    document hash are unchanged - which is what makes the alias a pure
+    forward rather than a compatibility shim over a format change.
+    """
+
+    _NEW = {"name": "prod-github", "scope": "repo:read", "connector_defaults": {"base_url": "https://api.github.com"}}
+    _PIN = "sha256:4a34c5e7682f18ada746b01aa6595edd190c1e59b53704eae7c8e6e4d7e341a6"
+
+    def test_constructor_keyword_still_accepted(self) -> None:
+        with pytest.warns(DeprecationWarning, match="secret_name"):
+            doc = ConnectionDocument(secret_name="GITHUB_TOKEN", **self._NEW)
+        assert doc.broker_ref == "GITHUB_TOKEN"
+
+    def test_attribute_read_still_works(self) -> None:
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        with pytest.warns(DeprecationWarning, match="secret_name"):
+            assert doc.secret_name == "GITHUB_TOKEN"
+
+    def test_old_and_new_spellings_are_the_same_document(self) -> None:
+        with pytest.warns(DeprecationWarning):
+            old = ConnectionDocument(secret_name="GITHUB_TOKEN", **self._NEW)
+        new = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        assert old == new
+        assert old.document_hash() == new.document_hash() == self._PIN
+        assert old.to_json() == new.to_json()
+
+    def test_alias_never_reaches_the_wire(self) -> None:
+        new = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        assert "broker_ref" not in new.to_json()
+        assert '"secret_name"' in new.to_json()
+
+    def test_conflicting_spellings_are_refused(self) -> None:
+        with pytest.raises(ValueError, match="not both with different values"):
+            ConnectionDocument(broker_ref="A", secret_name="B", **self._NEW)
+
+    def test_loading_a_document_does_not_warn(self) -> None:
+        """`from_json` uses the canonical keyword, so reading a document must
+        not spray deprecation warnings at an operator who never used the alias."""
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ConnectionDocument.from_json(doc.to_json())
+        assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
+
+    def test_signing_helper_still_round_trips(self) -> None:
+        """`_sign` uses dataclasses.replace on every signature."""
+        from dataclasses import replace
+
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        signed = replace(doc, signature="sig")
+        assert signed.broker_ref == "GITHUB_TOKEN"
+        assert signed.signature == "sig"
+
+    def test_internal_paths_do_not_emit_the_deprecation(self, tmp_path: Path) -> None:
+        """Only a caller using the old spelling should see the warning.
+
+        `dataclasses.replace` reads every init field off the instance, so
+        holding the alias as an InitVar made `_sign` warn on every signature -
+        a deprecation aimed at nobody. The alias is an `__init__` wrapper
+        instead, which `replace` never goes through.
+        """
+        from dataclasses import replace
+
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            replace(doc, signature="sig")
+            ConnectionDocument.from_json(doc.to_json())
+            create_document(
+                name="c",
+                broker_ref="TOK",
+                scope="s",
+                connector_defaults={},
+                identity_dir=tmp_path / "id",
+                chain=_chain(tmp_path),
+                store=ConnectionDocumentStore(tmp_path / "conns"),
+            )
+        assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
+
+    def test_alias_is_not_a_dataclass_field(self) -> None:
+        """It must stay off the field list, or it would reach the payload and
+        move the hash."""
+        import dataclasses
+
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        assert "secret_name" not in {f.name for f in dataclasses.fields(doc)}
+
+    def test_create_and_rotate_still_accept_the_old_keywords(self, tmp_path: Path) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        with pytest.warns(DeprecationWarning, match="secret_name"):
+            created = create_document(
+                name="c",
+                secret_name="TOK",
+                scope="s",
+                connector_defaults={},
+                identity_dir=tmp_path / "id",
+                chain=chain,
+                store=store,
+            )
+        assert created.broker_ref == "TOK"
+        with pytest.warns(DeprecationWarning, match="new_secret_name"):
+            rotated = rotate_document(
+                "c",
+                new_secret_name="TOK_V2",
+                identity_dir=tmp_path / "id",
+                chain=chain,
+                store=store,
+            )
+        assert rotated.broker_ref == "TOK_V2"
+        assert store.get("c").broker_ref == "TOK_V2"
