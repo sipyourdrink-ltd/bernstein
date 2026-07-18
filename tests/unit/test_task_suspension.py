@@ -57,6 +57,7 @@ from bernstein.core.tasks.suspension import (
     ResumeApprovalRequiredError,
     SuspendReceiptMismatchError,
     SuspendRow,
+    SuspensionAlreadySettledError,
     UnsafeTaskIdError,
     approval_decision_ref,
     decide_resume,
@@ -65,6 +66,7 @@ from bernstein.core.tasks.suspension import (
     park_task,
     release_resources,
     resume_task,
+    validate_task_id,
     verify_suspension_continuity,
     write_resume_marker,
 )
@@ -944,7 +946,10 @@ def test_verify_continuity_rejects_a_resume_bound_to_a_foreign_receipt(tmp_path:
 
     result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-forge", chain=chain)
     assert not result.ok
-    assert result.errors
+    # Assert *which* guard fired. Without this the test passes on the phantom
+    # journal-row check alone and the binding filter ships uncovered.
+    assert any("no resume receipt continued from the parked suspend row" in err for err in result.errors), result.errors
+    assert not result.resumed
 
 
 def test_verify_continuity_rejects_a_resume_row_absent_from_the_journal(tmp_path: Path) -> None:
@@ -1018,3 +1023,301 @@ def test_receipt_selection_ignores_a_later_receipt_for_another_row(tmp_path: Pat
             chain=chain,
             suspend_receipt_hash=injected.hmac,
         )
+
+
+# ---------------------------------------------------------------------------
+# Follow-up hardening (#2636 review): single-use settlement, and coverage for
+# the guards the first round left unpinned.
+# ---------------------------------------------------------------------------
+
+
+def test_one_approval_authorises_exactly_one_resume(tmp_path: Path) -> None:
+    """An approval settles a park once; it is not a reusable permission.
+
+    Regression for the replay hole: the wake gate used to be a presence check
+    on the decision file, and nothing consumed it, so a single operator
+    approval authorised an unbounded number of resume rows.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = park_task(
+        sdd_dir=sdd,
+        task_id="T-once",
+        adapter="claude",
+        session_id="s",
+        worktree_path=wt,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        chain=chain,
+        wake_condition=WAKE_APPROVAL,
+    )
+    approvals = sdd / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    (approvals / "T-once.approved").write_text("approved", encoding="utf-8")
+    approval_ref = approval_decision_ref(tmp_path, "T-once")
+
+    first = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        approval_ref=approval_ref,
+    )
+    assert first.resume_receipt_hash
+
+    rows_after_first = len(_journal_rows(sdd, "T-once"))
+    # The same approval file is still on disk and still yields the same digest,
+    # but the park is spent.
+    assert approval_decision_ref(tmp_path, "T-once") == approval_ref
+    with pytest.raises(SuspensionAlreadySettledError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=park.suspend_row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=park.suspend_receipt_hash,
+            approval_ref=approval_ref,
+        )
+    assert len(_journal_rows(sdd, "T-once")) == rows_after_first
+    assert len(chain.query(event_type=EVENT_TASK_RESUMED)) == 1
+
+
+def test_settled_park_refuses_replay_through_the_cli(tmp_path: Path) -> None:
+    """End-to-end: three CLI resumes against one approval yield one settlement."""
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.task_cmd import task_group
+
+    root = tmp_path
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    runner = CliRunner()
+
+    parked = runner.invoke(
+        task_group,
+        ["suspend", "T-cli", "--workdir", str(root), "--worktree", str(wt), "--until", "approval", "--json"],
+    )
+    assert parked.exit_code == 0, parked.output
+
+    approvals = root / ".sdd" / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    (approvals / "T-cli.approved").write_text("approved", encoding="utf-8")
+
+    outcomes = [
+        runner.invoke(task_group, ["resume", "T-cli", "--workdir", str(root), "--worktree", str(wt), "--json"])
+        for _ in range(3)
+    ]
+    assert outcomes[0].exit_code == 0, outcomes[0].output
+    assert outcomes[1].exit_code == 1
+    assert outcomes[2].exit_code == 1
+    # The console wraps, so compare against whitespace-normalised output.
+    assert "already settled" in " ".join(outcomes[1].output.split())
+
+    chain = AuditChainStore(root / ".sdd" / "audit")
+    assert len(chain.query(event_type=EVENT_TASK_RESUMED)) == 1
+
+    result = verify_suspension_continuity(sdd_dir=root / ".sdd", task_id="T-cli", chain=chain)
+    assert result.ok, result.errors
+
+
+def test_verify_continuity_flags_a_park_settled_more_than_once(tmp_path: Path) -> None:
+    """A chain carrying two settlements of one park is not a clean proof.
+
+    The resume path refuses the second settlement, so this shape only reaches
+    the verifier on a chain written before the guard existed or assembled by
+    hand. The offline proof must still refuse it rather than reporting the last
+    settlement as a clean continuity.
+    """
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-twice", wt)
+    resume = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+    )
+    assert verify_suspension_continuity(sdd_dir=sdd, task_id="T-twice", chain=chain).ok
+
+    # A second settlement of the same park, otherwise well-formed.
+    record_task_resume(
+        chain=chain,
+        task_id="T-twice",
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        suspend_event_hash=park.suspend_row.event_hash,
+        resume_event_hash=resume.resume_event_hash,
+        journal_index=1,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=True,
+        new_workspace_hash=park.suspend_row.workspace_hash,
+        downgrade_reason="",
+        decision_hash=resume.decision.decision_hash,
+    )
+
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-twice", chain=chain)
+    assert not result.ok
+    assert any("settled 2 times" in err for err in result.errors), result.errors
+
+
+def test_verify_continuity_ignores_a_resume_receipt_bound_to_another_park(tmp_path: Path) -> None:
+    """Binding selection, pinned independently of the journal-row check.
+
+    The forged receipt names a resume row the journal really holds, so the
+    ``_row_present`` guard cannot reject it. Only the binding filter can, and
+    reverting that filter makes the verifier read the forged receipt (warm with
+    no workspace match) and fail.
+    """
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-bind", wt)
+    decoy = _park(tmp_path, chain, "T-decoy2", wt)
+    resume = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+    )
+
+    # Real resume row, real parked row, but hung off the decoy park's receipt.
+    record_task_resume(
+        chain=chain,
+        task_id="T-bind",
+        suspend_receipt_hash=decoy.suspend_receipt_hash,
+        suspend_event_hash=park.suspend_row.event_hash,
+        resume_event_hash=resume.resume_event_hash,
+        journal_index=1,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=False,
+        new_workspace_hash="deadbeef",
+        downgrade_reason="",
+        decision_hash="deadbeef",
+    )
+
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-bind", chain=chain)
+    # The genuine settlement is read; the foreign-bound receipt is not this
+    # park's evidence and must not be selected by recency.
+    assert result.ok, result.errors
+    assert result.workspace_match
+    assert result.effective_mode == "warm"
+
+
+def test_park_refuses_an_unsafe_task_id_before_writing_anything(tmp_path: Path) -> None:
+    """The park-boundary guard, previously asserted only in the docstring."""
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    with pytest.raises(UnsafeTaskIdError):
+        park_task(
+            sdd_dir=sdd,
+            task_id="../../escape",
+            adapter="claude",
+            session_id="s",
+            worktree_path=wt,
+            envelope="subscription",
+            reserved_usd=1.0,
+            spent_usd=0.0,
+            chain=chain,
+        )
+    assert not (sdd / "runs").exists()
+    assert chain.query(event_type=EVENT_TASK_SUSPENDED) == []
+
+
+def test_task_id_bound_matches_the_journal_run_id_budget(tmp_path: Path) -> None:
+    """An over-long id is refused here, not by a bare ValueError downstream.
+
+    ``task_run_id`` prefixes ``"task-"`` and the journal caps the run id at 64
+    characters, so the validator must refuse at 59.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    assert validate_task_id("T" + "a" * 58)  # 59 chars: the budget, accepted
+    with pytest.raises(UnsafeTaskIdError):
+        validate_task_id("T" + "a" * 59)  # 60 chars: one over
+
+    # The park refuses with the typed error rather than the journal's ValueError.
+    with pytest.raises(UnsafeTaskIdError):
+        park_task(
+            sdd_dir=sdd,
+            task_id="T" + "a" * 90,
+            adapter="claude",
+            session_id="s",
+            worktree_path=wt,
+            envelope="subscription",
+            reserved_usd=1.0,
+            spent_usd=0.0,
+            chain=chain,
+        )
+
+
+def test_longest_accepted_task_id_survives_a_full_park_and_resume(tmp_path: Path) -> None:
+    """The accepted bound is genuinely usable end to end, not just accepted."""
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    task_id = "T" + "a" * 58
+
+    park = park_task(
+        sdd_dir=sdd,
+        task_id=task_id,
+        adapter="claude",
+        session_id="s",
+        worktree_path=wt,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        chain=chain,
+    )
+    resume = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+    )
+    assert resume.resume_receipt_hash
+    assert verify_suspension_continuity(sdd_dir=sdd, task_id=task_id, chain=chain).ok
+
+
+def test_approval_paths_refuse_a_symlinked_decision_file(tmp_path: Path) -> None:
+    """Containment catches what the identifier allowlist cannot.
+
+    ``T-sym`` is a perfectly well-formed task id, so the allowlist admits it.
+    The escape is in the filesystem: the decision file is a symlink out of the
+    approvals directory. Without the resolved-path containment check, reading
+    the approval would hash an arbitrary file's contents and writing the resume
+    marker would clobber an arbitrary path.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("not an approval", encoding="utf-8")
+    target = outside / "clobber.txt"
+    target.write_text("original", encoding="utf-8")
+
+    approvals = tmp_path / ".sdd" / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    (approvals / "T-sym.approved").symlink_to(secret)
+    (approvals / "T-sym.resumed").symlink_to(target)
+
+    with pytest.raises(UnsafeTaskIdError):
+        approval_decision_ref(tmp_path, "T-sym")
+    with pytest.raises(UnsafeTaskIdError):
+        write_resume_marker(tmp_path, "T-sym", "deadbeef")
+
+    # The outside file was neither read into a digest nor overwritten.
+    assert target.read_text(encoding="utf-8") == "original"

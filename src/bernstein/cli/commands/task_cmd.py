@@ -943,6 +943,7 @@ def task_resume(task_id: str, workdir: str, worktree: str | None, mode: str, as_
         ReleaseWithoutReceiptError,
         ResumeApprovalRequiredError,
         SuspendReceiptMismatchError,
+        SuspensionAlreadySettledError,
         UnsafeTaskIdError,
         approval_decision_ref,
         find_suspension_receipt,
@@ -1000,6 +1001,7 @@ def task_resume(task_id: str, workdir: str, worktree: str | None, mode: str, as_
         ReleaseWithoutReceiptError,
         ResumeApprovalRequiredError,
         SuspendReceiptMismatchError,
+        SuspensionAlreadySettledError,
         UnsafeTaskIdError,
     ) as exc:
         console.print(f"[red]Refusing to resume:[/red] {exc}")

@@ -115,7 +115,13 @@ WAKE_APPROVAL = "approval"
 #: resume marker) is matched against this anchored allowlist first: it admits no
 #: separator, no traversal segment, no NUL, and no leading dot, so the derived
 #: name is always a single safe path segment.
-_TASK_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+#:
+#: The 59-character bound is set by the narrowest sink downstream, not picked
+#: freely: the park builds the journal run id as ``"task-" + task_id`` and
+#: ``EventJournal`` enforces ``{1,64}`` on it. A looser bound here would let an
+#: over-long id past this typed refusal only to abort with a bare ValueError
+#: from the journal, so the validator matches the budget it is protecting.
+_TASK_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,58}\Z")
 
 #: Approvals live under ``<workdir>/.sdd/runtime/approvals``; the same relative
 #: root the pre-spawn approval gate writes its sentinels into.
@@ -144,6 +150,23 @@ class SuspendReceiptMismatchError(RuntimeError):
     """
 
 
+class SuspensionAlreadySettledError(RuntimeError):
+    """Raised when a park that already carries a resume receipt is resumed again.
+
+    A suspend receipt settles exactly once. The chain is the record of that
+    settlement: if a ``task.resume_receipt`` already hangs off this suspend
+    receipt, the park is spent, and a second resume would append another resume
+    row for a decision that was already made. That is the replay of a settled
+    decision, so it is refused before the journal is touched.
+
+    This is what makes an ``--until approval`` wake gate single-use. The
+    approval decision file records *that* the operator approved, not how many
+    times the approval may be spent; the settlement record on the chain is what
+    bounds it to one. Parking the task again mints a new suspend row and a new
+    receipt, which settles once in its own right.
+    """
+
+
 class ResumeApprovalRequiredError(RuntimeError):
     """Raised when an ``--until approval`` park is resumed with no decision.
 
@@ -167,9 +190,10 @@ def validate_task_id(task_id: str) -> str:
     """Return ``task_id`` if it is a safe single path segment, else refuse.
 
     Raises:
-        UnsafeTaskIdError: The identifier is empty, over-long, or contains any
-            character outside ``[A-Za-z0-9._-]`` (and it must not start with a
-            dot, which rules out ``.`` and ``..``).
+        UnsafeTaskIdError: The identifier is empty, longer than 59 characters
+            (the journal run-id budget), or contains any character outside
+            ``[A-Za-z0-9._-]`` (and it must not start with a dot, which rules
+            out ``.`` and ``..``).
     """
     if not _TASK_ID_RE.match(task_id):
         msg = f"refusing to derive a path from unsafe task id {task_id!r}"
@@ -424,6 +448,33 @@ def find_suspension_receipt(
         if str(details.get("suspend_event_hash", "")) != suspend_row.event_hash:
             continue
         if _as_index(details.get("journal_index")) != suspend_row.journal_index:
+            continue
+        return event
+    return None
+
+
+def find_resume_receipt(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    suspend_receipt_hash: str,
+) -> AuditEvent | None:
+    """Return the ``task.resume_receipt`` that already settled this park.
+
+    A park settles once. The chain is the settlement record, so this is the
+    check that makes a resume non-replayable: if a resume receipt already hangs
+    off ``suspend_receipt_hash``, the park is spent.
+
+    Returns:
+        The settling :class:`AuditEvent`, or ``None`` when the park is unspent.
+    """
+    from bernstein.core.security.audit_chain import EVENT_TASK_RESUMED
+
+    for event in reversed(chain.query(event_type=EVENT_TASK_RESUMED)):
+        details = event.details
+        if str(details.get("task_id", "")) != task_id:
+            continue
+        if str(details.get("suspend_receipt_hash", "")) != suspend_receipt_hash:
             continue
         return event
     return None
@@ -879,6 +930,9 @@ def resume_task(
         UnsafeTaskIdError: The row's ``task_id`` is not a safe identifier.
         ReleaseWithoutReceiptError: ``suspend_receipt_hash`` is empty.
         SuspendReceiptMismatchError: The receipt does not bind this suspend row.
+        SuspensionAlreadySettledError: This park already carries a resume
+            receipt. A park settles once, so one approval cannot be spent
+            twice; park again for a fresh suspend receipt.
         ResumeApprovalRequiredError: The park is gated on approval and no
             approval decision digest was supplied.
     """
@@ -895,6 +949,20 @@ def resume_task(
         suspend_event_hash=suspend_row.event_hash,
         journal_index=suspend_row.journal_index,
     )
+    # A park settles once. Without this the approval gate below would be a
+    # presence check that one decision file could satisfy repeatedly, so a
+    # single operator approval would authorise an unbounded number of resumes.
+    settled_by = find_resume_receipt(
+        chain=chain,
+        task_id=suspend_row.task_id,
+        suspend_receipt_hash=suspend_receipt_hash,
+    )
+    if settled_by is not None:
+        msg = (
+            f"refusing to resume task {suspend_row.task_id!r}: this park was already settled by "
+            f"resume receipt {settled_by.hmac[:16]}... (park again to obtain a fresh suspend receipt)"
+        )
+        raise SuspensionAlreadySettledError(msg)
     if suspend_row.wake_condition == WAKE_APPROVAL and not approval_ref:
         msg = (
             f"refusing to resume task {suspend_row.task_id!r}: parked until approval and "
@@ -1190,6 +1258,14 @@ def verify_suspension_continuity(
         and str(e.details.get("suspend_event_hash", "")) == parked_hash
     ]
 
+    # One park, one settlement. More than one resume receipt hanging off a
+    # single suspend receipt means a settled decision was replayed, which the
+    # proof must surface rather than quietly reporting the last one.
+    if len(bound_resumes) > 1:
+        errors.append(
+            f"park was settled {len(bound_resumes)} times: a suspend receipt must carry exactly one resume receipt"
+        )
+
     resumed = bool(bound_resumes)
     effective_mode = ""
     workspace_match = False
@@ -1256,9 +1332,11 @@ __all__ = [
     "ResumeResult",
     "SuspendReceiptMismatchError",
     "SuspendRow",
+    "SuspensionAlreadySettledError",
     "UnsafeTaskIdError",
     "approval_decision_ref",
     "decide_resume",
+    "find_resume_receipt",
     "find_suspension_receipt",
     "latest_suspension",
     "park_task",

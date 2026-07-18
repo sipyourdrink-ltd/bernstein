@@ -100,8 +100,9 @@ guarantees back the proof:
 
 The verifier only reports success on a complete, self-consistent proof. It
 refuses a park that was never resumed, a resume receipt that hangs off some
-other park's suspend receipt, and a receipt naming a suspend or resume row the
-task journal does not hold. Partial evidence is a failure, not a pass.
+other park's suspend receipt, a receipt naming a suspend or resume row the task
+journal does not hold, and a park carrying more than one settlement. Partial
+evidence is a failure, not a pass.
 
 ## What the resume path refuses
 
@@ -116,6 +117,11 @@ before anything is written:
 - A park recorded `--until approval` refuses to append a resume row until the
   approval decision has landed. The gate is enforced where the mutation
   happens, not only at the call site.
+- A park settles **once**. If a `task.resume_receipt` already hangs off the
+  suspend receipt, a second resume is refused. The decision file records that
+  the operator approved, not how many times that approval may be spent, so the
+  settlement record on the chain is what bounds it to one. To resume again,
+  park again and obtain a fresh suspend receipt.
 - A `task_id` that is not a plain identifier is refused outright rather than
   sanitised, so it can never be used to read or write an approval record
   outside `.sdd/runtime/approvals`.
