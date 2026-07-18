@@ -24,9 +24,12 @@ same fold discipline as the review-board projection
   via :func:`bernstein.core.security.audit_chain.record_mission_phase_receipt`)
   that binds the gate verdict, the evidence bundle hashes it verified, the
   ledger position, and the envelope spend at gate time. A phase without a
-  receipt is by definition not passed, and a receipt whose referenced evidence
-  bundle has been deleted or altered projects the phase as
-  :data:`PHASE_UNVERIFIED` rather than best-effort ``passed``.
+  receipt is by definition not passed, and a receipt that does not bind the
+  exact gate its phase declares -- a failed verdict, a different or empty set
+  of task ids, a ragged evidence binding, a hash that disagrees with its own
+  contents, or a bundle since deleted or altered -- projects the phase as
+  :data:`PHASE_UNVERIFIED` rather than best-effort ``passed``. Evidence for an
+  unrelated task therefore proves nothing about a gate it does not name.
 
 Strip the ledger and a mission collapses to a stored status row with a log:
 there is no mission state on disk other than the hash-chained transitions, and
@@ -43,7 +46,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -66,7 +71,7 @@ from bernstein.core.persistence.work_ledger import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Sequence
     from pathlib import Path
 
     from bernstein.core.cost.cost_tracker import TokenUsage
@@ -89,6 +94,10 @@ PHASE_ACTIVE = "active"
 PHASE_PASSED = "passed"
 PHASE_HALTED = "halted"
 PHASE_UNVERIFIED = "unverified"
+
+#: Phase states no further work proceeds from. A halt is terminal for its own
+#: phase only: sibling phases run under isolated envelopes and are unaffected.
+_TERMINAL_PHASE_STATES = (PHASE_PASSED, PHASE_HALTED)
 
 #: Overall mission states.
 MISSION_PENDING = "pending"
@@ -121,6 +130,59 @@ def _canonical_bytes(payload: Mapping[str, Any]) -> bytes:
 
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Typed boundary readers
+#
+# A spec arrives as untrusted JSON. Coercing it (``str(value)``,
+# ``float(value or 0)``) turns a malformed document into a plausible-looking
+# mission whose spec hash binds something the operator never wrote, so every
+# field is read with its declared type or refused outright.
+# ---------------------------------------------------------------------------
+
+
+def _require_mapping(raw: object, what: str) -> Mapping[str, Any]:
+    """Return *raw* as a mapping, or raise naming what was expected."""
+    if not isinstance(raw, Mapping):
+        msg = f"{what} must be a JSON object, got {type(raw).__name__}"
+        raise MissionSpecError(msg)
+    return cast("Mapping[str, Any]", raw)
+
+
+def _require_sequence(raw: object, what: str) -> Sequence[Any]:
+    """Return *raw* as a list/tuple, or raise; a scalar is never coerced."""
+    if not isinstance(raw, (list, tuple)):
+        msg = f"{what} must be a JSON array, got {type(raw).__name__}"
+        raise MissionSpecError(msg)
+    return cast("Sequence[Any]", raw)
+
+
+def _require_str(raw: Mapping[str, Any], key: str, what: str) -> str:
+    value = raw.get(key, "")
+    if not isinstance(value, str):
+        msg = f"{what} field {key!r} must be a string, got {type(value).__name__}"
+        raise MissionSpecError(msg)
+    return value
+
+
+def _require_int(raw: Mapping[str, Any], key: str, what: str, default: int) -> int:
+    value = raw.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"{what} field {key!r} must be an integer, got {type(value).__name__}"
+        raise MissionSpecError(msg)
+    return value
+
+
+def _require_finite_number(raw: Mapping[str, Any], key: str, what: str, default: float) -> float:
+    value = raw.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        msg = f"{what} field {key!r} must be a number, got {type(value).__name__}"
+        raise MissionSpecError(msg)
+    if not math.isfinite(value):
+        msg = f"{what} field {key!r} must be finite, got {value!r}"
+        raise MissionSpecError(msg)
+    return float(value)
 
 
 # ---------------------------------------------------------------------------
@@ -158,19 +220,27 @@ class PhaseSpec:
         }
 
     @classmethod
-    def from_dict(cls, raw: Mapping[str, Any]) -> PhaseSpec:
-        gate_raw = raw.get("gate", ())
-        gate = (
-            tuple(str(item) for item in cast("Sequence[object]", gate_raw))
-            if isinstance(gate_raw, (list, tuple))
-            else ()
-        )
+    def from_dict(cls, raw: object) -> PhaseSpec:
+        """Parse one phase at the boundary; a malformed shape is refused.
+
+        Raises:
+            MissionSpecError: when the phase is not an object, or any field
+                carries a type the schema does not declare.
+        """
+        obj = _require_mapping(raw, "mission phase")
+        gate_items = _require_sequence(obj.get("gate", ()), "mission phase field 'gate'")
+        gate: list[str] = []
+        for item in gate_items:
+            if not isinstance(item, str):
+                msg = f"mission phase gate entries must be strings, got {type(item).__name__}"
+                raise MissionSpecError(msg)
+            gate.append(item)
         return cls(
-            phase_id=str(raw.get("phase_id", "")),
-            name=str(raw.get("name", "")),
-            gate=gate,
-            envelope=str(raw.get("envelope", "")),
-            budget_usd=float(raw.get("budget_usd", 0.0) or 0.0),
+            phase_id=_require_str(obj, "phase_id", "mission phase"),
+            name=_require_str(obj, "name", "mission phase"),
+            gate=tuple(gate),
+            envelope=_require_str(obj, "envelope", "mission phase"),
+            budget_usd=_require_finite_number(obj, "budget_usd", "mission phase", 0.0),
         )
 
 
@@ -193,6 +263,12 @@ class MissionSpec:
         Raises:
             MissionSpecError: naming the exact violated rule.
         """
+        if self.schema_version != MISSION_SPEC_SCHEMA_VERSION:
+            msg = (
+                f"unsupported mission spec schema_version {self.schema_version}: "
+                f"this build reads version {MISSION_SPEC_SCHEMA_VERSION}"
+            )
+            raise MissionSpecError(msg)
         if not _ID_RE.match(self.mission_id):
             msg = f"invalid mission_id {self.mission_id!r}: must match {_ID_RE.pattern}"
             raise MissionSpecError(msg)
@@ -210,6 +286,11 @@ class MissionSpec:
             seen.add(phase.phase_id)
             if not phase.envelope:
                 msg = f"phase {phase.phase_id!r} must name a budget envelope"
+                raise MissionSpecError(msg)
+            if not math.isfinite(phase.budget_usd):
+                # A non-finite budget serialises as invalid JSON and would poison
+                # the canonical spec bytes every verifier recomputes.
+                msg = f"phase {phase.phase_id!r} budget must be finite (got {phase.budget_usd!r})"
                 raise MissionSpecError(msg)
             if phase.budget_usd < 0.0:
                 msg = f"phase {phase.phase_id!r} budget must be >= 0 (got {phase.budget_usd})"
@@ -257,19 +338,25 @@ class MissionSpec:
         }
 
     @classmethod
-    def from_dict(cls, raw: Mapping[str, Any]) -> MissionSpec:
-        """Parse and validate a spec dict at the boundary."""
-        phases_raw = raw.get("phases", ())
-        phases = (
-            tuple(PhaseSpec.from_dict(p) for p in cast("Sequence[Mapping[str, Any]]", phases_raw))
-            if isinstance(phases_raw, (list, tuple))
-            else ()
-        )
+    def from_dict(cls, raw: object) -> MissionSpec:
+        """Parse and validate a spec at the boundary.
+
+        Every malformed shape -- a non-object root, a scalar ``phases``, a
+        phase that is not an object, a field of the wrong type -- raises
+        :class:`MissionSpecError`, so a caller can map the whole boundary to a
+        single documented exit code instead of leaking a ``TypeError`` or an
+        ``AttributeError`` from deep inside the parse.
+
+        Raises:
+            MissionSpecError: naming the exact violated rule.
+        """
+        obj = _require_mapping(raw, "mission spec")
+        phases_raw = _require_sequence(obj.get("phases", ()), "mission spec field 'phases'")
         return cls(
-            mission_id=str(raw.get("mission_id", "")),
-            goal=str(raw.get("goal", "")),
-            phases=phases,
-            schema_version=int(raw.get("schema_version", MISSION_SPEC_SCHEMA_VERSION) or MISSION_SPEC_SCHEMA_VERSION),
+            mission_id=_require_str(obj, "mission_id", "mission spec"),
+            goal=_require_str(obj, "goal", "mission spec"),
+            phases=tuple(PhaseSpec.from_dict(p) for p in phases_raw),
+            schema_version=_require_int(obj, "schema_version", "mission spec", MISSION_SPEC_SCHEMA_VERSION),
         ).validate()
 
 
@@ -438,19 +525,33 @@ class MissionProjection:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _SealedReceipt:
+    """A receipt read back from the chain, plus the hash its writer sealed.
+
+    ``stored_hash`` is kept apart from the receipt because it is a *claim* about
+    the binding, not part of it: the projection re-derives the hash from the
+    binding and compares, so a receipt that does not hash to what it claims is
+    self-inconsistent and cannot advance a phase.
+    """
+
+    receipt: PhaseReceipt
+    stored_hash: str
+
+
 @dataclass
 class _PhaseAccum:
     """Running fold state for one phase."""
 
     entered_seq: int = -1
-    passed: PhaseReceipt | None = None
-    halted: PhaseReceipt | None = None
+    passed: _SealedReceipt | None = None
+    halted: _SealedReceipt | None = None
 
 
-def _receipt_from_payload(payload: Mapping[str, Any]) -> PhaseReceipt:
+def _receipt_from_payload(payload: Mapping[str, Any]) -> _SealedReceipt:
     task_ids = payload.get("evidence_task_ids", [])
     hashes = payload.get("evidence_bundle_hashes", [])
-    return PhaseReceipt(
+    receipt = PhaseReceipt(
         mission_id=str(payload.get("mission_id", "")),
         phase_id=str(payload.get("phase_id", "")),
         gate_passed=bool(payload.get("gate_passed", False)),
@@ -465,16 +566,23 @@ def _receipt_from_payload(payload: Mapping[str, Any]) -> PhaseReceipt:
         spend_usd=float(payload.get("spend_usd", 0.0) or 0.0),
         reason=str(payload.get("reason", "")),
     )
+    return _SealedReceipt(receipt=receipt, stored_hash=str(payload.get("receipt_hash", "")))
 
 
-def _spec_skeleton_from_defined(payload: Mapping[str, Any]) -> tuple[str, str, str, tuple[PhaseSpec, ...]]:
-    """Rebuild ``(mission_id, goal_digest, spec_hash, phases)`` from a defined row."""
-    phases_raw = payload.get("phases", [])
-    phases = (
-        tuple(PhaseSpec.from_dict(p) for p in cast("Sequence[Mapping[str, Any]]", phases_raw))
-        if isinstance(phases_raw, (list, tuple))
-        else ()
-    )
+def _spec_skeleton_from_defined(
+    payload: Mapping[str, Any],
+) -> tuple[str, str, str, tuple[PhaseSpec, ...]] | None:
+    """Rebuild ``(mission_id, goal_digest, spec_hash, phases)`` from a defined row.
+
+    Returns ``None`` when the row is not a well-formed definition. The fold is
+    a projection over untrusted bytes, so a malformed definition must render
+    the mission unverified rather than raise out of the projection.
+    """
+    try:
+        phases_raw = _require_sequence(payload.get("phases", []), "mission definition field 'phases'")
+        phases = tuple(PhaseSpec.from_dict(p) for p in phases_raw)
+    except MissionSpecError:
+        return None
     return (
         str(payload.get("mission_id", "")),
         str(payload.get("goal_digest", "")),
@@ -491,9 +599,14 @@ def project_mission(
 
     Pure function: no wall clock, no filesystem, no host state. The
     *evidence_hashes* mapping (``task_id -> "sha256:..."`` bundle hash,
-    recomputed from the sealed bundles) is the only external input; a phase
-    receipt whose bound evidence hash is missing or differs projects the phase
-    as :data:`PHASE_UNVERIFIED`.
+    recomputed from the sealed bundles) is the only external input.
+
+    A phase projects as passed only when its receipt binds the exact gate the
+    phase declares (see :func:`_receipt_binds_gate`); every weaker shape is
+    :data:`PHASE_UNVERIFIED`. A ledger declaring more than one mission, or one
+    whose definition is malformed, projects as :data:`MISSION_UNVERIFIED`
+    outright, because the projection and the evidence lookup could otherwise be
+    reading different specs from the same chain.
 
     Args:
         entries: Work-ledger entries as yielded by :meth:`LedgerReader.entries`.
@@ -509,10 +622,17 @@ def project_mission(
     spec_hash = ""
     phase_specs: tuple[PhaseSpec, ...] = ()
     accums: dict[str, _PhaseAccum] = {}
+    defined_count = 0
+    definition_malformed = False
 
     for entry in entries:
         if entry.kind == KIND_MISSION_DEFINED:
-            mission_id, goal_digest, spec_hash, phase_specs = _spec_skeleton_from_defined(entry.payload)
+            defined_count += 1
+            skeleton = _spec_skeleton_from_defined(entry.payload)
+            if skeleton is None:
+                definition_malformed = True
+                continue
+            mission_id, goal_digest, spec_hash, phase_specs = skeleton
             accums = {phase.phase_id: _PhaseAccum() for phase in phase_specs}
             continue
         phase_id = entry.task_id
@@ -532,8 +652,16 @@ def project_mission(
         accum = accums.get(spec.phase_id, _PhaseAccum())
         phases.append(_project_phase(spec, accum, evidence_hashes))
 
-    active_phase = next((p.phase_id for p in phases if p.state != PHASE_PASSED), "")
+    # The active phase is the first one still runnable. Passed phases are done;
+    # halted phases are done too (a halt is terminal for that phase alone), so
+    # neither can be reported as the phase work is proceeding in.
+    active_phase = next((p.phase_id for p in phases if p.state not in _TERMINAL_PHASE_STATES), "")
     overall = _overall_state(phases)
+    # Zero definitions is simply an empty ledger (pending). More than one, or a
+    # malformed one, means the projection and the evidence lookup could be
+    # reading different specs: refuse to render a trusted status.
+    if defined_count > 1 or definition_malformed:
+        overall = MISSION_UNVERIFIED
 
     return MissionStatus(
         schema_version=MISSION_STATUS_SCHEMA_VERSION,
@@ -546,9 +674,41 @@ def project_mission(
     )
 
 
+def _receipt_binds_gate(
+    spec: PhaseSpec,
+    sealed: _SealedReceipt,
+    evidence_hashes: Mapping[str, str],
+) -> bool:
+    """Return True only when *sealed* proves the gate *spec* declares.
+
+    A pass is the strongest claim the projection can make, so it is granted
+    only when every link in the chain holds:
+
+    1. the receipt asserts a passing gate verdict at all;
+    2. it binds exactly the task ids the phase gates on -- no more, no fewer,
+       so evidence for an unrelated task can never stand in for the gate;
+    3. it binds one bundle hash per task id (a ragged binding is malformed);
+    4. it hashes to the value its writer sealed, so the binding is
+       self-consistent; and
+    5. every bound bundle still hashes to what the receipt recorded.
+
+    Any other shape is a refusal (:data:`PHASE_UNVERIFIED`), never a pass.
+    """
+    receipt = sealed.receipt
+    if not receipt.gate_passed:
+        return False
+    if set(receipt.evidence_task_ids) != set(spec.gate):
+        return False
+    if len(receipt.evidence_task_ids) != len(receipt.evidence_bundle_hashes):
+        return False
+    if sealed.stored_hash != receipt.receipt_hash():
+        return False
+    return _evidence_matches(receipt, evidence_hashes)
+
+
 def _project_phase(spec: PhaseSpec, accum: _PhaseAccum, evidence_hashes: Mapping[str, str]) -> PhaseStatus:
     if accum.halted is not None:
-        receipt = accum.halted
+        receipt = accum.halted.receipt
         return PhaseStatus(
             phase_id=spec.phase_id,
             name=spec.name,
@@ -563,14 +723,14 @@ def _project_phase(spec: PhaseSpec, accum: _PhaseAccum, evidence_hashes: Mapping
             ledger_seq=receipt.ledger_seq,
         )
     if accum.passed is not None:
-        receipt = accum.passed
-        evidence_ok = _evidence_matches(receipt, evidence_hashes)
+        receipt = accum.passed.receipt
+        gate_bound = _receipt_binds_gate(spec, accum.passed, evidence_hashes)
         return PhaseStatus(
             phase_id=spec.phase_id,
             name=spec.name,
-            state=PHASE_PASSED if evidence_ok else PHASE_UNVERIFIED,
+            state=PHASE_PASSED if gate_bound else PHASE_UNVERIFIED,
             gate=spec.gate,
-            gate_passed=receipt.gate_passed and evidence_ok,
+            gate_passed=gate_bound,
             evidence_bundle_hashes=receipt.evidence_bundle_hashes,
             envelope=spec.envelope,
             budget_usd=spec.budget_usd,
@@ -595,14 +755,25 @@ def _project_phase(spec: PhaseSpec, accum: _PhaseAccum, evidence_hashes: Mapping
 
 
 def _evidence_matches(receipt: PhaseReceipt, evidence_hashes: Mapping[str, str]) -> bool:
-    """Return True when every bound evidence bundle still hashes as recorded."""
-    for task_id, bound in zip(receipt.evidence_task_ids, receipt.evidence_bundle_hashes, strict=False):
+    """Return True when every bound evidence bundle still hashes as recorded.
+
+    Callers must have already proven the two tuples are the same length; the
+    strict zip makes a ragged binding an error rather than a silent truncation
+    that would let a short hash list satisfy a longer gate.
+    """
+    for task_id, bound in zip(receipt.evidence_task_ids, receipt.evidence_bundle_hashes, strict=True):
         if evidence_hashes.get(task_id) != bound:
             return False
     return True
 
 
 def _overall_state(phases: Sequence[PhaseStatus]) -> str:
+    """Fold phase states into the mission state.
+
+    A halt is scoped to its own phase: phases run under isolated envelopes, so
+    one exhausted envelope must not halt siblings that are still runnable. The
+    mission halts only once nothing is left to run.
+    """
     states = [phase.state for phase in phases]
     if not states:
         return MISSION_PENDING
@@ -610,9 +781,11 @@ def _overall_state(phases: Sequence[PhaseStatus]) -> str:
         return MISSION_UNVERIFIED
     if all(state == PHASE_PASSED for state in states):
         return MISSION_COMPLETE
-    if PHASE_HALTED in states:
+    if all(state in _TERMINAL_PHASE_STATES for state in states):
+        # Every phase is passed or halted and at least one halted: nothing
+        # remains runnable, so the mission itself is halted.
         return MISSION_HALTED
-    if PHASE_ACTIVE in states or PHASE_PASSED in states:
+    if PHASE_ACTIVE in states or PHASE_PASSED in states or PHASE_HALTED in states:
         return MISSION_ACTIVE
     return MISSION_PENDING
 
@@ -671,16 +844,25 @@ def gather_evidence_hashes(workdir: Path, task_ids: Iterable[str]) -> dict[str, 
 
 
 def _referenced_task_ids(entries: Sequence[LedgerEntry]) -> tuple[str, ...]:
+    """Return every gate task id any mission definition in *entries* names.
+
+    A well-formed ledger carries exactly one definition. A ledger carrying more
+    already projects as unverified; gathering the union rather than the first
+    definition's gates keeps the evidence lookup from silently reading a
+    different spec than the projection folds.
+    """
+    seen: list[str] = []
     for entry in entries:
-        if entry.kind == KIND_MISSION_DEFINED:
-            _, _, _, phases = _spec_skeleton_from_defined(entry.payload)
-            seen: list[str] = []
-            for phase in phases:
-                for task_id in phase.gate:
-                    if task_id not in seen:
-                        seen.append(task_id)
-            return tuple(seen)
-    return ()
+        if entry.kind != KIND_MISSION_DEFINED:
+            continue
+        skeleton = _spec_skeleton_from_defined(entry.payload)
+        if skeleton is None:
+            continue
+        for phase in skeleton[3]:
+            for task_id in phase.gate:
+                if task_id not in seen:
+                    seen.append(task_id)
+    return tuple(seen)
 
 
 def project_mission_from_ledger(*, sdd_dir: Path, workdir: Path, mission_id: str) -> MissionProjection:
@@ -726,8 +908,24 @@ def define_mission(*, ledger: WorkLedger, spec: MissionSpec) -> LedgerEntry:
     The payload binds the spec hash, the goal digest, and the phase skeleton
     (ids, names, gates, envelopes, budgets) -- never the raw goal text. This is
     the only mission declaration; status is projected, never stored.
+
+    A mission owns its ledger outright: the definition must be the first
+    transition in it. A second definition would leave the projection and the
+    evidence lookup free to read different specs from the same chain, so it is
+    refused at the writer rather than detected later.
+
+    Raises:
+        MissionSpecError: when the spec fails validation, or the ledger is not
+            an empty ledger awaiting its definition.
     """
     spec.validate()
+    if ledger.next_seq != 0:
+        existing = list(LedgerReader(ledger.ledger_dir).entries())
+        if any(entry.kind == KIND_MISSION_DEFINED for entry in existing):
+            msg = f"mission {spec.mission_id!r} is already defined in this ledger"
+            raise MissionSpecError(msg)
+        msg = f"a mission must be defined into an empty ledger (found {len(existing)} prior entries)"
+        raise MissionSpecError(msg)
     return ledger.append(
         kind=KIND_MISSION_DEFINED,
         task_id="",
@@ -739,6 +937,41 @@ def define_mission(*, ledger: WorkLedger, spec: MissionSpec) -> LedgerEntry:
             "phases": [phase.to_dict() for phase in spec.phases],
         },
     )
+
+
+def _validated_spend(phase: PhaseSpec, spend_usd: object, *, enforce_budget: bool) -> float:
+    """Return *spend_usd* as a sealable figure, or raise.
+
+    The receipt is only as trustworthy as the figures it seals. A non-finite
+    spend serialises as invalid JSON and would break the canonical receipt
+    bytes every verifier recomputes; a negative spend is not a spend; and a
+    pass claiming more than the phase envelope allows contradicts the ceiling
+    the dispatch gate enforced. Each is refused before anything is appended,
+    so the chain never carries an unvalidated figure.
+
+    Args:
+        phase: The phase whose envelope bounds the spend.
+        spend_usd: The figure the caller proposes to seal.
+        enforce_budget: Whether to apply the phase ceiling. A halt is exempt:
+            an exhausted envelope is precisely why a phase halts, so its
+            receipt legitimately records spend at or beyond the budget.
+
+    Raises:
+        MissionSpecError: naming the exact violated rule.
+    """
+    if isinstance(spend_usd, bool) or not isinstance(spend_usd, (int, float)):
+        msg = f"phase {phase.phase_id!r} spend must be a number, got {type(spend_usd).__name__}"
+        raise MissionSpecError(msg)
+    if not math.isfinite(spend_usd):
+        msg = f"phase {phase.phase_id!r} spend must be finite (got {spend_usd!r})"
+        raise MissionSpecError(msg)
+    if spend_usd < 0.0:
+        msg = f"phase {phase.phase_id!r} spend must be >= 0 (got {spend_usd})"
+        raise MissionSpecError(msg)
+    if enforce_budget and phase.budget_usd > 0.0 and spend_usd > phase.budget_usd:
+        msg = f"phase {phase.phase_id!r} spend {spend_usd} exceeds its budget envelope of {phase.budget_usd}"
+        raise MissionSpecError(msg)
+    return float(spend_usd)
 
 
 def enter_phase(*, ledger: WorkLedger, mission_id: str, phase_id: str) -> LedgerEntry:
@@ -780,9 +1013,11 @@ def pass_phase(
         The sealed :class:`PhaseReceipt`.
 
     Raises:
-        MissionSpecError: when the phase gate is unsatisfied.
+        MissionSpecError: when the phase gate is unsatisfied, or the spend is
+            not a finite, non-negative figure within the phase envelope.
     """
     phase = spec.phase(phase_id)
+    sealable_spend = _validated_spend(phase, spend_usd, enforce_budget=True)
     gate_task_ids = tuple(sorted(phase.gate))
     missing = [task_id for task_id in gate_task_ids if task_id not in evidence_hashes]
     if missing:
@@ -798,7 +1033,7 @@ def pass_phase(
         evidence_bundle_hashes=bundle_hashes,
         ledger_seq=ledger.next_seq,
         envelope=phase.envelope,
-        spend_usd=spend_usd,
+        spend_usd=sealable_spend,
     )
     entry = ledger.append(
         kind=KIND_MISSION_PHASE_PASSED,
@@ -823,7 +1058,15 @@ def halt_phase(
 
     The halt is a first-class ledger transition: the projection derives the
     :data:`PHASE_HALTED` state from it, so a halted phase is provable from the
-    chain alone. Other phases are unaffected.
+    chain alone. Other phases are unaffected -- a halt never propagates to a
+    sibling phase, and the mission halts only once nothing remains runnable.
+
+    The recorded spend may sit at or above the budget (an exhausted envelope is
+    the usual reason to halt), but it must still be a finite, non-negative
+    figure or the receipt bytes would not survive a round trip.
+
+    Raises:
+        MissionSpecError: when the spend is not finite and non-negative.
     """
     phase = spec.phase(phase_id)
     receipt = PhaseReceipt(
@@ -834,7 +1077,7 @@ def halt_phase(
         evidence_bundle_hashes=(),
         ledger_seq=ledger.next_seq,
         envelope=phase.envelope,
-        spend_usd=spend_usd,
+        spend_usd=_validated_spend(phase, spend_usd, enforce_budget=False),
         reason=reason,
     )
     entry = ledger.append(

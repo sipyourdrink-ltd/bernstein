@@ -45,6 +45,7 @@ from bernstein.core.orchestration.missions import (
     KIND_MISSION_PHASE_PASSED,
     MISSION_ACTIVE,
     MISSION_COMPLETE,
+    MISSION_HALTED,
     MISSION_PENDING,
     MISSION_UNVERIFIED,
     PHASE_ACTIVE,
@@ -54,7 +55,9 @@ from bernstein.core.orchestration.missions import (
     PHASE_UNVERIFIED,
     MissionSpec,
     MissionSpecError,
+    PhaseReceipt,
     PhaseSpec,
+    PhaseStatus,
     define_mission,
     enforce_phase_dispatch,
     enter_phase,
@@ -557,3 +560,344 @@ def test_resume_against_fresh_copy_reproduces_status_hash(tmp_path: Path) -> Non
     assert after.status.phases[0].state == PHASE_PASSED
     assert after.status.phases[1].state == PHASE_ACTIVE
     assert after.status.overall == MISSION_ACTIVE
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2652) -- the receipt must bind the declared gate
+# ---------------------------------------------------------------------------
+
+
+def _defined_ledger(sdd_dir: Path, spec: MissionSpec) -> WorkLedger:
+    """Open a ledger with *spec* defined and phase 1 entered."""
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p1")
+    return ledger
+
+
+def _append_raw_receipt(ledger: WorkLedger, payload: dict[str, object], *, phase_id: str = "p1") -> None:
+    """Append a ``mission.phase_passed`` entry verbatim (bypassing pass_phase).
+
+    Models an attacker (or a buggy writer) that lands a well-formed chain entry
+    whose receipt does not bind the phase's declared gate.
+    """
+    ledger.append(kind=KIND_MISSION_PHASE_PASSED, task_id=phase_id, payload=payload)
+
+
+def _p1_status(sdd_dir: Path, spec: MissionSpec, evidence: dict[str, str]) -> PhaseStatus:
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    status = project_mission(entries, evidence)
+    return next(p for p in status.phases if p.phase_id == "p1")
+
+
+def test_receipt_for_an_unrelated_task_does_not_satisfy_the_gate(tmp_path: Path) -> None:
+    """#2652 critical: a receipt binding other evidence must not pass a gate.
+
+    Phase ``p1`` gates on ``task-a``. A receipt that binds a perfectly valid,
+    intact bundle for the unrelated ``task-z`` proves nothing about the gate,
+    so the phase must project unverified rather than passed.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    unrelated_hash = _seal_evidence(tmp_path, "task-z")
+    receipt = PhaseReceipt(
+        mission_id=spec.mission_id,
+        phase_id="p1",
+        gate_passed=True,
+        evidence_task_ids=("task-z",),
+        evidence_bundle_hashes=(unrelated_hash,),
+        ledger_seq=ledger.next_seq,
+        envelope="mission-m-1-p1",
+        spend_usd=1.0,
+    )
+    _append_raw_receipt(ledger, receipt.to_payload())
+    ledger.close()
+
+    evidence = gather_evidence_hashes(tmp_path, ("task-a", "task-z"))
+    phase = _p1_status(sdd_dir, spec, evidence)
+    assert phase.state == PHASE_UNVERIFIED
+    assert phase.gate_passed is False
+
+
+def test_receipt_binding_no_evidence_does_not_satisfy_the_gate(tmp_path: Path) -> None:
+    """#2652 critical: an empty evidence binding must not vacuously pass."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    receipt = PhaseReceipt(
+        mission_id=spec.mission_id,
+        phase_id="p1",
+        gate_passed=True,
+        evidence_task_ids=(),
+        evidence_bundle_hashes=(),
+        ledger_seq=ledger.next_seq,
+        envelope="mission-m-1-p1",
+        spend_usd=1.0,
+    )
+    _append_raw_receipt(ledger, receipt.to_payload())
+    ledger.close()
+
+    phase = _p1_status(sdd_dir, spec, gather_evidence_hashes(tmp_path, ("task-a",)))
+    assert phase.state == PHASE_UNVERIFIED
+
+
+def test_receipt_with_failed_gate_verdict_does_not_project_passed(tmp_path: Path) -> None:
+    """#2652 critical: ``gate_passed=false`` must never project as passed."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    bundle_hash = _seal_evidence(tmp_path, "task-a")
+    receipt = PhaseReceipt(
+        mission_id=spec.mission_id,
+        phase_id="p1",
+        gate_passed=False,
+        evidence_task_ids=("task-a",),
+        evidence_bundle_hashes=(bundle_hash,),
+        ledger_seq=ledger.next_seq,
+        envelope="mission-m-1-p1",
+        spend_usd=1.0,
+    )
+    _append_raw_receipt(ledger, receipt.to_payload())
+    ledger.close()
+
+    phase = _p1_status(sdd_dir, spec, gather_evidence_hashes(tmp_path, ("task-a",)))
+    assert phase.state == PHASE_UNVERIFIED
+
+
+def test_receipt_with_forged_receipt_hash_does_not_project_passed(tmp_path: Path) -> None:
+    """#2652 critical: the sealed receipt_hash must match its own binding."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    bundle_hash = _seal_evidence(tmp_path, "task-a")
+    receipt = PhaseReceipt(
+        mission_id=spec.mission_id,
+        phase_id="p1",
+        gate_passed=True,
+        evidence_task_ids=("task-a",),
+        evidence_bundle_hashes=(bundle_hash,),
+        ledger_seq=ledger.next_seq,
+        envelope="mission-m-1-p1",
+        spend_usd=1.0,
+    )
+    payload = receipt.to_payload()
+    payload["receipt_hash"] = "0" * 64
+    _append_raw_receipt(ledger, payload)
+    ledger.close()
+
+    phase = _p1_status(sdd_dir, spec, gather_evidence_hashes(tmp_path, ("task-a",)))
+    assert phase.state == PHASE_UNVERIFIED
+
+
+def test_receipt_with_mismatched_evidence_lengths_does_not_crash_or_pass(tmp_path: Path) -> None:
+    """#2652 critical: a ragged task-id/hash binding is a refusal, not a pass."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    bundle_hash = _seal_evidence(tmp_path, "task-a")
+    receipt = PhaseReceipt(
+        mission_id=spec.mission_id,
+        phase_id="p1",
+        gate_passed=True,
+        evidence_task_ids=("task-a",),
+        evidence_bundle_hashes=(bundle_hash, bundle_hash),
+        ledger_seq=ledger.next_seq,
+        envelope="mission-m-1-p1",
+        spend_usd=1.0,
+    )
+    _append_raw_receipt(ledger, receipt.to_payload())
+    ledger.close()
+
+    phase = _p1_status(sdd_dir, spec, gather_evidence_hashes(tmp_path, ("task-a",)))
+    assert phase.state == PHASE_UNVERIFIED
+
+
+def test_honest_receipt_still_projects_passed(tmp_path: Path) -> None:
+    """The hardened check must not reject a receipt sealed by pass_phase."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    _seal_evidence(tmp_path, "task-a")
+    ev = gather_evidence_hashes(tmp_path, ("task-a",))
+    pass_phase(ledger=ledger, spec=spec, phase_id="p1", evidence_hashes=ev, spend_usd=3.0)
+    ledger.close()
+
+    phase = _p1_status(sdd_dir, spec, ev)
+    assert phase.state == PHASE_PASSED
+    assert phase.gate_passed is True
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2652) -- a ledger declares exactly one mission
+# ---------------------------------------------------------------------------
+
+
+def test_define_mission_refuses_a_second_definition(tmp_path: Path) -> None:
+    """#2652: two definitions in one ledger split projection from evidence."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    with pytest.raises(MissionSpecError, match="already defined"):
+        define_mission(ledger=ledger, spec=spec)
+    ledger.close()
+
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    assert sum(1 for e in entries if e.kind == KIND_MISSION_DEFINED) == 1
+
+
+def test_define_mission_refuses_a_non_empty_ledger(tmp_path: Path) -> None:
+    """#2652: a mission must be the first transition in its own ledger."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p1")
+    with pytest.raises(MissionSpecError, match="empty ledger"):
+        define_mission(ledger=ledger, spec=spec)
+    ledger.close()
+
+
+def test_multiple_definitions_project_unverified(tmp_path: Path) -> None:
+    """#2652: a ledger carrying two definitions must never project trusted."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    # Bypass the writer guard the way a hand-edited ledger would.
+    ledger.append(
+        kind=KIND_MISSION_DEFINED,
+        task_id="",
+        payload={
+            "mission_id": spec.mission_id,
+            "spec_hash": spec.spec_hash(),
+            "goal_digest": spec.goal_digest(),
+            "schema_version": spec.schema_version,
+            "phases": [p.to_dict() for p in spec.phases],
+        },
+    )
+    ledger.close()
+
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    assert project_mission(entries, {}).overall == MISSION_UNVERIFIED
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2652) -- spec loader boundary
+# ---------------------------------------------------------------------------
+
+
+def test_spec_from_dict_rejects_a_non_object_root() -> None:
+    """#2652: a non-object root is a spec error, not an AttributeError."""
+    for bad in ([], "mission", 7, None):
+        with pytest.raises(MissionSpecError, match="object"):
+            MissionSpec.from_dict(bad)  # type: ignore[arg-type]
+
+
+def test_spec_from_dict_rejects_a_non_object_phase() -> None:
+    """#2652: phases must be objects, not coerced scalars."""
+    with pytest.raises(MissionSpecError, match="object"):
+        MissionSpec.from_dict({"mission_id": "m", "goal": "g", "phases": ["p1"]})
+
+
+def test_spec_from_dict_rejects_a_non_list_phases_field() -> None:
+    """#2652: a scalar ``phases`` must not be silently coerced to empty."""
+    with pytest.raises(MissionSpecError, match="phases"):
+        MissionSpec.from_dict({"mission_id": "m", "goal": "g", "phases": "p1"})
+
+
+def test_spec_rejects_unsupported_schema_version() -> None:
+    """#2652: an unknown wire version must not be accepted as version 1."""
+    with pytest.raises(MissionSpecError, match="schema_version"):
+        MissionSpec.from_dict({**_spec().to_dict(), "schema_version": 99})
+
+
+def test_spec_from_dict_rejects_non_string_scalars() -> None:
+    """#2652: malformed scalars are refused rather than str()-coerced."""
+    with pytest.raises(MissionSpecError):
+        MissionSpec.from_dict({**_spec().to_dict(), "mission_id": {"nested": "object"}})
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2652) -- phase isolation for halts
+# ---------------------------------------------------------------------------
+
+
+def test_halted_phase_does_not_halt_a_runnable_sibling(tmp_path: Path) -> None:
+    """#2652: halting one phase must not halt the mission (phase isolation)."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p1")
+    halt_phase(ledger=ledger, spec=spec, phase_id="p1", spend_usd=40.0, reason="envelope_exhausted")
+    enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p2")
+    ledger.close()
+
+    status = project_mission(list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries()), {})
+    assert status.phases[0].state == PHASE_HALTED
+    assert status.phases[1].state == PHASE_ACTIVE
+    # The runnable sibling is the active phase, not the halted one.
+    assert status.active_phase == "p2"
+    assert status.overall == MISSION_ACTIVE
+
+
+def test_mission_halts_only_when_no_phase_remains_runnable(tmp_path: Path) -> None:
+    """#2652: the mission halts once every phase is passed or halted."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
+    define_mission(ledger=ledger, spec=spec)
+    halt_phase(ledger=ledger, spec=spec, phase_id="p1", spend_usd=40.0, reason="envelope_exhausted")
+    halt_phase(ledger=ledger, spec=spec, phase_id="p2", spend_usd=25.0, reason="envelope_exhausted")
+    ledger.close()
+
+    status = project_mission(list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries()), {})
+    assert status.overall == MISSION_HALTED
+    assert status.active_phase == ""
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2652) -- spend is validated before it is sealed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spend",
+    [-1.0, float("nan"), float("inf"), float("-inf"), 40.01],
+)
+def test_pass_phase_refuses_unvalidated_spend(tmp_path: Path, spend: float) -> None:
+    """#2652: negative, non-finite, or over-budget spend never gets sealed."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    _seal_evidence(tmp_path, "task-a")
+    ev = gather_evidence_hashes(tmp_path, ("task-a",))
+    before = ledger.next_seq
+    with pytest.raises(MissionSpecError, match="spend"):
+        pass_phase(ledger=ledger, spec=spec, phase_id="p1", evidence_hashes=ev, spend_usd=spend)
+    # Nothing was sealed: the ledger did not advance.
+    assert ledger.next_seq == before
+    ledger.close()
+
+
+def test_pass_phase_allows_spend_at_the_budget_ceiling(tmp_path: Path) -> None:
+    """The guard refuses over-budget spend, not spend exactly at the cap."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    _seal_evidence(tmp_path, "task-a")
+    ev = gather_evidence_hashes(tmp_path, ("task-a",))
+    receipt = pass_phase(ledger=ledger, spec=spec, phase_id="p1", evidence_hashes=ev, spend_usd=40.0)
+    ledger.close()
+    assert receipt.spend_usd == 40.0
+
+
+def test_halt_phase_refuses_non_finite_spend(tmp_path: Path) -> None:
+    """#2652: a non-finite halt spend would poison the canonical receipt bytes."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    ledger = _defined_ledger(sdd_dir, spec)
+    with pytest.raises(MissionSpecError, match="spend"):
+        halt_phase(ledger=ledger, spec=spec, phase_id="p1", spend_usd=float("nan"), reason="x")
+    ledger.close()

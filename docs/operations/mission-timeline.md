@@ -24,6 +24,17 @@ The web UI route `Missions` renders the deterministic mission projection:
   tampered entry) or a referenced evidence bundle no longer matches the hash its
   receipt bound, the screen switches to an explicit unverified banner instead of
   best-effort rendering.
+- **Gate binding.** A phase renders `passed` only when its receipt binds the
+  exact gate the phase declares: a passing verdict, precisely the gate's task
+  ids, one bundle hash per task id, a receipt hash that agrees with its own
+  contents, and bundles that still hash as recorded. A receipt that verifies
+  unrelated evidence, or binds none at all, renders `unverified`. A ledger
+  declaring more than one mission renders `unverified` outright, since the
+  projection and the evidence lookup could otherwise read different specs.
+- **Phase isolation.** Phases run under isolated envelopes, so a halted phase
+  is terminal for itself alone. Sibling phases keep running, the reported
+  active phase is the first one still runnable, and the mission reports
+  `halted` only once no phase remains runnable.
 
 The read-only projection routes back this screen:
 

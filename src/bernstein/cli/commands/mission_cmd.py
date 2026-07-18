@@ -12,7 +12,8 @@ operator surface over it:
 * ``status``  - project the current mission status from the ledger and print
   it (with the ``mission_status_hash`` two hosts must agree on).
 * ``verify``  - re-verify the chain end to end and prove every referenced
-  evidence bundle is intact; a tampered entry or a deleted bundle fails.
+  evidence bundle is intact; a tampered entry, a deleted bundle, or a ledger
+  that declares no mission (or more than one) fails.
 * ``resume``  - rebuild mission state purely by replaying the ledger on any
   clone, reproducing the identical status hash after a restart or reimage.
 """
@@ -35,7 +36,12 @@ from bernstein.core.orchestration.missions import (
     mission_ledger_dir,
     project_mission_from_ledger,
 )
-from bernstein.core.persistence.work_ledger import LedgerError, LedgerReader, WorkLedger
+from bernstein.core.persistence.work_ledger import (
+    KIND_MISSION_DEFINED,
+    LedgerError,
+    LedgerReader,
+    WorkLedger,
+)
 
 if TYPE_CHECKING:
     from bernstein.core.chat.bridge import BridgeProtocol
@@ -95,7 +101,7 @@ def mission_define_cmd(spec_path: Path, workdir: Path | None, output_json: bool)
     \b
     Exit codes:
         0  mission defined
-        3  the spec failed validation
+        3  the spec failed validation, or the mission is already defined
     """
     try:
         raw = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -109,6 +115,11 @@ def mission_define_cmd(spec_path: Path, workdir: Path | None, output_json: bool)
         ledger = WorkLedger.open(ledger_dir)
         entry = define_mission(ledger=ledger, spec=spec)
         ledger.close()
+    except MissionSpecError as exc:
+        # A mission owns its ledger: redefining one would let the projection
+        # and the evidence lookup read different specs from the same chain.
+        console.print(f"[red]Refusing to define mission:[/red] {exc}")
+        raise SystemExit(EXIT_BAD_SPEC) from None
     except LedgerError as exc:
         console.print(f"[red]Failed to write mission definition:[/red] {exc}")
         raise SystemExit(EXIT_VERIFY_FAILED) from None
@@ -138,9 +149,30 @@ def mission_define_cmd(spec_path: Path, workdir: Path | None, output_json: bool)
 
 
 def _require_mission(workdir: Path | None, mission_id: str) -> None:
+    """Exit with :data:`EXIT_NO_MISSION` unless *mission_id* names a real mission.
+
+    Missions share the ledger root with plain run ledgers, so the presence of a
+    ledger directory proves nothing. A mission ledger declares exactly one
+    ``mission.defined`` transition naming the requested id; anything else is
+    not this mission, and reporting it as verified would let ``verify`` bless a
+    directory that carries no mission at all.
+    """
     ledger_dir = mission_ledger_dir(_sdd_dir(workdir), mission_id)
-    if not LedgerReader(ledger_dir).exists():
+    reader = LedgerReader(ledger_dir)
+    if not reader.exists():
         console.print(f"[red]No mission ledger for {mission_id!r}[/red] at {ledger_dir}")
+        raise SystemExit(EXIT_NO_MISSION)
+
+    defined = [entry for entry in reader.entries() if entry.kind == KIND_MISSION_DEFINED]
+    if not defined:
+        console.print(f"[red]Not a mission ledger:[/red] {ledger_dir} declares no mission")
+        raise SystemExit(EXIT_NO_MISSION)
+    if len(defined) > 1:
+        console.print(f"[red]Not a mission ledger:[/red] {ledger_dir} declares {len(defined)} missions")
+        raise SystemExit(EXIT_NO_MISSION)
+    declared = str(defined[0].payload.get("mission_id", ""))
+    if declared != mission_id:
+        console.print(f"[red]Ledger at {ledger_dir} declares mission {declared!r}, not {mission_id!r}[/red]")
         raise SystemExit(EXIT_NO_MISSION)
 
 
@@ -189,7 +221,7 @@ def mission_status_cmd(mission_id: str, workdir: Path | None, output_json: bool)
     \b
     Exit codes:
         0  status projected
-        1  no mission ledger for this id
+        1  no ledger declaring this mission id
     """
     _require_mission(workdir, mission_id)
     projection = project_mission_from_ledger(
@@ -227,7 +259,7 @@ def mission_verify_cmd(mission_id: str, workdir: Path | None, output_json: bool)
     \b
     Exit codes:
         0  chain + evidence verify; every passed phase is provable
-        1  no mission ledger for this id
+        1  no ledger declaring this mission id
         2  verification failed (chain torn or evidence diverged)
     """
     _require_mission(workdir, mission_id)
@@ -285,7 +317,7 @@ def mission_resume_cmd(mission_id: str, workdir: Path | None, output_json: bool)
     \b
     Exit codes:
         0  mission state rebuilt from the ledger
-        1  no mission ledger for this id
+        1  no ledger declaring this mission id
     """
     _require_mission(workdir, mission_id)
     projection = project_mission_from_ledger(
@@ -380,7 +412,7 @@ def mission_digest_show_cmd(mission_id: str, fire_time: int, workdir: Path | Non
     \b
     Exit codes:
         0  digest computed
-        1  no mission ledger for this id
+        1  no ledger declaring this mission id
     """
     from bernstein.core.orchestration.mission_digest import render_digest_message
 
@@ -426,7 +458,7 @@ def mission_digest_send_cmd(
     \b
     Exit codes:
         0  digest posted, or already delivered (idempotent no-op)
-        1  no mission ledger for this id
+        1  no ledger declaring this mission id
     """
     import asyncio
 
@@ -519,7 +551,7 @@ def mission_digest_verify_cmd(
     \b
     Exit codes:
         0  the posted message matches the ledger-recomputed digest
-        1  no mission ledger for this id
+        1  no ledger declaring this mission id
         2  mismatch (edited / truncated message, or a torn receipt)
     """
     from bernstein.core.orchestration.mission_digest import verify_message_matches

@@ -22,6 +22,8 @@ from bernstein.core.evidence.bundle import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from click.testing import Result
+
 _KEY = b"0" * 32
 
 
@@ -64,6 +66,11 @@ def _write_spec(tmp_path: Path) -> Path:
     spec_path = tmp_path / "mission.json"
     spec_path.write_text(json.dumps(_spec_dict()), encoding="utf-8")
     return spec_path
+
+
+def runner_invoke(args: list[str]) -> Result:
+    """Invoke the mission group with a fresh runner."""
+    return CliRunner().invoke(mission_group, args)
 
 
 def test_mission_define_then_status(tmp_path: Path) -> None:
@@ -122,3 +129,81 @@ def test_mission_define_rejects_invalid_spec(tmp_path: Path) -> None:
     bad.write_text(json.dumps({"mission_id": "", "goal": "x", "phases": []}), encoding="utf-8")
     res = runner.invoke(mission_group, ["define", str(bad), "--workdir", str(tmp_path)])
     assert res.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2652)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_refuses_a_non_mission_ledger(tmp_path: Path) -> None:
+    """#2652: a plain run ledger is not a mission and must not verify as OK."""
+    from bernstein.cli.commands.mission_cmd import EXIT_NO_MISSION
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "not-a-mission"))
+    ledger.append(kind="task.scheduled", task_id="t1", payload={"task_id": "t1"})
+    ledger.close()
+
+    res = runner_invoke(["verify", "not-a-mission", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_NO_MISSION, res.output
+
+
+def test_status_refuses_a_ledger_whose_mission_id_differs(tmp_path: Path) -> None:
+    """#2652: the definition must name the mission the operator asked for."""
+    from bernstein.cli.commands.mission_cmd import EXIT_NO_MISSION
+    from bernstein.core.orchestration.missions import MissionSpec, define_mission, mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    spec = MissionSpec.from_dict({**_spec_dict(), "mission_id": "m-other"})
+    # Land a definition for "m-other" under the directory keyed "m-cli".
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "m-cli"))
+    define_mission(ledger=ledger, spec=spec)
+    ledger.close()
+
+    res = runner_invoke(["status", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_NO_MISSION, res.output
+
+
+def test_define_rejects_a_non_object_spec_root(tmp_path: Path) -> None:
+    """#2652: a non-object root exits with the bad-spec code, never a traceback."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([{"mission_id": "m"}]), encoding="utf-8")
+    res = runner_invoke(["define", str(bad), "--workdir", str(tmp_path)])
+    assert res.exit_code == EXIT_BAD_SPEC, res.output
+    assert res.exception is None or isinstance(res.exception, SystemExit)
+
+
+def test_define_rejects_a_non_object_phase(tmp_path: Path) -> None:
+    """#2652: a scalar phase entry exits with the bad-spec code."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"mission_id": "m", "goal": "g", "phases": ["p1"]}), encoding="utf-8")
+    res = runner_invoke(["define", str(bad), "--workdir", str(tmp_path)])
+    assert res.exit_code == EXIT_BAD_SPEC, res.output
+
+
+def test_define_rejects_an_unsupported_schema_version(tmp_path: Path) -> None:
+    """#2652: an unknown wire version exits with the bad-spec code."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({**_spec_dict(), "schema_version": 99}), encoding="utf-8")
+    res = runner_invoke(["define", str(bad), "--workdir", str(tmp_path)])
+    assert res.exit_code == EXIT_BAD_SPEC, res.output
+
+
+def test_define_refuses_to_redefine_an_existing_mission(tmp_path: Path) -> None:
+    """#2652: a second define must not split projection from evidence lookup."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    spec_path = _write_spec(tmp_path)
+    first = runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    assert first.exit_code == 0, first.output
+
+    second = runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    assert second.exit_code == EXIT_BAD_SPEC, second.output
