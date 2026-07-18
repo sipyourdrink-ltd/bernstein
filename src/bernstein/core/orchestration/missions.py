@@ -88,12 +88,9 @@ MISSION_SPEC_SCHEMA_VERSION = 1
 #: canonical status shape *or* to the rules that derive it -- both move
 #: :meth:`MissionStatus.status_hash`, and this field is how a verifier tells
 #: "folded under different projection rules" apart from "tampered with".
-#:
-#: v2: phase isolation for halts. ``active_phase`` skips halted phases and the
-#: mission reports halted only when no phase remains runnable, so an honest
-#: ledger carrying a halt beside a runnable phase folds to a different hash
-#: than it did under v1.
-MISSION_STATUS_SCHEMA_VERSION = 2
+#: A bump breaks reproduction of every existing ledger's status hash, so it
+#: belongs in a minor release, never a patch.
+MISSION_STATUS_SCHEMA_VERSION = 1
 
 #: Phase states the projection can assign, in lifecycle order.
 PHASE_PENDING = "pending"
@@ -101,10 +98,6 @@ PHASE_ACTIVE = "active"
 PHASE_PASSED = "passed"
 PHASE_HALTED = "halted"
 PHASE_UNVERIFIED = "unverified"
-
-#: Phase states no further work proceeds from. A halt is terminal for its own
-#: phase only: sibling phases run under isolated envelopes and are unaffected.
-_TERMINAL_PHASE_STATES = (PHASE_PASSED, PHASE_HALTED)
 
 #: Overall mission states.
 MISSION_PENDING = "pending"
@@ -698,10 +691,14 @@ def project_mission(
         accum = accums.get(spec.phase_id, _PhaseAccum())
         phases.append(_project_phase(spec, accum, evidence_hashes))
 
-    # The active phase is the first one still runnable. Passed phases are done;
-    # halted phases are done too (a halt is terminal for that phase alone), so
-    # neither can be reported as the phase work is proceeding in.
-    active_phase = next((p.phase_id for p in phases if p.state not in _TERMINAL_PHASE_STATES), "")
+    # A halted phase is still reported as the active one, and one halt still
+    # halts the whole mission. Both are wrong -- phases run under isolated
+    # envelopes, so exhausting one must not stop a runnable sibling -- but both
+    # feed the hashed canonical status, so correcting them moves
+    # mission_status_hash for every ledger carrying a halt. That is a minor
+    # release change, tracked for v3.8.0; a patch must reproduce existing
+    # hashes byte for byte.
+    active_phase = next((p.phase_id for p in phases if p.state != PHASE_PASSED), "")
     overall = _overall_state(phases)
     # Zero definitions is simply an empty ledger (pending). More than one, or a
     # malformed one, means the projection and the evidence lookup could be
@@ -816,9 +813,11 @@ def _evidence_matches(receipt: PhaseReceipt, evidence_hashes: Mapping[str, str])
 def _overall_state(phases: Sequence[PhaseStatus]) -> str:
     """Fold phase states into the mission state.
 
-    A halt is scoped to its own phase: phases run under isolated envelopes, so
-    one exhausted envelope must not halt siblings that are still runnable. The
-    mission halts only once nothing is left to run.
+    Any halted phase currently halts the whole mission, which contradicts the
+    per-phase envelope isolation :func:`phase_envelope_key` provides. Fixing it
+    changes this fold's output for honest ledgers, and the result is hashed
+    into :meth:`MissionStatus.status_hash`, so the correction ships with a
+    :data:`MISSION_STATUS_SCHEMA_VERSION` bump in v3.8.0 rather than here.
     """
     states = [phase.state for phase in phases]
     if not states:
@@ -827,11 +826,9 @@ def _overall_state(phases: Sequence[PhaseStatus]) -> str:
         return MISSION_UNVERIFIED
     if all(state == PHASE_PASSED for state in states):
         return MISSION_COMPLETE
-    if all(state in _TERMINAL_PHASE_STATES for state in states):
-        # Every phase is passed or halted and at least one halted: nothing
-        # remains runnable, so the mission itself is halted.
+    if PHASE_HALTED in states:
         return MISSION_HALTED
-    if PHASE_ACTIVE in states or PHASE_PASSED in states or PHASE_HALTED in states:
+    if PHASE_ACTIVE in states or PHASE_PASSED in states:
         return MISSION_ACTIVE
     return MISSION_PENDING
 
@@ -1107,8 +1104,10 @@ def halt_phase(
 
     The halt is a first-class ledger transition: the projection derives the
     :data:`PHASE_HALTED` state from it, so a halted phase is provable from the
-    chain alone. Other phases are unaffected -- a halt never propagates to a
-    sibling phase, and the mission halts only once nothing remains runnable.
+    chain alone. Dispatch stays isolated -- a sibling phase's envelope is never
+    gated by this one (see :func:`phase_envelope_key`) -- but note that the
+    *projection* still reports the whole mission as halted; see
+    :func:`_overall_state` for why that correction waits for v3.8.0.
 
     The recorded spend may sit at or above the budget (an exhausted envelope is
     the usual reason to halt), but it must still be a finite, non-negative
