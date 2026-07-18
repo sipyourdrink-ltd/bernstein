@@ -53,6 +53,19 @@ HOSTILE_IDS = [
 ]
 
 
+def _symlink_or_skip(link: Path, target: Path, *, directory: bool = True) -> None:
+    """Create *link* pointing at *target*, or skip where that is not allowed.
+
+    Unprivileged Windows runners cannot create symlinks, and the symlink
+    leg of these tests is the only part that needs one; the allowlist leg
+    still runs everywhere.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=directory)
+    except OSError:  # pragma: no cover - platform dependent
+        pytest.skip("cannot create symlinks on this platform")
+
+
 # ---------------------------------------------------------------------------
 # The barrier itself
 # ---------------------------------------------------------------------------
@@ -80,7 +93,7 @@ def test_validate_path_segment_refuses_overlong_id() -> None:
 def test_contained_path_joins_under_base(tmp_path: Path) -> None:
     """An ordinary id resolves to the expected child of the base."""
     resolved = contained_path(tmp_path, "run-1", "journal.jsonl")
-    assert resolved == tmp_path / "run-1" / "journal.jsonl"
+    assert resolved == (tmp_path / "run-1" / "journal.jsonl").resolve()
 
 
 @pytest.mark.parametrize("bad_id", HOSTILE_IDS)
@@ -100,7 +113,7 @@ def test_contained_path_refuses_symlink_escape(tmp_path: Path) -> None:
     base.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    (base / "escape").symlink_to(outside, target_is_directory=True)
+    _symlink_or_skip(base / "escape", outside)
 
     with pytest.raises(PathContainmentError):
         contained_path(base, "escape")
@@ -118,7 +131,7 @@ def test_contained_path_refuses_sibling_prefix(tmp_path: Path) -> None:
     base.mkdir()
     sibling = tmp_path / "base-evil"
     sibling.mkdir()
-    (base / "link").symlink_to(sibling, target_is_directory=True)
+    _symlink_or_skip(base / "link", sibling)
 
     with pytest.raises(PathContainmentError):
         contained_path(base, "link")
@@ -128,7 +141,7 @@ def test_contained_path_allows_symlink_inside_base(tmp_path: Path) -> None:
     """A symlink that stays inside the base is fine - containment, not a ban."""
     base = tmp_path / "base"
     (base / "real").mkdir(parents=True)
-    (base / "link").symlink_to(base / "real", target_is_directory=True)
+    _symlink_or_skip(base / "link", base / "real")
 
     assert contained_path(base, "link") == (base / "real").resolve()
 
@@ -143,7 +156,7 @@ def test_event_journal_round_trips_ordinary_run_id(tmp_path: Path) -> None:
     journal = EventJournal(run_id="run-1", sdd_dir=tmp_path)
     journal.record("task_claimed", task_id="T-1")
 
-    assert journal.path == tmp_path / "runs" / "run-1" / "journal.jsonl"
+    assert journal.path == (tmp_path / "runs" / "run-1" / "journal.jsonl").resolve()
     assert journal.path.is_file()
     assert journal.event_count() == 1
     assert journal.verify().ok
@@ -175,7 +188,7 @@ def test_event_journal_refuses_symlinked_run_dir(tmp_path: Path) -> None:
     runs_root.mkdir(parents=True)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (runs_root / "run-evil").symlink_to(outside, target_is_directory=True)
+    _symlink_or_skip(runs_root / "run-evil", outside)
 
     with pytest.raises(JournalPathError):
         EventJournal(run_id="run-evil", sdd_dir=sdd_dir)
@@ -190,7 +203,7 @@ def test_event_journal_refuses_symlinked_run_dir(tmp_path: Path) -> None:
 
 def test_artifact_journal_path_round_trips(tmp_path: Path) -> None:
     """A normal task id maps to the same journal path as before."""
-    assert _artifact_journal_path(tmp_path, "T-1") == tmp_path / "runs" / "task-T-1" / "journal.jsonl"
+    assert _artifact_journal_path(tmp_path, "T-1") == (tmp_path / "runs" / "task-T-1" / "journal.jsonl").resolve()
 
 
 @pytest.mark.parametrize("bad_id", ["../../etc/passwd", "/etc/passwd", "a/../../b"])
@@ -206,7 +219,7 @@ def test_artifact_journal_path_refuses_symlinked_run_dir(tmp_path: Path) -> None
     runs_root.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    (runs_root / "task-T-1").symlink_to(outside, target_is_directory=True)
+    _symlink_or_skip(runs_root / "task-T-1", outside)
 
     with pytest.raises(PathContainmentError):
         _artifact_journal_path(tmp_path, "T-1")
@@ -219,7 +232,7 @@ def test_artifact_journal_path_refuses_symlinked_run_dir(tmp_path: Path) -> None
 
 def test_run_ledger_dir_round_trips(tmp_path: Path) -> None:
     """A legitimate run id keeps the documented ledger layout."""
-    assert run_ledger_dir(tmp_path, "run-a") == tmp_path / "runtime" / "ledger" / "run-a"
+    assert run_ledger_dir(tmp_path, "run-a") == (tmp_path / "runtime" / "ledger" / "run-a").resolve()
 
 
 @pytest.mark.parametrize("bad_id", HOSTILE_IDS)
@@ -266,7 +279,7 @@ def test_ledger_reader_refuses_symlinked_bucket(tmp_path: Path) -> None:
     ledger_dir.mkdir()
     secret = tmp_path / "secret.jsonl"
     secret.write_text("{}\n", encoding="utf-8")
-    (ledger_dir / "000000.jsonl").symlink_to(secret)
+    _symlink_or_skip(ledger_dir / "000000.jsonl", secret, directory=False)
 
     with pytest.raises(PathContainmentError):
         LedgerReader(ledger_dir)
@@ -284,7 +297,7 @@ def test_ledger_reader_refuses_symlinked_bucket(tmp_path: Path) -> None:
 
 def test_admission_ledger_dir_round_trips(tmp_path: Path) -> None:
     """The default admission ledger keeps its documented location."""
-    assert admission_ledger_dir(tmp_path) == tmp_path / "runtime" / "admission" / "fleet"
+    assert admission_ledger_dir(tmp_path) == (tmp_path / "runtime" / "admission" / "fleet").resolve()
 
 
 @pytest.mark.parametrize("bad_id", HOSTILE_IDS)
