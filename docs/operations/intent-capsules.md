@@ -97,18 +97,26 @@ capsule-bound anchor -- are never drift, whatever the policy, so
 
 The `verdict_hash` is a digest over the capsule hash, the policy mode, and the
 divergence list, so two verifiers on different machines recompute the
-byte-identical verdict offline. Timestamps are read off the journal rows rather
-than a clock, which keeps expiry enforcement deterministic.
+byte-identical verdict offline.
 
 Expiry is deliberately **not** part of the verdict. A journal row's `ts` sits
 outside the hashed payload (a faithful replay differs only in timing), so feeding
 it into `verdict_hash` would sign a value anyone can edit in place without
 breaking the chain, and would make the same run verdict differently on replay.
-Expiry is instead enforced against audit-chain entry timestamps, which are
-covered by each entry's HMAC. The trade-off is coverage: that detects a capsule
-still being acted on past expiry only as far as the chain records events for it,
-not per journal step. Per-step expiry would need a chained step clock inside the
-hashed payload.
+
+Expiry is instead checked against audit-chain entry timestamps, which are covered
+by each entry's HMAC, and only against **capsule-lifecycle** entries -- the
+approval, the journal seal, and drift records. The narrowness is deliberate in
+both directions. Approval entries alone enforce nothing, since an approval is by
+construction at or before the expiry it declares; the seal, written when the run
+ends, is the entry that evidences a capsule still being acted on. But widening
+the scan to every entry carrying the same `task_id` matches 27 unrelated event
+types, and on an append-only chain one ordinary later entry would then condemn an
+honest run permanently, with no repair path.
+
+The residual limit: expiry is enforced at the granularity of chain-recorded
+lifecycle events, not per journal step. Per-step expiry would need a chained step
+clock inside the hashed payload, which is a journal-format change.
 
 Deterministic replay of a run re-derives the same drift decisions at the same
 step indices. No LLM call exists on the drift-decision path: a static import
@@ -131,38 +139,66 @@ guard plus a test-suite runtime profiler assertion keep it that way.
 5. Require exactly one `intent.capsule_bound` anchor in the journal matching this
    `task_id` and capsule hash, so an unrelated clean journal cannot be presented
    as this capsule's run.
-6. Require exactly one `intent.journal_seal` entry for this run and capsule, and
-   check the journal's head hash and event count against it.
+6. Read any `intent.journal_seal` entry for this run and capsule and compare the
+   journal's head hash and event count against it, establishing the run state.
 7. Recompute the conformance verdict from the journal and the capsule.
 
-Exit codes: `0` conformant, `1` no capsule, `2` drift or tamper, `3` cannot
-verify (no audit key).
+Exit codes: `0` sealed and conformant, `1` no capsule, `2` drift or tamper, `3`
+cannot verify (no audit key), `4` unsealed (no drift found, completeness not
+attested).
+
+## Run states and what each one attests
+
+A capsule-governed run is in one of three states, and `verify` reports them
+distinctly. Collapsing them is a security bug, not a UX one: if "drifted" and
+"not finished" look the same, a worker suppresses its own drift by never
+finishing.
+
+| State | What it means | `verify` reports | Exit |
+|---|---|---|---|
+| **sealed** | The run ended and committed its journal's end to the chain. | Full attestation: no truncation, no rewrite, verdict covers the whole run. | `0` |
+| **unsealed** | The run has not sealed yet -- ordinarily, still in progress. | Conformance over the steps recorded so far. Drift is reported. A clean result is explicitly *not* attested for completeness. | `4` |
+| **mismatch** | A seal exists but disagrees with the journal, or two seals disagree. | Tampering. | `2` |
+
+Drift is reported in every state. Deleting journal rows can only *hide* drift,
+never manufacture it, so a divergence found in an unsealed journal is real
+evidence and is never withheld pending a seal. What an unsealed run cannot claim
+is the absence of drift -- only that none appears in the rows that exist.
+
+Drift escalation works the same way: a receipt can be signed for an in-flight
+run, and records the `seal_state` it was cut under, so blocking-mode drift is
+actionable in the window it exists for rather than only after the run ends.
 
 ## Sealing a run
 
-A run must be sealed before it can be verified:
+The orchestrator seals automatically at run completion, once the journal is
+final: `_seal_intent_capsules` walks the journal's own `intent.capsule_bound`
+anchors and seals each capsule the run declared. Failures are logged, never
+raised -- sealing is an attestation aid and must not fail a run that already
+finished.
+
+To seal explicitly (a run finished outside the orchestrator):
 
 ```python
-seal_run_journal(chain=chain, sdd_dir=sdd, task_id=task_id, run_id=run_id, capsule=capsule)
+seal_capsules_bound_to_run(chain=chain, sdd_dir=sdd, run_id=run_id)
 ```
 
-This records the journal's head hash and event count into the audit chain. It is
-not bookkeeping. The journal's Merkle chain recomputes from genesis using
-positional indices, so **every prefix of a valid journal is itself a valid
-journal**: a worker that drifted can delete the trailing rows that convict it and
-present a shorter, internally consistent history that verifies cleanly. A proof
-that reads only what remains cannot detect what was removed, so the verifier
-needs an independent commitment to the journal's end.
+Sealing records the journal's head hash and event count. It is not bookkeeping.
+The journal's Merkle chain recomputes from genesis using positional indices, so
+**every prefix of a valid journal is itself a valid journal**: a worker that
+drifted can delete the trailing rows that convict it and present a shorter,
+internally consistent history. Committing the end is what makes that detectable,
+and the head hash specifically is what catches a same-length rewrite -- an
+attacker who re-chains the journal from genesis with the convicting row swapped
+for a benign one produces a journal that self-verifies and matches the sealed
+count.
 
-An unsealed run therefore does not verify -- absent commitment is a denial, not a
-pass. Sealing refuses a journal whose own chain does not verify, and both
-truncation and post-seal appends are rejected by the count and head comparison.
-
-The seal is also what gives capsule expiry teeth. An approval entry is by
-construction at or before the expiry it declares, so scanning approvals alone
-could only ever flag a capsule minted already-expired. The seal timestamp, which
-is covered by its entry's HMAC, evidences a capsule still being acted on after it
-expired.
+**Sealing is idempotent.** Sealing the same journal twice returns the existing
+entry and writes nothing. A retry is not an attack, and the process that writes
+an attestation can die between the write and the acknowledgement, so
+at-least-once has to be safe -- especially on an append-only chain, where a
+duplicate could never be withdrawn. Re-sealing a journal that has *changed*
+since it was sealed is refused.
 
 `verify` is read-only. It never writes to the chain and never creates audit key
 material: a freshly minted key cannot authenticate an existing chain, so

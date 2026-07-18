@@ -18,6 +18,7 @@ Merkle-chained state, never from caller-supplied or unsigned input:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,8 @@ import pytest
 from bernstein.core.replay.journal import EventJournal, load_events, verify_journal
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.intent_capsule import (
+    SEAL_SEALED,
+    SEAL_UNSEALED,
     DriftPolicy,
     IntentCapsule,
     IntentCapsuleError,
@@ -32,11 +35,14 @@ from bernstein.core.security.intent_capsule import (
     assemble_intent_drift_escalation,
     bind_capsule_into_journal,
     capsule_hash,
+    claimed_action_classes,
     classify_journal_event,
     compile_capsule,
     evaluate_conformance,
+    find_journal_seals,
     path_in_scope,
     read_capsule_binding,
+    seal_capsules_bound_to_run,
     seal_run_journal,
     verify_intent_conformance,
 )
@@ -726,7 +732,7 @@ def test_divergence_set_is_stable_across_journal_reloads(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_truncating_the_journal_does_not_launder_drift(tmp_path: Path) -> None:
+def test_truncating_a_sealed_journal_does_not_launder_drift(tmp_path: Path) -> None:
     """Deleting the rows that convict you must not produce a clean verdict.
 
     The journal's Merkle chain recomputes from genesis using positional
@@ -761,21 +767,29 @@ def test_appending_after_the_seal_is_rejected(tmp_path: Path) -> None:
     assert "sealed" in result.reason
 
 
-def test_an_unsealed_run_cannot_be_verified(tmp_path: Path) -> None:
-    """Absent commitment is a denial, not a pass."""
+def test_an_unsealed_run_reports_conformance_without_attesting_completeness(tmp_path: Path) -> None:
+    """Unsealed is a coverage statement, not a verdict.
+
+    Refusing outright here was the round-3 critical: it made a drifted run
+    indistinguishable from an unfinished one, so a worker could suppress its own
+    drift simply by never sealing.
+    """
     capsule = _approve(tmp_path)
     _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
 
     result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
 
-    assert not result.ok
-    assert "journal_seal" in result.reason
+    assert result.seal_state == SEAL_UNSEALED
+    assert result.conformant, "no drift was found in the recorded steps"
+    assert not result.ok, "completeness is not attested"
+    assert result.verdict is not None
+    assert "unsealed" in result.reason
 
 
-def test_a_seal_for_another_run_does_not_satisfy_this_one(tmp_path: Path) -> None:
+def test_a_seal_for_another_run_does_not_seal_this_one(tmp_path: Path) -> None:
     capsule = _approve(tmp_path)
     _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
-    _journal(tmp_path, "run-other", capsule_h=capsule_hash(capsule), seal=None)
+    _journal(tmp_path, "run-other", capsule_h=capsule_hash(capsule))
     seal_run_journal(
         chain=_chain(tmp_path),
         sdd_dir=_sdd(tmp_path),
@@ -786,8 +800,8 @@ def test_a_seal_for_another_run_does_not_satisfy_this_one(tmp_path: Path) -> Non
 
     result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
 
+    assert result.seal_state == SEAL_UNSEALED
     assert not result.ok
-    assert "journal_seal" in result.reason
 
 
 def test_sealing_a_diverged_journal_is_refused(tmp_path: Path) -> None:
@@ -876,3 +890,222 @@ def test_absolute_paths_never_satisfy_a_workspace_relative_glob(path: str, globs
 @pytest.mark.parametrize("path", ["src/pricing/x.py", "./src/pricing/x.py", "src/pricing/nested/y.py"])
 def test_workspace_relative_paths_still_match(path: str) -> None:
     assert path_in_scope(path, ("src/pricing/**",))
+
+
+# ---------------------------------------------------------------------------
+# Seal: three states, idempotence, and isolating head coverage
+# ---------------------------------------------------------------------------
+
+
+def _rechain_journal(path: Path, *, swap_tool: str, replacement: str) -> None:
+    """Rebuild a journal from genesis with the SAME event count.
+
+    Produces a journal whose own Merkle chain verifies and whose length matches
+    the seal, so only the head hash can distinguish it from the original.
+    """
+    from bernstein.core.replay.journal import _payload_hash, compute_event_hash
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    prev = ""
+    rebuilt = []
+    for index, row in enumerate(rows):
+        if row.get("tool") == swap_tool:
+            row["tool"] = replacement
+        event_type = str(row.get("event", ""))
+        payload = {
+            k: v
+            for k, v in row.items()
+            if k not in {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"}
+        }
+        payload_hash = _payload_hash(event_type, payload)
+        event_hash = compute_event_hash(prev_hash=prev, event_type=event_type, payload_hash=payload_hash, index=index)
+        row.update({"index": index, "prev_hash": prev, "payload_hash": payload_hash, "event_hash": event_hash})
+        prev = event_hash
+        rebuilt.append(row)
+    path.write_text("\n".join(json.dumps(r) for r in rebuilt) + "\n", encoding="utf-8")
+
+
+def test_a_same_count_journal_rewrite_is_caught_by_the_head_alone(tmp_path: Path) -> None:
+    """Isolating coverage for the head comparison.
+
+    The count check cannot see this: the attacker re-chains from genesis with
+    the convicting row swapped for a benign one, so the journal self-verifies
+    and holds exactly as many events as the seal recorded. The head is the only
+    thing that differs, and it is the sole guard against the whole rewrite
+    class.
+    """
+    capsule = _approve(tmp_path)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True, seal=capsule)
+    before = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+    assert not before.conformant, "the run drifted before the rewrite"
+    count_before = len(load_events(journal.path))
+
+    _rechain_journal(journal.path, swap_tool="WebFetch", replacement="Read")
+
+    after = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    assert len(load_events(journal.path)) == count_before, "the count is preserved, so only the head can catch this"
+    assert verify_journal(journal.path).ok, "the rewritten journal verifies on its own"
+    assert not after.ok
+    assert "head" in after.reason
+
+
+def test_sealing_twice_is_safe(tmp_path: Path) -> None:
+    """A retry is not an attack.
+
+    The process that writes an attestation can die between the write and the
+    acknowledgement, so at-least-once has to be safe -- especially on an
+    append-only chain, where a duplicate could never be withdrawn.
+    """
+    capsule = _approve(tmp_path)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    chain = _chain(tmp_path)
+    first = seal_run_journal(chain=chain, sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=_RUN_ID, capsule=capsule)
+
+    for _ in range(3):
+        repeat = seal_run_journal(
+            chain=chain, sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=_RUN_ID, capsule=capsule
+        )
+        assert repeat.details["journal_head"] == first.details["journal_head"]
+
+    seals = find_journal_seals(chain=chain, task_id=_TASK_ID, run_id=_RUN_ID, capsule_hash_value=capsule_hash(capsule))
+    assert len(seals) == 1, "a repeated seal must not append a second entry"
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=chain, task_id=_TASK_ID)
+    assert result.ok, result.reason
+
+
+def test_resealing_a_changed_journal_is_refused(tmp_path: Path) -> None:
+    """Idempotence must not extend to blessing a different journal."""
+    capsule = _approve(tmp_path)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    chain = _chain(tmp_path)
+    seal_run_journal(chain=chain, sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=_RUN_ID, capsule=capsule)
+    journal.record("tool.call", tool="Read", adapter="claude")
+
+    with pytest.raises(IntentCapsuleError, match="already sealed"):
+        seal_run_journal(chain=chain, sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=_RUN_ID, capsule=capsule)
+
+
+def test_an_unrelated_later_chain_entry_does_not_expire_an_honest_run(tmp_path: Path) -> None:
+    """Only capsule-lifecycle entries may decide expiry.
+
+    Filtering on task_id alone matches 27 unrelated event types. On an
+    append-only chain, letting any of them decide expiry condemns an honest
+    sealed run permanently, with no repair path.
+    """
+    from bernstein.core.security.audit_chain import record_evidence_bundle
+
+    capsule = _approve(tmp_path, expiry_ts=int(time.time()) + 2)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
+    chain = _chain(tmp_path)
+    assert verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=chain, task_id=_TASK_ID).ok
+
+    time.sleep(2.2)
+    record_evidence_bundle(
+        chain=chain,
+        task_id=_TASK_ID,
+        bundle_hash="sha256:" + "a" * 64,
+        item_count=1,
+        gate_passed=True,
+        journal_entry_hash="sha256:" + "b" * 64,
+    )
+
+    after = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=chain, task_id=_TASK_ID)
+
+    assert after.ok, f"an unrelated entry must not condemn the run: {after.reason}"
+
+
+def test_the_run_writer_seals_every_capsule_bound_to_the_journal(tmp_path: Path) -> None:
+    """The production entry point, driven the way the orchestrator drives it."""
+    capsule = _approve(tmp_path)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    chain = _chain(tmp_path)
+    assert verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=chain, task_id=_TASK_ID).seal_state == SEAL_UNSEALED
+
+    sealed = seal_capsules_bound_to_run(chain=chain, sdd_dir=_sdd(tmp_path), run_id=_RUN_ID)
+
+    assert len(sealed) == 1
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=chain, task_id=_TASK_ID)
+    assert result.ok, result.reason
+    assert result.seal_state == SEAL_SEALED
+
+
+def test_the_run_writer_is_idempotent(tmp_path: Path) -> None:
+    capsule = _approve(tmp_path)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    chain = _chain(tmp_path)
+
+    seal_capsules_bound_to_run(chain=chain, sdd_dir=_sdd(tmp_path), run_id=_RUN_ID)
+    seal_capsules_bound_to_run(chain=chain, sdd_dir=_sdd(tmp_path), run_id=_RUN_ID)
+
+    seals = find_journal_seals(chain=chain, task_id=_TASK_ID, run_id=_RUN_ID, capsule_hash_value=capsule_hash(capsule))
+    assert len(seals) == 1
+    assert verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=chain, task_id=_TASK_ID).ok
+
+
+def test_drift_is_reported_on_an_unsealed_run(tmp_path: Path) -> None:
+    """Deleting rows can only hide drift, never invent it.
+
+    So a divergence found in an unsealed journal is real evidence and must be
+    reported rather than withheld pending a seal.
+    """
+    capsule = _approve(tmp_path)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True)
+
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    assert result.seal_state == SEAL_UNSEALED
+    assert not result.conformant
+    assert result.verdict is not None
+    assert [d.action_class for d in result.verdict.divergences] == ["web.fetch"]
+    assert "drift" in result.reason
+
+
+def test_a_live_drift_receipt_can_be_signed_before_the_run_seals(tmp_path: Path) -> None:
+    """Blocking-mode drift has to be signable in the window it exists for."""
+    capsule = _approve(tmp_path)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True)
+    verdict = evaluate_conformance(load_events(journal.path), capsule)
+
+    receipt = _escalate(tmp_path, capsule, verdict)
+
+    assert receipt.extra_binding is not None
+    assert receipt.extra_binding["seal_state"] == SEAL_UNSEALED
+    assert [d["action_class"] for d in receipt.extra_binding["divergent_events"]] == ["web.fetch"]
+
+
+# ---------------------------------------------------------------------------
+# Neither worker-controlled field may silence the other
+# ---------------------------------------------------------------------------
+
+
+def test_an_honestly_stamped_dangerous_class_is_not_silenced_by_the_tool_map() -> None:
+    """The inverse of relabelling: a benign tool name must not exonerate."""
+    capsule = _capsule(allowed_action_classes=["fs.read", "fs.write"])
+
+    verdict = evaluate_conformance([{"event": "tool.call", "tool": "Read", "action_class": "shell.exec"}], capsule)
+
+    assert not verdict.conformant
+    assert verdict.divergences[0].action_class == "shell.exec"
+
+
+def test_a_stamped_egress_class_is_not_silenced_by_a_benign_tool_name() -> None:
+    capsule = _capsule(allowed_action_classes=["fs.read", "web.fetch"], egress_classes=[])
+
+    verdict = evaluate_conformance([{"event": "tool.call", "tool": "Read", "action_class": "web.fetch"}], capsule)
+
+    assert not verdict.conformant
+    assert verdict.divergences[0].reason == "egress_not_permitted"
+
+
+def test_claimed_action_classes_reports_both_claims_deterministically() -> None:
+    assert claimed_action_classes({"tool": "Bash", "action_class": "git.commit"}) == ("shell.exec", "git.commit")
+    assert claimed_action_classes({"tool": "Read"}) == ("fs.read",)
+    assert claimed_action_classes({"tool": "Read", "action_class": "fs.read"}) == ("fs.read",)
+    assert claimed_action_classes({"event": "task.tick"}) == ()
+
+
+def test_an_event_whose_claims_all_pass_stays_conformant() -> None:
+    capsule = _capsule(allowed_action_classes=["fs.read"])
+
+    assert evaluate_conformance([{"event": "tool.call", "tool": "Read", "action_class": "fs.read"}], capsule).conformant

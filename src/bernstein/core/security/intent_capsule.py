@@ -60,6 +60,21 @@ if TYPE_CHECKING:
 #: wire-format change; canonicalisation and hashing key off it.
 INTENT_CAPSULE_VERSION = 1
 
+#: A run journal whose end is committed to the audit chain: truncation and
+#: rewriting are both detectable, so a conformant verdict covers the whole run.
+SEAL_SEALED = "sealed"
+
+#: A run journal with no seal yet -- the ordinary state of a run still in
+#: progress. Conformance is still computed and drift is still reported, because
+#: deleting rows can only *hide* drift, never manufacture it. What cannot be
+#: attested is completeness: a clean verdict here means "no drift in the rows
+#: that exist", not "no drift happened".
+SEAL_UNSEALED = "unsealed"
+
+#: A seal exists but disagrees with the journal (or two seals disagree with each
+#: other). Unlike the other two this is never benign.
+SEAL_MISMATCH = "mismatch"
+
 #: Journal event type recorded when a capsule is bound to a run. Every step
 #: after this anchor is attributable to the one approved capsule.
 CAPSULE_BOUND_EVENT = "intent.capsule_bound"
@@ -188,6 +203,40 @@ def normalise_tool_name(tool: str) -> str:
     worker claimed.
     """
     return " ".join(tool.split()).casefold()
+
+
+def claimed_action_classes(event: dict[str, Any]) -> tuple[str, ...]:
+    """Return every action class an event claims, most-authoritative first.
+
+    Both the ``tool`` name and the stamped ``action_class`` are written by the
+    same worker, so preferring either one alone just moves which field is
+    authoritative rather than removing worker control. When they disagree the
+    honest reading is that we do not know which is true, so conformance is
+    evaluated against **both**: whichever is disallowed produces the divergence.
+
+    That closes the relabelling hole in both directions. A ``Bash`` call stamped
+    ``git.commit`` is still shell execution, and a ``Read`` call that honestly
+    stamps ``shell.exec`` is no longer silenced by the reviewed map.
+
+    Order is deterministic (mapped class first, stamped second, event type last)
+    so ``verdict_hash`` is stable.
+    """
+    classes: list[str] = []
+    tool = event.get("tool")
+    if isinstance(tool, str) and tool.strip():
+        mapped = _TOOL_TO_ACTION_CLASS.get(normalise_tool_name(tool))
+        if mapped:
+            classes.append(mapped)
+    stamped = event.get("action_class")
+    if isinstance(stamped, str) and stamped and stamped not in classes:
+        classes.append(stamped)
+    if not classes:
+        event_type = event.get("event")
+        if isinstance(event_type, str) and event_type:
+            mapped_event = _EVENT_TO_ACTION_CLASS.get(event_type)
+            if mapped_event:
+                classes.append(mapped_event)
+    return tuple(classes)
 
 
 def _is_action_attempt(event: dict[str, Any]) -> bool:
@@ -818,25 +867,38 @@ def evaluate_conformance(
 
     divergences: list[Divergence] = []
     for index, event in enumerate(events):
-        action_class = classify_journal_event(event)
+        classes = claimed_action_classes(event)
 
-        if action_class is None:
+        if not classes:
             if active.allow_unclassified or not _is_action_attempt(event):
                 continue
             reason = "unclassified_event"
             action_class = ""
         else:
-            reason = _divergence_reason(
-                event,
-                action_class,
-                capsule,
-                policy=active,
-                allowed=allowed,
-                permitted_adapters=permitted_adapters,
-                egress_ok=egress_ok,
+            # Every class the event claims must clear the capsule: a worker
+            # cannot exonerate one claim by making a second, quieter one.
+            offender = next(
+                (
+                    (candidate, why)
+                    for candidate in classes
+                    for why in (
+                        _divergence_reason(
+                            event,
+                            candidate,
+                            capsule,
+                            policy=active,
+                            allowed=allowed,
+                            permitted_adapters=permitted_adapters,
+                            egress_ok=egress_ok,
+                        ),
+                    )
+                    if why is not None
+                ),
+                None,
             )
-            if reason is None:
+            if offender is None:
                 continue
+            action_class, reason = offender
 
         divergences.append(
             Divergence(
@@ -864,6 +926,26 @@ def evaluate_conformance(
     )
 
 
+def _capsule_lifecycle_entries(chain: AuditChainStore, task_id: str) -> list[AuditEvent]:
+    """Return the chain entries that evidence *this capsule* being acted on.
+
+    Deliberately narrow. Filtering on ``task_id`` alone matches 27 unrelated
+    ``record_*`` event types -- evidence bundles, task suspend/resume, review
+    board actions -- none of which mean the capsule was in use. Because the
+    chain is append-only, letting any of those decide expiry means one ordinary
+    later entry condemns an honest run forever, with no repair path.
+    """
+    from bernstein.core.security.audit_chain import (
+        EVENT_INTENT_CAPSULE,
+        EVENT_INTENT_DRIFT,
+        EVENT_INTENT_JOURNAL_SEAL,
+    )
+
+    wanted = (EVENT_INTENT_CAPSULE, EVENT_INTENT_JOURNAL_SEAL, EVENT_INTENT_DRIFT)
+    entries = [e for t in wanted for e in chain.query(event_type=t) if e.details.get("task_id") == task_id]
+    return sorted(entries, key=lambda e: str(e.timestamp))
+
+
 def chain_expiry_violation(entries: list[AuditEvent], capsule: IntentCapsule) -> str:
     """Return the first authenticated chain timestamp past ``expiry_ts``, or "".
 
@@ -879,16 +961,16 @@ def chain_expiry_violation(entries: list[AuditEvent], capsule: IntentCapsule) ->
     step. Making per-step expiry authenticated would require a chained step
     clock inside the hashed payload.
 
-    Pass **every** task-scoped chain entry, not only the ``intent.capsule``
-    approval entries. An approval is by construction at or before the expiry it
-    declares, so scanning approvals alone can only ever fire for a capsule
-    minted already-expired -- the control would sit on the audit surface looking
-    satisfied while enforcing nothing. It is the later entries, above all the
-    journal seal written when the run finishes, that evidence a capsule still
-    being acted on past its expiry.
+    Pass the capsule *lifecycle* entries from :func:`_capsule_lifecycle_entries`.
+    Approval entries alone cannot enforce anything -- an approval is by
+    construction at or before the expiry it declares -- so the signal is the
+    journal seal written when the run finishes, which evidences the capsule
+    still being acted on. Passing every task-scoped entry instead is the failure
+    in the other direction: unrelated later activity would condemn an honest run
+    permanently on an append-only chain.
 
     Args:
-        entries: Every authenticated chain entry relating to the capsule's task.
+        entries: Capsule-lifecycle chain entries for the task.
         capsule: The capsule whose ``expiry_ts`` governs.
 
     Returns:
@@ -1007,6 +1089,25 @@ def approve_and_capsule(
     return capsule, event
 
 
+def find_journal_seals(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    run_id: str,
+    capsule_hash_value: str,
+) -> list[AuditEvent]:
+    """Return every ``intent.journal_seal`` entry for this run and capsule."""
+    from bernstein.core.security.audit_chain import EVENT_INTENT_JOURNAL_SEAL
+
+    return [
+        e
+        for e in chain.query(event_type=EVENT_INTENT_JOURNAL_SEAL)
+        if e.details.get("task_id") == task_id
+        and str(e.details.get("run_id", "")) == run_id
+        and str(e.details.get("capsule_hash", "")) == capsule_hash_value
+    ]
+
+
 def seal_run_journal(
     *,
     chain: AuditChainStore,
@@ -1017,16 +1118,22 @@ def seal_run_journal(
 ) -> AuditEvent:
     """Commit a finished run journal's head and length to the audit chain (#2649).
 
-    Call once the capsule-governed run is over. Until a run is sealed it cannot
-    be verified: the journal's Merkle chain recomputes from genesis, so any
-    prefix of it verifies as a valid journal on its own, and a worker that
-    drifted can simply delete its trailing rows. Sealing records the head hash
-    and the event count into signed state, giving the verifier something to
-    compare the surviving journal against.
+    Called when a capsule-governed run ends. The journal's Merkle chain
+    recomputes from genesis, so any prefix of it verifies as a valid journal on
+    its own and a worker that drifted could delete its trailing rows. Sealing
+    records the head hash and the event count, giving the verifier an
+    independent commitment to compare the surviving journal against.
+
+    **Idempotent.** Sealing the same journal twice returns the existing entry
+    and writes nothing. A retry is not an attack, and the process that writes an
+    attestation can die between the write and the acknowledgement, so the
+    at-least-once shape has to be safe -- especially on an append-only chain,
+    where a duplicate could never be withdrawn.
 
     Raises:
-        IntentCapsuleError: If the journal is missing or its chain diverges,
-            since sealing a journal that does not verify would launder it.
+        IntentCapsuleError: If the journal is missing or its chain diverges, or
+            if a seal already exists that disagrees with the journal now on
+            disk (the journal changed after it was sealed).
     """
     from bernstein.core.replay.journal import load_events, verify_journal
     from bernstein.core.security.audit_chain import record_intent_journal_seal
@@ -1040,14 +1147,59 @@ def seal_run_journal(
         raise IntentCapsuleError(f"refusing to seal a journal whose chain diverges ({detail})")
 
     events = load_events(journal_path)
+    head = journal_head(events)
+    count = len(events)
+    ch = capsule_hash(capsule)
+
+    existing = find_journal_seals(chain=chain, task_id=task_id, run_id=run_id, capsule_hash_value=ch)
+    for entry in existing:
+        if str(entry.details.get("journal_head", "")) == head and entry.details.get("event_count") == count:
+            return entry
+    if existing:
+        raise IntentCapsuleError(
+            f"run {run_id!r} is already sealed at a different journal state "
+            f"(sealed head {existing[-1].details.get('journal_head', '')!r} / "
+            f"{existing[-1].details.get('event_count')!r} events, on-disk head {head!r} / {count} events)"
+        )
+
     return record_intent_journal_seal(
         chain=chain,
         task_id=task_id,
         run_id=run_id,
-        capsule_hash=capsule_hash(capsule),
-        journal_head=journal_head(events),
-        event_count=len(events),
+        capsule_hash=ch,
+        journal_head=head,
+        event_count=count,
     )
+
+
+def seal_capsules_bound_to_run(*, chain: AuditChainStore, sdd_dir: Path, run_id: str) -> list[AuditEvent]:
+    """Seal every capsule the run's journal is bound to (the production entry point).
+
+    The bindings are read from the journal's own ``intent.capsule_bound``
+    anchors, so a run seals exactly the capsules it actually declared and needs
+    no separate bookkeeping. Idempotent, since :func:`seal_run_journal` is.
+    """
+    from bernstein.core.replay.journal import load_events
+
+    journal_path = _run_journal_path(sdd_dir, run_id)
+    if not journal_path.exists():
+        return []
+
+    seen: list[str] = []
+    for event in load_events(journal_path):
+        if str(event.get("event", "")) != CAPSULE_BOUND_EVENT:
+            continue
+        task_id = str(event.get("task_id", ""))
+        if task_id and task_id not in seen:
+            seen.append(task_id)
+
+    sealed: list[AuditEvent] = []
+    for task_id in seen:
+        capsule = read_capsule(sdd_dir, task_id)
+        if capsule is None:
+            continue
+        sealed.append(seal_run_journal(chain=chain, sdd_dir=sdd_dir, task_id=task_id, run_id=run_id, capsule=capsule))
+    return sealed
 
 
 def journal_head(events: list[dict[str, Any]]) -> str:
@@ -1129,12 +1281,18 @@ def assemble_intent_drift_escalation(
     A signature is what turns a receipt into evidence, so every input it commits
     to has to come from chained state.
 
+    Works on an in-flight run: a drift receipt must be signable the moment the
+    drift happens, not only after the run seals, or ``DriftPolicy(mode="block")``
+    could never fire in the window it exists for. The receipt records the seal
+    state it was cut under.
+
     Raises:
         IntentCapsuleError: If the capsule is not the chain-approved one for its
             task, the run_id is not the signed one, the journal is missing or
             its chain diverges, the capsule-bound anchor is absent or ambiguous,
-            the run is actually conformant, or the supplied verdict does not
-            match the recomputed one.
+            a seal exists that disagrees with the journal, the run is actually
+            conformant, or the supplied verdict does not match the recomputed
+            one.
     """
     from bernstein.core.orchestration.escalation import (
         DEFAULT_ESCALATION_WINDOW,
@@ -1166,6 +1324,11 @@ def assemble_intent_drift_escalation(
         "capsule_hash": capsule_hash(capsule),
         "verdict_hash": recomputed.verdict_hash,
         "divergent_events": [d.to_dict() for d in recomputed.divergences],
+        # Named so a reader knows the attestation level of the journal the
+        # receipt was cut from. Live drift on an unsealed run is still real
+        # drift; what an unsealed receipt cannot claim is that the run held
+        # nothing else.
+        "seal_state": binding.seal_state,
     }
     return assemble_escalation_receipt(
         sdd_dir=sdd_dir,
@@ -1202,6 +1365,10 @@ class IntentVerifyResult:
     verdict: ConformanceVerdict | None = None
     capsule: IntentCapsule | None = None
     run_id: str = ""
+    #: One of :data:`SEAL_SEALED`, :data:`SEAL_UNSEALED`, :data:`SEAL_MISMATCH`.
+    #: ``ok`` is True only when the run is sealed *and* conformant: an unsealed
+    #: run can be reported conformant-so-far, never attested.
+    seal_state: str = SEAL_UNSEALED
 
 
 @dataclass(frozen=True)
@@ -1211,6 +1378,7 @@ class _ChainedBinding:
     capsule: IntentCapsule
     run_id: str
     events: list[dict[str, Any]]
+    seal_state: str
 
 
 def _resolve_chained_binding(
@@ -1242,10 +1410,7 @@ def _resolve_chained_binding(
         when it could be resolved and the caller's claim otherwise.
     """
     from bernstein.core.replay.journal import load_events, verify_journal
-    from bernstein.core.security.audit_chain import (
-        EVENT_INTENT_CAPSULE,
-        EVENT_INTENT_JOURNAL_SEAL,
-    )
+    from bernstein.core.security.audit_chain import EVENT_INTENT_CAPSULE
 
     claimed = expected_run_id or sidecar_run_id
 
@@ -1284,8 +1449,8 @@ def _resolve_chained_binding(
             run_id,
         )
 
-    task_entries = [e for e in chain.query() if e.details.get("task_id") == task_id]
-    expired_at = chain_expiry_violation(task_entries, capsule)
+    lifecycle = _capsule_lifecycle_entries(chain, task_id)
+    expired_at = chain_expiry_violation(lifecycle, capsule)
     if expired_at:
         return None, f"capsule expired at {capsule.expiry_ts}; audit chain records activity at {expired_at}", run_id
 
@@ -1319,42 +1484,46 @@ def _resolve_chained_binding(
     # The journal's Merkle chain recomputes from genesis, so every prefix of it
     # verifies on its own: without an independent commitment to the END, a
     # worker deletes the rows that convict it and the remainder looks clean.
-    seals = [
-        e
-        for e in chain.query(event_type=EVENT_INTENT_JOURNAL_SEAL)
-        if e.details.get("task_id") == task_id
-        and str(e.details.get("run_id", "")) == run_id
-        and str(e.details.get("capsule_hash", "")) == recomputed
-    ]
-    if len(seals) != 1:
-        return (
-            None,
-            f"run journal carries {len(seals)} matching {EVENT_INTENT_JOURNAL_SEAL} entries, expected exactly 1; "
-            f"an unsealed journal has no committed length and truncation would be undetectable",
-            run_id,
-        )
-    seal = seals[-1]
-    sealed_count = seal.details.get("event_count")
-    sealed_head = str(seal.details.get("journal_head", ""))
-    actual_head = journal_head(events)
-    if not isinstance(sealed_count, int) or isinstance(sealed_count, bool):
-        return None, "journal seal records no usable event_count; cannot bound the journal", run_id
-    if len(events) != sealed_count:
-        return (
-            None,
-            f"run journal holds {len(events)} events but the chain sealed {sealed_count}; "
-            f"steps were added or removed after the run",
-            run_id,
-        )
-    if actual_head != sealed_head:
-        return (
-            None,
-            f"run journal head {actual_head or '(empty)'} does not match the chain-sealed head "
-            f"{sealed_head or '(empty)'}; the journal was rewritten after the run",
-            run_id,
-        )
+    # A missing seal is therefore a *coverage* statement, not a failure -- an
+    # in-progress run has not sealed yet, and refusing here would suppress the
+    # drift the caller came to find.
+    seals = find_journal_seals(chain=chain, task_id=task_id, run_id=run_id, capsule_hash_value=recomputed)
+    seal_state = SEAL_UNSEALED
+    if seals:
+        actual_head = journal_head(events)
+        agreed = {(str(e.details.get("journal_head", "")), e.details.get("event_count")) for e in seals}
+        if len(agreed) != 1:
+            return (
+                None,
+                f"run {run_id!r} carries {len(agreed)} disagreeing journal seals; the chain cannot say "
+                f"which journal state was attested",
+                run_id,
+            )
+        sealed_head, sealed_count = next(iter(agreed))
+        if not isinstance(sealed_count, int) or isinstance(sealed_count, bool):
+            return None, "journal seal records no usable event_count; cannot bound the journal", run_id
+        # Subsumed by the head comparison below -- the head is chained over
+        # every event, so no count change can leave it intact -- and kept only
+        # because "3 events, sealed 4" is a far clearer diagnostic than two
+        # opaque hashes. It is not independent defence, and no test can isolate
+        # it; the head check is the real guard.
+        if len(events) != sealed_count:
+            return (
+                None,
+                f"run journal holds {len(events)} events but the chain sealed {sealed_count}; "
+                f"steps were added or removed after the run",
+                run_id,
+            )
+        if actual_head != sealed_head:
+            return (
+                None,
+                f"run journal head {actual_head or '(empty)'} does not match the chain-sealed head "
+                f"{sealed_head or '(empty)'}; the journal was rewritten with the same number of events",
+                run_id,
+            )
+        seal_state = SEAL_SEALED
 
-    return _ChainedBinding(capsule=capsule, run_id=run_id, events=events), "", run_id
+    return _ChainedBinding(capsule=capsule, run_id=run_id, events=events, seal_state=seal_state), "", run_id
 
 
 def verify_intent_conformance(
@@ -1407,27 +1576,50 @@ def verify_intent_conformance(
             reason=reason,
             capsule=capsule,
             run_id=resolved_run_id,
+            seal_state=SEAL_MISMATCH,
         )
 
     run_id = binding.run_id
     verdict = evaluate_conformance(binding.events, capsule, policy=policy)
-    if verdict.conformant:
+
+    # Drift is reported whatever the seal state. Removing rows can only hide
+    # drift, never invent it, so a divergence found in an unsealed journal is
+    # real evidence and must not be withheld pending a seal.
+    if not verdict.conformant:
+        classes = ", ".join(sorted({d.action_class for d in verdict.divergences}))
         return IntentVerifyResult(
-            ok=True,
-            conformant=True,
-            reason="",
+            ok=False,
+            conformant=False,
+            reason=f"drift: {len(verdict.divergences)} action(s) outside the capsule ({classes})",
             verdict=verdict,
             capsule=capsule,
             run_id=run_id,
+            seal_state=binding.seal_state,
         )
-    classes = ", ".join(sorted({d.action_class for d in verdict.divergences}))
+
+    if binding.seal_state != SEAL_SEALED:
+        return IntentVerifyResult(
+            ok=False,
+            conformant=True,
+            reason=(
+                f"no drift in the {len(binding.events)} recorded step(s), but run {run_id!r} is unsealed: "
+                f"its end is not committed to the audit chain, so a truncated journal would look identical. "
+                f"Completeness is not attested."
+            ),
+            verdict=verdict,
+            capsule=capsule,
+            run_id=run_id,
+            seal_state=binding.seal_state,
+        )
+
     return IntentVerifyResult(
-        ok=False,
-        conformant=False,
-        reason=f"drift: {len(verdict.divergences)} action(s) outside the capsule ({classes})",
+        ok=True,
+        conformant=True,
+        reason="",
         verdict=verdict,
         capsule=capsule,
         run_id=run_id,
+        seal_state=SEAL_SEALED,
     )
 
 
@@ -1435,6 +1627,9 @@ __all__ = [
     "CAPSULE_BOUND_EVENT",
     "INTENT_CAPSULE_VERSION",
     "LLM_FREE",
+    "SEAL_MISMATCH",
+    "SEAL_SEALED",
+    "SEAL_UNSEALED",
     "ConformanceVerdict",
     "Divergence",
     "DriftPolicy",
@@ -1451,9 +1646,11 @@ __all__ = [
     "capsule_path",
     "capsule_spawn_binding",
     "chain_expiry_violation",
+    "claimed_action_classes",
     "classify_journal_event",
     "compile_capsule",
     "evaluate_conformance",
+    "find_journal_seals",
     "iter_module_import_names",
     "journal_head",
     "normalise_tool_name",
@@ -1462,6 +1659,7 @@ __all__ = [
     "read_capsule",
     "read_capsule_binding",
     "record_intent_drift",
+    "seal_capsules_bound_to_run",
     "seal_run_journal",
     "verify_intent_conformance",
     "write_capsule",

@@ -2528,14 +2528,44 @@ class Orchestrator:
         try:
             from bernstein.core.security.audit import load_or_create_audit_key
 
+            hmac_key = load_or_create_audit_key()
             seal_journal_into_spine(
                 self._recorder,
                 lineage_root=self._workdir / ".sdd" / "lineage",
-                hmac_key=load_or_create_audit_key(),
+                hmac_key=hmac_key,
                 actor="orchestrator",
             )
         except Exception as exc:
             logger.warning("Failed to seal journal head into lineage spine: %s", sanitize_log(str(exc)))
+        else:
+            self._seal_intent_capsules(hmac_key)
+
+    def _seal_intent_capsules(self, hmac_key: bytes) -> None:
+        """Commit the finished journal's end for every capsule bound to this run (#2649).
+
+        Offline verification cannot otherwise tell a truncated journal from a
+        short one: the journal chain recomputes from genesis, so any prefix
+        verifies on its own. Sealing here -- once the run is over and the
+        journal is final -- is what makes a later ``bernstein intent verify``
+        able to attest completeness rather than only "no drift in what remains".
+
+        Idempotent, and failures are logged rather than raised: sealing is an
+        attestation aid and must not fail a run that already completed.
+        """
+        try:
+            from bernstein.core.security.audit_chain import AuditChainStore
+            from bernstein.core.security.intent_capsule import seal_capsules_bound_to_run
+
+            sdd_dir = self._workdir / ".sdd"
+            sealed = seal_capsules_bound_to_run(
+                chain=AuditChainStore(sdd_dir / "audit", key=hmac_key),
+                sdd_dir=sdd_dir,
+                run_id=self._run_id,
+            )
+            if sealed:
+                logger.info("Sealed %d intent capsule(s) for run %s", len(sealed), self._run_id)
+        except Exception as exc:
+            logger.warning("Failed to seal intent capsules: %s", sanitize_log(str(exc)))
 
     def _has_active_agents(self) -> bool:
         """Return True if any agents are still alive (not dead)."""

@@ -50,6 +50,24 @@ def _read_only_chain(workdir: Path):
     return AuditChainStore(_sdd_dir(workdir) / "audit", key=load_audit_key())
 
 
+def _exit_code(result) -> int:
+    """Map a verify result onto a distinct exit code per state.
+
+    A conformant-but-unsealed run gets its own code rather than sharing one
+    with either success or drift: an operator has to be able to tell "clean and
+    attested" from "clean so far, completeness unknown" from "drifted".
+    """
+    from bernstein.core.security.intent_capsule import SEAL_SEALED
+
+    if result.ok:
+        return 0
+    if result.capsule is None:
+        return 1
+    if result.conformant and result.seal_state != SEAL_SEALED:
+        return 4
+    return 2
+
+
 @click.group("intent")
 def intent_group() -> None:
     """Show and verify intent capsules and their drift conformance.
@@ -138,8 +156,11 @@ def intent_verify_cmd(task_id: str, workdir: str, as_json: bool) -> None:
     Checks the capsule hash against the audit chain, resolves the run from the
     signed audit entry, walks the run journal's Merkle chain, and maps observed
     action classes against the capsule. Read-only: it never writes to the chain
-    and never creates an audit key. Exit codes: 0 = conformant, 1 = no capsule,
-    2 = drift or tamper, 3 = cannot verify (no audit key).
+    and never creates an audit key.
+
+    Exit codes: 0 = sealed and conformant, 1 = no capsule, 2 = drift or tamper,
+    3 = cannot verify (no audit key), 4 = unsealed (no drift found, but the run
+    has not committed its end so completeness is not attested).
     """
     from bernstein.core.security.audit import AuditKeyMissingError
     from bernstein.core.security.intent_capsule import (
@@ -168,21 +189,18 @@ def intent_verify_cmd(task_id: str, workdir: str, as_json: bool) -> None:
         payload = {
             "ok": result.ok,
             "conformant": result.conformant,
+            "seal_state": result.seal_state,
             "reason": result.reason,
             "run_id": result.run_id,
             "verdict": project_conformance_verdict(result.verdict) if result.verdict else None,
         }
         console.print_json(json.dumps(payload))
-        if result.ok:
-            raise SystemExit(0)
-        if result.capsule is None:
-            raise SystemExit(1)
-        raise SystemExit(2)
+        raise SystemExit(_exit_code(result))
 
     console.print()
     console.print(f"[bold]Intent verify[/bold] task={task_id}")
     if result.ok:
-        console.print("[green]OK[/green] -- the run stayed inside the approved capsule.")
+        console.print("[green]OK[/green] -- the run stayed inside the approved capsule (sealed).")
         raise SystemExit(0)
     if result.capsule is None:
         console.print(f"[yellow]NO CAPSULE[/yellow] -- {result.reason}")
@@ -192,9 +210,12 @@ def intent_verify_cmd(task_id: str, workdir: str, as_json: bool) -> None:
         console.print(f"[red]DRIFT[/red] -- {result.reason}")
         console.print(f"  divergent action classes: {classes}")
         console.print(f"  verdict_hash: {result.verdict.verdict_hash}")
+        console.print(f"  seal state: {result.seal_state}")
+    elif result.conformant:
+        console.print(f"[yellow]UNSEALED[/yellow] -- {result.reason}")
     else:
         console.print(f"[red]MISMATCH[/red] -- {result.reason}")
-    raise SystemExit(2)
+    raise SystemExit(_exit_code(result))
 
 
 __all__ = ["intent_group"]
