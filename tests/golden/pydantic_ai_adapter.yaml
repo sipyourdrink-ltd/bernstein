@@ -1,0 +1,16 @@
+# Golden transcript for the Pydantic AI adapter.
+#
+# The adapter class is generated from a declarative capability profile
+# rather than hand-written (see
+# src/bernstein/adapters/capability_profile.py), so this transcript is
+# also the proof that a profile-built adapter clears the same
+# golden-transcript replay bar as a hand-written one.
+name: pydantic_ai_adapter_spawn
+adapter_class: bernstein.adapters.capability_profile.PydanticAiProfileAdapter
+steps:
+  - prompt: "implement feature X"
+    model: "openai:gpt-5"
+    expected_pid: 5678
+  - prompt: "run the test suite"
+    model: "anthropic:claude-sonnet-4-6"
+    expected_pid: 4321
