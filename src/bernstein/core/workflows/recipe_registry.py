@@ -35,6 +35,7 @@ import hashlib
 import json
 import logging
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -517,8 +518,9 @@ class RecipeRegistry:
         # improvising a substitute whose return value would not evidence a
         # submission.
         self._dispatch = dispatch
-        # Depth of nested write_lock() acquisitions on this instance.
-        self._lock_depth = 0
+        # Nested write_lock() depth, per thread (see write_lock).
+        self._lock_state = threading.local()
+        self._thread_lock = threading.Lock()
 
     # -- write serialisation ------------------------------------------------
 
@@ -547,22 +549,27 @@ class RecipeRegistry:
         Not re-entrant *across* instances or processes, which is the point:
         two registries over the same ``.sdd`` still serialise.
         """
-        if self._lock_depth > 0:
-            self._lock_depth += 1
+        # Depth is per thread. Instance state would let a second thread see
+        # depth>0 while the first holds the flock, skip acquisition entirely,
+        # and run unserialised - silently losing the exclusion the lock exists
+        # to provide. The threading.Lock serialises threads of this process;
+        # the flock serialises processes.
+        if getattr(self._lock_state, "depth", 0) > 0:
+            self._lock_state.depth += 1
             try:
                 yield
             finally:
-                self._lock_depth -= 1
+                self._lock_state.depth -= 1
             return
 
         from bernstein.core.persistence.file_locks import cross_process_lock
 
-        with cross_process_lock(self._lock_path):
-            self._lock_depth = 1
+        with self._thread_lock, cross_process_lock(self._lock_path):
+            self._lock_state.depth = 1
             try:
                 yield
             finally:
-                self._lock_depth = 0
+                self._lock_state.depth = 0
 
     # -- chain access -------------------------------------------------------
 
@@ -641,7 +648,7 @@ class RecipeRegistry:
         # Order the name's receipts by their per-name lineage linkage: each
         # receipt names the hmac of its predecessor, so a linked list rebuild
         # is order-independent of how query() grouped them.
-        ordered = _order_by_lineage(events, name)
+        ordered = _order_by_lineage(events, name, self._lineage_resolutions(name))
         state = _NameState()
         for ev in ordered:
             details = ev["details"]
@@ -657,6 +664,91 @@ class RecipeRegistry:
             state.last_receipt_hmac = str(ev["hmac"])
             state.receipts.append(ev)
         return state
+
+    def _lineage_resolutions(self, name: str) -> dict[str, str]:
+        """Return ``predecessor -> chosen successor`` from resolution receipts.
+
+        The latest resolution for a predecessor wins, so a mistaken repair is
+        corrected by another repair rather than by editing the chain.
+        """
+        from bernstein.core.security.audit_chain import EVENT_RECIPE_LINEAGE_RESOLVE
+
+        out: dict[str, str] = {}
+        for ev in self._get_chain().query(event_type=EVENT_RECIPE_LINEAGE_RESOLVE):
+            details = dict(ev.details)
+            if str(details.get("name", "")) != name:
+                continue
+            out[str(details.get("predecessor", ""))] = str(details.get("chosen_receipt", ""))
+        return out
+
+    def lineage_forks(self, name: str) -> dict[str, list[dict[str, Any]]]:
+        """Return unresolved ``predecessor -> competing receipts`` for *name*.
+
+        The inspection half of the recovery path: an operator has to see the
+        competing branches before choosing one, and ``history`` cannot show
+        them because the projection it feeds fails closed on the fork.
+        """
+        events = [ev for ev in self._lifecycle_events() if str(ev["details"].get("name", "")) == name]
+        by_prev: dict[str, list[dict[str, Any]]] = {}
+        for ev in events:
+            by_prev.setdefault(str(ev["details"].get("prev_receipt_digest", "")), []).append(ev)
+        resolved = self._lineage_resolutions(name)
+        return {
+            prev: evs
+            for prev, evs in by_prev.items()
+            if len(evs) > 1 and resolved.get(prev, "") not in {str(e["hmac"]) for e in evs}
+        }
+
+    def repair_lineage(self, name: str, chosen_receipt: str, *, actor: str = "operator") -> str:
+        """Resolve a forked lineage by naming the successor to follow.
+
+        Recovery, not repair in the destructive sense: nothing is deleted, the
+        losing branch stays on the chain, and the decision is itself a
+        receipt. Without this a fork produced by an ordinary concurrent write
+        would leave the name permanently unusable, since every operation
+        projects the lineage first and an append-only chain cannot be edited.
+
+        Args:
+            name: Recipe name with a forked lineage.
+            chosen_receipt: Full or 16-char-prefixed hmac of the successor to
+                follow.
+            actor: Operator performing the resolution.
+
+        Returns:
+            The full hmac of the chosen receipt.
+
+        Raises:
+            RecipeRegistryError: When the name has no unresolved fork, or the
+                chosen receipt is not one of the competing successors.
+        """
+        with self.write_lock():
+            forks = self.lineage_forks(name)
+            if not forks:
+                raise RecipeRegistryError(f"recipe {name!r} has no unresolved definition-lineage fork")
+            wanted = chosen_receipt.strip()
+            for predecessor, candidates in sorted(forks.items()):
+                for candidate in candidates:
+                    hmac = str(candidate["hmac"])
+                    if hmac == wanted or hmac.startswith(wanted):
+                        from bernstein.core.security.audit_chain import record_recipe_lineage_resolve
+
+                        record_recipe_lineage_resolve(
+                            chain=self._get_chain(),
+                            name=name,
+                            predecessor=predecessor,
+                            chosen_receipt=hmac,
+                            superseded_receipts=tuple(
+                                str(other["hmac"]) for other in candidates if str(other["hmac"]) != hmac
+                            ),
+                            actor=actor,
+                        )
+                        return hmac
+            available = ", ".join(
+                sorted(str(c["hmac"])[:16] for candidates in forks.values() for c in candidates),
+            )
+            raise RecipeRegistryError(
+                f"{chosen_receipt!r} is not a competing successor for {name!r}; candidates: {available}",
+            )
 
     def live_hash(self, name: str) -> str | None:
         """Return the live recipe hash for *name*, or None if never registered."""
@@ -831,6 +923,10 @@ class RecipeRegistry:
                 target hash is absent from the name's own lineage, or when
                 its canonical bytes are missing from the blob store.
         """
+        with self.write_lock():
+            return self._rollback_locked(name, target_hash, actor=actor)
+
+    def _rollback_locked(self, name: str, target_hash: str, *, actor: str) -> str:
         state = self._project_name(name)
         if not state.live_hash:
             raise RecipeRegistryError(f"recipe {name!r} is not registered")
@@ -863,6 +959,14 @@ class RecipeRegistry:
         self._set_pause(name, paused=False, actor=actor)
 
     def _set_pause(self, name: str, *, paused: bool, actor: str) -> None:
+        # Under the same lock register() takes. Reading the lineage tail and
+        # appending against it must be one step: interleaving a concurrent
+        # write between them forks the lineage, and a fork costs the operator
+        # a manual repair.
+        with self.write_lock():
+            self._set_pause_locked(name, paused=paused, actor=actor)
+
+    def _set_pause_locked(self, name: str, *, paused: bool, actor: str) -> None:
         state = self._project_name(name)
         if not state.live_hash:
             raise RecipeRegistryError(f"recipe {name!r} is not registered")
@@ -1180,7 +1284,11 @@ class RecipeRegistry:
         )
 
 
-def _order_by_lineage(events: list[dict[str, Any]], name: str = "") -> list[dict[str, Any]]:
+def _order_by_lineage(
+    events: list[dict[str, Any]],
+    name: str = "",
+    resolutions: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Order a name's receipts by their prev_receipt_digest linkage.
 
     Each receipt names the hmac of its predecessor (``""`` for genesis).
@@ -1201,30 +1309,48 @@ def _order_by_lineage(events: list[dict[str, Any]], name: str = "") -> list[dict
 
     Every one of those raises rather than degrading to a best guess.
 
+    A fork is recoverable rather than terminal: an operator resolves it with
+    ``recipes repair-lineage``, which appends a receipt naming the successor
+    to follow. *resolutions* carries those decisions, so a resolved fork
+    projects normally while the losing branch stays on the chain and in
+    ``history``. Without a resolution the fork still fails closed.
+
     Args:
         events: The name's lifecycle receipts, in any order.
         name: Recipe name, used only for the error message.
+        resolutions: ``predecessor -> chosen successor hmac`` from operator
+            resolution receipts.
 
     Returns:
         The receipts in definition-lineage order.
 
     Raises:
-        RecipeRegistryError: On a forked, orphaned, or cyclic lineage.
+        RecipeRegistryError: On an unresolved fork, or a cyclic lineage.
     """
     label = f"recipe {name!r}" if name else "recipe"
+    resolved = resolutions or {}
     by_prev: dict[str, list[dict[str, Any]]] = {}
     for ev in events:
         prev = str(ev["details"].get("prev_receipt_digest", ""))
         by_prev.setdefault(prev, []).append(ev)
 
     forked = {prev: evs for prev, evs in by_prev.items() if len(evs) > 1}
-    if forked:
-        prev = min(forked)
-        successors = ", ".join(sorted(str(e["hmac"])[:16] for e in forked[prev]))
-        raise RecipeRegistryError(
-            f"forked definition lineage for {label}: predecessor "
-            f"{prev[:16] or '(genesis)'} has {len(forked[prev])} successors ({successors})",
-        )
+    for prev, evs in forked.items():
+        chosen = resolved.get(prev, "")
+        picked = [e for e in evs if str(e["hmac"]) == chosen]
+        if not picked:
+            successors = ", ".join(sorted(str(e["hmac"])[:16] for e in evs))
+            hint = " ".join(
+                f"bernstein recipes repair-lineage {name or '<name>'} --pick {str(e['hmac'])[:16]}" for e in evs[:1]
+            )
+            raise RecipeRegistryError(
+                f"forked definition lineage for {label}: predecessor "
+                f"{prev[:16] or '(genesis)'} has {len(evs)} successors ({successors}). "
+                f"Nothing is lost - pick the branch to follow with: {hint}",
+            )
+        # Follow the operator-chosen successor; the others stay on the chain
+        # and in history, they are simply not walked.
+        by_prev[prev] = picked
 
     ordered: list[dict[str, Any]] = []
     cursor = ""
@@ -1241,11 +1367,15 @@ def _order_by_lineage(events: list[dict[str, Any]], name: str = "") -> list[dict
         cursor = hmac
 
     if len(ordered) != len(events):
-        unreachable = sorted(str(e["hmac"])[:16] for e in events if str(e["hmac"]) not in seen)
-        raise RecipeRegistryError(
-            f"unreachable definition-lineage receipt(s) for {label}: {', '.join(unreachable)}; "
-            "the receipt chain does not link back to the first registration",
+        superseded = {str(e["hmac"]) for evs in forked.values() for e in evs} - set(seen)
+        unreachable = sorted(
+            str(e["hmac"])[:16] for e in events if str(e["hmac"]) not in seen and str(e["hmac"]) not in superseded
         )
+        if unreachable:
+            raise RecipeRegistryError(
+                f"unreachable definition-lineage receipt(s) for {label}: {', '.join(unreachable)}; "
+                "the receipt chain does not link back to the first registration",
+            )
     return ordered
 
 

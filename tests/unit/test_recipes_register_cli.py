@@ -56,11 +56,25 @@ def _accepting_task_server(monkeypatch: pytest.MonkeyPatch, accepted: list[dict[
 
     ``recipes fire`` reports a dispatch only when work was actually accepted,
     so a test that expects a dispatched fire needs a sink that accepts it.
-    Recording every payload lets the test assert against the real submission
-    sink rather than against the CLI's echo of its own dispatcher.
+
+    The stub validates every payload through the real ``TaskCreate`` model -
+    the same binding POST /tasks performs - and returns ``None`` on a
+    validation error, which is exactly what ``server_post`` does on a 4xx. A
+    stub that accepted any payload would prove only that a function was
+    called, and would let field, enum, or required-key drift reach production
+    with the suite green.
     """
 
-    def _post(path: str, payload: dict[str, object]) -> dict[str, object]:
+    def _post(path: str, payload: dict[str, object]) -> dict[str, object] | None:
+        from pydantic import ValidationError
+
+        from bernstein.core.server.server_models import TaskCreate
+
+        try:
+            TaskCreate(**payload)
+        except ValidationError:
+            # The server would 422 and server_post would swallow it into None.
+            return None
         accepted.append({"path": path, "payload": payload})
         return {"id": f"T-{len(accepted):03d}"}
 

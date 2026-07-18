@@ -484,3 +484,118 @@ class TestFleetAtomicity:
         receipts = list(fresh._get_chain().query(event_type=EVENT_RECIPE_FLEET_APPLY))
         assert len(receipts) == 1
         assert receipts[0].details["plan_hash"] == plan.plan_hash
+
+
+# ---------------------------------------------------------------------------
+# a forked lineage is recoverable, and concurrent writes do not create one
+# ---------------------------------------------------------------------------
+
+
+class TestForkRecovery:
+    @staticmethod
+    def _fork_by_race(reg: RecipeRegistry) -> str:
+        """Fork the lineage the way an unlocked concurrent write would.
+
+        Read the tail (what an unlocked _set_pause does), let another write
+        land, then append against the stale tail.
+        """
+        from bernstein.core.security.audit_chain import record_recipe_pause
+
+        tail = reg._project_name("nightly-triage").last_receipt_hmac
+        reg.register(spec=_spec(), pins=RecipePins(git_commit="c2"))
+        record_recipe_pause(
+            chain=reg._get_chain(),
+            name="nightly-triage",
+            recipe_hash="a" * 64,
+            paused=True,
+            prev_receipt_digest=tail,
+            actor="operator",
+        )
+        return tail
+
+    def test_a_forked_name_is_recoverable(self, tmp_path: Path) -> None:
+        """Failing closed is right; leaving no way back is not."""
+        reg = _registry(tmp_path / ".sdd")
+        reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
+        self._fork_by_race(reg)
+
+        with pytest.raises(RecipeRegistryError):
+            reg.live_hash("nightly-triage")
+
+        forks = reg.lineage_forks("nightly-triage")
+        assert forks, "the operator must be able to see the competing branches"
+        candidates = next(iter(forks.values()))
+        chosen = str(candidates[0]["hmac"])
+
+        reg.repair_lineage("nightly-triage", chosen)
+        # The name works again, and nothing was deleted to achieve it.
+        assert reg.live_hash("nightly-triage")
+        assert reg.is_paused("nightly-triage") in (True, False)
+        assert len(reg.history("nightly-triage")) >= 2
+
+    def test_the_fork_error_names_the_recovery_command(self, tmp_path: Path) -> None:
+        reg = _registry(tmp_path / ".sdd")
+        reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
+        self._fork_by_race(reg)
+        with pytest.raises(RecipeRegistryError, match="repair-lineage"):
+            reg.live_hash("nightly-triage")
+
+    def test_repair_rejects_a_receipt_outside_the_fork(self, tmp_path: Path) -> None:
+        reg = _registry(tmp_path / ".sdd")
+        reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
+        self._fork_by_race(reg)
+        with pytest.raises(RecipeRegistryError, match="not a competing successor"):
+            reg.repair_lineage("nightly-triage", "f" * 64)
+
+    def test_repair_without_a_fork_is_refused(self, tmp_path: Path) -> None:
+        reg = _registry(tmp_path / ".sdd")
+        reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
+        with pytest.raises(RecipeRegistryError, match="no unresolved"):
+            reg.repair_lineage("nightly-triage", "a" * 64)
+
+    def test_pause_and_rollback_serialise_against_register(self, tmp_path: Path) -> None:
+        """pause / resume / rollback must hold the same lock register does.
+
+        Without it, read-tail-then-append races an ordinary concurrent
+        register and forks the lineage, which costs the operator a repair.
+        """
+        import inspect
+
+        for method in (RecipeRegistry._set_pause, RecipeRegistry.rollback):
+            source = inspect.getsource(method)
+            assert "write_lock()" in source, f"{method.__name__} appends without the registry write lock"
+
+
+class TestWriteLockThreadSafety:
+    def test_two_threads_do_not_both_hold_the_lock(self, tmp_path: Path) -> None:
+        """Re-entrancy is per thread, not per instance.
+
+        An instance-wide depth counter lets a second thread see depth>0 while
+        the first holds the flock, skip acquisition, and run unserialised.
+        """
+        import threading
+        import time
+
+        reg = _registry(tmp_path / ".sdd")
+        overlap: list[bool] = []
+        inside = threading.Event()
+
+        def _holder() -> None:
+            with reg.write_lock():
+                inside.set()
+                time.sleep(1.0)
+
+        def _contender() -> None:
+            inside.wait(timeout=5)
+            start = time.time()
+            with reg.write_lock():
+                overlap.append(time.time() - start < 0.3)
+
+        threads = [threading.Thread(target=_holder), threading.Thread(target=_contender)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        assert overlap, "contender never acquired the lock"
+        assert not overlap[0], "second thread entered while the first held the lock"

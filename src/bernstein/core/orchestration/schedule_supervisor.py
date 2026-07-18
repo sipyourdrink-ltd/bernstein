@@ -170,6 +170,23 @@ def _next_fire_after(parsed: ParsedCron, anchor_epoch: int) -> int:
     raise RuntimeError(f"No fire instant found in 2 years for cron expression {parsed.raw!r}")
 
 
+def _last_processed_window(schedule: Schedule) -> float:
+    """Newest window already decided about: a real fire or a canceled one.
+
+    Scheduling reads this; operator-facing surfaces read ``last_fire_at``,
+    which only ever records a window that actually dispatched.
+    """
+    from bernstein.core.planning.schedule_store import FIRE_CURSOR_KEY
+
+    cursor = 0.0
+    raw = (schedule.extra or {}).get(FIRE_CURSOR_KEY, 0.0)
+    try:
+        cursor = float(raw)
+    except (TypeError, ValueError):
+        cursor = 0.0
+    return max(float(schedule.last_fire_at), cursor)
+
+
 def _matches_day(parsed: ParsedCron, dt: datetime) -> bool:
     """POSIX cron day matching: if either ``day`` or ``weekday`` is
     restricted (not a full range), the match is the union of the two.
@@ -445,7 +462,7 @@ class ScheduleSupervisor:
         external API.
         """
         parsed = parse_cron(schedule.cron)
-        anchor = max(anchor_epoch, int(schedule.last_fire_at))
+        anchor = max(anchor_epoch, int(_last_processed_window(schedule)))
         return _next_fire_after(parsed, anchor)
 
     # -- Internals ----------------------------------------------------------
@@ -453,7 +470,8 @@ class ScheduleSupervisor:
     def _tick_one(self, schedule: Schedule, now_epoch: int) -> list[FireReceipt]:
         """Tick a single schedule. May emit 0..N receipts."""
         parsed = parse_cron(schedule.cron)
-        anchor = int(schedule.last_fire_at) if schedule.last_fire_at else now_epoch - 60
+        processed = _last_processed_window(schedule)
+        anchor = int(processed) if processed else now_epoch - 60
         receipts: list[FireReceipt] = []
         skipped_windows: list[int] = []
 
@@ -731,8 +749,12 @@ class ScheduleSupervisor:
             # is still "due" and the next idle tick dispatches the very fire
             # the policy canceled. ENQUEUE deliberately does not advance, so
             # its deferral is retried while the previous fire drains.
-            self._store.update_last_fire(schedule.id, float(fire_epoch))
-            self._last_fire_at = max(self._last_fire_at, float(fire_epoch))
+            #
+            # The *cursor* advances, not ``last_fire_at``: nothing dispatched
+            # and no fire entry exists, so reporting it as the last successful
+            # fire would be the same class of lie this change set exists to
+            # remove - only on the doctor / status surface instead.
+            self._store.advance_fire_cursor(schedule.id, float(fire_epoch))
         return receipt
 
     def _append_collision(

@@ -255,8 +255,19 @@ class TestCanceledWindowIsProcessed:
         supervisor.tick(now=first)
         assert len(dispatched) >= 1
 
-    def test_canceled_window_advances_the_stored_last_fire(self, tmp_path: Path) -> None:
+    def test_canceled_window_advances_the_cursor_not_the_last_fire(self, tmp_path: Path) -> None:
+        """The window is processed, but no surface may call it a fire.
+
+        ``last_fire_at`` is the operator-facing "last successful fire",
+        rendered by doctor, status, and ``schedule list``. A canceled window
+        dispatched nothing and wrote no fire entry, so recording it there
+        would print a fire that never happened.
+        """
+        from bernstein.core.planning.schedule_store import FIRE_CURSOR_KEY
+
         store, schedule = _store_with_schedule(tmp_path)
+        before = store.get(schedule.id)
+        assert before is not None
         supervisor = ScheduleSupervisor(
             store,
             lambda _e: None,
@@ -266,9 +277,14 @@ class TestCanceledWindowIsProcessed:
         )
         now = int(datetime(2030, 1, 1, 12, 3, 0, tzinfo=UTC).timestamp())
         supervisor.tick(now=now)
+
         refreshed = store.get(schedule.id)
         assert refreshed is not None
-        assert refreshed.last_fire_at >= now - 60
+        # The scheduling cursor moved, so the window is not re-offered...
+        assert float(refreshed.extra.get(FIRE_CURSOR_KEY, 0.0)) >= now - 60
+        # ...but nothing claims a fire happened.
+        assert refreshed.last_fire_at == before.last_fire_at
+        assert supervisor.status().last_fire_at == before.last_fire_at
 
     def test_enqueue_window_does_not_advance_the_stored_last_fire(self, tmp_path: Path) -> None:
         store, schedule = _store_with_schedule(tmp_path)

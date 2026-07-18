@@ -538,6 +538,36 @@ def _open_registry(*, create: bool = False, dispatch: Any = None) -> Any:
     return RecipeRegistry(_sdd_dir(create=create), dispatch=dispatch)
 
 
+def recipe_fire_payload(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Build the ``POST /tasks`` body for one recipe fire.
+
+    Public and separate from the dispatcher so the submission contract can be
+    validated directly against the real ``TaskCreate`` model. A body the
+    server rejects fails silently in production - the 422 becomes "the
+    dispatcher submitted no work", which reads as a legitimate refusal - so
+    the shape is pinned by tests rather than by inspection.
+
+    Every field here must satisfy ``TaskCreate``; ``task_type`` in particular
+    is a closed enum (standard, upgrade_proposal, fix, research).
+    """
+    recipe_name = str(metadata.get("recipe_name", ""))
+    recipe_hash = str(metadata.get("recipe_hash", ""))
+    label = recipe_name or "(unnamed recipe)"
+    return {
+        "title": f"Recipe fire: {label}"[:120],
+        "description": (
+            f"Fired registered recipe {label!r} "
+            f"(recipe_{recipe_hash[:12]}) at {metadata.get('fire_time', '')}.\n\n"
+            f"projection_hash: {metadata.get('projection_hash', '')}"
+        ),
+        "role": "backend",
+        "priority": 3,
+        "scope": "medium",
+        "task_type": "standard",
+        "metadata": dict(metadata),
+    }
+
+
 def _task_server_dispatch(sdd_dir: Any) -> Any:
     """Build the dispatcher ``recipes fire`` submits through.
 
@@ -562,22 +592,7 @@ def _task_server_dispatch(sdd_dir: Any) -> Any:
         from bernstein.cli.helpers import server_post
 
         metadata = dict(getattr(event, "metadata", {}) or {})
-        recipe_name = str(metadata.get("recipe_name", ""))
-        recipe_hash = str(metadata.get("recipe_hash", ""))
-        payload = {
-            "title": f"Recipe fire: {recipe_name}"[:120],
-            "description": (
-                f"Fired registered recipe {recipe_name!r} "
-                f"(recipe_{recipe_hash[:12]}) at {metadata.get('fire_time', '')}.\n\n"
-                f"projection_hash: {metadata.get('projection_hash', '')}"
-            ),
-            "role": "backend",
-            "priority": 3,
-            "scope": "medium",
-            "task_type": "feature",
-            "metadata": metadata,
-        }
-        created = server_post("/tasks", payload)
+        created = server_post("/tasks", recipe_fire_payload(metadata))
         if not created:
             # Unreachable server or a rejected POST. Returning nothing is the
             # honest answer: no id means no work, which means no receipt.
@@ -685,6 +700,56 @@ def fire_cmd(name: str, at: int | None, goal: str, schedule: str) -> None:
     console.print(f"  submitted: {result.submitted}")
     for task_id in result.submitted_ids:
         console.print(f"    task: {task_id}")
+
+
+@recipes_group.command("repair-lineage")
+@click.argument("name")
+@click.option("--pick", "pick", default="", help="Receipt hmac (or 16-char prefix) of the branch to follow.")
+def repair_lineage_cmd(name: str, pick: str) -> None:
+    """Resolve a forked definition lineage by naming the branch to follow.
+
+    A fork means one receipt has two successors, so the projection cannot
+    honestly pick one and every operation on the name fails closed. The chain
+    is append-only, so recovery is additive: nothing is deleted, the losing
+    branch stays in the history, and the choice is itself a receipt.
+
+    Without ``--pick`` the competing branches are listed.
+    """
+    from rich.console import Console
+
+    from bernstein.core.workflows.recipe_registry import RecipeRegistryError
+
+    console = Console()
+    registry = _open_registry()
+    try:
+        forks = registry.lineage_forks(name)
+    except RecipeRegistryError as exc:
+        console.print(f"[bold red]Could not inspect lineage:[/bold red] {exc}")
+        raise SystemExit(1) from exc
+
+    if not forks:
+        console.print(f"[green]No unresolved lineage fork for {name!r}.[/green]")
+        return
+
+    if not pick:
+        console.print(f"[yellow]Forked definition lineage for {name!r}.[/yellow] Competing branches:")
+        for predecessor, candidates in sorted(forks.items()):
+            console.print(f"  after {predecessor[:16] or '(genesis)'}:")
+            for candidate in candidates:
+                console.print(f"    {str(candidate['hmac'])[:16]}  {candidate['event_type']}  {candidate['timestamp']}")
+        console.print(
+            f"\nRe-run with [cyan]--pick <hmac>[/cyan] to follow one, "
+            f"e.g. 'recipes repair-lineage {name} --pick <hmac>'.",
+        )
+        raise SystemExit(1)
+
+    try:
+        chosen = registry.repair_lineage(name, pick)
+    except RecipeRegistryError as exc:
+        console.print(f"[bold red]Repair failed:[/bold red] {exc}")
+        raise SystemExit(1) from exc
+    console.print(f"[bold green]Resolved[/bold green] {name} -> following {chosen[:16]}")
+    console.print("[dim]The other branch is retained on the chain and in 'recipes history'.[/dim]")
 
 
 @recipes_group.command("history")

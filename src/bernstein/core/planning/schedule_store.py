@@ -41,6 +41,12 @@ _SCHEDULE_ID_HEX_LEN = 12
 
 MisfirePolicy = Literal["skip", "catch_up"]
 
+#: ``Schedule.extra`` key holding the scheduling cursor: the newest fire
+#: window the supervisor has already decided about, whether or not it
+#: dispatched. Kept out of ``last_fire_at`` so a canceled window never reads
+#: as a successful fire on the doctor / status surfaces.
+FIRE_CURSOR_KEY = "fire_cursor_at"
+
 
 @dataclass(frozen=True)
 class Schedule:
@@ -466,6 +472,41 @@ class ScheduleStore:
             params=dict(schedule.params),
         )
         self._write(updated)
+
+    def advance_fire_cursor(self, schedule_id: str, cursor_epoch: float) -> None:
+        """Mark a fire window as processed *without* claiming it fired.
+
+        Distinct from :meth:`update_last_fire` on purpose. ``last_fire_at`` is
+        the operator-facing "last successful fire" and is rendered by doctor,
+        status, and ``schedule list``; a window that a collision policy
+        canceled produced no dispatch and no fire audit entry, so recording it
+        there would print a fire that never happened.
+
+        The cursor exists so the scheduler does not re-offer a window it has
+        already decided about. Both are consulted when computing the next
+        fire; only ``last_fire_at`` is reported.
+        """
+        schedule = self.get(schedule_id)
+        if schedule is None:
+            return
+        extra = dict(schedule.extra)
+        if float(extra.get(FIRE_CURSOR_KEY, 0.0)) >= cursor_epoch:
+            return
+        extra[FIRE_CURSOR_KEY] = cursor_epoch
+        self._write(
+            Schedule(
+                id=schedule.id,
+                cron=schedule.cron,
+                goal=schedule.goal,
+                scenario_id=schedule.scenario_id,
+                misfire_policy=schedule.misfire_policy,
+                created_at=schedule.created_at,
+                last_fire_at=schedule.last_fire_at,
+                extra=extra,
+                params_schema=[dict(s) for s in schedule.params_schema],
+                params=dict(schedule.params),
+            ),
+        )
 
     def _write(self, schedule: Schedule) -> None:
         """Write a schedule atomically to its JSON path.
