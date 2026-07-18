@@ -171,8 +171,8 @@ def test_spec_rejects_duplicate_phase_ids() -> None:
             mission_id="m",
             goal="g",
             phases=(
-                PhaseSpec(phase_id="p", name="a", gate=(), envelope="e1", budget_usd=1.0),
-                PhaseSpec(phase_id="p", name="b", gate=(), envelope="e2", budget_usd=1.0),
+                PhaseSpec(phase_id="p", name="a", gate=("t",), envelope="e1", budget_usd=1.0),
+                PhaseSpec(phase_id="p", name="b", gate=("t",), envelope="e2", budget_usd=1.0),
             ),
         ).validate()
 
@@ -182,7 +182,7 @@ def test_spec_rejects_negative_budget() -> None:
         MissionSpec(
             mission_id="m",
             goal="g",
-            phases=(PhaseSpec(phase_id="p", name="a", gate=(), envelope="e", budget_usd=-1.0),),
+            phases=(PhaseSpec(phase_id="p", name="a", gate=("t",), envelope="e", budget_usd=-1.0),),
         ).validate()
 
 
@@ -191,7 +191,7 @@ def test_spec_rejects_blank_mission_id() -> None:
         MissionSpec(
             mission_id="",
             goal="g",
-            phases=(PhaseSpec(phase_id="p", name="a", gate=(), envelope="e", budget_usd=1.0),),
+            phases=(PhaseSpec(phase_id="p", name="a", gate=("t",), envelope="e", budget_usd=1.0),),
         ).validate()
 
 
@@ -1212,3 +1212,100 @@ def test_sealed_negative_zero_spend_projects_the_hash_it_always_did(tmp_path: Pa
 #: projection has always rendered it. Guards against a value-preserving parse
 #: silently moving the hash for existing ledgers.
 _PINNED_NEGATIVE_ZERO_STATUS_HASH = "f18f443bb6d3f13ae48ba7cac55cbd61337fe9487c77fbf42882e4c1156e49eb"
+
+
+# ---------------------------------------------------------------------------
+# Round-3 hardening (#2680) -- degenerate spec shapes
+# ---------------------------------------------------------------------------
+
+
+def test_spec_rejects_a_phase_with_an_empty_gate() -> None:
+    """#2680: a gateless phase would project passed having bound no evidence.
+
+    ``_receipt_binds_gate`` is vacuously satisfied by an empty gate: the
+    verdict is true, the empty task-id set equals the empty declared set, the
+    lengths agree at zero, and the evidence loop iterates nothing. Refusing at
+    the boundary keeps the projection untouched -- existing ledgers still fold
+    exactly as they did -- while making the shape unreachable for new missions.
+    """
+    with pytest.raises(MissionSpecError, match="at least one evidence task id"):
+        MissionSpec(
+            mission_id="m",
+            goal="g",
+            phases=(PhaseSpec(phase_id="p", name="a", gate=(), envelope="e", budget_usd=1.0),),
+        ).validate()
+
+
+def test_spec_from_dict_rejects_a_phase_with_an_empty_gate() -> None:
+    """#2680: the same refusal through the JSON boundary the CLI uses."""
+    with pytest.raises(MissionSpecError, match="at least one evidence task id"):
+        MissionSpec.from_dict(
+            {
+                "mission_id": "m",
+                "goal": "g",
+                "phases": [{"phase_id": "p", "name": "a", "gate": [], "envelope": "e", "budget_usd": 1.0}],
+            }
+        )
+
+
+def test_negative_zero_budget_hashes_as_positive_zero() -> None:
+    """#2680: -0.0 in budget_usd must not fork spec_hash across patch levels.
+
+    The shipped reader collapsed -0.0 via a falsy ``or 0.0``; the typed reader
+    that replaced it preserved the sign, so byte-identical spec files would
+    have produced different spec_hash values on two patch levels. The pinned
+    digest is the one origin/main produces for this spec.
+    """
+    import json as _json
+
+    spec = MissionSpec.from_dict(
+        {
+            "mission_id": "m-1",
+            "goal": "g",
+            "phases": [{"phase_id": "p1", "name": "p", "gate": ["task-a"], "envelope": "env", "budget_usd": -0.0}],
+        }
+    )
+    assert _json.dumps(spec.phases[0].budget_usd) == "0.0"
+    assert spec.spec_hash() == _PINNED_NEGATIVE_ZERO_BUDGET_SPEC_HASH
+
+
+#: spec_hash origin/main produces for a spec declaring ``budget_usd: -0.0``.
+_PINNED_NEGATIVE_ZERO_BUDGET_SPEC_HASH = "24015e262d978d966646ce31a480e0135da477219e1196996da8995c677f9f03"
+
+
+def test_spec_rejects_a_budget_too_large_for_a_float() -> None:
+    """#2680: an oversized JSON integer must be a spec error, not OverflowError.
+
+    ``math.isfinite`` raises OverflowError on an int too large to convert, and
+    that escaped the boundary -- aborting the whole projection and 500ing the
+    route instead of rendering the mission unverified.
+    """
+    with pytest.raises(MissionSpecError, match="out of range"):
+        MissionSpec.from_dict(
+            {
+                "mission_id": "m-1",
+                "goal": "g",
+                "phases": [{"phase_id": "p1", "name": "p", "gate": ["a"], "envelope": "e", "budget_usd": 10**400}],
+            }
+        )
+
+
+def test_oversized_budget_in_a_ledger_projects_unverified(tmp_path: Path) -> None:
+    """#2680: the fold must render the verdict, never raise through it."""
+    sdd_dir = tmp_path / ".sdd"
+    ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, "m-1"))
+    ledger.append(
+        kind=KIND_MISSION_DEFINED,
+        task_id="",
+        payload={
+            "mission_id": "m-1",
+            "spec_hash": "x",
+            "goal_digest": "y",
+            "schema_version": 1,
+            "phases": [{"phase_id": "p1", "name": "p", "gate": ["a"], "envelope": "e", "budget_usd": 10**400}],
+        },
+    )
+    ledger.close()
+
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, "m-1")).entries())
+    assert project_mission(entries, {}).overall == MISSION_UNVERIFIED

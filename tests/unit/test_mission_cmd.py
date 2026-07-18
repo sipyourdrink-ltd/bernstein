@@ -244,16 +244,48 @@ def test_verify_reports_a_tampered_mission_id_as_verification_failure(tmp_path: 
     assert res.exit_code == EXIT_VERIFY_FAILED, res.output
 
 
-def test_status_reports_a_tampered_mission_id_as_verification_failure(tmp_path: Path) -> None:
-    """#2680: the same downgrade must not happen on the status path."""
-    from bernstein.cli.commands.mission_cmd import EXIT_VERIFY_FAILED
+def test_status_renders_a_tampered_mission_id_as_unverified(tmp_path: Path) -> None:
+    """#2680: status must render the tamper, not report the mission missing.
 
+    ``status`` reports rather than gates, so it prints the projection the way
+    it does for any other torn chain: ``ledger_verified`` false with
+    ``overall`` unverified. What it must never do is answer "no such mission"
+    on the strength of an id read from an unverified row -- that would hide a
+    tamper behind a not-found.
+    """
     spec_path = _write_spec(tmp_path)
     runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
     _tamper_mission_id(tmp_path, "m-evil")
 
     res = runner_invoke(["status", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == 0, res.output
+    body = json.loads(res.output)
+    assert body["ledger_verified"] is False
+    assert body["overall"] == "unverified"
+
+
+def test_verify_reports_an_ambiguous_double_definition_as_an_integrity_failure(tmp_path: Path) -> None:
+    """#2680: two definitions is ambiguity, not absence -- exit 2, not 1.
+
+    The ledger does declare this mission, twice, on an intact chain. Reporting
+    that as "no ledger declaring this mission id" sends an integrity failure
+    down the channel operators use for "not found, skip". Ledgers already on
+    disk can carry this shape, because the shipped writer had no guard.
+    """
+    from bernstein.cli.commands.mission_cmd import EXIT_VERIFY_FAILED
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import KIND_MISSION_DEFINED, WorkLedger
+
+    spec_path = _write_spec(tmp_path)
+    runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "m-cli"))
+    ledger.append(kind=KIND_MISSION_DEFINED, task_id="", payload=dict(_spec_dict(), spec_hash="x", goal_digest="y"))
+    ledger.close()
+
+    res = runner_invoke(["verify", "m-cli", "--workdir", str(tmp_path), "--json"])
     assert res.exit_code == EXIT_VERIFY_FAILED, res.output
+    assert json.loads(res.output)["overall"] == "unverified"
 
 
 def test_intact_non_mission_ledger_is_still_a_plain_not_found(tmp_path: Path) -> None:

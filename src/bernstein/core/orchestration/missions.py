@@ -183,10 +183,23 @@ def _require_finite_number(raw: Mapping[str, Any], key: str, what: str, default:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         msg = f"{what} field {key!r} must be a number, got {type(value).__name__}"
         raise MissionSpecError(msg)
-    if not math.isfinite(value):
+    try:
+        # A JSON integer literal can be far too large to convert to a float.
+        # math.isfinite raises OverflowError on it, which would escape this
+        # boundary and abort the whole projection instead of rendering the
+        # mission unverified, so it is folded into the spec error here.
+        finite = math.isfinite(value)
+        as_float = float(value)
+    except (OverflowError, ValueError) as exc:
+        msg = f"{what} field {key!r} is out of range for a number: {exc}"
+        raise MissionSpecError(msg) from None
+    if not finite:
         msg = f"{what} field {key!r} must be finite, got {value!r}"
         raise MissionSpecError(msg)
-    return float(value)
+    # Normalise -0.0 to +0.0. It compares equal to zero but serialises as a
+    # distinct JSON token, so leaving it through would give byte-identical spec
+    # files different spec_hash values across patch levels.
+    return as_float + 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +311,14 @@ class MissionSpec:
                 raise MissionSpecError(msg)
             if phase.budget_usd < 0.0:
                 msg = f"phase {phase.phase_id!r} budget must be >= 0 (got {phase.budget_usd})"
+                raise MissionSpecError(msg)
+            if not phase.gate:
+                # A phase is a verification gate plus an envelope; one with no
+                # gate has nothing to verify, so its receipt would bind no
+                # evidence and the phase would project as passed on the
+                # strength of nothing. That is what a half-written spec looks
+                # like, so it is refused at the boundary rather than sealed.
+                msg = f"phase {phase.phase_id!r} must gate on at least one evidence task id"
                 raise MissionSpecError(msg)
             for task_id in phase.gate:
                 if not task_id:

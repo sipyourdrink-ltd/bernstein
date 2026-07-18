@@ -157,12 +157,21 @@ def _require_mission(workdir: Path | None, mission_id: str) -> None:
     not this mission, and reporting it as verified would let ``verify`` bless a
     directory that carries no mission at all.
 
+    The subtlety is what "is not this mission" may rest on.
     :meth:`LedgerReader.entries` yields any parseable row without checking a
-    single hash, so the mission id read here is an unverified claim. When the
-    claim does not match, the chain is verified before a verdict is returned:
-    a torn chain is a tamper (:data:`EXIT_VERIFY_FAILED`), not a benign
-    not-found, and must not be downgraded to one. The chain walk runs only on
-    the failure path, so a healthy mission pays nothing for it.
+    single hash, so the declared id is an attacker-controlled claim. Refusing
+    on the strength of it would turn a tampered ledger into a missing one --
+    the loudest signal replaced by the quietest. So only a chain that
+    *verifies* is allowed to report "no such mission"; anything torn falls
+    through to the projection, which renders ``ledger_verified=false`` with
+    ``overall=unverified`` so ``verify`` fails on integrity rather than
+    absence. A ledger carrying more than one definition is ambiguous, not
+    absent, and likewise falls through to the :data:`MISSION_UNVERIFIED`
+    verdict the projection forces for it.
+
+    The HTTP route's ``_require_mission`` applies the identical rule, so the
+    two surfaces agree on every shape. The chain walk runs only on the failure
+    path, so a healthy mission pays nothing for it.
     """
     ledger_dir = mission_ledger_dir(_sdd_dir(workdir), mission_id)
     reader = LedgerReader(ledger_dir)
@@ -173,18 +182,11 @@ def _require_mission(workdir: Path | None, mission_id: str) -> None:
     defined = [entry for entry in reader.entries() if entry.kind == KIND_MISSION_DEFINED]
     if len(defined) == 1 and str(defined[0].payload.get("mission_id", "")) == mission_id:
         return
-
-    if not reader.verify().ok:
-        console.print(
-            f"[red]Mission verification failed for {mission_id!r}:[/red] the work-ledger chain at "
-            f"{ledger_dir} does not verify (a ledger entry was tampered with)"
-        )
-        raise SystemExit(EXIT_VERIFY_FAILED)
+    if not reader.verify().ok or len(defined) > 1:
+        return
 
     if not defined:
         console.print(f"[red]Not a mission ledger:[/red] {ledger_dir} declares no mission")
-    elif len(defined) > 1:
-        console.print(f"[red]Not a mission ledger:[/red] {ledger_dir} declares {len(defined)} missions")
     else:
         declared = str(defined[0].payload.get("mission_id", ""))
         console.print(f"[red]Ledger at {ledger_dir} declares mission {declared!r}, not {mission_id!r}[/red]")

@@ -236,7 +236,7 @@ def test_route_refuses_a_non_mission_ledger(tmp_path: Path) -> None:
 
 
 def test_route_refuses_a_ledger_declaring_a_different_mission(tmp_path: Path) -> None:
-    """#2680: the ledger must declare the mission the caller asked for."""
+    """#2680: an intact ledger holding another mission is a genuine not-found."""
     from bernstein.core.orchestration.missions import (
         MissionSpec,
         PhaseSpec,
@@ -248,7 +248,7 @@ def test_route_refuses_a_ledger_declaring_a_different_mission(tmp_path: Path) ->
     spec = MissionSpec(
         mission_id="m-other",
         goal="g",
-        phases=(PhaseSpec(phase_id="p1", name="p", gate=(), envelope="e", budget_usd=1.0),),
+        phases=(PhaseSpec(phase_id="p1", name="p", gate=("t",), envelope="e", budget_usd=1.0),),
     )
     ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "m-cli"))
     define_mission(ledger=ledger, spec=spec)
@@ -277,3 +277,49 @@ def test_route_still_serves_a_real_mission(tmp_path: Path) -> None:
     _build_mission(tmp_path)
     client = TestClient(_make_app(tmp_path))
     assert client.get("/missions/m-1").status_code == 200
+
+
+def test_route_renders_a_tampered_mission_id_as_unverified(tmp_path: Path) -> None:
+    """#2680: a tampered ledger must not be downgraded to 404 not-found.
+
+    The declared id comes from a row no hash has checked, so refusing on it
+    turns the loudest signal available (this chain does not verify) into the
+    quietest (there is no such mission), which reads as an innocent typo. Only
+    a chain that verifies may answer not-found. The shipped behaviour is a 200
+    carrying the unverified verdict, and the timeline docs promise exactly that
+    banner.
+    """
+    import json as _json
+
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+
+    _build_mission(tmp_path)
+    bucket = mission_ledger_dir(tmp_path / ".sdd", "m-1") / "000000.jsonl"
+    lines = bucket.read_text(encoding="utf-8").splitlines()
+    row = _json.loads(lines[0])
+    row["payload"]["mission_id"] = "m-evil"
+    lines[0] = _json.dumps(row, separators=(",", ":"))
+    bucket.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    client = TestClient(_make_app(tmp_path))
+    response = client.get("/missions/m-1")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ledger_verified"] is False
+    assert body["status"]["overall"] == "unverified"
+
+
+def test_route_renders_an_ambiguous_double_definition_as_unverified(tmp_path: Path) -> None:
+    """#2680: two definitions is an integrity failure, not an absence."""
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import KIND_MISSION_DEFINED, WorkLedger
+
+    _build_mission(tmp_path)
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "m-1"))
+    ledger.append(kind=KIND_MISSION_DEFINED, task_id="", payload={"mission_id": "m-1", "phases": []})
+    ledger.close()
+
+    client = TestClient(_make_app(tmp_path))
+    response = client.get("/missions/m-1")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"]["overall"] == "unverified"
