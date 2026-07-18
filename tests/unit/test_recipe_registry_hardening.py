@@ -99,9 +99,9 @@ class TestFireSubmitsWork:
     def test_fire_reports_failure_when_no_work_is_submitted(self, tmp_path: Path) -> None:
         submitted: list[Any] = []
 
-        def _dispatch(event: Any) -> int:
+        def _dispatch(event: Any) -> list[str]:
             submitted.append(event)
-            return 0  # the trigger pipeline produced no task
+            return []  # the sink accepted nothing
 
         reg = _registry(tmp_path / ".sdd", dispatch=_dispatch)
         reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
@@ -114,7 +114,7 @@ class TestFireSubmitsWork:
         assert _fire_receipts(reg) == []
 
     def test_fire_reports_failure_when_dispatcher_raises(self, tmp_path: Path) -> None:
-        def _dispatch(_event: Any) -> int:
+        def _dispatch(_event: Any) -> list[str]:
             raise RuntimeError("pipeline down")
 
         reg = _registry(tmp_path / ".sdd", dispatch=_dispatch)
@@ -139,9 +139,9 @@ class TestFireSubmitsWork:
     def test_dispatched_fire_submits_and_appends_a_receipt(self, tmp_path: Path) -> None:
         submitted: list[Any] = []
 
-        def _dispatch(event: Any) -> int:
+        def _dispatch(event: Any) -> list[str]:
             submitted.append(event)
-            return 1
+            return ["T-001"]
 
         reg = _registry(tmp_path / ".sdd", dispatch=_dispatch)
         registered = reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
@@ -159,12 +159,13 @@ class TestFireSubmitsWork:
         assert details["projection_hash"] == result.projection_hash
         assert details["fire_time"] == 1_800_000_000
         assert details["submitted"] == 1
+        assert details["submitted_ids"] == ["T-001"]
         # The chain anchor is the fire receipt itself, not an unrelated tail.
         assert result.chain_anchor == receipts[0].hmac
 
     def test_paused_recipe_submits_nothing(self, tmp_path: Path) -> None:
         submitted: list[Any] = []
-        reg = _registry(tmp_path / ".sdd", dispatch=lambda e: submitted.append(e) or 1)
+        reg = _registry(tmp_path / ".sdd", dispatch=lambda e: submitted.append(e) or ["T-001"])
         reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
         reg.pause("nightly-triage")
         result = reg.fire("nightly-triage", fire_time=1_800_000_000)
@@ -180,7 +181,7 @@ class TestFireSubmitsWork:
 
 class TestFireScheduleAttribution:
     def test_fire_projects_under_the_triggering_schedule(self, tmp_path: Path) -> None:
-        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: 1)
+        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: ["T-001"])
         registered = reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
         first, second = registered.schedules
 
@@ -217,7 +218,7 @@ class TestFireScheduleAttribution:
         assert result.projection_hash != collapsed.projection_hash
 
     def test_manual_fire_is_schedule_neutral(self, tmp_path: Path) -> None:
-        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: 1)
+        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: ["T-001"])
         registered = reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
         result = reg.fire("nightly-triage", fire_time=1_800_000_000)
 
@@ -231,13 +232,13 @@ class TestFireScheduleAttribution:
         assert result.projection_hash == neutral.projection_hash
 
     def test_unknown_schedule_id_is_rejected(self, tmp_path: Path) -> None:
-        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: 1)
+        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: ["T-001"])
         reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
         with pytest.raises(RecipeRegistryError):
             reg.fire("nightly-triage", fire_time=1_800_000_000, schedule_id="sched_deadbeef")
 
     def test_declared_schedule_ids_are_content_derived(self, tmp_path: Path) -> None:
-        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: 1)
+        reg = _registry(tmp_path / ".sdd", dispatch=lambda _e: ["T-001"])
         reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
         declared = reg.declared_schedules("nightly-triage")
         assert len(declared) == 2
@@ -396,6 +397,75 @@ class TestFleetAtomicity:
         assert fresh.live_hash("nightly-triage") is None
         assert fresh.live_hash("plain") is None
         assert list(fresh._get_chain().query(event_type=EVENT_RECIPE_FLEET_APPLY)) == []
+
+    def test_commit_phase_failure_is_detectable_not_silent(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """Pins the documented commit-phase guarantee.
+
+        Phase 2 appends to an append-only chain and cannot be rolled back, so
+        the contract promises detectability rather than atomicity: the applied
+        prefix is registered, the aggregate receipt is absent, and a re-plan
+        surfaces the remainder as still pending.
+        """
+        import bernstein.core.security.audit_chain as audit_chain
+
+        sdd = tmp_path / ".sdd"
+        reg = _registry(sdd)
+        manifest = [
+            ManifestEntry(spec=_spec()),
+            ManifestEntry(spec=_spec(_PLAIN_MANIFEST)),
+        ]
+        plan = plan_fleet(reg, manifest)
+
+        real_register = audit_chain.record_recipe_register
+        calls: list[str] = []
+
+        def _flaky_register(**kwargs: Any) -> Any:
+            calls.append(str(kwargs["name"]))
+            if len(calls) > 1:
+                raise OSError("audit chain IO error")
+            return real_register(**kwargs)
+
+        monkeypatch.setattr(audit_chain, "record_recipe_register", _flaky_register)
+        with pytest.raises(OSError, match="audit chain IO error"):
+            apply_fleet(reg, manifest, plan_hash=plan.plan_hash)
+        monkeypatch.undo()
+
+        fresh = _registry(sdd)
+        committed = [n for n in ("nightly-triage", "plain") if fresh.live_hash(n)]
+        pending = [n for n in ("nightly-triage", "plain") if not fresh.live_hash(n)]
+        assert len(committed) == 1, "the appended prefix stays registered"
+        assert len(pending) == 1
+        # The absent aggregate receipt is what makes the partial apply
+        # detectable rather than passing for a completed one.
+        assert list(fresh._get_chain().query(event_type=EVENT_RECIPE_FLEET_APPLY)) == []
+        # A re-plan surfaces the remainder as still pending.
+        replan = plan_fleet(fresh, manifest)
+        assert set(replan.to_register) == set(pending)
+        assert set(replan.unchanged) == set(committed)
+
+    def test_nested_write_lock_does_not_deadlock(self, tmp_path: Path) -> None:
+        """A locking call from inside the locked section must not hang.
+
+        ``flock`` is per file descriptor, so a nested acquisition from the
+        same process would block forever on a lock it already holds - no
+        error, no timeout, just a hung process still holding it. ``apply_fleet``
+        runs its whole body inside the lock, so this is one edit away.
+        """
+        import threading
+
+        reg = _registry(tmp_path / ".sdd")
+        done = threading.Event()
+
+        def _nest() -> None:
+            with reg.write_lock(), reg.write_lock():
+                reg.register(spec=_spec(_PLAIN_MANIFEST), pins=RecipePins(git_commit="c1"))
+            done.set()
+
+        worker = threading.Thread(target=_nest, daemon=True)
+        worker.start()
+        worker.join(timeout=20)
+        assert done.is_set(), "nested write_lock() deadlocked"
+        assert reg.live_hash("plain")
 
     def test_successful_apply_registers_everything_with_a_receipt(self, tmp_path: Path) -> None:
         sdd = tmp_path / ".sdd"

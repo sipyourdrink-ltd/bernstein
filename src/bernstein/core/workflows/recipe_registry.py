@@ -36,7 +36,8 @@ import json
 import logging
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +51,6 @@ from bernstein.core.orchestration.schedule_kinds import (
 )
 
 if TYPE_CHECKING:
-    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
@@ -76,11 +76,16 @@ __all__ = [
 ]
 
 #: Task-graph dispatcher for a recipe fire. Receives the normalised trigger
-#: event and returns **how many work items it submitted**. The return value is
-#: the evidence ``fire`` relies on, so a dispatcher that returns 0 (or
-#: anything non-integer) is read as "nothing was submitted" and the fire
-#: reports failure rather than claiming a dispatch it cannot back up.
-RecipeDispatch = Callable[[Any], int]
+#: event and returns **the identifiers of the work items it submitted and the
+#: sink accepted** - for example the task ids the task server returned.
+#:
+#: Identifiers, not a count, because the fire receipt is an HMAC-chained claim
+#: that work happened: recording *which* work lets an auditor go and check it
+#: exists, where a bare number can only be taken on trust. A dispatcher that
+#: merely *renders* or *queues* candidate work has not submitted anything and
+#: must return an empty sequence; ``fire`` then reports failure and writes no
+#: receipt rather than attesting a dispatch it cannot back up.
+RecipeDispatch = Callable[[Any], "Sequence[str]"]
 
 #: Schema rev baked into the canonical recipe body. Bumping it changes every
 #: recipe_hash and is the single lever for evolving the canonical encoding.
@@ -250,7 +255,12 @@ class RecipeFireResult:
     Attributes:
         schedule_id: Content-derived id of the schedule that triggered the
             fire, or ``""`` for a schedule-neutral manual fire.
-        submitted: Number of work items the dispatcher reported submitting.
+        submitted: Number of work items the sink accepted.
+        submitted_ids: Identifiers of those work items, in submission order.
+        paused: True only when the recipe was paused. Structured state, so a
+            caller decides between "deliberately not fired" and "failed to
+            fire" from a field rather than by parsing ``reason``, which is
+            free-form prose derived from arbitrary dispatcher errors.
     """
 
     name: str
@@ -262,6 +272,8 @@ class RecipeFireResult:
     reason: str = ""
     schedule_id: str = ""
     submitted: int = 0
+    submitted_ids: tuple[str, ...] = ()
+    paused: bool = False
 
 
 def recipe_content_hash(canonical_bytes: bytes) -> str:
@@ -440,6 +452,29 @@ class _StagedRegistration:
     prev_receipt_digest: str = ""
 
 
+def _submitted_identifiers(returned: Any) -> tuple[str, ...] | None:
+    """Coerce a dispatcher return value into work-item identifiers.
+
+    Returns the identifiers, ``()`` when the dispatcher reported submitting
+    nothing, or ``None`` when the value is not an identifier sequence at all
+    (the dispatcher does not honour the contract, which is distinct from
+    honestly reporting no work).
+
+    Deliberately strict. A bare ``int`` is a count with no evidence behind
+    it; ``True`` is an ``int`` subclass and would otherwise read as one item;
+    a bare ``str`` is iterable and would silently decompose into one
+    "identifier" per character.
+    """
+    if isinstance(returned, (str, bytes)) or not isinstance(returned, Sequence):
+        return None
+    identifiers: list[str] = []
+    for item in returned:
+        if not isinstance(item, str) or not item.strip():
+            return None
+        identifiers.append(item)
+    return tuple(identifiers)
+
+
 def _lineage_hashes(receipts: list[dict[str, Any]]) -> set[str]:
     """Return every definition hash named by a name's own lifecycle receipts."""
     fields = ("recipe_hash", "new_hash", "old_hash", "to_hash", "from_hash")
@@ -477,10 +512,13 @@ class RecipeRegistry:
         self._hmac_key = hmac_key
         self._lineage_key = lineage_key if lineage_key is not None else hmac_key
         self._chain = chain
-        # Task-graph dispatcher invoked by ``fire``. Resolved lazily from the
-        # trigger pipeline when not injected; tests inject a spy.
+        # Task-graph dispatcher invoked by ``fire``. There is no fallback: a
+        # registry with none wired cannot dispatch, and says so, rather than
+        # improvising a substitute whose return value would not evidence a
+        # submission.
         self._dispatch = dispatch
-        self._dispatch_resolved = dispatch is not None
+        # Depth of nested write_lock() acquisitions on this instance.
+        self._lock_depth = 0
 
     # -- write serialisation ------------------------------------------------
 
@@ -488,17 +526,43 @@ class RecipeRegistry:
     def _lock_path(self) -> Path:
         return self._dir / "locks" / "registry.lock"
 
-    def write_lock(self) -> AbstractContextManager[None]:
-        """Return an exclusive cross-process lock over registry writes.
+    @contextmanager
+    def write_lock(self) -> Iterator[None]:
+        """Hold an exclusive cross-process lock over registry writes.
 
         Every mutation that must be seen as one step - a fleet apply's
         base-state recheck, its registrations, and its aggregate receipt -
         is held inside a single acquisition, so a concurrent writer cannot
         interleave a registration between the recheck and the receipt.
+
+        Re-entrant within one registry instance. The underlying ``flock`` is
+        per file descriptor, so a nested acquisition from the same process
+        would open a second descriptor and block on a lock it already holds -
+        a deadlock with no error and no timeout, just a hung process still
+        holding the lock. Counting the depth turns that footgun into ordinary
+        nesting, which matters because the obvious way to extend
+        :func:`~bernstein.core.workflows.recipe_fleet.apply_fleet` is to call
+        a locking method from inside the locked section.
+
+        Not re-entrant *across* instances or processes, which is the point:
+        two registries over the same ``.sdd`` still serialise.
         """
+        if self._lock_depth > 0:
+            self._lock_depth += 1
+            try:
+                yield
+            finally:
+                self._lock_depth -= 1
+            return
+
         from bernstein.core.persistence.file_locks import cross_process_lock
 
-        return cross_process_lock(self._lock_path)
+        with cross_process_lock(self._lock_path):
+            self._lock_depth = 1
+            try:
+                yield
+            finally:
+                self._lock_depth = 0
 
     # -- chain access -------------------------------------------------------
 
@@ -875,6 +939,7 @@ class RecipeRegistry:
                 dispatched=False,
                 fire_time=fire_time,
                 reason="recipe is paused",
+                paused=True,
             )
         from bernstein.core.orchestration.schedule_projection import project_schedule_fire
 
@@ -889,7 +954,7 @@ class RecipeRegistry:
             dst_policy=(schedule.dst_policy if schedule is not None and schedule.timezone else ""),
         )
 
-        submitted, reason = self._submit(
+        submitted_ids, reason = self._submit(
             name=name,
             recipe_hash=state.live_hash,
             fire_time=fire_time,
@@ -898,7 +963,7 @@ class RecipeRegistry:
             projection_hash=projection.projection_hash,
             dispatch=dispatch,
         )
-        if submitted <= 0:
+        if not submitted_ids:
             return RecipeFireResult(
                 name=name,
                 recipe_hash=state.live_hash,
@@ -918,7 +983,7 @@ class RecipeRegistry:
             fire_time=fire_time,
             projection_hash=projection.projection_hash,
             schedule_id=schedule_id,
-            submitted=submitted,
+            submitted_ids=submitted_ids,
         )
         return RecipeFireResult(
             name=name,
@@ -928,7 +993,8 @@ class RecipeRegistry:
             projection_hash=projection.projection_hash,
             chain_anchor=str(getattr(event, "hmac", "")),
             schedule_id=schedule_id,
-            submitted=submitted,
+            submitted=len(submitted_ids),
+            submitted_ids=submitted_ids,
         )
 
     def _resolve_schedule(self, name: str, recipe_hash: str, schedule_id: str) -> RecipeSchedule | None:
@@ -961,20 +1027,27 @@ class RecipeRegistry:
         schedule_id: str,
         projection_hash: str,
         dispatch: RecipeDispatch | None,
-    ) -> tuple[int, str]:
-        """Hand the fire to the dispatcher; return ``(submitted, reason)``.
+    ) -> tuple[tuple[str, ...], str]:
+        """Hand the fire to the dispatcher; return ``(submitted_ids, reason)``.
 
-        ``submitted <= 0`` always carries a non-empty reason. Every failure
-        mode - no dispatcher resolvable, the dispatcher raising, or the
-        dispatcher reporting nothing submitted - lands here rather than
-        being swallowed, because the caller uses this count to decide
-        whether it may claim the fire happened.
+        An empty tuple always carries a non-empty reason. Every failure mode -
+        no dispatcher wired, the dispatcher raising, or the dispatcher
+        returning nothing that identifies accepted work - lands here rather
+        than being swallowed, because the caller uses this result to decide
+        whether it may write a receipt claiming the fire happened.
+
+        There is deliberately no fallback dispatcher. Synthesising one from
+        whatever component happens to be reachable is how a fire ends up
+        counting *candidate* work (a rendered payload, a matched rule) as
+        submitted work, which is exactly the false attestation the receipt
+        exists to rule out. No wiring means no dispatch, and no dispatch
+        means no receipt.
         """
         from bernstein.core.trigger_sources.schedule import normalize_schedule_fire
 
-        dispatcher = dispatch if dispatch is not None else self._resolve_dispatch()
+        dispatcher = dispatch if dispatch is not None else self._dispatch
         if dispatcher is None:
-            return 0, "no task-graph dispatcher is available; nothing was submitted"
+            return (), "no task-graph dispatcher is configured for this registry; nothing was submitted"
 
         event = normalize_schedule_fire(
             schedule_id=recipe_hash,
@@ -988,42 +1061,19 @@ class RecipeRegistry:
             },
         )
         try:
-            submitted = dispatcher(event)
+            returned = dispatcher(event)
         except Exception as exc:
-            return 0, f"dispatch failed: {exc}"
-        # bool is an int subclass; a dispatcher returning True would otherwise
-        # read as "one item submitted" on no evidence at all.
-        count = submitted if isinstance(submitted, int) and not isinstance(submitted, bool) else 0
-        if count <= 0:
-            return 0, "the task-graph dispatcher submitted no work for this fire"
-        return count, ""
+            return (), f"dispatch failed: {exc}"
 
-    def _resolve_dispatch(self) -> RecipeDispatch | None:
-        """Resolve the default task-graph dispatcher, or None when unavailable.
-
-        The default routes the fire through the same trigger pipeline the
-        schedule supervisor uses and reports how many task payloads it
-        produced. Zero payloads is a real answer, not an error: it means the
-        fire matched no trigger and therefore submitted nothing.
-        """
-        if self._dispatch_resolved:
-            return self._dispatch
-        self._dispatch_resolved = True
-        try:
-            from bernstein.core.orchestration.trigger_manager import TriggerManager
-
-            manager = TriggerManager(self._sdd_dir)
-        except Exception:
-            logger.exception("Recipe fire could not resolve the trigger pipeline for %s", self._sdd_dir)
-            self._dispatch = None
-            return None
-
-        def _dispatch(event: Any) -> int:
-            payloads, _suppressed = manager.evaluate(event)
-            return len(payloads)
-
-        self._dispatch = _dispatch
-        return self._dispatch
+        submitted_ids = _submitted_identifiers(returned)
+        if submitted_ids is None:
+            return (), (
+                "the task-graph dispatcher did not return work-item identifiers; "
+                "a fire is only recorded against work the sink accepted"
+            )
+        if not submitted_ids:
+            return (), "the task-graph dispatcher submitted no work for this fire"
+        return submitted_ids, ""
 
     # -- verification -------------------------------------------------------
 

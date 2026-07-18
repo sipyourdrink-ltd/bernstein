@@ -532,10 +532,60 @@ def _sdd_dir(*, create: bool = False) -> Path:
     return sdd
 
 
-def _open_registry(*, create: bool = False) -> Any:
+def _open_registry(*, create: bool = False, dispatch: Any = None) -> Any:
     from bernstein.core.workflows.recipe_registry import RecipeRegistry
 
-    return RecipeRegistry(_sdd_dir(create=create))
+    return RecipeRegistry(_sdd_dir(create=create), dispatch=dispatch)
+
+
+def _task_server_dispatch(sdd_dir: Any) -> Any:
+    """Build the dispatcher ``recipes fire`` submits through.
+
+    Submission means the task server accepted the work and returned an id.
+    The returned ids are what the fire receipt records, so the receipt only
+    ever attests tasks that exist.
+
+    Two things are deliberately *not* treated as submission:
+
+    - rendering a payload from the recipe definition, and
+    - a trigger rule matching the fire.
+
+    Rendering produces a candidate; only the POST that comes back with an id
+    produces work. Trigger matching is skipped entirely: ``recipes fire`` is
+    an explicit operator command, so whether it runs must not depend on
+    unrelated ``triggers.yaml`` rules or on the trigger dedup cache, whose
+    300s cooldown would otherwise make the same fire submit on one call and
+    silently do nothing on the next.
+    """
+
+    def _dispatch(event: Any) -> list[str]:
+        from bernstein.cli.helpers import server_post
+
+        metadata = dict(getattr(event, "metadata", {}) or {})
+        recipe_name = str(metadata.get("recipe_name", ""))
+        recipe_hash = str(metadata.get("recipe_hash", ""))
+        payload = {
+            "title": f"Recipe fire: {recipe_name}"[:120],
+            "description": (
+                f"Fired registered recipe {recipe_name!r} "
+                f"(recipe_{recipe_hash[:12]}) at {metadata.get('fire_time', '')}.\n\n"
+                f"projection_hash: {metadata.get('projection_hash', '')}"
+            ),
+            "role": "backend",
+            "priority": 3,
+            "scope": "medium",
+            "task_type": "feature",
+            "metadata": metadata,
+        }
+        created = server_post("/tasks", payload)
+        if not created:
+            # Unreachable server or a rejected POST. Returning nothing is the
+            # honest answer: no id means no work, which means no receipt.
+            return []
+        task_id = str(created.get("id", "")).strip()
+        return [task_id] if task_id else []
+
+    return _dispatch
 
 
 def _resolve_pins(spec: Any) -> Any:
@@ -613,7 +663,7 @@ def fire_cmd(name: str, at: int | None, goal: str, schedule: str) -> None:
     from bernstein.core.workflows.recipe_registry import RecipeRegistryError
 
     console = Console()
-    registry = _open_registry()
+    registry = _open_registry(dispatch=_task_server_dispatch(_sdd_dir()))
     fire_time = at if at is not None else int(time.time())
     try:
         result = registry.fire(name, fire_time=fire_time, goal=goal, schedule_id=schedule)
@@ -621,15 +671,20 @@ def fire_cmd(name: str, at: int | None, goal: str, schedule: str) -> None:
         console.print(f"[bold red]Fire failed:[/bold red] {exc}")
         raise SystemExit(1) from exc
     if not result.dispatched:
-        reason = result.reason or "recipe is paused"
-        console.print(f"[yellow]Not fired:[/yellow] {reason}")
-        if "paused" not in reason:
+        console.print(f"[yellow]Not fired:[/yellow] {result.reason or 'recipe is paused'}")
+        # Branch on structured state, never on the reason text: the reason is
+        # prose built from arbitrary dispatcher errors, so a substring test
+        # here would let any failure whose message happened to contain the
+        # word "paused" exit 0.
+        if not result.paused:
             raise SystemExit(2)
         return
     console.print(f"[bold green]Fired[/bold green] {result.name} @ {result.fire_time}")
     console.print(f"  projection_hash: {result.projection_hash}")
     console.print(f"  chain_anchor: {result.chain_anchor[:16]}")
     console.print(f"  submitted: {result.submitted}")
+    for task_id in result.submitted_ids:
+        console.print(f"    task: {task_id}")
 
 
 @recipes_group.command("history")

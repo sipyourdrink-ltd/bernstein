@@ -72,12 +72,13 @@ def _registry(sdd: Path, *, dispatch: object = None) -> RecipeRegistry:
 
 
 def _submitting_registry(sdd: Path) -> RecipeRegistry:
-    """A registry whose task-graph dispatcher reports one submitted item.
+    """A registry whose dispatcher reports one accepted work item.
 
-    ``fire`` reports ``dispatched=True`` only when work was actually
-    submitted, so a test that asserts a dispatch has to supply a dispatcher.
+    ``fire`` reports ``dispatched=True`` only against identifiers for work a
+    sink accepted, so a test that asserts a dispatch has to supply a
+    dispatcher that returns them.
     """
-    return _registry(sdd, dispatch=lambda _event: 1)
+    return _registry(sdd, dispatch=lambda _event: ["T-001"])
 
 
 # ---------------------------------------------------------------------------

@@ -5234,9 +5234,10 @@ EVENT_SCHEDULE_COLLISION = "schedule.collision_receipt"
 EVENT_RECIPE_FLEET_APPLY = "recipe.fleet_apply"
 
 #: A registered recipe actually submitted work. Written only after the task
-#: graph was handed to the dispatcher and the dispatcher reported at least
-#: one submitted work item, so the presence of this receipt is the evidence
-#: that the fire happened; its absence means nothing was submitted.
+#: graph was handed to the dispatcher and the dispatcher returned identifiers
+#: for work the sink accepted, so the presence of this receipt is evidence
+#: that the fire happened; its absence means nothing was submitted. The
+#: identifiers ride in the entry so the claim is checkable, not just signed.
 EVENT_RECIPE_FIRE = "recipe.fire"
 
 #: Issue #2518 -- emitted once per sovereign-profile activation. The active
@@ -5423,15 +5424,19 @@ def record_recipe_fire(
     fire_time: int,
     projection_hash: str,
     schedule_id: str,
-    submitted: int,
+    submitted_ids: tuple[str, ...],
     actor: str = "recipe_registry",
 ) -> AuditEvent:
     """Append a ``recipe.fire`` event for a fire that submitted work (#2654).
 
-    The caller appends this only after the dispatcher reported at least one
-    submitted work item, so the receipt is the evidence that the fire ran.
-    A fire whose submission failed appends nothing and reports the failure
-    to its caller instead.
+    The caller appends this only after the dispatcher returned identifiers for
+    work the sink accepted, so the receipt is evidence that the fire ran
+    rather than an assertion about it. A fire whose submission failed appends
+    nothing and reports the failure to its caller instead.
+
+    The identifiers are recorded, not merely counted: a reader of the chain
+    can resolve each one and confirm the work exists, which is what separates
+    an auditable receipt from a signed claim.
 
     Args:
         chain: The audit chain store accepting the entry.
@@ -5441,7 +5446,7 @@ def record_recipe_fire(
         projection_hash: Deterministic fire-projection hash.
         schedule_id: Content-derived id of the declared schedule that
             triggered the fire, or ``""`` for a schedule-neutral manual fire.
-        submitted: Number of work items the dispatcher reported submitting.
+        submitted_ids: Identifiers of the work items the sink accepted.
         actor: Recorded actor; defaults to ``"recipe_registry"``.
 
     Returns:
@@ -5458,7 +5463,8 @@ def record_recipe_fire(
             "fire_time": fire_time,
             "projection_hash": projection_hash,
             "schedule_id": schedule_id,
-            "submitted": submitted,
+            "submitted": len(submitted_ids),
+            "submitted_ids": list(submitted_ids),
         },
     )
 

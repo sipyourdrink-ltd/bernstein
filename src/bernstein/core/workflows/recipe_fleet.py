@@ -162,15 +162,31 @@ def apply_fleet(
     is applied and a ``recipe.fleet_apply`` receipt bound to *plan_hash* is
     written.
 
-    The apply is all-or-nothing. One registry write lock is held across the
-    base-state recheck, every registration, and the aggregate receipt, so no
-    concurrent writer can interleave between the recheck and the receipt.
-    Inside the lock the work is staged in two phases: every registration is
-    prepared first (canonicalisation, lineage seal, blob write - the fallible
-    parts) and only then are the receipts appended. Because the live
-    ``name -> hash`` mapping is projected from receipts alone, a failure
-    during preparation leaves no name registered and no aggregate receipt
-    claiming otherwise, rather than a half-applied fleet.
+    One registry write lock is held across the base-state recheck, every
+    registration, and the aggregate receipt, so no concurrent writer can
+    interleave between the recheck and the receipt. Inside the lock the work
+    runs in two phases: every registration is *prepared* first
+    (canonicalisation, lineage seal, blob write - the fallible parts), and
+    only then are the receipts *committed*.
+
+    What that guarantees, precisely:
+
+    - **Preparation is all-or-nothing.** Because the live ``name -> hash``
+      mapping is projected from receipts alone, a failure anywhere in phase 1
+      leaves no name registered and no aggregate receipt, only inert
+      content-addressed blobs that nothing points at.
+    - **The commit phase is ordered, not transactional.** Receipts are
+      appended one name at a time and the aggregate receipt closes the apply.
+      An append that fails partway (audit-chain IO error, disk full, killed
+      process) leaves the already-appended prefix genuinely registered with no
+      aggregate receipt. That state is detectable rather than silent: a
+      re-run of :func:`plan_fleet` reports the applied names as unchanged and
+      the rest as pending, and the absent ``recipe.fleet_apply`` receipt shows
+      the apply never completed. Re-running ``apply`` against a freshly
+      reviewed plan converges.
+
+    Rolling the commit phase back is not possible on an append-only chain, so
+    this contract states the narrower guarantee the code actually delivers.
 
     Returns the tuple of applied names.
 
