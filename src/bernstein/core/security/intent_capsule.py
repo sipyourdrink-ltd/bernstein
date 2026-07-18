@@ -679,22 +679,30 @@ def _normalise_path(raw: str) -> str:
     collapse is purely textual (no filesystem access, no symlink resolution), so
     the verdict stays a pure function of the journal bytes.
     """
-    text = posixpath.normpath(raw.replace("\\", "/").strip())
-    return text.lstrip("/")
+    return posixpath.normpath(raw.replace("\\", "/").strip())
 
 
 def path_in_scope(path: str, globs: tuple[str, ...]) -> bool:
     """Return True when ``path`` matches at least one glob in ``globs``.
 
-    An empty ``globs`` declares no file scope and constrains nothing. A path
-    that still escapes upward after normalisation is never in scope.
+    An empty ``globs`` declares no file scope and constrains nothing.
+
+    Two shapes are never in scope, whatever the globs say, because both mean the
+    path is not the workspace-relative path the scope was approved for:
+
+    * a path that still escapes upward after normalisation (``../secrets``);
+    * an absolute path. Stripping the leading ``/`` would reinterpret the input
+      into the shape that passes -- ``/tmp/evil`` would satisfy ``tmp/**`` -- so
+      a containment check must reject it rather than rewrite it.
     """
     if not globs:
         return True
     candidate = _normalise_path(path)
-    if candidate == ".." or candidate.startswith("../"):
+    if candidate.startswith("/"):
         return False
-    return any(_compiled_glob(g).match(candidate) is not None for g in globs)
+    return not (candidate == ".." or candidate.startswith("../")) and any(
+        _compiled_glob(g).match(candidate) is not None for g in globs
+    )
 
 
 def _event_paths(event: dict[str, Any]) -> list[str]:
@@ -749,9 +757,17 @@ def _divergence_reason(
         return "action_class_not_permitted"
     if policy.escalate_on_egress and action_class in _EXTERNAL_COMM_ACTION_CLASSES and not egress_ok:
         return "egress_not_permitted"
-    adapter = _event_adapter(event)
-    if permitted_adapters and adapter and adapter not in permitted_adapters:
-        return "adapter_not_permitted"
+    if permitted_adapters:
+        adapter = _event_adapter(event)
+        if not adapter:
+            # Fail closed, exactly as the path check below does. An allowlist
+            # that applies only when the caller volunteers the field being
+            # checked is not an allowlist: the journal is written by the same
+            # worker whose conformance is being judged, so omitting one key
+            # would retire the control.
+            return "adapter_unrecorded"
+        if adapter not in permitted_adapters:
+            return "adapter_not_permitted"
     if action_class in _FILE_SCOPED_ACTION_CLASSES and capsule.file_scope_globs:
         paths = _event_paths(event)
         if not paths:
@@ -863,8 +879,16 @@ def chain_expiry_violation(entries: list[AuditEvent], capsule: IntentCapsule) ->
     step. Making per-step expiry authenticated would require a chained step
     clock inside the hashed payload.
 
+    Pass **every** task-scoped chain entry, not only the ``intent.capsule``
+    approval entries. An approval is by construction at or before the expiry it
+    declares, so scanning approvals alone can only ever fire for a capsule
+    minted already-expired -- the control would sit on the audit surface looking
+    satisfied while enforcing nothing. It is the later entries, above all the
+    journal seal written when the run finishes, that evidence a capsule still
+    being acted on past its expiry.
+
     Args:
-        entries: Authenticated chain entries relating to the capsule's task.
+        entries: Every authenticated chain entry relating to the capsule's task.
         capsule: The capsule whose ``expiry_ts`` governs.
 
     Returns:
@@ -885,7 +909,9 @@ def chain_expiry_violation(entries: list[AuditEvent], capsule: IntentCapsule) ->
             continue
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        if int(parsed.timestamp()) > capsule.expiry_ts:
+        # Float comparison: truncating to whole seconds would silently forgive
+        # any overrun shorter than a second.
+        if parsed.timestamp() > capsule.expiry_ts:
             return raw
     return ""
 
@@ -979,6 +1005,56 @@ def approve_and_capsule(
         expiry_ts=capsule.expiry_ts,
     )
     return capsule, event
+
+
+def seal_run_journal(
+    *,
+    chain: AuditChainStore,
+    sdd_dir: Path,
+    task_id: str,
+    run_id: str,
+    capsule: IntentCapsule,
+) -> AuditEvent:
+    """Commit a finished run journal's head and length to the audit chain (#2649).
+
+    Call once the capsule-governed run is over. Until a run is sealed it cannot
+    be verified: the journal's Merkle chain recomputes from genesis, so any
+    prefix of it verifies as a valid journal on its own, and a worker that
+    drifted can simply delete its trailing rows. Sealing records the head hash
+    and the event count into signed state, giving the verifier something to
+    compare the surviving journal against.
+
+    Raises:
+        IntentCapsuleError: If the journal is missing or its chain diverges,
+            since sealing a journal that does not verify would launder it.
+    """
+    from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.security.audit_chain import record_intent_journal_seal
+
+    journal_path = _run_journal_path(sdd_dir, run_id)
+    if not journal_path.exists():
+        raise IntentCapsuleError(f"run journal for {run_id!r} is missing; nothing to seal")
+    jres = verify_journal(journal_path)
+    if not jres.ok:
+        detail = jres.errors[0] if jres.errors else "chain break"
+        raise IntentCapsuleError(f"refusing to seal a journal whose chain diverges ({detail})")
+
+    events = load_events(journal_path)
+    return record_intent_journal_seal(
+        chain=chain,
+        task_id=task_id,
+        run_id=run_id,
+        capsule_hash=capsule_hash(capsule),
+        journal_head=journal_head(events),
+        event_count=len(events),
+    )
+
+
+def journal_head(events: list[dict[str, Any]]) -> str:
+    """Return the Merkle head of a loaded journal (its last ``event_hash``)."""
+    if not events:
+        return ""
+    return str(events[-1].get("event_hash", ""))
 
 
 def record_intent_drift(
@@ -1166,7 +1242,10 @@ def _resolve_chained_binding(
         when it could be resolved and the caller's claim otherwise.
     """
     from bernstein.core.replay.journal import load_events, verify_journal
-    from bernstein.core.security.audit_chain import EVENT_INTENT_CAPSULE
+    from bernstein.core.security.audit_chain import (
+        EVENT_INTENT_CAPSULE,
+        EVENT_INTENT_JOURNAL_SEAL,
+    )
 
     claimed = expected_run_id or sidecar_run_id
 
@@ -1205,7 +1284,8 @@ def _resolve_chained_binding(
             run_id,
         )
 
-    expired_at = chain_expiry_violation(recorded, capsule)
+    task_entries = [e for e in chain.query() if e.details.get("task_id") == task_id]
+    expired_at = chain_expiry_violation(task_entries, capsule)
     if expired_at:
         return None, f"capsule expired at {capsule.expiry_ts}; audit chain records activity at {expired_at}", run_id
 
@@ -1233,6 +1313,44 @@ def _resolve_chained_binding(
             None,
             f"run journal carries {len(anchors)} matching {CAPSULE_BOUND_EVENT} anchors for this capsule, "
             f"expected exactly 1; the run is not attributable to the approved capsule",
+            run_id,
+        )
+
+    # The journal's Merkle chain recomputes from genesis, so every prefix of it
+    # verifies on its own: without an independent commitment to the END, a
+    # worker deletes the rows that convict it and the remainder looks clean.
+    seals = [
+        e
+        for e in chain.query(event_type=EVENT_INTENT_JOURNAL_SEAL)
+        if e.details.get("task_id") == task_id
+        and str(e.details.get("run_id", "")) == run_id
+        and str(e.details.get("capsule_hash", "")) == recomputed
+    ]
+    if len(seals) != 1:
+        return (
+            None,
+            f"run journal carries {len(seals)} matching {EVENT_INTENT_JOURNAL_SEAL} entries, expected exactly 1; "
+            f"an unsealed journal has no committed length and truncation would be undetectable",
+            run_id,
+        )
+    seal = seals[-1]
+    sealed_count = seal.details.get("event_count")
+    sealed_head = str(seal.details.get("journal_head", ""))
+    actual_head = journal_head(events)
+    if not isinstance(sealed_count, int) or isinstance(sealed_count, bool):
+        return None, "journal seal records no usable event_count; cannot bound the journal", run_id
+    if len(events) != sealed_count:
+        return (
+            None,
+            f"run journal holds {len(events)} events but the chain sealed {sealed_count}; "
+            f"steps were added or removed after the run",
+            run_id,
+        )
+    if actual_head != sealed_head:
+        return (
+            None,
+            f"run journal head {actual_head or '(empty)'} does not match the chain-sealed head "
+            f"{sealed_head or '(empty)'}; the journal was rewritten after the run",
             run_id,
         )
 
@@ -1337,12 +1455,14 @@ __all__ = [
     "compile_capsule",
     "evaluate_conformance",
     "iter_module_import_names",
+    "journal_head",
     "normalise_tool_name",
     "path_in_scope",
     "project_conformance_verdict",
     "read_capsule",
     "read_capsule_binding",
     "record_intent_drift",
+    "seal_run_journal",
     "verify_intent_conformance",
     "write_capsule",
 ]

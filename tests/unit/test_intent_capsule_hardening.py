@@ -35,7 +35,9 @@ from bernstein.core.security.intent_capsule import (
     classify_journal_event,
     compile_capsule,
     evaluate_conformance,
+    path_in_scope,
     read_capsule_binding,
+    seal_run_journal,
     verify_intent_conformance,
 )
 from bernstein.core.tasks.models import TaskCostEstimate, TaskPlan
@@ -75,10 +77,13 @@ def _plan() -> TaskPlan:
 
 
 def _capsule(**overrides) -> IntentCapsule:
+    # No adapter allowlist by default: an allowlist now denies events that
+    # record no adapter (#2649), which would entangle every unrelated
+    # conformance assertion. The adapter control has its own tests below.
     kwargs = {
         "allowed_action_classes": ["fs.read", "fs.write", "git.commit"],
         "file_scope_globs": ["src/pricing/**"],
-        "permitted_adapters": ["claude"],
+        "permitted_adapters": [],
         "egress_classes": [],
         "expiry_ts": _FUTURE_EXPIRY,
     }
@@ -110,14 +115,24 @@ def _approve(tmp_path: Path, *, run_id: str = _RUN_ID, **overrides) -> IntentCap
     return capsule
 
 
-def _journal(tmp_path: Path, run_id: str, *, capsule_h: str, bind: bool = True, drift: bool = False) -> EventJournal:
+def _journal(
+    tmp_path: Path,
+    run_id: str,
+    *,
+    capsule_h: str,
+    bind: bool = True,
+    drift: bool = False,
+    seal: IntentCapsule | None = None,
+) -> EventJournal:
     journal = EventJournal(run_id, _sdd(tmp_path))
     if bind:
         bind_capsule_into_journal(journal, task_id=_TASK_ID, capsule_hash=capsule_h)
-    journal.record("tool.call", tool="Read", path="src/pricing/rates.py", seq=1)
-    journal.record("tool.call", tool="Edit", path="src/pricing/rates.py", seq=2)
+    journal.record("tool.call", tool="Read", adapter="claude", path="src/pricing/rates.py", seq=1)
+    journal.record("tool.call", tool="Edit", adapter="claude", path="src/pricing/rates.py", seq=2)
     if drift:
-        journal.record("tool.call", tool="WebFetch", seq=3)
+        journal.record("tool.call", tool="WebFetch", adapter="claude", seq=3)
+    if seal is not None:
+        seal_run_journal(chain=_chain(tmp_path), sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=run_id, capsule=seal)
     return journal
 
 
@@ -159,7 +174,7 @@ def test_forged_sidecar_run_id_is_rejected(tmp_path: Path) -> None:
 def test_verify_uses_audit_run_id_when_sidecar_is_silent(tmp_path: Path) -> None:
     """An empty sidecar run_id makes no claim; the signed run_id still governs."""
     capsule = _approve(tmp_path)
-    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
     _rewrite_sidecar_run_id(tmp_path, "")
 
     result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
@@ -194,7 +209,7 @@ def test_verify_rejects_a_capsule_bound_anchor_for_another_capsule(tmp_path: Pat
 def test_verify_rejects_duplicate_capsule_bound_anchors(tmp_path: Path) -> None:
     """Exactly one anchor: two bindings make attribution ambiguous."""
     capsule = _approve(tmp_path)
-    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
     bind_capsule_into_journal(journal, task_id=_TASK_ID, capsule_hash=capsule_hash(capsule))
 
     result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
@@ -314,7 +329,7 @@ def test_verdict_does_not_depend_on_unauthenticated_journal_timestamps(tmp_path:
     fresh wall-clock values -- disagree with the original run.
     """
     capsule = _capsule(expiry_ts=1_700_000_000)
-    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
     before = evaluate_conformance(load_events(journal.path), capsule)
 
     rows = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -345,7 +360,7 @@ def test_expiry_is_enforced_against_authenticated_chain_timestamps(tmp_path: Pat
 
 def test_verify_rejects_a_capsule_used_past_its_expiry(tmp_path: Path) -> None:
     capsule = _approve(tmp_path, expiry_ts=1_700_000_000)
-    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
 
     result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
 
@@ -479,7 +494,7 @@ def _escalate(tmp_path: Path, capsule: IntentCapsule, verdict, **overrides):
 def _drifted_run(tmp_path: Path) -> tuple[IntentCapsule, list]:
     """Approve a capsule on the chain and drift the bound run against it."""
     capsule = _approve(tmp_path)
-    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True, seal=capsule)
     return capsule, load_events(journal.path)
 
 
@@ -492,7 +507,7 @@ def test_escalation_refuses_a_capsule_that_was_never_approved(tmp_path: Path) ->
     as drift.
     """
     approved = _approve(tmp_path)
-    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(approved), drift=False)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(approved), drift=False, seal=approved)
     events = load_events(journal.path)
     assert evaluate_conformance(events, approved).conformant, "the real run is conformant"
 
@@ -551,7 +566,7 @@ def test_escalation_refuses_a_forged_verdict(tmp_path: Path) -> None:
 
 def test_escalation_refuses_a_conformant_verdict(tmp_path: Path) -> None:
     capsule = _approve(tmp_path)
-    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=False)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=False, seal=capsule)
     verdict = evaluate_conformance(load_events(journal.path), capsule)
     assert verdict.conformant
 
@@ -664,7 +679,7 @@ def test_capsule_hash_survives_the_write_read_round_trip(tmp_path: Path, overrid
 def test_verify_accepts_an_honest_capsule_with_a_float_expiry(tmp_path: Path) -> None:
     """End to end: the loosely-typed value must not read back as tampering."""
     capsule = _approve(tmp_path, expiry_ts=float(_FUTURE_EXPIRY))
-    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
 
     result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
 
@@ -680,7 +695,7 @@ def test_escalation_accepts_a_capsule_reloaded_from_disk(tmp_path: Path) -> None
     _approve(tmp_path)
     from_disk, sidecar_run_id = read_capsule_binding(_sdd(tmp_path), _TASK_ID)
     assert from_disk is not None
-    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(from_disk), drift=True)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(from_disk), drift=True, seal=from_disk)
     verdict = evaluate_conformance(load_events(journal.path), from_disk)
 
     receipt = _escalate(tmp_path, from_disk, verdict, run_id=sidecar_run_id or _RUN_ID)
@@ -704,3 +719,160 @@ def test_divergence_set_is_stable_across_journal_reloads(tmp_path: Path) -> None
     assert len(first.divergences) == 4
     assert first.verdict_hash == second.verdict_hash
     assert [d.to_dict() for d in first.divergences] == [d.to_dict() for d in second.divergences]
+
+
+# ---------------------------------------------------------------------------
+# Absent and malformed input must deny, not slip past the control
+# ---------------------------------------------------------------------------
+
+
+def test_truncating_the_journal_does_not_launder_drift(tmp_path: Path) -> None:
+    """Deleting the rows that convict you must not produce a clean verdict.
+
+    The journal's Merkle chain recomputes from genesis using positional
+    indices, so every prefix of a valid journal is itself a valid journal. A
+    proof that reads only what remains cannot tell what was removed; the sealed
+    head and length are the independent commitment that makes it detectable.
+    """
+    capsule = _approve(tmp_path)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True, seal=capsule)
+    before = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+    assert not before.ok and not before.conformant, "the drifted run is caught before truncation"
+
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    journal.path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+
+    after = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    assert verify_journal(journal.path).ok, "a truncated prefix still verifies on its own"
+    assert not after.ok
+    assert not after.conformant
+    assert "sealed" in after.reason
+
+
+def test_appending_after_the_seal_is_rejected(tmp_path: Path) -> None:
+    capsule = _approve(tmp_path)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
+    journal.record("tool.call", tool="WebFetch", adapter="claude")
+
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    assert not result.ok
+    assert "sealed" in result.reason
+
+
+def test_an_unsealed_run_cannot_be_verified(tmp_path: Path) -> None:
+    """Absent commitment is a denial, not a pass."""
+    capsule = _approve(tmp_path)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    assert not result.ok
+    assert "journal_seal" in result.reason
+
+
+def test_a_seal_for_another_run_does_not_satisfy_this_one(tmp_path: Path) -> None:
+    capsule = _approve(tmp_path)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    _journal(tmp_path, "run-other", capsule_h=capsule_hash(capsule), seal=None)
+    seal_run_journal(
+        chain=_chain(tmp_path),
+        sdd_dir=_sdd(tmp_path),
+        task_id=_TASK_ID,
+        run_id="run-other",
+        capsule=capsule,
+    )
+
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    assert not result.ok
+    assert "journal_seal" in result.reason
+
+
+def test_sealing_a_diverged_journal_is_refused(tmp_path: Path) -> None:
+    capsule = _approve(tmp_path)
+    journal = _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), drift=True)
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    lines[-1], lines[-2] = lines[-2], lines[-1]
+    journal.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(IntentCapsuleError, match="diverges"):
+        seal_run_journal(
+            chain=_chain(tmp_path), sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=_RUN_ID, capsule=capsule
+        )
+
+
+def test_expiry_fires_on_activity_after_approval_not_only_at_mint_time(tmp_path: Path) -> None:
+    """Scanning approval entries alone makes the control structurally inert.
+
+    An approval is by construction at or before the expiry it declares, so a
+    check that only sees approvals can fire solely for a capsule minted
+    already-expired. The seal, written when the run finishes, is what evidences
+    a capsule still being acted on past its expiry.
+    """
+    import time
+
+    capsule = _approve(tmp_path, expiry_ts=int(time.time()) + 1)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule))
+    time.sleep(1.2)
+    seal_run_journal(chain=_chain(tmp_path), sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=_RUN_ID, capsule=capsule)
+
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    assert not result.ok
+    assert "expired" in result.reason
+
+
+def test_a_run_inside_a_live_ttl_still_verifies(tmp_path: Path) -> None:
+    capsule = _approve(tmp_path, expiry_ts=_FUTURE_EXPIRY)
+    _journal(tmp_path, _RUN_ID, capsule_h=capsule_hash(capsule), seal=capsule)
+
+    assert verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID).ok
+
+
+def test_omitting_the_adapter_field_does_not_evade_the_allowlist(tmp_path: Path) -> None:
+    """An allowlist that applies only when the field is volunteered is not one."""
+    capsule = _capsule(permitted_adapters=["claude"])
+
+    omitted = evaluate_conformance([{"event": "tool.call", "tool": "Edit", "path": "src/pricing/a.py"}], capsule)
+    foreign = evaluate_conformance(
+        [{"event": "tool.call", "tool": "Edit", "adapter": "codex", "path": "src/pricing/a.py"}], capsule
+    )
+    permitted = evaluate_conformance(
+        [{"event": "tool.call", "tool": "Edit", "adapter": "claude", "path": "src/pricing/a.py"}], capsule
+    )
+
+    assert not omitted.conformant
+    assert omitted.divergences[0].reason == "adapter_unrecorded"
+    assert not foreign.conformant
+    assert foreign.divergences[0].reason == "adapter_not_permitted"
+    assert permitted.conformant
+
+
+def test_no_declared_adapter_allowlist_stays_unconstrained(tmp_path: Path) -> None:
+    capsule = _capsule(permitted_adapters=[])
+
+    assert evaluate_conformance([{"event": "tool.call", "tool": "Read"}], capsule).conformant
+
+
+@pytest.mark.parametrize(
+    ("path", "globs"),
+    [
+        ("/tmp/evil", ("tmp/**",)),
+        ("/src/pricing/x.py", ("src/pricing/**",)),
+        ("/etc/passwd", ("**",)),
+    ],
+)
+def test_absolute_paths_never_satisfy_a_workspace_relative_glob(path: str, globs: tuple[str, ...]) -> None:
+    """A containment check must reject its input, not rewrite it into a pass.
+
+    Stripping the leading separator reinterprets an absolute path as the
+    workspace-relative one the scope was approved for, silently widening it.
+    """
+    assert not path_in_scope(path, globs)
+
+
+@pytest.mark.parametrize("path", ["src/pricing/x.py", "./src/pricing/x.py", "src/pricing/nested/y.py"])
+def test_workspace_relative_paths_still_match(path: str) -> None:
+    assert path_in_scope(path, ("src/pricing/**",))

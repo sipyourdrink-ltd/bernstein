@@ -581,6 +581,16 @@ EVENT_INTENT_CAPSULE = "intent.capsule"
 #: their identity.
 EVENT_INTENT_DRIFT = "intent.drift"
 
+#: Issue #2649 -- emitted when a capsule-governed run's journal is sealed. The
+#: event mirrors ``{task_id, run_id, capsule_hash, journal_head, event_count}``
+#: into the chain so a verifier has an independent commitment to the journal's
+#: END. Without it, any prefix of a valid journal is itself a valid journal:
+#: the Merkle chain recomputes from genesis, so a worker can delete the trailing
+#: rows that convict it and present a shorter, internally consistent history.
+#: The seal is what makes truncation detectable -- a proof that reads only what
+#: remains cannot tell what was removed.
+EVENT_INTENT_JOURNAL_SEAL = "intent.journal_seal"
+
 #: Issue #2520 -- emitted once per statistical eval gate verdict. The verdict
 #: (significant_improvement / non_inferior / insufficient_evidence /
 #: significant_regression) is a pure function of the paired 2x2 discordance
@@ -2645,6 +2655,53 @@ def record_intent_drift(
             "verdict_hash": verdict_hash,
             "divergent_count": divergent_count,
             "escalation_journal_entry_hash": escalation_journal_entry_hash,
+        },
+    )
+
+
+def record_intent_journal_seal(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    run_id: str,
+    capsule_hash: str,
+    journal_head: str,
+    event_count: int,
+    actor: str = "intent_capsule",
+) -> AuditEvent:
+    """Append an ``intent.journal_seal`` event into *chain* (#2649).
+
+    Commits the run journal's END to signed state. The journal's Merkle chain
+    recomputes from genesis using positional indices, so every prefix of a valid
+    journal is itself a valid journal -- a worker can drop the trailing rows
+    that convict it and the remaining history verifies cleanly. Recording the
+    head hash and the event count gives the verifier an independent commitment
+    to compare against, which is the only way truncation becomes detectable.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task whose capsule governs the run.
+        run_id: The run whose journal is sealed.
+        capsule_hash: ``sha256:`` hash of the capsule governing the run.
+        journal_head: The journal's final ``event_hash`` (its Merkle head).
+        event_count: The number of events the journal contained when sealed.
+        actor: Recorded actor; defaults to ``"intent_capsule"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_INTENT_JOURNAL_SEAL,
+        actor=actor,
+        resource_type="intent_capsule",
+        resource_id=capsule_hash,
+        details={
+            "task_id": task_id,
+            "run_id": run_id,
+            "capsule_hash": capsule_hash,
+            "journal_head": journal_head,
+            "event_count": int(event_count),
         },
     )
 

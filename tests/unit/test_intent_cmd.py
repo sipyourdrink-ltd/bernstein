@@ -21,6 +21,7 @@ from bernstein.core.security.intent_capsule import (
     approve_and_capsule,
     bind_capsule_into_journal,
     capsule_hash,
+    seal_run_journal,
 )
 from bernstein.core.tasks.models import TaskCostEstimate, TaskPlan
 
@@ -68,10 +69,13 @@ def _approve(project: Path, *, drift: bool) -> None:
     )
     journal = EventJournal(_RUN_ID, sdd)
     bind_capsule_into_journal(journal, task_id=_TASK_ID, capsule_hash=capsule_hash(cap))
-    journal.record("tool.call", tool="Read", seq=1)
-    journal.record("tool.call", tool="Edit", path="src/pricing/rates.py", seq=2)
+    journal.record("tool.call", tool="Read", adapter="claude", seq=1)
+    journal.record("tool.call", tool="Edit", adapter="claude", path="src/pricing/rates.py", seq=2)
     if drift:
-        journal.record("tool.call", tool="WebFetch", seq=3)
+        journal.record("tool.call", tool="WebFetch", adapter="claude", seq=3)
+    # Offline verify requires the journal head and length to be committed to the
+    # chain, otherwise a truncated prefix would verify as a clean run (#2649).
+    seal_run_journal(chain=chain, sdd_dir=sdd, task_id=_TASK_ID, run_id=_RUN_ID, capsule=cap)
 
 
 def test_show_prints_capsule_projection(project: Path) -> None:

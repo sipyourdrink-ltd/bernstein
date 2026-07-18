@@ -57,6 +57,7 @@ its step index:
 | `action_class_not_permitted` | The action class is outside `allowed_action_classes`. |
 | `egress_not_permitted` | An outbound-communication class ran without `external_comm` in `egress_classes`. |
 | `adapter_not_permitted` | The event's adapter is outside `permitted_adapters`. |
+| `adapter_unrecorded` | The event named no adapter while an allowlist is declared. |
 | `file_scope_violation` | A mutating file action touched a path outside `file_scope_globs`. |
 | `path_unrecorded` | A mutating file action named no path while a scope is declared. |
 | `unclassified_event` | The event maps to no action class and the policy sets `allow_unclassified: false`. |
@@ -70,6 +71,16 @@ fails closed: when a scope is declared, a mutating action that records no
 recognised path is a `path_unrecorded` divergence rather than a silent pass. An
 empty `file_scope_globs` declares no file scope and constrains nothing. Reads are
 not scope-checked: the capsule scopes the worker's mutations.
+
+Both the file-scope and adapter checks fail closed on absent input: with a
+constraint declared, an action that records no path or no adapter is a
+divergence rather than a silent pass. An allowlist that applies only when the
+worker volunteers the field being checked is not an allowlist, and the journal is
+written by the same worker whose conformance is being judged.
+
+Absolute paths never satisfy a workspace-relative glob. Rewriting `/tmp/evil`
+into `tmp/evil` would reinterpret the input into the shape that passes, so the
+check rejects it instead.
 
 Tool names are normalised (whitespace stripped, case folded) before the reviewed
 map is consulted, so `"Bash "` cannot dodge the map and pick up a worker-stamped
@@ -120,10 +131,38 @@ guard plus a test-suite runtime profiler assertion keep it that way.
 5. Require exactly one `intent.capsule_bound` anchor in the journal matching this
    `task_id` and capsule hash, so an unrelated clean journal cannot be presented
    as this capsule's run.
-6. Recompute the conformance verdict from the journal and the capsule.
+6. Require exactly one `intent.journal_seal` entry for this run and capsule, and
+   check the journal's head hash and event count against it.
+7. Recompute the conformance verdict from the journal and the capsule.
 
 Exit codes: `0` conformant, `1` no capsule, `2` drift or tamper, `3` cannot
 verify (no audit key).
+
+## Sealing a run
+
+A run must be sealed before it can be verified:
+
+```python
+seal_run_journal(chain=chain, sdd_dir=sdd, task_id=task_id, run_id=run_id, capsule=capsule)
+```
+
+This records the journal's head hash and event count into the audit chain. It is
+not bookkeeping. The journal's Merkle chain recomputes from genesis using
+positional indices, so **every prefix of a valid journal is itself a valid
+journal**: a worker that drifted can delete the trailing rows that convict it and
+present a shorter, internally consistent history that verifies cleanly. A proof
+that reads only what remains cannot detect what was removed, so the verifier
+needs an independent commitment to the journal's end.
+
+An unsealed run therefore does not verify -- absent commitment is a denial, not a
+pass. Sealing refuses a journal whose own chain does not verify, and both
+truncation and post-seal appends are rejected by the count and head comparison.
+
+The seal is also what gives capsule expiry teeth. An approval entry is by
+construction at or before the expiry it declares, so scanning approvals alone
+could only ever flag a capsule minted already-expired. The seal timestamp, which
+is covered by its entry's HMAC, evidences a capsule still being acted on after it
+expired.
 
 `verify` is read-only. It never writes to the chain and never creates audit key
 material: a freshly minted key cannot authenticate an existing chain, so
