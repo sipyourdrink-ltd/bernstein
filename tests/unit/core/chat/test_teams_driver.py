@@ -235,6 +235,40 @@ def test_teams_push_approval_renders_adaptive_card(fake_teams: None) -> None:
     assert [a["data"]["approval_id"] for a in actions] == ["t-7", "t-7"]
 
 
+def test_teams_adaptive_card_schema_is_tls_only(fake_teams: None) -> None:
+    """The published card must not carry a clear-text schema URL.
+
+    ``$schema`` is an opaque identifier to renderers, but it ships inside the
+    card payload, so anything that does dereference it has to be sent to TLS.
+    """
+    from bernstein.core.chat.drivers.teams import ADAPTIVE_CARD_SCHEMA_URL, TeamsBridge
+
+    assert ADAPTIVE_CARD_SCHEMA_URL.startswith("https://")
+
+    bridge = TeamsBridge(token="app-id", app_password="secret", install_id="install-test", session_id="sess-1")
+
+    async def scenario() -> list[dict[str, Any]]:
+        await bridge.start()
+        await bridge.push_approval(
+            PendingApproval(
+                approval_id="t-8",
+                title="Approve shell command?",
+                body="ls",
+                thread_id="C42",
+            ),
+        )
+        sent = list(bridge._client.sent)  # type: ignore[attr-defined]
+        await bridge.stop()
+        return sent
+
+    sent = asyncio.run(scenario())
+    card = sent[0]["activity"]["attachments"][0]["content"]
+    assert card["$schema"] == ADAPTIVE_CARD_SCHEMA_URL
+    assert not card["$schema"].startswith("http://")
+    # The host and path are unchanged; only the scheme was upgraded.
+    assert card["$schema"] == "https://adaptivecards.io/schemas/adaptive-card.json"
+
+
 def test_teams_push_approval_renders_v2_card_verbatim(fake_teams: None) -> None:
     from bernstein.core.approval.card import build_card, card_hash, render_card_text
     from bernstein.core.chat.drivers.teams import TeamsBridge
