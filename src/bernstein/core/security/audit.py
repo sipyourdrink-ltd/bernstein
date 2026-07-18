@@ -772,7 +772,14 @@ class AuditLog:
             if blob is None:
                 # Unreadable archive segment; verify() reports it properly.
                 continue
-            for raw_line in blob.decode("utf-8", errors="replace").splitlines():
+            # Strict decode, deliberately. Invalid UTF-8 in a segment is
+            # evidence - of a truncated write, corruption, or tampering - and
+            # ``verify`` hashes the raw bytes. Substituting U+FFFD here would
+            # return a clean-looking record that does not match the bytes on
+            # disk, so the projection and the verifier would disagree about
+            # what the log says. Raising matches the previous ``read_text()``
+            # behaviour exactly.
+            for raw_line in blob.decode("utf-8").splitlines():
                 raw = raw_line.strip()
                 if not raw:
                     continue
