@@ -205,6 +205,15 @@ def verify_publication_record(record: dict[str, Any]) -> PublicationVerification
     publisher fingerprint matches the card's actual key, and - on the MCP
     surface - that ``content_hash`` still covers the embedded card.
 
+    Expiry is deliberately **not** enforced here. Publication refuses an
+    expired card at build time (see :func:`_require_publishable`), but a
+    record already sitting in a registry index will age past its card's
+    ``expires_at``, and at that point the useful question is "is this record
+    authentic?" rather than "is it fresh?". A consumer deciding whether to
+    *send work* must check expiry itself, via
+    :func:`~bernstein.core.interop.a2a_card.verify_capability_card` on the
+    embedded card.
+
     Args:
         record: A record produced by one of the ``build_*`` functions.
 

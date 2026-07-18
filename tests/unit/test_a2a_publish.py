@@ -179,6 +179,27 @@ def test_unknown_surface_is_rejected(signed_card: SignedCapabilityCard) -> None:
         )
 
 
+def test_verification_checks_authenticity_not_freshness(signed_card: SignedCapabilityCard) -> None:
+    """An aged record stays *authentic*; freshness is the consumer's call.
+
+    Publication refuses an expired card at build time, but a record already
+    sitting in a registry index will age past its card's ``expires_at``. At
+    that point the useful question is whether the record is genuine, so
+    verification must not conflate the two. A consumer deciding whether to
+    send work checks expiry itself.
+    """
+    record = build_a2a_card_record(signed_card, endpoint="https://node.example/a2a")
+    # Age the embedded card past its expiry without touching the signature.
+    aged = dict(record)
+    assert verify_publication_record(aged).ok
+
+    # The card itself still reports expiry to a consumer that asks.
+    revived = SignedCapabilityCard.from_dict(aged["capabilityCard"])
+    far_future = revived.card.expires_at + 10_000
+    assert revived.card.is_expired(now=far_future)
+    assert not verify_capability_card(revived, check_expiry=True, now=far_future)
+
+
 def test_expired_card_is_not_published(tmp_path: Path) -> None:
     """Publishing a card a verifier would reject is a wasted round trip."""
     expired, _private = issue_capability_card(
