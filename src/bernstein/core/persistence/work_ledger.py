@@ -458,8 +458,17 @@ def validated_canonical_lines(ledger_dir: Path) -> tuple[list[str], str]:
     bytes the chain verified over: a torn trailing line from a crash is
     excluded (matching writer recovery), while interior corruption raises
     :class:`LedgerError` so a broken chain is never exported.
+
+    The bucket goes through the same containment barrier the reader and the
+    writer use. This is the third constructor of the identical path and it
+    runs *before* the guarded reader in ``anchor_ledger``, so without the
+    barrier a symlinked bucket would have its bytes read into the anchor and
+    its head hash derived from them before anything refused.
+
+    Raises:
+        PathContainmentError: The bucket resolves outside *ledger_dir*.
     """
-    bucket_path = ledger_dir / _DEFAULT_BUCKET
+    bucket_path = _contained_bucket_path(ledger_dir)
     if not bucket_path.exists():
         return [], GENESIS_HASH
     tip_hash, validated = _walk_validated_lines(bucket_path)

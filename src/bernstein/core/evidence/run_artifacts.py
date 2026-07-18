@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.evidence.bundle import DEFAULT_MAX_BLOB_BYTES, EvidenceStore
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
-from bernstein.core.security.path_containment import contained_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -278,7 +277,9 @@ def _artifact_journal_path(sdd_dir: Path, task_id: str) -> Path:
     Raises:
         PathContainmentError: The derived run id escapes the runs root.
     """
-    return contained_path(sdd_dir / "runs", _task_run_id(task_id), "journal.jsonl", label="task run id")
+    from bernstein.core.tasks.checkpoint_retry import task_journal_path
+
+    return task_journal_path(sdd_dir, task_id)
 
 
 def _row_to_record(row: dict[str, Any]) -> RunArtifactRecord:

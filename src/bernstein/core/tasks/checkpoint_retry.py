@@ -50,7 +50,7 @@ from bernstein.adapters._contract import (
     CheckpointRetryCapability,
     checkpoint_retry_capability,
 )
-from bernstein.core.replay.journal import EventJournal, load_events, verify_journal
+from bernstein.core.replay.journal import JOURNAL_FILENAME, EventJournal, load_events, verify_journal
 
 if TYPE_CHECKING:
     from bernstein.core.security.audit_chain import AuditChainStore
@@ -151,6 +151,26 @@ def task_run_id(task_id: str) -> str:
     """
     safe = _RUN_ID_SAFE_RE.sub("-", task_id) or "unknown"
     return f"task-{safe}"
+
+
+def task_journal_path(sdd_dir: Path, task_id: str) -> Path:
+    """Return the task's event-journal path, contained under ``<sdd>/runs``.
+
+    Every reader of a task journal must derive its path here rather than
+    rebuilding ``<sdd>/runs/<task_run_id>/journal.jsonl`` by hand. The
+    identifier is slugified by :func:`task_run_id`, which blocks traversal,
+    but only the containment barrier catches a run directory that is a
+    symlink out of the runs root - the case that would otherwise let a
+    planted, self-consistent journal be read as if it were ours.
+    ``verify_journal`` cannot catch that: it is an unkeyed Merkle recompute,
+    so whoever plants the symlink can also satisfy it.
+
+    Raises:
+        PathContainmentError: The derived run id escapes the runs root.
+    """
+    from bernstein.core.security.path_containment import contained_path
+
+    return contained_path(sdd_dir / "runs", task_run_id(task_id), JOURNAL_FILENAME, label="task run id")
 
 
 def workspace_hash(worktree: Path) -> str:
@@ -295,7 +315,7 @@ def latest_checkpoint(sdd_dir: Path, task_id: str) -> CheckpointRef | None:
     restarts cold. A tampered checkpoint reference can therefore never fuel
     a warm resume.
     """
-    path = sdd_dir / "runs" / task_run_id(task_id) / "journal.jsonl"
+    path = task_journal_path(sdd_dir, task_id)
     if not path.exists():
         return None
     result = verify_journal(path)

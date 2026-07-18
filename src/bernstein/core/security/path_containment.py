@@ -34,12 +34,23 @@ import re
 from pathlib import Path
 
 #: A safe path segment: the git-ref-safe alphabet the persistence layer
-#: already uses for run, worktree, task, and ledger ids. Anchored on both
-#: ends, so a separator or a traversal sequence cannot match. The 255-byte
-#: cap is the ``NAME_MAX`` every supported filesystem enforces anyway, so
-#: it turns a later ``ENAMETOOLONG`` into a typed error rather than taking
-#: away a name that used to work.
-SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,255}$")
+#: already uses for run, worktree, task, and ledger ids.
+#:
+#: The length bound is a sanity limit, not the security control - containment
+#: below is. It is deliberately above the repo-wide 256-character task id
+#: convention (``_TASK_ID_RE``, the MCP tool schemas) plus room for a derived
+#: prefix such as ``task-``, so an identifier this codebase already blesses
+#: never trips it. A segment past the filesystem's ``NAME_MAX`` still
+#: normalises and contains correctly, and the read degrades to "not found"
+#: the same way it did before this barrier existed, rather than raising.
+#:
+#: The tail anchor is ``\Z``, not ``$``: in Python ``$`` also matches just
+#: before a trailing newline, so ``$`` would accept ``"..\n"`` - which the
+#: reserved-segment check below does not catch, since it is not equal to
+#: ``".."``. Containment would still hold (a newline is a literal character,
+#: not a parent reference), but the id would carry a control character into
+#: a directory name and into operator-facing log and ledger listings.
+SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,512}\Z")
 
 #: Segments that match the alphabet but name the current/parent directory.
 _RESERVED_SEGMENTS = frozenset({".", ".."})

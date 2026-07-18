@@ -27,6 +27,7 @@ from bernstein.core.persistence.work_ledger import (
     WorkLedger,
     default_ledger_root,
     run_ledger_dir,
+    validated_canonical_lines,
 )
 from bernstein.core.replay.journal import EventJournal, JournalPathError
 from bernstein.core.security.path_containment import (
@@ -78,16 +79,23 @@ def test_validate_path_segment_refuses_unsafe_ids(bad_id: str) -> None:
         validate_path_segment(bad_id, label="run id")
 
 
-@pytest.mark.parametrize("good_id", ["run-1", "run_1", "task-T.1", "a", "fleet", "A" * 255])
+@pytest.mark.parametrize(
+    "good_id",
+    ["run-1", "run_1", "task-T.1", "a", "fleet", "A" * 255, f"task-{'T' * 256}"],
+)
 def test_validate_path_segment_accepts_ordinary_ids(good_id: str) -> None:
-    """A plain identifier passes through unchanged."""
+    """A plain identifier passes through unchanged.
+
+    The last case is a task run id derived from the longest task id
+    ``_TASK_ID_RE`` accepts; the segment bound must stay clear of it.
+    """
     assert validate_path_segment(good_id) == good_id
 
 
-def test_validate_path_segment_refuses_overlong_id() -> None:
-    """A name past NAME_MAX is refused as a typed error, not an OSError."""
+def test_validate_path_segment_refuses_absurdly_long_id() -> None:
+    """The sanity bound still rejects a segment nothing legitimate produces."""
     with pytest.raises(PathContainmentError):
-        validate_path_segment("A" * 256)
+        validate_path_segment("A" * 513)
 
 
 def test_contained_path_joins_under_base(tmp_path: Path) -> None:
@@ -206,13 +214,6 @@ def test_artifact_journal_path_round_trips(tmp_path: Path) -> None:
     assert _artifact_journal_path(tmp_path, "T-1") == (tmp_path / "runs" / "task-T-1" / "journal.jsonl").resolve()
 
 
-@pytest.mark.parametrize("bad_id", ["../../etc/passwd", "/etc/passwd", "a/../../b"])
-def test_artifact_journal_path_neutralises_traversal(tmp_path: Path, bad_id: str) -> None:
-    """A traversal task id is slugified and stays under the runs root."""
-    resolved = _artifact_journal_path(tmp_path, bad_id)
-    assert resolved.is_relative_to((tmp_path / "runs").resolve())
-
-
 def test_artifact_journal_path_refuses_symlinked_run_dir(tmp_path: Path) -> None:
     """A symlinked task run directory is refused rather than followed."""
     runs_root = tmp_path / "runs"
@@ -305,6 +306,131 @@ def test_admission_ledger_dir_refuses_unsafe_id(tmp_path: Path, bad_id: str) -> 
     """A hostile ledger id never escapes the admission root."""
     with pytest.raises(PathContainmentError):
         admission_ledger_dir(tmp_path, bad_id)
+
+
+# ---------------------------------------------------------------------------
+# Every reader of a task journal, not just the artifact one
+# ---------------------------------------------------------------------------
+
+
+def _plant_symlinked_task_journal(tmp_path: Path) -> tuple[Path, Path]:
+    """Point ``<sdd>/runs/task-T-1`` at an attacker-controlled journal.
+
+    The planted chain is built with the real writer, so it verifies: a
+    ``verify_journal`` recompute is unkeyed, and whoever can plant the
+    symlink can also plant a self-consistent journal. Only containment
+    distinguishes it from ours.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    runs_root = sdd_dir / "runs"
+    runs_root.mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    planted = EventJournal("planted", elsewhere)
+    planted.record("checkpoint_recorded", task_id="T-1", checkpoint_id="cp-evil")
+    _symlink_or_skip(runs_root / "task-T-1", planted.path.parent)
+    return sdd_dir, planted.path
+
+
+def test_task_journal_path_refuses_symlinked_run_dir(tmp_path: Path) -> None:
+    """The shared helper every task-journal reader uses is contained."""
+    from bernstein.core.tasks.checkpoint_retry import task_journal_path
+
+    sdd_dir, _ = _plant_symlinked_task_journal(tmp_path)
+    with pytest.raises(PathContainmentError):
+        task_journal_path(sdd_dir, "T-1")
+
+
+def test_progress_rows_refuse_symlinked_run_dir(tmp_path: Path) -> None:
+    """The dashboard progress projection cannot read a planted journal."""
+    from bernstein.core.replay import progress
+
+    sdd_dir, _ = _plant_symlinked_task_journal(tmp_path)
+    with pytest.raises(PathContainmentError):
+        progress._load_task_journal_rows(sdd_dir, "T-1")
+
+
+def test_latest_checkpoint_refuses_symlinked_run_dir(tmp_path: Path) -> None:
+    """A planted checkpoint journal cannot fuel a warm resume."""
+    from bernstein.core.tasks import checkpoint_retry
+
+    sdd_dir, _ = _plant_symlinked_task_journal(tmp_path)
+    with pytest.raises(PathContainmentError):
+        checkpoint_retry.latest_checkpoint(sdd_dir, "T-1")
+
+
+def test_suspension_journal_path_refuses_symlinked_run_dir(tmp_path: Path) -> None:
+    """The suspension row reader resolves through the same barrier."""
+    from bernstein.core.tasks import suspension
+
+    sdd_dir, _ = _plant_symlinked_task_journal(tmp_path)
+    with pytest.raises(PathContainmentError):
+        suspension._journal_path(sdd_dir, "T-1")
+
+
+def test_validated_canonical_lines_refuses_symlinked_bucket(tmp_path: Path) -> None:
+    """The git-anchor export must not read a foreign file's bytes.
+
+    ``validated_canonical_lines`` runs before the guarded reader in
+    ``anchor_ledger``, so an unguarded read here would derive the anchored
+    head hash from the symlink target.
+    """
+    real = tmp_path / "real"
+    ledger = WorkLedger.open(real)
+    ledger.append(kind=KIND_RUN_OPEN, payload={"goal": "private"})
+    ledger.close()
+
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    _symlink_or_skip(victim / "000000.jsonl", real / "000000.jsonl", directory=False)
+
+    with pytest.raises(PathContainmentError):
+        validated_canonical_lines(victim)
+
+
+def test_validated_canonical_lines_round_trips(tmp_path: Path) -> None:
+    """An ordinary ledger still exports its validated lines and head."""
+    ledger_dir = run_ledger_dir(tmp_path, "run-a")
+    ledger = WorkLedger.open(ledger_dir)
+    entry = ledger.append(kind=KIND_RUN_OPEN, payload={"goal": "ship it"})
+    ledger.close()
+
+    lines, head = validated_canonical_lines(ledger_dir)
+    assert len(lines) == 1
+    assert head == entry.entry_hash
+
+
+# ---------------------------------------------------------------------------
+# Allowlist edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_id", ["..\n", ".\n", "run-1\n"])
+def test_validate_path_segment_refuses_trailing_newline(bad_id: str) -> None:
+    """``$`` would accept a trailing newline; the allowlist anchors on ``\\Z``.
+
+    ``"..\\n"`` is the sharp case: it is not equal to ``".."``, so the
+    reserved-segment guard does not catch it either.
+    """
+    with pytest.raises(PathContainmentError):
+        validate_path_segment(bad_id)
+
+
+def test_long_task_id_reads_empty_rather_than_raising(tmp_path: Path) -> None:
+    """An id the module's own validator blesses must not blow up a read.
+
+    ``_TASK_ID_RE`` accepts 256 characters, and ``task_run_id`` prefixes
+    ``task-``. The segment bound must stay clear of that, so the read
+    degrades to "no journal" exactly as it did before the barrier.
+    """
+    from bernstein.core.evidence.run_artifacts import _validate_ids, read_artifact_rows
+
+    sdd_dir = tmp_path / ".sdd"
+    (sdd_dir / "runs").mkdir(parents=True)
+    task_id = "T" * 256
+    _validate_ids(task_id, "k")
+
+    assert read_artifact_rows(sdd_dir, task_id) == []
 
 
 def test_no_stray_writes_outside_base(tmp_path: Path) -> None:

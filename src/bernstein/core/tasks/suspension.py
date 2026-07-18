@@ -189,7 +189,10 @@ class SuspendRow:
 
 
 def _journal_path(sdd_dir: Path, task_id: str) -> Path:
-    return sdd_dir / "runs" / task_run_id(task_id) / "journal.jsonl"
+    """Return the task journal path via the shared containment barrier."""
+    from bernstein.core.tasks.checkpoint_retry import task_journal_path
+
+    return task_journal_path(sdd_dir, task_id)
 
 
 def record_task_suspension_row(
