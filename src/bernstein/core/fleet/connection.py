@@ -568,9 +568,23 @@ def rotate_document(
         new_broker_ref, new_secret_name, where="rotate_document", old_name="new_secret_name"
     )
     current = store.get(name)
-    # The reference the rotation will persist: the new one when given, else
-    # the current one carried forward. Validated before the rotate receipt is
-    # recorded, for the same reason as create.
+    # Identity first, always. A document copied in from another install is
+    # exactly the population most likely to also hold a pre-hardening
+    # reference, so checking the reference first would swallow the refusal for
+    # the case the refusal receipt exists to record: the chain would go quiet
+    # precisely when someone plants a foreign document. The strongest check
+    # decides, and the reported reason names the real problem.
+    if not verify_document_local(current, identity_dir=identity_dir):
+        record_fleet_conn_refuse(
+            chain=chain,
+            name=name,
+            document_hash=current.document_hash(),
+            reason="signature_verification_failed",
+        )
+        raise ConnectionRefused(f"connection document {name!r} is not signed by the local install identity")
+    # Only once the document is known to be ours: the reference the rotation
+    # will persist, validated before the rotate receipt is recorded, for the
+    # same reason as create.
     if new_broker_ref is not None:
         _validate_broker_ref(new_broker_ref)
     elif not _is_reference_shaped(current.broker_ref):
@@ -582,14 +596,6 @@ def rotate_document(
             f"enforced ({_describe_ref(current.broker_ref)}); rotating it forward would persist it "
             f"again. Pass a new reference: bernstein conn rotate {name!r} --secret <name>"
         )
-    if not verify_document_local(current, identity_dir=identity_dir):
-        record_fleet_conn_refuse(
-            chain=chain,
-            name=name,
-            document_hash=current.document_hash(),
-            reason="signature_verification_failed",
-        )
-        raise ConnectionRefused(f"connection document {name!r} is not signed by the local install identity")
     private_key_pem, public_key_pem = _local_identity(identity_dir)
     unsigned = ConnectionDocument(
         name=name,

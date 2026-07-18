@@ -456,6 +456,24 @@ class TestTaskIdPathContainment:
         with pytest.raises(ArtifactValidationError):
             _artifact_journal_path(sdd, "../../escape")
 
+    @pytest.mark.parametrize("key", ["k\n", "report\n", "a.b\n"])
+    def test_trailing_newline_artifact_key_is_refused(self, tmp_path: Path, key: str) -> None:
+        """The key is embedded unescaped in the spine artifact path, so its
+        alphabet exists to exclude control characters. Python's `$` admits a
+        single trailing newline, so this shape was accepted until the anchor
+        became `\\Z`."""
+        sdd = _sdd(tmp_path)
+        with pytest.raises(ArtifactValidationError, match="artifact key"):
+            post_run_artifact(
+                sdd_dir=sdd,
+                task_id="task-1",
+                key=key,
+                payload=ArtifactPayload.report("body"),
+                actor="w",
+                hmac_key=_KEY,
+            )
+        assert read_artifact_rows(sdd, "task-1") == []
+
     @pytest.mark.parametrize("task_id", ["task-1\n", "report\n", "t\n"])
     def test_trailing_newline_task_id_is_refused(self, tmp_path: Path, task_id: str) -> None:
         """Python's `$` also matches before a trailing newline, so this shape

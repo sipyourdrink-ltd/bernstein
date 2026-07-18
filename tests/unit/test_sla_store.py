@@ -159,6 +159,30 @@ class TestContractIdPathContainment:
         assert store.remove(stored.id) is True
 
 
+class TestSubjectIdAnchor:
+    """`_ID_RE` guards the subject id, which reaches a log record.
+
+    This one is pinned at the constant, not through the public API:
+    `build_contract` calls `subject_id.strip()` before matching, and `$`
+    differs from `\\Z` only for a string ending in exactly one newline, which
+    strip has already removed. The anchor is therefore unreachable defence in
+    depth - it matters only if that strip is ever removed - so the test pins
+    the property directly rather than pretending to exercise it end to end.
+    """
+
+    def test_regex_rejects_a_trailing_newline(self) -> None:
+        from bernstein.core.planning.sla_store import _ID_RE
+
+        assert _ID_RE.match("sched_x") is not None
+        assert _ID_RE.match("sched_x\n") is None
+
+    def test_strip_is_what_makes_it_unreachable_today(self) -> None:
+        """Documents the precondition, so a future change that removes the
+        strip has a failing test pointing at the consequence."""
+        contract = build_contract(subject_type="schedule", subject_id="sched_x\n", fire_frequency_s=60)
+        assert contract.subject_id == "sched_x"
+
+
 class TestLogInjection:
     def test_crlf_in_a_store_path_cannot_forge_a_log_record(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -188,6 +212,26 @@ class TestLogInjection:
             assert "\r" not in rendered
             assert "\\r\\n" in rendered
             assert not rendered.startswith(forged)
+
+    def test_a_malformed_contract_body_is_logged_on_one_line(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The second log sink: valid JSON whose body fails validation.
+
+        Reached through `list()`, so the path is a real store path, but the
+        exception text is derived from stored content and gets the same
+        single-line treatment as the load failure.
+        """
+        store = SLAStore(tmp_path / ".sdd")
+        (store.directory / "sla_aaaaaaaaaaaa.json").write_text(
+            '{"subject_type": "galaxy", "subject_id": "s", "fire_frequency_s": 60}', encoding="utf-8"
+        )
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.planning.sla_store"):
+            assert store.list() == []
+        assert caplog.records, "a malformed contract body must be reported"
+        rendered = caplog.records[0].getMessage()
+        assert "Malformed SLA contract" in rendered
+        assert rendered.splitlines() == [rendered]
 
     @pytest.mark.parametrize(
         ("raw", "expected"),

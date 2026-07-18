@@ -725,3 +725,137 @@ class TestDeprecatedSecretNameAlias:
             )
         assert rotated.broker_ref == "TOK_V2"
         assert store.get("c").broker_ref == "TOK_V2"
+
+
+class TestIdentityRefusalIsRecordedFirst:
+    """A foreign document must always leave its refusal on the chain.
+
+    The refuse receipt is the forensic evidence that someone tried to rotate a
+    document copied in from another install. A document copied from an older
+    or foreign install is also the population most likely to carry a
+    pre-hardening reference, so a reference check placed ahead of the identity
+    check would swallow the refusal for exactly the case it exists to record -
+    the chain would go quiet under hostile input.
+    """
+
+    @staticmethod
+    def _foreign_doc(tmp_path: Path, broker_ref: str) -> ConnectionDocumentStore:
+        from bernstein.core.fleet.connection import _local_identity, _sign
+
+        root = tmp_path / "conns"
+        root.mkdir(parents=True)
+        private_key_pem, public_key_pem = _local_identity(tmp_path / "identity_foreign")
+        doc = _sign(
+            ConnectionDocument(name="d", broker_ref=broker_ref, scope="", signer_public_key_pem=public_key_pem),
+            private_key_pem,
+        )
+        (root / "d.json").write_text(doc.to_json(), encoding="utf-8")
+        return ConnectionDocumentStore(root)
+
+    @pytest.mark.parametrize(
+        ("broker_ref", "label"),
+        [("my secret name", "legacy reference"), ("GOOD_REF", "well-shaped reference")],
+    )
+    def test_foreign_document_records_a_refuse_receipt(self, tmp_path: Path, broker_ref: str, label: str) -> None:
+        chain = _chain(tmp_path)
+        store = self._foreign_doc(tmp_path, broker_ref)
+        with pytest.raises(ConnectionRefused):
+            rotate_document("d", new_scope="x", identity_dir=tmp_path / "identity_local", chain=chain, store=store)
+        receipts = chain.query(event_type=EVENT_FLEET_CONN_REFUSE)
+        assert len(receipts) == 1, f"a foreign document with a {label} must still be recorded as refused"
+        assert receipts[0].details["reason"] == "signature_verification_failed"
+
+    def test_the_reported_reason_names_the_real_problem(self, tmp_path: Path) -> None:
+        """Refusing a forged document for a stale reference would tell the
+        operator the wrong thing."""
+        store = self._foreign_doc(tmp_path, "my secret name")
+        with pytest.raises(ConnectionRefused, match="not signed by the local install identity"):
+            rotate_document(
+                "d", new_scope="x", identity_dir=tmp_path / "identity_local", chain=_chain(tmp_path), store=store
+            )
+
+    def test_a_local_document_still_gets_the_legacy_reference_refusal(self, tmp_path: Path) -> None:
+        """Reordering must not disable the legacy check for our own documents."""
+        from bernstein.core.fleet.connection import _local_identity, _sign
+
+        root = tmp_path / "conns"
+        root.mkdir(parents=True)
+        identity = tmp_path / "identity_local"
+        private_key_pem, public_key_pem = _local_identity(identity)
+        doc = _sign(
+            ConnectionDocument(name="d", broker_ref="my secret name", scope="", signer_public_key_pem=public_key_pem),
+            private_key_pem,
+        )
+        (root / "d.json").write_text(doc.to_json(), encoding="utf-8")
+        with pytest.raises(ConnectionReferenceError, match="--secret"):
+            rotate_document(
+                "d",
+                new_scope="x",
+                identity_dir=identity,
+                chain=_chain(tmp_path),
+                store=ConnectionDocumentStore(root),
+            )
+
+
+class TestReferenceShapeHelpers:
+    """Direct cover for the reference-shape helpers.
+
+    They feed the operator-facing legacy warning, and `_describe_ref` in
+    particular is what keeps a possibly-pasted credential out of the log, so
+    each branch is asserted rather than assumed.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "shaped"),
+        [
+            ("GITHUB_TOKEN", True),
+            ("vault:prod/github#token", True),
+            ("", False),
+            ("x" * 257, False),
+            ("has spaces", False),
+            ("multi\nline", False),
+            ("ctrl\x07char", False),
+        ],
+    )
+    def test_is_reference_shaped(self, value: str, shaped: bool) -> None:
+        from bernstein.core.fleet.connection import _is_reference_shaped
+
+        assert _is_reference_shaped(value) is shaped
+
+    @pytest.mark.parametrize(
+        ("value", "expected_trait"),
+        [
+            ("", "<empty>"),
+            ("x" * 300, "over length cap"),
+            ("multi\nline", "multi-line"),
+            ("has spaces", "contains whitespace"),
+            ("ctrl\x07char", "contains control characters"),
+        ],
+    )
+    def test_describe_ref_names_the_trait(self, value: str, expected_trait: str) -> None:
+        from bernstein.core.fleet.connection import _describe_ref
+
+        assert expected_trait in _describe_ref(value)
+
+    @pytest.mark.parametrize("value", ["x" * 300, "multi\nline", "has spaces", "ctrl\x07char"])
+    def test_describe_ref_never_echoes_the_value(self, value: str) -> None:
+        """The whole point: an unshaped reference may be a pasted credential."""
+        from bernstein.core.fleet.connection import _describe_ref
+
+        described = _describe_ref(value)
+        assert value not in described
+        assert value.strip()[:12] not in described or not value.strip()
+
+    def test_conflicting_spellings_are_refused_at_function_level(self, tmp_path: Path) -> None:
+        """The constructor guards this; so must the create/rotate keywords."""
+        with pytest.raises(ValueError, match="not both with different values"):
+            create_document(
+                name="c",
+                broker_ref="A",
+                secret_name="B",
+                scope="",
+                connector_defaults={},
+                identity_dir=tmp_path / "id",
+                chain=_chain(tmp_path),
+                store=ConnectionDocumentStore(tmp_path / "conns"),
+            )
