@@ -38,7 +38,7 @@ from bernstein.core.persistence.work_ledger import (
     WorkLedger,
     replay_state,
 )
-from bernstein.core.replay.journal import rebuild_state, verify_journal
+from bernstein.core.replay.journal import load_events, rebuild_state, verify_journal
 from bernstein.core.security.audit_chain import (
     EVENT_TASK_RESOURCE_RELEASE,
     EVENT_TASK_RESUMED,
@@ -54,8 +54,13 @@ from bernstein.core.tasks.suspension import (
     WAKE_APPROVAL,
     ReleaseWithoutReceiptError,
     ResourceHandles,
+    ResumeApprovalRequiredError,
+    SuspendReceiptMismatchError,
+    SuspendRow,
+    UnsafeTaskIdError,
     approval_decision_ref,
     decide_resume,
+    find_suspension_receipt,
     latest_suspension,
     park_task,
     release_resources,
@@ -666,3 +671,350 @@ def test_work_ledger_kinds_project_to_states(tmp_path: Path) -> None:
     state2 = replay_state(LedgerReader(tmp_path / "ledger").entries())
     assert state2.suspended_tasks == []
     assert state2.in_flight_tasks == ["T-x"]
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2636): receipt binding, approval gating, path containment,
+# and continuity proofs that refuse incomplete or unrelated evidence.
+# ---------------------------------------------------------------------------
+
+
+def _park(tmp_path: Path, chain: AuditChainStore, task_id: str, worktree: Path) -> object:
+    return park_task(
+        sdd_dir=tmp_path / ".sdd",
+        task_id=task_id,
+        adapter="claude",
+        session_id="s",
+        worktree_path=worktree,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        chain=chain,
+    )
+
+
+def _journal_rows(sdd: Path, task_id: str) -> list[dict[str, object]]:
+    path = sdd / "runs" / task_run_id(task_id) / "journal.jsonl"
+    return list(load_events(path)) if path.exists() else []
+
+
+def test_resume_rejects_receipt_from_a_different_suspend_row(tmp_path: Path) -> None:
+    """A receipt bound to another suspend row must not drive a resume.
+
+    The suspension's identity is the suspend row's ``event_hash``; a receipt
+    that binds a *different* row is not evidence for this park. The refusal
+    lands before any journal mutation.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    first = _park(tmp_path, chain, "T-sub", wt)
+    second = _park(tmp_path, chain, "T-sub", wt)
+    assert first.suspend_row.event_hash != second.suspend_row.event_hash
+
+    rows_before = len(_journal_rows(sdd, "T-sub"))
+    with pytest.raises(SuspendReceiptMismatchError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=first.suspend_row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=second.suspend_receipt_hash,
+        )
+    # Fail closed: no resume row, no resume receipt.
+    assert len(_journal_rows(sdd, "T-sub")) == rows_before
+    assert chain.query(event_type=EVENT_TASK_RESUMED) == []
+
+
+def test_resume_rejects_receipt_from_a_different_task(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    victim = _park(tmp_path, chain, "T-victim", wt)
+    foreign = _park(tmp_path, chain, "T-foreign", wt)
+
+    with pytest.raises(SuspendReceiptMismatchError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=victim.suspend_row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=foreign.suspend_receipt_hash,
+        )
+    assert chain.query(event_type=EVENT_TASK_RESUMED) == []
+
+
+def test_resume_rejects_a_receipt_hash_absent_from_the_chain(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-ghost", wt)
+
+    with pytest.raises(SuspendReceiptMismatchError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=park.suspend_row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash="f" * 64,
+        )
+    assert chain.query(event_type=EVENT_TASK_RESUMED) == []
+
+
+def test_release_rejects_a_receipt_bound_to_another_task(tmp_path: Path) -> None:
+    """A release must reference *this* task's receipt, not merely a non-empty one."""
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    foreign = _park(tmp_path, chain, "T-owner", wt)
+    releases_before = len(chain.query(event_type=EVENT_TASK_RESOURCE_RELEASE))
+
+    reaped: list[str] = []
+    handles = ResourceHandles(reap_process=lambda: (reaped.append("pid"), {"pid": 1})[1])
+    with pytest.raises(SuspendReceiptMismatchError):
+        release_resources(
+            chain=chain,
+            task_id="T-other",
+            suspend_receipt_hash=foreign.suspend_receipt_hash,
+            envelope="subscription",
+            reserved_usd=10.0,
+            spent_usd=2.0,
+            handles=handles,
+        )
+    # No physical effect ran and no release row reached the chain.
+    assert reaped == []
+    assert len(chain.query(event_type=EVENT_TASK_RESOURCE_RELEASE)) == releases_before
+
+
+def test_find_suspension_receipt_selects_the_receipt_for_the_given_row(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    first = _park(tmp_path, chain, "T-pick", wt)
+    second = _park(tmp_path, chain, "T-pick", wt)
+
+    assert find_suspension_receipt(chain=chain, task_id="T-pick", suspend_row=first.suspend_row) is not None
+    picked_first = find_suspension_receipt(chain=chain, task_id="T-pick", suspend_row=first.suspend_row)
+    picked_second = find_suspension_receipt(chain=chain, task_id="T-pick", suspend_row=second.suspend_row)
+    assert picked_first is not None and picked_second is not None
+    assert picked_first.hmac == first.suspend_receipt_hash
+    assert picked_second.hmac == second.suspend_receipt_hash
+
+
+def test_resume_without_approval_is_rejected_before_any_journal_mutation(tmp_path: Path) -> None:
+    """An ``--until approval`` park refuses to resume until the decision lands."""
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = park_task(
+        sdd_dir=sdd,
+        task_id="T-gate",
+        adapter="claude",
+        session_id="s",
+        worktree_path=wt,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        chain=chain,
+        wake_condition=WAKE_APPROVAL,
+    )
+    rows_before = len(_journal_rows(sdd, "T-gate"))
+
+    with pytest.raises(ResumeApprovalRequiredError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=park.suspend_row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=park.suspend_receipt_hash,
+            approval_ref="",
+        )
+    assert len(_journal_rows(sdd, "T-gate")) == rows_before
+    assert chain.query(event_type=EVENT_TASK_RESUMED) == []
+
+    # Once the decision lands the same resume succeeds.
+    approvals = sdd / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    (approvals / "T-gate.approved").write_text("approved", encoding="utf-8")
+    resume = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        approval_ref=approval_decision_ref(tmp_path, "T-gate"),
+    )
+    assert resume.resume_receipt_hash
+
+
+@pytest.mark.parametrize(
+    "bad_task_id",
+    [
+        "../../../etc/passwd",
+        "..",
+        ".",
+        "../escape",
+        "sub/dir",
+        "/absolute",
+        "with space",
+        "",
+        "back\\slash",
+    ],
+)
+def test_approval_paths_refuse_unsafe_task_ids(tmp_path: Path, bad_task_id: str) -> None:
+    """``task_id`` is an identifier, never a path fragment."""
+    with pytest.raises(UnsafeTaskIdError):
+        approval_decision_ref(tmp_path, bad_task_id)
+    with pytest.raises(UnsafeTaskIdError):
+        write_resume_marker(tmp_path, bad_task_id, "deadbeef")
+
+
+def test_resume_marker_never_escapes_the_approvals_directory(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(UnsafeTaskIdError):
+        write_resume_marker(tmp_path, "../../outside/pwned", "deadbeef")
+    assert list(outside.iterdir()) == []
+
+
+def test_approval_paths_accept_ordinary_task_ids(tmp_path: Path) -> None:
+    approvals = tmp_path / ".sdd" / "runtime" / "approvals"
+    approvals.mkdir(parents=True, exist_ok=True)
+    (approvals / "T-abc_123.def.approved").write_text("approved", encoding="utf-8")
+    assert approval_decision_ref(tmp_path, "T-abc_123.def")
+    marker = write_resume_marker(tmp_path, "T-abc_123.def", "cafe")
+    assert marker.read_text(encoding="utf-8") == "cafe"
+
+
+def test_resume_refuses_an_unsafe_task_id_on_the_suspend_row(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-ok", wt)
+    forged = SuspendRow(**{**park.suspend_row.to_dict(), "task_id": "../../escape"})
+
+    with pytest.raises(UnsafeTaskIdError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=forged,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=park.suspend_receipt_hash,
+        )
+
+
+def test_verify_continuity_rejects_a_park_that_was_never_resumed(tmp_path: Path) -> None:
+    """An unresumed park is an incomplete proof, not a verified continuity."""
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    _park(tmp_path, chain, "T-open", wt)
+
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-open", chain=chain)
+    assert not result.ok
+    assert not result.resumed
+    assert any("resume receipt" in err for err in result.errors)
+
+
+def test_verify_continuity_rejects_a_resume_bound_to_a_foreign_receipt(tmp_path: Path) -> None:
+    """A resume receipt must hang off *this* park's suspend receipt."""
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-forge", wt)
+    decoy = _park(tmp_path, chain, "T-decoy", wt)
+
+    # Names the parked row but hangs off a receipt from a different park.
+    record_task_resume(
+        chain=chain,
+        task_id="T-forge",
+        suspend_receipt_hash=decoy.suspend_receipt_hash,
+        suspend_event_hash=park.suspend_row.event_hash,
+        resume_event_hash="0" * 64,
+        journal_index=99,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=True,
+        new_workspace_hash=park.suspend_row.workspace_hash,
+        downgrade_reason="",
+        decision_hash="0" * 64,
+    )
+
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-forge", chain=chain)
+    assert not result.ok
+    assert result.errors
+
+
+def test_verify_continuity_rejects_a_resume_row_absent_from_the_journal(tmp_path: Path) -> None:
+    """The receipt's resume row must exist in the task journal it claims."""
+    from bernstein.core.security.audit_chain import record_task_resume
+
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-phantom", wt)
+
+    record_task_resume(
+        chain=chain,
+        task_id="T-phantom",
+        suspend_receipt_hash=park.suspend_receipt_hash,
+        suspend_event_hash=park.suspend_row.event_hash,
+        resume_event_hash="1" * 64,
+        journal_index=99,
+        effective_mode="warm",
+        requested_mode="warm",
+        workspace_match=True,
+        new_workspace_hash=park.suspend_row.workspace_hash,
+        downgrade_reason="",
+        decision_hash="1" * 64,
+    )
+
+    result = verify_suspension_continuity(sdd_dir=sdd, task_id="T-phantom", chain=chain)
+    assert not result.ok
+    assert any("journal" in err for err in result.errors)
+
+
+def test_receipt_selection_ignores_a_later_receipt_for_another_row(tmp_path: Path) -> None:
+    """Selection is by binding, not by recency.
+
+    This is the substitution the CLI resume path used to be open to: it took
+    the *latest* ``task.suspend_receipt`` for the task, so a later receipt
+    naming some other suspend row was accepted as evidence for the parked one.
+    """
+    from bernstein.core.security.audit_chain import record_task_suspension
+
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-inject", wt)
+
+    # A later receipt for the same task that binds a row the journal never had.
+    injected = record_task_suspension(
+        chain=chain,
+        task_id="T-inject",
+        suspend_event_hash="9" * 64,
+        journal_index=99,
+        adapter="claude",
+        workspace_hash=park.suspend_row.workspace_hash,
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        released_usd=5.0,
+    )
+    assert injected.hmac != park.suspend_receipt_hash
+
+    picked = find_suspension_receipt(chain=chain, task_id="T-inject", suspend_row=park.suspend_row)
+    assert picked is not None
+    assert picked.hmac == park.suspend_receipt_hash
+
+    # And the injected receipt cannot itself drive the resume.
+    with pytest.raises(SuspendReceiptMismatchError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=park.suspend_row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=injected.hmac,
+        )

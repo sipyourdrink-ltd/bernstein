@@ -98,6 +98,31 @@ guarantees back the proof:
 - Mutating the suspend **receipt** breaks the HMAC audit chain at that exact
   position, which `bernstein audit verify` reports.
 
+The verifier only reports success on a complete, self-consistent proof. It
+refuses a park that was never resumed, a resume receipt that hangs off some
+other park's suspend receipt, and a receipt naming a suspend or resume row the
+task journal does not hold. Partial evidence is a failure, not a pass.
+
+## What the resume path refuses
+
+The suspend receipt is selected by identity, never by recency, and is checked
+before anything is written:
+
+- A receipt bound to a **different suspend row** or a **different task** is
+  refused, so a task parked more than once cannot resume against the wrong
+  park and a substituted receipt has nothing to match.
+- A receipt hash **absent from the audit chain** is refused; a non-empty hash
+  is not evidence on its own.
+- A park recorded `--until approval` refuses to append a resume row until the
+  approval decision has landed. The gate is enforced where the mutation
+  happens, not only at the call site.
+- A `task_id` that is not a plain identifier is refused outright rather than
+  sanitised, so it can never be used to read or write an approval record
+  outside `.sdd/runtime/approvals`.
+
+Every one of these refusals lands before the journal is touched, so a refused
+resume leaves the task's Merkle chain byte-identical to the parked state.
+
 ## Commands
 
 ```bash
