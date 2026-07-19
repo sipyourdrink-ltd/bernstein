@@ -771,6 +771,116 @@ def test_resume_rejects_a_receipt_hash_absent_from_the_chain(tmp_path: Path) -> 
     assert chain.query(event_type=EVENT_TASK_RESUMED) == []
 
 
+def test_resume_refuses_forged_suspend_receipt_with_invalid_hmac(tmp_path: Path) -> None:
+    """A forged suspend receipt (invalid HMAC) must never drive a real resume.
+
+    Threat model: an actor with write access to the project ``.sdd/`` and
+    ``audit/`` store -- e.g. a semi-trusted worker sabotaging another task.
+    Such an actor holds no audit key, so they can:
+
+    * append a ``task.suspend`` row to the victim's run journal (the journal is
+      a keyless SHA-256 chain -- tamper-evident, not forgery-resistant), and
+    * append a ``task.suspend_receipt`` row to the audit store bearing an
+      attacker-chosen ``hmac`` (invalid, because they cannot sign it).
+
+    The audit-chain HMAC is the only forgery-resistant check in the flow. The
+    resume path must authenticate the receipt against it before honoring it, so
+    a receipt whose stored HMAC does not recompute is refused rather than
+    matched by string equality.
+    """
+    from bernstein.core.tasks.checkpoint_retry import workspace_hash
+    from bernstein.core.tasks.suspension import record_task_suspension_row
+
+    sdd = tmp_path / ".sdd"
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+
+    # (1) Fabricate a journal suspend row for the victim task. This writes the
+    #     keyless SHA-256 chain an attacker with journal write-access can compute
+    #     and, crucially, no audit receipt -- so T-x is not legitimately resumable.
+    record_task_suspension_row(
+        sdd_dir=sdd,
+        task_id="T-x",
+        adapter="claude",
+        session_id="s",
+        workspace_hash=workspace_hash(wt),
+        worktree_path=str(wt),
+        envelope="subscription",
+        reserved_usd=5.0,
+        spent_usd=0.0,
+        released_usd=5.0,
+    )
+    # The journal verifies (keyless), so the fail-closed reader hands the row back.
+    row = latest_suspension(sdd, "T-x")
+    assert row is not None
+
+    # (2) Forge a task.suspend_receipt on the audit store binding the victim task
+    #     and the forged journal row, with an INVALID hmac (no key to sign it).
+    forged_hmac = "f" * 64
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": "2026-07-19T00:00:00.000000Z",
+        "event_type": EVENT_TASK_SUSPENDED,
+        "actor": "attacker",
+        "resource_type": "task",
+        "resource_id": "T-x",
+        "details": {
+            "task_id": "T-x",
+            "suspend_event_hash": row.event_hash,
+            "journal_index": row.journal_index,
+        },
+        "prev_hmac": "0" * 64,
+        "hmac": forged_hmac,
+    }
+    (audit_dir / "2026-07-19.jsonl").write_text(json.dumps(entry, sort_keys=True) + "\n", encoding="utf-8")
+
+    chain = AuditChainStore(audit_dir, key=_KEY)
+    # The unauthenticated read the vulnerable path used *does* surface the forged
+    # row -- this is exactly what let the old string-equality match succeed.
+    assert any(e.hmac == forged_hmac for e in chain.query(event_type=EVENT_TASK_SUSPENDED))
+    # And the chain does not verify: the forged HMAC is the break.
+    ok, _errs = chain.verify()
+    assert not ok
+
+    # (3) The real resume path must refuse the forged receipt, before any mutation.
+    rows_before = len(_journal_rows(sdd, "T-x"))
+    with pytest.raises(SuspendReceiptMismatchError):
+        resume_task(
+            sdd_dir=sdd,
+            suspend_row=row,
+            new_worktree_path=wt,
+            chain=chain,
+            suspend_receipt_hash=forged_hmac,
+        )
+    # Fail closed: no resume row, no resume receipt reached either store.
+    assert len(_journal_rows(sdd, "T-x")) == rows_before
+    assert chain.query(event_type=EVENT_TASK_RESUMED) == []
+
+
+def test_resume_succeeds_with_valid_receipt_on_untampered_chain(tmp_path: Path) -> None:
+    """The authenticated read must not break the happy path.
+
+    A receipt with a valid HMAC on an untampered chain resumes exactly as
+    before: this is the direct counterpart to the forged-receipt refusal.
+    """
+    sdd = tmp_path / ".sdd"
+    chain = _chain(tmp_path)
+    wt = _worktree(tmp_path, "wt", {"a.py": "x = 1\n"})
+    park = _park(tmp_path, chain, "T-happy", wt)
+
+    result = resume_task(
+        sdd_dir=sdd,
+        suspend_row=park.suspend_row,
+        new_worktree_path=wt,
+        chain=chain,
+        suspend_receipt_hash=park.suspend_receipt_hash,
+    )
+    assert result.resume_receipt_hash
+    resumed = chain.query(event_type=EVENT_TASK_RESUMED)
+    assert len(resumed) == 1
+    assert resumed[0].details.get("suspend_receipt_hash") == park.suspend_receipt_hash
+
+
 def test_release_rejects_a_receipt_bound_to_another_task(tmp_path: Path) -> None:
     """A release must reference *this* task's receipt, not merely a non-empty one."""
     chain = _chain(tmp_path)

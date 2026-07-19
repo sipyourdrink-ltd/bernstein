@@ -165,6 +165,27 @@ class SuspendReceiptMismatchError(RuntimeError):
     """
 
 
+class SuspendChainUnverifiedError(SuspendReceiptMismatchError):
+    """Raised when a suspend receipt is read off an audit chain that does not verify.
+
+    :meth:`AuditChainStore.query` returns rows with their stored ``hmac`` field
+    trusted verbatim -- it never recomputes the HMAC -- so an actor with write
+    access to the audit store can append a ``task.suspend_receipt`` row bearing
+    an attacker-chosen hash and have it matched by plain string equality. Every
+    read that *authorizes a state change* (a resume or an infrastructure
+    release) instead authenticates the chain first via
+    :meth:`AuditChainStore.scan_verified`, which recomputes the HMAC of exactly
+    the bytes it returns; when that authentication fails, the forged receipt is
+    refused rather than honored.
+
+    Subclasses :class:`SuspendReceiptMismatchError` so callers that already fail
+    closed on a receipt mismatch -- including the ``bernstein task resume`` CLI
+    -- treat an unverifiable chain the same way, without a new except arm. This
+    mirrors the verify-gate migration in #2648/#2678, applied to the resume and
+    release path.
+    """
+
+
 class SuspensionAlreadySettledError(RuntimeError):
     """Raised when a park that already carries a resume receipt is resumed again.
 
@@ -445,6 +466,37 @@ def _as_index(value: Any) -> int | None:
         return None
 
 
+def _verified_suspend_receipts(chain: AuditChainStore) -> list[AuditEvent]:
+    """Return the ``task.suspend_receipt`` rows, read through the *authenticated* path.
+
+    ``chain.query`` reads and trusts the stored ``hmac`` field without ever
+    recomputing it, so a forged receipt row -- one an actor with write access to
+    the audit store appended with an attacker-chosen ``hmac`` -- is admitted
+    verbatim and would satisfy a string-equality match. Any read that authorizes
+    a state change must instead authenticate the chain first:
+    :meth:`AuditChainStore.scan_verified` recomputes the HMAC of exactly the
+    bytes it returns and reports ``ok == False`` when any row on the chain fails,
+    so a forged suspend receipt can never stand in for a signed one.
+
+    The scan is all-or-nothing on purpose (mirroring the verify-gate migration
+    in #2648/#2678): a chain that does not verify anywhere cannot authorize a
+    resume or a release, so the whole read is refused rather than trusting the
+    rows that happened to precede the break.
+
+    Raises:
+        SuspendChainUnverifiedError: The audit chain does not verify.
+    """
+    from bernstein.core.security.audit_chain import EVENT_TASK_SUSPENDED
+
+    result = chain.scan_verified(event_type=EVENT_TASK_SUSPENDED)
+    if not result.ok:
+        msg = "refusing to authorize a task state change off an unverified audit chain: " + (
+            "; ".join(result.errors[:3]) or "HMAC verification failed"
+        )
+        raise SuspendChainUnverifiedError(msg)
+    return [event for event in result.events if event.event_type == EVENT_TASK_SUSPENDED]
+
+
 def find_suspension_receipt(
     *,
     chain: AuditChainStore,
@@ -460,11 +512,19 @@ def find_suspension_receipt(
 
     Returns:
         The matching :class:`AuditEvent`, or ``None`` when the chain holds no
-        receipt for this row.
+        *authenticated* receipt for this row -- including when the chain does not
+        verify, which is treated as "no receipt" so the caller fails closed.
     """
-    from bernstein.core.security.audit_chain import EVENT_TASK_SUSPENDED
+    try:
+        receipts = _verified_suspend_receipts(chain)
+    except SuspendChainUnverifiedError:
+        # An unverifiable chain holds no receipt we may trust. Return None so the
+        # caller refuses (the CLI prints "no suspend receipt binds..."); the
+        # authoritative raise happens in verify_suspension_receipt on resume.
+        logger.warning("audit chain for task %s does not verify; refusing to select a suspend receipt", task_id)
+        return None
 
-    for event in reversed(chain.query(event_type=EVENT_TASK_SUSPENDED)):
+    for event in reversed(receipts):
         details = event.details
         if str(details.get("task_id", "")) != task_id:
             continue
@@ -608,15 +668,18 @@ def verify_suspension_receipt(
 
     Raises:
         ReleaseWithoutReceiptError: ``suspend_receipt_hash`` is empty.
+        SuspendChainUnverifiedError: The audit chain does not verify, so no
+            receipt on it can be trusted. Subclass of
+            :class:`SuspendReceiptMismatchError`.
         SuspendReceiptMismatchError: The hash names no receipt on the chain, or
             the receipt it names binds a different task or a different row.
     """
-    from bernstein.core.security.audit_chain import EVENT_TASK_SUSPENDED
-
     if not suspend_receipt_hash:
         raise ReleaseWithoutReceiptError(f"refusing to act on task {task_id!r}: no suspend receipt (fail closed)")
 
-    matches = [e for e in chain.query(event_type=EVENT_TASK_SUSPENDED) if e.hmac == suspend_receipt_hash]
+    # Authenticated read: the receipt must resolve on a chain whose HMAC verifies,
+    # not merely appear in an unauthenticated ``query`` that trusts stored hashes.
+    matches = [e for e in _verified_suspend_receipts(chain) if e.hmac == suspend_receipt_hash]
     if not matches:
         msg = (
             f"refusing to act on task {task_id!r}: no task.suspend_receipt on the chain "
@@ -1494,6 +1557,7 @@ __all__ = [
     "ResumeApprovalRequiredError",
     "ResumeResult",
     "Settlement",
+    "SuspendChainUnverifiedError",
     "SuspendReceiptMismatchError",
     "SuspendRow",
     "SuspensionAlreadySettledError",
