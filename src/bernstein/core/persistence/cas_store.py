@@ -147,6 +147,18 @@ class CASStore:
         """Return the filesystem path for the blob identified by *digest*."""
         return self._shard_dir(digest) / digest
 
+    def blob_path(self, digest: str) -> Path:
+        """Public accessor for a blob's on-disk path (validated, no I/O).
+
+        Callers that need the path (e.g. to probe a blob without going through
+        :meth:`get`) should use this instead of re-deriving the shard layout,
+        so the store stays the single source of truth for it. Raises
+        ``ValueError`` on a non-64-hex digest (the path-traversal guard); does
+        not touch the filesystem.
+        """
+        self._validate_digest(digest)
+        return self._blob_path(digest)
+
     def _meta_path(self, digest: str) -> Path:
         """Return the filesystem path for the sidecar metadata file."""
         return self._shard_dir(digest) / f"{digest}.meta.json"

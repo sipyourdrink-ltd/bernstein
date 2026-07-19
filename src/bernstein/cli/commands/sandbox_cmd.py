@@ -359,6 +359,25 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
         # absent (GC / retention / restart) is an ordinary operational event;
         # unreadable (a permissions problem *on this host*) is a property of the
         # reader, not the record; intact is the clean case.
+        # Ask the store for the path (single source of truth for the shard
+        # layout) rather than re-deriving cas_dir / digest[:2] / digest here.
+        try:
+            blob_path = cas.blob_path(digest)
+        except ValueError:
+            # Non-64-hex digest; defensive only - verify_receipt_full filters
+            # malformed digests before calling this - but never crash here.
+            return BLOB_UNREADABLE
+        # A content-addressed store only ever writes regular files. A blob path
+        # that is a symlink is an anomalous / hostile record: dereferencing it
+        # could read an attacker-chosen path or block on a FIFO/device before the
+        # hash check ever runs. Refuse to follow it - is_symlink() uses lstat and
+        # does not dereference - and report unreadable (we will not vouch for
+        # bytes we decline to read), never intact.
+        try:
+            if blob_path.is_symlink():
+                return BLOB_UNREADABLE
+        except OSError:
+            return BLOB_UNREADABLE
         try:
             blob = cas.get(digest, verify=True)
         except CASIntegrityError:
@@ -385,7 +404,6 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
         # a reader-side problem, reported as unreadable, never as a claim about
         # the record. A stat that succeeds while get() returned None means the
         # blob is present but could not be read, which is also unreadable.
-        blob_path = cas_dir / digest[:2] / digest
         try:
             blob_path.stat()
         except FileNotFoundError:

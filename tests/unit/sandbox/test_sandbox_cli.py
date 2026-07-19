@@ -488,3 +488,28 @@ async def test_cli_and_library_agree_on_exit_code(tmp_path: Path) -> None:
         receipt, expected_keyid=kid, blob_status=lambda d: BLOB_ABSENT if d == loser else BLOB_INTACT
     )
     assert cli_absent.exit_code == lib_absent.exit_code == 2, cli_absent.output
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX symlink semantics")
+@pytest.mark.asyncio
+async def test_receipt_verify_symlinked_blob_is_unreadable_not_followed(tmp_path: Path) -> None:
+    """New (Codex LOW): a CAS blob replaced by a symlink must NOT be dereferenced
+    - following it could read an attacker-chosen path or block on a FIFO/device.
+    The verifier refuses to follow and reports unreadable (exit 4), never absent
+    (which is what naively following a dangling link would yield) or intact."""
+    receipt, receipt_path, cas_dir = await _make_receipt(tmp_path)
+    base = receipt.base_snapshot_digest
+    blob_path = cas_dir / base[:2] / base
+    blob_path.unlink()
+    # A dangling symlink: if the verifier followed it, read/stat would raise
+    # FileNotFoundError and misreport "absent". The is_symlink() guard must fire
+    # first and classify it unreadable instead.
+    blob_path.symlink_to(cas_dir / "does-not-exist-target")
+
+    res = CliRunner().invoke(
+        sandbox_group,
+        ["receipt", "verify", str(receipt_path), "--cas-dir", str(cas_dir), "--expected-keyid", receipt.keyid],
+    )
+    assert res.exit_code == 4, res.output  # unreadable, NOT 2 (absent) or 0 (intact)
+    assert "unreadable" in res.output.lower()
+    assert "OK" not in res.output
