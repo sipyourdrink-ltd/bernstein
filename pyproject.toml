@@ -118,6 +118,15 @@ dependencies = [
     # stay above the CVE-2026-45409 floor regardless of which transitive
     # owner resolves first; pip-audit gates the production closure on this.
     "idna>=3.15",
+    # PEP 440 version parsing/comparison. Imported directly at runtime by the
+    # ``bernstein doctor`` last-green advisory (``cli/commands/doctor_cmd.py``)
+    # and the adapter security-floor / advisory gates
+    # (``adapters/security_floor.py``, ``adapters/advisories.py``). Only ever
+    # pulled into the lockfile transitively by dev/test tooling (pytest,
+    # pip-audit, e2b, ...), so a clean ``uv tool install`` shipped without it
+    # and ``bernstein doctor`` crashed with ModuleNotFoundError. Promoted to a
+    # direct dependency so the resolver always installs it. Pure-Python.
+    "packaging>=24",
 ]
 
 [project.urls]
