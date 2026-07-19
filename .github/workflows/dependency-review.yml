@@ -9,6 +9,15 @@ name: Dependency Review
 on:
   pull_request:
     branches: [main]
+    # Dependency review only has signal when a manifest actually changes.
+    # Path-filter to the dependency-bearing files so PRs that touch no
+    # manifest skip this lane instead of spinning up a runner for nothing.
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements*.txt"
+      - ".github/workflows/**"
+      - "Dockerfile"
 
 concurrency:
   group: dependency-review-${{ github.event.pull_request.number || github.ref }}

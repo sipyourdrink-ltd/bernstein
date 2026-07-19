@@ -19,17 +19,17 @@ on:
   pull_request_review:
     types: [submitted]
 
-# This workflow emits a required status check. Cancelling an in-progress
-# run leaves a CANCELLED conclusion that GitHub treats as a non-success
-# required check, blocking merge until a manual re-run. A PR receives
-# overlapping triggers (synchronize on new pushes, pull_request_review on
-# submitted reviews), so an in-flight gate run was routinely cancelled by
-# the next event and stalled the merge queue. Scope the group per-PR and
-# per-head-sha and let each run complete so every commit reports its own
-# conclusion without racing the required check.
+# This workflow emits a required status check. The concurrency group is
+# keyed per-PR AND per-head-sha, so cancel-in-progress only ever cancels a
+# duplicate evaluation of the SAME commit (e.g. a synchronize event that
+# lands while an equal-SHA pull_request_review run is still going). A new
+# push produces a new head SHA and therefore a new group, so an in-flight
+# run for the previous commit is never cancelled and still reports its own
+# conclusion. Cancelling the redundant same-SHA run reclaims a runner and
+# avoids two runs racing to publish the required check for one commit.
 concurrency:
   group: review-bot-ack-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions: {}
 
