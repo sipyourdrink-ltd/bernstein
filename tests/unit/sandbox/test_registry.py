@@ -13,6 +13,7 @@ from bernstein.core.sandbox import registry as sandbox_registry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from bernstein.core.sandbox.backend import SandboxSession
     from bernstein.core.sandbox.manifest import WorkspaceManifest
@@ -178,3 +179,40 @@ def test_unregister_removes_name() -> None:
     reg.list_names()  # ensure builtins loaded
     reg.unregister("docker")
     assert "docker" not in reg.list_names()
+
+
+def test_microvm_backend_reachable_by_name() -> None:
+    """The microVM backend must be reachable through the registry by name.
+
+    Nothing else asserts this, so the whole feature could become unreachable
+    through the registry with a green suite (the registration line could be
+    deleted undetected).
+    """
+    assert "microvm" in sandbox_registry.list_backend_names()
+    backend = sandbox_registry.get_backend("microvm")
+    assert backend.name == "microvm"
+    assert SandboxCapability.SNAPSHOT in backend.capabilities
+
+
+def test_list_backends_creates_no_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Materialising every registered backend from an empty CWD writes nothing.
+
+    ``list_backends`` instantiates each registered backend. Constructing a
+    backend must have no filesystem side effect: the microVM backend used to
+    create ``.sdd/cas`` in the process working directory just by being
+    constructed, so an operator who never asked for it got a directory created
+    wherever they happened to run.
+    """
+    empty = tmp_path / "empty_cwd"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+
+    backends = sandbox_registry.list_backends()
+    names = [b.name for b in backends]
+
+    assert "microvm" in names
+    # No backend construction created anything under the CWD.
+    assert list(empty.iterdir()) == []

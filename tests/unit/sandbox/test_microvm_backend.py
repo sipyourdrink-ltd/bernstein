@@ -455,3 +455,165 @@ def test_extract_rejects_absolute_symlink(tmp_path: Path) -> None:
 
     with pytest.raises(MicroVMUnavailableError):
         extract_workspace_image(buf.getvalue(), tmp_path / "dest4")
+
+
+# ---------------------------------------------------------------------------
+# #2707 item 1: no filesystem side effect on construction; project-rooted default
+# ---------------------------------------------------------------------------
+
+
+def test_constructing_backend_creates_no_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Merely instantiating the backend must write nothing to disk.
+
+    The microVM backend used to build its ``CASStore`` eagerly in ``__init__``,
+    and ``CASStore.__init__`` creates its root directory - so constructing the
+    backend (as ``registry.list_backends`` does for the whole catalogue) created
+    ``.sdd/cas`` in whatever directory the operator happened to run from. The
+    store must instead be built on first write.
+    """
+    empty = tmp_path / "empty_cwd"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+
+    backend = MicroVMSandboxBackend()  # no cas, no cas_dir -> default location
+
+    assert backend.name == "microvm"
+    # Nothing was created under the CWD as a side effect of construction.
+    assert list(empty.iterdir()) == []
+
+
+def test_default_cas_dir_resolves_against_project_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default CAS location is anchored on the project root, not the CWD.
+
+    ``.sdd`` is a project-rooted directory. Anchoring the default on the process
+    working directory means a subdirectory invocation silently creates a second
+    store. Resolving against the nearest project marker makes the location a
+    function of the project, not of where the process was launched.
+    """
+    from bernstein.core.sandbox.backends import microvm
+
+    root = tmp_path / "proj"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "pkg" / "deep"
+    sub.mkdir(parents=True)
+
+    # Resolve to an absolute path *while in each CWD* - a CWD-relative default
+    # would only diverge once anchored, and deferring .resolve() past the second
+    # chdir would hide the bug by anchoring both against the same final CWD.
+    monkeypatch.chdir(sub)
+    from_sub = microvm._default_cas_dir()
+    from_sub_abs = from_sub.resolve()
+    monkeypatch.chdir(root)
+    from_root_abs = microvm._default_cas_dir().resolve()
+
+    # A project-rooted default is absolute and identical from any subdirectory.
+    assert from_sub.is_absolute()
+    assert from_sub_abs == from_root_abs
+    assert from_sub_abs == (root / ".sdd" / "cas").resolve()
+    # Resolving the path created nothing.
+    assert not (root / ".sdd").exists()
+
+
+# ---------------------------------------------------------------------------
+# #2702 items 3, 4, 6: shutdown/destroy lifecycle under a failing monitor
+# ---------------------------------------------------------------------------
+
+
+class _FlakyShutdownMonitor:
+    """A VMMonitor stub whose ``shutdown`` fails the first ``fail_times`` calls.
+
+    ``boot`` succeeds so ``create()`` registers a real session; ``shutdown``
+    then raises until it has been called ``fail_times`` times, so a test can
+    prove a failed teardown is retryable (``_closed`` is not latched) and that
+    the backend still drops the tracking entry.
+    """
+
+    def __init__(self, root: str, *, fail_times: int = 1) -> None:
+        self._root = root
+        self._fail_times = fail_times
+        self.shutdown_calls = 0
+
+    @property
+    def workdir(self) -> str:
+        return self._root
+
+    async def boot(self, *, base_env: Mapping[str, str]) -> None:
+        return None
+
+    async def exec(
+        self,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: int | None = None,
+        stdin: bytes | None = None,
+    ) -> ExecResult:  # pragma: no cover - unused by these tests
+        return ExecResult(exit_code=0, stdout=b"", stderr=b"", duration_seconds=0.0)
+
+    async def write_file(self, path: str, data: bytes, *, mode: int = 0o644) -> None:
+        return None
+
+    async def read_file(self, path: str) -> bytes:  # pragma: no cover
+        return b""
+
+    async def ls(self, path: str) -> list[str]:  # pragma: no cover
+        return []
+
+    async def freeze_image(self) -> bytes:  # pragma: no cover
+        return b""
+
+    async def restore_image(self, image: bytes) -> None:  # pragma: no cover
+        return None
+
+    async def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        if self.shutdown_calls <= self._fail_times:
+            raise RuntimeError("monitor shutdown boom")
+
+
+@pytest.mark.asyncio
+async def test_failed_monitor_shutdown_is_not_latched_and_pops_session(tmp_path: Path) -> None:
+    """A session whose ``monitor.shutdown()`` raised must remain tearable-down.
+
+    Guards three lifecycle rules at once:
+      * ``MicroVMSandboxSession.shutdown`` sets ``_closed`` only *after* the
+        monitor shutdown returns, so a failed shutdown does not latch the
+        session shut (#2702 item 3).
+      * ``MicroVMSandboxBackend.destroy`` pops the tracking entry in a
+        ``finally``, so a failed shutdown does not strand it (#2702 item 4).
+      * A retry actually re-attempts the monitor shutdown and succeeds
+        (#2702 item 6).
+    """
+    monitors: list[_FlakyShutdownMonitor] = []
+
+    def factory(root: str) -> _FlakyShutdownMonitor:
+        monitor = _FlakyShutdownMonitor(root, fail_times=1)
+        monitors.append(monitor)
+        return monitor
+
+    backend = MicroVMSandboxBackend(monitor_factory=factory, cas=CASStore(tmp_path / "cas"))
+    session = await backend.create(WorkspaceManifest(root="/workspace"))
+    sid = session.session_id
+    assert sid in backend._sessions
+
+    # First teardown: the monitor shutdown raises.
+    with pytest.raises(RuntimeError, match="monitor shutdown boom"):
+        await backend.destroy(session)
+
+    # The entry is popped despite the failure (AC 4), and the session is not
+    # latched shut (AC 3/6), so it can be torn down again.
+    assert sid not in backend._sessions
+    assert session._closed is False
+    assert monitors[0].shutdown_calls == 1
+
+    # Retry: the monitor shutdown is actually re-attempted and now succeeds.
+    await backend.destroy(session)
+    assert session._closed is True
+    assert monitors[0].shutdown_calls == 2

@@ -78,6 +78,10 @@ _logger = logging.getLogger(__name__)
 #: Audit event-type for a completed fork-race selection.
 FORK_RACE_EVENT_TYPE = "sandbox.fork_race"
 
+#: Prefix stamped on each candidate's receipt ``isolation`` value. See
+#: :func:`_requested_isolation`.
+_REQUESTED_ISOLATION_PREFIX = "requested:"
+
 #: Serialises concurrent same-process audit appends. ``AuditLog`` has no
 #: internal lock, and offloading the append to ``asyncio.to_thread`` means two
 #: concurrent ``fork_race()`` calls sharing one ``AuditLog`` would run
@@ -133,6 +137,47 @@ class ForkRaceBackend(Protocol):
     async def resume(self, snapshot_id: str) -> SandboxSession: ...
 
     async def destroy(self, session: SandboxSession) -> None: ...
+
+
+def _requested_isolation(backend: ForkRaceBackend) -> str:
+    """Return the value stored in each candidate's receipt ``isolation`` field.
+
+    fork_race does not boot or probe the isolation boundary, so it cannot attest
+    that the named backend's isolation was actually in effect for the run.
+    Recording a bare backend name (which defaults to ``"microvm"`` in the
+    receipt schema) reads as exactly such an attestation. Prefixing it with
+    ``requested:`` makes the value plainly a *request*, not a verified posture,
+    so a receipt reader cannot mistake it for an enforced-and-checked isolation
+    claim. The genuinely enforced-and-checked posture - content-addressed,
+    integrity-verified snapshots - is attested by the base and terminal digests
+    the CAS verifier re-hashes, not by this field.
+
+    (The field is *named* ``isolation`` in
+    :mod:`bernstein.core.sandbox.selection_receipt`; this change is confined to
+    the value fork_race supplies for it.)
+    """
+    return f"{_REQUESTED_ISOLATION_PREFIX}{backend.name}"
+
+
+async def _reap_session(backend: ForkRaceBackend, session: SandboxSession) -> None:
+    """Tear ``session`` down, completing the reap even under a mid-teardown cancel.
+
+    When a sibling candidate fails, :func:`fork_race` cancels the remaining
+    candidates; that cancel can land while this task is suspended *inside*
+    ``backend.destroy``. Leaving a half-reclaimed guest is the leak this guards:
+    catch the cancellation, drive one more bounded reap to completion, then
+    re-raise the cancellation so the task still terminates. No ``asyncio.shield``
+    - shielding an unbounded reap turns a cancel into a hang; a single bounded
+    retry does not. A non-cancellation ``destroy`` error is left to propagate to
+    the caller, which decides whether it masks a candidate failure or is itself
+    the error worth surfacing.
+    """
+    try:
+        await backend.destroy(session)
+    except asyncio.CancelledError:
+        with contextlib.suppress(BaseException):
+            await backend.destroy(session)
+        raise
 
 
 def _score_vector(result: CandidateResult) -> dict[str, float]:
@@ -230,13 +275,17 @@ async def fork_race(
             result = await run_candidate(session, index)
             terminal_digest = await session.snapshot()
         except BaseException:
-            # Cleanup must never mask the original candidate failure, so a
-            # destroy() error here does not replace the in-flight exception the
-            # outer drain re-raises verbatim - but log it so a genuine teardown
-            # failure (leaked guest) leaves a trace instead of vanishing.
+            # Preserve the ORIGINAL candidate failure verbatim. The reap must
+            # still complete - even if the outer drain cancels this task
+            # mid-teardown (:func:`_reap_session` drives it to completion) - but
+            # a reap error, including a ``BaseException`` such as a cancellation
+            # injected into destroy(), must never replace the in-flight candidate
+            # exception the drain re-raises. Catch ``BaseException`` around the
+            # reap and log a genuine teardown failure so a leaked guest leaves a
+            # trace instead of vanishing.
             try:
-                await backend.destroy(session)
-            except Exception:
+                await _reap_session(backend, session)
+            except BaseException:
                 _logger.warning(
                     "candidate session teardown failed during fork_race cleanup; "
                     "a guest resource may have leaked (candidate index %d)",
@@ -244,8 +293,10 @@ async def fork_race(
                     exc_info=True,
                 )
             raise
-        # Success path: a destroy() failure here IS the error worth surfacing.
-        await backend.destroy(session)
+        # Success path: the reap gets the same cancellation-resilient teardown,
+        # but here a destroy() failure IS the error worth surfacing, so it
+        # propagates out of _reap_session rather than being swallowed.
+        await _reap_session(backend, session)
         return result, terminal_digest
 
     # Race the candidates concurrently; the barrier here is intentional -
@@ -281,7 +332,7 @@ async def fork_race(
             task_id=result.task_id,
             terminal_snapshot_digest=terminal_by_id[result.task_id],
             score_vector=_score_vector(result),
-            isolation=backend.name,
+            isolation=_requested_isolation(backend),
         )
         for result in results
     ]
