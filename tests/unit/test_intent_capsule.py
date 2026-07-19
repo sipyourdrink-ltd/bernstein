@@ -47,6 +47,7 @@ from bernstein.core.security.intent_capsule import (
     evaluate_conformance,
     read_capsule,
     read_capsule_binding,
+    seal_run_journal,
     verify_intent_conformance,
     write_capsule,
 )
@@ -55,6 +56,11 @@ from bernstein.core.tasks.models import TaskCostEstimate, TaskPlan
 _HMAC_KEY = b"k" * 32
 _RUN_ID = "run-intent-1"
 _TASK_ID = "task-abc123"
+
+#: Far-future expiry. Capsule expiry is enforced against the ``ts`` on each
+#: journal row (#2649), so fixtures that build a real journal need a capsule
+#: that has not already expired.
+_FUTURE_EXPIRY = 4_102_444_800  # 2100-01-01T00:00:00Z
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +100,7 @@ def _capsule() -> IntentCapsule:
         file_scope_globs=["src/pricing/**", "tests/**"],
         permitted_adapters=["claude", "codex"],
         egress_classes=[],
-        expiry_ts=1_700_100_000,
+        expiry_ts=_FUTURE_EXPIRY,
     )
 
 
@@ -110,26 +116,35 @@ def _journal_events(*, drift: bool):
     """
     events = [
         {"event": "task.tick", "action_class": None, "seq": 0},
-        {"event": "tool.call", "tool": "Read", "seq": 1},
-        {"event": "tool.call", "tool": "Edit", "seq": 2},
-        {"event": "tool.call", "tool": "Bash", "action_class": "git.commit", "seq": 3},
+        {"event": "tool.call", "tool": "Read", "adapter": "claude", "seq": 1},
+        {"event": "tool.call", "tool": "Edit", "adapter": "claude", "path": "src/pricing/rates.py", "seq": 2},
+        # A real commit tool, not a shell call labelled as one: the reviewed
+        # tool map outranks a worker-stamped action_class (#2649).
+        {"event": "tool.call", "tool": "git_commit", "adapter": "claude", "seq": 3},
     ]
     if drift:
-        events.append({"event": "tool.call", "tool": "WebFetch", "seq": 4})
+        events.append({"event": "tool.call", "tool": "WebFetch", "adapter": "claude", "seq": 4})
     return events
 
 
-def _build_run_journal(tmp_path: Path, *, capsule_h: str, drift: bool):
-    """Write a real Merkle-chained run journal binding the capsule then events."""
+def _build_run_journal(tmp_path: Path, *, capsule_h: str, drift: bool, seal: IntentCapsule | None = None):
+    """Write a real Merkle-chained run journal binding the capsule then events.
+
+    Pass ``seal`` to commit the journal head and length to the audit chain, which
+    offline verification requires (#2649): without it any prefix of the journal
+    verifies on its own and truncation is undetectable.
+    """
     from bernstein.core.replay.journal import EventJournal
 
     journal = EventJournal(_RUN_ID, _sdd(tmp_path))
     bind_capsule_into_journal(journal, task_id=_TASK_ID, capsule_hash=capsule_h)
-    journal.record("tool.call", tool="Read", seq=1)
-    journal.record("tool.call", tool="Edit", seq=2)
-    journal.record("tool.call", tool="Bash", action_class="git.commit", seq=3)
+    journal.record("tool.call", tool="Read", adapter="claude", seq=1)
+    journal.record("tool.call", tool="Edit", adapter="claude", path="src/pricing/rates.py", seq=2)
+    journal.record("tool.call", tool="git_commit", adapter="claude", seq=3)
     if drift:
-        journal.record("tool.call", tool="WebFetch", seq=4)
+        journal.record("tool.call", tool="WebFetch", adapter="claude", seq=4)
+    if seal is not None:
+        seal_run_journal(chain=_chain(tmp_path), sdd_dir=_sdd(tmp_path), task_id=_TASK_ID, run_id=_RUN_ID, capsule=seal)
     return journal
 
 
@@ -154,7 +169,7 @@ def test_compile_capsule_binds_goal_and_cost_by_digest_not_text() -> None:
     assert cap.goal_digest.startswith("sha256:")
     assert "Refactor" not in canonicalise(cap).decode("utf-8")
     assert cap.cost_envelope_ref.startswith("sha256:")
-    assert cap.expiry_ts == 1_700_100_000
+    assert cap.expiry_ts == _FUTURE_EXPIRY
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +190,7 @@ def test_ac1_approve_writes_capsule_to_audit_chain(tmp_path: Path) -> None:
         file_scope_globs=["src/pricing/**"],
         permitted_adapters=["claude"],
         egress_classes=[],
-        expiry_ts=1_700_100_000,
+        expiry_ts=_FUTURE_EXPIRY,
     )
     assert event.event_type == EVENT_INTENT_CAPSULE
     assert event.details["capsule_hash"] == capsule_hash(capsule)
@@ -220,8 +235,11 @@ def test_classify_journal_event_maps_tools_to_action_classes() -> None:
     assert classify_journal_event({"tool": "Read"}) == "fs.read"
     assert classify_journal_event({"tool": "Edit"}) == "fs.write"
     assert classify_journal_event({"tool": "WebFetch"}) == "web.fetch"
-    # Explicit action_class wins over the tool table.
-    assert classify_journal_event({"tool": "Bash", "action_class": "git.commit"}) == "git.commit"
+    # The reviewed tool table outranks a worker-stamped action_class, so a
+    # shell call cannot relabel itself as a commit (#2649).
+    assert classify_journal_event({"tool": "Bash", "action_class": "git.commit"}) == "shell.exec"
+    # For a tool the reviewed map does not know, the stamped class is the fallback.
+    assert classify_journal_event({"tool": "custom_tool", "action_class": "git.commit"}) == "git.commit"
     # Non-action events classify to None (ticks, capsule bindings, snapshots).
     assert classify_journal_event({"event": "task.tick"}) is None
     assert classify_journal_event({"event": CAPSULE_BOUND_EVENT, "capsule_hash": "x"}) is None
@@ -286,9 +304,9 @@ def test_ac3_clean_run_verifies(tmp_path: Path) -> None:
         file_scope_globs=["src/pricing/**"],
         permitted_adapters=["claude"],
         egress_classes=[],
-        expiry_ts=1_700_100_000,
+        expiry_ts=_FUTURE_EXPIRY,
     )
-    _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False)
+    _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False, seal=cap)
     result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
     assert result.ok, result.reason
     assert result.conformant
@@ -306,9 +324,9 @@ def test_ac3_tampered_capsule_bytes_fail_verify(tmp_path: Path) -> None:
         file_scope_globs=["src/pricing/**"],
         permitted_adapters=["claude"],
         egress_classes=[],
-        expiry_ts=1_700_100_000,
+        expiry_ts=_FUTURE_EXPIRY,
     )
-    _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False)
+    _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False, seal=cap)
     # Tamper the on-disk capsule: widen the allow-list after approval.
     import json as _json
 
@@ -334,9 +352,9 @@ def test_ac3_reordered_journal_steps_fail_verify(tmp_path: Path) -> None:
         file_scope_globs=["src/pricing/**"],
         permitted_adapters=["claude"],
         egress_classes=[],
-        expiry_ts=1_700_100_000,
+        expiry_ts=_FUTURE_EXPIRY,
     )
-    _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False)
+    _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False, seal=cap)
     journal_path = _sdd(tmp_path) / "runs" / _RUN_ID / "journal.jsonl"
     lines = journal_path.read_text(encoding="utf-8").splitlines()
     # Reorder two steps: the Merkle chain no longer recomputes.
@@ -361,9 +379,23 @@ def test_ac4_drift_emits_signed_escalation_binding_capsule_and_events(tmp_path: 
     )
     from bernstein.core.replay.journal import load_events
 
-    cap = _capsule()
+    # The escalation only signs a capsule the audit chain approved (#2649), so
+    # the capsule is compiled through the approval path rather than standalone.
+    chain = _chain(tmp_path)
+    cap, _ = approve_and_capsule(
+        chain=chain,
+        sdd_dir=_sdd(tmp_path),
+        plan=_plan(),
+        task_id=_TASK_ID,
+        run_id=_RUN_ID,
+        allowed_action_classes=["fs.read", "fs.write", "git.commit"],
+        file_scope_globs=["src/pricing/**", "tests/**"],
+        permitted_adapters=["claude", "codex"],
+        egress_classes=[],
+        expiry_ts=_FUTURE_EXPIRY,
+    )
     ch = capsule_hash(cap)
-    journal = _build_run_journal(tmp_path, capsule_h=ch, drift=True)
+    journal = _build_run_journal(tmp_path, capsule_h=ch, drift=True, seal=cap)
     verdict = evaluate_conformance(load_events(journal.path), cap)
     assert not verdict.conformant
 
@@ -374,6 +406,7 @@ def test_ac4_drift_emits_signed_escalation_binding_capsule_and_events(tmp_path: 
         hmac_key=_HMAC_KEY,
         private_key_pem=private_pem,
         public_key_pem=public_pem,
+        chain=chain,
         run_id=_RUN_ID,
         capsule=cap,
         verdict=verdict,
@@ -514,7 +547,7 @@ def test_verify_refuses_a_run_journal_planted_outside_the_runs_root(tmp_path: Pa
         file_scope_globs=["src/pricing/**"],
         permitted_adapters=["claude"],
         egress_classes=[],
-        expiry_ts=1_700_100_000,
+        expiry_ts=_FUTURE_EXPIRY,
     )
     journal = _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False)
 

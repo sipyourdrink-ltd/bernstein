@@ -35,6 +35,7 @@ Last updated: 2026-07-16
 | `goose` | Block | No | No |
 | `continue` | Multi | No | No |
 | `opencode` | Multi | JSON (`--format json`) | No |
+| `pydantic_ai` | Multi (`<provider>:<model>`) | No | No |
 | `kiro` | AWS | No | No |
 | `kilo` | Stackblitz | No | Yes (ACP/MCP) |
 | `cloudflare` | Cloudflare | No | No |

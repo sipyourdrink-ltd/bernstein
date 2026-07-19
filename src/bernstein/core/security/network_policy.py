@@ -32,10 +32,18 @@ ENV_PROFILE_MODE: Final[str] = "BERNSTEIN_PROFILE_MODE"
 #: it sets ``ENV_PROFILE_MODE=airgap`` for the deny-all + socket-guard posture
 #: and additionally sets this marker so the sovereign-specific gates (drift
 #: refusal, ``doctor sovereign``) can tell they are active.
+#:
+#: The two markers are a *pair*, never a standalone flag: sovereign is only
+#: active when this marker carries a recognised value **and**
+#: ``ENV_PROFILE_MODE`` is ``airgap``. See :func:`is_sovereign_profile`.
 ENV_SOVEREIGN_MODE: Final[str] = "BERNSTEIN_SOVEREIGN_MODE"
 
 PROFILE_AIRGAP: Final[str] = "airgap"
 PROFILE_SOVEREIGN: Final[str] = "sovereign"
+
+#: The only values ``ENV_SOVEREIGN_MODE`` may carry. Any other non-empty value
+#: is a half-set / mistyped marker and is refused rather than read as "off".
+SOVEREIGN_MARKER_VALUES: Final[frozenset[str]] = frozenset({"1", "true", PROFILE_SOVEREIGN})
 
 
 class NetworkPolicyDenied(RuntimeError):
@@ -52,6 +60,20 @@ class NetworkPolicyDenied(RuntimeError):
         if source:
             msg = f"{msg} (from {source})"
         super().__init__(msg)
+
+
+class SovereignMarkerError(RuntimeError):
+    """Raised when the sovereign marker pair is half-set or unrecognised.
+
+    Sovereign mode is a pair of markers, not a standalone flag: the sovereign
+    marker asserts the residency posture and ``BERNSTEIN_PROFILE_MODE=airgap``
+    asserts the network posture the residency posture is built on. A process
+    carrying only one of them is in a state nobody intended - either the
+    residency gates are armed over an unrestricted network, or the network is
+    shut while the drift gate believes it is not sovereign and waves spawns
+    through. Neither half is safe to interpret, so we refuse instead of picking
+    one, exactly like the airgap-plus-``any`` combination.
+    """
 
 
 class NetworkPolicyConfigError(ValueError):
@@ -222,10 +244,17 @@ def policy_from_env() -> NetworkPolicy:
 
     Adapters and MCP transports use this so they don't need a handle
     to the CLI args.
+
+    Under a network-locked profile marker an absent or empty
+    ``BERNSTEIN_NETWORK_POLICY`` is treated as deny-all rather than the legacy
+    allow-all: a child process whose policy variable was dropped must not
+    silently regain unrestricted egress while the profile marker still claims a
+    shut network. Outside those profiles the back-compat allow-all default is
+    unchanged.
     """
     raw = os.environ.get(ENV_NETWORK_POLICY)
-    if not raw:
-        return NetworkPolicy.allow_all()
+    if not raw or not raw.strip():
+        return NetworkPolicy.deny_all() if is_airgap_profile() else NetworkPolicy.allow_all()
     if raw.strip().lower() == "any":
         return NetworkPolicy.allow_all()
     if raw.strip().lower() == "none":
@@ -241,18 +270,64 @@ def is_airgap_profile() -> bool:
 def is_sovereign_profile() -> bool:
     """Return True iff the active run was started with ``--profile sovereign``.
 
-    Sovereign composes the airgap network posture, so ``is_airgap_profile()``
-    is also True under sovereign; this marker distinguishes the sovereign
-    superset (drift refusal + residency posture) from a bare airgap run.
+    Sovereign is a *pair* of markers: ``ENV_SOVEREIGN_MODE`` carrying one of
+    :data:`SOVEREIGN_MARKER_VALUES` **and** ``ENV_PROFILE_MODE=airgap`` for the
+    network posture the residency posture composes. Both present is sovereign;
+    neither present is not sovereign (a bare airgap run keeps
+    :func:`is_airgap_profile` True and this False).
+
+    Raises:
+        SovereignMarkerError: When the pair is half-set - the sovereign marker
+            carries an unrecognised value, or it is set while the network
+            profile marker is not ``airgap``. Reading a half-set state as
+            "off" would let a dropped or mistyped marker disable the drift
+            gate, so the ambiguity is refused rather than resolved.
     """
-    return os.environ.get(ENV_SOVEREIGN_MODE, "").strip().lower() in {"1", "true", PROFILE_SOVEREIGN}
+    raw = os.environ.get(ENV_SOVEREIGN_MODE, "").strip().lower()
+    if not raw:
+        return False
+    if raw not in SOVEREIGN_MARKER_VALUES:
+        raise SovereignMarkerError(
+            f"{ENV_SOVEREIGN_MODE}={raw!r} is not a recognised sovereign marker "
+            f"(expected one of {sorted(SOVEREIGN_MARKER_VALUES)}); refusing to interpret it"
+        )
+    if not is_airgap_profile():
+        raise SovereignMarkerError(
+            f"{ENV_SOVEREIGN_MODE} is set but {ENV_PROFILE_MODE} is "
+            f"{os.environ.get(ENV_PROFILE_MODE, '')!r} instead of {PROFILE_AIRGAP!r}; "
+            "the sovereign residency posture requires the airgap network posture it composes"
+        )
+    return True
 
 
-def install_policy(policy: NetworkPolicy, *, profile: str | None = None) -> None:
-    """Persist ``policy`` and ``profile`` into the process environment.
+def install_policy(policy: NetworkPolicy, *, profile: str | None = None, sovereign: bool = False) -> None:
+    """Persist ``policy`` and the profile markers into the process environment.
 
-    Subprocess adapters and MCP transports read these on startup.
+    Subprocess adapters and MCP transports read these on startup. When
+    *sovereign* is True the marker pair is written together so no observer can
+    see a half-set state; the caller must pass ``profile=PROFILE_AIRGAP``
+    alongside it because sovereign composes the airgap network posture.
+
+    Markers that the new policy does not assert are *cleared*, not left behind.
+    Installing a policy is a full statement of the process posture: a second
+    install in the same process must not inherit the first one's sovereign or
+    airgap marker, which would leave exactly the half-set state
+    :func:`is_sovereign_profile` refuses.
+
+    Raises:
+        SovereignMarkerError: When *sovereign* is requested without the airgap
+            network profile.
     """
+    if sovereign and (profile or "").strip().lower() != PROFILE_AIRGAP:
+        raise SovereignMarkerError(
+            f"sovereign mode requires profile={PROFILE_AIRGAP!r}; refusing to install a half-set marker pair"
+        )
     os.environ[ENV_NETWORK_POLICY] = policy.to_env_value()
     if profile:
         os.environ[ENV_PROFILE_MODE] = profile
+    else:
+        os.environ.pop(ENV_PROFILE_MODE, None)
+    if sovereign:
+        os.environ[ENV_SOVEREIGN_MODE] = PROFILE_SOVEREIGN
+    else:
+        os.environ.pop(ENV_SOVEREIGN_MODE, None)

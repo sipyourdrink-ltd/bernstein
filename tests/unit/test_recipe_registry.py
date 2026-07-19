@@ -60,14 +60,25 @@ def _spec(manifest: str = _MANIFEST) -> RecipeSpec:
     return load_recipe_spec_from_text(manifest)
 
 
-def _registry(sdd: Path) -> RecipeRegistry:
+def _registry(sdd: Path, *, dispatch: object = None) -> RecipeRegistry:
     sdd.mkdir(parents=True, exist_ok=True)
     return RecipeRegistry(
         sdd,
         chain=AuditChainStore(sdd / "audit", key=_KEY),
         hmac_key=_KEY,
         lineage_key=_KEY,
+        dispatch=dispatch,
     )
+
+
+def _submitting_registry(sdd: Path) -> RecipeRegistry:
+    """A registry whose dispatcher reports one accepted work item.
+
+    ``fire`` reports ``dispatched=True`` only against identifiers for work a
+    sink accepted, so a test that asserts a dispatch has to supply a
+    dispatcher that returns them.
+    """
+    return _registry(sdd, dispatch=lambda _event: ["T-001"])
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +233,7 @@ class TestPause:
         assert reg.live_hash("nightly-triage") == rr.recipe_hash
 
     def test_resume_restores_firing(self, tmp_path: Path) -> None:
-        reg = _registry(tmp_path / ".sdd")
+        reg = _submitting_registry(tmp_path / ".sdd")
         reg.register(spec=_spec(), pins=RecipePins(git_commit="c1"))
         reg.pause("nightly-triage")
         reg.resume("nightly-triage")
@@ -266,7 +277,7 @@ nodes:
         assert spec.schedules == []
         assert spec.triggers == []
         assert spec.sandbox_pool == ""
-        reg = _registry(tmp_path / ".sdd")
+        reg = _submitting_registry(tmp_path / ".sdd")
         rr = reg.register(spec=spec, pins=RecipePins(git_commit="c1"))
         assert reg.live_hash("plain") == rr.recipe_hash
         # A zero-schedule recipe fires with a plain (tz-less) projection.

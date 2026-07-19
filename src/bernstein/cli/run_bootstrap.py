@@ -213,6 +213,10 @@ SANDBOX_CHOICES: tuple[str, ...] = (
     "blaxel",
     "runloop",
     "vercel",
+    # Opt-in, never auto-selected: mirrors its trailing position in
+    # DEFAULT_PRECEDENCE, and it is deliberately absent from
+    # SANDBOX_FREE_CHOICES so only an explicit flag reaches it.
+    "microvm",
 )
 
 
@@ -357,7 +361,6 @@ def _install_network_policy(
             disables the airgap boundary so we reject it at parse time.
     """
     from bernstein.core.security.network_policy import (
-        ENV_SOVEREIGN_MODE,
         PROFILE_AIRGAP,
         PROFILE_SOVEREIGN,
         NetworkPolicy,
@@ -387,11 +390,11 @@ def _install_network_policy(
         policy = NetworkPolicy.allow_all()
     # Under sovereign, install the airgap network profile mode so every airgap
     # network behaviour (deny-all default, doctor airgap, socket guard) fires;
-    # the dedicated sovereign marker distinguishes the superset.
-    network_profile = PROFILE_AIRGAP if profile_norm == PROFILE_SOVEREIGN else profile_norm
-    install_policy(policy, profile=network_profile)
-    if profile_norm == PROFILE_SOVEREIGN:
-        os.environ[ENV_SOVEREIGN_MODE] = "1"
+    # the dedicated sovereign marker distinguishes the superset. Both markers go
+    # in through one call so the process never observes a half-set pair.
+    is_sovereign = profile_norm == PROFILE_SOVEREIGN
+    network_profile = PROFILE_AIRGAP if is_sovereign else profile_norm
+    install_policy(policy, profile=network_profile, sovereign=is_sovereign)
 
     # Under a network-locked profile, also patch socket.socket.connect so an
     # un-declared outbound dial cannot bypass the per-adapter check.
@@ -403,7 +406,51 @@ def _install_network_policy(
         install_runtime_socket_guard()
 
 
-def _install_profile_network_policy(*, run_profile: str | None, allow_network: tuple[str, ...], workdir: Path) -> None:
+def _sovereign_config_snapshot(*, run_profile: str | None, workdir: Path) -> dict[str, Any] | None:
+    """Load the sovereign config snapshot once, failing closed if unreadable.
+
+    Returning a single snapshot that both the network-policy install and the
+    attestation consume removes the window where the file could change between
+    two independent reads and leave the attestation describing a posture the
+    runtime never installed.
+
+    Returns:
+        The parsed snapshot under ``--profile sovereign``, else ``None``.
+
+    Raises:
+        SystemExit: When the sovereign config is missing or unreadable.
+    """
+    from bernstein.core.security.network_policy import PROFILE_SOVEREIGN
+
+    if (run_profile or "").strip().lower() != PROFILE_SOVEREIGN:
+        return None
+
+    from bernstein.core.security.deployment_profile import SovereignConfigError, load_config_snapshot
+
+    try:
+        return load_config_snapshot(workdir, require=True)
+    except SovereignConfigError as exc:
+        from bernstein.cli.errors import BernsteinError
+
+        BernsteinError(
+            what="Sovereign profile cannot resolve its source configuration",
+            why=(
+                f"{exc}. The residency posture is a projection of bernstein.yaml; an unreadable "
+                "config would resolve to a permissive default posture and be attested as though "
+                "the operator had declared it."
+            ),
+            fix="Restore a readable bernstein.yaml in the project root, then re-run with --profile sovereign",
+        ).print()
+        raise SystemExit(2) from exc
+
+
+def _install_profile_network_policy(
+    *,
+    run_profile: str | None,
+    allow_network: tuple[str, ...],
+    workdir: Path,
+    config_snapshot: dict[str, Any] | None = None,
+) -> None:
     """Install the egress policy, sourcing sovereign egress from config (#2518).
 
     Under ``--profile sovereign`` the egress allow-list comes from
@@ -413,15 +460,17 @@ def _install_profile_network_policy(*, run_profile: str | None, allow_network: t
     can never coexist with a runtime that quietly allows a destination).
     Everything else keeps the existing ``--allow-network`` behaviour.
 
+    Args:
+        config_snapshot: Pre-loaded snapshot shared with the attestation step.
+            ``None`` loads it here, failing closed if it cannot be read.
+
     Raises:
         click.UsageError: When ``--allow-network`` is combined with
             ``--profile sovereign``.
+        SystemExit: When the sovereign config is missing or unreadable.
     """
     if (run_profile or "").strip().lower() == "sovereign":
-        from bernstein.core.security.deployment_profile import (
-            load_config_snapshot,
-            sovereign_egress_allowlist,
-        )
+        from bernstein.core.security.deployment_profile import sovereign_egress_allowlist
 
         if allow_network:
             raise click.UsageError(
@@ -429,20 +478,86 @@ def _install_profile_network_policy(*, run_profile: str | None, allow_network: t
                 "destinations in bernstein.yaml under sovereign.allowed_egress so the runtime "
                 "network policy and the signed posture attestation stay in sync."
             )
-        egress = sovereign_egress_allowlist(load_config_snapshot(workdir))
+        snapshot = (
+            config_snapshot
+            if config_snapshot is not None
+            else _sovereign_config_snapshot(run_profile=run_profile, workdir=workdir)
+        )
+        egress = sovereign_egress_allowlist(snapshot)
         _install_network_policy(run_profile=run_profile, allow_network=egress)
     else:
         _install_network_policy(run_profile=run_profile, allow_network=allow_network)
 
 
-def _activate_sovereign_profile(*, run_profile: str | None, workdir: Path) -> None:
+def _refuse_sovereign_activation(*, workdir: Path, violations: tuple[str, ...], policy: Any) -> None:
+    """Anchor a signed refusal record and abort the run.
+
+    The refusal is evidence, not a console message: the same signed drift
+    record the spawn gate emits is anchored in the HMAC audit chain, so an
+    auditor sees why the profile refused to activate and can re-verify it under
+    ``bernstein audit verify``. Nothing is attested - a posture that violates
+    the profile must never be sealed as this install's sovereign posture.
+
+    Raises:
+        SystemExit: Always.
+    """
+    import time as _time
+
+    from bernstein.cli.errors import BernsteinError
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.deployment_profile import DriftEvaluation, record_and_sign_drift
+
+    evaluation = DriftEvaluation(
+        drifted=False,
+        reason="sovereign posture violates the profile; activation refused before attestation",
+        attested_hash="",
+        observed_hash=policy.posture_hash(),
+        diverging_keys=(),
+        observed_policy=policy,
+        violations=violations,
+    )
+    _, record_sha256 = record_and_sign_drift(
+        workdir=workdir,
+        evaluation=evaluation,
+        timestamp=int(_time.time()),
+        chain=AuditChainStore(workdir / ".sdd" / "audit"),
+    )
+    BernsteinError(
+        what="Sovereign profile activation refused: the live posture violates the profile",
+        why="; ".join(violations),
+        fix=(
+            "Fix the settings above, then re-run with --profile sovereign. "
+            "Inspect the full report with 'bernstein doctor sovereign'. "
+            f"Signed refusal record: {record_sha256}"
+        ),
+    ).print()
+    raise SystemExit(2)
+
+
+def _activate_sovereign_profile(
+    *,
+    run_profile: str | None,
+    workdir: Path,
+    config_snapshot: dict[str, Any] | None = None,
+) -> None:
     """Attest the sovereign residency posture at run start (issue #2518).
 
     No-op unless ``--profile sovereign`` was selected. When active, resolves
-    the effective policy from the workspace config snapshot, signs it with the
-    install's Ed25519 sovereign identity, and anchors the attestation in the
-    HMAC audit chain. The attestation is what the auditor checks; the spawn
-    gate later recomputes the posture and refuses on drift.
+    the effective policy from the workspace config snapshot, **enforces the
+    profile before sealing anything**, then signs the policy with the install's
+    Ed25519 sovereign identity and anchors the attestation in the HMAC audit
+    chain.
+
+    Enforcement before attestation is the point: the checks run here are the
+    same ones the spawn gate applies (config projection, endpoint certification,
+    and the attested-equals-enforced egress invariant against the network policy
+    installed moments earlier). Warning and attesting anyway would put a signed
+    claim of a sovereign posture on the chain for a deployment that does not
+    have one - and a signature is exactly what stops an auditor looking further.
+
+    Raises:
+        SystemExit: When the config is unreadable or the posture violates the
+            profile. Nothing is attested in either case.
     """
     from bernstein.core.security.network_policy import PROFILE_SOVEREIGN
 
@@ -455,12 +570,21 @@ def _activate_sovereign_profile(*, run_profile: str | None, workdir: Path) -> No
     from bernstein.core.security.deployment_profile import (
         SOVEREIGN_PROFILE,
         build_posture_attestation,
-        load_config_snapshot,
         resolve_effective_policy,
+        sovereign_posture_violations,
     )
+    from bernstein.core.security.network_policy import policy_from_env
 
-    snapshot = load_config_snapshot(workdir)
+    snapshot = (
+        config_snapshot
+        if config_snapshot is not None
+        else _sovereign_config_snapshot(run_profile=run_profile, workdir=workdir)
+    )
     policy = resolve_effective_policy(SOVEREIGN_PROFILE, snapshot)
+    violations = sovereign_posture_violations(policy, workdir=workdir, runtime_policy=policy_from_env())
+    if violations:
+        _refuse_sovereign_activation(workdir=workdir, violations=violations, policy=policy)
+
     chain = AuditChainStore(workdir / ".sdd" / "audit")
     attestation = build_posture_attestation(
         workdir=workdir,
@@ -468,15 +592,11 @@ def _activate_sovereign_profile(*, run_profile: str | None, workdir: Path) -> No
         timestamp=int(_time.time()),
         chain=chain,
     )
-    violations = policy.violations()
     console.print(f"[dim]Sovereign posture attested:[/dim] {attestation.posture_hash}")
-    if violations:
-        console.print(
-            "[yellow]Sovereign posture has non-compliant settings; run "
-            "'bernstein doctor sovereign' for the full report:[/yellow]"
-        )
-        for problem in violations:
-            console.print(f"  [yellow]-[/yellow] {problem}")
+    console.print(
+        f"[dim]Egress posture:[/dim] {policy.network_egress}"
+        + (f" {list(policy.egress_allowlist)}" if policy.egress_allowlist else "")
+    )
 
 
 def _show_dry_run_plan(
@@ -1623,8 +1743,21 @@ def _run_impl(
         max_blast_radius=max_blast_radius,
     )
 
-    _install_profile_network_policy(run_profile=run_profile, allow_network=allow_network, workdir=Path.cwd())
-    _activate_sovereign_profile(run_profile=run_profile, workdir=Path.cwd())
+    # One config read feeds both the enforced network policy and the attested
+    # posture, so the two cannot describe different versions of the file.
+    _run_workdir = Path.cwd()
+    _sovereign_snapshot = _sovereign_config_snapshot(run_profile=run_profile, workdir=_run_workdir)
+    _install_profile_network_policy(
+        run_profile=run_profile,
+        allow_network=allow_network,
+        workdir=_run_workdir,
+        config_snapshot=_sovereign_snapshot,
+    )
+    _activate_sovereign_profile(
+        run_profile=run_profile,
+        workdir=_run_workdir,
+        config_snapshot=_sovereign_snapshot,
+    )
 
     _configure_quality_gate_bypass(
         goal=goal,
