@@ -27,20 +27,11 @@ on:
       - "examples/**/docker-compose*.yml"
       - ".github/workflows/static-analysis-extended.yml"
       - ".semgrep/**"
-  pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "scripts/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "Dockerfile"
-      - "docker/**"
-      - "deploy/**"
-      - "examples/**/Dockerfile*"
-      - "examples/**/docker-compose*.yml"
-      - ".github/workflows/static-analysis-extended.yml"
-      - ".semgrep/**"
+  # Full-width static-analysis surface runs on the merge queue's ephemeral
+  # branch rather than on every PR push. merge_group has no paths filter, so
+  # the whole suite runs pre-merge; the weekly cron and push-to-main keep the
+  # main branch covered between merges.
+  merge_group: {}
   schedule:
     # Weekly safety net so dormant findings still surface even when
     # only docs change. Sunday 05:23 UTC keeps it clear of the

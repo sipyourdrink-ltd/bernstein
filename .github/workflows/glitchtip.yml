@@ -1,27 +1,54 @@
-name: glitchtip-insights
+name: GlitchTip
 
-# Daily 06:30 UTC sweep of GlitchTip for the bernstein project. When a
-# CRITICAL (fatal-level) issue is observed the workflow opens a sticky
-# GitHub issue with the GlitchTip title, first-seen time, and event
-# count. Resolved GlitchTip issues auto-close the GitHub mirror.
+# Consolidated GlitchTip observability workflow. Two independent jobs that
+# previously lived in separate files (glitchtip-ingester.yml and
+# glitchtip-insights.yml) now share one file to cut the workflow count:
 #
-# The workflow soft-fails (exit 0) when GLITCHTIP_API_TOKEN is not
-# configured so a fresh fork stays green until the operator wires the
-# token. The token is minted by the operator in GlitchTip and stored as
-# a repo secret named GLITCHTIP_API_TOKEN.
+#   * ingest -- pulls open unresolved GlitchTip issues into regression eval
+#     cases and opens a review-before-merge PR. Fires on its own daily cron
+#     (06:23 UTC) or manual dispatch.
+#   * sweep  -- mirrors CRITICAL (fatal-level) GlitchTip issues into sticky
+#     GitHub issues and auto-closes them when resolved. Fires on its own
+#     daily cron (06:30 UTC) or manual dispatch.
 #
-# Required repository configuration:
-#   * secret  GLITCHTIP_API_TOKEN  -- Bearer token for the GlitchTip API.
-#   * var     GLITCHTIP_BASE_URL   -- Base URL of the GlitchTip instance
-#                                     (e.g. https://errors.example.com).
-# Both are optional; the workflow short-circuits with a notice when
-# either is empty so forks stay green until the operator wires them.
+# Both crons are kept as separate schedule entries and each job is gated on
+# github.event.schedule matching its own cron, so the two jobs keep firing
+# independently exactly as they did as separate workflows. Per-job
+# concurrency groups preserve the original one-run-at-a-time behaviour of
+# each job.
+#
+# No host is hardcoded: base URLs come from repository vars so the
+# operator's private observability hostname never appears in this file.
+# With the token or base URL unset each job exits 0 and is a no-op, so a
+# fresh fork stays green until the operator wires the secrets.
 
 on:
   schedule:
-    - cron: "30 6 * * *"
+    - cron: '23 6 * * *'  # ingest: 06:23 UTC daily; 6 min after the Sonar sweeper.
+    - cron: "30 6 * * *"  # sweep:  06:30 UTC daily.
   workflow_dispatch:
     inputs:
+      severity_min:
+        description: Minimum severity to include (synthesized cases are P1)
+        required: false
+        default: P1
+        type: choice
+        options:
+          - P0
+          - P1
+          - P2
+      max_per_day:
+        description: Cap on records emitted in this run
+        required: false
+        default: '10'
+      dry_run:
+        description: When true, only print the would-be records
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
       org_slug:
         description: "GlitchTip organisation slug (default: bernstein)"
         required: false
@@ -33,25 +60,176 @@ on:
 
 permissions:
   contents: read
-  issues: write
-
-concurrency:
-  group: glitchtip-insights
-  cancel-in-progress: false
-
-# The API token is scoped to the single fetch step that needs it rather
-# than exposed at workflow/job level, so no other step inherits the
-# secret in its environment. Base URL, org, and label are non-secret.
-env:
-  GLITCHTIP_BASE_URL: ${{ github.event.inputs.base_url || vars.GLITCHTIP_BASE_URL }}
-  GLITCHTIP_ORG: ${{ github.event.inputs.org_slug || 'bernstein' }}
-  GLITCHTIP_LABEL: glitchtip-alert
 
 jobs:
+  ingest:
+    name: Ingest GlitchTip events
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fire on the ingester's own cron (06:23 UTC) or manual dispatch, and
+    # only when a base URL is configured.
+    if: >-
+      ${{ vars.BERNSTEIN_GLITCHTIP_BASE_URL != '' &&
+          (github.event_name == 'workflow_dispatch' ||
+           github.event.schedule == '23 6 * * *') }}
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: glitchtip-ingester
+      cancel-in-progress: false
+    env:
+      # Cron enabled: a clean workflow_dispatch smoke run opened a real
+      # eval-case PR, so the daily ingest path is proven. Emitted cases are
+      # redacted P1 (warn-only) YAML; the scheduled run stays a
+      # review-before-merge PR and never pushes to main. Job 'if:' cannot
+      # read env directly, so the gate runs as the first step of the job
+      # (see "Gate cron trigger").
+      ENABLE_CRON: '1'
+    steps:
+      - name: Gate cron trigger
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${ENABLE_CRON}" != "1" ]; then
+            echo "Cron trigger fired but ENABLE_CRON is '0'; exiting cleanly."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Harden runner
+        if: steps.gate.outputs.skip != 'true'
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Checkout
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up uv
+        if: steps.gate.outputs.skip != 'true'
+        uses: ./.github/actions/bootstrap
+        with:
+          python-version: '3.13'
+
+      - name: Install project deps
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          uv sync --group dev
+
+      - name: Scrape GlitchTip events
+        if: steps.gate.outputs.skip != 'true'
+        id: scrape
+        env:
+          # Token is a secret; base URL and org are non-secret vars so
+          # the operator's private hostname never lands in this file.
+          GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
+          BERNSTEIN_GLITCHTIP_BASE_URL: ${{ vars.BERNSTEIN_GLITCHTIP_BASE_URL }}
+          BERNSTEIN_GLITCHTIP_ORG: ${{ vars.BERNSTEIN_GLITCHTIP_ORG }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          mkdir -p .sdd/reports/glitchtip_events
+          args=(
+            "--out" ".sdd/reports/glitchtip_events"
+            "--cases-dir" "src/bernstein/eval/cases/incidents"
+          )
+          if [ "${DRY_RUN_INPUT}" = "true" ]; then
+            args+=("--dry-run")
+          fi
+          uv run python scripts/scrape_glitchtip_events.py "${args[@]}"
+
+      - name: Synthesize eval cases
+        if: >-
+          steps.gate.outputs.skip != 'true' &&
+          inputs.dry_run != 'true'
+        run: |
+          set -euo pipefail
+          uv run bernstein eval sync-incidents --workdir .
+
+      - name: Detect new eval-case files
+        if: >-
+          steps.gate.outputs.skip != 'true' &&
+          inputs.dry_run != 'true'
+        id: detect
+        run: |
+          set -euo pipefail
+          # Only files under the incidents corpus count toward the PR so
+          # the scope stays tight. The scraper's JSON records under
+          # .sdd/ are runtime state and are not committed.
+          changed=$(git status --porcelain -- src/bernstein/eval/cases/incidents/ | wc -l | tr -d ' ')
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
+          if [ "${changed}" = "0" ]; then
+            echo "No new eval cases emitted; will skip PR creation."
+          else
+            echo "${changed} new eval-case file(s) to commit."
+          fi
+
+      - name: Open PR with new eval cases
+        if: >-
+          steps.gate.outputs.skip != 'true' &&
+          steps.detect.outputs.changed != '0' &&
+          inputs.dry_run != 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: glitchtip-ingest/${{ github.run_id }}
+          delete-branch: true
+          add-paths: |
+            src/bernstein/eval/cases/incidents/
+          commit-message: |
+            chore(eval): import glitchtip regression cases
+          title: 'chore(eval): import glitchtip regression cases'
+          body: |
+            Automated import of open unresolved GlitchTip issues as
+            regression eval cases under
+            `src/bernstein/eval/cases/incidents/`. Generated by
+            `.github/workflows/glitchtip.yml`.
+
+            Each emitted case carries `source_incident:
+            glitchtip-issue:<issue_id>` and `severity: P1` (warn-only).
+            Re-runs are idempotent: the same issue will not produce a
+            second case.
+
+            Administrative wiring-probe issues are filtered out by the
+            allow-list in `scripts/scrape_glitchtip_events.py`. If a new
+            probe title appears, add it to
+            `DEFAULT_WIRING_PROBE_ALLOW_LIST` before merging.
+
+            See `docs/operations/glitchtip-ingester.md` for the env-var
+            matrix, the dedup contract, and the severity-mapping note.
+          labels: |
+            eval
+            regression
+            chore
+
   sweep:
     name: sweep
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Fire on the sweep's own cron (06:30 UTC) or manual dispatch.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '30 6 * * *'
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: glitchtip-insights
+      cancel-in-progress: false
+    # The API token is scoped to the single fetch step that needs it rather
+    # than exposed at workflow/job level, so no other step inherits the
+    # secret in its environment. Base URL, org, and label are non-secret.
+    env:
+      GLITCHTIP_BASE_URL: ${{ github.event.inputs.base_url || vars.GLITCHTIP_BASE_URL }}
+      GLITCHTIP_ORG: ${{ github.event.inputs.org_slug || 'bernstein' }}
+      GLITCHTIP_LABEL: glitchtip-alert
     steps:
       - name: Check token + base URL presence
         id: check_token
@@ -219,7 +397,7 @@ jobs:
                   else "- Link: (withheld: permalink host did not match the configured GlitchTip host)"
               )
               body = (
-                  f"Auto-opened by `.github/workflows/glitchtip-insights.yml`.\n\n"
+                  f"Auto-opened by `.github/workflows/glitchtip.yml`.\n\n"
                   f"- GlitchTip id: `{_code_span(short_id)}`\n"
                   f"- Level: `{_code_span(issue.get('level', '?'))}`\n"
                   f"- First seen: `{_code_span(first_seen)}`\n"

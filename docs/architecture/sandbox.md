@@ -142,8 +142,11 @@ executes commands and really freezes the workspace — not canned bytes).
 A Cloud Hypervisor variant fits behind the same shim and is deferred.
 
 **Content-addressed snapshots.** `snapshot()` freezes the workspace into a
-*canonicalised image* (a tar with sorted paths, zeroed mtimes/uids,
-normalised modes — deterministic given identical file contents), streams
+*canonicalised image* (a tar with sorted paths, zeroed mtimes/uids, real
+file-permission bits, and host-independent symlink targets - a pure
+function of the tree, so byte-identical on any host and under any process
+identity; special files are dropped from the payload but their presence is
+recorded so they cannot silently collide), streams
 it into the CAS store (`.sdd/cas`, see
 [cas-store.md](./cas-store.md)), and returns the **SHA-256 digest** as the
 snapshot id. `resume(digest)` reads the blob back with integrity
@@ -183,7 +186,28 @@ bernstein sandbox fork-race --base <sha256> --k 3 --cmd 'make test' --out receip
 # against CAS. Proves signed + CAS-intact; NOT that it was chain-appended
 # (that is the audit log's own verify).
 bernstein sandbox receipt verify receipt.json
+
+# Anchor the check to a known signer. WITHOUT this the signature is only
+# checked for self-consistency (a receipt re-signed under any key still
+# passes) - so an unanchored verify never exits 0.
+bernstein sandbox receipt verify receipt.json --expected-keyid <keyid>
 ```
+
+**Exit codes.** `receipt verify` distinguishes every outcome so a CLI-scripted
+gate can branch on them; the same verdict is computed once (`verify_receipt_full`
+→ `FullReceiptVerdict`) and shared by the CLI and the library, so the two can
+never disagree. A malformed or unreadable receipt file yields a clean
+diagnosable error, never a traceback.
+
+| Code | Verdict | Meaning |
+|---|---|---|
+| 0 | `verified` | Anchored to the expected signer, signature + consistency intact, and every named blob (base + winner + losers) re-hashed intact against CAS. |
+| 1 | `failed` | Bad signature/consistency, a **tampered** blob (present, wrong hash), or a **malformed** digest field. Highest precedence — an integrity alarm. |
+| 4 | `unreadable` | A named blob could not be read on this host (permissions, or an anomalous symlinked blob the verifier refuses to dereference). A property of the reader, not the record. |
+| 2 | `incomplete` | A named blob is **absent** from CAS (GC / retention / restart). An ordinary operational event, never conflated with tampering. |
+| 3 | `unanchored` | Signature + blobs check out, but `--expected-keyid` was omitted or empty (an unset env var counts as empty), so *whose* key signed it is unproven. |
+
+Precedence when several apply: `failed` > `unreadable` > `incomplete` (absent) > `unanchored` > `verified`.
 
 `fork-race` requires a microVM-capable host; on an unsupported host it
 fails loudly. The determinism/tamper guarantees are validated

@@ -45,6 +45,74 @@ bernstein recipes run NAME --param key=value [--param ...]   [--dry-run] [-g GOA
 - `run` executes end-to-end. `--dry-run` prints the resolved workflow
   plan without spawning agents.
 
+## Registered runs (content-addressed, receipt-backed)
+
+`recipes run` executes a manifest ad hoc. For a workflow you fire
+repeatedly, register it first: the recipe id becomes the sha256 of its
+canonical body, and every fire writes a receipt to the audit chain.
+
+```text
+bernstein recipes register NAME  [--collision-policy enqueue|cancel_new|supersede_with_handoff]
+                                 [--concurrency-cap N] [--sandbox-pool POOL]
+bernstein recipes fire NAME      [--at UNIX_EPOCH] [-g GOAL] [--schedule SCHEDULE_ID]
+bernstein recipes history NAME   [--verify]
+bernstein recipes repair-lineage NAME [--pick HMAC]
+```
+
+- `register` seals the canonical bytes into the lineage spine and writes
+  a register receipt (or, for a changed body, an operator-signed
+  supersede receipt). It prints the `recipe_hash` and `spine_anchor`.
+- `fire` submits the recipe's work and prints the fire receipt: the
+  projection hash and the chain anchor, not an opaque job id. The
+  receipt is the response.
+- `history` walks the definition-lineage receipts. `--verify` checks
+  them against the HMAC audit chain offline (no server running); a
+  broken or reordered link exits non-zero.
+- `repair-lineage` resolves a forked definition lineage (see below).
+
+### `fire` needs a reachable, authenticated task server
+
+`fire` records a fire only against work a sink actually accepted. It
+submits to the task server and derives the receipt from what came back,
+so a fire that could not submit its work never writes a "successful"
+receipt.
+
+The practical consequence is that `fire` now requires a task server
+that is both reachable and authenticated:
+
+| Situation | Result |
+|-----------|--------|
+| Recipe dispatched and work accepted | exit `0`; prints the fire receipt |
+| Recipe is paused (a deliberate operator state) | exit `0`; nothing fired |
+| No task server reachable, or auth rejected (e.g. `401`) | exit `2`; no receipt |
+| Recipe not found, or load/registration error | exit `1` |
+
+Exit `2` is deliberate: a script must never read a failed submission as
+a successful run. If you previously fired with no task server running
+and got exit `0`, start (and authenticate against) the task server
+first.
+
+### Recovering a forked lineage
+
+The definition lineage is an append-only chain, so recovery is
+additive. A fork means one receipt has two successors; the projection
+cannot honestly pick one, so every operation on the name fails closed
+with a message pointing at `recipes repair-lineage`.
+
+```bash
+# 1. List the competing branches (no --pick):
+bernstein recipes repair-lineage my-recipe
+
+# 2. Follow one by naming its receipt hmac (or 16-char prefix):
+bernstein recipes repair-lineage my-recipe --pick <hmac>
+```
+
+The choice is itself a receipt. Nothing is deleted: the losing branch
+stays in the history (`recipes history`), and re-running with the other
+hmac wins, because the latest resolution is authoritative. Without
+`--pick`, listing the branches exits `1` so a script does not read an
+unresolved fork as resolved.
+
 ## Manifest schema
 
 Each manifest declares:
