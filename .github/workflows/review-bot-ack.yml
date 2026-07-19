@@ -18,6 +18,12 @@ on:
     types: [opened, synchronize, edited, reopened]
   pull_request_review:
     types: [submitted]
+  # The merge queue evaluates required checks on a synthetic merge_group
+  # ref that has no pull_request payload. Without a merge_group trigger the
+  # `review-bot-ack` context is never published on the queued group, so the
+  # queue waits forever for a check that cannot report. The pass-through job
+  # below republishes the same context name on this event.
+  merge_group: {}
 
 # This workflow emits a required status check. Cancelling an in-progress
 # run leaves a CANCELLED conclusion that GitHub treats as a non-success
@@ -34,11 +40,26 @@ concurrency:
 permissions: {}
 
 jobs:
+  # Pass-through emitter for the merge queue. The queue runs required checks
+  # on a merge_group ref with no pull_request payload, where the acknowledgement
+  # gate has nothing to evaluate. This job reports the identical `review-bot-ack`
+  # context name (job-level `name:` controls the reported context) so the queued
+  # group can satisfy branch protection instead of stalling. It runs only on
+  # merge_group; the real gate below runs on every other event.
+  merge-group-pass:
+    name: review-bot-ack
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - run: echo "review-bot-ack is PR-scoped; on the queue's ephemeral branch it passes through"
+
   review-bot-ack:
     name: review-bot-ack
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event.pull_request != null
+    if: github.event.pull_request != null && github.event_name != 'merge_group'
     permissions:
       contents: read
       issues: write
