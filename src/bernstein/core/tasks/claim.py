@@ -308,6 +308,33 @@ class Backlog:
         write_atomic_json(self.path, [entry.to_dict() for entry in self.entries])
 
 
+@contextmanager
+def backlog_transaction(backlog_path: Path) -> Generator[Backlog, None, None]:
+    """Hold the claim lock for *backlog_path* and yield the loaded backlog.
+
+    This is the same cross-thread plus cross-process lock
+    :func:`claim_next_entry` takes, exposed so a caller that must create a row
+    before claiming it, or reopen a row after a failed run, performs that work
+    inside the claim protocol instead of in an unlocked read-modify-write
+    window. Mutations are persisted by calling :meth:`Backlog.save` before the
+    block exits; the lock is held for the whole block, so the load, the
+    mutation, and the save are one atomic step against every other claimer.
+
+    A missing backlog file yields an empty :class:`Backlog`, so create-if-absent
+    and claim collapse into a single transaction rather than a check-then-act
+    pair that two contenders can interleave.
+
+    Args:
+        backlog_path: Path to the JSON backlog document.
+
+    Yields:
+        The backlog loaded under the lock.
+    """
+    backlog = Backlog(path=backlog_path)
+    with _backlog_lock(backlog.lock_path):
+        yield Backlog.load(backlog_path)
+
+
 def claim_next_entry(
     backlog_path: Path,
     claimer_id: str,
@@ -350,6 +377,7 @@ __all__ = [
     "Backlog",
     "BacklogEntry",
     "ClaimFilter",
+    "backlog_transaction",
     "claim_next",
     "claim_next_entry",
 ]

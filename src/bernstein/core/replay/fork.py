@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.git.git_basic import run_git
-from bernstein.core.replay.journal import EventJournal, load_events
+from bernstein.core.replay.journal import EventJournal, JournalPathError, load_events, run_journal_path
 from bernstein.core.sandbox.snapshot import (
     SnapshotError,
     resume_worktree_snapshot,
@@ -166,7 +166,10 @@ def fork_run(
             (its sha no longer matches the journal), or the checkout
             fails.
     """
-    journal_path = sdd_dir / "runs" / run_id / "journal.jsonl"
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        raise ForkError(f"cannot fork run {run_id!r}: {exc}") from exc
     if not journal_path.exists():
         raise ForkError(f"no journal for run {run_id!r} (looked at {journal_path})")
 

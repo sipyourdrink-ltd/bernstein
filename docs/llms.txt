@@ -1,17 +1,20 @@
 # Bernstein
 
-> Forward-deployed engineering, with a coding swarm that fits in your `.sdd/`.
+> Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex,
+> Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination
+> loop - so runs are reproducible end to end.
 >
-> Bernstein is an open-source multi-agent orchestration platform for AI coding agents.
-> Deterministic scheduling, 40+ CLI adapters, pluggable sandbox backends, cloud artifact
-> storage sinks, progressive-disclosure skill packs, zero vendor lock-in. Apache 2.0 licensed.
+> Every task runs in its own git worktree behind lint/type/test gates. An always-on
+> lineage spine and replay journal record what happened; an opt-in HMAC-chained audit
+> log and signed receipts make results independently verifiable, offline if needed.
+> Air-gap install profile included. Apache-2.0.
 
-## Forward-deployed engineering use case
+## How it runs
 
-Forward-deployed engineering, on a swarm. Drop Bernstein into a
-client repo and you get a multi-agent crew with file-based state,
-per-agent credential scoping, and an HMAC-signed audit trail -
-running on whichever CLI agents the client already trusts.
+Drop Bernstein into a repo and you get a multi-agent crew with file-based
+state in `.sdd/`, per-agent credential scoping, and per-artefact lineage -
+running on whichever CLI agents you already trust. Enable `--audit` for an
+HMAC-signed audit trail on top.
 
 ## Core Documentation
 - [Getting Started](https://bernstein.readthedocs.io/getting-started/install/): Install, configure, run first orchestration in 60 seconds

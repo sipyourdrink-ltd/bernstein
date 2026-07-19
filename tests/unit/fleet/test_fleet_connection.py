@@ -10,12 +10,16 @@ event) any document not signed by the local install identity.
 
 from __future__ import annotations
 
+import logging
+import warnings
 from pathlib import Path
 
 import pytest
 
 from bernstein.core.fleet.connection import (
+    ConnectionDocument,
     ConnectionDocumentStore,
+    ConnectionReferenceError,
     ConnectionRefused,
     create_document,
     resolve_document,
@@ -78,7 +82,7 @@ def test_create_document_is_signed_and_recorded(tmp_path: Path) -> None:
 
     doc = create_document(
         name="prod-github",
-        secret_name="github_pat",
+        broker_ref="github_pat",
         scope="repo:read",
         connector_defaults={"base_url": "https://api.github.com"},
         identity_dir=identity,
@@ -87,7 +91,7 @@ def test_create_document_is_signed_and_recorded(tmp_path: Path) -> None:
     )
 
     assert doc.name == "prod-github"
-    assert doc.secret_name == "github_pat"
+    assert doc.broker_ref == "github_pat"
     assert doc.signature
     # The document carries no secret material.
     assert "github_pat" not in doc.signer_public_key_pem
@@ -110,7 +114,7 @@ def test_document_persisted_without_secret_value(tmp_path: Path) -> None:
     # defaults, references a broker secret by name, and never a secret value.
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={"base_url": "https://slack.com/api", "timeout_s": 30},
         identity_dir=identity,
@@ -125,7 +129,7 @@ def test_document_persisted_without_secret_value(tmp_path: Path) -> None:
     # broker secret *reference*. A secret is resolved solely through the broker
     # mint path, never persisted here.
     doc = store.get("team-slack")
-    assert doc.secret_name == "slack_token"
+    assert doc.broker_ref == "slack_token"
     assert not hasattr(doc, "secret_value")
 
 
@@ -136,7 +140,7 @@ def test_resolve_goes_through_broker_and_emits_receipt(tmp_path: Path) -> None:
     broker = _broker({"slack_token": "xoxb-super-secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity,
@@ -172,7 +176,7 @@ def test_conn_audit_reconstructs_resolving_tasks_offline(tmp_path: Path) -> None
     broker = _broker({"slack_token": "xoxb-secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity,
@@ -207,7 +211,7 @@ def test_copied_document_refuses_and_records_refusal(tmp_path: Path) -> None:
     broker = _broker({"slack_token": "secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token",
+        broker_ref="slack_token",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity_a,
@@ -246,7 +250,7 @@ def test_rotation_is_signed_event_and_repoints_consumers(tmp_path: Path) -> None
     broker = _broker({"slack_token_v1": "old", "slack_token_v2": "new-secret"})
     create_document(
         name="team-slack",
-        secret_name="slack_token_v1",
+        broker_ref="slack_token_v1",
         scope="chat:write",
         connector_defaults={},
         identity_dir=identity,
@@ -257,12 +261,12 @@ def test_rotation_is_signed_event_and_repoints_consumers(tmp_path: Path) -> None
 
     rotated = rotate_document(
         "team-slack",
-        new_secret_name="slack_token_v2",
+        new_broker_ref="slack_token_v2",
         identity_dir=identity,
         chain=chain,
         store=store,
     )
-    assert rotated.secret_name == "slack_token_v2"
+    assert rotated.broker_ref == "slack_token_v2"
     assert rotated.version == old_doc.version + 1
     assert verify_document_local(rotated, identity_dir=identity)
 
@@ -283,3 +287,575 @@ def test_rotation_is_signed_event_and_repoints_consumers(tmp_path: Path) -> None
     )
     assert broker.resolve(token.value) == "new-secret"
     assert "new-secret" in get_redactable_values()
+
+
+class TestNoSecretMaterialOnDisk:
+    """The document is signed and persisted in the clear, so the invariant that
+    it *names* a secret rather than carrying one has to be enforced, not just
+    documented."""
+
+    _CREDENTIAL_SHAPES = [
+        "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN\n-----END PRIVATE KEY-----",
+        '{"type": "service_account", "private_key": "abc"}',
+        "token with spaces",
+        "trailing-newline\n",
+        "tab\tseparated",
+        "x" * 257,
+        "",
+    ]
+
+    @pytest.mark.parametrize("material", _CREDENTIAL_SHAPES)
+    def test_put_refuses_a_credential_shaped_reference(self, tmp_path: Path, material: str) -> None:
+        """The write sink is where the shape is enforced, so nothing unshaped
+        can reach disk by any route that persists a document."""
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = ConnectionDocument(name="c", broker_ref=material, scope="")
+        with pytest.raises(ConnectionReferenceError, match="broker reference"):
+            store.put(doc)
+        assert store.list_names() == []
+
+    def test_construction_does_not_enforce_the_shape(self) -> None:
+        """Construction must stay permissive so a document written by an
+        earlier release can still be parsed. Enforcement lives on the write
+        path; see the back-compat class below."""
+        doc = ConnectionDocument(name="c", broker_ref="my secret name", scope="")
+        assert doc.broker_ref == "my secret name"
+
+    def test_refusal_is_narrow_enough_to_distinguish_from_other_failures(self, tmp_path: Path) -> None:
+        """The refusal is its own type so a caller can report it as operator
+        input error without also swallowing an unrelated failure."""
+        assert issubclass(ConnectionReferenceError, ValueError)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        with pytest.raises(ConnectionReferenceError):
+            store.put(ConnectionDocument(name="c", broker_ref="has spaces", scope=""))
+        # A malformed *name* is a different failure and keeps the plain type.
+        with pytest.raises(ValueError) as seen:
+            store._path("../escape")
+        assert not isinstance(seen.value, ConnectionReferenceError)
+
+    @pytest.mark.parametrize("material", _CREDENTIAL_SHAPES)
+    def test_credential_shaped_reference_never_reaches_disk(self, tmp_path: Path, material: str) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        with pytest.raises(ValueError, match="broker reference"):
+            create_document(
+                name="prod-github",
+                broker_ref=material,
+                scope="repo:read",
+                connector_defaults={},
+                identity_dir=tmp_path / "identity",
+                chain=chain,
+                store=store,
+            )
+        assert store.list_names() == []
+        written = [p for p in (tmp_path / "conns").rglob("*") if p.is_file()] if (tmp_path / "conns").exists() else []
+        assert written == []
+
+    def test_persisted_bytes_hold_the_reference_never_the_value(self, tmp_path: Path) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        secret_value = "ghp_this_is_the_actual_token_value"
+        create_document(
+            name="prod-github",
+            broker_ref="GITHUB_TOKEN",
+            scope="repo:read",
+            connector_defaults={"base_url": "https://api.github.com"},
+            identity_dir=tmp_path / "identity",
+            chain=chain,
+            store=store,
+        )
+        on_disk = (tmp_path / "conns" / "prod-github.json").read_text(encoding="utf-8")
+        assert "GITHUB_TOKEN" in on_disk
+        assert secret_value not in on_disk
+
+        # Nothing anywhere under the store or the chain carries the value.
+        for path in tmp_path.rglob("*"):
+            if path.is_file():
+                assert secret_value not in path.read_bytes().decode("utf-8", "replace")
+
+    def test_wire_key_is_stable_so_signed_documents_still_verify(self, tmp_path: Path) -> None:
+        """The wire key is inside the signed preimage and the document hash.
+
+        Renaming the attribute must not move the key, or every document ever
+        signed would fail to verify and every recorded hash would dangle.
+        """
+        import json as _json
+
+        doc = ConnectionDocument(
+            name="prod-github",
+            broker_ref="GITHUB_TOKEN",
+            scope="repo:read",
+            connector_defaults={"base_url": "https://api.github.com"},
+        )
+        payload = _json.loads(doc.to_json())
+        assert payload["secret_name"] == "GITHUB_TOKEN"
+        assert "broker_ref" not in payload
+        assert doc.document_hash() == "sha256:4a34c5e7682f18ada746b01aa6595edd190c1e59b53704eae7c8e6e4d7e341a6"
+        assert ConnectionDocument.from_json(doc.to_json()) == doc
+
+
+class TestLegacyDocumentCompatibility:
+    """A document written before the reference shape was enforced must stay
+    usable and remediable.
+
+    Enforcing the shape on the read path would strand an operator mid-upgrade:
+    refusing to parse a document already on disk cannot un-write it, and
+    rotation - the only remedy - has to load the old document first.
+    """
+
+    @staticmethod
+    def _write_legacy(tmp_path: Path, broker_ref: str = "my secret name") -> ConnectionDocumentStore:
+        """Write a document exactly as an earlier release did.
+
+        Signed by the local install identity, but with a reference the current
+        shape check rejects, and written straight to disk rather than through
+        ``put`` (which is where the check now lives).
+        """
+        from bernstein.core.fleet.connection import _local_identity, _sign
+
+        root = tmp_path / ".sdd" / "fleet" / "connections"
+        root.mkdir(parents=True)
+        private_key_pem, public_key_pem = _local_identity(tmp_path / ".sdd" / "identity")
+        doc = _sign(
+            ConnectionDocument(name="legacy", broker_ref=broker_ref, scope="", signer_public_key_pem=public_key_pem),
+            private_key_pem,
+        )
+        (root / "legacy.json").write_text(doc.to_json(), encoding="utf-8")
+        return ConnectionDocumentStore(root)
+
+    def test_legacy_document_still_loads(self, tmp_path: Path) -> None:
+        store = self._write_legacy(tmp_path)
+        assert store.get("legacy").broker_ref == "my secret name"
+
+    def test_one_legacy_document_does_not_break_the_whole_listing(self, tmp_path: Path) -> None:
+        """`conn list` iterates get() with no handler, so a refusal on load
+        would take out the entire store, not just the one document."""
+        store = self._write_legacy(tmp_path)
+        assert [store.get(n).name for n in store.list_names()] == ["legacy"]
+
+    def test_load_warns_with_the_remediating_command(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        store = self._write_legacy(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.fleet.connection"):
+            store.get("legacy")
+        assert caplog.records, "a legacy reference must be reported, not silently accepted"
+        assert "conn rotate" in caplog.records[0].getMessage()
+
+    def test_warning_never_reveals_the_reference_value(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """An unshaped reference may BE a pasted credential, so the warning
+        describes its shape and must never reproduce it."""
+        secret = "ghp_actual_token_value_pasted_by_mistake with spaces"
+        store = self._write_legacy(tmp_path, broker_ref=secret)
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.fleet.connection"):
+            store.get("legacy")
+        rendered = caplog.records[0].getMessage()
+        assert secret not in rendered
+        assert "ghp_actual_token_value" not in rendered
+        assert str(len(secret)) in rendered
+
+    def test_rotation_remediates_a_legacy_document(self, tmp_path: Path) -> None:
+        store = self._write_legacy(tmp_path)
+        rotated = rotate_document(
+            "legacy",
+            new_broker_ref="GOOD_NAME",
+            identity_dir=tmp_path / ".sdd" / "identity",
+            chain=_chain(tmp_path),
+            store=store,
+        )
+        assert rotated.broker_ref == "GOOD_NAME"
+        assert store.get("legacy").broker_ref == "GOOD_NAME"
+
+    def test_rotating_without_a_new_reference_names_the_remedy(self, tmp_path: Path) -> None:
+        """Carrying the legacy reference forward would re-persist it. The
+        refusal must point at the missing --secret, not blame an argument the
+        operator never passed."""
+        store = self._write_legacy(tmp_path)
+        with pytest.raises(ConnectionReferenceError) as seen:
+            rotate_document(
+                "legacy",
+                new_scope="repo:write",
+                identity_dir=tmp_path / ".sdd" / "identity",
+                chain=_chain(tmp_path),
+                store=store,
+            )
+        assert "--secret" in str(seen.value)
+        assert "my secret name" not in str(seen.value)
+
+    def test_a_refused_create_leaves_no_chain_receipt(self, tmp_path: Path) -> None:
+        """The create receipt is recorded before the document is written, so
+        the reference must be refused before the chain is touched or the chain
+        would carry a receipt for a document that never reached disk."""
+        from bernstein.core.security.audit_chain import EVENT_FLEET_CONN_CREATE
+
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        with pytest.raises(ConnectionReferenceError):
+            create_document(
+                name="pasted",
+                broker_ref="-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----",
+                scope="",
+                connector_defaults={},
+                identity_dir=tmp_path / "identity",
+                chain=chain,
+                store=store,
+            )
+        assert chain.query(event_type=EVENT_FLEET_CONN_CREATE) == []
+        assert store.list_names() == []
+
+
+class TestHashCoversWhatIsPersisted:
+    """The document hash must be computed over what actually lands on disk.
+
+    A self-consistency check that recomputes a hash from persisted data breaks
+    on honest records if anything lossy sits between the in-memory object and
+    the stored bytes: a redaction applied on write but not before hashing, a
+    falsy value coerced on read, or a second serialiser with different
+    canonicalisation. The hash, the signed preimage, and the file all derive
+    from one `_payload`, and these tests hold that.
+    """
+
+    _SHAPES = {
+        "plain": ("repo:read", {"base_url": "https://api.github.com"}),
+        # Falsy values are the direct analogue of an `or`-coercion bug: they
+        # must survive as themselves, not be replaced by a default on read.
+        "falsy_empty": ("", {}),
+        "falsy_nested": ("", {"a": 0, "b": "", "c": False, "d": None, "e": [], "f": {}}),
+        "non_ascii": ("portée", {"note": "naïve café"}),
+        "numeric": ("s", {"i": 1, "f": 1.0, "big": 2**53 + 1}),
+        "nested": ("s", {"x": {"y": ["z", {"w": 1}]}}),
+    }
+
+    @pytest.mark.parametrize("shape", sorted(_SHAPES))
+    def test_hash_agrees_across_memory_disk_and_chain(self, tmp_path: Path, shape: str) -> None:
+        scope, defaults = self._SHAPES[shape]
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = create_document(
+            name="c",
+            broker_ref="GITHUB_TOKEN",
+            scope=scope,
+            connector_defaults=defaults,
+            identity_dir=tmp_path / "id",
+            chain=chain,
+            store=store,
+        )
+        recorded = chain.query(event_type=EVENT_FLEET_CONN_CREATE)[0].details["document_hash"]
+        from_disk = store.get("c")
+
+        assert doc.document_hash() == from_disk.document_hash() == recorded
+        assert from_disk == doc
+        assert verify_document_local(from_disk, identity_dir=tmp_path / "id")
+
+    @pytest.mark.parametrize("shape", sorted(_SHAPES))
+    def test_signed_preimage_is_the_written_bytes_minus_the_signature(self, tmp_path: Path, shape: str) -> None:
+        """The one relationship that makes the hash meaningful: what is signed
+        is exactly what is stored, less the signature that cannot cover itself."""
+        import json as _json
+
+        scope, defaults = self._SHAPES[shape]
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = create_document(
+            name="c",
+            broker_ref="GITHUB_TOKEN",
+            scope=scope,
+            connector_defaults=defaults,
+            identity_dir=tmp_path / "id",
+            chain=_chain(tmp_path),
+            store=store,
+        )
+        raw = (tmp_path / "conns" / "c.json").read_text(encoding="utf-8")
+        # The writer must apply no normalisation of its own.
+        assert raw == doc.to_json()
+
+        written = _json.loads(raw)
+        written.pop("signature")
+        rebuilt = _json.dumps(written, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        assert rebuilt == doc.unsigned_canonical_bytes()
+        assert rebuilt == store.get("c").unsigned_canonical_bytes()
+
+    def test_rotation_hash_survives_the_storage_round_trip(self, tmp_path: Path) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        create_document(
+            name="c",
+            broker_ref="TOK",
+            scope="s",
+            connector_defaults={"a": 1},
+            identity_dir=tmp_path / "id",
+            chain=chain,
+            store=store,
+        )
+        rotated = rotate_document("c", new_broker_ref="TOK_V2", identity_dir=tmp_path / "id", chain=chain, store=store)
+        recorded = chain.query(event_type=EVENT_FLEET_CONN_ROTATE)[0].details["new_document_hash"]
+        from_disk = store.get("c")
+        assert rotated.document_hash() == from_disk.document_hash() == recorded
+        assert from_disk.version == 2
+        assert verify_document_local(from_disk, identity_dir=tmp_path / "id")
+
+    def test_put_does_not_mutate_the_document_it_persists(self, tmp_path: Path) -> None:
+        """`put` validates before writing; validation must stay a pure check.
+        A redaction here would make every recorded hash unverifiable."""
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        doc = create_document(
+            name="c",
+            broker_ref="TOK",
+            scope="s",
+            connector_defaults={"a": 1},
+            identity_dir=tmp_path / "id",
+            chain=_chain(tmp_path),
+            store=store,
+        )
+        before = doc.document_hash()
+        store.put(doc)
+        assert doc.document_hash() == before
+        assert store.get("c").document_hash() == before
+
+
+class TestDeprecatedSecretNameAlias:
+    """`secret_name` was public API before the rename, and this is a patch
+    release, so it keeps working.
+
+    Only the Python surface was renamed - the wire key, signed preimage and
+    document hash are unchanged - which is what makes the alias a pure
+    forward rather than a compatibility shim over a format change.
+    """
+
+    _NEW = {"name": "prod-github", "scope": "repo:read", "connector_defaults": {"base_url": "https://api.github.com"}}
+    _PIN = "sha256:4a34c5e7682f18ada746b01aa6595edd190c1e59b53704eae7c8e6e4d7e341a6"
+
+    def test_constructor_keyword_still_accepted(self) -> None:
+        with pytest.warns(DeprecationWarning, match="secret_name"):
+            doc = ConnectionDocument(secret_name="GITHUB_TOKEN", **self._NEW)
+        assert doc.broker_ref == "GITHUB_TOKEN"
+
+    def test_attribute_read_still_works(self) -> None:
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        with pytest.warns(DeprecationWarning, match="secret_name"):
+            assert doc.secret_name == "GITHUB_TOKEN"
+
+    def test_old_and_new_spellings_are_the_same_document(self) -> None:
+        with pytest.warns(DeprecationWarning):
+            old = ConnectionDocument(secret_name="GITHUB_TOKEN", **self._NEW)
+        new = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        assert old == new
+        assert old.document_hash() == new.document_hash() == self._PIN
+        assert old.to_json() == new.to_json()
+
+    def test_alias_never_reaches_the_wire(self) -> None:
+        new = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        assert "broker_ref" not in new.to_json()
+        assert '"secret_name"' in new.to_json()
+
+    def test_conflicting_spellings_are_refused(self) -> None:
+        with pytest.raises(ValueError, match="not both with different values"):
+            ConnectionDocument(broker_ref="A", secret_name="B", **self._NEW)
+
+    def test_loading_a_document_does_not_warn(self) -> None:
+        """`from_json` uses the canonical keyword, so reading a document must
+        not spray deprecation warnings at an operator who never used the alias."""
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ConnectionDocument.from_json(doc.to_json())
+        assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
+
+    def test_signing_helper_still_round_trips(self) -> None:
+        """`_sign` uses dataclasses.replace on every signature."""
+        from dataclasses import replace
+
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        signed = replace(doc, signature="sig")
+        assert signed.broker_ref == "GITHUB_TOKEN"
+        assert signed.signature == "sig"
+
+    def test_internal_paths_do_not_emit_the_deprecation(self, tmp_path: Path) -> None:
+        """Only a caller using the old spelling should see the warning.
+
+        `dataclasses.replace` reads every init field off the instance, so
+        holding the alias as an InitVar made `_sign` warn on every signature -
+        a deprecation aimed at nobody. The alias is an `__init__` wrapper
+        instead, which `replace` never goes through.
+        """
+        from dataclasses import replace
+
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            replace(doc, signature="sig")
+            ConnectionDocument.from_json(doc.to_json())
+            create_document(
+                name="c",
+                broker_ref="TOK",
+                scope="s",
+                connector_defaults={},
+                identity_dir=tmp_path / "id",
+                chain=_chain(tmp_path),
+                store=ConnectionDocumentStore(tmp_path / "conns"),
+            )
+        assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
+
+    def test_alias_is_not_a_dataclass_field(self) -> None:
+        """It must stay off the field list, or it would reach the payload and
+        move the hash."""
+        import dataclasses
+
+        doc = ConnectionDocument(broker_ref="GITHUB_TOKEN", **self._NEW)
+        assert "secret_name" not in {f.name for f in dataclasses.fields(doc)}
+
+    def test_create_and_rotate_still_accept_the_old_keywords(self, tmp_path: Path) -> None:
+        chain = _chain(tmp_path)
+        store = ConnectionDocumentStore(tmp_path / "conns")
+        with pytest.warns(DeprecationWarning, match="secret_name"):
+            created = create_document(
+                name="c",
+                secret_name="TOK",
+                scope="s",
+                connector_defaults={},
+                identity_dir=tmp_path / "id",
+                chain=chain,
+                store=store,
+            )
+        assert created.broker_ref == "TOK"
+        with pytest.warns(DeprecationWarning, match="new_secret_name"):
+            rotated = rotate_document(
+                "c",
+                new_secret_name="TOK_V2",
+                identity_dir=tmp_path / "id",
+                chain=chain,
+                store=store,
+            )
+        assert rotated.broker_ref == "TOK_V2"
+        assert store.get("c").broker_ref == "TOK_V2"
+
+
+class TestIdentityRefusalIsRecordedFirst:
+    """A foreign document must always leave its refusal on the chain.
+
+    The refuse receipt is the forensic evidence that someone tried to rotate a
+    document copied in from another install. A document copied from an older
+    or foreign install is also the population most likely to carry a
+    pre-hardening reference, so a reference check placed ahead of the identity
+    check would swallow the refusal for exactly the case it exists to record -
+    the chain would go quiet under hostile input.
+    """
+
+    @staticmethod
+    def _foreign_doc(tmp_path: Path, broker_ref: str) -> ConnectionDocumentStore:
+        from bernstein.core.fleet.connection import _local_identity, _sign
+
+        root = tmp_path / "conns"
+        root.mkdir(parents=True)
+        private_key_pem, public_key_pem = _local_identity(tmp_path / "identity_foreign")
+        doc = _sign(
+            ConnectionDocument(name="d", broker_ref=broker_ref, scope="", signer_public_key_pem=public_key_pem),
+            private_key_pem,
+        )
+        (root / "d.json").write_text(doc.to_json(), encoding="utf-8")
+        return ConnectionDocumentStore(root)
+
+    @pytest.mark.parametrize(
+        ("broker_ref", "label"),
+        [("my secret name", "legacy reference"), ("GOOD_REF", "well-shaped reference")],
+    )
+    def test_foreign_document_records_a_refuse_receipt(self, tmp_path: Path, broker_ref: str, label: str) -> None:
+        chain = _chain(tmp_path)
+        store = self._foreign_doc(tmp_path, broker_ref)
+        with pytest.raises(ConnectionRefused):
+            rotate_document("d", new_scope="x", identity_dir=tmp_path / "identity_local", chain=chain, store=store)
+        receipts = chain.query(event_type=EVENT_FLEET_CONN_REFUSE)
+        assert len(receipts) == 1, f"a foreign document with a {label} must still be recorded as refused"
+        assert receipts[0].details["reason"] == "signature_verification_failed"
+
+    def test_the_reported_reason_names_the_real_problem(self, tmp_path: Path) -> None:
+        """Refusing a forged document for a stale reference would tell the
+        operator the wrong thing."""
+        store = self._foreign_doc(tmp_path, "my secret name")
+        with pytest.raises(ConnectionRefused, match="not signed by the local install identity"):
+            rotate_document(
+                "d", new_scope="x", identity_dir=tmp_path / "identity_local", chain=_chain(tmp_path), store=store
+            )
+
+    def test_a_local_document_still_gets_the_legacy_reference_refusal(self, tmp_path: Path) -> None:
+        """Reordering must not disable the legacy check for our own documents."""
+        from bernstein.core.fleet.connection import _local_identity, _sign
+
+        root = tmp_path / "conns"
+        root.mkdir(parents=True)
+        identity = tmp_path / "identity_local"
+        private_key_pem, public_key_pem = _local_identity(identity)
+        doc = _sign(
+            ConnectionDocument(name="d", broker_ref="my secret name", scope="", signer_public_key_pem=public_key_pem),
+            private_key_pem,
+        )
+        (root / "d.json").write_text(doc.to_json(), encoding="utf-8")
+        with pytest.raises(ConnectionReferenceError, match="--secret"):
+            rotate_document(
+                "d",
+                new_scope="x",
+                identity_dir=identity,
+                chain=_chain(tmp_path),
+                store=ConnectionDocumentStore(root),
+            )
+
+
+class TestReferenceShapeHelpers:
+    """Direct cover for the reference-shape helpers.
+
+    They feed the operator-facing legacy warning, and `_describe_ref` in
+    particular is what keeps a possibly-pasted credential out of the log, so
+    each branch is asserted rather than assumed.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "shaped"),
+        [
+            ("GITHUB_TOKEN", True),
+            ("vault:prod/github#token", True),
+            ("", False),
+            ("x" * 257, False),
+            ("has spaces", False),
+            ("multi\nline", False),
+            ("ctrl\x07char", False),
+        ],
+    )
+    def test_is_reference_shaped(self, value: str, shaped: bool) -> None:
+        from bernstein.core.fleet.connection import _is_reference_shaped
+
+        assert _is_reference_shaped(value) is shaped
+
+    @pytest.mark.parametrize(
+        ("value", "expected_trait"),
+        [
+            ("", "<empty>"),
+            ("x" * 300, "over length cap"),
+            ("multi\nline", "multi-line"),
+            ("has spaces", "contains whitespace"),
+            ("ctrl\x07char", "contains control characters"),
+        ],
+    )
+    def test_describe_ref_names_the_trait(self, value: str, expected_trait: str) -> None:
+        from bernstein.core.fleet.connection import _describe_ref
+
+        assert expected_trait in _describe_ref(value)
+
+    @pytest.mark.parametrize("value", ["x" * 300, "multi\nline", "has spaces", "ctrl\x07char"])
+    def test_describe_ref_never_echoes_the_value(self, value: str) -> None:
+        """The whole point: an unshaped reference may be a pasted credential."""
+        from bernstein.core.fleet.connection import _describe_ref
+
+        described = _describe_ref(value)
+        assert value not in described
+        assert value.strip()[:12] not in described or not value.strip()
+
+    def test_conflicting_spellings_are_refused_at_function_level(self, tmp_path: Path) -> None:
+        """The constructor guards this; so must the create/rotate keywords."""
+        with pytest.raises(ValueError, match="not both with different values"):
+            create_document(
+                name="c",
+                broker_ref="A",
+                secret_name="B",
+                scope="",
+                connector_defaults={},
+                identity_dir=tmp_path / "id",
+                chain=_chain(tmp_path),
+                store=ConnectionDocumentStore(tmp_path / "conns"),
+            )

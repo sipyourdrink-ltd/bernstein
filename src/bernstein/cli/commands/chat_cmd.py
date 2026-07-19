@@ -579,14 +579,20 @@ class _ChatTaskRequest:
 
 
 def _write_approval_decision(workdir: Path, approval_id: str, decision: str) -> None:
-    """Write ``<approval_id>.approved`` or ``.rejected`` for the security gate."""
-    approvals_dir = workdir / ".sdd" / "runtime" / "approvals"
-    approvals_dir.mkdir(parents=True, exist_ok=True)
-    suffix = "approved" if decision == "approve" else "rejected"
-    (approvals_dir / f"{approval_id}.{suffix}").write_text(
-        "via chat bridge\n",
-        encoding="utf-8",
-    )
+    """Write ``<approval_id>.approved`` or ``.rejected`` for the security gate.
+
+    The id arrives over a chat bridge, so it goes through the same identifier
+    rule and containment check as every other approvals sink.
+
+    Raises:
+        UnsafeApprovalIdError: The id would escape the approvals directory.
+    """
+    from bernstein.core.orchestration.approval_gate import approval_path
+
+    suffix = ".approved" if decision == "approve" else ".rejected"
+    target = approval_path(workdir, approval_id, suffix)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("via chat bridge\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

@@ -132,6 +132,20 @@ def _replay_filter_find_run_dirs(runs_dir: Path, replay_jsonl: str) -> list[Path
     )
 
 
+def _run_journal_exists(runs_dir: Path, run_id: str, filename: str) -> bool:
+    """Return whether a *contained* run journal exists for ``run_id``.
+
+    A run id that escapes ``runs_dir`` is reported as absent rather than
+    probed, so the traversal never reaches the filesystem.
+    """
+    from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
+    try:
+        return contained_path(runs_dir, run_id, filename, label="run id").exists()
+    except PathContainmentError:
+        return False
+
+
 def _replay_filter_list_runs(runs_dir: Path, replay_jsonl: str) -> None:
     """List available replay runs."""
     run_dirs = _replay_filter_find_run_dirs(runs_dir, replay_jsonl)
@@ -202,6 +216,7 @@ def replay_filter_cmd(
       bernstein replay latest --limit 20 --event-type task_completed
     """
 
+    from bernstein.core.security.path_containment import contained_path
     from bernstein.core.traces import TraceStore, build_replay_task_request
 
     sdd_path = Path(sdd_dir)
@@ -211,7 +226,7 @@ def replay_filter_cmd(
     _REPLAY_JSONL = "journal.jsonl"
 
     has_filters = any([filter_str, event_type, agent, search])
-    is_run_replay = run_id in {"list", "latest"} or (runs_dir / run_id / _REPLAY_JSONL).exists()
+    is_run_replay = run_id in {"list", "latest"} or _run_journal_exists(runs_dir, run_id, _REPLAY_JSONL)
     is_task_trace = not is_run_replay and not has_filters
 
     if is_task_trace:
@@ -225,7 +240,7 @@ def replay_filter_cmd(
     if run_id == "latest":
         run_id = _replay_filter_resolve_latest(runs_dir, _REPLAY_JSONL)
 
-    replay_path = runs_dir / run_id / _REPLAY_JSONL
+    replay_path = contained_path(runs_dir, run_id, _REPLAY_JSONL, label="run id")
     if not replay_path.exists():
         console.print(f"[red]Replay log not found:[/red] {replay_path}")
         raise SystemExit(1)

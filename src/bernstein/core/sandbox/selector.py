@@ -61,6 +61,12 @@ DEFAULT_PRECEDENCE: tuple[str, ...] = (
     "blaxel",
     "runloop",
     "vercel",
+    # microvm is opt-in: it is not a FREE_BACKEND, so the heuristic path
+    # never auto-selects it over worktree/docker. An explicit
+    # ``sandbox.backend: microvm`` override reaches it, and an unsupported
+    # host then fails loudly at create() (MicroVMUnavailableError) rather
+    # than silently degrading to a bare worktree.
+    "microvm",
 )
 
 
