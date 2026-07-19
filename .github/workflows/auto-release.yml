@@ -364,6 +364,9 @@ jobs:
     #      created only after dist artefacts exist.
     permissions:
       contents: write
+      # actions: write is required to dispatch publish.yml below (a tag
+      # pushed with GITHUB_TOKEN does not emit a `push: tags` event).
+      actions: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -458,3 +461,17 @@ jobs:
         run: |
           git tag "v${FINAL_VERSION}"
           git push origin "v${FINAL_VERSION}"
+
+      # A tag pushed with GITHUB_TOKEN does not emit a `push: tags` event, so
+      # publish.yml would never start on its own from the tag above. Dispatch
+      # it explicitly. publish.yml keeps its native `push: tags` trigger for
+      # manual / PAT tag pushes; workflow_dispatch is exempt from the
+      # loop-prevention that suppresses GITHUB_TOKEN-driven tag events, and
+      # publish.yml's PyPI step sets `skip-existing: true`, so if both paths
+      # ever fire for the same tag the second run is a harmless no-op.
+      - name: Dispatch publish (GITHUB_TOKEN tag pushes do not trigger tag workflows)
+        if: steps.final.outputs.deferred != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FINAL_VERSION: ${{ steps.final.outputs.version }}
+        run: gh workflow run publish.yml --ref main -f tag="v${FINAL_VERSION}"
