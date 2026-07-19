@@ -66,7 +66,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | pull_request, pull_request_review | {"cancel-in-progress": "true", "group": "review-bot-ack-${{ github.event.pull_request.number \|\| github.ref }}-${{ github.event.pull_request.head.sha \|\| github.sha }}"} | 1 |
+| .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | merge_group, pull_request, pull_request_review | {"cancel-in-progress": "true", "group": "review-bot-ack-${{ github.event.pull_request.number \|\| github.ref }}-${{ github.event.pull_request.head.sha \|\| github.sha }}"} | 2 |
 | .github/workflows/review-bot-sweep.yml | Review-bot post-merge sweep | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/sbom-upload.yml | SBOM upload | push, release | {"cancel-in-progress": "false", "group": "sbom-upload-${{ github.ref }}"} | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
@@ -146,7 +146,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs PyPI |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
-| .github/workflows/review-bot-ack.yml | review-bot-ack: review-bot-ack |
+| .github/workflows/review-bot-ack.yml | merge-group-pass: review-bot-ack<br>review-bot-ack: review-bot-ack |
 | .github/workflows/review-bot-sweep.yml | sweep: Sweep recently merged PRs for unprocessed bot findings |
 | .github/workflows/sbom-upload.yml | upload: Generate and upload SBOM |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
