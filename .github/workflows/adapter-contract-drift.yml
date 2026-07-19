@@ -25,11 +25,11 @@ name: Adapter contract drift
 on:
   schedule:
     - cron: "0 6,14,22 * * *"
-  pull_request:
-    paths:
-      - "src/bernstein/adapters/**"
-      - "tests/contract/**"
-      - ".github/workflows/adapter-contract-drift.yml"
+  # Pre-merge validation runs on the merge queue's ephemeral branch instead
+  # of on every PR push. merge_group has no paths filter, so the full adapter
+  # matrix runs pre-merge; the thrice-daily cron still surfaces upstream CLI
+  # releases independent of any merge.
+  merge_group: {}
   workflow_dispatch:
 
 concurrency:

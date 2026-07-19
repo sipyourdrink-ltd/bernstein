@@ -509,10 +509,26 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
 def _run_journal_path(sdd_dir: Path, run_id: str) -> Path:
-    """Return the journal path for ``run_id``, rejecting unsafe segments."""
+    """Return the journal path for ``run_id`` via the shared containment barrier.
+
+    Delegates to :func:`bernstein.core.replay.journal.run_journal_path` rather
+    than rebuilding ``<sdd>/runs/<run_id>/journal.jsonl`` by hand: the barrier
+    also resolves the path so a symlinked run directory cannot redirect the
+    read outside the runs root, which a lexical ``run_id`` check alone misses.
+    The ``IntentCapsuleError`` interface is preserved for existing callers.
+    """
+    from bernstein.core.replay.journal import JournalPathError, run_journal_path
+
     if run_id in {".", ".."} or not _RUN_ID_RE.match(run_id):
         raise IntentCapsuleError(f"unsafe run_id for journal path: {run_id!r}")
-    return sdd_dir / "runs" / run_id / "journal.jsonl"
+    try:
+        return run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        # Barrier resolution rejected a lexically-valid id (e.g. a symlinked run
+        # directory pointing outside the runs root). Report it with the same
+        # "invalid run id" phrasing the direct barrier callers use, so a
+        # planted-journal refusal reads identically wherever it is caught.
+        raise IntentCapsuleError(f"invalid run id for journal path: {run_id!r}") from exc
 
 
 def write_capsule(sdd_dir: Path, capsule: IntentCapsule, *, run_id: str = "") -> Path:
