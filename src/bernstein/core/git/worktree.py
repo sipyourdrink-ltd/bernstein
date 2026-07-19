@@ -786,8 +786,7 @@ class WorktreeManager:
             )
             if not isolation_result.passed:
                 raise WorktreeError(
-                    f"Worktree isolation violated for session '{session_id}': "
-                    + "; ".join(isolation_result.violations)
+                    f"Worktree isolation violated for session '{session_id}': " + "; ".join(isolation_result.violations)
                 )
         except BaseException:
             self._undo_partial_create(session_id, worktree_path, branch_name)

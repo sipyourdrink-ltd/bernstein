@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from bernstein.core.orchestration.run_session import RunSession, sessions_dir_for
 from bernstein.core.sessions.fork import fork_session
 
@@ -60,16 +61,12 @@ def parent_session(repo: Path) -> RunSession:
 
 def _worktrees(repo: Path) -> list[str]:
     return sorted(
-        line
-        for line in _git(repo, "worktree", "list", "--porcelain").splitlines()
-        if line.startswith("worktree ")
+        line for line in _git(repo, "worktree", "list", "--porcelain").splitlines() if line.startswith("worktree ")
     )
 
 
 def _branches(repo: Path) -> list[str]:
-    return sorted(
-        _git(repo, "branch", "--list", "--format=%(refname:short)").splitlines()
-    )
+    return sorted(_git(repo, "branch", "--list", "--format=%(refname:short)").splitlines())
 
 
 def test_fork_raise_after_worktree_exists_leaves_no_worktree_or_branch(
@@ -85,9 +82,7 @@ def test_fork_raise_after_worktree_exists_leaves_no_worktree_or_branch(
 
     # _clone_session_snapshot is the first step after the fork worktree +
     # branch exist, so raising here proves the undo fires while they are live.
-    monkeypatch.setattr(
-        "bernstein.core.sessions.fork._clone_session_snapshot", boom
-    )
+    monkeypatch.setattr("bernstein.core.sessions.fork._clone_session_snapshot", boom)
 
     with pytest.raises(RuntimeError) as exc_info:
         fork_session(
@@ -114,9 +109,7 @@ def test_fork_cancellation_after_worktree_exists_leaves_no_worktree_or_branch(
     def cancel(*_args: object, **_kwargs: object) -> None:
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(
-        "bernstein.core.sessions.fork._clone_session_snapshot", cancel
-    )
+    monkeypatch.setattr("bernstein.core.sessions.fork._clone_session_snapshot", cancel)
 
     with pytest.raises(asyncio.CancelledError):
         fork_session(

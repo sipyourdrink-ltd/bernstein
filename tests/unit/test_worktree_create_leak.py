@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from bernstein.core.git.worktree import WorktreeManager
 
 
@@ -47,16 +48,12 @@ def repo(tmp_path: Path) -> Path:
 
 def _worktrees(repo: Path) -> list[str]:
     return sorted(
-        line
-        for line in _git(repo, "worktree", "list", "--porcelain").splitlines()
-        if line.startswith("worktree ")
+        line for line in _git(repo, "worktree", "list", "--porcelain").splitlines() if line.startswith("worktree ")
     )
 
 
 def _branches(repo: Path) -> list[str]:
-    return sorted(
-        _git(repo, "branch", "--list", "--format=%(refname:short)").splitlines()
-    )
+    return sorted(_git(repo, "branch", "--list", "--format=%(refname:short)").splitlines())
 
 
 def test_create_raise_after_worktree_exists_leaves_no_worktree_or_branch(
