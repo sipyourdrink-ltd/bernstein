@@ -417,6 +417,83 @@ def test_stop_tunnel_helper_survives_oserror(fake_registry: _FakeProvider, monke
 
 
 # ---------------------------------------------------------------------------
+# Local (no-tunnel) browser seed: authenticate the SPA on loopback
+# ---------------------------------------------------------------------------
+#
+# The SPA's data panels call the SSO-gated general API (``/api/v1/agents``,
+# ``/api/v1/tasks``, ...). That surface accepts the process ``BERNSTEIN_AUTH_TOKEN``
+# bearer - a #2366 dashboard scoped token only unlocks ``/api/v1/dashboard/*``.
+# Without seeding, a bare local ``serve`` opens ``/ui/`` with no token, so every
+# panel 401s. These tests pin the seed decision at the helper and CLI level.
+
+
+def test_resolve_local_open_url_seeds_configured_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "legacy-secret-xyz")
+    url = gui_cli._resolve_local_open_url(host="127.0.0.1", port=8052, echo=lambda *_a: None)
+    # The token rides the onboarding fragment the SPA parses on boot.
+    assert url == "http://127.0.0.1:8052/ui/#t=legacy-secret-xyz"
+
+
+def test_resolve_local_open_url_reuses_token_verbatim_no_mint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "  spaced-token  ")
+    url = gui_cli._resolve_local_open_url(host="localhost", port=9000, echo=lambda *_a: None)
+    # Whitespace is trimmed (matches create_app's resolution) but the token
+    # itself is reused, never regenerated per serve.
+    assert url == "http://localhost:9000/ui/#t=spaced-token"
+
+
+def test_resolve_local_open_url_bare_and_hint_when_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    notes: list[str] = []
+    url = gui_cli._resolve_local_open_url(host="127.0.0.1", port=8052, echo=notes.append)
+    assert url == "http://127.0.0.1:8052/ui/"
+    assert "#t=" not in url
+    assert any("BERNSTEIN_AUTH_TOKEN" in n for n in notes), notes
+
+
+def test_resolve_local_open_url_never_seeds_non_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A configured token must not be baked into a browser-open URL for a
+    # routable bind - posture stays at bind-time, and the token never rides a
+    # non-loopback URL.
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "legacy-secret-xyz")
+    url = gui_cli._resolve_local_open_url(host="0.0.0.0", port=8052, echo=lambda *_a: None)
+    assert url == "http://0.0.0.0:8052/ui/"
+    assert "#t=" not in url
+
+
+def test_cli_serve_local_open_seeds_browser_with_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_uvicorn_noop(monkeypatch)
+    import webbrowser
+
+    opened: list[str] = []
+    monkeypatch.setattr(webbrowser, "open", lambda u, *a, **k: opened.append(u) or True)
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "legacy-secret-xyz")
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(gui_cli.gui_group, ["serve", "--minimal"])
+    assert result.exit_code == 0, result.output
+    assert opened, "browser was never opened"
+    assert opened[0] == "http://127.0.0.1:8052/ui/#t=legacy-secret-xyz"
+    # The token travels only in the opened browser URL fragment, never in the
+    # console/log output.
+    assert "legacy-secret-xyz" not in result.output
+
+
+def test_cli_serve_local_open_bare_when_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_uvicorn_noop(monkeypatch)
+    import webbrowser
+
+    opened: list[str] = []
+    monkeypatch.setattr(webbrowser, "open", lambda u, *a, **k: opened.append(u) or True)
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(gui_cli.gui_group, ["serve", "--minimal"])
+    assert result.exit_code == 0, result.output
+    assert opened == ["http://127.0.0.1:8052/ui/"]
+
+
+# ---------------------------------------------------------------------------
 # Provider choice validation (Click choice)
 # ---------------------------------------------------------------------------
 

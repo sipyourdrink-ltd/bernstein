@@ -123,9 +123,16 @@ export function onlineSignal(listener: (online: boolean) => void): () => void {
  * it in ``localStorage``.  The fragment is then scrubbed from the URL so
  * the token never appears in shared screenshots or browser history.
  *
+ * The default ``storageKey`` MUST match ``TOKEN_KEY`` in ``lib/api.ts``
+ * (`'bernstein_token'`): the onboarding fragment is dead weight if the
+ * capture writes to a key the API layer never reads. This bit the local
+ * ``bernstein gui serve`` seed and the ``--tunnel`` onboarding flow - the
+ * token was captured into a key nothing consumed, so every ``/api/v1`` call
+ * still 401'd.
+ *
  * Returns the token that was captured, or ``null`` if no token was found.
  */
-export function captureAuthTokenFromFragment(storageKey: string = 'bernstein.auth.token'): string | null {
+export function captureAuthTokenFromFragment(storageKey: string = 'bernstein_token'): string | null {
   if (typeof window === 'undefined') return null;
   const hash = window.location.hash;
   if (!hash || !hash.startsWith('#t=')) return null;

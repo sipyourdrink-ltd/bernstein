@@ -91,6 +91,39 @@ Symptoms: navigation succeeds, page renders blank, no obvious error in the termi
 
 4. **Build artifact mismatch.** `bernstein gui serve --minimal` and watch DevTools Network. If `/api/v1/gui-meta` returns a build_time older than your last `npm run build`, you're serving a stale wheel - reinstall.
 
+## Dashboard panels 401 on a local `gui serve`
+
+Symptoms: the shell loads, but every data panel (Tasks, Agents, Costs, ...)
+shows an auth error. DevTools Network shows `/api/v1/*` returning `401`.
+
+**Cause.** The panels poll the authenticated general API (`/api/v1/agents`,
+`/api/v1/tasks`, ...). That surface accepts the process `BERNSTEIN_AUTH_TOKEN`
+bearer. (A `bernstein auth dashboard-token` scoped token only unlocks the
+`/api/v1/dashboard/*` mirror - not these routes.) A bare local `serve` used to
+open `/ui/` with no credential, so the browser had nothing to send.
+
+**Fix.** Set the token before serving; the launcher then opens the browser
+pre-seeded so the SPA stores the bearer and its XHRs authenticate:
+
+```bash
+BERNSTEIN_AUTH_TOKEN=<your-secret> bernstein gui serve
+```
+
+The token rides the opened browser's URL fragment only (the SPA scrubs it from
+the address bar after capture) - it never appears in the console URL or the
+access log. When `BERNSTEIN_AUTH_TOKEN` is unset, `serve` prints a hint instead
+of a silent 401 wall.
+
+Manual fallback (any bundle): set the key the API reads and reload.
+
+```js
+localStorage.setItem("bernstein_token", "<value of BERNSTEIN_AUTH_TOKEN>")
+location.reload()
+```
+
+For a dev-only open bind with no token at all, `BERNSTEIN_AUTH_DISABLED=1`
+drops auth (never on a network-exposed host).
+
 ## Theme not switching
 
 - The dark/light toggle flips the `.dark` class on `<html>`. Verify in DevTools Elements that `<html class="dark">` is present (or absent) when you click the toggle.

@@ -207,6 +207,73 @@ def _enforce_dashboard_posture(host: str, workdir: Path) -> None:
     )
 
 
+def _effective_api_token() -> str:
+    """Return the bearer the SPA must present to the SSO-gated ``/api/v1`` surface.
+
+    Mirrors :func:`bernstein.core.server.server_app.create_app`'s
+    ``effective_token`` resolution: on a bare local ``serve`` the only
+    operator-presentable credential the *general* API accepts is
+    ``BERNSTEIN_AUTH_TOKEN``. (SSO JWTs and per-agent identity JWTs are not
+    hand-issued, and a #2366 dashboard scoped token only unlocks the
+    ``/api/v1/dashboard/*`` mirror - not the ``/api/v1/agents`` /
+    ``/api/v1/tasks`` routes the SPA's panels poll.) Returns an empty string
+    when unset.
+    """
+    return os.environ.get("BERNSTEIN_AUTH_TOKEN", "").strip()
+
+
+def _resolve_local_open_url(*, host: str, port: int, echo: Callable[[str], object] | None = None) -> str:
+    """Choose the URL the local (non-tunnel) browser auto-open should target.
+
+    The bug this closes: a bare ``bernstein gui serve`` on loopback opened
+    ``/ui/`` with no credential, so the SPA shell loaded (200) but every
+    ``/api/v1`` XHR 401'd - the operator had no in-browser way to authenticate.
+
+    When an API bearer is configured (``BERNSTEIN_AUTH_TOKEN``) and the bind is
+    loopback, the SPA is seeded through the existing onboarding-fragment
+    mechanism (:func:`bernstein.gui.pwa.compose_onboarding_url`) so its XHRs
+    carry the bearer and stop 401-ing. The configured token is reused verbatim
+    - no fresh credential is minted per serve - and the token travels only in
+    the opened browser's URL fragment (which the SPA scrubs from the address
+    bar after capture); the console URL printed above stays bare, so the token
+    never lands in a terminal log or an access log.
+
+    When no token is configured the bare ``/ui/`` URL is returned together with
+    an operator hint: the shell loads but the data panels 401 until
+    ``BERNSTEIN_AUTH_TOKEN`` is set (or ``BERNSTEIN_AUTH_DISABLED=1`` for a
+    dev-only open bind). Posture is untouched either way - this only changes
+    which URL the operator's own browser is pointed at; an external, tokenless
+    request still 401s at the auth middleware exactly as before.
+
+    Args:
+        host: Bind host the server is listening on.
+        port: Bind port.
+        echo: Sink for the operator hint (defaults to :func:`click.echo`).
+
+    Returns:
+        The URL the browser should open: seeded with ``#t=<token>`` on a
+        configured loopback bind, otherwise the bare ``/ui/`` URL.
+    """
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+    from bernstein.gui import pwa
+
+    emit = echo if echo is not None else click.echo
+    local_url = f"http://{host}:{port}/ui/"
+    token = _effective_api_token()
+    if token and is_loopback_host(host):
+        # Reuse the onboarding fragment the SPA already parses on boot so the
+        # bearer reaches localStorage without a new login surface.
+        return pwa.compose_onboarding_url(f"http://{host}:{port}", token)
+    if not token:
+        emit(
+            "Dashboard data panels call the authenticated /api/v1 surface. "
+            "Set BERNSTEIN_AUTH_TOKEN before `gui serve` so the browser can "
+            "authenticate (or BERNSTEIN_AUTH_DISABLED=1 for a dev-only open "
+            "bind); otherwise the panels will show an auth error."
+        )
+    return local_url
+
+
 # ---------------------------------------------------------------------------
 # Click surface
 # ---------------------------------------------------------------------------
@@ -336,10 +403,13 @@ def serve(
         _print_onboarding(onboarding_url, issue.passphrase)
 
     if not no_open and not dev and not tunnel:
+        # Seed the SPA on loopback so its /api/v1 XHRs authenticate; the token
+        # rides the browser URL fragment only, never the console URL above.
+        open_url = _resolve_local_open_url(host=host, port=port)
         with contextlib.suppress(Exception):
             import webbrowser
 
-            webbrowser.open(local_url)
+            webbrowser.open(open_url)
 
     try:
         uvicorn.run(app, host=host, port=port, log_level="info")
