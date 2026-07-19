@@ -1,12 +1,13 @@
-"""GitHub and GitLab webhook routes and alerts endpoint."""
+"""GitHub and GitLab webhook routes, the automation bridge, and alerts endpoint."""
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -21,6 +22,11 @@ from bernstein.core.server import (
 )
 from bernstein.core.tenanting import request_tenant_id
 from bernstein.core.webhook_signatures import verify_hmac_sha256
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.trigger_sources.receipt import TriggerAdmission
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +63,7 @@ def _parse_timestamp_header(raw: str) -> int | None:
         return None
 
 
-def _verify_generic_webhook_secret(request: Request, body: bytes) -> JSONResponse | None:
+def _verify_generic_webhook_secret(request: Request, body: bytes) -> tuple[JSONResponse, str] | None:
     """Verify the HMAC signature + timestamp freshness for POST ``/webhook``.
 
     Fail-closed semantics ( + ): when
@@ -76,7 +82,17 @@ def _verify_generic_webhook_secret(request: Request, body: bytes) -> JSONRespons
     The plaintext ``X-Bernstein-Webhook-Secret`` fallback has been
     removed - there is no remaining code path that
     compares the raw secret against a request header.
+
+    Returns:
+        ``None`` when the request authenticates, else the refusal response
+        paired with a canonical refusal reason for the trigger receipt (#2512).
+        The unconfigured-endpoint case is a deployment fault, not a refused
+        trigger, and carries an empty reason so no receipt is minted for it.
     """
+    from bernstein.core.trigger_sources.receipt import (
+        REFUSAL_STALE_TIMESTAMP,
+        REFUSAL_UNAUTHENTICATED,
+    )
 
     configured_secret = os.environ.get(_GENERIC_WEBHOOK_SECRET_ENV, "")
     if not configured_secret:
@@ -86,41 +102,155 @@ def _verify_generic_webhook_secret(request: Request, body: bytes) -> JSONRespons
             "webhooks are not accepted.",
             _GENERIC_WEBHOOK_SECRET_ENV,
         )
-        return JSONResponse(
-            status_code=503,
-            content={
-                "detail": (
-                    "Webhook endpoint is not configured: set "
-                    f"{_GENERIC_WEBHOOK_SECRET_ENV} to the shared "
-                    "secret used by the caller."
-                ),
-            },
+        return (
+            JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        "Webhook endpoint is not configured: set "
+                        f"{_GENERIC_WEBHOOK_SECRET_ENV} to the shared "
+                        "secret used by the caller."
+                    ),
+                },
+            ),
+            "",
         )
 
     timestamp_header = request.headers.get(_GENERIC_WEBHOOK_TIMESTAMP_HEADER, "")
     timestamp = _parse_timestamp_header(timestamp_header)
     if timestamp is None:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Missing or malformed X-Bernstein-Timestamp header"},
+        return (
+            JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or malformed X-Bernstein-Timestamp header"},
+            ),
+            REFUSAL_STALE_TIMESTAMP,
         )
     if abs(int(time.time()) - timestamp) > _WEBHOOK_TIMESTAMP_MAX_SKEW_SECONDS:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Stale or future-dated X-Bernstein-Timestamp header"},
+        return (
+            JSONResponse(
+                status_code=401,
+                content={"detail": "Stale or future-dated X-Bernstein-Timestamp header"},
+            ),
+            REFUSAL_STALE_TIMESTAMP,
         )
 
     provided_signature = request.headers.get(_GENERIC_WEBHOOK_SIGNATURE_HEADER, "")
     if not provided_signature:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Missing X-Bernstein-Webhook-Signature-256 header"},
+        return (
+            JSONResponse(
+                status_code=401,
+                content={"detail": "Missing X-Bernstein-Webhook-Signature-256 header"},
+            ),
+            REFUSAL_UNAUTHENTICATED,
         )
 
     signed_payload = f"{timestamp}.".encode() + body
     if verify_hmac_sha256(signed_payload, provided_signature, configured_secret, prefix="sha256="):
         return None
-    return JSONResponse(status_code=401, content={"detail": "Invalid webhook signature"})
+    return (
+        JSONResponse(status_code=401, content={"detail": "Invalid webhook signature"}),
+        REFUSAL_UNAUTHENTICATED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Automation bridge (#2512)
+# ---------------------------------------------------------------------------
+
+
+def _bridge_paths(request: Request) -> tuple[Path, Path] | None:
+    """Return ``(bridge_root, audit_dir)`` for this install, or ``None``.
+
+    ``None`` means the app carries no ``.sdd`` layout, so there is nowhere to
+    anchor a receipt; callers degrade to the pre-bridge behaviour rather than
+    failing a request over bookkeeping.
+    """
+    from bernstein.core.trigger_sources.receipt import bridge_root
+
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None:
+        return None
+    return bridge_root(sdd_dir / "automation-bridge"), sdd_dir / "audit"
+
+
+def _fallback_trigger_id(request: Request, body: bytes) -> str:
+    """Derive a replay nonce when the caller named none.
+
+    Binds the signed timestamp to the payload digest, so a byte-identical
+    request replayed inside the signature window collides with its own earlier
+    admission and is refused -- which is exactly the request a captured
+    delivery reproduces.
+    """
+    timestamp = request.headers.get(_GENERIC_WEBHOOK_TIMESTAMP_HEADER, "").strip()
+    digest = hashlib.sha256(body).hexdigest()
+    return f"derived-{hashlib.sha256(f'{timestamp}.{digest}'.encode()).hexdigest()[:32]}"
+
+
+def _mint_trigger_receipt(
+    request: Request,
+    body: bytes,
+    *,
+    authenticated: bool,
+    refusal_reason: str = "",
+    task_ids: tuple[str, ...] = (),
+) -> TriggerAdmission | None:
+    """Admit or refuse the inbound trigger and mint its signed receipt.
+
+    Returns ``None`` when the bridge has nowhere to anchor a receipt, or when
+    minting failed; the caller keeps its existing behaviour in that case, and
+    the failure is logged rather than swallowed.
+    """
+    from bernstein.core.trigger_sources.automation_platforms import normalise_trigger
+    from bernstein.core.trigger_sources.receipt import RefusalBudget, admit_trigger
+
+    paths = _bridge_paths(request)
+    if paths is None:
+        return None
+    root, audit_dir = paths
+
+    try:
+        import json as _json
+
+        decoded = _json.loads(body) if body else {}
+    except (ValueError, UnicodeDecodeError):
+        decoded = {}
+    payload = decoded if isinstance(decoded, dict) else {}
+
+    headers = dict(request.headers)
+    platform, intent, trigger_id = normalise_trigger(payload=payload, headers=headers)
+    # Replay refusal is only sound against a caller-supplied nonce. A derived id
+    # cannot tell a captured replay apart from a legitimate re-fire of the same
+    # goal, so we record the weaker regime on the receipt instead of refusing.
+    enforce_replay = bool(trigger_id)
+    if not trigger_id:
+        trigger_id = _fallback_trigger_id(request, body)
+
+    from bernstein.core.trigger_sources.automation_platforms import adapter_for
+
+    try:
+        from bernstein.core.security.audit import load_or_create_audit_key
+
+        return admit_trigger(
+            root=root,
+            audit_dir=audit_dir,
+            hmac_key=load_or_create_audit_key(),
+            platform=platform,
+            request_path=request.url.path,
+            trigger_id=trigger_id,
+            body=body,
+            scope=adapter_for(platform).scope,
+            timestamp=int(time.time()),
+            authenticated=authenticated,
+            refusal_reason=refusal_reason,
+            enforce_replay=enforce_replay,
+            budget=RefusalBudget(root),
+            intent=intent,
+            task_ids=task_ids,
+        )
+    except (OSError, RuntimeError, ValueError):
+        logger.exception("automation bridge: could not mint a trigger receipt for %s", request.url.path)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +296,32 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
     ``f"{timestamp}.".encode() + body``. The plaintext
     ``X-Bernstein-Webhook-Secret`` fallback has been removed; callers
     relying on it must upgrade to the HMAC + timestamp flow.
+
+    Automation bridge (#2512): an admitted trigger returns a signed,
+    chain-anchored trigger receipt in ``receipt`` so the calling platform holds
+    a proof of what it asked for rather than a bare task reference. A trigger
+    that fails authentication, or that replays a trigger id already admitted,
+    is refused with its own signed refusal receipt (HTTP 401 and 409
+    respectively) -- the negative path leaves a record, never a silent drop.
     """
     raw_body = await request.body()
     denied = _verify_generic_webhook_secret(request, raw_body)
     if denied is not None:
-        return denied
+        response, refusal_reason = denied
+        if not refusal_reason:
+            return response
+        refusal = _mint_trigger_receipt(request, raw_body, authenticated=False, refusal_reason=refusal_reason)
+        return _with_receipt(response, refusal)
+
+    admission = _mint_trigger_receipt(request, raw_body, authenticated=True)
+    if admission is not None and not admission.admitted:
+        return _with_receipt(
+            JSONResponse(
+                status_code=409,
+                content={"detail": f"Trigger refused: {admission.refusal_reason}"},
+            ),
+            admission,
+        )
 
     store = _get_store(request)
     effective_body = body.model_copy(update={"tenant_id": request_tenant_id(request)})
@@ -178,7 +329,24 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
         score = estimate_difficulty(effective_body.description)
         effective_body.estimated_minutes = minutes_for_level(score.level)
     task = await store.create(effective_body)
-    return WebhookTaskResponse(task=task_to_response(task))
+    receipt = admission.receipt.to_dict() if admission is not None and admission.receipt is not None else None
+    return WebhookTaskResponse(task=task_to_response(task), receipt=receipt)
+
+
+def _with_receipt(response: JSONResponse, admission: TriggerAdmission | None) -> JSONResponse:
+    """Attach a refusal receipt to a refusal response, preserving its status.
+
+    The response is returned unchanged when no receipt was minted -- an install
+    with no ``.sdd`` layout, or a refusal that exceeded the refusal budget. The
+    trigger is refused either way; only the per-request receipt is absent.
+    """
+    if admission is None or admission.receipt is None:
+        return response
+    import json as _json
+
+    body: dict[str, Any] = _json.loads(response.body)
+    body["receipt"] = admission.receipt.to_dict()
+    return JSONResponse(status_code=response.status_code, content=body)
 
 
 def _count_ci_fix_attempts(store: TaskStore, head_branch: str) -> int:

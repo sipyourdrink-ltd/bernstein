@@ -771,6 +771,25 @@ EVENT_TASK_RESOURCE_RELEASE = "task.suspend_resource_release"
 EVENT_AUDIT_RECEIPT_EXPORT = "audit.receipt_export"
 
 
+#: Issue #2512 -- emitted for every trigger an automation platform fires into
+#: the bridge. ``trigger.receipt.issued`` records an admitted trigger;
+#: ``trigger.receipt.refused`` records one turned away (bad signature, stale
+#: timestamp, or a replayed trigger id). Both carry the same binding digest, so
+#: the negative path is as discoverable as the positive one: a refused trigger
+#: leaves a signed, chain-anchored record rather than a silent drop. Only the
+#: platform label, request path, granted scope, and hashes are recorded --
+#: never the trigger body.
+EVENT_TRIGGER_RECEIPT_ISSUED = "trigger.receipt.issued"
+EVENT_TRIGGER_RECEIPT_REFUSED = "trigger.receipt.refused"
+
+#: Issue #2512 -- emitted for every status callback the bridge hands back to an
+#: automation platform. The row records the reported status, the digest of the
+#: producing notification event, and the chain head at emission, so a verifier
+#: holding only the delivered envelope can establish whether the status the
+#: platform acted on equals the status the chain recorded for that run.
+EVENT_STATUS_PROOF_EMITTED = "status.proof.emitted"
+
+
 # ---------------------------------------------------------------------------
 # AuditChainStore
 # ---------------------------------------------------------------------------
@@ -870,9 +889,14 @@ class AuditChainStore:
         actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        resource_id: str | None = None,
         include_archived: bool = False,
     ) -> list[AuditEvent]:
         """Delegate to the underlying :class:`AuditLog`.
+
+        ``resource_id`` narrows the scan to a single resource's events and lets
+        the underlying log skip parsing lines that cannot match, so a
+        per-resource lookup does not cost a full pass over the log.
 
         ``include_archived`` also replays archived ``*.jsonl.gz`` segments, so
         a caller reasoning about linkage across the retention boundary sees
@@ -883,6 +907,7 @@ class AuditChainStore:
             actor=actor,
             since=since,
             until=until,
+            resource_id=resource_id,
             include_archived=include_archived,
         )
 
@@ -2715,6 +2740,123 @@ def record_webhook_node_receipt(
         resource_type="webhook_node_receipt",
         resource_id=event_id,
         details=details,
+    )
+
+
+def record_trigger_receipt(
+    *,
+    chain: AuditChainStore,
+    trigger_id: str,
+    platform: str,
+    request_path: str,
+    payload_digest: str,
+    graph_digest: str,
+    scope: str,
+    outcome: str,
+    receipt_digest: str,
+    refusal_reason: str = "",
+    suppressed_refusals: int = 0,
+    actor: str = "automation_bridge",
+) -> AuditEvent:
+    """Append a ``trigger.receipt.*`` event into *chain* (#2512).
+
+    Anchors one inbound automation trigger in the HMAC chain. The event type is
+    :data:`EVENT_TRIGGER_RECEIPT_ISSUED` for an admitted trigger and
+    :data:`EVENT_TRIGGER_RECEIPT_REFUSED` for one turned away, so a refusal is
+    as discoverable as an admission. ``receipt_digest`` is the hash of the
+    signed receipt binding: a verifier holding the platform's stored copy
+    recomputes it and matches this row.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        trigger_id: The caller-supplied trigger id (the replay nonce).
+        platform: The automation platform label the trigger arrived from.
+        request_path: The request path the trigger was fired at.
+        payload_digest: Content hash of the raw trigger body.
+        graph_digest: Digest of the canonical task graph the payload projects;
+            empty for a refusal, which projects nothing.
+        scope: The scope granted to the admitted trigger.
+        outcome: ``admitted`` or ``refused``.
+        receipt_digest: Hash of the signed receipt binding.
+        refusal_reason: Why the trigger was refused; empty when admitted.
+        suppressed_refusals: Refusals turned away since the last anchored one
+            without an individual entry, because the refusal budget was
+            exhausted. Recorded so the chain never hides that they happened.
+        actor: Recorded actor; defaults to ``"automation_bridge"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    details: dict[str, Any] = {
+        "trigger_id": trigger_id,
+        "platform": platform,
+        "request_path": request_path,
+        "payload_digest": payload_digest,
+        "scope": scope,
+        "outcome": outcome,
+        "receipt_digest": receipt_digest,
+    }
+    if graph_digest:
+        details["graph_digest"] = graph_digest
+    if refusal_reason:
+        details["refusal_reason"] = refusal_reason
+    if suppressed_refusals:
+        details["suppressed_refusals"] = suppressed_refusals
+    event_type = EVENT_TRIGGER_RECEIPT_ISSUED if outcome == "admitted" else EVENT_TRIGGER_RECEIPT_REFUSED
+    return chain.log_with_prev_digest(
+        event_type=event_type,
+        actor=actor,
+        resource_type="automation_trigger",
+        resource_id=trigger_id,
+        details=details,
+    )
+
+
+def record_status_proof(
+    *,
+    chain: AuditChainStore,
+    event_id: str,
+    run_id: str,
+    status: str,
+    producing_event_digest: str,
+    proof_digest: str,
+    actor: str = "automation_bridge",
+) -> AuditEvent:
+    """Append a ``status.proof.emitted`` event into *chain* (#2512).
+
+    Records the status the bridge reported outward together with the digest of
+    the notification event that produced it. A verifier presented a delivered
+    callback envelope re-derives ``producing_event_digest`` from the carried
+    payload and compares ``status`` against this row, so a status altered on the
+    wire is detected and the chain's recorded value is recoverable.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        event_id: The notification event id the callback carries.
+        run_id: The run the status belongs to.
+        status: The reported status.
+        producing_event_digest: Content hash of the canonical notification
+            payload that produced the status.
+        proof_digest: Hash of the signed proof binding.
+        actor: Recorded actor; defaults to ``"automation_bridge"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_STATUS_PROOF_EMITTED,
+        actor=actor,
+        resource_type="automation_status",
+        resource_id=event_id,
+        details={
+            "event_id": event_id,
+            "run_id": run_id,
+            "status": status,
+            "producing_event_digest": producing_event_digest,
+            "proof_digest": proof_digest,
+        },
     )
 
 

@@ -225,6 +225,11 @@ nav:
           - GitHub App: integrations/github-app-setup.md
           - GitLab App: integrations/gitlab-app-setup.md
           - GitLab integration: operations/gitlab.md
+      - Workflow automation:
+          - Automation bridge: integrations/automation-bridge.md
+          - n8n: integrations/n8n.md
+          - Zapier: integrations/zapier.md
+          - Workato: integrations/workato.md
       - MCP:
           - Server: mcp/server.md
           - Client: mcp/client.md

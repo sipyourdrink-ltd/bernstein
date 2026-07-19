@@ -1117,6 +1117,12 @@ from bernstein.cli.commands.interop_cmd import interop_group  # noqa: E402
 
 cli.add_command(interop_group, "interop")
 
+# A2A node surface: publish this node to agent registries, verify the
+# lineage receipts it returns on inbound tasks.
+from bernstein.cli.commands.a2a_cmd import a2a_group  # noqa: E402
+
+cli.add_command(a2a_group, "a2a")
+
 # release/1.9: outbound notification drivers (Telegram, Slack, Discord, Email, Webhook, Shell).
 from bernstein.cli.commands.notify_cmd import notify_group  # noqa: E402
 
