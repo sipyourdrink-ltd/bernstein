@@ -25,6 +25,10 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[2]
 
 
+#: The MCP registry rejects a longer ``description`` with a 422 at publish time.
+_REGISTRY_DESCRIPTION_MAX = 100
+
+
 def _pyproject_version() -> str:
     with (_REPO / "pyproject.toml").open("rb") as fh:
         return tomllib.load(fh)["project"]["version"]
@@ -41,6 +45,24 @@ def test_server_json_version_matches_pyproject() -> None:
     # the version rides in the identifier tag instead.
     assert "version" not in packages["oci"]
     assert packages["oci"]["identifier"] == f"ghcr.io/sipyourdrink-ltd/bernstein:{version}"
+
+
+def test_server_json_description_fits_the_registry_limit() -> None:
+    """The MCP registry caps ``description`` at 100 characters.
+
+    It enforces this at publish time with a 422, which lands *after* the tag
+    and the PyPI upload have already gone out - so the listing silently stays
+    on the previous version while every other artifact ships. A description
+    edit that overruns is invisible until then; this pins it at commit time
+    instead.
+    """
+    data = json.loads((_REPO / "server.json").read_text(encoding="utf-8"))
+    description = data["description"]
+    assert len(description) <= _REGISTRY_DESCRIPTION_MAX, (
+        f"server.json description is {len(description)} characters; the MCP registry "
+        f"rejects anything over {_REGISTRY_DESCRIPTION_MAX} with a 422 during publish. "
+        f"Shorten it: {description!r}"
+    )
 
 
 def test_plugin_manifest_version_and_paths() -> None:
