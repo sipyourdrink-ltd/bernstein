@@ -273,9 +273,17 @@ class TaskResponse(BaseModel):
 
 
 class WebhookTaskResponse(BaseModel):
-    """Serialized task returned by POST /webhook."""
+    """Serialized task returned by POST /webhook.
+
+    ``receipt`` carries the signed, chain-anchored trigger receipt for the
+    admitted trigger (#2512) so the calling automation platform stores a proof
+    of what it asked for, not just a task reference. It is optional: an install
+    whose bridge state is unavailable still creates the task and returns
+    ``None`` rather than failing the caller.
+    """
 
     task: TaskResponse
+    receipt: dict[str, Any] | None = None
 
 
 class TaskCompleteRequest(BaseModel):

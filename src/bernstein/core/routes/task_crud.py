@@ -12,11 +12,11 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
-from bernstein.core.bulletin import BulletinBoard, BulletinMessage, DirectChannel
+from bernstein.core.bulletin import BulletinBoard, BulletinMessage, DirectChannel, SignalActionFailure
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
 from bernstein.core.eu_ai_act import (
     TaskRiskAssessment,
@@ -2252,8 +2252,16 @@ def agent_stream(session_id: str, request: Request) -> StreamingResponse:
 
 
 @router.post("/bulletin", status_code=201)
-def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessageResponse:
-    """Append a message to the bulletin board."""
+def post_bulletin(body: BulletinPostRequest, request: Request, response: Response) -> BulletinMessageResponse:
+    """Append a message to the bulletin board.
+
+    Returns 201 when the message is stored and any registered signal action
+    ran. When a signal action hook fails (for example a ``blocker`` whose
+    clearance gate did not materialize), the message is still on the
+    append-only board and queued in the board's retry outbox, but the action is
+    not complete: the response is 202 rather than 201 so the caller can tell
+    "stored and acted on" from "stored, action pending retry" (#2648).
+    """
     bulletin = _get_bulletin(request)
     msg = BulletinMessage(
         agent_id=body.agent_id,
@@ -2261,7 +2269,16 @@ def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessag
         content=body.content,
         cell_id=body.cell_id,
     )
-    stored = bulletin.post(msg)
+    try:
+        stored = bulletin.post(msg)
+    except SignalActionFailure as exc:
+        logger.warning(
+            "bulletin signal action pending retry for %s from %s",
+            sanitize_log(str(body.type)),
+            sanitize_log(body.agent_id),
+        )
+        stored = exc.message
+        response.status_code = 202
 
     # Broadcast to SSE bus
     _get_sse_bus(request).publish(

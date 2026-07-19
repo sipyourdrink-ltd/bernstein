@@ -68,9 +68,17 @@ def _binary_for(name: str, use_case: AdapterUseCase | None) -> str:
     """Pick the binary name to probe via ``shutil.which``.
 
     Priority: explicit use-case entry, then the override table in
-    :mod:`bernstein.cli.commands.adapter_cmd`, then the registry key
-    itself. Empty string means "no external binary" (in-process or
-    SDK-only adapters).
+    :mod:`bernstein.cli.commands.adapter_cmd`, then the adapter's
+    capability profile (which already declares its binary), then the
+    registry key itself. Empty string means "no external binary"
+    (in-process or SDK-only adapters).
+
+    Consulting the profile keeps this surface consistent with
+    ``report._binary_for_adapter`` and ``adapter_cmd._binary_for_adapter``:
+    a factory-built adapter whose binary differs from its registry key
+    (for example ``pydantic_ai`` -> ``clai``) is probed under its real
+    binary even without a curated use-case entry, so it is not silently
+    misreported as not installed.
     """
     if use_case is not None:
         return use_case.binary
@@ -79,7 +87,9 @@ def _binary_for(name: str, use_case: AdapterUseCase | None) -> str:
     overrides = importlib.import_module("bernstein.cli.commands.adapter_cmd")._BINARY_OVERRIDES
     if name in overrides:
         return overrides[name]
-    return name
+    from bernstein.adapters.capability_profile import profile_binary_for
+
+    return profile_binary_for(name) or name
 
 
 def _enumerate_rows() -> list[dict[str, object]]:
