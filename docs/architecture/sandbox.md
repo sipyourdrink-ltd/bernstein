@@ -142,8 +142,11 @@ executes commands and really freezes the workspace — not canned bytes).
 A Cloud Hypervisor variant fits behind the same shim and is deferred.
 
 **Content-addressed snapshots.** `snapshot()` freezes the workspace into a
-*canonicalised image* (a tar with sorted paths, zeroed mtimes/uids,
-normalised modes — deterministic given identical file contents), streams
+*canonicalised image* (a tar with sorted paths, zeroed mtimes/uids, real
+file-permission bits, and host-independent symlink targets - a pure
+function of the tree, so byte-identical on any host and under any process
+identity; special files are dropped from the payload but their presence is
+recorded so they cannot silently collide), streams
 it into the CAS store (`.sdd/cas`, see
 [cas-store.md](./cas-store.md)), and returns the **SHA-256 digest** as the
 snapshot id. `resume(digest)` reads the blob back with integrity
