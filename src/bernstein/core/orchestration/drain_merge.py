@@ -211,8 +211,7 @@ async def _reap_merge_agent(proc: asyncio.subprocess.Process) -> None:
 
     if proc.returncode is None:
         logger.error(
-            "Merge agent (pid %s) could not be confirmed dead after kill; it "
-            "may still be editing the working tree",
+            "Merge agent (pid %s) could not be confirmed dead after kill; it may still be editing the working tree",
             getattr(proc, "pid", "unknown"),
         )
 
