@@ -70,6 +70,14 @@ if sys.platform == "win32":  # pragma: no cover - exercised on Windows only
                 # match the blocking POSIX flock.
                 time.sleep(0.05)
 
+    def _os_try_lock(fh: IO[bytes]) -> bool:
+        """Attempt the lock without blocking; return whether it was taken."""
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
     def _os_unlock(fh: IO[bytes]) -> None:
         """Release the OS-level lock on *fh* (Windows)."""
         with suppress(OSError):
@@ -80,6 +88,14 @@ else:
     def _os_lock(fh: IO[bytes]) -> None:
         """Acquire an exclusive OS-level lock on *fh* (POSIX)."""
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+
+    def _os_try_lock(fh: IO[bytes]) -> bool:
+        """Attempt the lock without blocking; return whether it was taken."""
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
 
     def _os_unlock(fh: IO[bytes]) -> None:
         """Release the OS-level lock on *fh* (POSIX)."""
@@ -116,18 +132,54 @@ def _cross_process_lock(lock_path: Path) -> Iterator[None]:
         fh.close()
 
 
+class LockTimeout(TimeoutError):
+    """Raised when a bounded :func:`cross_process_lock` could not be acquired."""
+
+
 @contextmanager
-def cross_process_lock(lock_path: Path) -> Iterator[None]:
+def cross_process_lock(lock_path: Path, *, timeout: float | None = None) -> Iterator[None]:
     """Public alias for :func:`_cross_process_lock`.
 
-    A blocking exclusive OS-level file lock at *lock_path*, usable by any
-    subsystem that needs to serialize a load-modify-save cycle across
-    processes sharing a ``.sdd/`` directory (e.g. the fleet config plane's
-    variable writer). See the module docstring for the cross-process safety
-    contract and the NFS caveat.
+    An exclusive OS-level file lock at *lock_path*, usable by any subsystem
+    that needs to serialize a load-modify-save cycle across processes sharing
+    a ``.sdd/`` directory (e.g. the fleet config plane's variable writer). See
+    the module docstring for the cross-process safety contract and the NFS
+    caveat.
+
+    Args:
+        lock_path: Path to the ``.lock`` sentinel file.
+        timeout: Seconds to wait before giving up. ``None`` (the default)
+            blocks indefinitely, preserving the historical behaviour for
+            existing callers. A bounded wait turns the worst failure mode -
+            a same-process second descriptor on a lock this process already
+            holds, which ``flock`` will never grant - from a silent permanent
+            hang into a diagnosable error.
+
+    Raises:
+        LockTimeout: When *timeout* elapses before the lock is acquired.
     """
-    with _cross_process_lock(lock_path):
-        yield
+    if timeout is None:
+        with _cross_process_lock(lock_path):
+            yield
+        return
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = lock_path.open("a+b")
+    try:
+        deadline = time.monotonic() + timeout
+        while not _os_try_lock(fh):
+            if time.monotonic() >= deadline:
+                raise LockTimeout(
+                    f"could not acquire {lock_path} within {timeout}s; another process - or this one, "
+                    "through a second handle on the same lock - is holding it",
+                )
+            time.sleep(0.05)
+        try:
+            yield
+        finally:
+            _os_unlock(fh)
+    finally:
+        fh.close()
 
 
 @dataclass

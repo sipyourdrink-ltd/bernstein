@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.core.communication.bulletin import BulletinBoard, BulletinMessage
+from bernstein.core.communication.bulletin import BulletinBoard, BulletinMessage, SignalActionFailure
 from bernstein.core.llm import call_llm
 from bernstein.core.quality.cross_model_verifier import (
     _MAX_DIFF_CHARS,
@@ -353,21 +353,27 @@ async def _run_stage(
     # Forward stage context via bulletin board - same mechanism agents use
     # for cross-agent findings.  No new IPC.
     if bulletin is not None:
-        for av in sv.agents:
+        # These are advisory forwards of stage context. A failing signal-action
+        # hook queues the message for retry on the board; it must not abort the
+        # review stage (#2648).
+        try:
+            for av in sv.agents:
+                bulletin.post(
+                    BulletinMessage(
+                        agent_id=f"review_pipeline:{sv.stage}:{av.role}",
+                        type="finding",
+                        content=(f"[{sv.stage}/{av.role}] verdict={av.verdict} feedback={av.feedback[:280]}"),
+                    )
+                )
             bulletin.post(
                 BulletinMessage(
-                    agent_id=f"review_pipeline:{sv.stage}:{av.role}",
-                    type="finding",
-                    content=(f"[{sv.stage}/{av.role}] verdict={av.verdict} feedback={av.feedback[:280]}"),
+                    agent_id=f"review_pipeline:{sv.stage}",
+                    type="status",
+                    content=sv.feedback,
                 )
             )
-        bulletin.post(
-            BulletinMessage(
-                agent_id=f"review_pipeline:{sv.stage}",
-                type="status",
-                content=sv.feedback,
-            )
-        )
+        except SignalActionFailure:
+            logger.exception("bulletin signal action pending retry for review stage %s", sv.stage)
 
     logger.info(
         "review_pipeline: stage %s verdict=%s (%d/%d, %.2fs)",

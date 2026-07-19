@@ -14,6 +14,8 @@ Commands:
   bernstein audit verify             Verify HMAC chain and Merkle tree.
   bernstein audit verify --hmac-only Verify HMAC chain only.
   bernstein audit verify --merkle-only  Verify Merkle tree only.
+  bernstein audit verify --receipt   Verify one automation trigger receipt or
+                                     status callback offline.
   bernstein audit verify-hmac        Verify HMAC chain across all audit files.
   bernstein audit verify-gates       Verify clearance-gate integrity offline.
   bernstein audit export             Export a signed Article 12 evidence pack.
@@ -179,13 +181,34 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
 @audit_group.command("verify")
 @click.option("--merkle-only", is_flag=True, default=False, help="Only verify Merkle tree (skip HMAC chain).")
 @click.option("--hmac-only", is_flag=True, default=False, help="Only verify HMAC chain (skip Merkle tree).")
-def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
+@click.option(
+    "--receipt",
+    "receipt_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Verify a stored automation trigger receipt or status callback against the local chain.",
+)
+@click.option(
+    "--payload",
+    "payload_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Original trigger body to re-digest against a trigger receipt.",
+)
+def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, payload_path: str | None) -> None:
     """Verify audit log integrity (HMAC chain per RFC 2104 + Merkle tree).
 
     \b
       bernstein audit verify              Verify both HMAC chain and Merkle tree
       bernstein audit verify --hmac-only  Verify HMAC chain only
       bernstein audit verify --merkle-only  Verify Merkle tree only
+      bernstein audit verify --receipt r.json
+                                          Verify one automation receipt or
+                                          status callback exactly as the
+                                          automation platform stored it
+      bernstein audit verify --receipt r.json --payload body.json
+                                          Also re-digest the original trigger
+                                          body against the receipt
 
     Exits non-zero on any chain break, missing record, or HMAC mismatch.
     Run from cron and fail the run on non-zero exit (cite: docs/security/audit-log.md).
@@ -193,6 +216,13 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     if not AUDIT_DIR.is_dir():
         console.print(f"[red]Audit directory not found:[/red] {AUDIT_DIR}")
         raise SystemExit(1)
+
+    if receipt_path is not None:
+        _verify_automation_receipt(receipt_path, payload_path)
+        return
+    if payload_path is not None:
+        console.print("[red]--payload requires --receipt.[/red]")
+        raise SystemExit(2)
 
     all_passed = True
 
@@ -256,6 +286,70 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
 
     console.print()
     raise SystemExit(0 if all_passed else 1)
+
+
+def _verify_automation_receipt(receipt_path: str, payload_path: str | None) -> None:
+    """Verify one automation receipt or status callback offline (#2512).
+
+    Takes the document exactly as the automation platform stored it -- a signed
+    trigger receipt, or a delivered status callback with its proof envelope --
+    and checks it against the local chain: the Ed25519 signature, the payload
+    digest, the chain anchor, and (for a status callback) that the status the
+    platform was told equals the status the chain recorded. Exits non-zero on
+    any failure so a workflow step can gate on it.
+    """
+    import json as _json
+
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.trigger_sources.receipt import verify_receipt_document
+
+    try:
+        document = _json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]Could not read receipt:[/red] {exc}")
+        raise SystemExit(2) from exc
+    if not isinstance(document, dict):
+        console.print("[red]Receipt must be a JSON object.[/red]")
+        raise SystemExit(2)
+
+    body: bytes | None = None
+    if payload_path is not None:
+        try:
+            body = Path(payload_path).read_bytes()
+        except OSError as exc:
+            console.print(f"[red]Could not read payload:[/red] {exc}")
+            raise SystemExit(2) from exc
+
+    result = verify_receipt_document(
+        document,
+        audit_dir=AUDIT_DIR,
+        hmac_key=load_or_create_audit_key(),
+        body=body,
+    )
+
+    console.print()
+    label = {"trigger": "Trigger Receipt", "status": "Status Proof"}.get(result.kind, "Receipt")
+    if result.ok:
+        lines = [f"[bold green]{label} Verified[/bold green]"]
+        if result.outcome:
+            lines.append(f"Outcome: {result.outcome}")
+        if result.chain_status:
+            lines.append(f"Chain-recorded status: {result.chain_status}")
+        for key, value in sorted(result.details.items()):
+            if value:
+                lines.append(f"{key}: {value}")
+        console.print(Panel("\n".join(lines), border_style="green", expand=False))
+        console.print()
+        raise SystemExit(0)
+
+    lines = [f"[bold red]{label} Verification Failed[/bold red]", result.reason]
+    if result.chain_status:
+        # The whole point of the negative path: the operator holding a doctored
+        # callback learns what the chain actually recorded for the run.
+        lines.append(f"Chain-recorded status: {result.chain_status}")
+    console.print(Panel("\n".join(lines), border_style="red", expand=False))
+    console.print()
+    raise SystemExit(1)
 
 
 def _verify_fleet_config() -> bool:
@@ -599,6 +693,13 @@ def _verify_approval_cards() -> bool:
     console.print(Panel("[bold red]Approval Card Verification FAILED[/bold red]", border_style="red", expand=False))
     for err in result.errors:
         console.print(f"  [red]![/red] {err}")
+    # Internal faults are shown apart from record failures so an operator does
+    # not read a bug in this tool as evidence that their audit log was
+    # tampered with. Both still fail the pillar.
+    if result.verifier_errors:
+        console.print("  [yellow]The following records could not be evaluated by the verifier itself:[/yellow]")
+        for err in result.verifier_errors:
+            console.print(f"  [yellow]?[/yellow] {err}")
     return False
 
 
@@ -643,15 +744,35 @@ def _verify_clearance_gates() -> bool:
     Reconstructs, from the ``signal.gate_projection`` chain entries alone, that
     (a) every recorded ``graph_delta_hash`` recomputes byte-identically from the
     projection's recorded inputs, and (b) no ``task.claim_receipt`` granted a
-    scoped dependent while its clearance gate was still open (#2556, AC4). When
-    no gates were recorded the check is a silent no-op.
+    scoped dependent while its clearance gate was still open (#2556, AC4).
+
+    The HMAC chain is verified first: the semantic replay is only meaningful on
+    authenticated rows, so a tampered chain aborts the pass instead of feeding
+    forged details into the gate reconstruction (#2648). When no gates were
+    recorded and nothing failed, the check is a silent no-op.
     """
     from bernstein.core.communication.signal_actions import verify_clearance_gates
     from bernstein.core.security.audit import AuditLog
 
-    events = AuditLog(AUDIT_DIR).query()
+    log = AuditLog(AUDIT_DIR)
+    chain_ok, chain_errors = log.verify()
+    if not chain_ok:
+        console.print()
+        console.print(
+            Panel("[bold red]Clearance Gate Verification FAILED[/bold red]", border_style="red", expand=False)
+        )
+        console.print("  [red]![/red] audit chain HMAC verification failed; gate replay not attempted")
+        for err in chain_errors:
+            console.print(f"  [red]![/red] {err}")
+        return False
+
+    # Read the same segments verify() authenticated. Without
+    # ``include_archived`` a query covers live files only, so after retention
+    # archiving it would hide archived gates and every claim of their
+    # dependents from the replay (#2648).
+    events = log.query(include_archived=True)
     result = verify_clearance_gates(events)
-    if result.gate_count == 0:
+    if result.gate_count == 0 and result.ok:
         return True  # no clearance gates recorded; nothing to verify
 
     console.print()

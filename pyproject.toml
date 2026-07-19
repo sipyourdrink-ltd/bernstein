@@ -191,6 +191,16 @@ k8s = ["kubernetes>=35.0.0"]
 #   pip install 'bernstein[spiffe]'
 spiffe = ["spiffe>=0.2"]
 ml = ["scikit-learn>=1.5"]
+# Browser activity driver (src/bernstein/core/orchestration/browser_driver.py).
+# Declared empty (like `graphics` below) so a default install and the project
+# lock stay lean and license-clean: the live `browser-use` backend pulls a large
+# transitive tree with licenses outside the accepted set (see
+# .github/workflows/dependency-review.yml), and vendoring it here would bind that
+# surface onto every install. The recorded-tape driver runs every offline replay
+# and verification path with no extra installed, and asking for a live driver
+# without the backend raises a typed refusal naming the package to install.
+# Enable the live driver on demand with: pip install 'browser-use>=0.7'.
+browser = []
 graphics = []  # term-image disabled: caps pillow<11, conflicts with CVE-2026-25990 fix
 # OpenAI Agents SDK v2 integration (src/bernstein/adapters/openai_agents.py).
 # Declared as an optional extra so users who don't spawn OpenAI Agents agents

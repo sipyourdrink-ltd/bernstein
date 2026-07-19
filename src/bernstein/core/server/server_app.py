@@ -34,6 +34,7 @@ from bernstein.core.models import (
     NodeInfo,
     Task,
 )
+from bernstein.core.protocols.a2a.server_receipts import build_receipt_issuer
 from bernstein.core.server.access_log import StructuredAccessLogMiddleware
 from bernstein.core.server.json_logging import setup_json_logging
 from bernstein.core.server.server_middleware import (
@@ -216,9 +217,16 @@ class ContentLengthMiddleware:
 # ---------------------------------------------------------------------------
 
 
-def a2a_task_to_response(task: Any) -> A2ATaskResponse:
-    """Convert an A2ATask to its Pydantic response model."""
+def a2a_task_to_response(task: Any, *, receipt: dict[str, Any] | None = None) -> A2ATaskResponse:
+    """Convert an A2ATask to its Pydantic response model.
+
+    Args:
+        task: The A2A task record.
+        receipt: Optional lineage receipt to attach (#2609). Set on the
+            inbound write path; omitted on reads.
+    """
     return A2ATaskResponse(
+        receipt=receipt,
         id=task.id,
         bernstein_task_id=task.bernstein_task_id,
         sender=task.sender,
@@ -1189,7 +1197,12 @@ def create_app(
     bulletin = BulletinBoard()
     message_board = MessageBoard()
     direct_channel = DirectChannel()
-    a2a_handler = A2AHandler(server_url="http://localhost:8052")
+    # Persist A2A state alongside the rest of the server's runtime state so an
+    # inbound task and its receipt survive a restart (#2609).
+    a2a_handler = A2AHandler(
+        server_url="http://localhost:8052",
+        state_path=sdd_dir / "a2a" / "state.json",
+    )
     a2a_federation = A2AFederation(local_endpoint="http://localhost:8052")
     acp_handler = ACPHandler(server_url="http://localhost:8052")
 
@@ -1199,6 +1212,10 @@ def create_app(
     application.state.direct_channel = direct_channel  # type: ignore[attr-defined]
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.a2a_federation = a2a_federation  # type: ignore[attr-defined]
+    # Mints the lineage receipt every inbound A2A response carries (#2609).
+    # ``None`` when key material or the lineage root is unavailable, in which
+    # case responses are served unattested rather than not at all.
+    application.state.a2a_receipt_issuer = build_receipt_issuer(sdd_dir)  # type: ignore[attr-defined]
     application.state.acp_handler = acp_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
     application.state.cluster_authenticator = cluster_authenticator  # type: ignore[attr-defined]

@@ -1087,6 +1087,142 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
         return task
 
+    async def create_gate_with_edges(
+        self,
+        *,
+        clearance_task_id: str,
+        title: str,
+        role: str,
+        cell_id: str | None = None,
+        priority: int = 1,
+        tenant_id: str = "default",
+        dependent_task_ids: Sequence[str] | None = None,
+    ) -> tuple[Task, list[str]]:
+        """Create a clearance gate and inject every dependent edge atomically.
+
+        Creating the gate task and injecting the ``depends_on`` edges as two
+        separate lock acquisitions leaves a claim race window: between the two
+        steps the gate exists but the dependents are not yet gated, so
+        ``claim_next`` can hand out work the gate was meant to withhold. This
+        method performs the whole mutation under a single lock acquisition and
+        re-selects the OPEN dependents *inside* that lock, so no claim can
+        interleave and no dependent that was open at gate time is missed.
+
+        The mutation is transactional: if any step raises (for example a failed
+        journal append), every in-memory change made by this call is rolled
+        back, so an interrupted materialization leaves neither an orphan gate
+        task nor an orphan edge.
+
+        Args:
+            clearance_task_id: The projected clearance-task id (``clearance-…``).
+            title: Human-readable gate title.
+            role: Role lane the clearance task belongs to (kept distinct from
+                worker roles so workers never claim the gate itself).
+            cell_id: Cell scope the gate belongs to.
+            priority: Task priority (defaults to 1 so the gate surfaces first).
+            tenant_id: Tenant scope.
+            dependent_task_ids: Optional explicit dependent set. When supplied,
+                only these ids receive an edge (intersected with the OPEN tasks
+                re-selected under the lock). When ``None``, every OPEN task in
+                the gate's cell scope **and tenant** is gated; tasks belonging
+                to another tenant are never gated by this gate.
+
+        Returns:
+            A tuple of ``(gate_task, injected_dependent_ids)`` where the id list
+            is sorted and de-duplicated.
+
+        Raises:
+            ValueError: If a task with ``clearance_task_id`` already exists.
+        """
+        gate = Task(
+            id=clearance_task_id,
+            title=title,
+            description=f"Clearance gate for a bulletin blocker in cell {cell_id or 'global'}.",
+            role=role,
+            priority=priority,
+            status=TaskStatus.OPEN,
+            cell_id=cell_id,
+            tenant_id=normalize_tenant_id(tenant_id),
+        )
+        requested = set(dependent_task_ids) if dependent_task_ids is not None else None
+
+        async with self._lock:
+            if clearance_task_id in self._tasks:
+                raise ValueError(f"clearance task already exists: {clearance_task_id}")
+
+            # Re-select the OPEN dependents under the same lock that creates the
+            # gate. A gate never gates another gate, and never gates itself.
+            # Scope by tenant as well as cell. Every other selection path in
+            # this store filters candidates by normalized tenant; omitting it
+            # here would let a gate created for one tenant inject depends_on
+            # edges onto another tenant's OPEN tasks in the same cell, which is
+            # a containment failure rather than a cosmetic gap (#2648).
+            candidates = [
+                task.id
+                for task in self._by_status[TaskStatus.OPEN].values()
+                if task.id != clearance_task_id
+                and not task.id.startswith("clearance-")
+                and (cell_id is None or task.cell_id == cell_id)
+                and task.tenant_id == gate.tenant_id
+                and (requested is None or task.id in requested)
+            ]
+            targets = sorted(set(candidates))
+
+            edged: list[Task] = []
+            created = False
+            staged = len(self._write_buffer)
+            try:
+                self._tasks[gate.id] = gate
+                self._index_add(gate)
+                self._parent_index_add(gate)
+                created = True
+
+                for dependent_id in targets:
+                    dependent = self._tasks[dependent_id]
+                    if clearance_task_id in dependent.depends_on:
+                        continue
+                    dependent.depends_on = [*dependent.depends_on, clearance_task_id]
+                    dependent.version += 1
+                    edged.append(dependent)
+
+                # Stage the gate row and every edge row, then flush once. The
+                # buffer is written by a single fsynced write, so the journal
+                # never records a gate without its edges: replaying a crashed
+                # materialization restores the whole gate or none of it.
+                rows = [self._task_to_record(task) for task in (gate, *edged)]
+                lines = [json.dumps(record, default=str) + "\n" for record in rows]
+                self._write_buffer.extend(lines)
+                await self._flush_buffer_unlocked()
+            except BaseException:
+                # Roll back every in-memory mutation so a partial failure leaves
+                # neither an orphan gate nor an orphan edge behind.
+                del self._write_buffer[staged:]
+                for dependent in edged:
+                    dependent.depends_on = [d for d in dependent.depends_on if d != clearance_task_id]
+                    dependent.version -= 1
+                if created:
+                    self._index_remove(gate)
+                    self._parent_index_remove(gate)
+                    self._tasks.pop(gate.id, None)
+                raise
+
+            # Mirror into the tenant backlog only after the primary journal
+            # write committed, so a rolled-back gate never appears in the
+            # tenant view. The mirror is a derived view: by this point the
+            # mutation is durable, so a mirror failure is logged rather than
+            # raised, which would report failure for a committed gate and
+            # strand it with no receipt.
+            for record, line in zip(rows, lines, strict=True):
+                try:
+                    await self._append_tenant_backlog_record(record, line)
+                except Exception:
+                    logger.exception(
+                        "tenant backlog mirror failed for clearance gate %s; the gate is committed",
+                        clearance_task_id,
+                    )
+
+        return gate, targets
+
     async def inject_dependency(self, task_id: str, depends_on_id: str) -> Task:
         """Inject a ``depends_on`` edge onto an existing non-terminal task.
 
@@ -1133,7 +1269,17 @@ class TaskStore:
 
         Raises:
             KeyError: If ``clearance_task_id`` is unknown.
+            ClearanceResolutionRefusal: If ``resolution`` is outside
+                ``{cleared, expired}``. The refusal happens before the lock is
+                taken, so an unrecognised resolution never reaches the task
+                state or the result summary (#2648).
         """
+        from bernstein.core.security.audit_chain import (
+            GATE_TERMINAL_RESOLUTIONS,
+            validate_gate_resolution,
+        )
+
+        validate_gate_resolution(resolution, allowed=GATE_TERMINAL_RESOLUTIONS)
         async with self._lock:
             task = self._tasks.get(clearance_task_id)
             if task is None:

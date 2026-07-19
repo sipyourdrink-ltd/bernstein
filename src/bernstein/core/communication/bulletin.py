@@ -14,6 +14,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -28,6 +29,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MessageType = Literal["alert", "blocker", "finding", "status", "dependency"]
+
+
+class SignalActionFailure(RuntimeError):
+    """Typed refusal raised when a bulletin post hook fails (#2648).
+
+    The board is append-only, so the message itself is retained, but the post
+    is not acknowledged as successful: a ``blocker`` whose clearance gate only
+    partially materialized must not be reported to its poster as handled. The
+    offending message is carried on the exception and queued in the board's
+    retry outbox.
+    """
+
+    def __init__(self, message: BulletinMessage) -> None:
+        super().__init__(f"post hook failed for {message.type} signal from {message.agent_id}")
+        self.message = message
 
 
 # ---------------------------------------------------------------------------
@@ -448,19 +464,139 @@ class BulletinBoard:
     # typed signal (e.g. ``blocker``) can drive deterministic scheduler state.
     # Default ``None`` keeps existing observe-only behaviour unchanged.
     _post_hook: Callable[[BulletinMessage], None] | None = field(default=None, repr=False)
+    # Durable retry outbox for messages whose action hook failed (#2648). A
+    # blocker whose clearance gate did not materialize is never acknowledged as
+    # posted; it lands here (and, when an outbox path is configured, on disk)
+    # so the action can be replayed instead of silently lost.
+    _pending_actions: list[BulletinMessage] = field(default_factory=list, repr=False)
+    _outbox_path: Path | None = field(default=None, repr=False)
 
-    def set_post_hook(self, hook: Callable[[BulletinMessage], None] | None) -> None:
+    def set_post_hook(
+        self,
+        hook: Callable[[BulletinMessage], None] | None,
+        *,
+        outbox_path: Path | None = None,
+    ) -> None:
         """Register (or clear) a per-message action hook invoked after ``post``.
 
         The hook receives every stored message (timestamp filled in) and may
         dispatch a typed-signal action such as materializing a clearance gate.
-        A hook exception is swallowed so a faulty action layer never breaks the
-        append-only board.
+
+        A hook failure is no longer swallowed. The message stays on the
+        append-only board, but it is recorded in the retry outbox and the
+        failure is propagated to the caller as
+        :class:`SignalActionFailure`, so a blocker whose gate only partially
+        materialized is never acknowledged as successfully posted (#2648).
 
         Args:
             hook: Callable invoked with each stored message, or ``None`` to clear.
+            outbox_path: Optional JSONL path. When set, every failed action is
+                durably appended there before the failure is raised, and any
+                actions already recorded there are loaded back into the pending
+                queue, so a pending action survives a crash and is replayed by
+                :meth:`retry_pending_actions`.
         """
         self._post_hook = hook
+        self._outbox_path = outbox_path
+        if outbox_path is not None:
+            self._load_outbox(outbox_path)
+
+    def _load_outbox(self, path: Path) -> None:
+        """Hydrate the pending queue from a durable outbox file.
+
+        Without this the outbox would be write-only: a crash would leave the
+        failed action on disk with nothing ever reading it back (#2648).
+        """
+        if not path.is_file():
+            return
+        loaded: list[BulletinMessage] = []
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            logger.exception("failed to read pending signal actions from %s", path)
+            return
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            try:
+                loaded.append(BulletinMessage(**json.loads(line)))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                logger.exception("skipping malformed pending signal action in %s", path)
+        if not loaded:
+            return
+        with self._lock:
+            known = {(m.agent_id, m.type, m.content, m.timestamp) for m in self._pending_actions}
+            self._pending_actions.extend(m for m in loaded if (m.agent_id, m.type, m.content, m.timestamp) not in known)
+
+    def _rewrite_outbox(self) -> None:
+        """Rewrite the outbox so drained entries are not replayed again."""
+        path = self._outbox_path
+        if path is None:
+            return
+        with self._lock:
+            remaining = self._pending_actions.copy()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as handle:
+                for msg in remaining:
+                    handle.write(json.dumps(asdict(msg), sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            logger.exception("failed to compact pending signal actions in %s", path)
+
+    @property
+    def pending_actions(self) -> list[BulletinMessage]:
+        """Messages whose action hook failed and has not yet been replayed."""
+        with self._lock:
+            return self._pending_actions.copy()
+
+    def _record_pending_action(self, msg: BulletinMessage) -> None:
+        """Record *msg* in the retry outbox, durably when a path is configured."""
+        with self._lock:
+            self._pending_actions.append(msg)
+        path = self._outbox_path
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(asdict(msg), sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            # The in-memory outbox entry and the raised failure still prevent a
+            # false acknowledgement; only the durable copy is lost.
+            logger.exception("failed to persist pending signal action to %s", path)
+
+    def retry_pending_actions(self) -> int:
+        """Replay every pending action through the current hook.
+
+        Returns:
+            The number of pending actions that were successfully replayed and
+            cleared from the outbox. Entries whose replay fails stay pending.
+        """
+        hook = self._post_hook
+        if hook is None:
+            return 0
+        with self._lock:
+            queued = self._pending_actions.copy()
+        drained: list[BulletinMessage] = []
+        for msg in queued:
+            try:
+                hook(msg)
+            except Exception:
+                logger.exception("bulletin action replay failed for %s signal from %s", msg.type, msg.agent_id)
+                continue
+            drained.append(msg)
+        if drained:
+            drained_ids = {id(m) for m in drained}
+            with self._lock:
+                self._pending_actions[:] = [m for m in self._pending_actions if id(m) not in drained_ids]
+            # Compact the durable copy too, so a later load does not replay an
+            # action that already succeeded.
+            self._rewrite_outbox()
+        return len(drained)
 
     def post(self, msg: BulletinMessage) -> BulletinMessage:
         """Append a message to the board.
@@ -472,6 +608,11 @@ class BulletinBoard:
 
         Returns:
             The stored message (with timestamp filled in).
+
+        Raises:
+            SignalActionFailure: If a registered post hook raised. The message
+                is still on the board and is queued in the retry outbox, but the
+                post is not acknowledged as successful (#2648).
         """
         if msg.timestamp == 0:
             msg = BulletinMessage(
@@ -487,8 +628,10 @@ class BulletinBoard:
         if hook is not None:
             try:
                 hook(msg)
-            except Exception:
+            except Exception as exc:
                 logger.exception("bulletin post hook failed for %s signal from %s", msg.type, msg.agent_id)
+                self._record_pending_action(msg)
+                raise SignalActionFailure(msg) from exc
         return msg
 
     def snapshot(self) -> list[BulletinMessage]:
