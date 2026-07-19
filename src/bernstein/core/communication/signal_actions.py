@@ -1019,9 +1019,19 @@ def verify_clearance_gates(
                     f"(recomputed {recomputed[:12]}.. != stored {stored[:12]}..)"
                 )
             if resolution == "pending":
-                anchor = materialized.get(clearance_task_id)
-                if anchor is not None:
-                    open_gates[clearance_task_id] = anchor
+                # Track the gate's edge set AS OF THIS row, not the folded
+                # anchor's latest set. build_gate_anchors keeps the latest
+                # pending row's fields for resolution comparison, but a
+                # re-materialization that narrows the edges (a legacy
+                # per-restart chain, or a cross-process materialize race) must
+                # not retroactively shrink the window a claim between the two
+                # pending rows is checked against. Folding to the latest set
+                # would let a claim of a since-dropped dependent go unreported
+                # (#2648).
+                if clearance_task_id:
+                    row_anchor = GateAnchor(clearance_task_id=clearance_task_id)
+                    row_anchor.absorb_pending(details, hmac=event.hmac, index=idx)
+                    open_gates[clearance_task_id] = row_anchor
             else:
                 closing_errors = _validate_gate_resolution_row(
                     clearance_task_id=clearance_task_id,

@@ -36,6 +36,7 @@ from bernstein.core.communication.signal_actions import (
 )
 from bernstein.core.security.audit_chain import (
     EVENT_SIGNAL_GATE_PROJECTION,
+    EVENT_TASK_CLAIM_RECEIPT,
     AuditChainStore,
     ClearanceResolutionRefusal,
     record_signal_gate_projection,
@@ -907,6 +908,36 @@ def test_post_bulletin_route_reports_a_pending_action_instead_of_500(tmp_path: P
     assert len(board.pending_actions) == 1
 
 
+def test_post_bulletin_retry_log_neutralises_a_crlf_agent_id(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The 202 retry warning must not log a CRLF-laden request field verbatim.
+
+    A failed signal-action hook logs the request-body ``agent_id`` and
+    ``type``. Both are attacker-controlled, so a value carrying a carriage
+    return or newline could forge additional log lines. Every other log sink in
+    this route wraps user data in ``sanitize_log``; this one must too.
+    """
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    from bernstein.core.server import create_app
+
+    forged = "attacker\r\n2026-07-19 WARN forged audit line"
+    app = create_app(jsonl_path=tmp_path / "tasks.jsonl")
+    with TestClient(app) as client:
+        board = app.state.bulletin
+        board.set_post_hook(lambda _m: (_ for _ in ()).throw(RuntimeError("gate failed")))
+        with caplog.at_level(logging.WARNING):
+            pending = client.post("/bulletin", json={"agent_id": forged, "type": "blocker", "content": "y"})
+
+    assert pending.status_code == 202, pending.text
+    retry_records = [r for r in caplog.records if "bulletin signal action pending retry" in r.getMessage()]
+    assert retry_records, "the retry warning was not logged"
+    message = retry_records[0].getMessage()
+    assert "\r" not in message and "\n" not in message, f"unsanitised CRLF reached the log: {message!r}"
+    assert "forged audit line" in message, "the field content should survive, only its newlines neutralised"
+
+
 # ---------------------------------------------------------------------------
 # Round 3: bounded authenticated scan, a discriminating anchor guard, the CLI
 # archive read path, multi-hmac acceptance, and tenant containment.
@@ -1039,6 +1070,71 @@ def test_resolution_closes_a_gate_whose_pending_rows_differ(tmp_path: Path) -> N
 
     result = verify_clearance_gates(chain.query(include_archived=True))
     assert result.ok, result.errors
+
+
+def test_claim_during_a_wider_pending_row_is_reported_after_a_narrowing_rematerialization(
+    tmp_path: Path,
+) -> None:
+    """A claim between two pending rows is checked against the gate open at that time.
+
+    A re-materialization that narrows the gated edge set (a legacy per-restart
+    chain, or a cross-process materialize race) must not retroactively shrink
+    the window an earlier claim is checked against. If the verifier folds every
+    pending row into the latest edge set, a claim of a since-dropped dependent
+    goes unreported and ``verify-gates`` passes an authentic chain that contains
+    a coordination-safety violation.
+    """
+    from bernstein.core.communication.signal_actions import journal_prefix_hash, project_clearance_gate
+    from bernstein.core.security.audit_chain import record_task_claim_receipt
+
+    board = BulletinBoard()
+    posted = board.post(_blocker())
+    jph = journal_prefix_hash([posted])
+    wide = project_clearance_gate(blocker=posted, scope_task_ids=["task-A", "task-B"], journal_prefix_hash=jph)
+    narrow = project_clearance_gate(blocker=posted, scope_task_ids=["task-A"], journal_prefix_hash=jph)
+    assert wide.clearance_task_id == narrow.clearance_task_id
+    assert "task-B" in wide.injected_edges
+    assert "task-B" not in narrow.injected_edges
+
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    # idx0: the wider gate is open, task-B is gated.
+    record_signal_gate_projection(
+        chain=chain,
+        blocker_content_hash=wide.blocker_content_hash,
+        clearance_task_id=wide.clearance_task_id,
+        injected_edges=list(wide.injected_edges),
+        graph_delta_hash=wide.graph_delta_hash,
+        scope_cell_id=wide.scope_cell_id,
+        deadline=wide.deadline,
+        resolution="pending",
+    )
+    # idx1: task-B is claimed while its gate is still open -> a real breach.
+    record_task_claim_receipt(
+        chain=chain,
+        task_id="task-B",
+        role="backend",
+        claimed_by="sess-rogue",
+        depends_on=[wide.clearance_task_id],
+        task_version=2,
+        claim_path="by_id",
+    )
+    # idx2: a restart re-selects OPEN dependents; task-B is gone, edges narrow.
+    record_signal_gate_projection(
+        chain=chain,
+        blocker_content_hash=narrow.blocker_content_hash,
+        clearance_task_id=narrow.clearance_task_id,
+        injected_edges=list(narrow.injected_edges),
+        graph_delta_hash=narrow.graph_delta_hash,
+        scope_cell_id=narrow.scope_cell_id,
+        deadline=narrow.deadline,
+        resolution="pending",
+    )
+
+    events = chain.query(include_archived=True)
+    claim_index = next(idx for idx, event in enumerate(events) if event.event_type == EVENT_TASK_CLAIM_RECEIPT)
+    result = verify_clearance_gates(events)
+    assert not result.ok, "a claim during the wider open gate must be reported"
+    assert ("task-B", claim_index) in result.violations, result.violations
 
 
 def test_verifier_accepts_a_resolution_anchored_on_an_earlier_pending_row(tmp_path: Path) -> None:

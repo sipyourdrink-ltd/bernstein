@@ -2272,7 +2272,11 @@ def post_bulletin(body: BulletinPostRequest, request: Request, response: Respons
     try:
         stored = bulletin.post(msg)
     except SignalActionFailure as exc:
-        logger.warning("bulletin signal action pending retry for %s from %s", body.type, body.agent_id)
+        logger.warning(
+            "bulletin signal action pending retry for %s from %s",
+            sanitize_log(str(body.type)),
+            sanitize_log(body.agent_id),
+        )
         stored = exc.message
         response.status_code = 202
 

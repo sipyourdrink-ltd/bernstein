@@ -936,8 +936,14 @@ class AuditLog:
                     tail = handle.read()
 
             active.prev_hmac = _verify_log_bytes(tail, path.name, active.prev_hmac, self._key, errors)
+            # Strict decode on purpose, matching ``query``: an undecodable byte
+            # is evidence (truncation, corruption, tampering), not something to
+            # paper over with replacement characters. ``_verify_log_bytes`` above
+            # already hashes the raw bytes, so a segment that reaches here is the
+            # one it verified; decoding it leniently would only let this path
+            # diverge from ``query`` and hide the very bytes verify hashes.
             segment_events = _events_from_text(
-                tail.decode("utf-8", errors="replace"),
+                tail.decode("utf-8"),
                 event_type=event_type,
                 actor=None,
                 since=None,
