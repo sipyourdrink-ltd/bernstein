@@ -134,5 +134,7 @@ def test_missing_browser_extra_raises_a_typed_refusal(tmp_path: Path, monkeypatc
     refusal = excinfo.value
     assert refusal.driver_name == "browser_use"
     assert refusal.extra == "browser"
-    # The refusal names the install target rather than leaving the operator to guess.
-    assert "bernstein[browser]" in str(refusal)
+    # The refusal names the pip package to install (the backend is not vendored
+    # via a bernstein extra) rather than leaving the operator to guess.
+    assert "browser-use" in str(refusal)
+    assert "pip install" in str(refusal)

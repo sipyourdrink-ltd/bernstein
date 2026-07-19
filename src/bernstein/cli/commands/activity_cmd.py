@@ -355,6 +355,8 @@ def browser_run_cmd(
     try:
         run = worker.run(
             flow_id=flow_id,
+            run_id=run_id,
+            stage_id=stage_id,
             start_url=start_url,
             steps=steps,
             driver_factory=build,

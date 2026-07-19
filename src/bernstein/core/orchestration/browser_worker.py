@@ -6,10 +6,14 @@ content-addresses an observation per decision step, but nothing drove a browser:
 the caller had to arrive already holding snapshot bytes. This module is the
 worker. It runs a site check or UI flow end to end -- allocate an isolated
 profile, observe, act, anchor, tear down -- and hands a built
-:class:`~bernstein.core.orchestration.activity.ActivityResult` to the same
-:func:`~bernstein.core.orchestration.activity.dispatch_activity` path a coding
-spawn uses, so a browser task is scheduled, budgeted, journalled, and audited
-next to coding tasks with no separate control plane.
+:class:`~bernstein.core.orchestration.activity.ActivityResult` across the shared
+typed activity boundary via
+:func:`~bernstein.core.orchestration.activity.dispatch_activity`, the same
+boundary any modality's result crosses to be journalled and audited. So a browser
+result is budgeted, journalled, and audited next to any other activity result with
+no browser-specific control plane. (Automatic dispatch by the deterministic
+scheduler is separate substrate work: today the ``bernstein activity browser run``
+command is the entry point that drives the worker and crosses the boundary.)
 
 What makes the run replayable
 -----------------------------
@@ -34,9 +38,13 @@ closed :class:`~bernstein.core.orchestration.activity.TerminalState` set, and a
 partial flow is still anchored, because the steps that did run are exactly the
 evidence a post-incident reader needs.
 
-Isolation is structural: each run gets a profile directory derived from its flow
-id, and the profile is torn down on every exit path, so two concurrent browser
-tasks cannot share cookies even if they run against the same site.
+Isolation is structural: each run gets a profile directory derived from its
+scheduler coordinates -- the ``(run_id, stage_id)`` pair the task was dispatched
+under, not the flow document -- and the profile is torn down on every exit path.
+Keying on the run coordinates is what keeps two concurrent tasks that drive the
+*same* flow (a retry in flight, a staging-and-prod pair off one document) in
+disjoint directories, so neither shares the other's cookie jar and neither's
+teardown deletes the other's live profile.
 """
 
 from __future__ import annotations
@@ -206,6 +214,8 @@ class BrowserWorker:
         self,
         *,
         flow_id: str,
+        run_id: str,
+        stage_id: str,
         start_url: str,
         steps: Sequence[FlowStep],
         driver_factory: Callable[[Path], BrowserDriver],
@@ -220,7 +230,13 @@ class BrowserWorker:
         it. The profile is torn down and the driver closed on every exit path.
 
         Args:
-            flow_id: Stable id for the flow (also the profile isolation key).
+            flow_id: Stable id for the flow document.
+            run_id: The run the activity anchors into. Part of the profile
+                isolation key, so a retry or a second run of the same flow does
+                not share a profile with the one still in flight.
+            stage_id: The scheduler stage the task was dispatched under. Part of
+                the profile isolation key, so two stages of one run that drive the
+                same flow stay in disjoint directories.
             start_url: The URL the flow starts from (provenance).
             steps: The declared actions and their per-step checks.
             driver_factory: Builds a driver bound to the isolated profile
@@ -236,7 +252,10 @@ class BrowserWorker:
                 check id, an empty operand, a broken chain), so a report that
                 could not be verified later never reaches the journal.
         """
-        profile = BrowserProfile.allocate(root=self._profile_root, task_id=flow_id)
+        profile = BrowserProfile.allocate(
+            root=self._profile_root,
+            task_id=_profile_isolation_key(run_id=run_id, stage_id=stage_id, flow_id=flow_id),
+        )
         session = _FlowSession(store=self._store, budget=self._budget)
         driver: BrowserDriver | None = None
         terminal_state = TerminalState.COMPLETED
@@ -309,6 +328,32 @@ def _classify(exc: BrowserDriverError) -> tuple[TerminalState, str]:
         if isinstance(exc, failure_type):
             return state, reason
     return TerminalState.FAILED, "driver_error"
+
+
+def _profile_isolation_key(*, run_id: str, stage_id: str, flow_id: str) -> str:
+    """Compose the per-task profile isolation key.
+
+    Two concurrent browser tasks are told apart by their scheduler coordinates
+    -- the ``(run_id, stage_id)`` pair the task was dispatched under -- never by
+    the flow document alone. The same flow can be in flight under two runs at once
+    (a retry started before the first finished, a staging-and-prod pair off one
+    document); keying the profile on the flow id would collapse both onto one
+    directory, so they would share a live cookie jar and whichever finished first
+    would delete the other's profile in its teardown. The flow id is folded in for
+    a readable directory, and the NUL separators keep ``("a", "b\\x00c", ...)``
+    from colliding with ``("a\\x00b", "c", ...)``.
+
+    Args:
+        run_id: The run the task anchors into.
+        stage_id: The scheduler stage the task was dispatched under.
+        flow_id: The flow document id (descriptive only).
+
+    Returns:
+        A string that is unique per ``(run_id, stage_id)`` and stable across
+        processes, so a supervisor can reconstruct and tear down the same profile
+        after a crash.
+    """
+    return "\x00".join((run_id, stage_id, flow_id))
 
 
 class _FlowSession:

@@ -15,13 +15,15 @@ Three pieces live here:
   flow over the same tape must reproduce a byte-identical action sequence, and any
   divergence is a hash mismatch at an exact index rather than a flaky assertion.
 * :class:`BrowserProfile` -- per-task profile isolation. Each task's profile
-  directory is derived from its task id, so two concurrent browser tasks hold
+  directory is derived from its task id -- the scheduler's ``(run_id, stage_id)``
+  coordinates, composed by the worker -- so two concurrent browser tasks hold
   disjoint directories by construction (no allocator, no shared counter, no
-  coordination), and the profile is torn down when the task reaches a terminal
-  state so no cookie survives into another task.
+  coordination) even when they drive the same flow document, and the profile is
+  torn down when the task reaches a terminal state so no cookie survives into
+  another task.
 
 Failure is typed, never free text. :class:`BrowserDriverUnavailable` names the
-optional extra to install, :class:`BrowserStepTimeout` marks a step that did not
+pip package to install, :class:`BrowserStepTimeout` marks a step that did not
 complete, and both derive from :class:`BrowserDriverError` so the worker maps
 them onto the closed
 :class:`~bernstein.core.orchestration.activity.TerminalState` set.
@@ -55,9 +57,14 @@ __all__ = [
     "observe",
 ]
 
-#: Optional extra that ships the default live driver. Named in the typed refusal
-#: so an operator is told what to install rather than left to guess.
+#: The bernstein extra namespace the live browser driver belongs to. Declared
+#: empty in pyproject (like ``graphics``) so a default install and the project
+#: lock stay lean and license-clean; the live backend is installed on demand.
 BROWSER_EXTRA = "browser"
+
+#: The pip package that backs the live driver. Named in the typed refusal so an
+#: operator is told exactly what to install rather than left to guess.
+BROWSER_DRIVER_PACKAGE = "browser-use>=0.7"
 
 
 # ---------------------------------------------------------------------------
@@ -86,19 +93,20 @@ class BrowserDriverUnavailable(BrowserDriverError):
     """The requested driver is not installed.
 
     Mapped onto :attr:`~bernstein.core.orchestration.activity.TerminalState.REFUSED`
-    with the ``driver_unavailable`` reason code. The message names the extra to
-    install so the refusal is actionable.
+    with the ``driver_unavailable`` reason code. The message names the pip package
+    to install so the refusal is actionable -- the backend is not vendored via a
+    bernstein extra, so pointing at the extra alone would install nothing.
 
     Attributes:
         driver_name: The driver that could not be constructed.
-        extra: The optional extra that ships it.
+        extra: The bernstein extra namespace it belongs to (declared empty).
     """
 
     def __init__(self, *, driver_name: str, extra: str) -> None:
         self.driver_name = driver_name
         self.extra = extra
         super().__init__(
-            f"Browser driver {driver_name!r} is not installed. Install it with: pip install 'bernstein[{extra}]'."
+            f"Browser driver {driver_name!r} is not installed. Install it with: pip install '{BROWSER_DRIVER_PACKAGE}'."
         )
 
 
@@ -258,9 +266,12 @@ class BrowserProfile:
 
     The directory name is ``sha256(task_id)[:16]``, so two tasks hold disjoint
     directories by construction: no allocator, no shared counter, and no way for
-    one task's cookie jar or local storage to land inside another's. Allocation is
-    deterministic, so the same task id resolves to the same directory across
-    processes -- which is what lets a supervisor tear a profile down after a crash.
+    one task's cookie jar or local storage to land inside another's. The task id
+    is opaque here; the browser worker composes it from the scheduler's
+    ``(run_id, stage_id)`` coordinates so two runs of the same flow never collide.
+    Allocation is deterministic, so the same task id resolves to the same
+    directory across processes -- which is what lets a supervisor tear a profile
+    down after a crash.
 
     Attributes:
         task_id: The task the profile belongs to.
@@ -389,7 +400,8 @@ def browser_use_driver(*, profile_dir: Path) -> BrowserUseDriver:
         A :class:`BrowserUseDriver` bound to *profile_dir*.
 
     Raises:
-        BrowserDriverUnavailable: When the optional extra is not installed.
+        BrowserDriverUnavailable: When the ``browser-use`` backend is not
+            installed.
     """
     module = _import_browser_use()
     if module is None:

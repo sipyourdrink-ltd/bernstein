@@ -135,9 +135,11 @@ driver is added without touching the activity boundary.
 Two drivers ship:
 
 - `browser_use_driver(profile_dir=...)` builds the live driver backed by the
-  optional `browser-use` package. It is an optional extra, so a missing install is
-  a typed `BrowserDriverUnavailable` naming the install target
-  (`pip install 'bernstein[browser]'`), never an `ImportError` surfacing from
+  optional `browser-use` package. The backend is not vendored into the project
+  lock (the `browser` extra is declared empty so a default install and the lock
+  stay lean and license-clean), so a missing install is a typed
+  `BrowserDriverUnavailable` naming the install target
+  (`pip install 'browser-use>=0.7'`), never an `ImportError` surfacing from
   inside a run.
 - `RecordedBrowserDriver(frames)` drives a fixed tape of recorded observations.
   This is the offline replay driver, and it is what makes replay determinism a

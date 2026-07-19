@@ -2,9 +2,9 @@
 
 The worker runs a site check or UI flow as a first-class activity on the typed
 boundary: it anchors the exact observation it saw before every action, folds each
-anchor into its predecessor, and hands the resulting Merkle-chained flow report to
-the same :func:`dispatch_activity` path a coding spawn uses. These tests prove the
-bar the issue sets:
+anchor into its predecessor, and hands the resulting Merkle-chained flow report
+across the same :func:`dispatch_activity` boundary any activity result crosses.
+These tests prove the bar the issue sets:
 
 * every step's screenshot bytes, DOM bytes, and action receipt are content-addressed
   and participate in the ``evidence_set_hash`` (AC2);
@@ -102,9 +102,18 @@ def _worker(tmp_path: Path, *, max_steps: int = 10, **budget: int) -> BrowserWor
     )
 
 
-def _run(worker: BrowserWorker, *, flow_id: str = "login-flow", tape: tuple[PageState, ...] = _TAPE):
+def _run(
+    worker: BrowserWorker,
+    *,
+    flow_id: str = "login-flow",
+    run_id: str = "run-a",
+    stage_id: str = "browser-0",
+    tape: tuple[PageState, ...] = _TAPE,
+):
     return worker.run(
         flow_id=flow_id,
+        run_id=run_id,
+        stage_id=stage_id,
         start_url="https://shop/",
         steps=_STEPS,
         driver_factory=lambda profile_dir: RecordedBrowserDriver(tape, profile_dir=profile_dir),
@@ -389,8 +398,22 @@ def test_two_browser_tasks_get_disjoint_profile_directories(tmp_path: Path) -> N
         (profile_dir / "cookies.txt").write_text(f"session={profile_dir.name}", encoding="utf-8")
         return RecordedBrowserDriver(_TAPE, profile_dir=profile_dir)
 
-    worker.run(flow_id="task-a", start_url="https://shop/", steps=_STEPS, driver_factory=factory)
-    worker.run(flow_id="task-b", start_url="https://shop/", steps=_STEPS, driver_factory=factory)
+    worker.run(
+        flow_id="task-a",
+        run_id="run-a",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory,
+    )
+    worker.run(
+        flow_id="task-b",
+        run_id="run-b",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory,
+    )
 
     assert len(seen) == 2
     assert seen[0] != seen[1]
@@ -407,7 +430,14 @@ def test_profile_is_torn_down_on_a_terminal_state(tmp_path: Path) -> None:
         (profile_dir / "cookies.txt").write_text("session=secret", encoding="utf-8")
         return RecordedBrowserDriver(_TAPE, profile_dir=profile_dir)
 
-    worker.run(flow_id="task-a", start_url="https://shop/", steps=_STEPS, driver_factory=factory)
+    worker.run(
+        flow_id="task-a",
+        run_id="run-a",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory,
+    )
     assert not captured[0].exists()
 
 
@@ -419,7 +449,14 @@ def test_profile_is_torn_down_even_when_the_driver_fails(tmp_path: Path) -> None
         captured.append(profile_dir)
         return RecordedBrowserDriver(_TAPE[:1], profile_dir=profile_dir)
 
-    run = worker.run(flow_id="task-a", start_url="https://shop/", steps=_STEPS, driver_factory=factory)
+    run = worker.run(
+        flow_id="task-a",
+        run_id="run-a",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory,
+    )
     assert run.result.terminal_state is TerminalState.FAILED
     assert not captured[0].exists()
 
@@ -428,6 +465,128 @@ def test_profile_allocation_uses_the_worker_profile_root(tmp_path: Path) -> None
     profile = BrowserProfile.allocate(root=tmp_path / "root", task_id="task-a")
     assert profile.profile_dir.parent == tmp_path / "root"
     profile.teardown()
+
+
+def test_two_concurrent_runs_of_the_same_flow_get_disjoint_profiles(tmp_path: Path) -> None:
+    # A retry started before the first finished, or a staging-and-prod pair off
+    # one document, carries the SAME flow_id but a different run coordinate. The
+    # profile is keyed on the run coordinates, so the two must not collide: if
+    # they shared a directory they would share a live cookie jar and one run's
+    # teardown would delete the other's profile mid-flight.
+    worker = _worker(tmp_path)
+    seen: dict[str, Path] = {}
+
+    def factory_for(run_id: str):
+        def build(profile_dir: Path) -> RecordedBrowserDriver:
+            seen[run_id] = profile_dir
+            return RecordedBrowserDriver(_TAPE, profile_dir=profile_dir)
+
+        return build
+
+    worker.run(
+        flow_id="checkout",
+        run_id="run-42",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory_for("run-42"),
+    )
+    worker.run(
+        flow_id="checkout",
+        run_id="run-43",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory_for("run-43"),
+    )
+
+    assert seen["run-42"] != seen["run-43"]
+
+
+def test_two_stages_of_one_run_driving_the_same_flow_get_disjoint_profiles(tmp_path: Path) -> None:
+    # The run coordinate is (run_id, stage_id): two stages of one run that drive
+    # the same flow document must also be disjoint.
+    worker = _worker(tmp_path)
+    seen: dict[str, Path] = {}
+
+    def factory_for(stage_id: str):
+        def build(profile_dir: Path) -> RecordedBrowserDriver:
+            seen[stage_id] = profile_dir
+            return RecordedBrowserDriver(_TAPE, profile_dir=profile_dir)
+
+        return build
+
+    for stage_id in ("browser-0", "browser-1"):
+        worker.run(
+            flow_id="checkout",
+            run_id="run-42",
+            stage_id=stage_id,
+            start_url="https://shop/",
+            steps=_STEPS,
+            driver_factory=factory_for(stage_id),
+        )
+
+    assert seen["browser-0"] != seen["browser-1"]
+
+
+def test_a_concurrent_same_flow_teardown_does_not_wipe_a_live_profile(tmp_path: Path) -> None:
+    # The exact isolation break: while run-42's profile is live, a concurrent
+    # run-43 of the SAME flow runs to completion and tears its profile down. If
+    # both keyed on the flow document they would share a directory, so run-43's
+    # ``shutil.rmtree`` would delete run-42's live cookie jar out from under it.
+    # We simulate the interleaving by driving run-43 to completion from inside
+    # run-42's driver factory, before run-42 has observed anything.
+    worker = _worker(tmp_path)
+
+    def outer_factory(profile_dir: Path) -> RecordedBrowserDriver:
+        (profile_dir / "cookies.txt").write_text("session=RUN42-secret", encoding="utf-8")
+        # A concurrent run of the same flow starts and finishes (its teardown
+        # fires) while run-42's profile above is still live.
+        worker.run(
+            flow_id="checkout",
+            run_id="run-43",
+            stage_id="browser-0",
+            start_url="https://shop/",
+            steps=_STEPS,
+            driver_factory=lambda inner: RecordedBrowserDriver(_TAPE, profile_dir=inner),
+        )
+        # run-42's live profile and cookie jar must survive run-43's teardown.
+        assert profile_dir.exists()
+        assert (profile_dir / "cookies.txt").read_text(encoding="utf-8") == "session=RUN42-secret"
+        return RecordedBrowserDriver(_TAPE, profile_dir=profile_dir)
+
+    worker.run(
+        flow_id="checkout",
+        run_id="run-42",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=outer_factory,
+    )
+
+
+def test_the_same_run_and_stage_resolve_to_a_stable_profile(tmp_path: Path) -> None:
+    # Determinism the other way: the same (run_id, stage_id) must resolve to the
+    # same directory across processes, so a supervisor can reconstruct and tear a
+    # profile down after a crash without a live handle.
+    worker = _worker(tmp_path)
+    seen: list[Path] = []
+
+    def factory(profile_dir: Path) -> RecordedBrowserDriver:
+        seen.append(profile_dir)
+        return RecordedBrowserDriver(_TAPE, profile_dir=profile_dir)
+
+    for _ in range(2):
+        worker.run(
+            flow_id="checkout",
+            run_id="run-42",
+            stage_id="browser-0",
+            start_url="https://shop/",
+            steps=_STEPS,
+            driver_factory=factory,
+        )
+
+    assert seen[0] == seen[1]
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +598,8 @@ def test_driver_timeout_maps_to_a_typed_terminal_state(tmp_path: Path) -> None:
     worker = _worker(tmp_path)
     run = worker.run(
         flow_id="f",
+        run_id="run-a",
+        stage_id="browser-0",
         start_url="https://shop/",
         steps=_STEPS,
         driver_factory=lambda d: RecordedBrowserDriver(_TAPE, profile_dir=d, timeout_at_step=1),
@@ -457,7 +618,14 @@ def test_driver_error_maps_to_failed(tmp_path: Path) -> None:
     def factory(profile_dir: Path) -> RecordedBrowserDriver:
         return RecordedBrowserDriver(_TAPE[:1], profile_dir=profile_dir)
 
-    run = _worker(tmp_path).run(flow_id="f", start_url="https://shop/", steps=_STEPS, driver_factory=factory)
+    run = _worker(tmp_path).run(
+        flow_id="f",
+        run_id="run-a",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory,
+    )
     assert run.result.terminal_state is TerminalState.FAILED
     assert run.result.reason_code == "driver_error"
 
@@ -466,7 +634,14 @@ def test_unavailable_driver_maps_to_refused(tmp_path: Path) -> None:
     def factory(profile_dir: Path) -> RecordedBrowserDriver:
         raise BrowserDriverUnavailable(driver_name="browser_use", extra="browser")
 
-    run = _worker(tmp_path).run(flow_id="f", start_url="https://shop/", steps=_STEPS, driver_factory=factory)
+    run = _worker(tmp_path).run(
+        flow_id="f",
+        run_id="run-a",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory,
+    )
     assert run.result.terminal_state is TerminalState.REFUSED
     assert run.result.reason_code == "driver_unavailable"
     assert run.report.steps == ()
@@ -483,6 +658,8 @@ def test_a_failed_run_still_dispatches_and_verifies(tmp_path: Path) -> None:
     )
     run = worker.run(
         flow_id="f",
+        run_id="run-b",
+        stage_id="browser-0",
         start_url="https://shop/",
         steps=_STEPS,
         driver_factory=lambda d: RecordedBrowserDriver(_TAPE, profile_dir=d, timeout_at_step=1),
@@ -510,6 +687,8 @@ def test_a_check_naming_an_unknown_kind_is_refused_before_dispatch(tmp_path: Pat
     with pytest.raises(ActivityRejected, match="operand"):
         worker.run(
             flow_id="f",
+            run_id="run-a",
+            stage_id="browser-0",
             start_url="https://shop/",
             steps=(FlowStep(action=Action(kind=ActionKind.WAIT), checks=()),),
             driver_factory=lambda d: RecordedBrowserDriver(_TAPE, profile_dir=d),
@@ -523,6 +702,8 @@ def test_duplicate_check_ids_are_refused_before_dispatch(tmp_path: Path) -> None
     with pytest.raises(ActivityRejected, match="duplicate check_id"):
         worker.run(
             flow_id="f",
+            run_id="run-a",
+            stage_id="browser-0",
             start_url="https://shop/",
             steps=(FlowStep(action=Action(kind=ActionKind.WAIT), checks=dupes),),
             driver_factory=lambda d: RecordedBrowserDriver(_TAPE, profile_dir=d),
@@ -534,6 +715,8 @@ def test_recorded_check_verdicts_reflect_the_observed_bytes(tmp_path: Path) -> N
     worker = _worker(tmp_path)
     run = worker.run(
         flow_id="f",
+        run_id="run-a",
+        stage_id="browser-0",
         start_url="https://shop/",
         steps=(FlowStep(action=Action(kind=ActionKind.WAIT), checks=()),),
         driver_factory=lambda d: RecordedBrowserDriver(_TAPE, profile_dir=d),
@@ -559,7 +742,14 @@ def test_driver_is_closed_on_every_path(tmp_path: Path) -> None:
         drivers.append(driver)
         return driver
 
-    _worker(tmp_path).run(flow_id="f", start_url="https://shop/", steps=_STEPS, driver_factory=factory)
+    _worker(tmp_path).run(
+        flow_id="f",
+        run_id="run-a",
+        stage_id="browser-0",
+        start_url="https://shop/",
+        steps=_STEPS,
+        driver_factory=factory,
+    )
     assert drivers[0].closed
 
 
