@@ -24,6 +24,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
@@ -147,6 +148,18 @@ class CASStore:
         """Return the filesystem path for the blob identified by *digest*."""
         return self._shard_dir(digest) / digest
 
+    def blob_path(self, digest: str) -> Path:
+        """Public accessor for a blob's on-disk path (validated, no I/O).
+
+        Callers that need the path (e.g. to probe a blob without going through
+        :meth:`get`) should use this instead of re-deriving the shard layout,
+        so the store stays the single source of truth for it. Raises
+        ``ValueError`` on a non-64-hex digest (the path-traversal guard); does
+        not touch the filesystem.
+        """
+        self._validate_digest(digest)
+        return self._blob_path(digest)
+
     def _meta_path(self, digest: str) -> Path:
         """Return the filesystem path for the sidecar metadata file."""
         return self._shard_dir(digest) / f"{digest}.meta.json"
@@ -238,9 +251,22 @@ class CASStore:
         """
         self._validate_digest(digest)
         blob = self._blob_path(digest)
-        if not blob.exists():
+        # Open with O_NOFOLLOW so a symlink planted at the blob path is rejected
+        # atomically by the read itself. A separate is_symlink() pre-check would
+        # leave a TOCTOU window: an attacker with write access to the store could
+        # swap in a symlink to a FIFO/device (hang) or another path between the
+        # check and the read. A content-addressed store only ever writes regular
+        # files, so O_NOFOLLOW never rejects a legitimate blob. The flag is
+        # POSIX-only; where it is absent it degrades to 0 (Windows has different
+        # symlink semantics and its own protections). A symlinked blob surfaces
+        # as OSError (ELOOP), which callers classify as unreadable, not absent.
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(blob, flags)
+        except FileNotFoundError:
             return None
-        content = blob.read_bytes()
+        with os.fdopen(fd, "rb") as handle:
+            content = handle.read()
         if verify:
             actual = self._digest(content)
             if actual != digest:

@@ -693,6 +693,13 @@ def _verify_approval_cards() -> bool:
     console.print(Panel("[bold red]Approval Card Verification FAILED[/bold red]", border_style="red", expand=False))
     for err in result.errors:
         console.print(f"  [red]![/red] {err}")
+    # Internal faults are shown apart from record failures so an operator does
+    # not read a bug in this tool as evidence that their audit log was
+    # tampered with. Both still fail the pillar.
+    if result.verifier_errors:
+        console.print("  [yellow]The following records could not be evaluated by the verifier itself:[/yellow]")
+        for err in result.verifier_errors:
+            console.print(f"  [yellow]?[/yellow] {err}")
     return False
 
 

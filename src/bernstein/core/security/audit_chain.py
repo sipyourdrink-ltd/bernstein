@@ -889,9 +889,14 @@ class AuditChainStore:
         actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        resource_id: str | None = None,
         include_archived: bool = False,
     ) -> list[AuditEvent]:
         """Delegate to the underlying :class:`AuditLog`.
+
+        ``resource_id`` narrows the scan to a single resource's events and lets
+        the underlying log skip parsing lines that cannot match, so a
+        per-resource lookup does not cost a full pass over the log.
 
         ``include_archived`` also replays archived ``*.jsonl.gz`` segments, so
         a caller reasoning about linkage across the retention boundary sees
@@ -902,6 +907,7 @@ class AuditChainStore:
             actor=actor,
             since=since,
             until=until,
+            resource_id=resource_id,
             include_archived=include_archived,
         )
 
