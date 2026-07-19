@@ -72,12 +72,12 @@ one upstream regression away from failing without warning.
 | Adapter | Binary | Last-green version | Verified | Receipt |
 |---|---|---|---|---|
 | agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z | `006fb946868d` |
-| claude | `claude` | 2.1.214 | 2026-07-18T07:20:11Z | `9d7c987f6334` |
-| codex | `codex` | 0.144.5 | 2026-07-18T07:20:11Z | `13822c8d8fe0` |
-| copilot | `copilot` | 1.0.71 | 2026-07-18T07:20:11Z | `470814f02cf3` |
-| gemini | `gemini` | 0.51.0 | 2026-07-18T07:20:11Z | `0ce0a060515b` |
-| opencode | `opencode` | 1.18.3 | 2026-07-18T07:20:11Z | `fb76cdf1c276` |
-| qwen | `qwen` | 0.19.11 | 2026-07-18T07:20:11Z | `667affba8cb2` |
+| claude | `claude` | 2.1.215 | 2026-07-19T07:21:31Z | `86fa26c3d484` |
+| codex | `codex` | 0.144.6 | 2026-07-19T07:21:31Z | `dbf02174d0fc` |
+| copilot | `copilot` | 1.0.71 | 2026-07-19T07:21:31Z | `44ecd7c6e373` |
+| gemini | `gemini` | 0.51.0 | 2026-07-19T07:21:31Z | `914991203ca6` |
+| opencode | `opencode` | 1.18.3 | 2026-07-19T07:21:31Z | `8f389f0027ba` |
+| qwen | `qwen` | 0.19.12 | 2026-07-19T07:21:31Z | `311a8ffc30f7` |
 <!-- last-green:end -->
 
 ## Operator knobs
