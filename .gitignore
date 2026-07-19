@@ -60,6 +60,9 @@ coverage*.xml
 *.junit.xml
 htmlcov/
 .coverage
+# Tunnel registry state written by an older, CWD-relative test fixture.
+# The fixture is tmp-scoped now; this stays as a guard against regressions.
+/tunnels-test.json
 
 # Project/Repository-specific generated or log files
 *.pid

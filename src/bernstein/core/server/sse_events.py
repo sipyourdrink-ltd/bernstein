@@ -156,8 +156,8 @@ class SSEEvent:
         # task, key, type, or version by passing a colliding keyword.
         return cls(
             event=SSEEventType.TASK_ARTIFACT,
-            data={
-                **extra,
+            data=extra
+            | {
                 "task_id": task_id,
                 "key": key,
                 "artifact_type": artifact_type,
@@ -185,8 +185,8 @@ class SSEEvent:
         # or forge the vector hash by passing a colliding keyword.
         return cls(
             event=SSEEventType.TASK_PROGRESS,
-            data={
-                **extra,
+            data=extra
+            | {
                 "task_id": task_id,
                 "vector_hash": vector_hash,
             },

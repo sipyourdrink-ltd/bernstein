@@ -585,8 +585,8 @@ def _events_from_text(
 ) -> list[AuditEvent]:
     """Parse JSONL *text* into filtered :class:`AuditEvent` records.
 
-    Shared by :meth:`AuditLog.query` and :meth:`AuditLog.query_chain` so live
-    and archived segments are decoded by exactly one code path.
+    Shared by every :meth:`AuditLog.query` source so live and archived
+    segments are decoded by exactly one code path.
     """
     events: list[AuditEvent] = []
     for raw_line in text.splitlines():
@@ -1083,6 +1083,7 @@ class AuditLog:
         actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        include_archived: bool = False,
     ) -> list[AuditEvent]:
         """Filter audit events by type, actor, and/or time range.
 
@@ -1091,58 +1092,51 @@ class AuditLog:
             actor: If set, only return events from this actor.
             since: ISO 8601 lower bound (inclusive).
             until: ISO 8601 upper bound (inclusive).
+            include_archived: Also read archived ``*.jsonl.gz`` segments,
+                replayed in chronological order *before* the live files, the
+                same way :meth:`verify` walks them (#1835). Default False
+                keeps the hot path reading only live segments.
+
+                Callers that reason about *linkage* between events - rather
+                than about individual events - need this. After retention an
+                event's predecessor commonly lives in an archived segment, so
+                a live-only read makes an intact chain look broken. Reading
+                archives costs a decompress per segment, so it belongs on the
+                paths that need completeness, not on every query.
 
         Returns:
             List of matching AuditEvent instances (chronological order).
+
+        Raises:
+            UnicodeDecodeError: When a segment is not valid UTF-8. Invalid
+                bytes are evidence - of a truncated write, corruption, or
+                tampering - and ``verify`` hashes the raw bytes, so silently
+                substituting replacement characters here would return records
+                that do not match what is on disk.
         """
         results: list[AuditEvent] = []
-        log_files = sorted(self._audit_dir.glob(_JSONL_GLOB))
+        sources: list[bytes | None] = []
+        if include_archived:
+            discarded: list[str] = []
+            sources.extend(_read_archived_segment(gz, discarded) for gz in _archived_segment_paths(self._audit_dir))
+        sources.extend(path.read_bytes() for path in sorted(self._audit_dir.glob(_JSONL_GLOB)))
 
-        for log_path in log_files:
-            results.extend(
-                _events_from_text(log_path.read_text(), event_type=event_type, actor=actor, since=since, until=until)
-            )
-
-        return results
-
-    def query_chain(
-        self,
-        *,
-        event_type: str | None = None,
-        actor: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
-    ) -> list[AuditEvent]:
-        """Like :meth:`query`, but over the same segments :meth:`verify` walks.
-
-        ``query`` reads live ``*.jsonl`` only; ``verify`` replays archived
-        ``archive/*.jsonl.gz`` segments first and then the live files. A caller
-        that authenticates with ``verify`` and then reads with ``query`` checks
-        a strictly larger set than it uses, so once ``archive()`` has run, rows
-        it authenticated silently vanish from what it reads. This method makes
-        the read set identical to the verified set, in the same chronological
-        order (#2648).
-
-        Returns:
-            Matching events across archived and live segments, oldest first.
-        """
-        results: list[AuditEvent] = []
-        errors: list[str] = []
-        for gz_path in _archived_segment_paths(self._audit_dir):
-            raw = _read_archived_segment(gz_path, errors)
-            if raw is None:
+        for blob in sources:
+            if blob is None:
+                # Unreadable archive segment (corrupt gzip). ``verify`` reports
+                # it with a named error; a query simply has nothing to yield.
                 continue
+            # ``decode`` is strict on purpose: undecodable bytes raise rather
+            # than becoming replacement characters, so a query never reports a
+            # record that differs from the bytes ``verify`` hashed.
             results.extend(
                 _events_from_text(
-                    raw.decode("utf-8", errors="replace"),
+                    blob.decode("utf-8"),
                     event_type=event_type,
                     actor=actor,
                     since=since,
                     until=until,
                 )
             )
-        for log_path in sorted(self._audit_dir.glob(_JSONL_GLOB)):
-            results.extend(
-                _events_from_text(log_path.read_text(), event_type=event_type, actor=actor, since=since, until=until)
-            )
+
         return results

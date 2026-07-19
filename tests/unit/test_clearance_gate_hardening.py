@@ -754,7 +754,7 @@ def test_writer_and_verifier_agree_on_the_gate_anchor(tmp_path: Path) -> None:
         )
 
     chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
-    rows = chain.query_chain(event_type=EVENT_SIGNAL_GATE_PROJECTION)
+    rows = chain.query(event_type=EVENT_SIGNAL_GATE_PROJECTION, include_archived=True)
     assert len({r.hmac for r in rows}) == 2, "fixture must produce two distinct pending rows"
 
     # Drive the hydration path the coordinator uses on restart, which is where
@@ -805,7 +805,7 @@ def test_legacy_duplicate_pending_rows_can_still_be_closed(tmp_path: Path) -> No
     )
     coord.resolve(spec.clearance_task_id, resolver="operator:alex")
 
-    result = verify_clearance_gates(chain.query_chain())
+    result = verify_clearance_gates(chain.query(include_archived=True))
     assert result.ok, result.errors
 
 
@@ -825,12 +825,12 @@ def test_gate_index_reads_every_segment_it_authenticates(tmp_path: Path) -> None
     ).materialize(board.post(_blocker()))
 
     log = AuditLog(tmp_path / "audit", key=b"k" * 32)
-    before = len(log.query_chain())
+    before = len(log.query(include_archived=True))
     _archive_all_segments(tmp_path / "audit")
 
     assert log.verify()[0], "archived chain still verifies"
     assert len(log.query()) == 0, "fixture did not actually archive the live segments"
-    assert len(log.query_chain()) == before, "the read set shrank while the verified set did not"
+    assert len(log.query(include_archived=True)) == before, "the read set shrank while the verified set did not"
 
 
 def test_archiving_does_not_re_enable_double_injection(tmp_path: Path) -> None:
@@ -1037,7 +1037,7 @@ def test_resolution_closes_a_gate_whose_pending_rows_differ(tmp_path: Path) -> N
     )
     coord.resolve(wide.clearance_task_id, resolver="operator:alex")
 
-    result = verify_clearance_gates(chain.query_chain())
+    result = verify_clearance_gates(chain.query(include_archived=True))
     assert result.ok, result.errors
 
 
@@ -1067,7 +1067,7 @@ def test_verifier_accepts_a_resolution_anchored_on_an_earlier_pending_row(tmp_pa
         )
 
     chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
-    pending_rows = chain.query_chain(event_type=EVENT_SIGNAL_GATE_PROJECTION)
+    pending_rows = chain.query(event_type=EVENT_SIGNAL_GATE_PROJECTION, include_archived=True)
     earliest_hmac = pending_rows[0].hmac
     latest_hmac = pending_rows[-1].hmac
     assert earliest_hmac != latest_hmac
@@ -1086,7 +1086,7 @@ def test_verifier_accepts_a_resolution_anchored_on_an_earlier_pending_row(tmp_pa
         blocker_entry_hash=earliest_hmac,
     )
 
-    result = verify_clearance_gates(chain.query_chain())
+    result = verify_clearance_gates(chain.query(include_archived=True))
     assert result.ok, result.errors
 
 

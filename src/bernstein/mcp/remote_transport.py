@@ -23,6 +23,7 @@ import os
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -61,6 +62,22 @@ _LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # Env var names used to pick up the bearer auth token if not provided explicitly.
 _TOKEN_ENV_VARS = ("BERNSTEIN_MCP_TOKEN", "BERNSTEIN_MCP_AUTH_TOKEN")
 
+# Clear-text scheme, spelled as a bare token so a browser origin can only be
+# built from it deliberately. Any origin carrying this scheme has to prove it
+# is loopback-pinned (see ``RemoteMCPConfig.__post_init__``).
+_PLAINTEXT_SCHEME = "http"
+
+# Every scheme that carries traffic without TLS. `ws` and `ftp` are not valid
+# browser origins, but enumerating them keeps the enforced policy identical to
+# the documented one: clear-text is loopback-only, everything else is TLS.
+# Non-URL CORS tokens such as `*` and `null` have no scheme and are untouched.
+_CLEAR_TEXT_SCHEMES = frozenset({_PLAINTEXT_SCHEME, "ws", "ftp"})
+
+# Default browser origin. Clear-text is acceptable here only because the origin
+# is pinned to a loopback host, so the traffic never leaves the machine; every
+# non-loopback origin is required to be TLS.
+_DEFAULT_CORS_ORIGINS: tuple[str, ...] = (f"{_PLAINTEXT_SCHEME}://localhost:*",)
+
 
 class RemoteMCPConfigError(RuntimeError):
     """Raised when an MCP remote transport config is unsafe to start with.
@@ -82,6 +99,44 @@ def _resolve_token_from_env() -> str:
 def _is_localhost(host: str) -> bool:
     """Return True if ``host`` refers to the loopback interface only."""
     return host in _LOCALHOST_HOSTS
+
+
+def _origin_host(origin: str) -> str | None:
+    """Return the host of a CORS ``origin``, or ``None`` if it does not parse.
+
+    Delegates to :func:`urllib.parse.urlsplit` so bracketed IPv6 literals are
+    unwrapped by the stdlib instead of by hand. Hand-rolled bracket stripping
+    silently accepted malformed authorities: ``http://[::1]evil.test`` and
+    ``http://[::1]@evil.test`` both collapsed to ``::1`` and were admitted as
+    loopback. ``urlsplit`` raises on those, so they are refused.
+
+    ``hostname`` never parses the port, so the ``host:*`` port glob the server
+    accepts survives, and the host comes back already lower-cased. Userinfo is
+    refused outright: a browser ``Origin`` never carries it, so its presence
+    means the value is not an origin.
+    """
+    try:
+        parts = urlsplit(origin)
+        if "@" in parts.netloc:
+            return None
+        return parts.hostname
+    except ValueError:
+        return None
+
+
+def _is_plaintext_non_loopback_origin(origin: str) -> bool:
+    """Return True if ``origin`` is clear-text and not pinned to loopback.
+
+    Every clear-text scheme is covered, not just ``http``, so the policy the
+    docs state holds for anything that would put a bearer token on the wire.
+    An origin that does not parse is not provably loopback, so it is refused.
+    """
+    # Scheme is case-insensitive per RFC 3986.
+    scheme, sep, _rest = origin.partition("://")
+    if not sep or scheme.lower() not in _CLEAR_TEXT_SCHEMES:
+        return False
+    host = _origin_host(origin)
+    return host is None or not _is_localhost(host)
 
 
 def _constant_time_eq(left: str, right: str) -> bool:
@@ -109,6 +164,8 @@ class RemoteMCPConfig:
     * ``auth_type='none'`` on a non-loopback host → :class:`RemoteMCPConfigError`
     * ``auth_type='bearer'`` with an empty token on a non-loopback host →
       :class:`RemoteMCPConfigError`
+    * a clear-text (``http://``) CORS origin that is not pinned to a loopback
+      host → :class:`RemoteMCPConfigError`
     """
 
     host: str = "127.0.0.1"
@@ -116,7 +173,7 @@ class RemoteMCPConfig:
     path: str = "/mcp"
     auth_type: str = "bearer"  # "none", "bearer", "oauth"
     auth_token: str = ""
-    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:*"])
+    cors_origins: list[str] = field(default_factory=lambda: list(_DEFAULT_CORS_ORIGINS))
 
     def __post_init__(self) -> None:
         """Enforce safe-by-default policy and pick up env-provided tokens."""
@@ -143,6 +200,16 @@ class RemoteMCPConfig:
                 "not loopback but no bearer token is configured. Set "
                 "BERNSTEIN_MCP_TOKEN (or pass auth_token=...) before binding to "
                 "a public interface."
+            )
+            raise RemoteMCPConfigError(msg)
+
+        plaintext = [o for o in self.cors_origins if _is_plaintext_non_loopback_origin(o)]
+        if plaintext:
+            msg = (
+                "Refusing to start MCP remote transport: clear-text CORS "
+                f"origin(s) {plaintext!r} are not pinned to a loopback host. "
+                "Bearer tokens travel on these origins, so use https:// or "
+                "restrict the origin to 127.0.0.1, localhost or [::1]."
             )
             raise RemoteMCPConfigError(msg)
 

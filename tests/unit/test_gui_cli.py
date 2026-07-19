@@ -68,14 +68,24 @@ class _FakeProvider(TunnelProvider):
 
 
 @pytest.fixture
-def fake_registry(monkeypatch: pytest.MonkeyPatch) -> _FakeProvider:
+def tunnel_state_path(tmp_path: Path) -> Path:
+    """Tmp-scoped tunnel registry state file.
+
+    The registry persists via a plain ``Path``, so a relative state path
+    would resolve against the CWD and dirty the repo root on every run.
+    """
+    return tmp_path / "tunnels.json"
+
+
+@pytest.fixture
+def fake_registry(monkeypatch: pytest.MonkeyPatch, tunnel_state_path: Path) -> _FakeProvider:
     """Replace ``_build_tunnel_registry`` with one wired to a fake provider."""
     fake = _FakeProvider()
 
     def _build() -> Any:
         from bernstein.core.tunnels.registry import TunnelRegistry
 
-        reg = TunnelRegistry(state_path=Path("tunnels-test.json"))
+        reg = TunnelRegistry(state_path=tunnel_state_path)
         reg.register(fake)
         return reg
 
@@ -333,14 +343,14 @@ def test_cli_serve_with_tunnel_prints_onboarding(
 
 
 def test_cli_serve_with_tunnel_handles_provider_unavailable(
-    monkeypatch: pytest.MonkeyPatch, tmp_passphrase_file: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_passphrase_file: Path, tmp_path: Path
 ) -> None:
     _patch_uvicorn_noop(monkeypatch)
 
     def _build_empty() -> Any:
         from bernstein.core.tunnels.registry import TunnelRegistry
 
-        return TunnelRegistry(state_path=Path("empty.json"))
+        return TunnelRegistry(state_path=tmp_path / "empty.json")
 
     monkeypatch.setattr(gui_cli, "_build_tunnel_registry", _build_empty)
     runner = CliRunner()
@@ -354,6 +364,17 @@ def test_start_tunnel_helper_creates_handle(fake_registry: _FakeProvider) -> Non
     assert handle.port == 8052
     assert handle.provider == "cloudflared"
     assert handle.public_url == "https://fake-cloudflared.example.com"
+
+
+def test_start_tunnel_persists_outside_the_repo(fake_registry: _FakeProvider, tunnel_state_path: Path) -> None:
+    """A relative state path resolves against the CWD and dirties the repo."""
+    repo_root = Path(__file__).resolve().parents[2]
+    assert tunnel_state_path.is_absolute(), f"state path must be absolute, got {tunnel_state_path}"
+    assert not tunnel_state_path.resolve().is_relative_to(repo_root), (
+        f"tunnel state {tunnel_state_path} would be written inside {repo_root}"
+    )
+    gui_cli._start_tunnel(port=8052, provider="cloudflared")
+    assert tunnel_state_path.exists(), "state was not persisted to the tmp path"
 
 
 def test_stop_tunnel_helper_idempotent(fake_registry: _FakeProvider, monkeypatch: pytest.MonkeyPatch) -> None:

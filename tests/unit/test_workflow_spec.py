@@ -1,4 +1,4 @@
-"""Unit tests for the Archon-style YAML workflow manifest schema.
+"""Unit tests for the declarative YAML workflow manifest schema.
 
 Covers parser round-trips, structural validation (cycles, missing
 references, duplicate ids), kind detection (command vs agent vs loop),

@@ -124,18 +124,16 @@ def gate_report_findings(report: QualityGatesResult | None) -> tuple[dict[str, A
     """
     if report is None:
         return ()
-    findings: list[dict[str, Any]] = []
-    for check in report.gate_results:
-        findings.append(
-            {
-                "gate": check.gate,
-                "passed": bool(check.passed),
-                "blocked": bool(check.blocked),
-                "status": check.status,
-                "detail": (check.detail or "")[:2000],
-            }
-        )
-    return tuple(findings)
+    return tuple(
+        {
+            "gate": check.gate,
+            "passed": bool(check.passed),
+            "blocked": bool(check.blocked),
+            "status": check.status,
+            "detail": (check.detail or "")[:2000],
+        }
+        for check in report.gate_results
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,8 +180,8 @@ class RecoveryReceipt:
             "recovery_node_id": self.recovery_node_id,
             "source_status": self.source_status,
             "condition_context": self.condition_context,
-            "gate_report": [dict(g) for g in self.gate_report],
-            "journal_tail": [dict(e) for e in self.journal_tail],
+            "gate_report": [g.copy() for g in self.gate_report],
+            "journal_tail": [e.copy() for e in self.journal_tail],
         }
 
     def canonical_bytes(self) -> bytes:
@@ -232,14 +230,11 @@ class RecoveryReceipt:
         ]
         if self.spine_entry_hash:
             lines.append(f"- Lineage spine entry: `{self.spine_entry_hash}`")
-        lines.append(f"- Receipt content hash: `{self.content_hash()}`")
-        lines.append("")
+        lines.extend((f"- Receipt content hash: `{self.content_hash()}`", ""))
 
         result = str(self.condition_context.get("result", "") or "")
         if result:
-            lines.append("### Failing task result")
-            lines.append(result[:2000])
-            lines.append("")
+            lines.extend(("### Failing task result", result[:2000], ""))
 
         failed = [g for g in self.gate_report if not g.get("passed")]
         if failed:
@@ -297,7 +292,7 @@ def build_receipt(
         failing_node_id=failing_node_id,
         recovery_node_id=recovery_node_id,
         source_status=source_status,
-        condition_context=dict(condition_context),
+        condition_context=condition_context.copy(),
         gate_report=gate_report_findings(gate_report),
         journal_tail=tail,
     )

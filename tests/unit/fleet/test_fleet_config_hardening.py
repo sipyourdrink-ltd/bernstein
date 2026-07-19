@@ -131,7 +131,7 @@ def test_secret_name_digest_is_keyed_not_plain_sha256(tmp_path: Path) -> None:
     store = ConnectionDocumentStore(tmp_path / "conns")
     create_document(
         name="c",
-        secret_name="github_pat",
+        broker_ref="github_pat",
         scope="",
         connector_defaults={},
         identity_dir=tmp_path / "id",
@@ -151,7 +151,7 @@ def test_store_get_rejects_name_mismatch(tmp_path: Path) -> None:
     store = ConnectionDocumentStore(tmp_path / "conns")
     create_document(
         name="real",
-        secret_name="s",
+        broker_ref="s",
         scope="",
         connector_defaults={},
         identity_dir=tmp_path / "id",
@@ -168,7 +168,7 @@ def test_create_refuses_to_replace_existing(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
     store = ConnectionDocumentStore(tmp_path / "conns")
     kwargs = dict(
-        secret_name="s", scope="", connector_defaults={}, identity_dir=tmp_path / "id", chain=chain, store=store
+        broker_ref="s", scope="", connector_defaults={}, identity_dir=tmp_path / "id", chain=chain, store=store
     )
     create_document(name="c", **kwargs)
     with pytest.raises(FileExistsError):
@@ -182,7 +182,7 @@ def test_rotate_refuses_foreign_document(tmp_path: Path) -> None:
     store_a = ConnectionDocumentStore(tmp_path / "a" / "conns")
     create_document(
         name="c",
-        secret_name="s",
+        broker_ref="s",
         scope="",
         connector_defaults={},
         identity_dir=tmp_path / "a" / "id",
@@ -197,7 +197,7 @@ def test_rotate_refuses_foreign_document(tmp_path: Path) -> None:
     with pytest.raises(ConnectionRefused):
         rotate_document(
             "c",
-            new_secret_name="s2",
+            new_broker_ref="s2",
             identity_dir=tmp_path / "b" / "id",
             chain=chain_b,
             store=store_b,
@@ -215,7 +215,7 @@ def test_create_records_audit_before_persist(tmp_path: Path) -> None:
     broker = _broker({"s": "raw-secret"})
     create_document(
         name="c",
-        secret_name="s",
+        broker_ref="s",
         scope="",
         connector_defaults={},
         identity_dir=tmp_path / "id",
@@ -232,7 +232,7 @@ def test_connection_document_defensive_copies_connector_defaults(tmp_path: Path)
     from bernstein.core.fleet.connection import ConnectionDocument
 
     defaults = {"base_url": "https://a", "nested": {"k": "v"}}
-    doc = ConnectionDocument(name="c", secret_name="s", scope="", connector_defaults=defaults)
+    doc = ConnectionDocument(name="c", broker_ref="s", scope="", connector_defaults=defaults)
     before = doc.document_hash()
     # Mutating the caller's dict (top-level and nested) must not affect the
     # signed/hashed document.

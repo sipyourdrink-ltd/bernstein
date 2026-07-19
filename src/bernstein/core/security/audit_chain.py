@@ -872,34 +872,20 @@ class AuditChainStore:
         actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        include_archived: bool = False,
     ) -> list[AuditEvent]:
-        """Delegate to the underlying :class:`AuditLog`."""
+        """Delegate to the underlying :class:`AuditLog`.
+
+        ``include_archived`` also replays archived ``*.jsonl.gz`` segments, so
+        a caller reasoning about linkage across the retention boundary sees
+        the same events :meth:`verify` does.
+        """
         return self._log.query(
             event_type=event_type,
             actor=actor,
             since=since,
             until=until,
-        )
-
-    def query_chain(
-        self,
-        *,
-        event_type: str | None = None,
-        actor: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
-    ) -> list[AuditEvent]:
-        """Delegate to :meth:`AuditLog.query_chain` (archived + live segments).
-
-        Use this, not :meth:`query`, whenever the caller also calls
-        :meth:`verify`: it reads exactly the segments ``verify`` authenticates,
-        so archiving cannot silently shrink what the caller sees (#2648).
-        """
-        return self._log.query_chain(
-            event_type=event_type,
-            actor=actor,
-            since=since,
-            until=until,
+            include_archived=include_archived,
         )
 
     def scan_verified(
@@ -2403,7 +2389,7 @@ def record_sla_violation(
             "subject_type": subject_type,
             "subject_id": subject_id,
             "tick_instant": tick_instant,
-            "breached_axes": list(breached_axes),
+            "breached_axes": breached_axes.copy(),
             "requested_action": requested_action,
             "effective_action": effective_action,
             "remediation_blocked": remediation_blocked,

@@ -76,6 +76,18 @@ FuncMetadata.convert_result = _patched_convert_result
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 
+# Self-description advertised to MCP clients on connect.
+_SERVER_INSTRUCTIONS = (
+    "Bernstein: deterministic, verifiable orchestration for CLI coding agents - "
+    "reproducible parallel runs, signed audit trail, air-gap friendly. "
+    "Dispatches goals across 40+ CLI agent adapters (Claude Code, Codex, "
+    "Gemini CLI, and more), each task in its own git worktree behind "
+    "lint/type/test gates. Scheduling is plain Python with no LLM in the "
+    "coordination loop, so runs replay byte-identically. An always-on lineage "
+    "spine and replay journal record every run; an opt-in HMAC-chained audit "
+    "log adds receipts that verify offline."
+)
+
 # Timeout for all httpx calls to the task server (seconds).
 _HTTP_TIMEOUT = 5.0
 
@@ -160,13 +172,13 @@ def _register_health_tool(mcp: FastMCP[None]) -> None:
 def _get_journal_head(task_id: str) -> str:
     from pathlib import Path
 
-    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.replay.journal import EventJournal, run_journal_path
     from bernstein.core.tasks.checkpoint_retry import task_run_id
 
     run_id = task_run_id(task_id)
     sdd_dir = Path.cwd() / ".sdd"
     try:
-        journal_path = sdd_dir / "runs" / run_id / "journal.jsonl"
+        journal_path = run_journal_path(sdd_dir, run_id)
         if journal_path.exists():
             journal = EventJournal.resume(run_id, sdd_dir)
             return journal.head()
@@ -476,18 +488,20 @@ def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
             return _validation_error_response(err)
         try:
             from bernstein.core.protocols.mcp.tasks_extension import RunHandle
-            from bernstein.core.replay.journal import JOURNAL_FILENAME, load_events
+            from bernstein.core.replay.journal import (
+                JournalPathError,
+                load_events,
+                run_journal_path,
+            )
 
             base = Path(workdir).resolve()
-            runs_root = (base / ".sdd" / "runs").resolve()
-            journal_path = (runs_root / run_id / JOURNAL_FILENAME).resolve()
-            # Realpath-containment check (CodeQL): a crafted run_id must not
-            # escape the runs root via ``..`` or an absolute path. A plain run
-            # id resolves to ``<runs_root>/<run_id>/journal.jsonl``; anything
-            # else is refused.
-            if journal_path.parent.parent != runs_root:
+            # Shared barrier rather than a local containment check, so this
+            # surface cannot drift from the rest of the run-journal readers.
+            try:
+                journal_path = run_journal_path(base / ".sdd", run_id)
+            except JournalPathError as exc:
                 return _error_response(
-                    ValueError("run_id escapes the runs directory"),
+                    exc,
                     hint="run_id must be a plain run identifier",
                 )
             events = load_events(journal_path)
@@ -780,7 +794,7 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             # Carry the caller identity in the request header (the server's
             # authorization principal), not only in the body. The server refuses
             # posts against a task this identity does not hold the claim for.
-            headers = {**_auth_headers(), "x-bernstein-agent-id": poster}
+            headers = _auth_headers() | {"x-bernstein-agent-id": poster}
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.post(
                     f"{server_url}/tasks/{task_id}/artifacts",
@@ -1219,7 +1233,7 @@ def create_mcp_server(
     from bernstein.mcp.prompts import register_prompt_resources
 
     active_tier = resolve_active_tier(tier)
-    mcp: FastMCP[None] = FastMCP(name)
+    mcp: FastMCP[None] = FastMCP(name, instructions=_SERVER_INSTRUCTIONS)
     register_capability_resource(mcp)
     register_prompt_resources(mcp)
     _register_health_tool(mcp)

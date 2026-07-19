@@ -17,7 +17,7 @@ session is attached, performs:
    :meth:`AgentSpawner.kill` keep working without subprocess PIDs.
 
 The worktree-direct path is preserved unchanged when no session is
-attached - existing users see byte-identical behaviour. The 35 adapters
+attached - existing users see byte-identical behaviour. The adapters
 themselves are not refactored in this phase; they continue to expose
 :meth:`CLIAdapter.spawn`, which we still call as a fallback when the
 selected sandbox is the local-worktree backend (``backend_name ==

@@ -665,10 +665,11 @@ def _verify_clearance_gates() -> bool:
             console.print(f"  [red]![/red] {err}")
         return False
 
-    # Read the same segments verify() authenticated. ``query()`` covers live
-    # files only, so after retention archiving it would hide archived gates and
-    # every claim of their dependents from the replay (#2648).
-    events = log.query_chain()
+    # Read the same segments verify() authenticated. Without
+    # ``include_archived`` a query covers live files only, so after retention
+    # archiving it would hide archived gates and every claim of their
+    # dependents from the replay (#2648).
+    events = log.query(include_archived=True)
     result = verify_clearance_gates(events)
     if result.gate_count == 0 and result.ok:
         return True  # no clearance gates recorded; nothing to verify
@@ -743,6 +744,19 @@ def verify_suspension_cmd(task_id: str, workdir: str, as_json: bool) -> None:
         raise SystemExit(0 if result.ok else 1)
 
     console.print()
+    if result.pending:
+        # A live park is an incomplete lifecycle, not a break. It exits 0, the
+        # same as before this distinction existed, so operator scripts that
+        # sweep parked fleets keep working.
+        console.print(
+            Panel(
+                f"[bold yellow]Suspension not settled yet[/bold yellow]\ntask [bold]{task_id}[/bold]: "
+                "parked, no resume recorded. Nothing to verify until it resumes.",
+                border_style="yellow",
+                expand=False,
+            )
+        )
+        raise SystemExit(0)
     if result.ok:
         detail = f"continued {result.effective_mode}"
         if result.effective_mode == "warm":
