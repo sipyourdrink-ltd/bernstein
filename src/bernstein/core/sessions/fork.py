@@ -347,9 +347,10 @@ def fork_session(
     The function fails fast (no partial state) when the parent session
     cannot be loaded, the fork worktree path already exists, the
     requested fork step is out of range, or the git worktree command
-    fails.  No cleanup of partial state is required because the fork
-    worktree is the only side-effect and it is created as the very last
-    step.
+    fails.  Once the fork worktree and branch exist, the remaining steps
+    (snapshot clone, journal seeding) run inside an undo handler that
+    removes the worktree and deletes the branch if anything raises - or a
+    cancellation is delivered - so neither is left dangling.
 
     Args:
         parent_session_id: Identifier of the source session.
@@ -438,38 +439,48 @@ def fork_session(
         stderr = (result.stderr or "").strip()
         raise SessionForkError(f"git worktree add failed for fork '{fork_session_id}': {stderr or result.stdout!r}")
 
-    snapshot_path = _clone_session_snapshot(
-        parent_session=parent_session,
-        fork_session_id=fork_session_id,
-        target_sessions_dir=sessions_dir_for(fork_worktree),
-        fork_label=fork_label,
-        parent_session_id=parent_session_id,
-        fork_branch=fork_branch,
-        fork_commit=fork_commit,
-        from_step=from_step,
-        parent_step_hash=parent_step_hash,
-    )
-
-    # Seed the fork journal with the parent prefix when forking from a step.
-    if from_step is not None and parent_journal_prefix:
-        _seed_fork_journal(
-            fork_worktree=fork_worktree,
+    # The fork worktree and its branch now exist.  Establish the undo before
+    # any further step so a failure - including a cancellation delivered
+    # mid-seed, which is a BaseException rather than an Exception - cannot
+    # leave the fork worktree or branch behind.  The cleanup is bounded git
+    # plumbing, so a plain handler is enough (no ``asyncio.shield``).
+    try:
+        snapshot_path = _clone_session_snapshot(
+            parent_session=parent_session,
             fork_session_id=fork_session_id,
-            entries=parent_journal_prefix,
+            target_sessions_dir=sessions_dir_for(fork_worktree),
+            fork_label=fork_label,
+            parent_session_id=parent_session_id,
+            fork_branch=fork_branch,
+            fork_commit=fork_commit,
+            from_step=from_step,
+            parent_step_hash=parent_step_hash,
         )
 
-    fork = SessionFork(
-        parent_session_id=parent_session_id,
-        fork_session_id=fork_session_id,
-        parent_branch=parent_branch,
-        fork_branch=fork_branch,
-        parent_worktree=parent_worktree,
-        fork_worktree=fork_worktree,
-        snapshot_path=snapshot_path,
-        fork_commit=fork_commit,
-        from_step=from_step,
-        parent_step_hash=parent_step_hash,
-    )
+        # Seed the fork journal with the parent prefix when forking from a step.
+        if from_step is not None and parent_journal_prefix:
+            _seed_fork_journal(
+                fork_worktree=fork_worktree,
+                fork_session_id=fork_session_id,
+                entries=parent_journal_prefix,
+            )
+
+        fork = SessionFork(
+            parent_session_id=parent_session_id,
+            fork_session_id=fork_session_id,
+            parent_branch=parent_branch,
+            fork_branch=fork_branch,
+            parent_worktree=parent_worktree,
+            fork_worktree=fork_worktree,
+            snapshot_path=snapshot_path,
+            fork_commit=fork_commit,
+            from_step=from_step,
+            parent_step_hash=parent_step_hash,
+        )
+    except BaseException:
+        _undo_fork_worktree(repo_root, fork_worktree, fork_branch)
+        raise
+
     logger.info(
         "Forked session %s -> %s (branch=%s commit=%s from_step=%s)",
         parent_session_id,
@@ -479,6 +490,28 @@ def fork_session(
         from_step if from_step is not None else "n/a",
     )
     return fork
+
+
+def _undo_fork_worktree(repo_root: Path, fork_worktree: Path, fork_branch: str) -> None:
+    """Undo a partially-created fork worktree after a post-add step fails.
+
+    Removes the fork worktree and deletes its branch so ``fork_session``
+    never leaves either behind when snapshot cloning or journal seeding
+    raises (or a cancellation is delivered mid-seed).
+
+    Best-effort and never raises, so the caller re-raises the original error
+    verbatim rather than masking it with a cleanup failure.
+    """
+    from bernstein.core.git.git_ops import branch_delete, worktree_remove
+
+    try:
+        worktree_remove(repo_root, fork_worktree)
+    except Exception as exc:
+        logger.warning("undo fork: worktree remove failed for %s: %s", fork_worktree, exc)
+    try:
+        branch_delete(repo_root, fork_branch)
+    except Exception as exc:
+        logger.warning("undo fork: branch delete failed for %s: %s", fork_branch, exc)
 
 
 def _seed_fork_journal(
