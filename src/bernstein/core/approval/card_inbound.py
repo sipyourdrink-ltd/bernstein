@@ -62,11 +62,7 @@ def _require_origin(*, worktree_id: str, thread_id: str) -> None:
     caller that cannot state the worktree and conversation an approval belongs
     to cannot route it.
     """
-    missing = [
-        name
-        for name, value in (("worktree_id", worktree_id), ("thread_id", thread_id))
-        if not value
-    ]
+    missing = [name for name, value in (("worktree_id", worktree_id), ("thread_id", thread_id)) if not value]
     if missing:
         joined = " and ".join(missing)
         msg = (
