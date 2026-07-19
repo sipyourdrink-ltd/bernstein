@@ -650,8 +650,8 @@ def profile_contract_discrepancies(
     The pinned contract is authoritative. A profile may declare less
     than the contract requires (a module can pass a required flag the
     profile does not model), but it may never declare a binary,
-    subcommand or flag the contract does not carry - that would let an
-    adapter advertise a capability nothing verified.
+    subcommand, flag or forwarded secret the contract does not carry -
+    that would let an adapter advertise a capability nothing verified.
 
     Args:
         profile: The declaration under test.
@@ -672,6 +672,18 @@ def profile_contract_discrepancies(
     for sub in profile.invocation.subcommands:
         if sub not in required_subcommands:
             discrepancies.append(f"profile declares subcommand {sub!r} that contract {spec.adapter!r} does not require")
+    # ``env_passthrough`` is the credential surface a profile forwards into
+    # the isolated spawn environment; the contract's ``secret_env`` allow-list
+    # is the pinned surface. A profile forwarding a secret the contract does
+    # not pin declares more than was verified, so the credential surface is
+    # policed the same way the invocation surface is - otherwise the two can
+    # drift silently.
+    pinned_secrets = set(spec.auth_secret_envs)
+    for env_var in profile.invocation.env_passthrough:
+        if env_var not in pinned_secrets:
+            discrepancies.append(
+                f"profile forwards env {env_var!r} that contract {spec.adapter!r} does not pin in secret_env"
+            )
     return tuple(sorted(discrepancies))
 
 
@@ -805,6 +817,12 @@ class ProfileAdapter(CLIAdapter):
         binary = profile.invocation.binary
         with log_path.open("w") as log_file:
             try:
+                # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                # wrapped_cmd is an argv list built by build_worker_cmd from the
+                # profile's fixed invocation surface (no shell=True, no string
+                # interpolation into a shell). The prompt is a single argv
+                # element and never reaches a shell. Identical to every
+                # hand-written adapter's spawn (see aider.py, amp.py, ...).
                 proc = subprocess.Popen(
                     wrapped_cmd,
                     cwd=workdir,
@@ -1064,9 +1082,11 @@ def profile_built_adapter_classes() -> dict[str, type[ProfileAdapter]]:
     Returns:
         A copy of the registry-name to generated-class mapping, sorted by
         name. A copy so a caller mutating the result cannot disturb the
-        classes the registry already handed out.
+        classes the registry already handed out. The sort is applied here
+        rather than relying on the construction order, so the ordering
+        holds even if the source mapping is later reordered.
     """
-    return dict(_PROFILE_ADAPTER_CLASSES)
+    return dict(sorted(_PROFILE_ADAPTER_CLASSES.items()))
 
 
 def profile_binary_for(name: str) -> str | None:

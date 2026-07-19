@@ -112,7 +112,7 @@ was relaxed to admit profile-built adapters.
 
 The profile test suite additionally asserts that every shipped profile
 agrees with its `STRATEGY_MATRIX` row and that no profile claims vision
-the multimodal capability table does not grant, so the declaration and
+that the multimodal capability table does not grant, so the declaration and
 the authoritative matrices cannot drift apart.
 
 ## Capability-aware selection

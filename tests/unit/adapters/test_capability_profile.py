@@ -545,3 +545,25 @@ class TestProfileContractVerification:
         spec = ContractSpec.load("pydantic_ai")
         wrong = _minimal_profile(name="pydantic_ai", invocation=InvocationSpec(binary="not-clai", model_flag="-m"))
         assert any("binary" in reason for reason in profile_contract_discrepancies(wrong, spec))
+
+    def test_undeclared_env_passthrough_is_reported(self) -> None:
+        """A forwarded secret the contract does not pin is a discrepancy.
+
+        ``env_passthrough`` is the credential surface a profile forwards
+        into the isolated environment; the contract's ``secret_env``
+        allow-list is the pinned surface. A profile that forwards a secret
+        the contract does not carry declares more than was verified, so the
+        cross-check must report it the same way it reports an undeclared
+        flag, rather than letting the credential surface drift silently.
+        """
+        spec = ContractSpec.load("pydantic_ai")
+        overreaching = _minimal_profile(
+            name="pydantic_ai",
+            invocation=InvocationSpec(
+                binary="clai",
+                model_flag="-m",
+                env_passthrough=("TOTALLY_INVENTED_SECRET",),
+            ),
+        )
+        discrepancies = profile_contract_discrepancies(overreaching, spec)
+        assert any("TOTALLY_INVENTED_SECRET" in reason for reason in discrepancies), discrepancies
