@@ -1,0 +1,23 @@
+# Contract for the Kimi CLI (adapter: kimi).
+#
+# Always-passed surface from src/bernstein/adapters/kimi.py:
+# ``kimi --yolo -c <prompt>``.
+# ``--yolo`` auto-approves tool calls so the session runs unattended;
+# ``-c`` carries the initial prompt.
+adapter: kimi
+binary: kimi
+install:
+  method: uv
+  spec: "kimi-cli"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "MOONSHOT_API_KEY"
+required_flags:
+  - "--yolo"
+  - "-c"
+required_subcommands: []
+help_command: ["kimi", "--help"]
+expected_models:
+  command: []
+  required_present: []
