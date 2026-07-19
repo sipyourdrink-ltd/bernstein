@@ -29,6 +29,7 @@ from bernstein.core.trigger_sources.receipt import (
     TRIGGER_OUTCOME_ADMITTED,
     TRIGGER_OUTCOME_REFUSED,
     RefusalBudget,
+    StatusProof,
     TriggerReceipt,
     admit_trigger,
     compute_payload_digest,
@@ -66,6 +67,23 @@ def _admit(bridge: dict[str, object], *, trigger_id: str = "n8n-exec-1", body: b
         authenticated=kw.pop("authenticated", True),
         refusal_reason=kw.pop("refusal_reason", ""),
     )
+
+
+def _archive_chain(bridge: dict[str, object]) -> None:
+    """Roll every live audit segment into the compressed ``archive/`` tree.
+
+    Models routine retention: after the window the day's ``<date>.jsonl`` is
+    gzip-compressed to ``archive/<date>.jsonl.gz`` and the live file removed.
+    A negative retention window forces today's segment across the boundary so
+    the test does not have to wait for the wall clock.
+    """
+    from bernstein.core.security.audit import AuditLog, RetentionPolicy
+
+    audit_dir = bridge["audit_dir"]
+    log = AuditLog(audit_dir=audit_dir, key=bridge["hmac_key"])
+    result = log.archive(RetentionPolicy(retention_days=-1))
+    assert result.archived, "expected the live segment to be archived"
+    assert not list(audit_dir.glob("*.jsonl")), "live segment should be gone after archival"
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +250,28 @@ def test_receipt_binds_the_projected_graph(bridge: dict[str, object]) -> None:
     assert admission.receipt.graph_digest == admission.graph.graph_digest
 
 
+def test_admitted_receipt_still_verifies_after_the_segment_is_archived(bridge: dict[str, object]) -> None:
+    """Re-verification long after admission survives the retention boundary.
+
+    The anchoring row moves from the live ``<date>.jsonl`` into a compressed
+    ``archive/<date>.jsonl.gz`` segment during routine retention. Offline
+    verification must still find it; reading only the live segment reports an
+    honest receipt as unanchored, which is a false tamper verdict on exactly the
+    long-after-the-fact check the receipt exists for.
+    """
+    receipt = _admit(bridge).receipt
+    _archive_chain(bridge)
+
+    result = verify_receipt_document(
+        receipt.to_dict(),
+        audit_dir=bridge["audit_dir"],
+        hmac_key=bridge["hmac_key"],
+    )
+    assert result.ok, result.reason
+    assert result.kind == "trigger"
+    assert result.outcome == TRIGGER_OUTCOME_ADMITTED
+
+
 # ---------------------------------------------------------------------------
 # Outbound: chain-anchored status proofs
 # ---------------------------------------------------------------------------
@@ -276,6 +316,87 @@ def test_status_proof_verifies_against_the_chain_anchor(bridge: dict[str, object
     assert result.ok, result.reason
     assert result.kind == "status"
     assert result.chain_status == "failed"
+
+
+def test_status_proof_still_verifies_after_the_segment_is_archived(bridge: dict[str, object]) -> None:
+    """A delivered callback re-verifies after its anchor rolls into the archive.
+
+    Same retention boundary as the trigger path: the ``status.proof.emitted``
+    row is compressed into ``archive/<date>.jsonl.gz`` and the verifier must
+    still resolve it rather than fall through to an unanchored (false tamper)
+    verdict.
+    """
+    proof = _emit(bridge)
+    envelope = wrap_status_payload(_EVENT_PAYLOAD, proof)
+    _archive_chain(bridge)
+
+    result = verify_receipt_document(
+        envelope,
+        audit_dir=bridge["audit_dir"],
+        hmac_key=bridge["hmac_key"],
+    )
+    assert result.ok, result.reason
+    assert result.kind == "status"
+    assert result.chain_status == "failed"
+
+
+def test_reordered_carried_payload_still_verifies(bridge: dict[str, object]) -> None:
+    """A callback whose carried payload keys are reordered in transit still verifies.
+
+    The producing-event digest canonicalises the payload with sorted keys, so a
+    proxy that reserialises the JSON in a different key order is not mistaken for
+    a tampered body. Only a changed *value* breaks the digest. Drop the sorted
+    canonicalisation and this honest reserialisation reads as tampering.
+    """
+    proof = _emit(bridge)
+    reordered = dict(reversed(list(_EVENT_PAYLOAD.items())))
+    assert list(reordered) != list(_EVENT_PAYLOAD), "reordering must actually change key order"
+    envelope = wrap_status_payload(reordered, proof)
+
+    result = verify_receipt_document(
+        envelope,
+        audit_dir=bridge["audit_dir"],
+        hmac_key=bridge["hmac_key"],
+    )
+    assert result.ok, result.reason
+    assert result.chain_status == "failed"
+
+
+def test_chain_recorded_status_mismatch_is_rejected(bridge: dict[str, object]) -> None:
+    """A validly signed proof whose status disagrees with the chain row fails.
+
+    The signature covers the status, and the anchor's ``proof_digest`` matches
+    the binding, so neither the signature check nor the digest check catches a
+    chain row whose ``status`` field was altered on its own. The dedicated
+    ``status != chain`` gate is what rejects it and surfaces the recorded value.
+    The anchor hash is outside the signed binding, so re-pointing the proof at
+    the altered row keeps the signature valid.
+    """
+    from dataclasses import replace
+
+    from bernstein.core.security.audit_chain import AuditChainStore, record_status_proof
+
+    proof = _emit(bridge, status="failed")
+    chain = AuditChainStore(bridge["audit_dir"], key=bridge["hmac_key"])
+    altered = record_status_proof(
+        chain=chain,
+        event_id=proof.event_id,
+        run_id=proof.run_id,
+        status="succeeded",
+        producing_event_digest=proof.producing_event_digest,
+        proof_digest=proof.binding_digest(),
+    )
+    swapped: StatusProof = replace(proof, chain_entry_hash=altered.hmac)
+    envelope = wrap_status_payload(_EVENT_PAYLOAD, swapped)
+
+    result = verify_receipt_document(
+        envelope,
+        audit_dir=bridge["audit_dir"],
+        hmac_key=bridge["hmac_key"],
+    )
+    assert not result.ok
+    assert "status" in result.reason
+    assert result.chain_status == "succeeded"
 
 
 def test_status_flipped_in_transit_fails_and_reports_the_chain_status(bridge: dict[str, object]) -> None:

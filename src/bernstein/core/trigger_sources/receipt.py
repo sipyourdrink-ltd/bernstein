@@ -974,9 +974,19 @@ def _verify_signature(canonical: bytes, signature: str, public_key_pem: str) -> 
 
 
 def _chain_rows(audit_dir: Path, hmac_key: bytes, event_type: str) -> list[dict[str, Any]]:
-    """Return ``(details, hmac)`` pairs for every chain event of ``event_type``."""
+    """Return ``(details, hmac)`` pairs for every chain event of ``event_type``.
+
+    ``include_archived=True`` so re-verification reads the compressed
+    ``archive/*.jsonl.gz`` segments as well as the live ones. Retention routinely
+    moves an anchoring row across that boundary; a live-only read would report an
+    honest, archived receipt as unanchored, which is a false tamper verdict on
+    exactly the long-after-the-fact check the receipt exists to answer.
+    """
     chain = _chain_store(audit_dir, hmac_key)
-    return [{"details": event.details, "hmac": event.hmac} for event in chain.query(event_type=event_type)]
+    return [
+        {"details": event.details, "hmac": event.hmac}
+        for event in chain.query(event_type=event_type, include_archived=True)
+    ]
 
 
 def verify_trigger_receipt(
