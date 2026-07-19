@@ -44,13 +44,79 @@ subsequent journal step is attributable to one approved capsule.
 
 The drift monitor maps each observed journal event to an action class through a
 static, reviewed table (no inference, no model) and compares it against the
-capsule. The verdict is a pure function of `(journal, capsule)`:
+capsule. A recognised tool name resolves through the reviewed table first; a
+worker-stamped `action_class` is honoured only for a tool the table does not
+know, so a worker cannot relabel its own actions to fit the capsule.
 
-- every observed action class outside the capsule's allow-list, or carrying
-  egress the capsule did not permit, produces one divergence at its step index;
-- the `verdict_hash` is a digest over the capsule hash, the policy mode, and the
-  divergence list, so two verifiers on different machines recompute the
-  byte-identical verdict offline.
+The verdict is a pure function of `(journal, capsule, policy)`. Every constraint
+the capsule declares is enforced, and each violation produces one divergence at
+its step index:
+
+| Divergence reason | Raised when |
+|---|---|
+| `action_class_not_permitted` | The action class is outside `allowed_action_classes`. |
+| `egress_not_permitted` | An outbound-communication class ran without `external_comm` in `egress_classes`. |
+| `adapter_not_permitted` | The event's adapter is outside `permitted_adapters`. |
+| `adapter_unrecorded` | The event named no adapter while an allowlist is declared. |
+| `file_scope_violation` | A mutating file action touched a path outside `file_scope_globs`. |
+| `path_unrecorded` | A mutating file action named no path while a scope is declared. |
+| `unclassified_event` | The event maps to no action class and the policy sets `allow_unclassified: false`. |
+
+Scope globs are matched segment-wise: `*` and `?` stop at `/` and `**` spans
+directories, so `src/*.py` does not silently admit `src/nested/deep.py`. Paths
+are lexically normalised before matching, so an in-scope prefix cannot be used as
+a free pass (`src/pricing/../../etc/passwd` does not match `src/pricing/**`), and
+a path that still escapes upward after normalisation is never in scope. The check
+fails closed: when a scope is declared, a mutating action that records no
+recognised path is a `path_unrecorded` divergence rather than a silent pass. An
+empty `file_scope_globs` declares no file scope and constrains nothing. Reads are
+not scope-checked: the capsule scopes the worker's mutations.
+
+Both the file-scope and adapter checks fail closed on absent input: with a
+constraint declared, an action that records no path or no adapter is a
+divergence rather than a silent pass. An allowlist that applies only when the
+worker volunteers the field being checked is not an allowlist, and the journal is
+written by the same worker whose conformance is being judged.
+
+Absolute paths never satisfy a workspace-relative glob. Rewriting `/tmp/evil`
+into `tmp/evil` would reinterpret the input into the shape that passes, so the
+check rejects it instead.
+
+Tool names are normalised (whitespace stripped, case folded) before the reviewed
+map is consulted, so `"Bash "` cannot dodge the map and pick up a worker-stamped
+label instead. The stamped label remains the fallback for tool names the map does
+not know at all, so a worker that invents an unmapped name can still self-declare
+a class the capsule allows; `allow_unclassified: false` surfaces those calls.
+Extend the reviewed map as tools are adopted.
+
+Only events that claim to be actions (they carry a `tool` or `action_class`, or
+their type is in the action-bearing vocabulary) can become `unclassified_event`.
+Structural journal rows -- ticks, snapshots, retry decisions, worktree reaps, the
+capsule-bound anchor -- are never drift, whatever the policy, so
+`allow_unclassified: false` stays usable on a real run.
+
+The `verdict_hash` is a digest over the capsule hash, the policy mode, and the
+divergence list, so two verifiers on different machines recompute the
+byte-identical verdict offline.
+
+Expiry is deliberately **not** part of the verdict. A journal row's `ts` sits
+outside the hashed payload (a faithful replay differs only in timing), so feeding
+it into `verdict_hash` would sign a value anyone can edit in place without
+breaking the chain, and would make the same run verdict differently on replay.
+
+Expiry is instead checked against audit-chain entry timestamps, which are covered
+by each entry's HMAC, and only against **capsule-lifecycle** entries -- the
+approval, the journal seal, and drift records. The narrowness is deliberate in
+both directions. Approval entries alone enforce nothing, since an approval is by
+construction at or before the expiry it declares; the seal, written when the run
+ends, is the entry that evidences a capsule still being acted on. But widening
+the scan to every entry carrying the same `task_id` matches 27 unrelated event
+types, and on an append-only chain one ordinary later entry would then condemn an
+honest run permanently, with no repair path.
+
+The residual limit: expiry is enforced at the granularity of chain-recorded
+lifecycle events, not per journal step. Per-step expiry would need a chained step
+clock inside the hashed payload, which is a journal-format change.
 
 Deterministic replay of a run re-derives the same drift decisions at the same
 step indices. No LLM call exists on the drift-decision path: a static import
@@ -64,16 +130,95 @@ guard plus a test-suite runtime profiler assertion keep it that way.
    `intent.capsule` entry recorded in the audit chain (a tampered capsule
    diverges here).
 2. Verify the audit chain itself.
-3. Walk the run journal's Merkle chain (a reordered or tampered journal fails
+3. Resolve which run the capsule governs from the **signed** `intent.capsule`
+   entry. The on-disk capsule record carries a `run_id` too, but it is unsigned,
+   so it is only cross-checked: a record naming a different run than the chain
+   fails as tampering rather than redirecting the verifier.
+4. Walk that run journal's Merkle chain (a reordered or tampered journal fails
    here, with no live process required).
-4. Recompute the conformance verdict from the journal and the capsule.
+5. Require exactly one `intent.capsule_bound` anchor in the journal matching this
+   `task_id` and capsule hash, so an unrelated clean journal cannot be presented
+   as this capsule's run.
+6. Read any `intent.journal_seal` entry for this run and capsule and compare the
+   journal's head hash and event count against it, establishing the run state.
+7. Recompute the conformance verdict from the journal and the capsule.
 
-Exit codes: `0` conformant, `1` no capsule, `2` drift or tamper.
+Exit codes: `0` sealed and conformant, `1` no capsule, `2` drift or tamper, `3`
+cannot verify (no audit key), `4` unsealed (no drift found, completeness not
+attested).
+
+## Run states and what each one attests
+
+A capsule-governed run is in one of three states, and `verify` reports them
+distinctly. Collapsing them is a security bug, not a UX one: if "drifted" and
+"not finished" look the same, a worker suppresses its own drift by never
+finishing.
+
+| State | What it means | `verify` reports | Exit |
+|---|---|---|---|
+| **sealed** | The run ended and committed its journal's end to the chain. | Full attestation: no truncation, no rewrite, verdict covers the whole run. | `0` |
+| **unsealed** | The run has not sealed yet -- ordinarily, still in progress. | Conformance over the steps recorded so far. Drift is reported. A clean result is explicitly *not* attested for completeness. | `4` |
+| **mismatch** | A seal exists but disagrees with the journal, or two seals disagree. | Tampering. | `2` |
+
+Drift is reported in every state. Deleting journal rows can only *hide* drift,
+never manufacture it, so a divergence found in an unsealed journal is real
+evidence and is never withheld pending a seal. What an unsealed run cannot claim
+is the absence of drift -- only that none appears in the rows that exist.
+
+Drift escalation works the same way: a receipt can be signed for an in-flight
+run, and records the `seal_state` it was cut under, so blocking-mode drift is
+actionable in the window it exists for rather than only after the run ends.
+
+## Sealing a run
+
+The orchestrator seals automatically at run completion, once the journal is
+final: `_seal_intent_capsules` walks the journal's own `intent.capsule_bound`
+anchors and seals each capsule the run declared. Failures are logged, never
+raised -- sealing is an attestation aid and must not fail a run that already
+finished.
+
+To seal explicitly (a run finished outside the orchestrator):
+
+```python
+seal_capsules_bound_to_run(chain=chain, sdd_dir=sdd, run_id=run_id)
+```
+
+Sealing records the journal's head hash and event count. It is not bookkeeping.
+The journal's Merkle chain recomputes from genesis using positional indices, so
+**every prefix of a valid journal is itself a valid journal**: a worker that
+drifted can delete the trailing rows that convict it and present a shorter,
+internally consistent history. Committing the end is what makes that detectable,
+and the head hash specifically is what catches a same-length rewrite -- an
+attacker who re-chains the journal from genesis with the convicting row swapped
+for a benign one produces a journal that self-verifies and matches the sealed
+count.
+
+**Sealing is idempotent.** Sealing the same journal twice returns the existing
+entry and writes nothing. A retry is not an attack, and the process that writes
+an attestation can die between the write and the acknowledgement, so
+at-least-once has to be safe -- especially on an append-only chain, where a
+duplicate could never be withdrawn. Re-sealing a journal that has *changed*
+since it was sealed is refused.
+
+`verify` is read-only. It never writes to the chain and never creates audit key
+material: a freshly minted key cannot authenticate an existing chain, so
+generating one would report a missing-key setup error as tampering. On a machine
+without the key, point `BERNSTEIN_AUDIT_KEY_PATH` at the key the chain was
+written with.
 
 ## Drift escalation
 
 On divergence the monitor emits a signed escalation receipt reusing the stall
-escalation shape. The receipt binds the trailing journal window by Merkle hash,
+escalation shape. Both the capsule and the verdict handed to it are treated as
+claims. Recomputing the verdict alone would not be enough, because a verdict only
+means anything relative to a capsule: a caller who supplies a fabricated capsule
+permitting nothing can hand in a self-consistent verdict and have a conformant
+run attested as drift. The capsule is therefore resolved through the same
+authority `verify` uses -- it must match the `intent.capsule` chain entry, the
+run must be the signed one, and the journal must carry the matching capsule-bound
+anchor. Only then is the verdict recomputed and that recomputed verdict signed.
+
+The receipt binds the trailing journal window by Merkle hash,
 is signed with the install identity, and is anchored in the escalation lineage
 spine; its `extra_binding` names the capsule hash, the verdict hash, and the
 divergent events. Because it is an ordinary escalation receipt on disk it passes

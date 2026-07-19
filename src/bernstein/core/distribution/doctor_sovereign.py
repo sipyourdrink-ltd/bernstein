@@ -66,8 +66,19 @@ class SovereignReport:
 
 
 def check_sovereign_profile_active() -> Check:
-    """Verify ``--profile sovereign`` marked this process tree."""
-    if os.environ.get(ENV_SOVEREIGN_MODE, "").strip().lower() in {"1", "true", SOVEREIGN_PROFILE}:
+    """Verify the sovereign marker *pair* consistently marked this process tree."""
+    from bernstein.core.security.network_policy import SovereignMarkerError, is_sovereign_profile
+
+    try:
+        active = is_sovereign_profile()
+    except SovereignMarkerError as exc:
+        return Check(
+            name="sovereign profile active",
+            status=CheckStatus.FAIL,
+            detail=f"markers are inconsistent: {exc}",
+            fix="rerun with --profile sovereign so both profile markers are installed together",
+        )
+    if active:
         return Check(
             name="sovereign profile active",
             status=CheckStatus.PASS,
@@ -170,7 +181,34 @@ def check_endpoints_certified(policy: EffectivePolicy, workdir: Path) -> Check:
 
 
 def check_posture_attested(policy: EffectivePolicy, evaluation: DriftEvaluation) -> Check:
-    """Verify the posture is attested and the live posture has not drifted."""
+    """Verify the posture is attested and the live posture still holds.
+
+    An attestation that exists but is *not trusted* (incomplete contract, bad
+    signature, foreign signer) is a FAIL, not the never-activated WARN. Both
+    leave ``attested_hash`` empty, so keying off that alone would report a
+    tampered record as "you have not activated yet" - a clean bill of health on
+    the one surface an auditor reads, at the moment the spawn gate is refusing
+    every spawn.
+
+    A matching attested hash is necessary but not sufficient: the spawn gate
+    refuses on any :attr:`DriftEvaluation.should_refuse`, which is drift *or* a
+    live compliance violation. The attested-equals-enforced egress invariant and
+    a certification receipt revoked without a config change both leave the
+    posture hash unchanged, so keying off drift alone reported PASS while the
+    gate refused every spawn. The row now reports the same live violations the
+    gate acts on, so the verifier surface cannot claim the guarantee holds when
+    the enforcement surface denies it.
+    """
+    if evaluation.attestation_rejected:
+        return Check(
+            name="posture attested (no drift)",
+            status=CheckStatus.FAIL,
+            detail=f"attestation present but not trusted: {evaluation.attestation_rejected}",
+            fix=(
+                "investigate the attestation record; re-activate with "
+                "'bernstein run --profile sovereign' only after establishing why it was replaced"
+            ),
+        )
     if not evaluation.attested_hash:
         return Check(
             name="posture attested (no drift)",
@@ -185,6 +223,20 @@ def check_posture_attested(policy: EffectivePolicy, evaluation: DriftEvaluation)
             status=CheckStatus.FAIL,
             detail=f"drift from attested {evaluation.attested_hash}: diverging keys [{diverging}]",
             fix="restore the intended posture, then re-activate --profile sovereign",
+        )
+    if evaluation.violations:
+        joined = "; ".join(evaluation.violations)
+        return Check(
+            name="posture attested (no drift)",
+            status=CheckStatus.FAIL,
+            detail=(
+                f"attested {evaluation.attested_hash} still matches the config hash, but the live "
+                f"posture violates the sovereign profile: {joined}"
+            ),
+            fix=(
+                "realign the enforced posture with the attestation (for example restore the attested "
+                "egress policy or the revoked certification receipt), then re-activate --profile sovereign"
+            ),
         )
     return Check(
         name="posture attested (no drift)",
@@ -201,11 +253,45 @@ def run_sovereign_checks(workdir: Path | None = None) -> SovereignReport:
     """
     from pathlib import Path
 
+    from bernstein.core.security.deployment_profile import SovereignConfigError
+    from bernstein.core.security.network_policy import policy_from_env
+
     cwd = workdir or Path.cwd()
-    snapshot = load_config_snapshot(cwd)
+    config_rows: list[Check] = []
+    config_violations: tuple[str, ...] = ()
+    try:
+        snapshot: dict[str, object] | None = load_config_snapshot(cwd, require=True)
+    except SovereignConfigError as exc:
+        # Report the fail-closed condition instead of silently reporting on the
+        # permissive default posture an unreadable config would project to.
+        snapshot = None
+        config_violations = (str(exc),)
+        config_rows.append(
+            Check(
+                name="source configuration readable",
+                status=CheckStatus.FAIL,
+                detail=str(exc),
+                fix="restore a readable bernstein.yaml in the project root",
+            )
+        )
     policy = resolve_effective_policy(SOVEREIGN_PROFILE, snapshot)
-    evaluation = evaluate_posture_drift(workdir=cwd, config_snapshot=snapshot)
+    # Carry the config failure into the drift evaluation too, or the attestation
+    # row could report the empty-config projection as a clean match.
+    #
+    # Pass the runtime policy explicitly, exactly as the spawn gate does, rather
+    # than letting the evaluator derive it. The evaluator only derives one under
+    # the airgap marker, so a process whose markers were stripped would fall to
+    # ``_live_runtime_policy() is None`` and skip the attested-equals-enforced
+    # egress invariant while ``policy_from_env`` sits at allow-all. The verifier
+    # must report the same mismatch the gate refuses on, not a clean match.
+    evaluation = evaluate_posture_drift(
+        workdir=cwd,
+        config_snapshot=snapshot,
+        runtime_policy=policy_from_env(),
+        extra_violations=config_violations,
+    )
     rows: list[Check] = [
+        *config_rows,
         check_sovereign_profile_active(),
         check_network_policy_deny_all(),
         check_runtime_socket_guard_active(),

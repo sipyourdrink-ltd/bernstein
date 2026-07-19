@@ -298,6 +298,19 @@ USE_CASES: dict[str, AdapterUseCase] = {
         headline="Plandex CLI - context-aware planning agent",
         binary="plandex",
     ),
+    "pydantic_ai": AdapterUseCase(
+        headline="Pydantic AI clai one-shot CLI",
+        binary="clai",
+        details=(
+            "Runs the Pydantic AI CLI in one-shot mode (`clai -m <model> "
+            "--no-stream <prompt>`). Models are given as `<provider>:<model>`, "
+            "so OpenAI-compatible local endpoints work alongside hosted "
+            "providers.\n\n"
+            "Built from a declarative capability profile rather than a "
+            "hand-written module - see docs/adapters/capability_profiles.md."
+        ),
+        docs_path="docs/adapters/capability_profiles.md",
+    ),
     "q_dev": AdapterUseCase(
         headline="AWS Q Developer CLI (binary: q)",
         binary="q",

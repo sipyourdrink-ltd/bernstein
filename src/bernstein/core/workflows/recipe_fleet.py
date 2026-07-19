@@ -162,42 +162,81 @@ def apply_fleet(
     is applied and a ``recipe.fleet_apply`` receipt bound to *plan_hash* is
     written.
 
+    One registry write lock is held across the base-state recheck, every
+    registration, and the aggregate receipt, so no concurrent writer can
+    interleave between the recheck and the receipt. Inside the lock the work
+    runs in two phases: every registration is *prepared* first
+    (canonicalisation, lineage seal, blob write - the fallible parts), and
+    only then are the receipts *committed*.
+
+    What that guarantees, precisely:
+
+    - **Preparation is all-or-nothing.** Because the live ``name -> hash``
+      mapping is projected from receipts alone, a failure anywhere in phase 1
+      leaves no name registered and no aggregate receipt, only inert
+      content-addressed blobs that nothing points at.
+    - **The commit phase is ordered, not transactional.** Receipts are
+      appended one name at a time and the aggregate receipt closes the apply.
+      An append that fails partway (audit-chain IO error, disk full, killed
+      process) leaves the already-appended prefix genuinely registered with no
+      aggregate receipt. That state is detectable rather than silent: a
+      re-run of :func:`plan_fleet` reports the applied names as unchanged and
+      the rest as pending, and the absent ``recipe.fleet_apply`` receipt shows
+      the apply never completed. Re-running ``apply`` against a freshly
+      reviewed plan converges.
+
+    Rolling the commit phase back is not possible on an append-only chain, so
+    this contract states the narrower guarantee the code actually delivers.
+
     Returns the tuple of applied names.
 
     Raises:
         FleetDriftError: When the live registry state differs from the plan.
     """
-    current = plan_fleet(registry, manifest)
-    if current.plan_hash != plan_hash:
-        divergent = _first_divergence(current, plan_hash, registry, manifest)
-        raise FleetDriftError(
-            f"registry state drifted from approved plan {plan_hash[:16]}: {divergent}; "
-            f"current plan hash is {current.plan_hash[:16]}",
-        )
+    with registry.write_lock():
+        current = plan_fleet(registry, manifest)
+        if current.plan_hash != plan_hash:
+            divergent = _first_divergence(current, plan_hash, registry, manifest)
+            raise FleetDriftError(
+                f"registry state drifted from approved plan {plan_hash[:16]}: {divergent}; "
+                f"current plan hash is {current.plan_hash[:16]}",
+            )
 
-    applied: list[str] = []
-    entries = {e.spec.name: e for e in manifest}
-    for name in (*current.to_register, *current.to_supersede):
-        entry = entries[name]
-        registry.register(
-            spec=entry.spec,
-            pins=entry.pins,
-            collision_policy=entry.collision_policy,
-            concurrency_cap=entry.concurrency_cap,
-            sandbox_pool=entry.sandbox_pool,
+        entries = {e.spec.name: e for e in manifest}
+        names = (*current.to_register, *current.to_supersede)
+
+        # Phase 1: stage every registration. Nothing reaches the chain yet,
+        # so an exception here aborts with the registry state untouched.
+        staged = [
+            (
+                name,
+                registry.prepare_registration(
+                    spec=entries[name].spec,
+                    pins=entries[name].pins,
+                    collision_policy=entries[name].collision_policy,
+                    concurrency_cap=entries[name].concurrency_cap,
+                    sandbox_pool=entries[name].sandbox_pool,
+                ),
+            )
+            for name in names
+        ]
+
+        # Phase 2: commit. Appending receipts is the only step that changes
+        # the projected registry state, and the aggregate receipt closes it.
+        applied: list[str] = []
+        for name, prepared in staged:
+            registry.commit_registration(prepared, actor=actor)
+            applied.append(name)
+
+        from bernstein.core.security.audit_chain import record_recipe_fleet_apply
+
+        record_recipe_fleet_apply(
+            chain=registry._get_chain(),
+            plan_hash=plan_hash,
+            applied=tuple(applied),
             actor=actor,
         )
-        applied.append(name)
-
-    from bernstein.core.security.audit_chain import record_recipe_fleet_apply
-
-    record_recipe_fleet_apply(
-        chain=registry._get_chain(),
-        plan_hash=plan_hash,
-        applied=tuple(applied),
-        actor=actor,
-    )
-    return tuple(applied)
+        return tuple(applied)
 
 
 def _first_divergence(

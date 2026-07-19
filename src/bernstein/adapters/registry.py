@@ -17,6 +17,7 @@ from bernstein.adapters.amp import AmpAdapter
 from bernstein.adapters.auggie import AuggieAdapter
 from bernstein.adapters.autohand import AutohandAdapter
 from bernstein.adapters.base import CLIAdapter
+from bernstein.adapters.capability_profile import profile_built_adapter_classes
 from bernstein.adapters.charm import CharmAdapter
 from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.adapters.cline import ClineAdapter
@@ -119,6 +120,17 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "ralphex": RalphexAdapter,
     "rovo": RovoAdapter,
 }
+
+# Agents tracked as declarative capability profiles rather than as
+# hand-written modules (see
+# :mod:`bernstein.adapters.capability_profile`). The factory returns one
+# generated CLIAdapter subclass per profile, so a profile-built agent is
+# an ordinary registry citizen: it resolves through ``get_adapter``, is
+# enumerated by ``iter_adapter_specs``, and faces the same conformance
+# suite, strategy declaration and contract gate as a hand-written
+# adapter. Declaration-only profiles are not merged here - their
+# hand-written module keeps owning the spawn path.
+_ADAPTERS.update(profile_built_adapter_classes())
 
 _entrypoints_loaded = False
 

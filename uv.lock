@@ -538,7 +538,7 @@ requires-dist = [
     { name = "watchdog", specifier = ">=4.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["dev", "grpc", "k8s", "spiffe", "ml", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "teams", "eval", "gui", "otel", "observability"]
+provides-extras = ["dev", "grpc", "k8s", "spiffe", "ml", "browser", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "teams", "eval", "gui", "otel", "observability"]
 
 [package.metadata.requires-dev]
 dev = [
