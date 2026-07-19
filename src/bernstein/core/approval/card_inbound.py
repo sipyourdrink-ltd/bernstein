@@ -22,6 +22,7 @@ approval record are chain-linked.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.approval.card import ApprovalCardV2, build_card
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_CARD_TTL_SECONDS",
     "A2AInputRequiredRouter",
+    "ApprovalCardRequestMismatch",
     "ElicitationApprovalRouter",
     "card_for_a2a_input_required",
     "card_for_elicitation",
@@ -44,6 +46,41 @@ __all__ = [
 
 #: Default lifetime for a card issued from a server-initiated prompt.
 DEFAULT_CARD_TTL_SECONDS = 600.0
+
+
+def _require_origin(*, worktree_id: str, thread_id: str) -> None:
+    """Refuse to build a routing surface that would issue unpinned cards.
+
+    The gate pins a card to the worktree and conversation it was issued into,
+    but that guard can only fire when the issued card carries an origin: an
+    empty ``worktree_id`` or ``thread_id`` makes the corresponding comparison
+    vacuous, so a card issued without one is a bearer token that whoever
+    captured its ``card_hash`` can settle from any worktree or conversation.
+
+    These routers are the only real call paths onto the gate, so the pin has to
+    be mandatory here rather than an opt-in keyword that defaults to off. A
+    caller that cannot state the worktree and conversation an approval belongs
+    to cannot route it.
+    """
+    missing = [name for name, value in (("worktree_id", worktree_id), ("thread_id", thread_id)) if not value]
+    if missing:
+        joined = " and ".join(missing)
+        msg = (
+            f"approval card router requires a non-empty {joined}: an unpinned card is a bearer "
+            f"token that any worktree or conversation could settle, so the origin pin must be "
+            f"supplied at construction rather than defaulted off"
+        )
+        raise ValueError(msg)
+
+
+class ApprovalCardRequestMismatch(RuntimeError):
+    """Raised when ``(request_id, card_hash)`` do not name the same routed prompt.
+
+    The gate checks the hash and the handler checks the request id, but neither
+    can see the other's subject. Without a binding the router would happily
+    settle card A while answering elicitation B, so an operator who approved one
+    prompt would have answered a different one.
+    """
 
 
 def card_for_elicitation(
@@ -120,11 +157,18 @@ class ElicitationApprovalRouter:
         thread_id: str = "",
         worktree_id: str = "",
     ) -> None:
+        _require_origin(worktree_id=worktree_id, thread_id=thread_id)
         self._handler = handler
         self._gate = gate
         self._bridge = bridge
         self._thread_id = thread_id
         self._worktree_id = worktree_id
+        #: ``request_id -> card_hash`` for every prompt this router issued a
+        #: card for. The binding is what makes the two legs of a resolution
+        #: refer to the same prompt; it is consumed on settlement so a replayed
+        #: pair cannot re-enter the gate.
+        self._bound_cards: dict[str, str] = {}
+        self._bind_lock = threading.Lock()
 
     async def route(
         self,
@@ -148,6 +192,8 @@ class ElicitationApprovalRouter:
 
         card = card_for_elicitation(request, created_at=now, ttl_seconds=ttl_seconds)
         issued = self._gate.issue(card, worktree_id=self._worktree_id, thread_id=self._thread_id)
+        with self._bind_lock:
+            self._bound_cards[request.id] = issued.card_hash
         if self._bridge is not None:
             await self._bridge.push_approval(self._pending_payload(request, issued))
         return issued
@@ -175,19 +221,57 @@ class ElicitationApprovalRouter:
     ) -> tuple[IssuedCard, ElicitationRequest | None]:
         """Resolve a routed elicitation via the gate, then the handler.
 
-        The gate enforces the hash echo and chain-side expiry and records the
-        ``chat.approval_card.resolved`` event; the handler records the
-        elicitation response, which equals the operator decision. Both are
+        The gate enforces the hash echo, terminality and chain-side expiry and
+        records the ``chat.approval_card.resolved`` event; the handler records
+        the elicitation response, which equals the operator decision. Both are
         chain-linked through the shared ``card_hash``.
+
+        The two legs commit together. ``request_id`` is bound to the
+        ``card_hash`` this router issued for it, and every precondition either
+        leg can fail on is checked *before* the gate appends anything:
+
+        * the pair must match the recorded binding, so a decision on card A
+          cannot answer prompt B,
+        * the handler must still hold the prompt as pending, so the gate does
+          not settle a card whose handler leg would then silently no-op.
+
+        Only once both legs are known to be able to commit does the gate write.
+        The binding is consumed on success, so a replayed pair is refused here
+        rather than reaching the gate a second time.
+
+        Raises:
+            ApprovalCardRequestMismatch: When *request_id* and *card_hash* do
+                not name the same routed prompt, or the handler no longer holds
+                it pending.
         """
-        issued = self._gate.resolve(
-            card_hash=card_hash,
-            decision=decision,
-            approver=approver,
-            worktree_id=self._worktree_id,
-            now=now,
-        )
-        resolved = self._handler.resolve(request_id, decision)
+        with self._bind_lock:
+            bound = self._bound_cards.get(request_id)
+            if bound is None:
+                msg = f"request_id {request_id!r} has no approval card issued by this router; refusing to resolve"
+                raise ApprovalCardRequestMismatch(msg)
+            if bound != card_hash:
+                msg = (
+                    f"request_id {request_id!r} is bound to card {bound[:16]} "
+                    f"but the decision echoed card {card_hash[:16]}; refusing to resolve"
+                )
+                raise ApprovalCardRequestMismatch(msg)
+            if not any(pending.id == request_id for pending in self._handler.get_pending()):
+                msg = (
+                    f"elicitation {request_id!r} is no longer pending; refusing to settle its "
+                    f"approval card because the handler leg can no longer commit"
+                )
+                raise ApprovalCardRequestMismatch(msg)
+
+            issued = self._gate.resolve(
+                card_hash=card_hash,
+                decision=decision,
+                approver=approver,
+                worktree_id=self._worktree_id,
+                thread_id=self._thread_id,
+                now=now,
+            )
+            resolved = self._handler.resolve(request_id, decision)
+            self._bound_cards.pop(request_id, None)
         return issued, resolved
 
 
@@ -208,6 +292,7 @@ class A2AInputRequiredRouter:
         worktree_id: str = "",
         peer: str = "",
     ) -> None:
+        _require_origin(worktree_id=worktree_id, thread_id=thread_id)
         self._gate = gate
         self._bridge = bridge
         self._thread_id = thread_id
@@ -254,12 +339,17 @@ class A2AInputRequiredRouter:
         approver: str = "",
         now: float | None = None,
     ) -> IssuedCard:
-        """Resolve the A2A card via the gate (hash echo + chain-side expiry)."""
+        """Resolve the A2A card via the gate.
+
+        The router's own worktree and conversation are passed through so the
+        gate can enforce the origin pinning it recorded at issue time.
+        """
         return self._gate.resolve(
             card_hash=card_hash,
             decision=decision,
             approver=approver,
             worktree_id=self._worktree_id,
+            thread_id=self._thread_id,
             now=now,
         )
 
