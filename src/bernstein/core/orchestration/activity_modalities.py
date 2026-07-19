@@ -73,7 +73,7 @@ from bernstein.core.orchestration.research_report import (
     ResearchReportVerdict,
     verify_research_report,
 )
-from bernstein.core.replay.journal import load_events, verify_journal
+from bernstein.core.replay.journal import JournalPathError, load_events, run_journal_path, verify_journal
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -782,7 +782,18 @@ def verify_run_activities(
         An :class:`ActivityVerifyResult`. ``found`` is ``False`` when no journal
         or no activity entry exists.
     """
-    journal_path = sdd_dir / "runs" / run_id / "journal.jsonl"
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        # A run id that escapes the runs root names no run of ours; report it
+        # as absent rather than verifying a journal outside the tree.
+        return ActivityVerifyResult(
+            run_id=run_id,
+            found=False,
+            ok=False,
+            chain_ok=False,
+            reason=f"invalid run id: {exc}",
+        )
     if not journal_path.exists():
         return ActivityVerifyResult(
             run_id=run_id,

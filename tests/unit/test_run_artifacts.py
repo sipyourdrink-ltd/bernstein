@@ -357,3 +357,187 @@ class TestVerifyAll:
         results = verify_all_run_artifacts(tmp_path, hmac_key=_KEY)
         assert len(results) == 2
         assert all(r.ok for r in results)
+
+
+class TestTaskIdPathContainment:
+    """A task id reaches these readers from a request path, a CLI argument, or
+    a journal row, and every one of them turns it into a filesystem path."""
+
+    @pytest.mark.parametrize(
+        "task_id",
+        [
+            "../../../../etc/passwd",
+            "../outside",
+            "task/../../escape",
+            "/absolute/path",
+            "task\x00null",
+            "task\r\nid",
+        ],
+    )
+    def test_traversal_task_id_reads_as_empty_and_touches_nothing_outside(self, tmp_path: Path, task_id: str) -> None:
+        """Readers absorb an id that names no task; nothing outside is touched.
+
+        The readers are called with arbitrary CLI arguments, so an id they
+        cannot resolve reads as "no artifacts" rather than raising. The
+        security property is unchanged and asserted here directly: no path
+        outside the runs directory is read, created, or removed.
+        """
+        sdd = _sdd(tmp_path)
+        canary = tmp_path / "outside.jsonl"
+        canary.write_text('{"event":"artifact_posted"}\n', encoding="utf-8")
+        before = sorted(p.name for p in tmp_path.iterdir())
+
+        assert read_artifact_rows(sdd, task_id) == []
+        assert verify_run_artifacts(sdd, task_id, hmac_key=_KEY) == []
+        assert latest_versions(sdd, task_id) == {}
+
+        assert canary.read_text(encoding="utf-8") == '{"event":"artifact_posted"}\n'
+        assert not (tmp_path / "etc").exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+    @pytest.mark.parametrize(
+        "task_id",
+        [
+            "../../../../etc/passwd",
+            "../outside",
+            "task/../../escape",
+            "/absolute/path",
+            "task\x00null",
+            "task\r\nid",
+            "task-1\n",
+        ],
+    )
+    def test_the_path_helper_refuses_a_traversal_id_with_a_typed_error(self, tmp_path: Path, task_id: str) -> None:
+        """The typed refusal still exists at the boundary; the public readers
+        choose to absorb it, and the writer lets it propagate."""
+        from bernstein.core.evidence.run_artifacts import _artifact_journal_path
+
+        with pytest.raises(ArtifactValidationError):
+            _artifact_journal_path(_sdd(tmp_path), task_id)
+
+    @pytest.mark.parametrize("task_id", ["..", ".", "..."])
+    def test_dot_segment_task_id_stays_inside_the_runs_dir(self, tmp_path: Path, task_id: str) -> None:
+        """A dot-segment id is admitted by the alphabet but cannot escape.
+
+        ``task_run_id`` prefixes every id, so ``..`` addresses the literal
+        directory ``task-..`` rather than the parent. The containment check is
+        what guarantees this, so assert containment directly rather than
+        asserting a refusal the reader does not owe.
+        """
+        from bernstein.core.evidence.run_artifacts import _artifact_journal_path
+
+        sdd = _sdd(tmp_path)
+        resolved = _artifact_journal_path(sdd, task_id)
+        assert resolved.is_relative_to((sdd / "runs").resolve())
+        assert read_artifact_rows(sdd, task_id) == []
+
+    def test_a_malformed_id_is_refused_before_the_filesystem_is_touched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unsafe id must be rejected lexically, before anything resolves.
+
+        This originally asserted that containment never touched disk at all.
+        That is too strong, and buying it would cost a real detection: only
+        resolution catches a run directory that is a *symlink* out of the runs
+        root, and ``verify_journal`` cannot cover that gap because it is an
+        unkeyed Merkle recompute - whoever plants the symlink can satisfy it.
+
+        The property worth guarding is the ORDER. A hostile id is screened
+        against the alphabet first and never reaches ``realpath``; a well-formed
+        id resolves, which is what makes the symlink case detectable. Asserted
+        by making filesystem access explode and checking which of the two ids
+        gets that far.
+        """
+        import os.path
+
+        from bernstein.core.evidence.run_artifacts import _artifact_journal_path
+
+        def _boom(*_args: object, **_kwargs: object) -> Path:
+            raise AssertionError("a malformed id must be refused before the filesystem is touched")
+
+        monkeypatch.setattr(Path, "resolve", _boom)
+        monkeypatch.setattr(os.path, "realpath", _boom)
+
+        sdd = _sdd(tmp_path)
+        # Refused on the alphabet alone - never reaches the patched realpath.
+        with pytest.raises(ArtifactValidationError):
+            _artifact_journal_path(sdd, "../../escape")
+
+    @pytest.mark.parametrize("key", ["k\n", "report\n", "a.b\n"])
+    def test_trailing_newline_artifact_key_is_refused(self, tmp_path: Path, key: str) -> None:
+        """The key is embedded unescaped in the spine artifact path, so its
+        alphabet exists to exclude control characters. Python's `$` admits a
+        single trailing newline, so this shape was accepted until the anchor
+        became `\\Z`."""
+        sdd = _sdd(tmp_path)
+        with pytest.raises(ArtifactValidationError, match="artifact key"):
+            post_run_artifact(
+                sdd_dir=sdd,
+                task_id="task-1",
+                key=key,
+                payload=ArtifactPayload.report("body"),
+                actor="w",
+                hmac_key=_KEY,
+            )
+        assert read_artifact_rows(sdd, "task-1") == []
+
+    @pytest.mark.parametrize("task_id", ["task-1\n", "report\n", "t\n"])
+    def test_trailing_newline_task_id_is_refused(self, tmp_path: Path, task_id: str) -> None:
+        """Python's `$` also matches before a trailing newline, so this shape
+        passed the alphabet check until the anchor became `\\Z`."""
+        from bernstein.core.evidence.run_artifacts import _artifact_journal_path
+
+        sdd = _sdd(tmp_path)
+        with pytest.raises(ArtifactValidationError):
+            _artifact_journal_path(sdd, task_id)
+
+    def test_traversal_task_id_writes_nothing_outside_the_runs_dir(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        before = sorted(p.name for p in tmp_path.iterdir())
+        with pytest.raises(ArtifactValidationError):
+            post_run_artifact(
+                sdd_dir=sdd,
+                task_id="../../escape",
+                key="k",
+                payload=ArtifactPayload.report("body"),
+                actor="w",
+                hmac_key=_KEY,
+            )
+        assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+    def test_valid_task_id_still_resolves_inside_the_runs_dir(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        rec = post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="k",
+            payload=ArtifactPayload.report("body"),
+            actor="w",
+            hmac_key=_KEY,
+        )
+        assert rec.version == 1
+        assert read_artifact_rows(sdd, "task-1")[0].content_hash == rec.content_hash
+
+    def test_rewritten_task_id_row_is_reported_not_skipped(self, tmp_path: Path) -> None:
+        """A row whose task id no longer maps to its own journal is tampering.
+
+        Verifying under the rewritten id would read a different (or absent)
+        journal and report a clean, empty result for a tampered run.
+        """
+        sdd = _sdd(tmp_path)
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="k",
+            payload=ArtifactPayload.report("body"),
+            actor="w",
+            hmac_key=_KEY,
+        )
+        journal = sdd / "runs" / "task-task-1" / "journal.jsonl"
+        journal.write_text(
+            journal.read_text(encoding="utf-8").replace('"task_id": "task-1"', '"task_id": "../elsewhere"'),
+            encoding="utf-8",
+        )
+        results = verify_all_run_artifacts(tmp_path, hmac_key=_KEY)
+        assert results, "a rewritten task id must not silently verify as an empty artifact set"
+        assert all(not r.ok for r in results)

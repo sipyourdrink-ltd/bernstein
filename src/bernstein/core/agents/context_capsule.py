@@ -434,7 +434,12 @@ def verify_context_capsule(
     ``ok`` is True only when every check holds. A verifier holding only the
     journal, the chain, and the capsule record can run this end to end.
     """
-    from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.replay.journal import (
+        JournalPathError,
+        load_events,
+        run_journal_path,
+        verify_journal,
+    )
     from bernstein.core.security.audit_chain import EVENT_CONTEXT_CAPSULE
 
     signed = read_capsule_record(sdd_dir, task_id)
@@ -483,7 +488,16 @@ def verify_context_capsule(
             capsule=capsule,
         )
 
-    journal_path = sdd_dir / "runs" / capsule.run_id / "journal.jsonl"
+    try:
+        journal_path = run_journal_path(sdd_dir, capsule.run_id)
+    except JournalPathError as exc:
+        return ContextVerifyResult(
+            ok=False,
+            reason=f"invalid run id: {exc}",
+            signature_ok=True,
+            chain_ok=True,
+            capsule=capsule,
+        )
     if not journal_path.exists():
         return ContextVerifyResult(
             ok=False,

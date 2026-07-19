@@ -278,12 +278,11 @@ def _build_intoto_envelope(
     )
     payload = _canonical_json_bytes(statement.to_dict())
     signature = kms_adapter.sign(pae(DSSE_PAYLOAD_TYPE, payload))
-    envelope = Envelope(
+    return Envelope(
         payload_type=DSSE_PAYLOAD_TYPE,
         payload_b64=base64.b64encode(payload).decode("ascii"),
         signatures=[Signature(keyid=key_id, sig=base64.b64encode(signature).decode("ascii"))],
-    )
-    return envelope.to_dict()
+    ).to_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +305,7 @@ def _merkle_root_and_path(
     if not leaves:
         return _EMPTY_TREE_ROOT, []
     path: list[tuple[str, bool]] = []
-    level = list(leaves)
+    level = leaves.copy()
     idx = index
     while len(level) > 1:
         sibling = idx ^ 1

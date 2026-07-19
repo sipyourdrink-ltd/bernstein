@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.7.0"
-description = "Audit-grade multi-agent orchestration for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40 more): HMAC-chained audit log, signed agent cards, per-artefact lineage, air-gap deploy. The orchestrator your compliance team will sign off on."
+version = "3.7.1"
+description = "Deterministic, verifiable orchestration for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more): reproducible parallel runs in git worktrees, always-on lineage and replay journal, opt-in HMAC-chained audit log, air-gap install profile."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -20,6 +20,12 @@ keywords = [
     "llm",
     "automation",
     "devtools",
+    "deterministic",
+    "replay",
+    "audit",
+    "provenance",
+    "lineage",
+    "worktree",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

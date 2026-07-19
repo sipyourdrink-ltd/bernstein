@@ -51,6 +51,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import operator
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -290,8 +291,8 @@ class EffectivePolicy:
             "storage_backend": self.storage_backend,
             "residency_enforce_strict": self.residency_enforce_strict,
             "residency_regions": list(self.residency_regions),
-            "model_endpoints": [dict(e) for e in self.model_endpoints],
-            "catalogs": [dict(c) for c in self.catalogs],
+            "model_endpoints": [e.copy() for e in self.model_endpoints],
+            "catalogs": [c.copy() for c in self.catalogs],
         }
 
     def posture_hash(self) -> str:
@@ -307,17 +308,16 @@ class EffectivePolicy:
         on-disk receipts) is checked separately by
         :func:`endpoint_certification_violations`.
         """
-        problems: list[str] = []
         # Egress may be deny-all, or an allow-list of self-hosted / EU-region
         # destinations (a residency deployment must reach its own model server
         # on an RFC-1918 address). A public destination in the allow-list is a
         # violation; the allow-list itself is attested so the claim is truthful.
-        for token in self.egress_allowlist:
-            if not _egress_token_is_local(token):
-                problems.append(
-                    f"egress allow-list entry {token!r} is neither self-hosted nor EU-region; "
-                    "sovereign permits only local / EU-region egress destinations"
-                )
+        problems: list[str] = [
+            f"egress allow-list entry {token!r} is neither self-hosted nor EU-region; "
+            "sovereign permits only local / EU-region egress destinations"
+            for token in self.egress_allowlist
+            if not _egress_token_is_local(token)
+        ]
         if self.catalog_mode != _PINNED_CATALOG_MODE:
             problems.append(f"catalog mode is {self.catalog_mode!r}, sovereign requires offline")
         if self.storage_backend not in LOCAL_STORAGE_BACKENDS:
@@ -368,7 +368,7 @@ def _project_endpoints(config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
             if isinstance(profile, Mapping):
                 base_url = profile.get("base_url", base_url)
                 model = profile.get("model", model)
-        if base_url is None and model is None and profile_name is None:
+        if base_url is model is profile_name is None:
             # A role that only pins cli/effort with no endpoint is not
             # residency-relevant; skip it so the projection stays stable.
             continue
@@ -380,7 +380,7 @@ def _project_endpoints(config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
                 "model": str(model) if model is not None else "",
             }
         )
-    projected.sort(key=lambda e: (e["role"], e["base_url"], e["model"]))
+    projected.sort(key=operator.itemgetter("role", "base_url", "model"))
     return tuple(projected)
 
 
@@ -394,7 +394,7 @@ def _project_catalogs(config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
         if not isinstance(item, Mapping):
             continue
         projected.append({"name": str(item.get("name", "")), "enabled": bool(item.get("enabled", True))})
-    projected.sort(key=lambda c: c["name"])
+    projected.sort(key=operator.itemgetter("name"))
     return tuple(projected)
 
 
@@ -1082,7 +1082,7 @@ def record_and_sign_drift(
         "timestamp": timestamp,
     }
     signature = sign_payload(_canonical_bytes(signed_body), private_pem)
-    record = dict(signed_body)
+    record = signed_body.copy()
     record["signer_public_key_pem"] = public_pem
     record["signature"] = signature
     record_sha256 = _sha256_of(record)

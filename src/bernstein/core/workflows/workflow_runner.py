@@ -1,4 +1,4 @@
-"""DAG runner for Archon-style YAML workflow manifests.
+"""DAG runner for declarative YAML workflow manifests.
 
 Drives a :class:`bernstein.core.workflows.workflow_spec.WorkflowSpec`
 through a topological execution: every layer of ready nodes runs in
