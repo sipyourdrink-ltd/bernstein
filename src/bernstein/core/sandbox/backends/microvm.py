@@ -70,8 +70,27 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-#: Default location of the content-addressed store for VM snapshots.
-_DEFAULT_CAS_DIR = Path(".sdd/cas")
+#: Directory (relative to the project root) that holds the content-addressed
+#: store for VM snapshots.
+_CAS_SUBDIR = Path(".sdd/cas")
+
+
+def _default_cas_dir() -> Path:
+    """Resolve the default CAS directory against the project root, not the CWD.
+
+    ``.sdd`` is a project-rooted directory. Anchoring the default on the process
+    working directory means the store follows the operator around: a run from a
+    subdirectory silently creates a second store under that subdirectory. Walk up
+    from the CWD to the nearest project marker (``.git`` or ``pyproject.toml``)
+    and root the store there; fall back to the CWD when no marker is found. This
+    only computes a path - it creates nothing (the store is built on first
+    write).
+    """
+    start = Path.cwd()
+    for candidate in (start, *start.parents):
+        if (candidate / ".git").exists() or (candidate / "pyproject.toml").exists():
+            return candidate / _CAS_SUBDIR
+    return start / _CAS_SUBDIR
 
 
 class MicroVMProvisioningError(RuntimeError):
@@ -166,8 +185,12 @@ class MicroVMSandboxSession(SandboxSession):
     async def shutdown(self) -> None:
         if self._closed:
             return
-        self._closed = True
+        # Set _closed only AFTER the monitor shutdown returns. Latching it before
+        # the await would make a failed shutdown (monitor raised) look closed, so
+        # the early-return above would swallow every retry and leave the guest
+        # running - the session must stay tearable-down on retry.
         await self._monitor.shutdown()
+        self._closed = True
 
 
 class MicroVMSandboxBackend:
@@ -178,10 +201,13 @@ class MicroVMSandboxBackend:
             the logical workspace root. Defaults to a real
             :class:`FirecrackerMonitor`; tests inject a
             :class:`FakeMonitor` factory.
-        cas: Content-addressed store for snapshots. Defaults to a store
-            rooted at ``.sdd/cas``; tests inject a temp-dir store.
+        cas: Content-addressed store for snapshots. When omitted a store is
+            built lazily on first write, rooted at ``.sdd/cas`` under the
+            project root (never created merely by constructing the backend);
+            tests inject a temp-dir store.
         cas_dir: Convenience alternative to *cas* - the directory to root
-            a fresh :class:`CASStore` at. Ignored when *cas* is given.
+            a fresh :class:`CASStore` at (also built lazily on first write).
+            Ignored when *cas* is given.
     """
 
     name = "microvm"
@@ -202,12 +228,24 @@ class MicroVMSandboxBackend:
         cas_dir: Path | None = None,
     ) -> None:
         self._monitor_factory = monitor_factory or _default_monitor_factory
-        self._cas = cas or CASStore(cas_dir or _DEFAULT_CAS_DIR)
+        # Do NOT build the CASStore here. CASStore.__init__ creates its root
+        # directory, and merely *constructing* a backend (as
+        # registry.list_backends does when it materialises the whole catalogue)
+        # must not touch the filesystem. Build it lazily on first use, and root
+        # the default against the project root rather than the process CWD.
+        self._cas: CASStore | None = cas
+        self._cas_dir: Path = Path(cas_dir) if cas_dir is not None else _default_cas_dir()
         self._sessions: dict[str, MicroVMSandboxSession] = {}
 
     @property
     def cas(self) -> CASStore:
-        """The content-addressed store backing this backend's snapshots."""
+        """The content-addressed store backing this backend's snapshots.
+
+        Built lazily on first access so that instantiating the backend creates
+        no directories; the store (and its root) is created on first write.
+        """
+        if self._cas is None:
+            self._cas = CASStore(self._cas_dir)
         return self._cas
 
     async def create(
@@ -267,7 +305,7 @@ class MicroVMSandboxBackend:
         session = MicroVMSandboxSession(
             session_id=session_id,
             monitor=monitor,
-            cas=self._cas,
+            cas=self.cas,
         )
         self._sessions[session_id] = session
         return session
@@ -285,7 +323,7 @@ class MicroVMSandboxBackend:
             CASIntegrityError: When the stored bytes do not hash to
                 *snapshot_id* (tampering / corruption).
         """
-        image = self._cas.get(snapshot_id, verify=True)
+        image = self.cas.get(snapshot_id, verify=True)
         if image is None:
             msg = f"Unknown microvm snapshot digest: {snapshot_id}"
             raise KeyError(msg)
@@ -312,15 +350,25 @@ class MicroVMSandboxBackend:
         session = MicroVMSandboxSession(
             session_id=session_id,
             monitor=monitor,
-            cas=self._cas,
+            cas=self.cas,
         )
         self._sessions[session_id] = session
         return session
 
     async def destroy(self, session: SandboxSession) -> None:
-        """Tear down *session* and drop it from the tracking table."""
-        await session.shutdown()
-        self._sessions.pop(session.session_id, None)
+        """Tear down *session* and drop it from the tracking table.
+
+        The tracking entry is dropped in a ``finally``: a failed
+        ``session.shutdown()`` (monitor raised) must not strand the entry in the
+        table, or a stranded session would read as live forever. The session
+        itself stays tearable-down on retry - ``shutdown`` does not latch
+        ``_closed`` on failure - so a caller can retry ``destroy`` after a
+        transient monitor error.
+        """
+        try:
+            await session.shutdown()
+        finally:
+            self._sessions.pop(session.session_id, None)
 
 
 __all__ = [

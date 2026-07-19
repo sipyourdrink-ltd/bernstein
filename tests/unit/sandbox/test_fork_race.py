@@ -230,6 +230,196 @@ async def test_fork_race_rejects_zero_k(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fork_race_selection_is_byte_identical_across_varied_axes(tmp_path: Path) -> None:
+    """Determinism gate that actually varies the axes it is named for.
+
+    Across two runs the candidate *set* (task_id -> deliverable) is held fixed
+    while three axes vary: candidate completion order (opposite per-index
+    sleeps), the wall-clock (``runtime_s`` differs by an order of magnitude),
+    and the order results are assembled into the receipt's mappings (the
+    task-id-to-slot assignment is reversed). The signed selection must be
+    byte-identical regardless. A regression that ranked in completion order, or
+    leaked a wall-clock axis into the signed body, diverges here (the old test
+    left the wall-clock axis inert, so it could not detect either).
+    """
+    key = Ed25519PrivateKey.generate()
+    k = 4
+
+    def deliverable(slot: int) -> tuple[bool, float]:
+        return (slot % 2 == 0), max(0.0, 1.0 - 0.1 * slot)
+
+    async def make_receipt(*, reverse: bool, runtimes: list[float]) -> object:
+        backend = _backend(tmp_path / ("rev" if reverse else "fwd"))
+        base = await _base_snapshot(backend)
+
+        async def run_candidate(session: object, index: int) -> CandidateResult:
+            # Reversed assignment varies which submission slot produces which
+            # task_id (mapping-assembly order); the opposite per-index sleep
+            # varies completion order; runtime_s varies the wall-clock axis.
+            slot = (k - 1 - index) if reverse else index
+            await session.write(f"c{slot}.txt", f"work-{slot}".encode())  # type: ignore[attr-defined]
+            await asyncio.sleep(0.001 * (index if reverse else (k - 1 - index)))
+            tests_passing, lint = deliverable(slot)
+            return CandidateResult(
+                task_id=f"candidate-{slot}",
+                tests_passing=tests_passing,
+                lint_score=lint,
+                runtime_s=runtimes[index],
+            )
+
+        return await fork_race(
+            backend=backend,
+            base_snapshot_digest=base,
+            run_candidate=run_candidate,
+            k=k,
+            signing_key=key,
+        )
+
+    r1 = await make_receipt(reverse=False, runtimes=[0.10, 0.20, 0.30, 0.40])
+    r2 = await make_receipt(reverse=True, runtimes=[9.9, 8.8, 7.7, 6.6])
+
+    assert canonical_receipt_bytes(r1) == canonical_receipt_bytes(r2)
+    assert r1.signature_b64 == r2.signature_b64
+    assert r1.winner_task_id == r2.winner_task_id
+    assert verify_receipt(r1).ok
+    assert verify_receipt(r2).ok
+
+
+@pytest.mark.asyncio
+async def test_candidate_failure_not_masked_by_base_exception_in_teardown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A teardown that raises a *BaseException* must not replace the original.
+
+    The old cleanup caught only ``Exception``, so a ``BaseException`` from
+    ``destroy`` (a cancellation injected into it, say) propagated *past* the
+    ``raise`` that re-surfaces the candidate failure - masking it. The cleanup
+    must catch ``BaseException`` around the reap and re-raise the original
+    candidate exception verbatim.
+    """
+    backend = _backend(tmp_path)
+    key = Ed25519PrivateKey.generate()
+    base = await _base_snapshot(backend)
+
+    class _BaseBoom(BaseException):
+        pass
+
+    async def boom_candidate(session: object, index: int) -> CandidateResult:
+        raise ValueError(f"candidate {index} boom")
+
+    async def base_boom_destroy(session: object) -> None:
+        raise _BaseBoom("teardown base-exception boom")
+
+    monkeypatch.setattr(backend, "destroy", base_boom_destroy)
+
+    with pytest.raises(ValueError, match="candidate .* boom"):
+        await fork_race(
+            backend=backend,
+            base_snapshot_digest=base,
+            run_candidate=boom_candidate,
+            k=2,
+            signing_key=key,
+        )
+
+
+@pytest.mark.asyncio
+async def test_sibling_cancel_completes_teardown_for_every_candidate() -> None:
+    """When two candidates fail and the slower one is cancelled *inside* its
+    teardown, ``destroy`` must still complete for every candidate.
+
+    Choreography: candidate B fails and enters ``destroy``, which blocks; A then
+    fails, which makes the drain cancel B while it is suspended inside destroy.
+    A correct reap catches that cancellation and drives the reap to completion
+    (a bounded retry, no ``asyncio.shield``), so ``destroy`` completes for both
+    candidates rather than leaking B's guest. This is the sibling cancel/drain
+    path that had no coverage at all before.
+    """
+    key = Ed25519PrivateKey.generate()
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.session_id = "s"
+            self.slot: int | None = None
+
+        async def snapshot(self) -> str:  # pragma: no cover - candidates fail first
+            return "0" * 64
+
+    class _SiblingBackend:
+        name = "microvm"
+
+        def __init__(self) -> None:
+            self.destroy_completed = 0
+            self._b_destroy_calls = 0
+            self.b_inside_destroy = asyncio.Event()
+
+        async def resume(self, snapshot_id: str) -> _FakeSession:
+            return _FakeSession()
+
+        async def destroy(self, session: _FakeSession) -> None:
+            if session.slot == 1:  # B, the slower candidate
+                self._b_destroy_calls += 1
+                if self._b_destroy_calls == 1:
+                    # Announce we are inside destroy, then block so the drain
+                    # cancels us here. The retry (call 2) completes immediately.
+                    self.b_inside_destroy.set()
+                    await asyncio.sleep(3600)
+            self.destroy_completed += 1
+
+    backend = _SiblingBackend()
+
+    async def run_candidate(session: _FakeSession, index: int) -> CandidateResult:
+        session.slot = index
+        if index == 0:  # A fails only once B is suspended inside its teardown
+            await backend.b_inside_destroy.wait()
+            raise ValueError("A fail")
+        raise ValueError("B fail")  # B fails immediately -> enters destroy
+
+    with pytest.raises(ValueError):
+        await fork_race(
+            backend=backend,  # type: ignore[arg-type]
+            base_snapshot_digest="0" * 64,
+            run_candidate=run_candidate,
+            k=2,
+            signing_key=key,
+        )
+
+    # destroy() COMPLETED for every candidate: A once, B on the post-cancel retry.
+    assert backend.destroy_completed == 2
+
+
+@pytest.mark.asyncio
+async def test_receipt_isolation_reads_as_request_not_attestation(tmp_path: Path) -> None:
+    """The per-candidate ``isolation`` value must not read as a verified claim.
+
+    fork_race never boots or probes the isolation boundary, so it cannot attest
+    that the named backend's isolation was in effect. It records the *requested*
+    backend, plainly labelled so a receipt reader cannot mistake it for an
+    enforced-and-checked posture.
+    """
+    backend = _backend(tmp_path)
+    key = Ed25519PrivateKey.generate()
+    base = await _base_snapshot(backend)
+
+    receipt = await fork_race(
+        backend=backend,
+        base_snapshot_digest=base,
+        run_candidate=_run_candidate,
+        k=3,
+        signing_key=key,
+    )
+
+    candidates = receipt_to_dict(receipt)["candidates"]
+    assert candidates
+    for cand in candidates:
+        iso = cand["isolation"]
+        assert iso.startswith("requested:")
+        assert iso == "requested:microvm"
+        # A bare backend name would read as an attestation of enforced isolation.
+        assert iso != backend.name
+
+
+@pytest.mark.asyncio
 async def test_fork_race_audit_lock_path_is_honoured(tmp_path: Path) -> None:
     """Passing a lock path serialises the append and leaves the chain verifiable."""
     backend = _backend(tmp_path)
