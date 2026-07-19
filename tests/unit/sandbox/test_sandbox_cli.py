@@ -59,6 +59,102 @@ def test_fork_race_absent_base_fails_cleanly_without_minting_key(tmp_path: Path)
     assert not key_minted
 
 
+def _seed_present_base(cas_dir: Path) -> str:
+    """Materialise a real base snapshot in ``cas_dir`` and return its digest.
+
+    Uses the fake microVM monitor so the CAS ends up with a genuinely
+    *present* base. That lets the ``--out`` preflight tests below use a valid
+    ``--base``: without the preflight, a present base makes the command proceed
+    to mint a signing key and create the audit dir *before* it ever tries to
+    write the receipt, so those side effects are the discriminator.
+    """
+    import asyncio
+
+    from bernstein.core.persistence.cas_store import CASStore
+    from bernstein.core.sandbox.backends._vmmonitor import FakeMonitor
+    from bernstein.core.sandbox.backends.microvm import MicroVMSandboxBackend
+    from bernstein.core.sandbox.manifest import FileEntry, WorkspaceManifest
+
+    async def _seed() -> str:
+        cas = CASStore(cas_dir)
+        backend = MicroVMSandboxBackend(monitor_factory=lambda root: FakeMonitor(root=root), cas=cas)
+        session = await backend.create(
+            WorkspaceManifest(root="/workspace", files=(FileEntry(path="b.txt", content=b"BASE"),)),
+        )
+        base = await session.snapshot()
+        await backend.destroy(session)
+        return base
+
+    return asyncio.run(_seed())
+
+
+def _invoke_fork_race_out(base: str, out_path: Path, tmp_path: Path) -> tuple[int, str, bool, bool]:
+    cas_dir = tmp_path / "cas"
+    key_path = tmp_path / "keys" / "selection.key"
+    audit_dir = tmp_path / "audit"
+    result = CliRunner().invoke(
+        sandbox_group,
+        [
+            "fork-race",
+            "--base",
+            base,
+            "--cmd",
+            "true",
+            "--out",
+            str(out_path),
+            "--cas-dir",
+            str(cas_dir),
+            "--key",
+            str(key_path),
+            "--audit-dir",
+            str(audit_dir),
+        ],
+    )
+    return result.exit_code, (result.output or ""), key_path.exists(), audit_dir.exists()
+
+
+def test_fork_race_out_nonexistent_parent_fails_before_dispatch(tmp_path: Path) -> None:
+    """AC4 (#2707): a ``--out`` whose parent directory does not exist must fail
+    cleanly *before* any candidate is dispatched - even with a valid, present
+    ``--base``. No signing key minted, no audit dir created, no receipt written,
+    no raw traceback."""
+    base = _seed_present_base(tmp_path / "cas")
+    out_path = tmp_path / "nonexistent-dir" / "receipt.json"  # parent missing
+
+    exit_code, output, key_minted, audit_created = _invoke_fork_race_out(base, out_path, tmp_path)
+
+    assert exit_code == 1, output
+    assert "Traceback" not in output  # diagnosable ClickException, not a crash
+    assert "parent directory does not exist" in output
+    assert not key_minted, "no signing key may be minted for a doomed --out"
+    assert not audit_created, "no audit dir may be created for a doomed --out"
+    assert not out_path.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="chmod-based unwritability is a no-op on Windows and for root",
+)
+def test_fork_race_out_unwritable_parent_fails_before_dispatch(tmp_path: Path) -> None:
+    """AC4 (#2707): a ``--out`` whose parent exists but is not writable (0o000)
+    must also fail before dispatch, with no side effects."""
+    base = _seed_present_base(tmp_path / "cas")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o000)
+    out_path = locked / "receipt.json"
+    try:
+        exit_code, output, key_minted, audit_created = _invoke_fork_race_out(base, out_path, tmp_path)
+    finally:
+        locked.chmod(0o755)  # let tmp cleanup remove it
+
+    assert exit_code == 1, output
+    assert "Traceback" not in output
+    assert "not writable" in output.lower()
+    assert not key_minted, "no signing key may be minted for a doomed --out"
+    assert not audit_created, "no audit dir may be created for a doomed --out"
+
+
 @pytest.mark.asyncio
 async def test_receipt_verify_distinguishes_ok_tampered_absent(tmp_path: Path) -> None:
     """`receipt verify` gives three different answers: OK (0), tampered (1), and

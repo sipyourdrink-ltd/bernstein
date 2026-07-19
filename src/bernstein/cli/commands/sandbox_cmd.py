@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -252,6 +253,21 @@ def fork_race_cmd(
         raise click.ClickException(f"invalid base snapshot digest {base_digest!r}: {exc}") from exc
     if not base_present:
         raise click.ClickException(f"base snapshot digest not found in CAS ({cas_dir}): {base_digest}")
+    # Validate the --out destination is writable *before* any side-effectful
+    # state, mirroring the base-digest guard above: an unwritable or invalid
+    # --out must fail cleanly here, before a signing key is minted, the audit
+    # directory is created, or a (possibly-paid) candidate is booted - so the
+    # whole race is never run only to have its result discarded at write time.
+    out_parent = out_path.parent
+    if not out_parent.is_dir():
+        raise click.ClickException(f"cannot write receipt: --out parent directory does not exist: {out_parent}")
+    try:
+        # An actual write probe (not just os.access) so a 0o000 directory is
+        # caught the same way the real write would fail.
+        with tempfile.NamedTemporaryFile(dir=out_parent, prefix=".fork-race-out-probe-"):
+            pass
+    except OSError as exc:
+        raise click.ClickException(f"cannot write receipt to {out_path}: destination not writable: {exc}") from exc
     signing_key = load_or_create_signing_key(key_path)
     audit_log = AuditLog(audit_dir)
 
