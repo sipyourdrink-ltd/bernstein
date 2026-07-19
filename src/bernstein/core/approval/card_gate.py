@@ -588,11 +588,24 @@ class ApprovalCardGate:
         second process over the same audit dir may have settled the card), so
         it always costs a chain read, and folding the issue lookup into the same
         read keeps a resolve at one pass over the log instead of three.
+
+        The read is scoped to this card's ``resource_id`` (every issue, resolve
+        and refuse event for the card is written with ``resource_id == digest``).
+        The store rejects non-matching lines before parsing them, so a
+        first-time resolve reads only this card's handful of events rather than
+        scanning the whole log. Without that scope a stream of unknown
+        ``card_hash`` values - none of which is ever cached, because no issued
+        card is found for them - would each force a full O(chain) parse, a
+        denial-of-service amplifier that worsens as the chain ages.
         """
         issued: IssuedCard | None = None
         settled = False
-        for event in self._chain.query():
+        for event in self._chain.query(resource_id=digest):
             details: dict[str, Any] = event.details
+            # Belt and braces: the query already scoped to resource_id == digest,
+            # but the settlement meaning is carried by details.card_hash, so a
+            # crafted event that reused the resource_id without matching the
+            # committed hash is not allowed to count as this card's.
             if str(details.get("card_hash", "")) != digest:
                 continue
             if event.event_type == EVENT_APPROVAL_CARD_ISSUED:

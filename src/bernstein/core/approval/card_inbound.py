@@ -48,6 +48,35 @@ __all__ = [
 DEFAULT_CARD_TTL_SECONDS = 600.0
 
 
+def _require_origin(*, worktree_id: str, thread_id: str) -> None:
+    """Refuse to build a routing surface that would issue unpinned cards.
+
+    The gate pins a card to the worktree and conversation it was issued into,
+    but that guard can only fire when the issued card carries an origin: an
+    empty ``worktree_id`` or ``thread_id`` makes the corresponding comparison
+    vacuous, so a card issued without one is a bearer token that whoever
+    captured its ``card_hash`` can settle from any worktree or conversation.
+
+    These routers are the only real call paths onto the gate, so the pin has to
+    be mandatory here rather than an opt-in keyword that defaults to off. A
+    caller that cannot state the worktree and conversation an approval belongs
+    to cannot route it.
+    """
+    missing = [
+        name
+        for name, value in (("worktree_id", worktree_id), ("thread_id", thread_id))
+        if not value
+    ]
+    if missing:
+        joined = " and ".join(missing)
+        msg = (
+            f"approval card router requires a non-empty {joined}: an unpinned card is a bearer "
+            f"token that any worktree or conversation could settle, so the origin pin must be "
+            f"supplied at construction rather than defaulted off"
+        )
+        raise ValueError(msg)
+
+
 class ApprovalCardRequestMismatch(RuntimeError):
     """Raised when ``(request_id, card_hash)`` do not name the same routed prompt.
 
@@ -132,6 +161,7 @@ class ElicitationApprovalRouter:
         thread_id: str = "",
         worktree_id: str = "",
     ) -> None:
+        _require_origin(worktree_id=worktree_id, thread_id=thread_id)
         self._handler = handler
         self._gate = gate
         self._bridge = bridge
@@ -266,6 +296,7 @@ class A2AInputRequiredRouter:
         worktree_id: str = "",
         peer: str = "",
     ) -> None:
+        _require_origin(worktree_id=worktree_id, thread_id=thread_id)
         self._gate = gate
         self._bridge = bridge
         self._thread_id = thread_id

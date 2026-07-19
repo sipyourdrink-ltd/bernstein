@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bernstein.core.approval.card_gate import ApprovalCardGate
+from bernstein.core.approval.card_gate import ApprovalCardBindingMismatch, ApprovalCardGate
 from bernstein.core.approval.card_inbound import (
+    A2AInputRequiredRouter,
     ApprovalCardRequestMismatch,
     ElicitationApprovalRouter,
 )
@@ -126,3 +127,88 @@ def test_binding_is_consumed_so_a_replayed_pair_is_refused(tmp_path: Path) -> No
         router.resolve(request_id="e1", card_hash=issued.card_hash, decision="approve", now=1_200.0)
 
     assert len(chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Origin pinning is not opt-in: a router refuses to route without an origin
+# ---------------------------------------------------------------------------
+#
+# The gate can pin a card to the worktree and conversation it was issued into,
+# but that guard only fires when the issued card actually carries an origin. If
+# a routing surface were allowed to construct with an empty origin, every card
+# it issued would be an unpinned bearer token: whoever captured the card_hash
+# could settle it from any worktree or conversation, because the gate has
+# nothing to compare against. These routers are the real call paths, so they are
+# where the pin has to become mandatory rather than default-off.
+
+
+@pytest.mark.parametrize(
+    ("worktree_id", "thread_id"),
+    [("", "C42"), ("wt-a", ""), ("", "")],
+)
+def test_elicitation_router_refuses_to_construct_without_a_full_origin(
+    tmp_path: Path,
+    worktree_id: str,
+    thread_id: str,
+) -> None:
+    """Revert-checked: fails if the constructor stops requiring a non-empty origin."""
+    with pytest.raises(ValueError, match="worktree_id|thread_id"):
+        ElicitationApprovalRouter(
+            handler=ElicitationHandler(),
+            gate=ApprovalCardGate(_chain(tmp_path)),
+            worktree_id=worktree_id,
+            thread_id=thread_id,
+        )
+
+
+@pytest.mark.parametrize(
+    ("worktree_id", "thread_id"),
+    [("", "C42"), ("wt-a", ""), ("", "")],
+)
+def test_a2a_router_refuses_to_construct_without_a_full_origin(
+    tmp_path: Path,
+    worktree_id: str,
+    thread_id: str,
+) -> None:
+    """Revert-checked: fails if the constructor stops requiring a non-empty origin."""
+    with pytest.raises(ValueError, match="worktree_id|thread_id"):
+        A2AInputRequiredRouter(
+            gate=ApprovalCardGate(_chain(tmp_path)),
+            worktree_id=worktree_id,
+            thread_id=thread_id,
+        )
+
+
+def test_a2a_card_is_pinned_and_refuses_a_foreign_worktree(tmp_path: Path) -> None:
+    """End-to-end on a real call path: a card issued by one router cannot be
+    settled by a router in a different worktree.
+
+    This exercises the origin pin the gate enforces, driven entirely through the
+    routing surface rather than through the gate directly, so the headline
+    binding is proven present on the path a deployment actually uses.
+    """
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    issuer = A2AInputRequiredRouter(gate=gate, thread_id="C42", worktree_id="wt-a", peer="planner")
+    attacker = A2AInputRequiredRouter(gate=gate, thread_id="C42", worktree_id="wt-EVIL", peer="planner")
+
+    issued = asyncio.run(issuer.route(task_uuid="task-1", message="Need a region", now=1_000.0))
+
+    with pytest.raises(ApprovalCardBindingMismatch):
+        attacker.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+
+    assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
+
+
+def test_a2a_card_is_pinned_and_refuses_a_foreign_conversation(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    issuer = A2AInputRequiredRouter(gate=gate, thread_id="C42", worktree_id="wt-a", peer="planner")
+    attacker = A2AInputRequiredRouter(gate=gate, thread_id="C-EVIL", worktree_id="wt-a", peer="planner")
+
+    issued = asyncio.run(issuer.route(task_uuid="task-1", message="Need a region", now=1_000.0))
+
+    with pytest.raises(ApprovalCardBindingMismatch):
+        attacker.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0)
+
+    assert chain.query(event_type=EVENT_APPROVAL_CARD_RESOLVED) == []
