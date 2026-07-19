@@ -2,9 +2,10 @@ name: CIFuzz (ClusterFuzzLite, PR)
 
 # OSSF Scorecard's `Fuzzing` check recognizes ClusterFuzzLite when a
 # .clusterfuzzlite/ directory and a CIFuzz workflow are both present.
-# This workflow runs a short fuzzing session on each pull request so the
-# check fires; the Hypothesis property-test suite in tests/ stays the
-# primary fuzzing surface for real bug discovery.
+# This workflow runs a short weekly batch fuzzing session so the check
+# fires without paying a per-PR-push cost; the Hypothesis property-test
+# suite in tests/ stays the primary fuzzing surface for real bug
+# discovery.
 #
 # Build and run live in a single job because ClusterFuzzLite expects
 # the build-out directory to exist on disk when run_fuzzers starts;
@@ -14,12 +15,12 @@ name: CIFuzz (ClusterFuzzLite, PR)
 # Ref: https://google.github.io/clusterfuzzlite/running-clusterfuzzlite/github-actions/
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/bernstein/core/config/**"
-      - ".clusterfuzzlite/**"
-      - ".github/workflows/cifuzz-pr.yml"
+  # Weekly batch fuzz session (Monday 05:17 UTC). The previous per-PR
+  # code-change trigger is dropped to cut per-push CI load; a weekly run
+  # keeps a CIFuzz workflow present for OSSF Scorecard's Fuzzing check.
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: cifuzz-pr-${{ github.ref }}
@@ -64,7 +65,10 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 120
-          mode: code-change
+          # batch mode (not code-change): a scheduled / dispatch run has no
+          # PR diff to drive code-change mode, so run all fuzzers for the
+          # fixed session length instead.
+          mode: batch
           sanitizer: address
           # output-sarif disabled intentionally: enabling it would
           # require `security-events: write` on this job (Scorecard
