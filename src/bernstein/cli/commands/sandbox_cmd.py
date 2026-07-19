@@ -361,37 +361,31 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
         # reader, not the record; intact is the clean case.
         # Ask the store for the path (single source of truth for the shard
         # layout) rather than re-deriving cas_dir / digest[:2] / digest here.
+        # Used only for the absent/unreadable disambiguation below; the symlink
+        # defence lives in cas.get (O_NOFOLLOW), atomically and race-free - no
+        # is_symlink() pre-check here, which would only add a TOCTOU window.
         try:
             blob_path = cas.blob_path(digest)
         except ValueError:
             # Non-64-hex digest; defensive only - verify_receipt_full filters
             # malformed digests before calling this - but never crash here.
             return BLOB_UNREADABLE
-        # A content-addressed store only ever writes regular files. A blob path
-        # that is a symlink is an anomalous / hostile record: dereferencing it
-        # could read an attacker-chosen path or block on a FIFO/device before the
-        # hash check ever runs. Refuse to follow it - is_symlink() uses lstat and
-        # does not dereference - and report unreadable (we will not vouch for
-        # bytes we decline to read), never intact.
-        try:
-            if blob_path.is_symlink():
-                return BLOB_UNREADABLE
-        except OSError:
-            return BLOB_UNREADABLE
         try:
             blob = cas.get(digest, verify=True)
         except CASIntegrityError:
             return BLOB_TAMPERED
         except FileNotFoundError:
-            # The blob vanished between the store's exists() and read (GC /
+            # The blob vanished between the store's open and read (GC /
             # retention race). That is genuinely absent, not a reader-side
             # failure - classify it before the broad OSError below.
             return BLOB_ABSENT
         except (OSError, ValueError):
-            # OSError: present but unreadable (e.g. an unreadable blob file) - a
-            # reader-side failure. ValueError: the store rejects a non-64-hex
-            # digest; defensive only, since verify_receipt_full already filters
-            # malformed digests before calling this - but never crash here.
+            # OSError: present but unreadable - a permissions problem on this
+            # host, or a symlinked blob cas.get refused to follow (O_NOFOLLOW ->
+            # ELOOP). Either way a reader-side failure, never a claim about the
+            # record. ValueError: the store rejects a non-64-hex digest;
+            # defensive only, since verify_receipt_full already filters malformed
+            # digests before calling this - but never crash here.
             return BLOB_UNREADABLE
         if blob is not None:
             return BLOB_INTACT

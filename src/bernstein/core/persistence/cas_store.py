@@ -24,6 +24,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
@@ -250,9 +251,22 @@ class CASStore:
         """
         self._validate_digest(digest)
         blob = self._blob_path(digest)
-        if not blob.exists():
+        # Open with O_NOFOLLOW so a symlink planted at the blob path is rejected
+        # atomically by the read itself. A separate is_symlink() pre-check would
+        # leave a TOCTOU window: an attacker with write access to the store could
+        # swap in a symlink to a FIFO/device (hang) or another path between the
+        # check and the read. A content-addressed store only ever writes regular
+        # files, so O_NOFOLLOW never rejects a legitimate blob. The flag is
+        # POSIX-only; where it is absent it degrades to 0 (Windows has different
+        # symlink semantics and its own protections). A symlinked blob surfaces
+        # as OSError (ELOOP), which callers classify as unreadable, not absent.
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(blob, flags)
+        except FileNotFoundError:
             return None
-        content = blob.read_bytes()
+        with os.fdopen(fd, "rb") as handle:
+            content = handle.read()
         if verify:
             actual = self._digest(content)
             if actual != digest:

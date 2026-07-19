@@ -202,9 +202,9 @@ diagnosable error, never a traceback.
 | 1 | `failed` | Bad signature/consistency, a **tampered** blob (present, wrong hash), or a **malformed** digest field. Highest precedence — an integrity alarm. |
 | 4 | `unreadable` | A named blob could not be read on this host (permissions, or an anomalous symlinked blob the verifier refuses to dereference). A property of the reader, not the record. |
 | 2 | `incomplete` | A named blob is **absent** from CAS (GC / retention / restart). An ordinary operational event, never conflated with tampering. |
-| 3 | `unanchored` | Signature + blobs check out, but no `--expected-keyid` was given, so *whose* key signed it is unproven. |
+| 3 | `unanchored` | Signature + blobs check out, but `--expected-keyid` was omitted or empty (an unset env var counts as empty), so *whose* key signed it is unproven. |
 
-Precedence when several apply: `failed` > `unreadable` > `absent` > `unanchored` > `verified`.
+Precedence when several apply: `failed` > `unreadable` > `incomplete` (absent) > `unanchored` > `verified`.
 
 `fork-race` requires a microVM-capable host; on an unsupported host it
 fails loudly. The determinism/tamper guarantees are validated
