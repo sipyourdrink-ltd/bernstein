@@ -161,9 +161,27 @@ collapses back to a logged blocker.
 from bernstein.core.communication.signal_actions import ClearanceGateCoordinator
 
 coordinator = ClearanceGateCoordinator(bulletin=board, injector=injector, chain=chain)
-board.set_post_hook(coordinator.materialize)   # a posted blocker materializes a gate
+board.set_post_hook(
+    coordinator.materialize,
+    outbox_path=Path(".sdd/runtime/signal_outbox.jsonl"),   # durable retry queue
+)
 # ... later, when the blocker is fixed:
 coordinator.resolve(clearance_task_id, resolver="operator:alex")
+```
+
+A blocker whose gate fails to materialize is **not** acknowledged: `post()`
+raises `SignalActionFailure` and queues the message in the retry outbox, so a
+partially materialized blocker never looks handled. Callers that post blockers
+on a board with a hook wired must handle that exception (or drain the queue
+later with `board.retry_pending_actions()`):
+
+```python
+from bernstein.core.communication.bulletin import SignalActionFailure
+
+try:
+    board.post(BulletinMessage(agent_id="vp", type="blocker", content=msg, cell_id=cell_id))
+except SignalActionFailure:
+    logger.exception("blocker posted but its clearance gate did not materialize")
 ```
 
 `bernstein audit verify-gates` reconstructs, offline from the chain alone,

@@ -50,6 +50,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -61,6 +62,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 #: Schema version embedded in every selection receipt. Bump on a breaking change.
@@ -372,10 +374,22 @@ def verify_receipt(
             their own key and it still verifies. Pass the trusted signer's
             keyid to bind acceptance to a known key (mirrors
             :func:`bernstein.core.sandbox.pool_enrolment.verify_claim_receipt`'s
-            ``enrolled_keyid``). ``None`` preserves the self-consistency-only
-            behaviour.
+            ``enrolled_keyid``). ``None`` *or an empty string* (e.g. an unset
+            env var) preserves the self-consistency-only behaviour - an empty
+            value is never treated as a valid anchor.
     """
     errors: list[str] = []
+
+    # A "verified" verdict must attest to something. The base and winner digests
+    # must be present and well-formed 64-hex, or an all-empty-digest receipt -
+    # which references no CAS objects at all - could be signed and verify clean
+    # while zero blobs are ever checked.
+    for label, value in (
+        ("base_snapshot_digest", receipt.base_snapshot_digest),
+        ("winner_snapshot_digest", receipt.winner_snapshot_digest),
+    ):
+        if not _HEX64.match(value or ""):
+            errors.append(f"{label} is not a valid 64-hex digest")
 
     expected_digest = _payload_digest(receipt)
     if expected_digest != receipt.payload_digest:
@@ -383,10 +397,13 @@ def verify_receipt(
             f"payload_digest mismatch (expected {expected_digest[:16]}..., got {receipt.payload_digest[:16]}...)",
         )
 
-    if expected_keyid is not None and receipt.keyid != expected_keyid:
+    if expected_keyid and receipt.keyid != expected_keyid:
         # receipt.keyid is typed str but a hand-built/deserialised receipt could
         # carry None; guard the slice so verification reports a mismatch rather
-        # than raising TypeError.
+        # than raising TypeError. Do not remove this guard in a cleanup pass: a
+        # verifier that crashes on a hostile record tells an operator strictly
+        # less than one that reports it, so the None case must yield a mismatch
+        # verdict, never a TypeError.
         got = (receipt.keyid or "")[:16]
         errors.append(
             f"keyid {got}... is not the trusted signer {expected_keyid[:16]}...",
@@ -460,6 +477,140 @@ def snapshot_digests(receipt: SelectionReceipt) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Full verdict: one shared definition for the library and the CLI (#2705)
+# ---------------------------------------------------------------------------
+
+#: Per-blob CAS outcomes a caller reports for each digest in the receipt.
+BLOB_INTACT = "intact"
+BLOB_TAMPERED = "tampered"
+BLOB_ABSENT = "absent"
+BLOB_UNREADABLE = "unreadable"
+
+#: A valid CAS digest is exactly 64 lowercase hex chars (sha256). A receipt field
+#: that is not is a malformed/hostile record, not a blob to look up - and passing
+#: it to the store raises, so it must be caught before the CAS read.
+_HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class FullReceiptVerdict:
+    """The complete offline verdict for a receipt: signature *and* CAS content.
+
+    Produced by :func:`verify_receipt_full` so the ``sandbox receipt verify``
+    CLI and any library caller derive one answer from one definition (rather
+    than the CLI re-implementing the CAS logic and drifting). ``verdict`` is the
+    machine-readable field; ``exit_code`` is what the CLI returns.
+
+    exit_code / verdict, strongest reason first:
+
+    * ``1`` / ``failed``     - invalid signature/consistency, a receipt digest
+      field that is not 64 hex chars (**malformed**), or a blob that is
+      present-but-hash-mismatched (**tampered**). Takes precedence over all else.
+    * ``4`` / ``unreadable`` - a blob is present but cannot be read on this host
+      (a permissions problem *here*, never a claim about the record).
+    * ``2`` / ``incomplete`` - authentic and untampered, but a blob is **absent**
+      from CAS (GC / retention / restart), so the re-hash is incomplete.
+    * ``3`` / ``unanchored`` - signed, consistent, blobs intact, but no trust
+      anchor was applied, so the signer is unverified. A receipt re-signed under
+      any other key would look identical, so this **never** reports ``0``.
+    * ``0`` / ``verified``   - signed, anchored to a trusted signer, and every
+      named blob re-hashed intact.
+    """
+
+    verdict: str
+    exit_code: int
+    anchored: bool
+    signature_errors: tuple[str, ...]
+    tampered: tuple[str, ...]
+    malformed: tuple[str, ...]
+    absent: tuple[str, ...]
+    unreadable: tuple[str, ...]
+    digests_checked: int
+
+    @property
+    def ok(self) -> bool:
+        """True only for a fully verified, anchored, CAS-intact receipt."""
+        return self.exit_code == 0
+
+
+def verify_receipt_full(
+    receipt: SelectionReceipt,
+    *,
+    expected_keyid: str | None,
+    blob_status: Callable[[str], str],
+) -> FullReceiptVerdict:
+    """Combine signature/consistency with per-blob CAS outcomes into one verdict.
+
+    This is the single definition the CLI and any library caller share, so the
+    two can never disagree about whether a receipt verifies. ``blob_status`` maps
+    a digest to one of :data:`BLOB_INTACT` / :data:`BLOB_TAMPERED` /
+    :data:`BLOB_ABSENT` / :data:`BLOB_UNREADABLE`; it is injected rather than a
+    CAS import so this module stays free of storage dependencies (the CLI
+    supplies a CAS-backed reader).
+
+    Precedence, strongest reason first: tampered/invalid > unreadable > absent >
+    unanchored > verified. Crucially, with no ``expected_keyid`` the result is
+    never ``verified``/exit 0 - an unanchored receipt proves only that it was
+    signed by *the key it carries*, which an attacker can also produce.
+    """
+    base = verify_receipt(receipt, expected_keyid=expected_keyid)
+    tampered: list[str] = []
+    absent: list[str] = []
+    unreadable: list[str] = []
+    malformed: list[str] = []
+    digests = snapshot_digests(receipt)
+    for digest in digests:
+        # A digest that is not 64 hex chars is a malformed/hostile record, not a
+        # blob to look up. Skip the CAS read (the store would raise ValueError on
+        # it) and force a failed verdict - never let a bit-flipped digest crash
+        # the verifier. This runs before blob_status precisely so the read is
+        # never reached with a value the store rejects.
+        if not _HEX64.match(digest):
+            malformed.append(digest)
+            continue
+        status = blob_status(digest)
+        if status == BLOB_INTACT:
+            continue
+        if status == BLOB_TAMPERED:
+            tampered.append(digest)
+        elif status == BLOB_ABSENT:
+            absent.append(digest)
+        else:
+            # BLOB_UNREADABLE or any unexpected value: a status this function
+            # does not recognise must never be treated as intact (that could
+            # yield a false "verified"), so it degrades to unreadable.
+            unreadable.append(digest)
+
+    # An empty string is NOT a trust anchor - it commonly arrives from an unset
+    # env var (--expected-keyid "$VAR" with VAR unset). Treat "" as no anchor
+    # (bool() maps both None and "" to unanchored) so a forged receipt carrying
+    # an empty keyid can never satisfy an empty anchor and reach exit 0.
+    anchored = bool(expected_keyid)
+    if not base.ok or tampered or malformed:
+        verdict, code = "failed", 1
+    elif unreadable:
+        verdict, code = "unreadable", 4
+    elif absent:
+        verdict, code = "incomplete", 2
+    elif not anchored:
+        verdict, code = "unanchored", 3
+    else:
+        verdict, code = "verified", 0
+
+    return FullReceiptVerdict(
+        verdict=verdict,
+        exit_code=code,
+        anchored=anchored,
+        signature_errors=base.errors,
+        tampered=tuple(tampered),
+        malformed=tuple(malformed),
+        absent=tuple(absent),
+        unreadable=tuple(unreadable),
+        digests_checked=len(digests),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Disk persistence (crash-safe: tmp + rename)
 # ---------------------------------------------------------------------------
 
@@ -479,19 +630,55 @@ def write_receipt(path: Path, receipt: SelectionReceipt) -> Path:
     return path
 
 
+def _reject_nonfinite(token: str) -> float:
+    """json parse_constant hook: reject NaN / Infinity / -Infinity in a receipt.
+
+    ``json.loads`` accepts these by default, and they survive into the receipt;
+    a non-finite score then trips ``allow_nan=False`` during canonical
+    serialisation *at verify time* with an uncaught ValueError. Rejecting them at
+    the parse boundary keeps a hostile receipt from crashing the verifier.
+    """
+    msg = f"non-finite JSON constant not allowed in a receipt: {token}"
+    raise ValueError(msg)
+
+
 def read_receipt_file(path: Path) -> SelectionReceipt | None:
-    """Load a receipt from an explicit path (used by ``sandbox receipt verify``)."""
-    if not path.exists():
+    """Load a receipt from an explicit path (used by ``sandbox receipt verify``).
+
+    Returns ``None`` for anything that is not a well-formed receipt: a missing
+    or unreadable file, non-JSON or truncated JSON, a non-object payload, or a
+    dict missing required fields. Callers map ``None`` to a clean, diagnosable
+    error; this function never raises on hostile or damaged input, because a
+    verifier that tracebacks on a malformed file tells an operator strictly less
+    than one that returns a verdict.
+    """
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        # OSError: missing/unreadable file. UnicodeDecodeError (a ValueError,
+        # not an OSError): a binary/mis-encoded file, e.g. a verify pointed at a
+        # .tar.gz - must still return a verdict, never a traceback.
         return None
-    raw = json.loads(path.read_text())
+    try:
+        raw = json.loads(text, parse_constant=_reject_nonfinite)
+    except (ValueError, UnicodeDecodeError):
+        return None
     if not isinstance(raw, dict):
         return None
-    return receipt_from_dict(cast("dict[str, Any]", raw))
+    try:
+        return receipt_from_dict(cast("dict[str, Any]", raw))
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 __all__ = [
+    "BLOB_ABSENT",
+    "BLOB_INTACT",
+    "BLOB_TAMPERED",
+    "BLOB_UNREADABLE",
     "DEFAULT_ISOLATION",
     "SELECTION_RECEIPT_SCHEMA_VERSION",
+    "FullReceiptVerdict",
     "RaceCandidate",
     "ReceiptVerification",
     "SelectionReceipt",
@@ -506,5 +693,6 @@ __all__ = [
     "sign_receipt",
     "snapshot_digests",
     "verify_receipt",
+    "verify_receipt_full",
     "write_receipt",
 ]

@@ -95,6 +95,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `base.py`                   | Base adapter for CLI coding agents |
 | `caching_adapter.py`        | Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse |
 | `canary.py`                 | Adapter conformance canary matrix (issue #2368) |
+| `capability_profile.py`     | Declarative adapter capability profiles and the profile factory |
 | `charm.py`                  | Charm Crush CLI adapter |
 | `claude.py`                 | Claude Code CLI adapter |
 | `claude_agents.py`          | Build per-task Claude Code subagent definitions for the --agents flag |
