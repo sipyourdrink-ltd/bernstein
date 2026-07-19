@@ -44,8 +44,9 @@ The alternative model puts an LLM in the control plane loop. The manager LLM
 receives task status updates, reasons about priorities, assigns work to agents,
 and decides when work is done.
 
-This is the model used by CrewAI's hierarchical process and was the model used in
-the long-running multi-agent pilot (an LLM "manager" agent on top of LLM workers).
+This is the hierarchical-manager pattern used by several in-process frameworks,
+and was the model used in the long-running multi-agent pilot (an LLM "manager"
+agent on top of LLM workers).
 
 **Why rejected:**
 

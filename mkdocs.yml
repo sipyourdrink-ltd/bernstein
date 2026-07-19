@@ -2,12 +2,8 @@ site_name: Bernstein
 site_url: https://bernstein.readthedocs.io/
 site_author: Alex Chernysh
 site_description: >-
-  Bernstein is the open-source multi-agent orchestration platform for AI coding
-  agents. Run Claude Code, Codex, Gemini CLI, and the OpenAI Agents SDK in
-  parallel with deterministic scheduling, 43 adapters, pluggable sandbox
-  backends, cloud artifact storage, and zero vendor lock-in. Built for the
-  forward-deployed engineering pattern - drop the swarm onto a client repo
-  with file-based state, per-agent credential scoping, and a signed audit trail.
+  Deterministic, verifiable orchestration for CLI coding agents - reproducible
+  parallel runs, signed audit trail, air-gap friendly.
 repo_url: https://github.com/sipyourdrink-ltd/bernstein
 repo_name: sipyourdrink-ltd/bernstein
 edit_uri: edit/main/docs/

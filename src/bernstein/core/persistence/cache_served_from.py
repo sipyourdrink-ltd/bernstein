@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from bernstein.core.persistence.cache_policy import validate_cache_key
+
 if TYPE_CHECKING:
     from bernstein.core.lineage.spine import LineageSpine
 
@@ -25,8 +27,16 @@ _SERVED_FROM_PREFIX = ".sdd/cache/served_from"
 
 
 def served_from_artifact_path(cache_key: str) -> str:
-    """Return the repo-relative spine artifact path for a served-from hit."""
-    return f"{_SERVED_FROM_PREFIX}/{cache_key}"
+    """Return the repo-relative spine artifact path for a served-from hit.
+
+    The key becomes the final path component, so it is validated first: a key
+    carrying separators or traversal segments would otherwise let a spine entry
+    claim an artifact path outside the served-from namespace.
+
+    Raises:
+        UnsafeCacheKeyError: When ``cache_key`` is not a safe cache key.
+    """
+    return f"{_SERVED_FROM_PREFIX}/{validate_cache_key(cache_key)}"
 
 
 def served_from_content(*, cache_key: str, output_hash: str, policy_hash: str, recipe_hash: str) -> bytes:

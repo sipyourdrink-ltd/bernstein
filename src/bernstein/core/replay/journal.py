@@ -45,10 +45,23 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class JournalPathError(PathContainmentError):
+    """Raised for a run id that cannot safely name a journal directory.
+
+    Subclasses :class:`ValueError` (through
+    :class:`~bernstein.core.security.path_containment.PathContainmentError`)
+    so callers that already handle a bad run id with ``except ValueError``
+    keep working unchanged.
+    """
+
 
 #: Name of the canonical per-run event journal inside ``.sdd/runs/<id>/``.
 JOURNAL_FILENAME = "journal.jsonl"
@@ -68,18 +81,83 @@ _GENESIS_HASH = ""
 
 #: A run_id names exactly one journal directory and must be a single safe path
 #: segment. This mirrors ``run_service.paths.validate_run_id``: an anchored
-#: allowlist match then a return of the checked value, the shape CodeQL credits
-#: as a path-injection barrier. The journal path is derived only from the value
-#: :func:`_validated_run_id` returns, so no attacker-controlled character reaches
-#: the filesystem sinks below.
+#: allowlist match then a return of the checked value.
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
 def _validated_run_id(run_id: str) -> str:
-    """Return *run_id* unchanged when it is a safe path segment, else raise."""
-    if not _RUN_ID_RE.match(run_id):
-        raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
+    """Return *run_id* unchanged when it is a safe path segment, else raise.
+
+    Raises:
+        JournalPathError: The id is ``.``, ``..``, or falls outside the
+            allowlisted alphabet.
+    """
+    if run_id in {".", ".."} or not _RUN_ID_RE.match(run_id):
+        raise JournalPathError(f"unsafe run_id for journal path: {run_id!r}")
     return run_id
+
+
+def run_journal_path(sdd_dir: Path, run_id: str) -> Path:
+    """Return the run's journal path, contained under ``<sdd>/runs``.
+
+    Every reader of a run journal must derive its path here rather than
+    rebuilding ``<sdd>/runs/<run_id>/journal.jsonl`` by hand, so that a
+    crafted run id cannot address a journal outside the runs root and a
+    symlinked run directory cannot redirect the read. This is the run-level
+    twin of ``checkpoint_retry.task_journal_path``.
+
+    ``verify_journal`` is not a substitute: it is an unkeyed Merkle
+    recompute, so a journal planted outside the tree verifies cleanly.
+
+    Args:
+        sdd_dir: The project ``.sdd`` directory.
+        run_id: The run whose journal to locate.
+
+    Returns:
+        The containment-checked journal path.
+
+    Raises:
+        JournalPathError: The run id is not a safe path segment, or the
+            resolved journal escapes the runs root.
+    """
+    safe_run_id = _validated_run_id(run_id)
+    try:
+        return contained_path(sdd_dir / "runs", safe_run_id, JOURNAL_FILENAME, label="run id")
+    except PathContainmentError as exc:
+        raise JournalPathError(f"run_id escapes the journal runs root: {run_id!r}") from exc
+
+
+def contained_run_journal(runs_root: Path, entry_name: str, filename: str = JOURNAL_FILENAME) -> Path | None:
+    """Return the journal path for an iterated run directory, or ``None``.
+
+    For the sweep case: the caller obtained *entry_name* by iterating
+    *runs_root*, so it cannot carry ``..`` or a separator. That covers only
+    half the threat. A directory entry with a perfectly ordinary name can be
+    a **symlink** pointing outside the runs root - the name is innocent, the
+    target is not - and iteration says nothing about what the entry resolves
+    to. Containment is what closes that half, so sweeps re-derive through
+    the same barrier as targeted lookups.
+
+    Returns ``None`` for an entry that escapes, so a sweep skips it and
+    keeps going rather than aborting the whole pass over one bad entry.
+
+    Args:
+        runs_root: The directory being iterated.
+        entry_name: A directory entry name from that iteration.
+        filename: Journal filename to append.
+
+    Returns:
+        The contained journal path, or ``None`` when the entry escapes.
+    """
+    try:
+        return contained_path(runs_root, entry_name, filename, label="run directory")
+    except PathContainmentError:
+        logger.warning(
+            "skipping run directory %r: it resolves outside %s",
+            entry_name,
+            runs_root,
+        )
+        return None
 
 
 def _payload_hash(event_type: str, payload: dict[str, Any]) -> str:
@@ -156,21 +234,13 @@ class EventJournal:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
         # Path-injection barrier (py/path-injection). A run_id names one journal
-        # directory and must be a single safe path segment. ``.``/``..`` pass the
-        # id alphabet but are the current/parent directory, so reject them first;
-        # then ``_validated_run_id`` -- an anchored allowlist match that returns
-        # the checked value, mirroring run_service.paths.validate_run_id -- is the
-        # sanitizer the filesystem sinks below are built from. The path is derived
-        # only from the value that flows out of that barrier.
-        if run_id in {".", ".."}:
-            raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
-        safe_run_id = _validated_run_id(run_id)
-        self._path = self._runs_root / safe_run_id / JOURNAL_FILENAME
-        # Defence in depth: refuse a resolved path that still escapes the runs
-        # root, e.g. through a symlinked run directory.
-        runs_root_real = os.path.realpath(self._runs_root)
-        if os.path.commonpath((runs_root_real, os.path.realpath(self._path))) != runs_root_real:
-            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
+        # directory and must be a single safe path segment. The writer shares
+        # ``run_journal_path`` with every run-journal reader, so there is one
+        # definition of where a run journal lives and one barrier guarding it:
+        # the path is the normalised, containment-checked value, never the raw
+        # join, so every filesystem sink below is built from a location proven
+        # to sit under the runs root even when the run directory is a symlink.
+        self._path = run_journal_path(sdd_dir, run_id)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0
@@ -550,8 +620,10 @@ __all__ = [
     "JOURNAL_FILENAME",
     "RETENTION_ENV_VAR",
     "EventJournal",
+    "JournalPathError",
     "JournalVerifyResult",
     "compute_event_hash",
+    "contained_run_journal",
     "load_events",
     "rebuild_state",
     "record_dispatch_knob_selection",

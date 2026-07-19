@@ -76,7 +76,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `trackers/`                 | Tracker adapter subsystem |
 | `trigger_sources/`          | Trigger source adapters - normalize raw events into TriggerEvent |
 | `tunnels/`                  | Tunnel provider abstraction and registry |
-| `workflows/`                | Archon-inspired YAML workflow manifests |
+| `workflows/`                | Declarative YAML workflow manifests |
 | `worktrees/`                | Worktree inventory and garbage-collection helpers |
 
 ### `src/bernstein/adapters/` - CLI agent adapters
@@ -190,7 +190,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `install_check.py`      | Installation mismatch detection -- detect multiple Bernstein installs and config conflicts |
 | `keybindings.py`        | Keybinding system for the Bernstein TUI |
 | `live.py`               | Live view helpers for ``bernstein live --classic`` |
-| `main.py`               | CLI entry point for Bernstein -- declarative agent orchestration |
+| `main.py`               | CLI entry point for Bernstein -- deterministic, verifiable orchestration for CLI coding agents |
 | `notebook_traces.py`    | Notebook-aware traces - detect and track Jupyter notebook cell edits |
 | `release_notes.py`      | Release notes display - fetch and format CHANGELOG.md for terminal output |
 | `run.py`                | Enhanced run output for ``bernstein run`` |

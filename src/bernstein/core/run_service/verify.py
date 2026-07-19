@@ -25,6 +25,7 @@ from bernstein.core.run_service.receipts import (
     TRANSITION_SUBMITTED,
 )
 from bernstein.core.security.audit_chain import EVENT_RUN_LIFECYCLE, AuditChainStore
+from bernstein.core.security.path_containment import PathContainmentError
 
 
 @dataclass(frozen=True)
@@ -72,13 +73,24 @@ def verify_run(root: Path, run_id: str) -> RunVerification:
     if not audit_ok:
         errors.extend(f"audit: {e}" for e in audit_errors)
 
-    reader = LedgerReader(run_ledger_dir(sdd, run_id))
-    ledger_result = reader.verify()
-    ledger_ok = ledger_result.ok
-    if not ledger_ok:
-        errors.extend(f"ledger: {e}" for e in ledger_result.errors)
+    # A verifier reports; it does not raise. An unusable run id is a ledger
+    # finding like any other, so it is recorded and the remaining pillars
+    # still get reported. Raising here would discard the audit-chain result
+    # computed just above -- the tamper finding would be lost to an
+    # unrelated identifier check, which is strictly worse than not checking.
+    reader: LedgerReader | None = None
+    try:
+        reader = LedgerReader(run_ledger_dir(sdd, run_id))
+    except PathContainmentError as exc:
+        ledger_ok = False
+        errors.append(f"ledger: unusable run id: {exc}")
+    else:
+        ledger_result = reader.verify()
+        ledger_ok = ledger_result.ok
+        if not ledger_ok:
+            errors.extend(f"ledger: {e}" for e in ledger_result.errors)
 
-    hashes = [entry.entry_hash for entry in reader.entries()] if ledger_ok else []
+    hashes = [entry.entry_hash for entry in reader.entries()] if (reader is not None and ledger_ok) else []
 
     receipts = [e for e in chain.query(event_type=EVENT_RUN_LIFECYCLE) if e.details.get("run_id") == run_id]
     receipts_seen = len(receipts)

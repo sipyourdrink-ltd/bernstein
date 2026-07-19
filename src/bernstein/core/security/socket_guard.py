@@ -27,6 +27,12 @@ Design notes:
   and the IPv6 4-tuple form ``(host, port, flowinfo, scopeid)``.
 * The guard is idempotent: ``install_runtime_socket_guard()`` can
   be called many times; only the first call patches the global.
+* Install and uninstall key off the *identity* of the callable on
+  the class, not off a bookkeeping flag. Bernstein is not the only
+  thing that may patch ``socket.socket.connect``, and a flag that
+  outlives the patch it describes would otherwise let uninstall
+  write a dead wrapper into the process -- or let install report an
+  egress boundary it never put in place.
 """
 
 from __future__ import annotations
@@ -51,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 _INSTALLED_FLAG: Final[str] = "_bernstein_socket_guard_installed"
 _ORIGINAL_FLAG: Final[str] = "_bernstein_socket_guard_original_connect"
+_GUARD_FLAG: Final[str] = "_bernstein_socket_guard_active_connect"
 
 __all__ = [
     "ENV_PROFILE_MODE",
@@ -132,6 +139,32 @@ def _make_guarded_connect(original: Any) -> Any:
     return _guarded_connect
 
 
+def _guard_is_live(sock_cls: type[socket.socket]) -> bool:
+    """Return True iff *our* guard is the callable currently on the class.
+
+    The ``_INSTALLED_FLAG`` alone is not enough. Bernstein is not the only
+    thing that patches ``socket.socket.connect``: a test harness, tracer, or
+    sandbox shim may swap in its own wrapper and restore its predecessor when
+    its scope ends. If the guard was installed while such a shim was live and
+    was not uninstalled before the shim went away, the flags describe an
+    installation that no longer exists and ``_ORIGINAL_FLAG`` holds a callable
+    nothing references any more. Acting on the flags then writes that dead
+    wrapper onto the class process-wide. Compare identities instead.
+    """
+    if not getattr(sock_cls, _INSTALLED_FLAG, False):
+        return False
+    guard = getattr(sock_cls, _GUARD_FLAG, None)
+    return guard is not None and sock_cls.connect is guard
+
+
+def _clear_guard_state(sock_cls: type[socket.socket]) -> None:
+    """Drop the bookkeeping without touching ``connect``."""
+    setattr(sock_cls, _INSTALLED_FLAG, False)
+    for flag in (_ORIGINAL_FLAG, _GUARD_FLAG):
+        with contextlib.suppress(AttributeError):
+            delattr(sock_cls, flag)
+
+
 def install_runtime_socket_guard(*, force: bool = False) -> bool:
     """Install the process-wide runtime egress hook.
 
@@ -155,16 +188,24 @@ def install_runtime_socket_guard(*, force: bool = False) -> bool:
     if not force and not is_airgap_profile():
         return False
     sock_cls = socket.socket
-    if getattr(sock_cls, _INSTALLED_FLAG, False) and not force:
+    live = _guard_is_live(sock_cls)
+    if live and not force:
         return True
-    if force and getattr(sock_cls, _INSTALLED_FLAG, False):
+    if live:
         # Restore first so we close over the truly original connect,
         # not over the previous guard.
-        original = getattr(sock_cls, _ORIGINAL_FLAG, sock_cls.connect)
-        sock_cls.connect = original  # type: ignore[method-assign]
+        sock_cls.connect = getattr(sock_cls, _ORIGINAL_FLAG, sock_cls.connect)  # type: ignore[method-assign]
+    # Every other state -- never installed, or flags left over from an
+    # installation another patcher has since displaced -- is rebuilt from the
+    # live ``connect`` below, and the stale original is dropped rather than
+    # restored. The displaced case must not short-circuit as "already
+    # installed": reporting an egress boundary that is not actually patched in
+    # is the one failure mode an airgap run cannot tolerate.
     original_connect = sock_cls.connect
+    guard = _make_guarded_connect(original_connect)
     setattr(sock_cls, _ORIGINAL_FLAG, original_connect)
-    sock_cls.connect = _make_guarded_connect(original_connect)  # type: ignore[method-assign]
+    setattr(sock_cls, _GUARD_FLAG, guard)
+    sock_cls.connect = guard  # type: ignore[method-assign]
     setattr(sock_cls, _INSTALLED_FLAG, True)
     return True
 
@@ -172,25 +213,30 @@ def install_runtime_socket_guard(*, force: bool = False) -> bool:
 def uninstall_runtime_socket_guard() -> bool:
     """Restore the original ``socket.socket.connect`` (test helper).
 
-    Returns True iff the guard was previously installed and has been
-    successfully removed.
+    Safe to call unconditionally, including when another patcher has taken
+    over ``connect`` since the guard was installed. In that case the stashed
+    original is stale -- putting it back would swap a dead wrapper into the
+    process and silently displace the live patch -- so the bookkeeping is
+    dropped and ``connect`` is left exactly as found.
+
+    Returns True iff the guard was actually the callable on the class and has
+    been replaced by the original it captured.
     """
     sock_cls = socket.socket
     if not getattr(sock_cls, _INSTALLED_FLAG, False):
         return False
     original = getattr(sock_cls, _ORIGINAL_FLAG, None)
-    if original is None:
+    live = _guard_is_live(sock_cls)
+    _clear_guard_state(sock_cls)
+    if not live or original is None:
         return False
     sock_cls.connect = original  # type: ignore[method-assign]
-    setattr(sock_cls, _INSTALLED_FLAG, False)
-    with contextlib.suppress(AttributeError):
-        delattr(sock_cls, _ORIGINAL_FLAG)
     return True
 
 
 def is_runtime_socket_guard_installed() -> bool:
     """Return True iff the guard is currently patched into ``socket.socket``."""
-    return bool(getattr(socket.socket, _INSTALLED_FLAG, False))
+    return _guard_is_live(socket.socket)
 
 
 def collect_unmonitored_destinations(allowed_specs: Iterable[str]) -> list[str]:

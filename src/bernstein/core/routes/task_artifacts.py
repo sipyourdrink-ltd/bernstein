@@ -309,8 +309,7 @@ def _decode_content(
     from bernstein.core.lineage.spine import content_hash_of
 
     root = sdd_dir if sdd_dir is not None else _sdd_dir(request)  # type: ignore[arg-type]
-    store = EvidenceStore(root / "evidence")
-    blob = store.get(content_hash)
+    blob = EvidenceStore(root / "evidence").get(content_hash)
     if blob is None or content_hash_of(blob) != content_hash:
         return None
     try:

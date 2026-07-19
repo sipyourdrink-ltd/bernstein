@@ -1,6 +1,6 @@
 User-agent: *
 Name: Bernstein
-Description: Open-source multi-agent orchestration platform for AI coding agents
+Description: Deterministic, verifiable orchestration for CLI coding agents - reproducible parallel runs, signed audit trail, air-gap friendly
 Homepage: https://bernstein.readthedocs.io/
 Repository: https://github.com/sipyourdrink-ltd/bernstein
 Package: https://pypi.org/project/bernstein/
@@ -10,4 +10,4 @@ Author: Alex Chernysh <https://alexchernysh.com>
 Author-X: https://x.com/alex_chernysh
 License: Apache-2.0
 Category: DeveloperTool, AIOrchestration, MultiAgent
-Tags: multi-agent, orchestration, ai-coding, deterministic-scheduling, cli-agents
+Tags: multi-agent, orchestration, ai-coding, deterministic-scheduling, cli-agents, replay, lineage, provenance, audit

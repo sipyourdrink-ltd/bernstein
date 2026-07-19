@@ -30,7 +30,6 @@ from bernstein.core.server.server_app import node_to_response as node_to_respons
 from bernstein.core.server.server_app import notify_agent_status as notify_agent_status
 from bernstein.core.server.server_app import read_log_tail as read_log_tail
 from bernstein.core.server.server_app import task_to_response as task_to_response
-from bernstein.core.server.server_middleware import _PUBLIC_PATH_PREFIXES as _PUBLIC_PATH_PREFIXES
 from bernstein.core.server.server_middleware import _PUBLIC_PATHS as _PUBLIC_PATHS
 from bernstein.core.server.server_middleware import _WRITE_METHODS as _WRITE_METHODS
 
