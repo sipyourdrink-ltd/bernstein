@@ -841,6 +841,94 @@ def test_doctor_still_warns_when_genuinely_never_activated(tmp_path: Path) -> No
     assert "no attestation yet" in row.detail
 
 
+def _attest(workdir: Path, body: str) -> None:
+    """Write *body* and seal a matching signed posture attestation on disk."""
+    _write_config(workdir, body)
+    policy = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(workdir))
+    build_posture_attestation(
+        workdir=workdir, policy=policy, timestamp=1, chain=AuditChainStore(workdir / ".sdd" / "audit")
+    )
+
+
+def test_doctor_fails_when_the_enforced_egress_diverges_from_the_attestation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The posture-attested row must FAIL when the runtime egress diverges.
+
+    The config attests an allow-list egress, and the marker pair is present and
+    consistent, but the enforced ``BERNSTEIN_NETWORK_POLICY`` points at a
+    different destination. ``evaluate_posture_drift`` records that mismatch as a
+    live violation (``should_refuse`` is True and the spawn gate refuses), yet
+    the doctor row keyed only off drift / attested-hash / rejection and reported
+    a clean match. The verifier must not hand an auditor a green row at the
+    moment the gate is refusing every spawn.
+    """
+    from bernstein.core.distribution.doctor_sovereign import CheckStatus
+
+    _attest(tmp_path, _COMPLIANT_ALLOW_LIST)  # attests allow-list 10.0.0.5:11434
+    monkeypatch.setenv(ENV_SOVEREIGN_MODE, "1")
+    monkeypatch.setenv(ENV_PROFILE_MODE, PROFILE_AIRGAP)
+    monkeypatch.setenv(ENV_NETWORK_POLICY, "10.0.0.6:11434")
+
+    _, row = _doctor_attestation_row(tmp_path)
+    assert row.status is CheckStatus.FAIL, f"expected FAIL, got {row.status}: {row.detail}"
+    assert "does not equal the enforced" in row.detail
+    # One posture, one verdict: the gate refuses the identical posture.
+    with pytest.raises(PostureDriftRefusal):
+        _preflight(tmp_path)
+
+
+def test_doctor_fails_when_markers_stripped_leave_the_runtime_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run_sovereign_checks`` must compare the attested egress against the real
+    runtime, not skip the invariant when the airgap marker is absent.
+
+    A workspace carrying a signed deny-all attestation, run in a process whose
+    markers were stripped, enforces allow-all. The spawn gate refuses that
+    (it passes ``runtime_policy=policy_from_env()`` explicitly). The doctor
+    derived its runtime from ``_live_runtime_policy()``, which returns ``None``
+    without the airgap marker, so it skipped the egress invariant and reported a
+    clean match. It must instead mirror the gate.
+    """
+    from bernstein.core.distribution.doctor_sovereign import CheckStatus
+
+    _attest(tmp_path, _COMPLIANT_DENY_ALL)  # deny-all attestation on disk
+    for var in _SOVEREIGN_ENV:
+        monkeypatch.delenv(var, raising=False)
+    assert policy_from_env().allow_any is True  # premise: runtime is wide open
+
+    _, row = _doctor_attestation_row(tmp_path)
+    assert row.status is CheckStatus.FAIL, f"expected FAIL, got {row.status}: {row.detail}"
+    assert "does not equal the enforced" in row.detail
+    with pytest.raises(PostureDriftRefusal):
+        _preflight(tmp_path)
+
+
+def test_cli_doctor_simulation_installs_the_configured_egress_for_an_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The standalone doctor must simulate the egress a real activation installs.
+
+    Run from a bare shell, ``bernstein doctor sovereign`` simulates
+    ``--profile sovereign`` for the duration of the checks. A real activation
+    installs the ``sovereign.allowed_egress`` allow-list from config; the
+    simulation must install the same policy, or an honest allow-list workspace
+    is falsely reported as an egress mismatch now that the verifier surfaces
+    live violations.
+    """
+    from bernstein.cli.commands.doctor_sovereign_cmd import run_doctor_sovereign
+
+    _attest(tmp_path, _COMPLIANT_ALLOW_LIST)  # honest, compliant allow-list posture
+    for var in _SOVEREIGN_ENV:
+        monkeypatch.delenv(var, raising=False)  # bare shell -> simulation active
+
+    # rc 0 means no FAIL row: the posture-attested row does not report a false
+    # egress mismatch against a fabricated deny-all runtime.
+    rc = run_doctor_sovereign(workdir=tmp_path, as_json=False)
+    assert rc == 0
+
+
 def test_verify_rejects_a_chain_record_signed_by_a_foreign_key(tmp_path: Path) -> None:
     """Isolates the chain-side signer anchor.
 
