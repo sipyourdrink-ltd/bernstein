@@ -27,23 +27,13 @@
 name: Mutation (fixed critical paths)
 
 on:
-  pull_request:
-    paths:
-      - "src/bernstein/core/tasks/claim.py"
-      - "src/bernstein/core/security/audit.py"
-      - "src/bernstein/core/security/audit_integrity.py"
-      - "src/bernstein/core/lineage/gate.py"
-      - "src/bernstein/core/lineage/tips.py"
-      - "src/bernstein/core/lineage/merge.py"
-      - "src/bernstein/core/config/seed_parser.py"
-      - "tests/unit/test_claim_next.py"
-      - "tests/unit/test_audit_chain_byteflip_regression.py"
-      - "tests/unit/test_audit_key.py"
-      - "tests/unit/test_audit_integrity.py"
-      - "tests/unit/test_config_schema.py"
-      - "tests/unit/lineage/**"
-      - "scripts/mutmut_critical.py"
-      - ".github/workflows/mutation-fixed.yml"
+  # Pre-merge mutation gate runs on the merge queue's ephemeral branch rather
+  # than on every PR push. merge_group has no paths filter, so the full
+  # critical-path matrix runs pre-merge; the weekly cron still audits the
+  # modules independent of diff coverage. The PR-comment summary job below is
+  # event-gated to pull_request and simply no-ops on the queue (no PR to
+  # comment on), while the matrix jobs still run and enforce the gate.
+  merge_group: {}
   schedule:
     # Weekly full audit. Independent of any PR.
     - cron: "17 4 * * 0"
