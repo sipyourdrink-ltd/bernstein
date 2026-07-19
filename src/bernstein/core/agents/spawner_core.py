@@ -2790,28 +2790,67 @@ class AgentSpawner:
         ``bernstein audit verify``, so the divergence is caught at spawn time and
         evidenced on the chain rather than surfacing at audit time.
 
+        The gate arms on either of two independent signals, so no single
+        environment edit disables it: the sovereign marker *pair*, or the mere
+        presence of a signed attestation in the workspace. A workspace that has
+        been attested sovereign stays gated even if a child process is launched
+        with the markers stripped -- the receipt on disk is the durable claim,
+        the environment is not.
+
         Raises:
-            PostureDriftRefusal: On drift, a live violation, or a missing
+            PostureDriftRefusal: On drift, a live violation, a half-set marker
+                pair, an unreadable config, or a missing / untrusted
                 attestation. Deliberately not a ``SpawnError`` so the
                 per-provider failover loop never retries it -- a hard stop.
         """
-        from bernstein.core.security.network_policy import is_sovereign_profile
+        from bernstein.core.security.network_policy import (
+            SovereignMarkerError,
+            is_sovereign_profile,
+            policy_from_env,
+        )
 
-        if not is_sovereign_profile():
-            return
+        extra_violations: list[str] = []
+        try:
+            sovereign_active = is_sovereign_profile()
+        except SovereignMarkerError as exc:
+            # A half-set marker pair is never read as "not sovereign": that is
+            # precisely the bypass. Arm the gate and record the inconsistency.
+            sovereign_active = True
+            extra_violations.append(f"sovereign profile markers are inconsistent: {exc}")
 
         import time as _time
 
         from bernstein.core.security.audit_chain import AuditChainStore
         from bernstein.core.security.deployment_profile import (
             PostureDriftRefusal,
+            SovereignConfigError,
+            attestation_path,
             evaluate_posture_drift,
             load_config_snapshot,
             record_and_sign_drift,
         )
 
-        snapshot = load_config_snapshot(self._workdir)
-        evaluation = evaluate_posture_drift(workdir=self._workdir, config_snapshot=snapshot)
+        if not sovereign_active and not attestation_path(self._workdir).is_file():
+            return
+
+        try:
+            snapshot: dict[str, Any] | None = load_config_snapshot(self._workdir, require=True)
+        except SovereignConfigError as exc:
+            snapshot = None
+            extra_violations.append(str(exc))
+
+        # Pass the runtime policy explicitly rather than letting the evaluator
+        # derive it: it only derives one under the airgap marker, so a process
+        # whose markers were stripped -- the exact case the attestation-armed
+        # branch above exists for -- would skip the egress invariant while
+        # ``policy_from_env`` sits at allow-all. An attested deny-all posture
+        # over an open runtime must refuse here, not pass quietly.
+        evaluation = evaluate_posture_drift(
+            workdir=self._workdir,
+            config_snapshot=snapshot,
+            runtime_policy=policy_from_env(),
+            extra_violations=tuple(extra_violations),
+        )
         if not evaluation.should_refuse:
             return
 

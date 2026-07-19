@@ -1,0 +1,34 @@
+# Contract for the Pydantic AI CLI (adapter: pydantic_ai).
+#
+# The adapter is built from a declarative capability profile rather than
+# a hand-written module; see
+# src/bernstein/adapters/capability_profile.py and
+# docs/adapters/capability_profiles.md.
+#
+# Always-passed surface: ``clai -m <model> --no-stream <prompt>``.
+# The prompt is positional (one-shot mode); omitting it would start an
+# interactive REPL. ``--no-stream`` is always passed because the
+# orchestrator reads a log file rather than a TTY.
+adapter: pydantic_ai
+binary: clai
+install:
+  method: pip
+  spec: "clai"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+    - "OPENAI_API_KEY"
+    - "ANTHROPIC_API_KEY"
+    - "GOOGLE_API_KEY"
+    - "GEMINI_API_KEY"
+    - "GROQ_API_KEY"
+    - "MISTRAL_API_KEY"
+required_flags:
+  - "-m"
+  - "--no-stream"
+required_subcommands: []
+help_command: ["clai", "--help"]
+expected_models:
+  command: []
+  required_present: []

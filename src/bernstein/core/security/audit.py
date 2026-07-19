@@ -482,11 +482,14 @@ def _matches_query_filters(
     actor: str | None,
     since: str | None,
     until: str | None,
+    resource_id: str | None = None,
 ) -> bool:
     """Return True if entry passes all query filters."""
     if event_type and entry.get("event_type") != event_type:
         return False
     if actor and entry.get("actor") != actor:
+        return False
+    if resource_id and entry.get("resource_id") != resource_id:
         return False
     ts = entry.get("timestamp", "")
     if since and ts < since:
@@ -737,15 +740,25 @@ class AuditLog:
         actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        resource_id: str | None = None,
         include_archived: bool = False,
     ) -> list[AuditEvent]:
-        """Filter audit events by type, actor, and/or time range.
+        """Filter audit events by type, actor, resource, and/or time range.
 
         Args:
             event_type: If set, only return events matching this type.
             actor: If set, only return events from this actor.
             since: ISO 8601 lower bound (inclusive).
             until: ISO 8601 upper bound (inclusive).
+            resource_id: If set, only return events whose ``resource_id``
+                matches exactly. A non-empty value also enables a raw-line
+                prefilter: a record whose serialized form does not contain the
+                id as a substring cannot have it as a field value, so it is
+                skipped before ``json.loads`` runs. This keeps a per-resource
+                lookup from paying a full parse of the whole log. The prefilter
+                is a superset test - a coincidental substring match still parses
+                and is then rejected by the exact comparison below - so it can
+                never drop a genuine match, only cheaply reject definite misses.
             include_archived: Also read archived ``*.jsonl.gz`` segments,
                 replayed in chronological order *before* the live files, the
                 same way :meth:`verify` walks them (#1835). Default False
@@ -780,16 +793,30 @@ class AuditLog:
                 # Unreadable archive segment (corrupt gzip). ``verify`` reports
                 # it with a named error; a query simply has nothing to yield.
                 continue
-            for raw_line in blob.decode("utf-8").splitlines():
+            text = blob.decode("utf-8")
+            # Segment-level reject: a record can only carry ``resource_id`` as a
+            # field value if that value appears verbatim in the segment's bytes.
+            # A segment that never mentions the id holds no match, so skip it
+            # whole - no line split, no per-line work. This is what keeps a
+            # first-time approval resolve, and a stream of unknown card hashes,
+            # off an O(chain) parse of the entire log.
+            if resource_id and resource_id not in text:
+                continue
+            for raw_line in text.splitlines():
                 raw = raw_line.strip()
                 if not raw:
+                    continue
+                # Line-level repeat of the same superset test: within a segment
+                # that does mention the id, only parse the lines that could
+                # match it.
+                if resource_id and resource_id not in raw:
                     continue
                 try:
                     entry = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
 
-                if not _matches_query_filters(entry, event_type, actor, since, until):
+                if not _matches_query_filters(entry, event_type, actor, since, until, resource_id):
                     continue
 
                 results.append(

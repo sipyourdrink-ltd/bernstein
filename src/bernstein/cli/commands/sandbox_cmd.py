@@ -312,80 +312,156 @@ def receipt_group() -> None:
 def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | None) -> None:
     """Verify a receipt's signature and re-hash every snapshot blob in CAS.
 
-    Proves the receipt is *properly signed and internally consistent* and
-    that every snapshot it names (base + winner + every loser) still exists
-    and re-hashes correctly in CAS. With ``--expected-keyid`` it additionally
-    proves the receipt was signed by that trusted signer. It does NOT prove
-    the receipt was appended to the audit chain - that is the audit log's own
-    ``verify``.
+    Proves the receipt is *properly signed and internally consistent* and that
+    every snapshot it names (base + winner + every loser) still exists and
+    re-hashes correctly in CAS. With ``--expected-keyid`` it additionally proves
+    the receipt was signed by that trusted signer. It does NOT prove the receipt
+    was appended to the audit chain - that is the audit log's own ``verify``.
 
-    Exit codes give three distinct answers (an absent blob is an operational
-    event, not proof of tampering, and must not read as one):
+    The CLI and the library derive the verdict from one shared definition
+    (:func:`~bernstein.core.sandbox.selection_receipt.verify_receipt_full`), so
+    the two can never disagree. Exit codes, strongest reason first:
 
-    * ``0`` - signed, consistent, and every named blob re-hashed intact.
-    * ``1`` - invalid signature/consistency, or a blob is **tampered**
-      (present but hash-mismatched).
-    * ``2`` - authentic and untampered, but a blob is **absent** from CAS, so
-      the content re-hash could not be completed (verification incomplete).
+    * ``1`` - invalid signature/consistency, or a blob is **tampered** (present
+      but hash-mismatched). Takes precedence over everything below.
+    * ``4`` - a blob is present but **unreadable** on this host (a permissions
+      problem here, never a claim about the record).
+    * ``2`` - authentic and untampered, but a blob is **absent** from CAS
+      (GC / retention / restart), so the content re-hash is incomplete.
+    * ``3`` - signed, consistent, blobs intact, but **unanchored**: no
+      ``--expected-keyid`` was given, so the signer was not checked. A receipt
+      re-signed under any other key would look identical, so this never exits 0.
+    * ``0`` - signed, anchored to the trusted signer, and every named blob
+      re-hashed intact.
     """
     from bernstein.core.persistence.cas_store import CASIntegrityError, CASStore
     from bernstein.core.sandbox.selection_receipt import (
+        BLOB_ABSENT,
+        BLOB_INTACT,
+        BLOB_TAMPERED,
+        BLOB_UNREADABLE,
         read_receipt_file,
-        snapshot_digests,
-        verify_receipt,
+        verify_receipt_full,
     )
 
     receipt = read_receipt_file(receipt_path)
     if receipt is None:
-        raise click.ClickException(f"Could not read a selection receipt from {receipt_path}")
-
-    verification = verify_receipt(receipt, expected_keyid=expected_keyid)
-    for err in verification.errors:
-        console.print(f"[red]signature/consistency:[/red] {err}")
+        raise click.ClickException(
+            f"Could not read a selection receipt from {receipt_path} "
+            "(missing, unreadable, or not a valid receipt JSON).",
+        )
 
     cas = CASStore(cas_dir)
-    # Distinguish two very different CAS outcomes (a hard lesson from the v3.7.1
-    # hardening wave): a blob that is *present but hash-mismatched* is tampering,
-    # while a blob that is simply *absent* is an ordinary operational event (GC,
-    # log retention, a restart). Conflating them turns a retry into a permanent
-    # "tampered" verdict on an append-only chain, so they get different answers.
-    tampered: list[str] = []
-    absent: list[str] = []
-    digests = snapshot_digests(receipt)
-    for digest in digests:
+
+    def _blob_status(digest: str) -> str:
+        # Classify one blob for verify_receipt_full. Four outcomes, never
+        # conflated: tampered (present, wrong hash) is an integrity alarm;
+        # absent (GC / retention / restart) is an ordinary operational event;
+        # unreadable (a permissions problem *on this host*) is a property of the
+        # reader, not the record; intact is the clean case.
+        # Ask the store for the path (single source of truth for the shard
+        # layout) rather than re-deriving cas_dir / digest[:2] / digest here.
+        # Used only for the absent/unreadable disambiguation below; the symlink
+        # defence lives in cas.get (O_NOFOLLOW), atomically and race-free - no
+        # is_symlink() pre-check here, which would only add a TOCTOU window.
+        try:
+            blob_path = cas.blob_path(digest)
+        except ValueError:
+            # Non-64-hex digest; defensive only - verify_receipt_full filters
+            # malformed digests before calling this - but never crash here.
+            return BLOB_UNREADABLE
         try:
             blob = cas.get(digest, verify=True)
-        except CASIntegrityError as exc:
-            tampered.append(str(exc))
-            continue
-        if blob is None:
-            absent.append(digest)
+        except CASIntegrityError:
+            return BLOB_TAMPERED
+        except FileNotFoundError:
+            # The blob vanished between the store's open and read (GC /
+            # retention race). That is genuinely absent, not a reader-side
+            # failure - classify it before the broad OSError below.
+            return BLOB_ABSENT
+        except (OSError, ValueError):
+            # OSError: present but unreadable - a permissions problem on this
+            # host, or a symlinked blob cas.get refused to follow (O_NOFOLLOW ->
+            # ELOOP). Either way a reader-side failure, never a claim about the
+            # record. ValueError: the store rejects a non-64-hex digest;
+            # defensive only, since verify_receipt_full already filters malformed
+            # digests before calling this - but never crash here.
+            return BLOB_UNREADABLE
+        if blob is not None:
+            return BLOB_INTACT
+        # get() returned None. Path.exists() and os.access both *suppress*
+        # permission errors, so either would let an unreadable CAS directory
+        # masquerade as an absent blob - the exact false accusation #2705 is
+        # about. Stat the blob path directly (stat raises, it does not suppress)
+        # and let the errno decide: FileNotFoundError is genuinely absent; any
+        # other OSError (a permission/traversal failure anywhere on the path) is
+        # a reader-side problem, reported as unreadable, never as a claim about
+        # the record. A stat that succeeds while get() returned None means the
+        # blob is present but could not be read, which is also unreadable.
+        try:
+            blob_path.stat()
+        except FileNotFoundError:
+            return BLOB_ABSENT
+        except OSError:
+            return BLOB_UNREADABLE
+        return BLOB_UNREADABLE
 
-    for err in verification.errors:
+    result = verify_receipt_full(receipt, expected_keyid=expected_keyid, blob_status=_blob_status)
+
+    for err in result.signature_errors:
         console.print(f"[red]signature/consistency:[/red] {err}")
-    for err in tampered:
-        console.print(f"[red]tampered:[/red] {err}")
-    for digest in absent:
+    for digest in result.malformed:
+        console.print(
+            f"[red]malformed:[/red] receipt names a digest that is not 64 hex chars: {digest!r}",
+        )
+    for digest in result.tampered:
+        console.print(f"[red]tampered:[/red] snapshot blob present but hash-mismatched: {digest}")
+    for digest in result.unreadable:
+        console.print(
+            f"[yellow]unreadable:[/yellow] snapshot blob present but not readable on this host: "
+            f"{digest} (a permissions problem here, not a claim about the record)",
+        )
+    for digest in result.absent:
         console.print(
             f"[yellow]cannot-verify:[/yellow] snapshot blob absent from CAS: {digest} "
             "(absent != tampered - likely GC / retention / restart)",
         )
+    if not result.anchored:
+        console.print(
+            "[yellow]unanchored:[/yellow] no --expected-keyid given, so the signer was NOT "
+            "checked - a receipt re-signed under any other key would look identical. "
+            "Pass --expected-keyid <trusted keyid> to establish trust.",
+        )
 
-    # Three answers, three exit codes (see the command docstring).
-    if not verification.ok or tampered:
+    if result.verdict == "failed":
         console.print("[red]FAILED[/red] receipt is invalid or a snapshot blob is tampered.")
-        raise click.exceptions.Exit(code=1)
-    if absent:
+    elif result.verdict == "unreadable":
+        console.print(
+            f"[yellow]UNREADABLE[/yellow] {len(result.unreadable)} of {result.digests_checked} "
+            "snapshot blob(s) could not be read on this host; verification is incomplete "
+            "(a reader-side problem, not a claim about the record).",
+        )
+    elif result.verdict == "incomplete":
         console.print(
             f"[yellow]INCOMPLETE[/yellow] receipt is authentic and consistent, but "
-            f"{len(absent)} of {len(digests)} snapshot blob(s) are absent from CAS; "
-            "content re-hash could not be completed (this is not tampering).",
+            f"{len(result.absent)} of {result.digests_checked} snapshot blob(s) are absent from "
+            "CAS; content re-hash could not be completed (this is not tampering).",
         )
-        raise click.exceptions.Exit(code=2)
-    console.print(
-        f"[green]OK[/green] receipt signed + all {len(digests)} snapshot digests intact "
-        "(proves signed + CAS-intact; not chain-appended).",
-    )
+    elif result.verdict == "unanchored":
+        console.print(
+            f"[yellow]UNANCHORED[/yellow] receipt is self-consistent and all "
+            f"{result.digests_checked} snapshot blob(s) are intact, but the signer was not "
+            "verified (no trust anchor); re-run with --expected-keyid to exit 0.",
+        )
+    else:
+        console.print(
+            f"[green]OK[/green] receipt signed by the trusted signer + all "
+            f"{result.digests_checked} snapshot digests intact "
+            "(proves signed + anchored + CAS-intact; not chain-appended).",
+        )
+
+    if result.exit_code:
+        raise click.exceptions.Exit(code=result.exit_code)
 
 
 __all__ = [

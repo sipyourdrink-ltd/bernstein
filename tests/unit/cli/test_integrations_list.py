@@ -19,6 +19,7 @@ from bernstein.adapters.use_cases import USE_CASES, AdapterUseCase
 from bernstein.cli.commands.integrations_cmd import (
     CONFIG_KNOB,
     DOCS_INDEX,
+    _binary_for,
     _enumerate_rows,
     _fallback_headline,
     _filter_installed,
@@ -114,6 +115,32 @@ def test_integrations_list_unknown_subcommand_returns_nonzero(
     result = runner.invoke(cli, ["integrations", "definitely-not-a-cmd"])
     assert result.exit_code != 0
     assert "No such command" in result.output or "Error" in result.output
+
+
+def test_binary_for_consults_profile_when_no_use_case() -> None:
+    """A profiled adapter with no curated use-case entry resolves its binary
+    from its capability profile, not from the registry key.
+
+    ``pydantic_ai`` is factory-built and its CLI binary (``clai``) differs
+    from its registry key. It is not in the ``adapter_cmd`` override table.
+    When a curated ``use_cases`` entry is absent the resolver must consult
+    the profile declaration; otherwise it probes ``shutil.which("pydantic_ai")``
+    and misreports the integration as not installed. This resolver is the
+    third binary-resolution surface (alongside ``report._binary_for_adapter``
+    and ``adapter_cmd._binary_for_adapter``); all three must agree.
+    """
+    assert _binary_for("pydantic_ai", None) == "clai"
+
+
+def test_binary_for_prefers_use_case_over_profile() -> None:
+    """A curated use-case entry stays authoritative over the profile."""
+    use_case = AdapterUseCase(headline="h", details="d", binary="curated-bin", docs_path="")
+    assert _binary_for("pydantic_ai", use_case) == "curated-bin"
+
+
+def test_binary_for_falls_back_to_registry_key_without_profile() -> None:
+    """An adapter with neither use-case, override, nor profile probes its key."""
+    assert _binary_for("no_such_adapter_xyz", None) == "no_such_adapter_xyz"
 
 
 def test_enumerate_rows_includes_generic_adapter() -> None:

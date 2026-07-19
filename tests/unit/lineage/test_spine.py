@@ -109,6 +109,41 @@ def test_entry_hash_chains_previous(tmp_path: Path) -> None:
     assert entries[1].prev_hash == h1
 
 
+def test_record_entry_returns_the_full_entry(tmp_path: Path) -> None:
+    """``record_entry`` hands back the appended entry, hmac included.
+
+    Callers that need the HMAC tag of the entry they just wrote (for
+    instance the A2A receipt issuer) can read it off the return value
+    rather than walking the whole spine to find it again.
+    """
+    spine = _make_spine(tmp_path)
+    entry = spine.record_entry(
+        artifact_path="src/a.py",
+        content=b"one",
+        actor="a",
+        step_id="s1",
+        model="m",
+        timestamp=1,
+    )
+    # The returned entry matches exactly what iter_entries reports, so the
+    # hmac is the tag over this entry - not the head snapshot's hmac.
+    (persisted,) = list(spine.iter_entries())
+    assert entry.entry_hash == persisted.entry_hash
+    assert entry.hmac == persisted.hmac
+    assert entry.hmac
+    # record() stays a thin wrapper returning just the entry hash.
+    h2 = spine.record(
+        artifact_path="src/b.py",
+        content=b"two",
+        actor="a",
+        step_id="s2",
+        model="m",
+        timestamp=2,
+    )
+    second = list(spine.iter_entries())[1]
+    assert h2 == second.entry_hash
+
+
 def test_verify_ok_on_intact_chain(tmp_path: Path) -> None:
     spine = _make_spine(tmp_path)
     for i in range(5):
