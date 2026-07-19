@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from bernstein.core.audit import (
     _GENESIS_HMAC,  # pyright: ignore[reportPrivateUsage]
     ArchiveResult,
@@ -122,6 +123,73 @@ def test_audit_log_query_filters(tmp_path: Path) -> None:
     results = log.query(event_type="type.A", actor="actor.1")
     assert len(results) == 1
     assert results[0].resource_id == "id1"
+
+
+def test_audit_log_query_filters_by_resource_id(tmp_path: Path) -> None:
+    """A resource_id filter narrows the scan to one resource's events.
+
+    Revert-checked: fails if ``_matches_query_filters`` drops the resource_id
+    branch, because it would then return every event regardless of resource.
+    """
+    audit_dir = tmp_path / "audit"
+    log = AuditLog(audit_dir, key=b"test-key")
+    log.log("type.A", "actor.1", "res", "id1")
+    log.log("type.B", "actor.1", "res", "id2")
+    log.log("type.A", "actor.2", "res", "id1")
+    # A decoy whose serialized line contains "id1" as a substring but is not the
+    # resource we asked for. The cheap prefilter keeps it, so the exact match
+    # has to reject it: this is what makes the filter correct and not merely a
+    # substring search.
+    log.log("type.A", "actor.3", "res", "id123")
+
+    results = log.query(resource_id="id1")
+    assert [e.event_type for e in results] == ["type.A", "type.A"]
+    assert {e.resource_id for e in results} == {"id1"}
+
+    # Composes with the other filters rather than replacing them.
+    assert len(log.query(resource_id="id1", actor="actor.1")) == 1
+    assert log.query(resource_id="id2") == log.query(actor="actor.1", event_type="type.B")
+    assert log.query(resource_id="absent") == []
+
+
+def test_query_by_resource_id_does_not_parse_the_whole_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resource_id query must not JSON-parse every line of the log.
+
+    Revert-checked: fails without the raw-line prefilter -- every line is parsed
+    and the parse count equals the chain length. The approval gate resolves a
+    card against exactly this filter, so an unbounded parse here is an O(chain)
+    cost on every first-time resolve and a denial-of-service amplifier under a
+    stream of unknown card hashes, each of which would otherwise rescan the log.
+    """
+    import bernstein.core.security.audit as audit_mod
+
+    audit_dir = tmp_path / "audit"
+    log = AuditLog(audit_dir, key=b"test-key")
+    for i in range(200):
+        log.log("type.A", "actor", "res", f"resource-{i:04d}")
+
+    real_loads = audit_mod.json.loads
+    parsed = {"n": 0}
+
+    def counting_loads(*args: object, **kwargs: object) -> object:
+        parsed["n"] += 1
+        return real_loads(*args, **kwargs)
+
+    monkeypatch.setattr(audit_mod.json, "loads", counting_loads)
+
+    # A resource_id present in no line: the prefilter rejects each line before
+    # json.loads, so nothing at all is parsed.
+    assert log.query(resource_id="resource-absent") == []
+    assert parsed["n"] == 0
+
+    # A present resource_id parses only its own record, not the whole chain.
+    parsed["n"] = 0
+    found = log.query(resource_id="resource-0100")
+    assert [e.resource_id for e in found] == ["resource-0100"]
+    assert parsed["n"] <= 2
 
 
 # -- retention & archive tests -----------------------------------------

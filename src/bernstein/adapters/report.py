@@ -170,8 +170,20 @@ class AdapterReport:
 
 
 def _binary_for_adapter(name: str) -> str:
-    """Map a registry key to its expected CLI binary name."""
-    return _BINARY_OVERRIDES.get(name, name)
+    """Map a registry key to its expected CLI binary name.
+
+    Explicit overrides win, then the adapter's capability profile (which
+    already declares its binary), then the registry key itself. Sourcing
+    the binary from the declaration keeps profiled adapters out of the
+    hand-maintained override table, where a second copy of the same fact
+    could drift from the adapter it describes.
+    """
+    override = _BINARY_OVERRIDES.get(name)
+    if override is not None:
+        return override
+    from bernstein.adapters.capability_profile import profile_binary_for
+
+    return profile_binary_for(name) or name
 
 
 def _resolve_module_path(adapter: type[CLIAdapter] | CLIAdapter) -> str:

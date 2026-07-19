@@ -1,0 +1,27 @@
+# Contract for the Droid (Factory AI) CLI (adapter: droid).
+#
+# Always-passed surface from src/bernstein/adapters/droid.py:
+# ``droid <prompt>``.
+# The prompt is a positional argument and the adapter passes no flags,
+# so the pinned surface is the binary itself. A ``-r``/resume flag
+# exists upstream but is unused at spawn time and is therefore not
+# pinned here: the contract records what the adapter actually depends
+# on, so unrelated upstream flag churn does not produce false drift.
+adapter: droid
+binary: droid
+install:
+  method: curl
+  spec: "https://app.factory.ai/cli"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+    - "FACTORY_API_KEY"
+    - "ANTHROPIC_API_KEY"
+    - "OPENAI_API_KEY"
+required_flags: []
+required_subcommands: []
+help_command: ["droid", "--help"]
+expected_models:
+  command: []
+  required_present: []

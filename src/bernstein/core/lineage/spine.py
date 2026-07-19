@@ -379,6 +379,41 @@ class LineageSpine:
     ) -> str:
         """Append one entry for an artifact write. Returns its entry hash.
 
+        A thin wrapper over :meth:`record_entry` for the common caller that
+        only needs the entry hash; see that method for argument semantics.
+        """
+        return self.record_entry(
+            artifact_path=artifact_path,
+            content=content,
+            actor=actor,
+            step_id=step_id,
+            model=model,
+            timestamp=timestamp,
+            traceparent=traceparent,
+            tracestate=tracestate,
+            baggage=baggage,
+        ).entry_hash
+
+    def record_entry(
+        self,
+        *,
+        artifact_path: str,
+        content: bytes,
+        actor: str,
+        step_id: str,
+        model: str,
+        timestamp: int,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+        baggage: str | None = None,
+    ) -> SpineEntry:
+        """Append one entry for an artifact write and return it.
+
+        Returns the fully-materialised :class:`SpineEntry`, so a caller that
+        needs the entry's HMAC tag (not just its hash) reads it off the
+        return value instead of re-scanning the whole spine to find the entry
+        it just appended.
+
         Args:
             artifact_path: Repo-relative POSIX path of the artifact.
             content: The bytes that landed on disk; hashed into
@@ -452,7 +487,7 @@ class LineageSpine:
                 fh.flush()
                 os.fsync(fh.fileno())
             self._write_head(e_hash, count + 1)
-        return e_hash
+        return entry
 
     # -- read ---------------------------------------------------------------
 

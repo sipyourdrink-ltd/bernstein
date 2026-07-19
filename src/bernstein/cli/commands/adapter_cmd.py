@@ -173,10 +173,18 @@ def _resolve_source_file(adapter_obj: Any) -> str:
 
 
 def _binary_for_adapter(name: str) -> str:
-    """Map a registry key to its expected CLI binary name."""
+    """Map a registry key to its expected CLI binary name.
+
+    Explicit overrides win, then the adapter's capability profile (which
+    already declares its binary), then the registry key itself. Mirrors
+    :func:`bernstein.adapters.report._binary_for_adapter` so this surface
+    and ``bernstein adapters check`` agree.
+    """
     if name in _BINARY_OVERRIDES:
         return _BINARY_OVERRIDES[name]
-    return name
+    from bernstein.adapters.capability_profile import profile_binary_for
+
+    return profile_binary_for(name) or name
 
 
 def _enumerate_adapters() -> list[dict[str, str]]:
