@@ -178,7 +178,6 @@ def _last_processed_window(schedule: Schedule) -> float:
     """
     from bernstein.core.planning.schedule_store import FIRE_CURSOR_KEY
 
-    cursor = 0.0
     raw = (schedule.extra or {}).get(FIRE_CURSOR_KEY, 0.0)
     try:
         cursor = float(raw)

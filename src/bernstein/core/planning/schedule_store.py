@@ -503,7 +503,7 @@ class ScheduleStore:
                 created_at=schedule.created_at,
                 last_fire_at=schedule.last_fire_at,
                 extra=extra,
-                params_schema=[dict(s) for s in schedule.params_schema],
+                params_schema=[s.copy() for s in schedule.params_schema],
                 params=dict(schedule.params),
             ),
         )

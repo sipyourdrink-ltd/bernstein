@@ -568,7 +568,7 @@ def recipe_fire_payload(metadata: dict[str, Any]) -> dict[str, Any]:
         "priority": 3,
         "scope": "medium",
         "task_type": "standard",
-        "metadata": dict(metadata),
+        "metadata": metadata.copy(),
     }
 
 

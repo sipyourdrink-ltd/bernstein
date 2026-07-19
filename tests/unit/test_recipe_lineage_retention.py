@@ -228,9 +228,10 @@ class TestWriteLockIsBounded:
         """
         import threading
 
-        import bernstein.core.workflows.recipe_registry as registry_module
-
-        monkeypatch.setattr(registry_module, "WRITE_LOCK_TIMEOUT_S", 1.0)
+        monkeypatch.setattr(
+            "bernstein.core.workflows.recipe_registry.WRITE_LOCK_TIMEOUT_S",
+            1.0,
+        )
         sdd = tmp_path / ".sdd"
         first = _registry(sdd)
         second = _registry(sdd)

@@ -24,6 +24,7 @@ from bernstein.core.security.audit_chain import (
     EVENT_RECIPE_FIRE,
     EVENT_RECIPE_FLEET_APPLY,
     AuditChainStore,
+    record_recipe_register,
     record_recipe_supersede,
 )
 from bernstein.core.workflows.recipe_fleet import ManifestEntry, apply_fleet, plan_fleet
@@ -417,8 +418,6 @@ class TestFleetAtomicity:
         prefix is registered, the aggregate receipt is absent, and a re-plan
         surfaces the remainder as still pending.
         """
-        import bernstein.core.security.audit_chain as audit_chain
-
         sdd = tmp_path / ".sdd"
         reg = _registry(sdd)
         manifest = [
@@ -427,7 +426,7 @@ class TestFleetAtomicity:
         ]
         plan = plan_fleet(reg, manifest)
 
-        real_register = audit_chain.record_recipe_register
+        real_register = record_recipe_register
         calls: list[str] = []
 
         def _flaky_register(**kwargs: Any) -> Any:
@@ -436,7 +435,10 @@ class TestFleetAtomicity:
                 raise OSError("audit chain IO error")
             return real_register(**kwargs)
 
-        monkeypatch.setattr(audit_chain, "record_recipe_register", _flaky_register)
+        monkeypatch.setattr(
+            "bernstein.core.security.audit_chain.record_recipe_register",
+            _flaky_register,
+        )
         with pytest.raises(OSError, match="audit chain IO error"):
             apply_fleet(reg, manifest, plan_hash=plan.plan_hash)
         monkeypatch.undo()

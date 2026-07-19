@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import subprocess
 import threading
 import time
@@ -56,8 +55,6 @@ if TYPE_CHECKING:
 
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.workflows.recipe_spec import RecipeSpec
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "CANONICAL_RECIPE_REV",
@@ -1455,7 +1452,7 @@ def _order_by_lineage(
     events: list[dict[str, Any]],
     name: str = "",
     resolutions: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
     """Order a name's receipts by their prev_receipt_digest linkage.
 
     Each receipt names the hmac of its predecessor (``""`` for genesis).
@@ -1542,7 +1539,7 @@ def _order_by_lineage(
         ordered.append(ev)
         cursor = hmac
 
-    superseded = {str(e["hmac"]) for evs in forked.values() for e in evs} - set(seen)
+    superseded = {str(e["hmac"]) for evs in forked.values() for e in evs} - seen.copy()
     unreachable = [e for e in events if str(e["hmac"]) not in seen and str(e["hmac"]) not in superseded]
     # Unreachable receipts are ABSENCE of evidence, not evidence of a defect,
     # so they are reported rather than raised. The caller discriminates the
