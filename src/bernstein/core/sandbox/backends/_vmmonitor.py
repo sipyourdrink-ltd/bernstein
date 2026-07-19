@@ -24,9 +24,11 @@ Snapshots are **full canonicalised workspace images**, not memory dumps.
 A memory snapshot can never be byte-reproducible (kernel timers, entropy
 pool, page/ASLR ordering), which would make the "same race twice ->
 identical signed receipt" guarantee impossible. A canonicalised tar of the
-guest filesystem (sorted paths, zeroed mtimes/uids, normalised modes) is
-reproducible given identical file contents, and its ``sha256`` *is* the
-snapshot id the CAS store addresses. Full images are self-contained, so
+guest filesystem (sorted paths, zeroed mtimes/uids, real file-permission
+bits, host-independent symlink targets) is a pure function of the tree -
+reproducible given identical file contents on any host, under any process
+identity - and its ``sha256`` *is* the snapshot id the CAS store addresses.
+Full images are self-contained, so
 ``resume(digest)`` needs no base and cannot be confused about which base
 it forked from. Disk-*delta* images (smaller, base-relative) are a future
 optimisation tracked separately; correctness does not depend on them.
@@ -40,6 +42,7 @@ import io
 import operator
 import os
 import shutil
+import stat
 import sys
 import tarfile
 import tempfile
@@ -71,6 +74,36 @@ class MicroVMUnavailableError(RuntimeError):
 #: Content-type recorded in CAS metadata for a workspace-image snapshot.
 SNAPSHOT_CONTENT_TYPE = "application/x-bernstein-vm-snapshot+tar"
 
+#: Reserved payload member recording the presence of special files
+#: (fifos/sockets/devices) that live in the tree but are deliberately not
+#: carried as device nodes. Recording them keeps the digest a pure function of
+#: the tree: a workspace containing a special file cannot share a content
+#: address with one that omits it.
+SPECIAL_FILES_MANIFEST = ".bernstein-special-files"
+
+
+class WorkspaceImageError(RuntimeError):
+    """A workspace tree cannot be canonicalised into a deterministic image.
+
+    Raised diagnosably (naming the offending condition) for one tree so a
+    caller racing many candidate trees can attribute the failure to that
+    single candidate, instead of an opaque ``ValueError`` propagating with no
+    context and aborting the whole race.
+    """
+
+
+def _special_kind(mode: int) -> str:
+    """Name the kind of a non-regular, non-directory, non-symlink inode."""
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    if stat.S_ISSOCK(mode):
+        return "socket"
+    if stat.S_ISBLK(mode):
+        return "block-device"
+    if stat.S_ISCHR(mode):
+        return "char-device"
+    return "unknown"
+
 
 def _tarfile_data_filter_is_patched() -> bool:
     """Whether this interpreter's tarfile ``data`` filter includes the June-2025 fix.
@@ -100,46 +133,91 @@ def _tarfile_data_filter_is_patched() -> bool:
 def canonical_workspace_image(root: Path) -> bytes:
     """Freeze the directory tree at *root* into deterministic tar bytes.
 
-    Determinism is the whole point: two calls over byte-identical file
-    trees must produce byte-identical output so ``sha256`` of the result
-    is a stable content address. To get there we strip every source of
-    run-to-run variance a normal tar would embed:
+    Determinism is the whole point: the digest is a *content address*, so the
+    bytes must be a pure function of the tree and nothing else - not of the
+    process that reads it, not of where *root* lives on this host. Two calls
+    over byte-identical trees, on any host, under any process identity, must
+    produce byte-identical output. To get there we strip every source of
+    variance a normal tar would embed:
 
     - entries are emitted in sorted path order (not readdir order);
     - mtime is zeroed; uid/gid/uname/gname are zeroed/emptied;
-    - modes are normalised to ``0o755`` for dirs/executables and
-      ``0o644`` otherwise (guest-arbitrary permission bits do not affect
-      the deliverable and would otherwise poison the digest);
-    - the fixed ``USTAR`` format is used so no PAX timestamp headers leak.
+    - a directory's stored mode is pinned to ``0o755``. A real directory mode
+      comes from the creating process's umask (host state), and the
+      extraction ``data`` filter ignores a directory's stored mode anyway, so
+      pinning it keeps the digest tree-pure without changing any restore;
+    - a regular file records its real POSIX permission bits
+      (``st_mode & 0o777``). These are a property of the inode - identical for
+      every reader - so unlike ``os.access(X_OK)`` (which folds in
+      euid/root/ACLs/``noexec`` mount flags that are absent from the tree)
+      they are host-independent. Recording the real bits also keeps ``0o600``
+      and ``0o644`` distinct and lets the extraction ``data`` filter restore a
+      private file without widening it to world-readable (the filter clamps
+      permissions down, never up);
+    - a symlink's target is recorded relative to the link's own directory when
+      the stored target is absolute, so an in-tree link does not embed this
+      host's path prefix; the target is normalised the same way the extraction
+      filter normalises it, so the digest round-trips through extract;
+    - the fixed ``USTAR`` format is used so no PAX/GNU timestamp or OS byte
+      leaks. A single path that overruns the USTAR name limit falls back to
+      ``GNU`` format *for that image only* - GNU has no such limit and, given
+      our zeroed metadata and fixed auxiliary-member names, is byte-identical
+      across hosts and processes - so one long filename never aborts a
+      fork-race with a bare ``ValueError``.
 
-    Symlinks are captured as symlinks; special files are skipped (a guest
-    should not be smuggling device nodes into a content-addressed image).
+    Special files (fifos/sockets/devices) are not carried as device nodes -
+    a content-addressed deliverable should not smuggle them - but their
+    presence and kind are recorded in a single deterministic
+    :data:`SPECIAL_FILES_MANIFEST` member, so a workspace containing one
+    cannot share a digest with the same workspace without it.
 
     Args:
         root: Directory whose contents become the image.
 
     Returns:
         Deterministic tar bytes suitable for ``CASStore.put``.
+
+    Raises:
+        WorkspaceImageError: When the tree cannot be represented
+            unambiguously (a real member colliding with the reserved
+            manifest name, or a path no supported tar format can encode).
     """
     root = root.resolve()
-    entries: list[tuple[str, Path]] = []
+    # Payload members (dirs / regular files / symlinks) kept separate from
+    # special files, whose presence is recorded but whose bytes are dropped.
+    members: list[tuple[str, Path]] = []
+    specials: list[tuple[str, str]] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
         base = Path(dirpath)
         for name in sorted(dirnames):
             full = base / name
             arc = full.relative_to(root).as_posix()
-            entries.append((arc, full))
+            members.append((arc, full))
         for name in sorted(filenames):
             full = base / name
             arc = full.relative_to(root).as_posix()
-            entries.append((arc, full))
-    entries.sort(key=operator.itemgetter(0))
+            if full.is_symlink() or full.is_file():
+                members.append((arc, full))
+            else:
+                specials.append((arc, _special_kind(full.lstat().st_mode)))
+    members.sort(key=operator.itemgetter(0))
+    specials.sort()
 
-    buf = io.BytesIO()
-    # Fixed format + no compression: gzip would embed an mtime and OS byte.
-    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tar:
-        for arc, full in entries:
+    # A real member colliding with the reserved manifest name is only
+    # ambiguous once a special file would also be recorded; refuse then, with a
+    # diagnosable error, rather than emit two members sharing one name (which
+    # restore would silently collapse).
+    if specials and any(arc == SPECIAL_FILES_MANIFEST for arc, _ in members):
+        msg = (
+            f"workspace has both a real {SPECIAL_FILES_MANIFEST!r} entry and a special "
+            "file; that name is reserved for the special-file manifest and cannot be "
+            "disambiguated"
+        )
+        raise WorkspaceImageError(msg)
+
+    def _write_members(tar: tarfile.TarFile) -> None:
+        for arc, full in members:
             info = tarfile.TarInfo(name=arc)
             info.mtime = 0
             info.uid = 0
@@ -148,21 +226,54 @@ def canonical_workspace_image(root: Path) -> bytes:
             info.gname = ""
             if full.is_symlink():
                 info.type = tarfile.SYMTYPE
-                info.linkname = os.readlink(full)
+                target = os.readlink(full)
+                if os.path.isabs(target):
+                    target = os.path.relpath(target, start=os.path.dirname(os.fspath(full)))
+                info.linkname = os.path.normpath(target)
                 info.mode = 0o777
                 tar.addfile(info)
             elif full.is_dir():
                 info.type = tarfile.DIRTYPE
                 info.mode = 0o755
                 tar.addfile(info)
-            elif full.is_file():
+            else:  # regular file (symlinks and specials handled elsewhere)
                 data = full.read_bytes()
                 info.type = tarfile.REGTYPE
                 info.size = len(data)
-                info.mode = 0o755 if os.access(full, os.X_OK) else 0o644
+                info.mode = full.lstat().st_mode & 0o777
                 tar.addfile(info, io.BytesIO(data))
-            # else: skip fifos/sockets/devices - not part of a deliverable.
-    return buf.getvalue()
+        if specials:
+            payload = "".join(f"{arc}\t{kind}\n" for arc, kind in specials).encode("utf-8")
+            info = tarfile.TarInfo(name=SPECIAL_FILES_MANIFEST)
+            info.mtime = 0
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            info.type = tarfile.REGTYPE
+            info.size = len(payload)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(payload))
+
+    def _pack(fmt: int) -> bytes:
+        buf = io.BytesIO()
+        # No compression: gzip would embed an mtime and OS byte.
+        with tarfile.open(fileobj=buf, mode="w", format=fmt) as tar:
+            _write_members(tar)
+        return buf.getvalue()
+
+    try:
+        return _pack(tarfile.USTAR_FORMAT)
+    except ValueError:
+        # A path overran the fixed-width USTAR name/prefix limit. Rather than a
+        # bare ValueError taking down an entire fork-race, canonicalise THIS
+        # image with GNU format (no length limit, byte-identical across hosts
+        # given our zeroed metadata), so the single long path fails no one.
+        try:
+            return _pack(tarfile.GNU_FORMAT)
+        except ValueError as exc:  # pragma: no cover - GNU has no practical name limit
+            msg = f"cannot canonicalise workspace tree into a deterministic image: {exc}"
+            raise WorkspaceImageError(msg) from exc
 
 
 def extract_workspace_image(image: bytes, root: Path) -> None:
@@ -549,10 +660,12 @@ class FirecrackerMonitor:
 
 __all__ = [
     "SNAPSHOT_CONTENT_TYPE",
+    "SPECIAL_FILES_MANIFEST",
     "FakeMonitor",
     "FirecrackerMonitor",
     "MicroVMUnavailableError",
     "VMMonitor",
+    "WorkspaceImageError",
     "canonical_workspace_image",
     "extract_workspace_image",
 ]
