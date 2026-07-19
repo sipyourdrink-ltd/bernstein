@@ -19,7 +19,6 @@ RELEASE_ENTRYPOINTS: dict[str, tuple[str, ...]] = {
     "auto-release.yml": ("workflow_call",),
     "publish.yml": ("push",),
     "release-major-minor.yml": ("workflow_dispatch",),
-    "release-please.yml": ("workflow_dispatch",),
     "reconcile-release.yml": ("schedule", "workflow_dispatch"),
     "publish-docker.yml": ("release", "workflow_dispatch"),
     "publish-homebrew.yml": ("release", "workflow_dispatch"),
