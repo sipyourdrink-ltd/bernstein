@@ -85,7 +85,7 @@ def test_auto_resolved_elicitation_produces_no_card(tmp_path: Path) -> None:
     handler = ElicitationHandler()
     handler.add_auto_policy("auto-confirm", pattern="confirm", response="yes")
     bridge = _RecordingBridge()
-    router = ElicitationApprovalRouter(handler=handler, gate=gate, bridge=bridge, thread_id="C42")
+    router = ElicitationApprovalRouter(handler=handler, gate=gate, bridge=bridge, thread_id="C42", worktree_id="wt-a")
 
     request = ElicitationRequest(
         id="e2", server_name="github", message="Confirm safe read?", request_type="confirmation"
@@ -100,7 +100,7 @@ def test_elicitation_response_equals_decision_and_is_chain_linked(tmp_path: Path
     chain = _chain(tmp_path)
     gate = ApprovalCardGate(chain)
     handler = ElicitationHandler()
-    router = ElicitationApprovalRouter(handler=handler, gate=gate, thread_id="C42")
+    router = ElicitationApprovalRouter(handler=handler, gate=gate, thread_id="C42", worktree_id="wt-a")
 
     request = ElicitationRequest(id="e3", server_name="github", message="Provide a branch name", request_type="input")
     issued = asyncio.run(router.route(request, now=1_000.0))

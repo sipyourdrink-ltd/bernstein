@@ -663,6 +663,13 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "openhands": AdapterStrategy(),
     "pi": AdapterStrategy(),
     "plandex": AdapterStrategy(),
+    # Built from a declarative capability profile rather than a
+    # hand-written module (see
+    # :mod:`bernstein.adapters.capability_profile`). The row stays here
+    # because STRATEGY_MATRIX is the authoritative declaration every
+    # derived capability matrix is computed from; the profile test suite
+    # asserts the profile and this row agree, so the two cannot drift.
+    "pydantic_ai": AdapterStrategy(),
     "q_dev": AdapterStrategy(),
     "qwen": AdapterStrategy(),
     "ralphex": AdapterStrategy(),

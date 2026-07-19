@@ -41,29 +41,37 @@ _STATUS_STYLE: dict[str, str] = {"PASS": "green", "WARN": "yellow", "FAIL": "red
 
 
 @contextlib.contextmanager
-def _simulated_sovereign_env() -> Iterator[bool]:
+def _simulated_sovereign_env(workdir: Path | None = None) -> Iterator[bool]:
     """Activate sovereign env vars for the duration of a standalone doctor run.
 
     Sovereign composes the airgap network posture, so this sets
-    ``BERNSTEIN_PROFILE_MODE=airgap`` and ``BERNSTEIN_NETWORK_POLICY=none``
-    (mirroring the air-gap doctor) plus the ``BERNSTEIN_SOVEREIGN_MODE`` marker.
-    All three are restored to their original state (including absence) in the
-    ``finally`` block. Yields True when the doctor simulated the activation.
+    ``BERNSTEIN_PROFILE_MODE=airgap`` and the ``BERNSTEIN_SOVEREIGN_MODE`` marker
+    plus the network policy a real ``bernstein run --profile sovereign`` would
+    install from ``bernstein.yaml``. All three are restored to their original
+    state (including absence) in the ``finally`` block. Yields True when the
+    doctor simulated the activation.
+
+    The network policy is derived from ``sovereign.allowed_egress`` (the same
+    source the real activation reads), not hard-coded to deny-all. A deny-all
+    config still simulates ``none``; an allow-list config simulates that
+    allow-list. Hard-coding deny-all made the egress invariant compare an honest
+    allow-list attestation against a fabricated deny-all runtime and report a
+    mismatch the real run would never produce.
     """
     prior_profile = os.environ.get(ENV_PROFILE_MODE)
     prior_policy = os.environ.get(ENV_NETWORK_POLICY)
     prior_sovereign = os.environ.get(ENV_SOVEREIGN_MODE)
     activated = False
     if (prior_sovereign or "").strip().lower() not in {"1", "true", "sovereign"}:
-        # A real ``bernstein run --profile sovereign`` always installs the
-        # airgap deny-all baseline, so the simulation overrides BOTH the profile
-        # mode and the network policy unconditionally (not only when unset) --
-        # otherwise a stale ``BERNSTEIN_NETWORK_POLICY`` from a prior session
-        # would make the deny-all check report a state the real run would not
-        # produce. The caller's values are restored in the ``finally`` block.
+        # A real ``bernstein run --profile sovereign`` installs the airgap
+        # baseline plus the config's egress allow-list, so the simulation
+        # overrides BOTH the profile mode and the network policy unconditionally
+        # (not only when unset) -- otherwise a stale ``BERNSTEIN_NETWORK_POLICY``
+        # from a prior session would make the checks report a state the real run
+        # would not produce. The caller's values are restored in ``finally``.
         os.environ[ENV_SOVEREIGN_MODE] = "1"
         os.environ[ENV_PROFILE_MODE] = PROFILE_AIRGAP
-        os.environ[ENV_NETWORK_POLICY] = "none"
+        os.environ[ENV_NETWORK_POLICY] = _simulated_network_policy_value(workdir)
         activated = True
     try:
         yield activated
@@ -72,6 +80,26 @@ def _simulated_sovereign_env() -> Iterator[bool]:
             _restore(ENV_PROFILE_MODE, prior_profile)
             _restore(ENV_NETWORK_POLICY, prior_policy)
             _restore(ENV_SOVEREIGN_MODE, prior_sovereign)
+
+
+def _simulated_network_policy_value(workdir: Path | None) -> str:
+    """Return the ``BERNSTEIN_NETWORK_POLICY`` a real sovereign activation installs.
+
+    Mirrors ``_install_profile_network_policy``: the sovereign egress allow-list
+    comes from ``sovereign.allowed_egress`` in ``bernstein.yaml``, and an empty
+    list is deny-all. Reads the config leniently (a missing or unreadable file
+    resolves to deny-all); the dedicated config-readable check still reports an
+    unreadable config as a FAIL row, so this fallback does not mask it.
+    """
+    from pathlib import Path as _Path
+
+    from bernstein.core.security.deployment_profile import load_config_snapshot, sovereign_egress_allowlist
+    from bernstein.core.security.network_policy import NetworkPolicy
+
+    snapshot = load_config_snapshot(workdir or _Path.cwd(), require=False)
+    egress = sovereign_egress_allowlist(snapshot)
+    policy = NetworkPolicy.from_specs(egress) if egress else NetworkPolicy.deny_all()
+    return policy.to_env_value()
 
 
 def _restore(key: str, prior: str | None) -> None:
@@ -83,7 +111,7 @@ def _restore(key: str, prior: str | None) -> None:
 
 def run_doctor_sovereign(*, workdir: Path | None = None, as_json: bool = False) -> int:
     """Run the sovereign battery and render the report. Returns the exit code."""
-    with _simulated_sovereign_env() as simulated:
+    with _simulated_sovereign_env(workdir) as simulated:
         report = run_sovereign_checks(workdir=workdir)
     if as_json:
         _render_json(report, simulated=simulated)

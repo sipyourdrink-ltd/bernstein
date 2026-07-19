@@ -175,22 +175,54 @@ def resolve_local_instant(
         )
 
     if imaginary:
-        # The wall time was skipped. Probe the offsets on either side of the
-        # gap and shift the instant to the chosen edge. ``fold=0`` reads the
-        # pre-gap offset, ``fold=1`` the post-gap offset.
-        pre = naive_local.replace(tzinfo=zone, fold=0)
-        post = naive_local.replace(tzinfo=zone, fold=1)
-        gap = post.utcoffset() - pre.utcoffset()  # negative in spring-forward
-        if policy is DstPolicy.POST_TRANSITION:
-            resolved = naive_local.replace(tzinfo=zone, fold=1) - gap
-        else:
-            # PRE_TRANSITION: the instant just before the gap opens.
-            resolved = (naive_local.replace(tzinfo=zone, fold=0) - gap) - timedelta(seconds=1)
-        return int(resolved.astimezone(_UTC).timestamp())
+        # The wall time was skipped, so it names no instant of its own; the
+        # only instant it can name deterministically is the transition the
+        # gap belongs to. Locate that transition in UTC and return it
+        # (POST_TRANSITION) or the second before it (PRE_TRANSITION).
+        transition = _utc_transition_instant(zone, naive_local)
+        epoch = int(transition.timestamp())
+        return epoch if policy is DstPolicy.POST_TRANSITION else epoch - 1
 
     fold = 1 if policy is DstPolicy.POST_TRANSITION else 0
     aware = naive_local.replace(tzinfo=zone, fold=fold)
     return int(aware.timestamp())
+
+
+def _utc_transition_instant(zone: ZoneInfo, naive_local: datetime) -> datetime:
+    """Return the UTC instant of the transition whose gap swallows *naive_local*.
+
+    ``naive_local`` must be an imaginary wall time in *zone* (checked by the
+    caller). Bracketing the transition is exact rather than heuristic:
+
+    - ``naive_local - post_offset`` is strictly *before* the transition,
+      because the wall clock had not yet reached the end of the gap;
+    - ``naive_local - pre_offset`` is at or *after* the transition, because
+      the wall clock had already passed the start of the gap.
+
+    A whole-second bisection over that bracket converges on the first
+    instant carrying the post-transition offset. The result depends only on
+    ``(zone, naive_local)`` and the stdlib zone database, so it is
+    gap-width-agnostic (a 30-minute shift resolves as exactly as an hour)
+    and identical on every host.
+    """
+    pre_offset = naive_local.replace(tzinfo=zone, fold=0).utcoffset()
+    post_offset = naive_local.replace(tzinfo=zone, fold=1).utcoffset()
+    if pre_offset is None or post_offset is None:  # pragma: no cover - defensive
+        raise ScheduleKindError(f"zone {zone} does not expose a UTC offset for {naive_local.isoformat()}")
+
+    low = (naive_local - post_offset).replace(tzinfo=_UTC)
+    high = (naive_local - pre_offset).replace(tzinfo=_UTC)
+    one_second = timedelta(seconds=1)
+    while high - low > one_second:
+        midpoint = low + (high - low) / 2
+        midpoint = midpoint.replace(microsecond=0)
+        if midpoint <= low:  # pragma: no cover - sub-second bracket
+            break
+        if midpoint.astimezone(zone).utcoffset() == post_offset:
+            high = midpoint
+        else:
+            low = midpoint
+    return high
 
 
 def interval_anchor_fires(
