@@ -152,8 +152,7 @@ def artifacts_show_cmd(task: str, key: str, workdir: str) -> None:
         console.print("[red]Content withheld: the stored blob does not recompute from the seal.[/red]\n")
         raise SystemExit(2)
 
-    store = EvidenceStore(sdd / "evidence")
-    blob = store.get(latest.content_hash)
+    blob = EvidenceStore(sdd / "evidence").get(latest.content_hash)
     console.print("\n[bold]Content[/bold]")
     if blob is not None and content_hash_of(blob) == latest.content_hash:
         console.print(json.loads(blob.decode("utf-8")))

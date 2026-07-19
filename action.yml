@@ -1,5 +1,5 @@
-name: "Bernstein - Multi-Agent Orchestration"
-description: "Run Bernstein to orchestrate CLI coding agents from GitHub Actions. Supports ad-hoc tasks and automatic CI-fix mode."
+name: "Bernstein - agent orchestration"
+description: "Run Bernstein to orchestrate CLI coding agents from GitHub Actions with deterministic, reproducible runs. Supports ad-hoc tasks and automatic CI-fix mode."
 author: "Bernstein contributors"
 
 branding:

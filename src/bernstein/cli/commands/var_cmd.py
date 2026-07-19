@@ -86,8 +86,7 @@ def var_group() -> None:
 @_WORKDIR_OPTION
 def var_set_cmd(name: str, value: str, actor: str, workdir: str) -> None:
     """Write VALUE (parsed as JSON) under NAME as an audit-chain event."""
-    store = _store(Path(workdir))
-    write = store.set(name, _parse_value(value), actor=actor)
+    write = _store(Path(workdir)).set(name, _parse_value(value), actor=actor)
     console.print(f"[green]set[/green] {name} (position {write.chain_position}, hash {write.new_value_hash[:19]}...)")
 
 
@@ -146,8 +145,7 @@ def var_history_cmd(name: str, as_json: bool, workdir: str) -> None:
     values are explained by the write that landed between their positions -
     with no server running.
     """
-    store = _store(Path(workdir))
-    history = store.history(name)
+    history = _store(Path(workdir)).history(name)
     if not history:
         console.print(f"[dim]no history for[/dim] {name}")
         return

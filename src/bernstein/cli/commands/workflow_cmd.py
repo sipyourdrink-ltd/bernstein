@@ -6,7 +6,7 @@ Two manifest flavours coexist under ``bernstein workflow``:
   orchestrator's deterministic crew-routing model - see
   :mod:`bernstein.core.planning.workflow_dsl`).  Surface: the original
   ``validate``/``list``/``show`` commands keep working unchanged.
-* The new **YAML manifest** flavour added in #1108 - Archon-inspired
+* The new **YAML manifest** flavour added in #1108 - declarative
   agent / command / loop nodes executed via
   :class:`bernstein.core.workflows.WorkflowRunner`.  Surface:
   ``run``/``init`` plus dual-mode ``validate``/``list`` that auto-detect
@@ -69,7 +69,7 @@ def workflow_group() -> None:
 
     \b
     Two manifest flavours are supported and auto-detected by validate/list:
-    - YAML manifest (Archon-style): nodes as a list, executed by
+    - YAML manifest (declarative): nodes as a list, executed by
       `bernstein workflow run`.
     - DSL: nodes keyed by id with `phases:`, used by the orchestrator's
       deterministic crew-routing model.

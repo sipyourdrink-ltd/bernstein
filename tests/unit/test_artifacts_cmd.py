@@ -121,3 +121,69 @@ def test_audit_verify_fails_on_tampered_artifact(project: Path, monkeypatch: pyt
     assert result.exit_code == 1, result.output
     assert "Run Artifact Verification FAILED" in result.output
     assert "summary" in result.output
+
+
+class TestMalformedTaskIdIsHandledNotRaised:
+    """A task id comes straight off the command line, so a typo or a pasted
+    path is ordinary input, not a programming error.
+
+    The read helpers validate the id before it addresses a path; that
+    validation must not turn a mistyped argument into an uncaught traceback.
+    """
+
+    @pytest.mark.parametrize(
+        "task_id",
+        [
+            "no/such/task",
+            "task with spaces",
+            "../../etc/passwd",
+            "task\nid",
+        ],
+    )
+    def test_list_reports_no_artifacts_instead_of_crashing(self, project: Path, task_id: str) -> None:
+        res = CliRunner().invoke(artifacts_group, ["list", "--workdir", str(project), task_id])
+        assert not isinstance(res.exception, Exception) or isinstance(res.exception, SystemExit), (
+            f"uncaught {type(res.exception).__name__}: {res.exception}"
+        )
+        assert res.exit_code == 1
+        assert "No artifacts found" in res.output
+
+    @pytest.mark.parametrize("task_id", ["no/such/task", "task with spaces"])
+    def test_show_reports_no_artifact_instead_of_crashing(self, project: Path, task_id: str) -> None:
+        res = CliRunner().invoke(artifacts_group, ["show", "--workdir", str(project), task_id, "report"])
+        assert not isinstance(res.exception, Exception) or isinstance(res.exception, SystemExit), (
+            f"uncaught {type(res.exception).__name__}: {res.exception}"
+        )
+        assert res.exit_code == 1
+        assert "No artifact" in res.output
+
+    def test_readers_return_empty_for_an_id_that_names_no_task(self, project: Path) -> None:
+        """The helper contract the CLI depends on, asserted directly."""
+        from bernstein.core.evidence.run_artifacts import (
+            latest_versions,
+            read_artifact_rows,
+            verify_run_artifacts,
+        )
+
+        sdd = project / ".sdd"
+        assert read_artifact_rows(sdd, "no/such/task") == []
+        assert latest_versions(sdd, "no/such/task") == {}
+        assert verify_run_artifacts(sdd, "no/such/task", hmac_key=b"k" * 32) == []
+
+    def test_the_write_path_still_refuses_a_malformed_id(self, project: Path) -> None:
+        """Readers absorbing a bad id must not soften the writer: posting is
+        where a typed refusal belongs, and it still fires."""
+        from bernstein.core.evidence.run_artifacts import (
+            ArtifactValidationError,
+            post_run_artifact,
+        )
+
+        with pytest.raises(ArtifactValidationError):
+            post_run_artifact(
+                sdd_dir=project / ".sdd",
+                task_id="no/such/task",
+                key="report",
+                payload=ArtifactPayload.report("body"),
+                actor="w",
+                hmac_key=b"k" * 32,
+            )

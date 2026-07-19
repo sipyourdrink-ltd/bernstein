@@ -802,7 +802,12 @@ def verify_intent_conformance(
     conformant. A drifted-but-untampered run returns ``ok=False`` with
     ``conformant=False`` and a divergence-naming reason.
     """
-    from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.replay.journal import (
+        JournalPathError,
+        load_events,
+        run_journal_path,
+        verify_journal,
+    )
     from bernstein.core.security.audit_chain import EVENT_INTENT_CAPSULE
 
     capsule, run_id = read_capsule_binding(sdd_dir, task_id)
@@ -839,7 +844,16 @@ def verify_intent_conformance(
             run_id=run_id,
         )
 
-    journal_path = sdd_dir / "runs" / run_id / "journal.jsonl"
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        return IntentVerifyResult(
+            ok=False,
+            conformant=False,
+            reason=f"invalid run id: {exc}",
+            capsule=capsule,
+            run_id=run_id,
+        )
     if not journal_path.exists():
         return IntentVerifyResult(
             ok=False,

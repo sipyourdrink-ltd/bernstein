@@ -218,3 +218,45 @@ def test_audit_verify_fails_after_variable_tamper(tmp_path: Path, monkeypatch: p
 
     bad = runner.invoke(audit_group, ["verify", "--hmac-only"])
     assert bad.exit_code == 1
+
+
+class TestPastedCredentialIsReportedAsUsage:
+    """`--secret` takes the NAME of a broker-managed secret, so pasting the
+    value is the likely operator mistake.
+
+    It must land as a usage error naming the problem, not as a raw traceback:
+    a traceback tells the operator nothing about what to do, and on a paste
+    accident the value can end up in a crash dump.
+    """
+
+    _PASTED = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN\n-----END PRIVATE KEY-----"
+
+    def test_conn_create_reports_usage_not_a_traceback(self, tmp_path: Path) -> None:
+        res = CliRunner().invoke(conn_group, ["create", "prod-gh", "--secret", self._PASTED, "-w", str(tmp_path)])
+        assert res.exception is None or isinstance(res.exception, SystemExit), (
+            f"uncaught {type(res.exception).__name__}"
+        )
+        assert res.exit_code == 2, res.output
+        assert "broker reference" in res.output
+        assert "Usage:" in res.output
+
+    def test_conn_rotate_reports_usage_not_a_traceback(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        created = runner.invoke(conn_group, ["create", "prod-gh", "--secret", "GOOD_REF", "-w", str(tmp_path)])
+        assert created.exit_code == 0, created.output
+        res = runner.invoke(conn_group, ["rotate", "prod-gh", "--secret", self._PASTED, "-w", str(tmp_path)])
+        assert res.exception is None or isinstance(res.exception, SystemExit), (
+            f"uncaught {type(res.exception).__name__}"
+        )
+        assert res.exit_code == 2, res.output
+        assert "broker reference" in res.output
+        assert "Usage:" in res.output
+
+    def test_nothing_is_written_when_the_paste_is_refused(self, tmp_path: Path) -> None:
+        CliRunner().invoke(conn_group, ["create", "leaked", "--secret", self._PASTED, "-w", str(tmp_path)])
+        store = tmp_path / ".sdd" / "fleet" / "connections"
+        written = list(store.rglob("*")) if store.exists() else []
+        assert written == []
+        for path in tmp_path.rglob("*"):
+            if path.is_file():
+                assert "MIIEvQIBADAN" not in path.read_bytes().decode("utf-8", "replace")

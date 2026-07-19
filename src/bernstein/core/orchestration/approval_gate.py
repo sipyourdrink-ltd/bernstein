@@ -26,6 +26,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from datetime import UTC, datetime, timedelta
@@ -53,10 +54,106 @@ _DEFAULT_POLL_INTERVAL_S: float = 0.5
 #: outstanding decision in a single ``glob``.
 _RUNTIME_REL = Path(".sdd") / "runtime" / "approvals"
 
+#: The one rule for any identifier that becomes an approvals filename.
+#:
+#: Every sink under :data:`_RUNTIME_REL` derives its name from a caller-supplied
+#: id (``<id>.pending`` / ``.approved`` / ``.rejected`` / ``.resumed``), so the
+#: id is an identifier and never a path fragment. If two call sites can disagree
+#: about this rule they eventually will, so all of them go through
+#: :func:`approval_path_in`.
+#:
+#: **Length is 64**, matching the prevailing identifier rule in this codebase
+#: (``replay.journal``, ``run_service.paths``, ``orchestration.missions``,
+#: ``persistence.work_ledger``). A tighter bound here would refuse ids those
+#: surfaces accept and strand them with no operator remedy. A caller with a
+#: narrower downstream budget enforces that budget at its own boundary rather
+#: than tightening this shared rule (see
+#: :func:`bernstein.core.tasks.suspension.validate_task_id`, which additionally
+#: caps at 59 because a parked task's journal run id is ``"task-" + task_id``).
+#:
+#: **The first character must be alphanumeric.** This is deliberately stricter
+#: than the prevailing rule, which admits a leading dot and therefore matches
+#: ``.`` and ``..``. Those surfaces are not always joined onto a directory; this
+#: one always is, so traversal segments must be impossible here.
+#:
+#: **A colon is refused**, unlike ``evidence.run_artifacts`` which admits it for
+#: MCP-supplied ids. A colon cannot be made safe for a path that is joined and
+#: then written: on Windows ``C:evil`` parses as a drive-relative path, so
+#: ``base / "C:evil.approved"`` discards the base entirely, and ``file:stream``
+#: addresses an NTFS alternate data stream, which a containment check cannot
+#: see because the path itself still looks contained. Verified for both shapes;
+#: see the mismatch test in ``tests/unit/test_task_suspension.py``.
+_APPROVAL_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+
+class UnsafeApprovalIdError(ValueError):
+    """Raised when an id cannot be used to derive an approvals filename.
+
+    Fail closed: the identifier is rejected outright rather than sanitised, so
+    a traversal attempt surfaces as a refusal instead of silently reading or
+    writing a record outside the approvals directory.
+    """
+
+
+def validate_approval_id(approval_id: str) -> str:
+    """Return *approval_id* if it is a safe single path segment, else refuse.
+
+    Raises:
+        UnsafeApprovalIdError: The id is empty, longer than 64 characters, or
+            contains any character outside ``[A-Za-z0-9._-]`` (and it must
+            start with an alphanumeric, which rules out ``.`` and ``..``).
+    """
+    if not _APPROVAL_ID_RE.match(approval_id):
+        msg = f"refusing to derive an approvals path from unsafe id {approval_id!r}"
+        raise UnsafeApprovalIdError(msg)
+    return approval_id
+
 
 def _approvals_dir(workdir: Path) -> Path:
     """Return the canonical approvals directory rooted at *workdir*."""
     return workdir / _RUNTIME_REL
+
+
+def approval_path_in(approvals_dir: Path, approval_id: str, suffix: str) -> Path:
+    """Return the contained ``<approvals_dir>/<approval_id><suffix>`` path.
+
+    The single implementation every approvals sink resolves to. Two
+    independent gates, both fail closed: the identifier allowlist above, then a
+    resolved-path containment check. Resolving both the candidate and the base
+    means a symlinked approvals directory is followed consistently, while a
+    candidate landing anywhere outside the resolved base is refused -- which is
+    what catches a symlinked decision file, something the allowlist alone
+    cannot see.
+
+    Args:
+        approvals_dir: The approvals directory itself.
+        approval_id: Task or approval identifier.
+        suffix: File suffix including the dot, e.g. ``".approved"``.
+
+    Raises:
+        UnsafeApprovalIdError: The id is unsafe, or the resolved path escapes
+            the approvals directory.
+    """
+    validate_approval_id(approval_id)
+    resolved_base = approvals_dir.resolve()
+    candidate = (approvals_dir / f"{approval_id}{suffix}").resolve()
+    if candidate.parent != resolved_base or not candidate.is_relative_to(resolved_base):
+        msg = f"refusing approvals path outside {resolved_base} for id {approval_id!r}"
+        raise UnsafeApprovalIdError(msg)
+    return candidate
+
+
+def approval_path(workdir: Path, approval_id: str, suffix: str) -> Path:
+    """Return the contained ``<workdir>/.sdd/runtime/approvals/<id><suffix>``.
+
+    Convenience wrapper over :func:`approval_path_in` for the common case where
+    the caller holds a project root rather than the approvals directory.
+
+    Raises:
+        UnsafeApprovalIdError: The id is unsafe, or the resolved path escapes
+            the approvals directory.
+    """
+    return approval_path_in(_approvals_dir(workdir), approval_id, suffix)
 
 
 def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
@@ -171,18 +268,18 @@ def _publish_actor_event(
 
 
 def _pending_path(workdir: Path, task_id: str) -> Path:
-    """Return the ``<task_id>.pending`` sentinel path."""
-    return _approvals_dir(workdir) / f"{task_id}.pending"
+    """Return the ``<task_id>.pending`` sentinel path (validated, contained)."""
+    return approval_path(workdir, task_id, ".pending")
 
 
 def _approved_path(workdir: Path, task_id: str) -> Path:
-    """Return the ``<task_id>.approved`` decision path."""
-    return _approvals_dir(workdir) / f"{task_id}.approved"
+    """Return the ``<task_id>.approved`` decision path (validated, contained)."""
+    return approval_path(workdir, task_id, ".approved")
 
 
 def _rejected_path(workdir: Path, task_id: str) -> Path:
-    """Return the ``<task_id>.rejected`` decision path."""
-    return _approvals_dir(workdir) / f"{task_id}.rejected"
+    """Return the ``<task_id>.rejected`` decision path (validated, contained)."""
+    return approval_path(workdir, task_id, ".rejected")
 
 
 def write_pending_sentinel(

@@ -10,7 +10,7 @@
 # property-test suite in tests/ remains the primary fuzzing surface
 # for the rest of bernstein's input handling.
 # Ref: https://google.github.io/clusterfuzzlite/build-integration/python-lang/
-FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:5a4612c556e795e67b19d748dbe74a4fd0535ef0e268086bf4ddd7437d70eb4e
+FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:a5e01ec9a7fb6004fd6f5df7cdc5e5ca9d732a48f4b0e34b1d1fe91fe5c9a018
 
 COPY . /src/bernstein
 WORKDIR /src/bernstein
