@@ -61,9 +61,14 @@ def verify_receipt_endpoint(request: Request, receipt_id: str) -> JSONResponse:
 @router.get("/sla/{contract_id}")
 def show_contract(request: Request, contract_id: str) -> JSONResponse:
     """Return one SLA contract's full record."""
-    from bernstein.core.planning.sla_store import SLAStore
+    from bernstein.core.planning.sla_store import SLAContractError, SLAStore
 
-    contract = SLAStore(_sdd_dir(request)).get(contract_id)
+    try:
+        contract = SLAStore(_sdd_dir(request)).get(contract_id)
+    except SLAContractError:
+        # A malformed id addresses no contract; it reads as "not found" to the
+        # client rather than leaking that the store refused the id shape.
+        contract = None
     if contract is None:
         return JSONResponse({"error": "contract not found", "contract_id": contract_id}, status_code=404)
     return JSONResponse(contract.to_dict())
@@ -73,10 +78,13 @@ def show_contract(request: Request, contract_id: str) -> JSONResponse:
 def contract_report(request: Request, contract_id: str) -> JSONResponse:
     """Return the deterministic error-budget report for a contract."""
     from bernstein.core.orchestration.sla_monitor import build_report
-    from bernstein.core.planning.sla_store import SLAStore
+    from bernstein.core.planning.sla_store import SLAContractError, SLAStore
 
     sdd = _sdd_dir(request)
-    contract = SLAStore(sdd).get(contract_id)
+    try:
+        contract = SLAStore(sdd).get(contract_id)
+    except SLAContractError:
+        contract = None
     if contract is None:
         return JSONResponse({"error": "contract not found", "contract_id": contract_id}, status_code=404)
     return JSONResponse(build_report(sdd, contract))

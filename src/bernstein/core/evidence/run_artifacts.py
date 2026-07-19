@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -82,10 +83,13 @@ LINK_KINDS: frozenset[str] = frozenset({"preview", "dashboard", "document"})
 
 #: Artifact key alphabet: a single safe path-ish segment, no leading dot, no
 #: separators, so it can be embedded in a spine artifact path unescaped.
-_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+#: Anchored with ``\Z``, not ``$``: in Python ``$`` also matches immediately
+#: before a trailing newline, which would let a control character through an
+#: alphabet that exists precisely to exclude them.
+_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 #: Task id alphabet accepted for artifact posting (matches the MCP tool schema).
-_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,256}$")
+_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,256}\Z")
 
 
 class ArtifactError(ValueError):
@@ -266,7 +270,33 @@ def _validate_ids(task_id: str, key: str) -> None:
 
 
 def _artifact_journal_path(sdd_dir: Path, task_id: str) -> Path:
-    return sdd_dir / "runs" / _task_run_id(task_id) / "journal.jsonl"
+    """Return the task journal path, proven to sit under ``<sdd>/runs``.
+
+    Two checks, in order, because they answer different questions.
+
+    First the id must match the alphabet ``post_run_artifact`` enforces.
+    ``task_run_id`` maps every separator and control character to ``-``, so a
+    malformed id is not a traversal risk - but it is a COLLISION risk: ``a/b``,
+    ``a\\nb`` and ``a-b`` all normalise to the same run directory, and two
+    tasks that address the same journal can read each other's artifacts.
+    Refusing the id keeps distinct tasks distinct, which sanitising alone
+    cannot do.
+
+    Then the derived run id goes through the shared containment barrier and the
+    *returned* value is the normalised, checked path. Readers open that value
+    rather than the raw join, so a crafted id or a symlinked run directory
+    cannot address a journal outside the runs root. The barrier is shared on
+    purpose: a local copy of this check drifted from it once already.
+
+    Raises:
+        ArtifactValidationError: The id is not a valid task identifier.
+        PathContainmentError: The derived run id escapes the runs root.
+    """
+    from bernstein.core.tasks.checkpoint_retry import task_journal_path
+
+    if not _TASK_ID_RE.match(task_id):
+        raise ArtifactValidationError(f"task id {task_id!r} is not a valid task identifier")
+    return task_journal_path(sdd_dir, task_id)
 
 
 def _row_to_record(row: dict[str, Any]) -> RunArtifactRecord:
@@ -293,10 +323,26 @@ def read_artifact_rows(sdd_dir: Path, task_id: str, *, verify: bool = True) -> l
         task_id: The task whose artifacts to read.
         verify: When True (default), a task journal that fails Merkle
             verification yields no records (fail-closed).
+
+    A task id too long to name a file reads as empty, matching the
+    "no journal" case: ``_TASK_ID_RE`` accepts 256 characters and
+    ``task_run_id`` adds a prefix, so the derived component can exceed
+    ``NAME_MAX``. An id that is not a valid task identifier reads as empty for
+    the same reason: it addresses no task, and every caller here (the CLI
+    listing, the dashboard projection) already treats "addresses nothing" as
+    "nothing to show". The typed refusal belongs on the write path, where
+    :func:`post_run_artifact` validates before it anchors anything.
+
+    A *containment* failure is deliberately not caught - a traversal or symlink
+    escape must surface, never read as empty.
     """
     from bernstein.core.replay.journal import load_events, verify_journal
+    from bernstein.core.security.path_containment import PathTooLongError
 
-    path = _artifact_journal_path(sdd_dir, task_id)
+    try:
+        path = _artifact_journal_path(sdd_dir, task_id)
+    except (ArtifactValidationError, PathTooLongError):
+        return []
     if not path.is_file():
         return []
     if verify and not verify_journal(path).ok:
@@ -449,10 +495,16 @@ def verify_run_artifacts(sdd_dir: Path, task_id: str, *, hmac_key: bytes) -> lis
     row's ``content_hash`` (a flipped blob byte is caught), and the row's spine
     entry hash must appear in a verified lineage spine binding the same content.
     A failure names the artifact key and its exact journal position.
+
+    An id that cannot name any task has nothing to verify, so it reads as
+    empty rather than raising, matching :func:`read_artifact_rows`.
     """
     from bernstein.core.replay.journal import verify_journal
 
-    path = _artifact_journal_path(sdd_dir, task_id)
+    try:
+        path = _artifact_journal_path(sdd_dir, task_id)
+    except ArtifactValidationError:
+        return []
     if not path.is_file():
         return []
 
@@ -528,7 +580,7 @@ def _verify_one_artifact(
 
 def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[ArtifactVerifyResult]:
     """Verify every task's artifacts under ``workdir/.sdd`` (for ``audit verify``)."""
-    from bernstein.core.replay.journal import verify_journal
+    from bernstein.core.replay.journal import contained_run_journal, verify_journal
 
     sdd_dir = workdir / ".sdd"
     runs_root = sdd_dir / "runs"
@@ -536,12 +588,38 @@ def verify_all_run_artifacts(workdir: Path, *, hmac_key: bytes) -> list[Artifact
         return []
     results: list[ArtifactVerifyResult] = []
     for run_dir in sorted(p for p in runs_root.iterdir() if p.is_dir()):
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         task_id = _task_id_from_rows(journal_path)
         if task_id is not None:
-            results.extend(verify_run_artifacts(sdd_dir, task_id, hmac_key=hmac_key))
+            # The row's task id must map back to the journal it was read from.
+            # An id that fails validation, or that resolves to some other
+            # journal, means the row was rewritten: verifying under it would
+            # read a different (or absent) journal and report a clean result
+            # for a tampered run.
+            try:
+                derived = _artifact_journal_path(sdd_dir, task_id)
+            except ArtifactValidationError:
+                derived = None
+            # Compare under the same lexical normalisation the deriver uses,
+            # so the equality is not decided by symlinks on either side.
+            if derived is not None and str(derived) == os.path.normpath(str(journal_path)):
+                results.extend(verify_run_artifacts(sdd_dir, task_id, hmac_key=hmac_key))
+            else:
+                results.append(
+                    ArtifactVerifyResult(
+                        ok=False,
+                        task_id=run_dir.name.removeprefix("task-"),
+                        key="",
+                        version=0,
+                        journal_index=-1,
+                        reason=(
+                            f"artifact row task id does not resolve to its own journal ({run_dir.name}); "
+                            "the journal has been tampered with"
+                        ),
+                    )
+                )
             continue
         # No identifiable artifact rows. If this is an artifact journal
         # (``task-*``) whose Merkle chain does not verify, tampering may have
@@ -584,12 +662,12 @@ def live_artifact_content_hashes(sdd_dir: Path) -> set[str]:
     runs_root = sdd_dir / "runs"
     if not runs_root.is_dir():
         return set()
-    from bernstein.core.replay.journal import load_events
+    from bernstein.core.replay.journal import contained_run_journal, load_events
 
     live: set[str] = set()
     for run_dir in runs_root.iterdir():
-        journal_path = run_dir / "journal.jsonl"
-        if not journal_path.is_file():
+        journal_path = contained_run_journal(runs_root, run_dir.name)
+        if journal_path is None or not journal_path.is_file():
             continue
         for row in load_events(journal_path):
             if str(row.get("event", "")) == JOURNAL_EVENT_ARTIFACT_POSTED:

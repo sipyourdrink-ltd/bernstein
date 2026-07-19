@@ -467,9 +467,9 @@ class ScheduleStore:
             misfire_policy=schedule.misfire_policy,
             created_at=schedule.created_at,
             last_fire_at=fire_time,
-            extra=dict(schedule.extra),
-            params_schema=[dict(s) for s in schedule.params_schema],
-            params=dict(schedule.params),
+            extra=schedule.extra.copy(),
+            params_schema=[s.copy() for s in schedule.params_schema],
+            params=schedule.params.copy(),
         )
         self._write(updated)
 

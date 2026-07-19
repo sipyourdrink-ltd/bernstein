@@ -2320,7 +2320,7 @@ def record_sla_violation(
             "subject_type": subject_type,
             "subject_id": subject_id,
             "tick_instant": tick_instant,
-            "breached_axes": list(breached_axes),
+            "breached_axes": breached_axes.copy(),
             "requested_action": requested_action,
             "effective_action": effective_action,
             "remediation_blocked": remediation_blocked,

@@ -134,13 +134,25 @@ def block_network() -> Iterator[None]:
     exiting restores the outer guard rather than re-enabling real egress for
     the remainder of the outer scope. Intended for use by the autouse fixture,
     but usable directly in a ``with`` block for targeted tests.
+
+    The class object is bound once, on entry, and both the patch and the
+    restore go through that binding rather than re-resolving ``socket.socket``.
+    A purity test proving some code path never opens a socket does so by
+    replacing the class in the ``socket`` module namespace
+    (``monkeypatch.setattr(socket, "socket", ...)``), and that replacement can
+    still be live when this context exits - fixture finalizers do not have to
+    unwind in the order that would make re-resolution safe. Re-resolving would
+    then write the saved methods onto the stand-in and strand the guard on the
+    real class for the rest of the session, breaking every later
+    ``allow_network`` test with a failure that points nowhere near the cause.
     """
-    previous_connect = socket.socket.connect
-    previous_connect_ex = socket.socket.connect_ex
-    socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
-    socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
+    sock_cls = socket.socket
+    previous_connect = sock_cls.connect
+    previous_connect_ex = sock_cls.connect_ex
+    sock_cls.connect = _guarded_connect  # type: ignore[method-assign]
+    sock_cls.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
     try:
         yield
     finally:
-        socket.socket.connect = previous_connect  # type: ignore[method-assign]
-        socket.socket.connect_ex = previous_connect_ex  # type: ignore[method-assign]
+        sock_cls.connect = previous_connect  # type: ignore[method-assign]
+        sock_cls.connect_ex = previous_connect_ex  # type: ignore[method-assign]

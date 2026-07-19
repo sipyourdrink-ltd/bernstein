@@ -1901,19 +1901,37 @@ class TestRunnerRun:
 # ---------------------------------------------------------------------------
 
 
+def _await_heartbeat_payload(hb_file: Path, timeout_s: float = 5.0) -> dict[str, Any]:
+    """Return the first complete heartbeat payload written to *hb_file*.
+
+    The writer uses ``Path.write_text``, which truncates before writing, so
+    the file can exist while still being empty or only partially written.
+    Waiting for mere existence races that window and reads torn content, so
+    poll until the file parses instead.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            text = hb_file.read_text(encoding="utf-8").strip()
+        except OSError:  # not created yet
+            text = ""
+        if text:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                pass  # partial write; retry
+        time.sleep(0.01)
+    raise AssertionError(f"no complete heartbeat payload at {hb_file} within {timeout_s}s")
+
+
 class TestRunnerHeartbeat:
     def test_heartbeat_writes_proxy_shaped_payload(self, tmp_path: Path) -> None:
         hb_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
         stop_event = _start_heartbeat("hb-sess", hb_dir, interval_s=0.05)
-        hb_file = hb_dir / "hb-sess.json"
         try:
-            deadline = time.monotonic() + 5.0
-            while not hb_file.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
+            payload = _await_heartbeat_payload(hb_dir / "hb-sess.json")
         finally:
             stop_event.set()
-        assert hb_file.exists()
-        payload = json.loads(hb_file.read_text(encoding="utf-8"))
         # Schema mirrors _start_heartbeat_proxy in spawner_sandbox_session.
         assert set(payload) == {
             "timestamp",
@@ -1932,9 +1950,7 @@ class TestRunnerHeartbeat:
         hb_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
         stop_event = _start_heartbeat("hb-stop", hb_dir, interval_s=0.05)
         hb_file = hb_dir / "hb-stop.json"
-        deadline = time.monotonic() + 5.0
-        while not hb_file.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
+        _await_heartbeat_payload(hb_file)
         stop_event.set()
         time.sleep(0.15)
         hb_file.unlink()

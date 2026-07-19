@@ -247,3 +247,33 @@ def test_any_field_change_changes_hash(field_name: str) -> None:
     base = _capsule()
     changed = replace(base, **{field_name: "CHANGED"})
     assert base.capsule_hash() != changed.capsule_hash()
+
+
+def test_verify_refuses_a_run_journal_planted_outside_the_runs_root(tmp_path: Path) -> None:
+    """The capsule verifier must not re-derive from a journal outside the tree.
+
+    Pins the routing of ``verify_context_capsule`` through the shared
+    containment barrier. The planted journal's Merkle chain is intact - it
+    is written by the real writer - so ``verify_journal`` cannot tell it
+    apart from ours; only containment can. Reverting the routing to a raw
+    join makes this verify a planted journal and fails the test.
+    """
+    import pytest
+
+    sdd = tmp_path / ".sdd"
+    capsule = _capsule()
+    _seal(sdd, capsule)
+
+    run_dir = sdd / "runs" / "run-1"
+    outside = tmp_path / "outside_runs"
+    run_dir.rename(outside)
+    try:
+        run_dir.symlink_to(outside, target_is_directory=True)
+    except OSError:  # pragma: no cover - platform dependent
+        pytest.skip("cannot create symlinks on this platform")
+
+    result = verify_context_capsule(sdd_dir=sdd, chain=_chain(sdd), task_id="task-1")
+
+    # Unrouted, this journal reads cleanly and the capsule verifies ok.
+    assert not result.ok
+    assert "invalid run id" in result.reason

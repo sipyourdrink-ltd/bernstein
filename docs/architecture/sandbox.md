@@ -11,7 +11,7 @@ This document covers:
 
 - The `SandboxBackend` / `SandboxSession` protocol and the
   `WorkspaceManifest` / `SandboxCapability` value objects
-- The eight first-party backends (`worktree`, `docker`, `e2b`, `modal`, `daytona`, `blaxel`, `runloop`, `vercel`)
+- The nine first-party backends (`worktree`, `docker`, `e2b`, `modal`, `daytona`, `blaxel`, `runloop`, `vercel`, `microvm`)
 - The `bernstein.sandbox_backends` entry-point group for third-party
   backends
 
@@ -95,6 +95,7 @@ work.
 | `docker`   | core     | `FILE_RW`, `EXEC`, `NETWORK`                     | Launches a container per session via the `docker` Python SDK. Needs `pip install bernstein[docker]`. |
 | `e2b`      | `[e2b]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`     | Runs in E2B Firecracker microVMs. Needs `pip install bernstein[e2b]` plus `E2B_API_KEY`. |
 | `modal`    | `[modal]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`, `GPU` | Serverless containers with optional GPU. Needs `pip install bernstein[modal]` plus `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. |
+| `microvm`  | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | Firecracker microVM per session — isolates kernel / network / PID namespace at a hardware boundary. Snapshots are **content-addressed** (the snapshot id *is* the SHA-256 of the image bytes in CAS). Opt-in: not a free backend, so the heuristic path never auto-selects it; an explicit `sandbox.backend: microvm` on a host without KVM fails loudly rather than degrading isolation. **The VM boot path is experimental (not yet implemented) — see below.** |
 
 ### Trade-offs
 
@@ -108,10 +109,87 @@ work.
   `docker` provides cgroup + namespace isolation but shares the
   kernel; `e2b` runs in a fresh Firecracker microVM per session;
   `modal` runs in dedicated serverless containers.
-- **Capabilities.** `e2b`, `modal`, `daytona`, `runloop`, and `vercel` support snapshot/resume (as does the local `worktree`);
+- **Capabilities.** `e2b`, `modal`, `daytona`, `runloop`, `vercel`, and `microvm` support snapshot/resume (as does the local `worktree`);
   only `modal` exposes GPU today.
 - **Supported exec semantics.** All four backends handle argv-based
   exec with exit-code, stdout, and stderr capture.
+
+## MicroVM backend and deterministic fork-and-race
+
+The `microvm` backend (`src/bernstein/core/sandbox/backends/microvm.py`)
+adds two things the rest of the sandbox layer was missing: a real
+kernel/network/PID boundary, and a snapshot contract strong enough to
+build reproducible, auditable races on.
+
+> **Status: the deterministic core (snapshot / fork-race / signed receipt)
+> is complete and fully tested; the Firecracker VM boot itself is
+> experimental and not yet implemented.** `FirecrackerMonitor` ships the
+> host preflight and the strict no-silent-downgrade contract; the full boot
+> lifecycle (API socket, drives, networking, `InstanceStart`, and an
+> in-guest vsock agent for exec/file-IO) is a tracked follow-up. It cannot
+> be built or validated without a KVM-capable Linux host plus an
+> operator-supplied kernel, rootfs, and guest agent, so `boot()` raises
+> `MicroVMUnavailableError` on every host today rather than pretending. All
+> the guarantees below are exercised host-independently over the
+> `FakeMonitor`.
+
+**Monitor shim.** The backend never talks to a hypervisor directly. It
+drives a `VMMonitor` adapter (`backends/_vmmonitor.py`): a
+`FirecrackerMonitor` (production; strict host preflight for KVM +
+`firecracker` binary + kernel/rootfs) and a `FakeMonitor` (a
+deterministic, host-portable stand-in used by the tests that really
+executes commands and really freezes the workspace — not canned bytes).
+A Cloud Hypervisor variant fits behind the same shim and is deferred.
+
+**Content-addressed snapshots.** `snapshot()` freezes the workspace into a
+*canonicalised image* (a tar with sorted paths, zeroed mtimes/uids,
+normalised modes — deterministic given identical file contents), streams
+it into the CAS store (`.sdd/cas`, see
+[cas-store.md](./cas-store.md)), and returns the **SHA-256 digest** as the
+snapshot id. `resume(digest)` reads the blob back with integrity
+verification on, so a tampered snapshot fails its CAS check
+(`CASIntegrityError`) *before* it can boot. Images are full and
+self-contained, so a resume can never be confused about which base it
+forked from. Memory snapshots are deliberately out of scope: a memory
+image is never byte-reproducible (kernel timers, entropy, page/ASLR
+ordering), which would make the determinism guarantee below impossible.
+
+**Fork-and-race** (`src/bernstein/core/sandbox/fork_race.py`).
+`fork_race()` resumes K candidates from *one* content-addressed base
+digest, runs each to a terminal snapshot, and picks the winner with the
+existing deterministic ranker (`select_winner` → TOPSIS) — **no LLM in the
+selection path**. Determinism is engineered end to end: candidates are
+sorted by `task_id` *before* ranking (float sums are order-sensitive), and
+the pinned ranking profile excludes any wall-clock axis.
+
+**Selection receipt** (`src/bernstein/core/sandbox/selection_receipt.py`).
+The output is a `SelectionReceipt`: canonical JSON, Ed25519-signed, binding
+`{base_snapshot_digest, candidates[{task_id, terminal_snapshot_digest,
+score_vector, isolation}], winner_task_id, winner_snapshot_digest,
+ranker_profile, loser_snapshot_digests[]}`. The signed body carries **no**
+wall-clock, run id, or chain position, so running the same race twice
+produces a **byte-identical** signed receipt. Losing branches are recorded
+as lineage siblings, and the receipt is appended to the HMAC-chained audit
+log in a single serialised call (chain-position binding lives in that
+wrapper entry, not in the receipt body).
+
+**CLI.**
+
+```bash
+# Fork K candidates from a base snapshot; emits a signed receipt.
+bernstein sandbox fork-race --base <sha256> --k 3 --cmd 'make test' --out receipt.json
+
+# Verify a receipt: Ed25519 signature + re-hash base + winner + every loser
+# against CAS. Proves signed + CAS-intact; NOT that it was chain-appended
+# (that is the audit log's own verify).
+bernstein sandbox receipt verify receipt.json
+```
+
+`fork-race` requires a microVM-capable host; on an unsupported host it
+fails loudly. The determinism/tamper guarantees are validated
+host-independently over the `FakeMonitor` (see
+`tests/unit/sandbox/test_fork_race.py`); the real Firecracker boot is
+covered by the KVM-gated `tests/integration/sandbox/test_microvm_firecracker.py`.
 
 ## `plan.yaml` extension
 
@@ -161,8 +239,8 @@ Third-party backends must:
 
 - `SandboxBackend` / `SandboxSession` / `SandboxCapability` /
   `WorkspaceManifest` live in `src/bernstein/core/sandbox/`.
-- Eight first-party backends ship (worktree & docker in core; e2b,
-  modal, daytona, blaxel, runloop, and vercel as optional extras).
+- First-party backends ship in core (worktree, docker, microvm, blaxel,
+  daytona, runloop, vercel); e2b and modal ship as optional extras.
 - `AgentSpawner` accepts an optional `sandbox_session` parameter; when
   `None` it falls back to the direct-worktree path.
 - `bernstein agents sandbox-backends` lists installed backends.

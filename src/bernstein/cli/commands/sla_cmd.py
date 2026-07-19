@@ -137,9 +137,12 @@ def sla_list(as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON output.")
 def sla_show(contract_id: str, as_json: bool) -> None:
     """Show one SLA contract's full record."""
-    from bernstein.core.planning.sla_store import SLAStore
+    from bernstein.core.planning.sla_store import SLAContractError, SLAStore
 
-    contract = SLAStore(_sdd_dir()).get(contract_id)
+    try:
+        contract = SLAStore(_sdd_dir()).get(contract_id)
+    except SLAContractError:
+        contract = None
     if contract is None:
         click.echo(f"error: SLA contract {contract_id!r} not found", err=True)
         raise SystemExit(1)
@@ -203,10 +206,13 @@ def sla_report(contract_id: str, as_json: bool) -> None:
     pure projection, so operator and stakeholder derive the same numbers.
     """
     from bernstein.core.orchestration.sla_monitor import build_report
-    from bernstein.core.planning.sla_store import SLAStore
+    from bernstein.core.planning.sla_store import SLAContractError, SLAStore
 
     sdd = _sdd_dir()
-    contract = SLAStore(sdd).get(contract_id)
+    try:
+        contract = SLAStore(sdd).get(contract_id)
+    except SLAContractError:
+        contract = None
     if contract is None:
         click.echo(f"error: SLA contract {contract_id!r} not found", err=True)
         raise SystemExit(1)

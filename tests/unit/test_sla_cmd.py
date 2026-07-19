@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.sla_cmd import sla_group
@@ -106,3 +107,39 @@ def test_supervisor_tick_is_unchanged_without_a_monitor(tmp_path: Path) -> None:
     store = ScheduleStore(sdd)
     supervisor = ScheduleSupervisor(store, lambda _e: None, audit_writer=None)
     assert supervisor.tick(now=1_000_000) == []
+
+
+class TestMalformedContractIdIsHandledNotRaised:
+    """A contract id arrives from the command line, so a typo or a pasted
+    path is ordinary input.
+
+    `SLAStore.get` refuses a malformed id with a typed error before it can
+    address a file; these commands must turn that into their existing
+    "not found" exit, not an uncaught traceback.
+    """
+
+    _MALFORMED = ["not-a-sla-id", "../../escape", "sla_ZZZZZZZZZZZZ", "sla_deadbeefdead\n", ""]
+
+    @pytest.mark.parametrize("contract_id", _MALFORMED)
+    def test_show_reports_not_found(self, tmp_path: Path, contract_id: str) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path) as cwd:
+            (Path(cwd) / ".sdd").mkdir()
+            res = runner.invoke(sla_group, ["show", contract_id])
+            assert not isinstance(res.exception, Exception) or isinstance(res.exception, SystemExit), (
+                f"uncaught {type(res.exception).__name__}: {res.exception}"
+            )
+            assert res.exit_code == 1
+            assert "not found" in res.output
+
+    @pytest.mark.parametrize("contract_id", _MALFORMED)
+    def test_report_reports_not_found(self, tmp_path: Path, contract_id: str) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path) as cwd:
+            (Path(cwd) / ".sdd").mkdir()
+            res = runner.invoke(sla_group, ["report", contract_id])
+            assert not isinstance(res.exception, Exception) or isinstance(res.exception, SystemExit), (
+                f"uncaught {type(res.exception).__name__}: {res.exception}"
+            )
+            assert res.exit_code == 1
+            assert "not found" in res.output

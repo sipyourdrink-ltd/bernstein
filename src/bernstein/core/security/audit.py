@@ -752,7 +752,7 @@ class AuditLog:
                 keeps the hot path reading only live segments.
 
                 Callers that reason about *linkage* between events - rather
-                than about individual events - need this: after retention an
+                than about individual events - need this. After retention an
                 event's predecessor commonly lives in an archived segment, so
                 a live-only read makes an intact chain look broken. Reading
                 archives costs a decompress per segment, so it belongs on the
@@ -760,25 +760,26 @@ class AuditLog:
 
         Returns:
             List of matching AuditEvent instances (chronological order).
+
+        Raises:
+            UnicodeDecodeError: When a segment is not valid UTF-8. Invalid
+                bytes are evidence - of a truncated write, corruption, or
+                tampering - and ``verify`` hashes the raw bytes, so silently
+                substituting replacement characters here would return records
+                that do not match what is on disk.
         """
         results: list[AuditEvent] = []
         sources: list[bytes | None] = []
         if include_archived:
-            discard: list[str] = []
-            sources.extend(_read_archived_segment(gz, discard) for gz in _archived_segment_paths(self._audit_dir))
+            discarded: list[str] = []
+            sources.extend(_read_archived_segment(gz, discarded) for gz in _archived_segment_paths(self._audit_dir))
         sources.extend(path.read_bytes() for path in sorted(self._audit_dir.glob(_JSONL_GLOB)))
 
         for blob in sources:
             if blob is None:
-                # Unreadable archive segment; verify() reports it properly.
+                # Unreadable archive segment (corrupt gzip). ``verify`` reports
+                # it with a named error; a query simply has nothing to yield.
                 continue
-            # Strict decode, deliberately. Invalid UTF-8 in a segment is
-            # evidence - of a truncated write, corruption, or tampering - and
-            # ``verify`` hashes the raw bytes. Substituting U+FFFD here would
-            # return a clean-looking record that does not match the bytes on
-            # disk, so the projection and the verifier would disagree about
-            # what the log says. Raising matches the previous ``read_text()``
-            # behaviour exactly.
             for raw_line in blob.decode("utf-8").splitlines():
                 raw = raw_line.strip()
                 if not raw:

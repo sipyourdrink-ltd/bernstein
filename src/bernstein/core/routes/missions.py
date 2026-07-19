@@ -41,6 +41,7 @@ from fastapi.responses import JSONResponse
 from bernstein.core.evidence.bundle import read_evidence_bundle
 from bernstein.core.orchestration.mission_digest import build_mission_digest, render_digest_message
 from bernstein.core.orchestration.missions import (
+    KIND_MISSION_DEFINED,
     LedgerReader,
     list_missions,
     mission_ledger_dir,
@@ -84,8 +85,38 @@ def _validate_task_id(task_id: str) -> str:
 
 
 def _require_mission(sdd_dir: Path, mission_id: str) -> None:
-    if not LedgerReader(mission_ledger_dir(sdd_dir, mission_id)).exists():
+    """Refuse a request only when the ledger provably is not this mission.
+
+    Missions share the ledger root with plain run ledgers, so directory
+    existence proves nothing: a run ledger carries no ``mission.defined`` entry
+    and would project as an empty pending mission with ``ledger_verified`` true,
+    which is a non-mission served as a healthy one.
+
+    The subtlety is what "is not this mission" may rest on.
+    :meth:`LedgerReader.entries` yields any parseable row without checking a
+    hash, so the declared id is an attacker-controlled claim. Answering 404 on
+    the strength of it turns a tampered ledger into a missing one -- the
+    loudest signal replaced by the quietest, and one that reads as a typo. So
+    only a chain that *verifies* is allowed to say "not found"; anything torn
+    falls through to the projection, which renders ``ledger_verified=false``
+    with ``overall=unverified`` and accuses the data rather than the caller.
+    An ambiguous ledger (more than one definition) is likewise an integrity
+    failure, not an absence, and the projection forces
+    :data:`MISSION_UNVERIFIED` for it.
+
+    The CLI's ``_require_mission`` applies the identical rule, so the two
+    surfaces agree on every shape.
+    """
+    reader = LedgerReader(mission_ledger_dir(sdd_dir, mission_id))
+    if not reader.exists():
         raise HTTPException(status_code=404, detail=f"no mission ledger for: {mission_id}")
+
+    defined = [entry for entry in reader.entries() if entry.kind == KIND_MISSION_DEFINED]
+    if len(defined) == 1 and str(defined[0].payload.get("mission_id", "")) == mission_id:
+        return
+    if not reader.verify().ok or len(defined) > 1:
+        return
+    raise HTTPException(status_code=404, detail=f"no mission ledger for: {mission_id}")
 
 
 @router.get("/missions")

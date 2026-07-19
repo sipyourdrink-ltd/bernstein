@@ -1,4 +1,4 @@
-"""Pydantic v2 schema for Archon-style YAML workflow manifests.
+"""Pydantic v2 schema for declarative YAML workflow manifests.
 
 This module defines the data model that backs ``bernstein workflow run``.
 The format is intentionally small and orthogonal to the existing

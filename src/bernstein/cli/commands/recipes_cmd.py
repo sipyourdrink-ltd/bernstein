@@ -641,8 +641,7 @@ def register_cmd(name: str, collision_policy: str, concurrency_cap: int, sandbox
         console.print(f"[bold red]Recipe load failed:[/bold red] {exc}")
         raise SystemExit(2) from exc
 
-    registry = _open_registry(create=True)
-    registered = registry.register(
+    registered = _open_registry(create=True).register(
         spec=spec,
         pins=_resolve_pins(spec),
         collision_policy=collision_policy,
