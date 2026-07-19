@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from bernstein.core.bulletin import BulletinBoard, BulletinMessage
+from bernstein.core.bulletin import BulletinBoard, BulletinMessage, SignalActionFailure
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import (
     AgentSession,
@@ -415,14 +415,23 @@ class MultiCellOrchestrator:
             if status.blocked_tasks > 3:
                 msg = f"Cell {cell_id} has {status.blocked_tasks} blocked tasks. VP escalation needed."
                 actions.append(msg)
-                self._bulletin.post(
-                    BulletinMessage(
-                        agent_id="vp",
-                        type="blocker",
-                        content=msg,
-                        cell_id=cell_id,
+                try:
+                    self._bulletin.post(
+                        BulletinMessage(
+                            agent_id="vp",
+                            type="blocker",
+                            content=msg,
+                            cell_id=cell_id,
+                        )
                     )
-                )
+                except SignalActionFailure:
+                    # A board wired with a clearance-gate post hook refuses to
+                    # acknowledge a blocker whose gate did not materialize. The
+                    # message is queued for retry on the board; surfacing the
+                    # advisory must not abort the whole tick, matching the
+                    # ``clearance_coordinator=`` wiring which degrades the same
+                    # failure into ``result.errors``.
+                    logger.exception("clearance gate for the VP escalation blocker did not materialize")
                 logger.warning(msg)
 
         return actions

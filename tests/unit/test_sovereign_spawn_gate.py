@@ -7,6 +7,7 @@ a lightweight shim carrying just that attribute -- no full orchestrator boot.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,10 +23,35 @@ from bernstein.core.security.deployment_profile import (
     resolve_effective_policy,
 )
 from bernstein.core.security.network_policy import (
+    ENV_PROFILE_MODE,
     ENV_SOVEREIGN_MODE,
+    PROFILE_AIRGAP,
     is_airgap_profile,
     is_sovereign_profile,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_profile_markers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start each test from a process with no profile markers, and restore after.
+
+    Two hazards this closes. Inbound: an earlier module can leave
+    ``BERNSTEIN_NETWORK_POLICY`` set to an allow-list, and the gate now compares
+    the attested egress posture against the *enforced* one - so a leaked policy
+    makes a deny-all attestation genuinely mismatch and the gate correctly
+    refuses, failing a test that never meant to declare any egress. Outbound:
+    ``install_policy`` writes ``os.environ`` directly, and
+    ``monkeypatch.delenv(..., raising=False)`` on an already-absent variable
+    records nothing to restore, so the markers would leak onward.
+
+    Touching each variable with ``setenv`` first registers the pre-test state
+    (including "absent") so teardown always puts it back.
+    """
+    from bernstein.core.security.network_policy import ENV_NETWORK_POLICY
+
+    for var in (ENV_PROFILE_MODE, ENV_NETWORK_POLICY, ENV_SOVEREIGN_MODE):
+        monkeypatch.setenv(var, os.environ.get(var, ""))
+        monkeypatch.delenv(var, raising=False)
 
 
 def _preflight(workdir: Path) -> None:
@@ -50,14 +76,24 @@ def test_gate_is_noop_when_not_sovereign(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_gate_passes_when_posture_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sovereign is a marker pair: the residency marker plus the airgap network
+    # posture it composes. A half-set pair is refused (see #2638).
     monkeypatch.setenv(ENV_SOVEREIGN_MODE, "1")
+    monkeypatch.setenv(ENV_PROFILE_MODE, PROFILE_AIRGAP)
     _attest_clean(tmp_path)
+    # Premise: the config declares no egress, so the attested posture is
+    # deny-all and the enforced runtime policy must be deny-all to match.
+    from bernstein.core.security.network_policy import policy_from_env
+
+    assert policy_from_env().allow_any is False
+    assert not policy_from_env().rules
     _preflight(tmp_path)  # posture matches attestation -> no refusal
 
 
 def test_gate_refuses_on_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC3: a config edit after attestation blocks the next spawn with a receipt."""
     monkeypatch.setenv(ENV_SOVEREIGN_MODE, "1")
+    monkeypatch.setenv(ENV_PROFILE_MODE, PROFILE_AIRGAP)
     _attest_clean(tmp_path)
     # Add a cloud storage sink after attestation.
     (tmp_path / "bernstein.yaml").write_text(
@@ -71,6 +107,7 @@ def test_gate_refuses_on_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
 def test_gate_refuses_when_never_attested(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(ENV_SOVEREIGN_MODE, "1")
+    monkeypatch.setenv(ENV_PROFILE_MODE, PROFILE_AIRGAP)
     (tmp_path / ".sdd" / "audit").mkdir(parents=True, exist_ok=True)
     (tmp_path / "bernstein.yaml").write_text("goal: x\n", encoding="utf-8")
     with pytest.raises(PostureDriftRefusal):
@@ -82,6 +119,7 @@ def test_gate_refuses_on_revoked_certification_without_config_change(
 ) -> None:
     """AC4: a gated endpoint with no receipt is refused even when the hash matches."""
     monkeypatch.setenv(ENV_SOVEREIGN_MODE, "1")
+    monkeypatch.setenv(ENV_PROFILE_MODE, PROFILE_AIRGAP)
     (tmp_path / ".sdd" / "audit").mkdir(parents=True, exist_ok=True)
     (tmp_path / "bernstein.yaml").write_text(
         "goal: x\nrole_model_policy:\n  developer:\n    base_url: http://10.0.0.5:11434/v1\n    model: m\n",
@@ -160,6 +198,7 @@ def test_airgap_helpers_unaffected_by_sovereign_marker(monkeypatch: pytest.Monke
 
 def test_sovereign_marker_detected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(ENV_SOVEREIGN_MODE, "1")
+    monkeypatch.setenv(ENV_PROFILE_MODE, PROFILE_AIRGAP)
     assert is_sovereign_profile() is True
 
 
