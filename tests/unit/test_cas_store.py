@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -402,3 +403,33 @@ class TestCASStoreInit:
         root = tmp_path / "cas"
         store = CASStore(root)
         assert store.root == root
+
+
+# ---------------------------------------------------------------------------
+# CASStore.get - symlink safety (O_NOFOLLOW, race-free)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX symlink semantics")
+class TestCASStoreSymlinkSafety:
+    def test_get_refuses_to_follow_a_symlinked_blob(self, cas: CASStore, tmp_path: Path) -> None:
+        """A blob path replaced by a symlink must be rejected by the read itself
+        (O_NOFOLLOW), atomically - never followed to its target. This is the
+        race-free replacement for an is_symlink() pre-check, which would leave a
+        TOCTOU window (swap in the symlink between check and read)."""
+        digest = cas.put(b"authentic blob")
+        blob = cas.blob_path(digest)
+        # Repoint the blob at an attacker-controlled file with different content.
+        target = tmp_path / "attacker-target"
+        target.write_bytes(b"attacker bytes")
+        blob.unlink()
+        blob.symlink_to(target)
+        # OSError (ELOOP) from O_NOFOLLOW refusing the symlink.
+        with pytest.raises(OSError):
+            cas.get(digest, verify=True)
+
+    def test_get_returns_none_for_a_genuinely_absent_blob(self, cas: CASStore) -> None:
+        """A blob that was never stored still reads as None (absent), so the
+        O_NOFOLLOW change does not turn a normal miss into an error."""
+        missing = hashlib.sha256(b"never stored").hexdigest()
+        assert cas.get(missing) is None

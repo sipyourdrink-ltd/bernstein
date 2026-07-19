@@ -213,6 +213,10 @@ SANDBOX_CHOICES: tuple[str, ...] = (
     "blaxel",
     "runloop",
     "vercel",
+    # Opt-in, never auto-selected: mirrors its trailing position in
+    # DEFAULT_PRECEDENCE, and it is deliberately absent from
+    # SANDBOX_FREE_CHOICES so only an explicit flag reaches it.
+    "microvm",
 )
 
 
