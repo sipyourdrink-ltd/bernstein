@@ -762,27 +762,63 @@ class WorktreeManager:
 
         logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
 
-        # Write lock file for stale detection (T487)
-        worker_pid = os.getpid()
-        write_worktree_lock(self.repo_root, session_id, pid=worker_pid)
+        # The worktree and agent branch now exist.  Every remaining step runs
+        # inside an undo handler so that a failure - including a cancellation
+        # delivered mid-setup, which is a BaseException rather than an
+        # Exception - cannot leave the worktree or the agent branch behind.
+        # The cleanup is bounded git plumbing, so a plain handler is enough:
+        # no ``asyncio.shield`` (shielding an unbounded cleanup would turn a
+        # cancel into a hang).
+        try:
+            # Write lock file for stale detection (T487)
+            worker_pid = os.getpid()
+            write_worktree_lock(self.repo_root, session_id, pid=worker_pid)
 
-        allowed_symlinks: tuple[str, ...] = ()
-        if self._setup_config is not None:
-            setup_worktree_env(self.repo_root, worktree_path, self._setup_config)
-            allowed_symlinks = self._setup_config.symlink_dirs
+            allowed_symlinks: tuple[str, ...] = ()
+            if self._setup_config is not None:
+                setup_worktree_env(self.repo_root, worktree_path, self._setup_config)
+                allowed_symlinks = self._setup_config.symlink_dirs
 
-        isolation_result = validate_worktree_isolation(
-            worktree_path,
-            self.repo_root,
-            allowed_symlink_dirs=allowed_symlinks,
-        )
-        if not isolation_result.passed:
-            self.cleanup(session_id)
-            raise WorktreeError(
-                f"Worktree isolation violated for session '{session_id}': " + "; ".join(isolation_result.violations)
+            isolation_result = validate_worktree_isolation(
+                worktree_path,
+                self.repo_root,
+                allowed_symlink_dirs=allowed_symlinks,
             )
+            if not isolation_result.passed:
+                raise WorktreeError(
+                    f"Worktree isolation violated for session '{session_id}': " + "; ".join(isolation_result.violations)
+                )
+        except BaseException:
+            self._undo_partial_create(session_id, worktree_path, branch_name)
+            raise
 
         return worktree_path
+
+    def _undo_partial_create(self, session_id: str, worktree_path: Path, branch_name: str) -> None:
+        """Undo a partially-created worktree after a post-``worktree_add`` step fails.
+
+        Removes the worktree and deletes the agent branch so ``create`` never
+        leaves either behind.  Deliberately does *not* run the salvage path
+        used by :meth:`cleanup`: at this point no agent has run in the
+        worktree, there is nothing to salvage, and salvage would rename the
+        agent branch to ``salvage/<id>`` - leaving a ref behind and defeating
+        the "back to prior state" guarantee.
+
+        Best-effort and never raises, so the caller re-raises the original
+        error verbatim rather than masking it with a cleanup failure.
+        """
+        try:
+            worktree_remove(self.repo_root, worktree_path)
+        except Exception as exc:
+            logger.warning("undo create: worktree remove failed for %s: %s", session_id, exc)
+        try:
+            branch_delete(self.repo_root, branch_name)
+        except Exception as exc:
+            logger.warning("undo create: branch delete failed for %s: %s", session_id, exc)
+        try:
+            remove_worktree_lock(self.repo_root, session_id)
+        except Exception as exc:
+            logger.warning("undo create: lock removal failed for %s: %s", session_id, exc)
 
     def cleanup(self, session_id: str) -> None:
         """Remove the worktree and branch for *session_id*.
