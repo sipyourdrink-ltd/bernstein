@@ -6,19 +6,19 @@
     "url": "https://github.com/sipyourdrink-ltd/bernstein",
     "source": "github"
   },
-  "version": "3.8.0",
+  "version": "3.8.1",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "bernstein",
-      "version": "3.8.0",
+      "version": "3.8.1",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein:3.8.0",
+      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein:3.8.1",
       "transport": {
         "type": "stdio"
       }
