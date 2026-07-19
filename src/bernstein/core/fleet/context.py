@@ -138,9 +138,9 @@ class OperatingContext:
             "name": self.name,
             "server_url": self.server_url,
             "store_dsn": self.store_dsn,
-            "adapter_defaults": dict(self.adapter_defaults),
+            "adapter_defaults": self.adapter_defaults.copy(),
             "budget_envelope": self.budget_envelope,
-            "config_layer": dict(self.config_layer),
+            "config_layer": self.config_layer.copy(),
         }
 
     @classmethod
@@ -290,8 +290,7 @@ class ContextStore:
         the pointer write is atomic, so an effective config resolution sees
         the context layer entirely or not at all.
         """
-        context = self.get(name)
-        receipt = context.run_receipt()
+        receipt = self.get(name).run_receipt()
         if self._chain is not None:
             record_fleet_context_activate(
                 chain=self._chain,

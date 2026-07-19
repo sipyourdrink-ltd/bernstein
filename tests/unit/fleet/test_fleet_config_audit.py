@@ -36,7 +36,7 @@ def test_valid_variable_and_connection_history_passes(tmp_path: Path) -> None:
     conn_store = ConnectionDocumentStore(tmp_path / "conns")
     create_document(
         name="team-slack",
-        secret_name="slack",
+        broker_ref="slack",
         scope="chat:write",
         connector_defaults={},
         identity_dir=tmp_path / "id",

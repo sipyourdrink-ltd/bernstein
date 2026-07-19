@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- declarative agent orchestration.
+"""CLI entry point for Bernstein -- deterministic, verifiable orchestration for CLI coding agents.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -383,7 +383,7 @@ def print_rich_help() -> None:
     c.print(
         Panel(
             "[bold]bernstein[/bold]  deterministic Python scheduler for CLI coding agents.\n"
-            "  43 adapters, parallel git worktrees, HMAC-SHA256 audit chain (RFC 2104).",
+            "  40+ adapters, parallel git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
             expand=False,
@@ -730,7 +730,7 @@ def cli(
     refine_spec: str | None,
     unsafe_allow_unicode_tags: bool,
 ) -> None:
-    """Declarative agent orchestration for engineering teams."""
+    """Deterministic, verifiable orchestration for CLI coding agents."""
     # The skill-pack invisible-Unicode sanitizer reads its opt-out from this
     # env var; set it as early as possible so any later import that triggers a
     # SkillLoader sees the operator's choice. Default is OFF (sanitize on).

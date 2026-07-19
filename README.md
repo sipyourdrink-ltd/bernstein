@@ -35,20 +35,20 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 
 ---
 
-Bernstein is a deterministic Python scheduler that runs a crew of CLI coding agents (Claude Code, Codex, Gemini CLI, and 40 more) against a single goal in parallel git worktrees, with an HMAC-signed audit chain over every step.
+Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination loop - so runs are reproducible end to end. Every task runs in its own git worktree behind lint/type/test gates. Results stay checkable after the fact: an always-on lineage spine and replay journal, plus an opt-in HMAC-chained audit log (`--audit`) with receipts you can verify offline. Air-gap install profile included. Apache-2.0.
 
 ### at a glance
 
-- **43 CLI agent adapters**, plus a generic `--prompt` wrapper for anything else. Source of truth: the [supported agents](#supported-agents) table below.
-- **HMAC-SHA256 audit chain** per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104), one record per scheduling decision, tamper-evident. Operator guide: [docs/security/audit-log.md](docs/security/audit-log.md).
+- **Deterministic scheduler**: zero LLM in the coordination loop. Plain Python decides who runs, where, with what budget. Replay yesterday's plan, get yesterday's task graph.
+- **Per-artefact lineage** records every adapter file write, without per-adapter opt-in, as one Merkle-chained, HMAC-tagged entry in an always-on lineage spine (`.sdd/lineage/<run_id>/spine.jsonl`). The chain head hash is the run's artifact-provenance identity. CLI: `bernstein lineage verify <run_id>` (recompute the chain, distinct `NO ENTRIES` status for empty runs) and `bernstein lineage replay <run_id>`.
+- **Always-on replay journal**: every run records into one Merkle-chained event journal (`.sdd/runs/<run_id>/journal.jsonl`) whose head hash is the run identity; no on/off flag, `BERNSTEIN_REPLAY_RETENTION` caps disk. Non-determinism surfaces as a hash mismatch: `bernstein replay <run_id> --verify` recomputes the head and reports the exact first divergent step, and `bernstein replay <run_id> --from-step N` rebuilds deterministic state. The journal head is sealed into the lineage spine so replay identity and artefact provenance share one root. Provider-side context mutations (server-side compaction and similar opaque state) are recorded as content-addressed journal entries, so a change to what the model actually saw surfaces as divergence at the exact step instead of drifting silently; deterministic runs request suppression and fail loudly if a mutation arrives anyway.
+- **HMAC-SHA256 audit chain** per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104), one record per scheduling decision, tamper-evident. Enabled with `--audit`, `BERNSTEIN_AUDIT=1`, or a compliance preset; off by default. Operator guide: [docs/security/audit-log.md](docs/security/audit-log.md).
+- **40+ CLI agent adapters**, plus a generic `--prompt` wrapper for anything else. Source of truth: the [supported agents](#supported-agents) table below.
 - **Bearer-token task server** authenticates the manager and every worker. Per-session zero-trust JWT in `.sdd/runtime/agent_tokens/`, legacy `BERNSTEIN_AUTH_TOKEN` fallback, opt-out via `BERNSTEIN_AUTH_DISABLED=1`. Flow + diagnostics: [docs/security/manager-auth.md](docs/security/manager-auth.md).
 - **Signed agent cards** use detached JWS ([RFC 7515 §A.5](https://datatracker.ietf.org/doc/html/rfc7515#appendix-A.5)) over [RFC 8785 (JCS)](https://datatracker.ietf.org/doc/html/rfc8785) canonicalization, with [Ed25519 / EdDSA](https://datatracker.ietf.org/doc/html/rfc8037) keys. Code: [src/bernstein/core/security/agent_card_signer.py](src/bernstein/core/security/agent_card_signer.py).
-- **Per-artefact lineage** records every adapter file write, without per-adapter opt-in, as one Merkle-chained, HMAC-tagged entry in an always-on lineage spine (`.sdd/lineage/<run_id>/spine.jsonl`). The chain head hash is the run's artifact-provenance identity. CLI: `bernstein lineage verify <run_id>` (recompute the chain, distinct `NO ENTRIES` status for empty runs) and `bernstein lineage replay <run_id>`.
 - **Content credentials**: a C2PA 2.2 manifest for any produced artifact is a deterministic projection of that artifact's lineage-spine subtree, signed with the install-identity key so one attestation root covers both who ran it and what was produced. Stripping the spine makes the manifest unproducible, not merely unsigned. Watermark/fingerprint soft-binding layers are pluggable. CLI: `bernstein credential emit <artifact> --run-id <run_id>` and `bernstein credential verify <artifact>`.
 - **Tamper-evident memory**: every cross-session memory write is an append-only, HMAC-tagged chained record attributing a claim to an actor at a time (`entry_hash = H(prev, source_hash, actor, claim, model, timestamp, ...)`), stored per identity scope (user / agent / run / app) under `.sdd/memory/chain/<scope>/<namespace>.jsonl` and anchored to the lineage spine that produced it. Forgetting appends a signed tombstone rather than deleting, so the original stays provable. CLI: `bernstein memory verify --scope <s> --namespace <ns>` (proves a fact was written by the claimed actor and never edited), `bernstein memory why <fact> ...` (returns the originating run and step), and `bernstein memory forget <entry_hash> ...`.
-- **Always-on replay journal**: every run records into one Merkle-chained event journal (`.sdd/runs/<run_id>/journal.jsonl`) whose head hash is the run identity; no on/off flag, `BERNSTEIN_REPLAY_RETENTION` caps disk. Non-determinism surfaces as a hash mismatch: `bernstein replay <run_id> --verify` recomputes the head and reports the exact first divergent step, and `bernstein replay <run_id> --from-step N` rebuilds deterministic state. The journal head is sealed into the lineage spine so replay identity and artefact provenance share one root. Provider-side context mutations (server-side compaction and similar opaque state) are recorded as content-addressed journal entries, so a change to what the model actually saw surfaces as divergence at the exact step instead of drifting silently; deterministic runs request suppression and fail loudly if a mutation arrives anyway.
 - **Compaction receipts**: every context compaction of a long-running worker is validated mechanically (code blocks and error text must survive) and recorded as an HMAC-chained receipt. CLI: `bernstein compaction log --task <id>`. Operator guide: [docs/operations/context-compaction.md](docs/operations/context-compaction.md).
-- **Deterministic scheduler**: zero LLM in the coordination loop. Plain Python decides who runs, where, with what budget. Replay yesterday's plan, get yesterday's task graph.
 - **Cost-aware scheduling (USD budgets, pools, batch and cache policies)**: USD ceilings per task / run / day are enforced before dispatch against a hash-pinned, config-overridable price table (no network lookup in the scheduling loop). Every budget decision is a pure function of `(price table, spend ledger, caps)`, so two operators with the same ledger reproduce byte-identical decisions; a halt is a sealed receipt naming the exact policy inputs (`price_table_hash`, `ledger_state_hash`, `policy_hash`) and the projected overrun, anchored in the lineage spine and mirrored into the audit chain (`cost.dispatch_receipt`). `bernstein cost policy verify <decision_hash>` recomputes the decision from the stored bytes and re-checks the spine anchor offline; a forged admit or zeroed overrun fails like a tampered chain entry. Usage is attributed to named pools (`api`, `subscription`) with independent caps, and `bernstein cost policy preflight` surfaces pool exhaustion before a run starts rather than mid-run. Batch dispatch and cache-window fan-out (one warm-up call primes a shared prompt prefix for M cache-hitting workers) are gated on a declared adapter capability map -- refused, never faked, on an adapter without the surface, and cache windows default off. `bernstein doctor` flags a stale price table.
 - **Signed OTel span projection**: the OpenTelemetry GenAI export is a deterministic projection of the run event journal rather than random-id telemetry. Every span id is derived from the journal entry hash it projects, each span carries `bernstein.journal.entry_hash`, and the whole span set is signed with the install identity. Two replays export a byte-identical trace, a tampered span breaks the entry-hash binding, and the local JSONL store emits even with no OTLP endpoint set. CLI: `bernstein trace project <run_id>` and `bernstein trace verify-projection <run_id>`.
 - **Verifiable spending mandates**: when an agent spends against an external service, the signed intent, the tool calls it authorized, and the settlement reference become one journal-anchored consent receipt binding `{mandate_hash, authorized_tool_calls_hash, settlement_ref, journal_entry_hash}`, so "this payment was authorized by this exact intent" is provable offline. AP2-style Intent and Cart mandates are signed and revocable; per-task spend caps are enforced by the cost ledger and a cap breach is refused; revocation appends a signed entry so subsequent actions are refused. The authorized action set is a deterministic projection of `(mandate, state, time)`, and the HTTP 402 pay-and-retry settlement (x402 / AP2 shapes) is bound into the receipt so decision-to-pay and settlement cross-verify. CLI: `bernstein mandate emit`, `bernstein mandate verify <mandate_hash>` (proves the action was authorized by the recorded intent), and `bernstein mandate revoke <mandate_hash>`.
@@ -92,19 +92,25 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 See installed integrations: `bernstein integrations list --installed`.
 
-## sponsor
+### prove a run
 
-If Bernstein routed a model that saved you a Claude bill, $25 covers a month of my coffee.
+```bash
+BERNSTEIN_AUDIT=1 bernstein -g "fix the failing test in tests/test_foo.py"
+bernstein replay list                 # run ids recorded on disk
+bernstein replay latest --verify      # recompute the journal head, name the first divergent step
+bernstein lineage verify <run_id>     # recompute the always-on lineage spine
+bernstein audit verify                # HMAC chain + Merkle seal (written because audit was enabled)
+```
 
-[github.com/sponsors/chernistry](https://github.com/sponsors/chernistry)
+The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `--audit`, `BERNSTEIN_AUDIT=1`, or a compliance preset.
 
 ## who this is for
 
 Specific shapes where the value lands:
 
 - engineering teams running >=3 CLI coding agents in parallel: each agent gets its own git worktree, the merge queue serialises landings, no race conditions
-- operators running compliance-sensitive workflows: every routing decision is plaintext, the audit log is HMAC-signed and tamper-evident, no SaaS hop, no third-party data plane
-- platform teams that need an audit log of agent decisions: the orchestrator writes one row per scheduling decision, you can grep it
+- operators running compliance-sensitive workflows: every routing decision is plaintext, and with `--audit` the log is HMAC-signed and tamper-evident, no SaaS hop, no third-party data plane
+- platform teams that need an audit log of agent decisions: enable `--audit` and the orchestrator writes one row per scheduling decision, you can grep it
 - anyone burning more than $1k/mo on coding agents who wants determinism: you can replay yesterday's plan and get yesterday's task graph
 - forward-deployed engineers dropping into a client repo: credentials stay in your env, not the client's; agents you spawn are whichever CLI tool the client already trusts
 
@@ -121,13 +127,13 @@ If you nodded at two of those bullets, this fits.
 
 ## how it compares
 
-What Bernstein does well is the auditability surface: HMAC-chained audit, signed agent cards, per-artefact lineage, air-gap deploy profile, plus broad CLI adapter coverage.
+What Bernstein does well is the verifiability surface: an always-on lineage spine and replay journal, an opt-in HMAC-chained audit log, signed agent cards, an air-gap deploy profile, plus broad CLI adapter coverage.
 
 ---
 
 ### what is this, in one paragraph
 
-You tell Bernstein what you want built. It splits the work across several AI coding agents, runs them in parallel inside isolated git worktrees, records every handoff in an HMAC-SHA256-chained audit log (RFC 2104), runs the tests, and merges the code that actually passes. File-based state (`.sdd/`), per-agent credential scoping, signed audit trail.
+You tell Bernstein what you want built. It splits the work across several AI coding agents, runs them in parallel inside isolated git worktrees, records every handoff in the always-on lineage spine and replay journal, runs the tests, and merges the code that actually passes. File-based state (`.sdd/`), per-agent credential scoping, and an opt-in HMAC-SHA256-chained audit log (RFC 2104) when you start the run with `--audit`.
 
 ### other install methods
 
@@ -176,14 +182,14 @@ Stock workflows shipping in the wheel: `idea-to-pr`, `refactor-with-tests`, `sec
 
 - forward-deployed engineering: drop the crew onto a client repo when you arrive, take it with you when you leave.
 - self-evolving projects: point Bernstein at its own repo and let it execute the backlog (this codebase is one).
-- CI fleets: run a crew of agents in parallel on PRs, with per-agent credential scoping and signed audit trail.
+- CI fleets: run a crew of agents in parallel on PRs, with per-agent credential scoping and an opt-in signed audit trail.
 - air-gapped deployment: install from a signed wheelhouse, run with `--profile airgap` to deny outbound by default. See [Air-gap installation](docs/installation/air-gap.md).
 
 ## supported agents
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
 
-43 CLI agent adapters, plus a generic wrapper for anything with `--prompt`.
+40+ CLI agent adapters, plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
@@ -277,7 +283,7 @@ Bernstein runs a four-stage pipeline per goal:
 3. **Verify**. The janitor checks concrete signals: tests pass, files exist, lint clean, types correct.
 4. **Merge**. Verified work lands in main. Failed tasks get retried or routed to a different model.
 
-The orchestrator is a Python scheduler, not an LLM. Scheduling decisions are deterministic, auditable, and reproducible. Every step writes a record to the HMAC-chained audit log (`.sdd/audit/YYYY-MM-DD.jsonl`) per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104).
+The orchestrator is a Python scheduler, not an LLM. Scheduling decisions are deterministic, auditable, and reproducible. Every step lands in the always-on replay journal; run with `--audit` and every step additionally writes a record to the HMAC-chained audit log (`.sdd/audit/YYYY-MM-DD.jsonl`) per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104).
 
 ## cloud execution (Cloudflare)
 
@@ -291,7 +297,7 @@ bernstein cloud run plan.yaml  # execute a plan on Cloudflare
 
 ## capabilities
 
-Bernstein ships parallel execution + worktree isolation + a janitor that gates merges on tests/lint/types, signed lineage records, MCP server mode, an HMAC-SHA256 audit chain, and 40+ CLI adapters out of the box. Pluggable sandbox backends (worktree, Docker, [E2B](https://e2b.dev), [Modal](https://modal.com)), pluggable artifact sinks (local, S3, GCS, Azure Blob, R2), progressive-disclosure skill packs, and a [lethal-trifecta capability gate](docs/security/lethal-trifecta.md) round it out.
+Bernstein ships parallel execution + worktree isolation + a janitor that gates merges on tests/lint/types, signed lineage records, MCP server mode, an opt-in HMAC-SHA256 audit chain, and 40+ CLI adapters out of the box. Pluggable sandbox backends (worktree, Docker, [E2B](https://e2b.dev), [Modal](https://modal.com)), pluggable artifact sinks (local, S3, GCS, Azure Blob, R2), progressive-disclosure skill packs, and a [lethal-trifecta capability gate](docs/security/lethal-trifecta.md) round it out.
 
 Full feature matrix: [docs/reference/FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md). Recent features: [docs/whats-new.md](docs/whats-new.md).
 
@@ -376,6 +382,12 @@ Editor extensions: [VS Marketplace](https://marketplace.visualstudio.com/items?i
 ## contributing
 
 PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and code style.
+
+## sponsor
+
+If Bernstein routed a model that saved you a Claude bill, $25 covers a month of my coffee.
+
+[github.com/sponsors/chernistry](https://github.com/sponsors/chernistry)
 
 ## support
 

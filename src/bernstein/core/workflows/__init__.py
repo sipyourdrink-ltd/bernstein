@@ -1,4 +1,4 @@
-"""Archon-inspired YAML workflow manifests.
+"""Declarative YAML workflow manifests.
 
 Companion to ``bernstein run -g <goal>``: a declarative way to run a
 DAG of agent / command / loop nodes through the existing

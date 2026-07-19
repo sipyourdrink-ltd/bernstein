@@ -120,7 +120,7 @@ This architecture makes real sacrifices.
 
 **Task decomposition quality matters.** The initial goal decomposition is load-bearing. If the LLM produces a bad task graph (wrong dependencies, ambiguous deliverables), the orchestrator faithfully executes it, badly. We've put most of our prompt engineering into this step.
 
-If your use case needs dynamic re-planning or agent collaboration, Bernstein is probably not the right tool. LangGraph or AutoGen would serve you better.
+If your use case needs dynamic re-planning or agent collaboration, Bernstein is probably not the right tool. An in-process graph framework would serve you better.
 
 ---
 

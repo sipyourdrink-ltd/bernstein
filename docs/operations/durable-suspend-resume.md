@@ -98,6 +98,55 @@ guarantees back the proof:
 - Mutating the suspend **receipt** breaks the HMAC audit chain at that exact
   position, which `bernstein audit verify` reports.
 
+The outcome is a tri-state on the `status` field, so a caller can branch on it
+without parsing messages:
+
+| `status` | meaning | exit code |
+|---|---|---|
+| `verified` | a settlement happened and its proof holds | 0 |
+| `pending` | the park has not settled yet, nothing to prove | 0 |
+| `failed` | a settlement is claimed but its evidence does not hold | 1 |
+
+`failed` is reserved for a real break: a resume receipt hanging off another
+park's suspend receipt, a receipt naming a suspend or resume row the task
+journal does not hold, a park carrying more than one settlement, or a broken
+chain or journal.
+
+A live park reports `pending`, not `failed`. It is an incomplete lifecycle
+rather than a broken proof, and reporting it as a failure would bury real
+breaks when sweeping a fleet that has parked tasks in it. The `ok` field means
+"no integrity failure found" and so covers both `verified` and `pending`; test
+`status == "verified"` when you need a settled, proven continuity.
+
+The distinction between `pending` and `failed` is which suspend row a resume
+receipt *claims*, not merely whether any resume exists: a task parked twice
+with only the first park settled leaves the second park `pending`.
+
+## What the resume path refuses
+
+The suspend receipt is selected by identity, never by recency, and is checked
+before anything is written:
+
+- A receipt bound to a **different suspend row** or a **different task** is
+  refused, so a task parked more than once cannot resume against the wrong
+  park and a substituted receipt has nothing to match.
+- A receipt hash **absent from the audit chain** is refused; a non-empty hash
+  is not evidence on its own.
+- A park recorded `--until approval` refuses to append a resume row until the
+  approval decision has landed. The gate is enforced where the mutation
+  happens, not only at the call site.
+- A park settles **once**. If a `task.resume_receipt` already hangs off the
+  suspend receipt, a second resume is refused. The decision file records that
+  the operator approved, not how many times that approval may be spent, so the
+  settlement record on the chain is what bounds it to one. To resume again,
+  park again and obtain a fresh suspend receipt.
+- A `task_id` that is not a plain identifier is refused outright rather than
+  sanitised, so it can never be used to read or write an approval record
+  outside `.sdd/runtime/approvals`.
+
+Every one of these refusals lands before the journal is touched, so a refused
+resume leaves the task's Merkle chain byte-identical to the parked state.
+
 ## Commands
 
 ```bash

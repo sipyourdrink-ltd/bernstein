@@ -11,12 +11,15 @@ map so a mutation is flagged at verification.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS
+from bernstein.adapters.canary import _VERSION_TOKEN_RE as _CANARY_VERSION_TOKEN_RE
 from bernstein.adapters.security_floor import (
+    _VERSION_TOKEN_RE,
     POLICY_BLOCK,
     POLICY_WARN,
     VERDICT_PERMIT,
@@ -310,3 +313,72 @@ class TestOfflineAudit:
         assert not ok
         assert len(violations) == 1
         assert _ADAPTER in violations[0]
+
+
+# ---------------------------------------------------------------------------
+# Version-token scanning
+# ---------------------------------------------------------------------------
+
+
+class TestVersionTokenRegex:
+    """The ``--version`` scanner runs on untrusted subprocess output.
+
+    A long run of digits with no dot used to force the engine to retry every
+    interior offset, making the scan quadratic in the size of the blob. The
+    pattern is now anchored to digit-run starts with possessive quantifiers, so
+    the scan is linear and the same tokens are still extracted.
+    """
+
+    @pytest.mark.parametrize(
+        ("blob", "expected"),
+        [
+            ("claude-code 1.2.3", "1.2.3"),
+            ("v0.9.1\n", "0.9.1"),
+            ("codex 1.2.3.4 (build 7)", "1.2.3.4"),
+            # {1,3} groups cap the token at four components.
+            ("1.2.3.4.5", "1.2.3.4"),
+            ("abc123.45", "123.45"),
+            ("tool 10.0", "10.0"),
+            # No dotted token at all.
+            ("no version here", None),
+            ("12345", None),
+            ("", None),
+        ],
+    )
+    def test_extracts_the_same_token_as_before(self, blob: str, expected: str | None) -> None:
+        match = _VERSION_TOKEN_RE.search(blob)
+        assert (match.group(0) if match else None) == expected
+
+    def test_matches_the_canary_scanner(self) -> None:
+        """Both probes must agree; they read the same kind of output."""
+        assert _VERSION_TOKEN_RE.pattern == _CANARY_VERSION_TOKEN_RE.pattern
+
+    def test_adversarial_digit_run_stays_fast(self) -> None:
+        """A digit run with no dot must not blow up the scan.
+
+        Against the old pattern this input took roughly a second and grew
+        quadratically; the linear scan finishes in microseconds. The budget is
+        loose enough to survive a slow CI runner but far below the old cost.
+        """
+        blob = "9" * 40_000 + "x"
+        start = time.perf_counter()
+        assert _VERSION_TOKEN_RE.search(blob) is None
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.5, f"version scan took {elapsed:.3f}s, expected linear time"
+
+    def test_scan_cost_does_not_grow_quadratically(self) -> None:
+        """Doubling the adversarial input must not quadruple the runtime."""
+
+        def scan(size: int) -> float:
+            blob = "9" * size + "x"
+            start = time.perf_counter()
+            _VERSION_TOKEN_RE.search(blob)
+            return time.perf_counter() - start
+
+        # Warm the engine so the first call does not carry setup cost.
+        scan(1_000)
+        small = scan(20_000)
+        large = scan(40_000)
+        # Linear scaling gives ~2x. The old pattern gave ~4x and was already
+        # into the hundreds of milliseconds at these sizes.
+        assert large < max(small * 3.0, 0.05), f"{small=:.6f}s {large=:.6f}s looks super-linear"
