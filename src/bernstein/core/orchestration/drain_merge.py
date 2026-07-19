@@ -150,6 +150,73 @@ def _parse_report(stdout: str) -> list[MergeResult]:
     return results
 
 
+def _close_pipe_transports(proc: asyncio.subprocess.Process) -> None:
+    """Close the subprocess pipe transports without an unbounded read.
+
+    Draining via ``communicate()`` reads both pipes to EOF, which a grandchild
+    that inherited the stdout pipe can defer indefinitely -- turning teardown
+    into a hang.  Closing the transport is synchronous and bounded: it releases
+    the pipe file descriptors so a child blocked on a full stdout pipe cannot
+    linger and the parent leaks nothing.  Missing on a stub process (no
+    ``_transport``), so it is a no-op there.
+    """
+    transport = getattr(proc, "_transport", None)
+    if transport is None:
+        return
+    with contextlib.suppress(Exception):
+        transport.close()
+
+
+async def _reap_merge_agent(proc: asyncio.subprocess.Process) -> None:
+    """Kill and reap the merge agent if it is still running.
+
+    Invoked from a ``finally`` so it runs on every exit path: normal return,
+    timeout, unexpected exception, and cancellation.  On the normal path the
+    process has already exited and ``communicate()`` has drained and closed the
+    pipe transports, so this returns immediately.
+
+    On every other path the merge agent is a coding-agent CLI still holding
+    ``cwd`` write access to the repository, so it must not outlive the drain
+    phase.  We SIGKILL it and then reap the already-killed *direct* child.  That
+    reap is the only awaited teardown step and it is bounded -- SIGKILL on the
+    direct child is reaped promptly by the OS regardless of any grandchild
+    holding the stdout pipe -- which is exactly why shielding it against an
+    in-flight cancellation is safe and cannot turn a cancel into a hang.  The
+    pipe transports are then closed synchronously.
+
+    The kill and the residual-orphan case are logged, so an operator reading
+    the log can tell that a merge agent was still running when its phase ended.
+    """
+    if proc.returncode is not None:
+        return
+
+    logger.warning(
+        "Merge agent (pid %s) still running at drain-phase exit -- killing it "
+        "so it cannot retain repository write access",
+        getattr(proc, "pid", "unknown"),
+    )
+    with contextlib.suppress(OSError, ProcessLookupError):
+        proc.kill()
+
+    # Reap the already-killed direct child.  Shield so an in-flight
+    # cancellation cannot abort the (bounded) reap; suppress BaseException so
+    # the shield's CancelledError -- which ``except Exception`` would not catch
+    # -- and any stub-process quirk cannot break this ``finally``.  Do NOT shield
+    # an unbounded read here: shielding cleanup that is not bounded would turn a
+    # cancel into a hang.
+    with contextlib.suppress(BaseException):
+        await asyncio.shield(proc.wait())
+
+    _close_pipe_transports(proc)
+
+    if proc.returncode is None:
+        logger.error(
+            "Merge agent (pid %s) could not be confirmed dead after kill; it "
+            "may still be editing the working tree",
+            getattr(proc, "pid", "unknown"),
+        )
+
+
 async def run_merge_agent(
     branches: list[str],
     workdir: Path,
@@ -221,13 +288,16 @@ async def run_merge_agent(
         async with asyncio.timeout(timeout_s):
             stdout_bytes, _ = await proc.communicate()
     except TimeoutError:
-        logger.warning("Merge agent timed out after %ds -- killing process", timeout_s)
-        with contextlib.suppress(OSError):
-            proc.kill()
-        # Drain remaining output so the transport closes cleanly.
-        with contextlib.suppress(Exception):
-            await proc.communicate()
+        logger.warning("Merge agent timed out after %ds", timeout_s)
         return []
+    finally:
+        # Cover every exit path, not just the timeout branch.  An external
+        # cancellation (the orchestrator aborting the drain phase) reaches here
+        # as ``CancelledError``, which the ``except TimeoutError`` above does
+        # not catch.  Without this ``finally`` the merge agent -- a coding-agent
+        # CLI still holding ``cwd`` write access to the repository -- would
+        # survive the cancellation and keep editing the working tree.
+        await _reap_merge_agent(proc)
 
     if proc.returncode != 0:
         logger.warning("Merge agent exited with code %s", proc.returncode)
