@@ -233,6 +233,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      # actions: write is required to dispatch publish-docker.yml below (a
+      # release created with GITHUB_TOKEN does not emit `release: published`).
+      actions: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -266,6 +269,19 @@ jobs:
             echo "::error::Release $TAG has no assets"
             exit 1
           fi
+
+      # publish-docker.yml fires on `release: published`, but a release
+      # created with GITHUB_TOKEN does not emit that event (loop-prevention on
+      # token-authored events), so GHCR would never build. Dispatch it
+      # explicitly. publish-docker.yml keeps its native `release: published`
+      # trigger for releases created by a human or PAT; workflow_dispatch is
+      # exempt from the loop-prevention, and a repeat build for the same tag
+      # is harmless (idempotent image push).
+      - name: Dispatch docker publish (release event from GITHUB_TOKEN does not trigger it)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: gh workflow run publish-docker.yml --ref main -f tag="$TAG"
 
   publish-npm:
     name: Publish npm wrapper
