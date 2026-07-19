@@ -70,6 +70,11 @@ def _attest(
     payload by dropping the ``receipt`` field, which is what
     ``bernstein a2a verify --receipt`` does.
 
+    On this path the response is the acceptance record for the task the node
+    just took in and linked, so the receipt attests that acceptance, not the
+    task's eventual completed result (see the receipt module's "Scope of the
+    claim").
+
     Returns ``None`` when the node has no issuer, in which case the response
     goes out unattested rather than failing.
     """

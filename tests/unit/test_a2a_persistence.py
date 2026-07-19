@@ -8,6 +8,8 @@ existing callers and tests are untouched.
 
 from __future__ import annotations
 
+import stat
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -16,6 +18,24 @@ from bernstein.core.protocols.a2a.a2a import A2AHandler, A2ATaskStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes only")
+def test_state_file_is_written_owner_only(tmp_path: Path) -> None:
+    """The state file holds inbound task messages and artifact payloads.
+
+    It carries the same class of data the receipt key material does, so it is
+    persisted at ``0o600`` rather than at the process umask - a group- or
+    world-readable state file would leak inbound peer content to any local
+    account.
+    """
+    state_path = tmp_path / "a2a-state.json"
+    handler = A2AHandler(server_url="http://localhost:8052", state_path=state_path)
+    handler.create_task(sender="peer.example", message="secret inbound content")
+
+    assert state_path.exists()
+    mode = stat.S_IMODE(state_path.stat().st_mode)
+    assert mode == 0o600, f"expected 0o600, got {mode:#o}"
 
 
 # ---------------------------------------------------------------------------

@@ -55,9 +55,9 @@ from fastapi.responses import PlainTextResponse, Response
 
 from bernstein import __version__ as _BERNSTEIN_VERSION
 from bernstein.core.interop.a2a_card import (
-    CardPolicies,
     SignedCapabilityCard,
     issue_capability_card,
+    resolve_advertised_card_policies,
 )
 from bernstein.core.security.agent_card_keystore import (
     DEFAULT_KEY_DIR,
@@ -420,12 +420,6 @@ _ADVERTISED_TOOLS: tuple[str, ...] = (
     "a2a_message",
 )
 
-#: Policies the node enforces on delegated work. Advertised so a peer can
-#: decide *before* delegating whether our ceiling is acceptable to it.
-_CARD_COST_CAP_USD = 0.0
-_CARD_REDACTION_TIER = "standard"
-_CARD_SANDBOX_PROFILE = "container"
-
 #: Re-issue the cached card once it is within this many seconds of expiry, so
 #: a peer never fetches a card that expires mid-verification.
 _CARD_REISSUE_MARGIN_SECONDS = 5 * 60
@@ -460,11 +454,7 @@ def _capability_card(tenant_id: str = DEFAULT_TENANT_ID) -> SignedCapabilityCard
             name=_AGENT_NAME,
             description=_AGENT_DESCRIPTION,
             advertised_tools=list(_ADVERTISED_TOOLS),
-            policies=CardPolicies(
-                cost_cap_usd=_CARD_COST_CAP_USD,
-                redaction_tier=_CARD_REDACTION_TIER,
-                sandbox_profile=_CARD_SANDBOX_PROFILE,
-            ),
+            policies=resolve_advertised_card_policies(),
             private_key_pem=private_pem,
             public_key_pem=public_pem,
             kid=_tenant_kid(tenant_id),

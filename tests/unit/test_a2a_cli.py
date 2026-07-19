@@ -124,6 +124,81 @@ def test_verify_emits_json_when_asked(runner: CliRunner, tmp_path: Path) -> None
     assert payload["entry_hash"] == receipt["entry_hash"]
 
 
+def test_verify_warns_when_the_key_is_not_pinned(runner: CliRunner, tmp_path: Path) -> None:
+    """A default verify trusts the receipt's own key on first use.
+
+    Without ``--trusted-jwk`` the signature is checked against a key the
+    issuer itself supplied, so a valid result proves internal consistency,
+    not provenance. That distinction must be surfaced, not silent, or an
+    operator reads "valid" as "verified against the operator's key".
+    """
+    response, receipt = _issue_receipt(tmp_path)
+    receipt_path = tmp_path / "receipt.json"
+    response_path = tmp_path / "response.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+
+    result = runner.invoke(
+        a2a_group,
+        ["verify", "--receipt", str(receipt_path), "--response", str(response_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    lowered = result.output.lower()
+    assert "trust-on-first-use" in lowered or "not pinned" in lowered
+    assert "--trusted-jwk" in result.output
+
+
+def test_verify_json_reports_the_key_is_not_pinned(runner: CliRunner, tmp_path: Path) -> None:
+    response, receipt = _issue_receipt(tmp_path)
+    receipt_path = tmp_path / "receipt.json"
+    response_path = tmp_path / "response.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+
+    result = runner.invoke(
+        a2a_group,
+        ["verify", "--receipt", str(receipt_path), "--response", str(response_path), "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["key_pinned"] is False
+    assert payload.get("warning")
+
+
+def test_verify_does_not_warn_when_the_key_is_pinned(runner: CliRunner, tmp_path: Path) -> None:
+    response, receipt = _issue_receipt(tmp_path)
+    receipt_path = tmp_path / "receipt.json"
+    response_path = tmp_path / "response.json"
+    jwk_path = tmp_path / "trusted.jwk"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+    # Pin against exactly the key the receipt was signed with.
+    jwk_path.write_text(json.dumps(receipt["head_signature"]["public_key_jwk"]), encoding="utf-8")
+
+    result = runner.invoke(
+        a2a_group,
+        [
+            "verify",
+            "--receipt",
+            str(receipt_path),
+            "--response",
+            str(response_path),
+            "--trusted-jwk",
+            str(jwk_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["key_pinned"] is True
+    assert "warning" not in payload
+
+
 def test_verify_rejects_a_malformed_receipt_file(runner: CliRunner, tmp_path: Path) -> None:
     receipt_path = tmp_path / "receipt.json"
     receipt_path.write_text("{not json", encoding="utf-8")

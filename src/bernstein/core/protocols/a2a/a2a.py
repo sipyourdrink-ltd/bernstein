@@ -19,9 +19,11 @@ Implements Google's A2A protocol for agent interoperability. Provides:
 #   offline.
 # * Execution evidence - every inbound ``POST /a2a/tasks/send`` response
 #   carries a lineage receipt (see :mod:`.receipt`). A caller proves the
-#   answer it received is the answer we recorded, without trusting us to
-#   summarise our own behaviour. Identity evidence and execution evidence
-#   are deliberately separate claims.
+#   answer it received is the answer we recorded for the task, without
+#   trusting us to summarise our own behaviour. On the send path that
+#   recorded answer is the acceptance record, not the eventual completed
+#   result (see the receipt module's "Scope of the claim"). Identity
+#   evidence and execution evidence are deliberately separate claims.
 # * Durability - handler state persists when ``state_path`` is set, so an
 #   inbound task and its receipt survive a restart. The default backend
 #   remains in-memory.
@@ -37,6 +39,7 @@ Implements Google's A2A protocol for agent interoperability. Provides:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -368,6 +371,16 @@ class A2AHandler:
     # their behaviour. When a path is supplied, every mutation is flushed
     # atomically, which closes the loss-on-restart gap for inbound tasks and
     # their receipts.
+    #
+    # Single-writer backend: each mutation rewrites the whole state file
+    # under an in-process ``RLock``. That is correct for the intended
+    # deployment - one server process owning one ``state_path``. It is NOT a
+    # multi-writer store: two processes pointed at the same file would each
+    # flush their own in-memory snapshot, so the last writer wins and the
+    # other's tasks are dropped. Sharding inbound A2A traffic across
+    # processes therefore needs a shared backend, tracked as a follow-up;
+    # this backend is deliberately the smallest thing that removes the
+    # loss-on-restart flag without pulling in a database.
 
     @property
     def state_path(self) -> Path | None:
@@ -427,6 +440,13 @@ class A2AHandler:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(path.suffix + ".tmp")
             tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+            # Inbound task messages and artifact payloads are peer content, so
+            # the file is owner-only rather than left at the process umask.
+            # chmod the temp file before the atomic rename so the final path is
+            # never briefly group- or world-readable. (No-op on Windows, which
+            # has no POSIX mode bits.)
+            with contextlib.suppress(OSError, NotImplementedError):  # pragma: no cover - platform-dependent
+                tmp.chmod(0o600)
             tmp.replace(path)
         except OSError as exc:
             # Losing durability is bad; taking the request down with it is

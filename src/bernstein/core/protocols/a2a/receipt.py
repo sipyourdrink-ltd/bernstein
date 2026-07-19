@@ -3,13 +3,25 @@
 An inbound ``POST /a2a/tasks/send`` answers a peer that has no access to
 this node's internals. Transport success proves only that bytes arrived; it
 says nothing about whether those bytes are the ones the node actually
-executed and recorded. This module closes that gap: every inbound response
-is projected onto a receipt
+recorded. This module closes that gap: the response is projected onto a
+receipt
 
 ``{entry_hash, content_hash, operator_hmac, head_signature, kid}``
 
 that a caller verifies offline, holding nothing but the response bytes, the
 receipt, and a public key.
+
+Scope of the claim
+------------------
+A receipt attests the exact response bytes the node recorded *at the moment
+it was issued*. On the inbound send path that moment is acceptance: the
+response is the acceptance record (the task this node took in and chained),
+not the eventual completed result. So a receipt proves "this is the answer
+this node recorded for this task", not "this task has finished". Re-attesting
+the completed result when the task terminates, and serving that receipt from
+the read path, is tracked as a follow-up on #2609. The mechanism below is
+independent of which response dict it is handed, so it carries over unchanged
+when the completion-time response is the one recorded.
 
 Two independent claims, deliberately kept apart
 -----------------------------------------------
@@ -366,7 +378,7 @@ class A2AReceiptIssuer:
         artefact_path = receipt_artefact_path(task_id)
         ts = time.time_ns() if timestamp is None else timestamp
 
-        entry_hash_value = self._spine.record(
+        entry = self._spine.record_entry(
             artifact_path=artefact_path,
             content=content,
             actor=self._actor,
@@ -380,8 +392,11 @@ class A2AReceiptIssuer:
             task_id=task_id,
             artefact_path=artefact_path,
             content_hash="sha256:" + hashlib.sha256(content).hexdigest(),
-            entry_hash=entry_hash_value,
-            operator_hmac=self._operator_hmac_for(entry_hash_value),
+            entry_hash=entry.entry_hash,
+            # The HMAC tag comes straight off the entry we just appended, so
+            # issuing a receipt no longer re-reads the whole spine per inbound
+            # request (that walk was O(entries) on a network-facing path).
+            operator_hmac=entry.hmac,
             kid=self._kid,
         )
         head_signature = build_head_signature(
@@ -398,14 +413,3 @@ class A2AReceiptIssuer:
             kid=unsigned.kid,
             head_signature=head_signature,
         )
-
-    def _operator_hmac_for(self, entry_hash_value: str) -> str:
-        """Return the HMAC tag of the entry identified by its hash.
-
-        Walks newest-first because the entry we just appended is the tail in
-        the overwhelmingly common case.
-        """
-        for entry in reversed(list(self._spine.iter_entries())):
-            if entry.entry_hash == entry_hash_value:
-                return entry.hmac
-        return ""

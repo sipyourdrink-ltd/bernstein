@@ -135,6 +135,64 @@ def test_tampered_policies_fail_verification(client: TestClient) -> None:
     assert not verify_capability_card(SignedCapabilityCard.from_dict(document), check_expiry=True)
 
 
+def test_advertised_policies_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no operator override the advertised policy is the documented default."""
+    from bernstein.core.interop.a2a_card import resolve_advertised_card_policies
+
+    for env in ("BERNSTEIN_A2A_COST_CAP_USD", "BERNSTEIN_A2A_REDACTION_TIER", "BERNSTEIN_A2A_SANDBOX_PROFILE"):
+        monkeypatch.delenv(env, raising=False)
+
+    policies = resolve_advertised_card_policies()
+
+    assert policies.cost_cap_usd == 0.0
+    assert policies.redaction_tier == "standard"
+    assert policies.sandbox_profile == "container"
+
+
+def test_advertised_policies_follow_operator_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator env overrides drive the advertised policy, not frozen literals."""
+    from bernstein.core.interop.a2a_card import resolve_advertised_card_policies
+
+    monkeypatch.setenv("BERNSTEIN_A2A_COST_CAP_USD", "42.5")
+    monkeypatch.setenv("BERNSTEIN_A2A_REDACTION_TIER", "strict")
+    monkeypatch.setenv("BERNSTEIN_A2A_SANDBOX_PROFILE", "microvm")
+
+    policies = resolve_advertised_card_policies()
+
+    assert policies.cost_cap_usd == 42.5
+    assert policies.redaction_tier == "strict"
+    assert policies.sandbox_profile == "microvm"
+
+
+def test_advertised_cost_cap_falls_back_on_bad_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed or negative cost override must not break the identity route."""
+    from bernstein.core.interop.a2a_card import resolve_advertised_card_policies
+
+    monkeypatch.setenv("BERNSTEIN_A2A_COST_CAP_USD", "not-a-number")
+    assert resolve_advertised_card_policies().cost_cap_usd == 0.0
+
+    monkeypatch.setenv("BERNSTEIN_A2A_COST_CAP_USD", "-5")
+    assert resolve_advertised_card_policies().cost_cap_usd == 0.0
+
+
+def test_served_card_reflects_operator_policy_override(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The signed card the route serves carries the operator-configured policy.
+
+    Proves the well-known route resolves its policy block from configuration
+    rather than emitting a constant no configuration backs.
+    """
+    monkeypatch.setenv("BERNSTEIN_A2A_COST_CAP_USD", "12.5")
+    monkeypatch.setenv("BERNSTEIN_A2A_SANDBOX_PROFILE", "microvm")
+
+    payload = _card_payload(client)
+    signed = SignedCapabilityCard.from_dict(payload["capabilityCard"])
+
+    assert signed.card.policies.cost_cap_usd == 12.5
+    assert signed.card.policies.sandbox_profile == "microvm"
+    # The card is still internally consistent (signed over the new policy).
+    assert verify_capability_card(signed, check_expiry=True)
+
+
 def test_tampered_signature_fails_verification(client: TestClient) -> None:
     payload = _card_payload(client)
     document = payload["capabilityCard"]

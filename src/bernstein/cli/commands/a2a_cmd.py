@@ -31,9 +31,9 @@ from bernstein.cli.helpers import (
     print_success,
 )
 from bernstein.core.interop.a2a_card import (
-    CardPolicies,
     SignedCapabilityCard,
     issue_capability_card,
+    resolve_advertised_card_policies,
 )
 from bernstein.core.protocols.a2a.publish import (
     PUBLISH_SURFACES,
@@ -109,6 +109,11 @@ def verify(
     receipt's own signature does not verify, or when the receipt carries no
     signature at all - an unattested answer is treated as unverified, not as
     trusted.
+
+    Provenance is only established when ``--trusted-jwk`` pins the signing
+    key. Without it the receipt's embedded key is trusted on first use, which
+    authenticates the bytes against a key the issuer supplied - not against
+    the operator's pinned key - and the command says so on success.
     """
     emit_json = as_json or is_json()
 
@@ -149,21 +154,32 @@ def verify(
                 console.print(f"  - {reason}")
         sys.exit(1)
 
+    key_pinned = trusted_jwk is not None
+    unpinned_warning = (
+        "signature verified against the receipt's own embedded key "
+        "(trust-on-first-use); the key is not pinned. Pass --trusted-jwk to "
+        "verify provenance against the operator's published key."
+    )
+
     if emit_json:
-        print_json(
-            {
-                "ok": True,
-                "task_id": receipt.task_id,
-                "entry_hash": receipt.entry_hash,
-                "content_hash": receipt.content_hash,
-                "kid": receipt.kid,
-                "verified_key_id": result.verified_key_id,
-            }
-        )
+        payload: dict[str, object] = {
+            "ok": True,
+            "task_id": receipt.task_id,
+            "entry_hash": receipt.entry_hash,
+            "content_hash": receipt.content_hash,
+            "kid": receipt.kid,
+            "verified_key_id": result.verified_key_id,
+            "key_pinned": key_pinned,
+        }
+        if not key_pinned:
+            payload["warning"] = unpinned_warning
+        print_json(payload)
         return
     print_success(f"A2A receipt {receipt_path} is valid", soft_wrap=True)
     console.print(f"  task: [bold]{receipt.task_id}[/bold]  kid: {receipt.kid}")
     console.print(f"  entry: {receipt.entry_hash}")
+    if not key_pinned:
+        console.print(f"  [yellow]warning:[/yellow] {unpinned_warning}")
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +290,7 @@ def _load_or_issue_card(card_path: Path, *, endpoint: str) -> SignedCapabilityCa
         name="bernstein",
         description=f"Bernstein orchestrator node at {endpoint}",
         advertised_tools=["task_orchestration", "agent_spawning", "code_review", "a2a_message"],
-        policies=CardPolicies(cost_cap_usd=0.0, redaction_tier="standard", sandbox_profile="container"),
+        policies=resolve_advertised_card_policies(),
         private_key_pem=private_key_pem,
     )
 
