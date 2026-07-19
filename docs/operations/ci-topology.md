@@ -13,7 +13,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | --- | --- | --- | --- | --- |
 | .github/workflows/a2a-federation-e2e.yml | a2a-federation-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "a2a-federation-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/adapter-conformance-canary.yml | Adapter conformance canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "adapter-conformance-canary"} | 1 |
-| .github/workflows/adapter-contract-drift.yml | Adapter contract drift | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "adapter-contract-drift-${{ github.ref }}"} | 2 |
+| .github/workflows/adapter-contract-drift.yml | Adapter contract drift | merge_group, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "adapter-contract-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/airgap-e2e.yml | Airgap E2E | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "airgap-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/auto-heal.yml | Auto-heal v2 | workflow_call | - | 2 |
 | .github/workflows/auto-release.yml | Auto-release | workflow_call | - | 5 |
@@ -27,7 +27,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/ci-topology-heal.yml | CI topology heal | push, workflow_dispatch | {"cancel-in-progress": "true", "group": "ci-topology-heal"} | 1 |
 | .github/workflows/ci-weekly-digest.yml | CI Weekly Digest | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "ci-weekly-digest"} | 1 |
 | .github/workflows/ci.yml | CI | merge_group, pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| format('branch-{0}', github.ref) }}"} | 31 |
-| .github/workflows/cifuzz-pr.yml | CIFuzz (ClusterFuzzLite, PR) | pull_request | {"cancel-in-progress": "true", "group": "cifuzz-pr-${{ github.ref }}"} | 1 |
+| .github/workflows/cifuzz-pr.yml | CIFuzz (ClusterFuzzLite, PR) | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cifuzz-pr-${{ github.ref }}"} | 1 |
 | .github/workflows/cleanup-runs.yml | Cleanup Action Runs | workflow_dispatch | {"cancel-in-progress": "false", "group": "cleanup-runs-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-e2e.yml | cluster-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
@@ -42,14 +42,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-observability-snapshot.yml | Observability daily snapshot | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
 | .github/workflows/flake-quarantine.yml | Flake quarantine | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "flake-quarantine"} | 1 |
-| .github/workflows/glitchtip-ingester.yml | GlitchTip event ingester | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "glitchtip-ingester"} | 1 |
-| .github/workflows/glitchtip-insights.yml | glitchtip-insights | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "glitchtip-insights"} | 1 |
+| .github/workflows/glitchtip.yml | GlitchTip | schedule, workflow_dispatch | - | 2 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
 | .github/workflows/labeler.yml | PR Labeler | pull_request_target | {"cancel-in-progress": "true", "group": "labeler-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/license-compliance.yml | License Compliance | pull_request, push | {"cancel-in-progress": "true", "group": "license-${{ github.ref }}"} | 1 |
 | .github/workflows/main-red-guard.yml | main-red-guard | pull_request | {"cancel-in-progress": "true", "group": "main-red-guard-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/main-sha-marker.yml | Main SHA marker | push | {"cancel-in-progress": "false", "group": "main-sha-marker-${{ github.sha }}"} | 1 |
-| .github/workflows/mutation-fixed.yml | Mutation (fixed critical paths) | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "mutation-fixed-${{ github.workflow }}-${{ github.ref }}"} | 2 |
+| .github/workflows/mutation-fixed.yml | Mutation (fixed critical paths) | merge_group, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "mutation-fixed-${{ github.workflow }}-${{ github.ref }}"} | 2 |
 | .github/workflows/nightly-canary.yml | Nightly real-run canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-canary"} | 1 |
 | .github/workflows/nightly-deep-tests.yml | Nightly deep tests | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "nightly-deep-tests"} | 7 |
 | .github/workflows/nightly-drift-sweep.yml | Nightly drift sweep | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-drift-sweep"} | 1 |
@@ -66,9 +65,8 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 8 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
-| .github/workflows/release-please.yml | Release Please | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-please-${{ github.ref }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | pull_request, pull_request_review | {"cancel-in-progress": "false", "group": "review-bot-ack-${{ github.event.pull_request.number \|\| github.ref }}-${{ github.event.pull_request.head.sha \|\| github.sha }}"} | 1 |
+| .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | pull_request, pull_request_review | {"cancel-in-progress": "true", "group": "review-bot-ack-${{ github.event.pull_request.number \|\| github.ref }}-${{ github.event.pull_request.head.sha \|\| github.sha }}"} | 1 |
 | .github/workflows/review-bot-sweep.yml | Review-bot post-merge sweep | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/sbom-upload.yml | SBOM upload | push, release | {"cancel-in-progress": "false", "group": "sbom-upload-${{ github.ref }}"} | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
@@ -80,7 +78,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sonar-scan.yml | SonarQube scan | schedule, workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-scan-${{ github.ref }}"} | 1 |
 | .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
-| .github/workflows/static-analysis-extended.yml | static-analysis (extended) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
+| .github/workflows/static-analysis-extended.yml | static-analysis (extended) | merge_group, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
 | .github/workflows/telegram-notify.yml | Telegram CI Notifications | workflow_call | - | 1 |
 | .github/workflows/trend-scan.yml | Trend scan | workflow_dispatch | {"cancel-in-progress": "false", "group": "trend-scan"} | 1 |
 | .github/workflows/trufflehog.yml | trufflehog (secret scanning) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trufflehog-${{ github.ref }}"} | 1 |
@@ -124,8 +122,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture daily snapshot |
 | .github/workflows/eval-nightly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
 | .github/workflows/flake-quarantine.yml | detect-and-quarantine: Detect flaky tests and open quarantine PR |
-| .github/workflows/glitchtip-ingester.yml | ingest: Ingest GlitchTip events |
-| .github/workflows/glitchtip-insights.yml | sweep: sweep |
+| .github/workflows/glitchtip.yml | ingest: Ingest GlitchTip events<br>sweep: sweep |
 | .github/workflows/hotfix-r-tracker.yml | track: Detect hotfix-begets-hotfix |
 | .github/workflows/labeler.yml | label |
 | .github/workflows/license-compliance.yml | license-check |
@@ -148,7 +145,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish.yml | build: Build<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs PyPI |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
-| .github/workflows/release-please.yml | release-please |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
 | .github/workflows/review-bot-ack.yml | review-bot-ack: review-bot-ack |
 | .github/workflows/review-bot-sweep.yml | sweep: Sweep recently merged PRs for unprocessed bot findings |
@@ -206,8 +202,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | DT_API_KEY, DT_API_URL, GITHUB_TOKEN, GLITCHTIP_API_TOKEN, SONAR_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED, GLITCHTIP_DSN |
 | .github/workflows/flake-quarantine.yml | workflow: {"contents": "read"}<br>detect-and-quarantine: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
-| .github/workflows/glitchtip-ingester.yml | workflow: {"contents": "read"}<br>ingest: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, GLITCHTIP_API_TOKEN |
-| .github/workflows/glitchtip-insights.yml | workflow: {"contents": "read", "issues": "write"} | GITHUB_TOKEN, GLITCHTIP_API_TOKEN |
+| .github/workflows/glitchtip.yml | workflow: {"contents": "read"}<br>ingest: {"contents": "write", "pull-requests": "write"}<br>sweep: {"contents": "read", "issues": "write"} | GITHUB_TOKEN, GLITCHTIP_API_TOKEN |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/labeler.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/license-compliance.yml | workflow: {"contents": "read"}<br>license-check: {"contents": "read"} | - |
@@ -230,7 +225,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | GITHUB_TOKEN, NPM_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"attestations": "write", "contents": "write", "id-token": "write"} | GITHUB_TOKEN |
-| .github/workflows/release-please.yml | workflow: {"contents": "read"}<br>release-please: {"contents": "write", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN, RELEASE_PLEASE_PAT |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
 | .github/workflows/review-bot-ack.yml | review-bot-ack: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, LANDING_REPO_PAT |
