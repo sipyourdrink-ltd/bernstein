@@ -22,6 +22,8 @@ from bernstein.core.evidence.bundle import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from click.testing import Result
+
 _KEY = b"0" * 32
 
 
@@ -64,6 +66,11 @@ def _write_spec(tmp_path: Path) -> Path:
     spec_path = tmp_path / "mission.json"
     spec_path.write_text(json.dumps(_spec_dict()), encoding="utf-8")
     return spec_path
+
+
+def runner_invoke(args: list[str]) -> Result:
+    """Invoke the mission group with a fresh runner."""
+    return CliRunner().invoke(mission_group, args)
 
 
 def test_mission_define_then_status(tmp_path: Path) -> None:
@@ -122,3 +129,174 @@ def test_mission_define_rejects_invalid_spec(tmp_path: Path) -> None:
     bad.write_text(json.dumps({"mission_id": "", "goal": "x", "phases": []}), encoding="utf-8")
     res = runner.invoke(mission_group, ["define", str(bad), "--workdir", str(tmp_path)])
     assert res.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Hardening (#2652)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_refuses_a_non_mission_ledger(tmp_path: Path) -> None:
+    """#2652: a plain run ledger is not a mission and must not verify as OK."""
+    from bernstein.cli.commands.mission_cmd import EXIT_NO_MISSION
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "not-a-mission"))
+    ledger.append(kind="task.scheduled", task_id="t1", payload={"task_id": "t1"})
+    ledger.close()
+
+    res = runner_invoke(["verify", "not-a-mission", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_NO_MISSION, res.output
+
+
+def test_status_refuses_a_ledger_whose_mission_id_differs(tmp_path: Path) -> None:
+    """#2652: the definition must name the mission the operator asked for."""
+    from bernstein.cli.commands.mission_cmd import EXIT_NO_MISSION
+    from bernstein.core.orchestration.missions import MissionSpec, define_mission, mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    spec = MissionSpec.from_dict({**_spec_dict(), "mission_id": "m-other"})
+    # Land a definition for "m-other" under the directory keyed "m-cli".
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "m-cli"))
+    define_mission(ledger=ledger, spec=spec)
+    ledger.close()
+
+    res = runner_invoke(["status", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_NO_MISSION, res.output
+
+
+def test_define_rejects_a_non_object_spec_root(tmp_path: Path) -> None:
+    """#2652: a non-object root exits with the bad-spec code, never a traceback."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([{"mission_id": "m"}]), encoding="utf-8")
+    res = runner_invoke(["define", str(bad), "--workdir", str(tmp_path)])
+    assert res.exit_code == EXIT_BAD_SPEC, res.output
+    assert res.exception is None or isinstance(res.exception, SystemExit)
+
+
+def test_define_rejects_a_non_object_phase(tmp_path: Path) -> None:
+    """#2652: a scalar phase entry exits with the bad-spec code."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"mission_id": "m", "goal": "g", "phases": ["p1"]}), encoding="utf-8")
+    res = runner_invoke(["define", str(bad), "--workdir", str(tmp_path)])
+    assert res.exit_code == EXIT_BAD_SPEC, res.output
+
+
+def test_define_rejects_an_unsupported_schema_version(tmp_path: Path) -> None:
+    """#2652: an unknown wire version exits with the bad-spec code."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({**_spec_dict(), "schema_version": 99}), encoding="utf-8")
+    res = runner_invoke(["define", str(bad), "--workdir", str(tmp_path)])
+    assert res.exit_code == EXIT_BAD_SPEC, res.output
+
+
+def test_define_refuses_to_redefine_an_existing_mission(tmp_path: Path) -> None:
+    """#2652: a second define must not split projection from evidence lookup."""
+    from bernstein.cli.commands.mission_cmd import EXIT_BAD_SPEC
+
+    spec_path = _write_spec(tmp_path)
+    first = runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    assert first.exit_code == 0, first.output
+
+    second = runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    assert second.exit_code == EXIT_BAD_SPEC, second.output
+
+
+# ---------------------------------------------------------------------------
+# Review hardening (#2680) -- a tamper must not be downgraded to not-found
+# ---------------------------------------------------------------------------
+
+
+def _tamper_mission_id(tmp_path: Path, new_id: str) -> None:
+    """Rewrite the declared mission id in place, leaving entry_hash stale."""
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+
+    bucket = mission_ledger_dir(tmp_path / ".sdd", "m-cli") / "000000.jsonl"
+    lines = bucket.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[0])
+    row["payload"]["mission_id"] = new_id
+    lines[0] = json.dumps(row, separators=(",", ":"))
+    bucket.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_verify_reports_a_tampered_mission_id_as_verification_failure(tmp_path: Path) -> None:
+    """#2680: editing the declared id tears the chain -- that is exit 2, not 1.
+
+    ``LedgerReader.entries`` yields unverified rows, so the identity pre-check
+    reads an attacker-controlled value. Reporting the mismatch as "no such
+    mission" would let a real tamper pass as a benign not-found and defeat any
+    operator script keying on the verification-failed code.
+    """
+    from bernstein.cli.commands.mission_cmd import EXIT_VERIFY_FAILED
+
+    spec_path = _write_spec(tmp_path)
+    runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    _tamper_mission_id(tmp_path, "m-evil")
+
+    res = runner_invoke(["verify", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_VERIFY_FAILED, res.output
+
+
+def test_status_renders_a_tampered_mission_id_as_unverified(tmp_path: Path) -> None:
+    """#2680: status must render the tamper, not report the mission missing.
+
+    ``status`` reports rather than gates, so it prints the projection the way
+    it does for any other torn chain: ``ledger_verified`` false with
+    ``overall`` unverified. What it must never do is answer "no such mission"
+    on the strength of an id read from an unverified row -- that would hide a
+    tamper behind a not-found.
+    """
+    spec_path = _write_spec(tmp_path)
+    runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+    _tamper_mission_id(tmp_path, "m-evil")
+
+    res = runner_invoke(["status", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == 0, res.output
+    body = json.loads(res.output)
+    assert body["ledger_verified"] is False
+    assert body["overall"] == "unverified"
+
+
+def test_verify_reports_an_ambiguous_double_definition_as_an_integrity_failure(tmp_path: Path) -> None:
+    """#2680: two definitions is ambiguity, not absence -- exit 2, not 1.
+
+    The ledger does declare this mission, twice, on an intact chain. Reporting
+    that as "no ledger declaring this mission id" sends an integrity failure
+    down the channel operators use for "not found, skip". Ledgers already on
+    disk can carry this shape, because the shipped writer had no guard.
+    """
+    from bernstein.cli.commands.mission_cmd import EXIT_VERIFY_FAILED
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import KIND_MISSION_DEFINED, WorkLedger
+
+    spec_path = _write_spec(tmp_path)
+    runner_invoke(["define", str(spec_path), "--workdir", str(tmp_path)])
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "m-cli"))
+    ledger.append(kind=KIND_MISSION_DEFINED, task_id="", payload=dict(_spec_dict(), spec_hash="x", goal_digest="y"))
+    ledger.close()
+
+    res = runner_invoke(["verify", "m-cli", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_VERIFY_FAILED, res.output
+    assert json.loads(res.output)["overall"] == "unverified"
+
+
+def test_intact_non_mission_ledger_is_still_a_plain_not_found(tmp_path: Path) -> None:
+    """The tamper escalation must not swallow the honest not-a-mission case."""
+    from bernstein.cli.commands.mission_cmd import EXIT_NO_MISSION
+    from bernstein.core.orchestration.missions import mission_ledger_dir
+    from bernstein.core.persistence.work_ledger import WorkLedger
+
+    ledger = WorkLedger.open(mission_ledger_dir(tmp_path / ".sdd", "plain-run"))
+    ledger.append(kind="task.scheduled", task_id="t1", payload={"task_id": "t1"})
+    ledger.close()
+
+    res = runner_invoke(["verify", "plain-run", "--workdir", str(tmp_path), "--json"])
+    assert res.exit_code == EXIT_NO_MISSION, res.output

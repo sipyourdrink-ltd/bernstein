@@ -24,6 +24,7 @@ from bernstein.core.persistence.work_ledger import (
     LedgerReader,
     WorkLedger,
 )
+from bernstein.core.security.path_containment import contained_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -87,8 +88,18 @@ ADMISSION_KINDS: frozenset[str] = frozenset(
 
 
 def admission_ledger_dir(sdd_dir: Path, ledger_id: str = DEFAULT_ADMISSION_ID) -> Path:
-    """Return the on-disk directory backing an admission ledger."""
-    return sdd_dir / "runtime" / "admission" / ledger_id
+    """Return the on-disk directory backing an admission ledger.
+
+    ``ledger_id`` names a directory, so it goes through the containment
+    barrier: it must be a single safe path segment and the resolved
+    directory must stay under the admission root. Callers build their
+    reader or writer from the returned (checked) path.
+
+    Raises:
+        PathContainmentError: ``ledger_id`` is not a safe path segment, or
+            the resolved directory escapes the admission root.
+    """
+    return contained_path(sdd_dir / "runtime" / "admission", ledger_id, label="admission ledger id")
 
 
 def open_admission_ledger(sdd_dir: Path, ledger_id: str = DEFAULT_ADMISSION_ID) -> WorkLedger:

@@ -26,8 +26,12 @@ This module turns the active posture into a **signed, verifiable claim**:
    with the install's Ed25519 sovereign identity
    (:mod:`bernstein.core.lineage.identity`) and anchored in the HMAC audit
    chain via ``record_sovereign_attestation``. The attestation -- not the
-   config file -- is what an auditor checks; the embedded public key makes the
-   signature key-material-free to verify offline.
+   config file -- is what an auditor checks. The record embeds its signer's
+   public key so the signature needs no key distribution to check, but the key
+   is *anchored* against the install's own sovereign identity before the record
+   is believed: a record that verifies only against the key it carries proves
+   self-consistency, not authorship, and anyone who can rewrite the record can
+   also mint a fresh keypair for it.
 
 3. Drift refusal: at spawn time the orchestrator recomputes the effective
    posture from the live config and compares its hash to the attested hash;
@@ -47,6 +51,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import operator
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -56,9 +61,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.network_policy import NetworkPolicy
 
 __all__ = [
     "EFFECTIVE_POLICY_SCHEMA_VERSION",
+    "EGRESS_ALLOW_ANY",
+    "EGRESS_ALLOW_LIST",
+    "EGRESS_DENY_ALL",
     "LOCAL_STORAGE_BACKENDS",
     "SOVEREIGN_EU_REGIONS",
     "SOVEREIGN_PROFILE",
@@ -66,11 +75,15 @@ __all__ = [
     "EffectivePolicy",
     "PostureAttestation",
     "PostureDriftRefusal",
+    "SovereignConfigError",
     "SovereignVerifyResult",
     "attestation_path",
     "build_posture_attestation",
+    "egress_attestation_mismatch",
     "endpoint_certification_violations",
+    "enforced_egress_posture",
     "evaluate_posture_drift",
+    "installed_sovereign_public_key",
     "is_local_or_eu_host",
     "load_config_snapshot",
     "load_or_create_sovereign_identity",
@@ -78,6 +91,7 @@ __all__ = [
     "record_and_sign_drift",
     "resolve_effective_policy",
     "sovereign_egress_allowlist",
+    "sovereign_posture_violations",
     "verify_sovereign_attestations",
 ]
 
@@ -97,8 +111,16 @@ SOVEREIGN_EU_REGIONS: frozenset[str] = frozenset({"eu-west", "eu-central"})
 #: point at a network service and are rejected as non-local sinks.
 LOCAL_STORAGE_BACKENDS: frozenset[str] = frozenset({"memory"})
 
+#: The three egress postures the attestation and the runtime policy share as a
+#: common vocabulary. ``network_egress`` in the signed document is always one of
+#: these, and :func:`enforced_egress_posture` projects the live
+#: :class:`~bernstein.core.security.network_policy.NetworkPolicy` onto the same
+#: set, so "attested == enforced" is a literal tuple comparison.
+EGRESS_DENY_ALL: str = "deny-all"
+EGRESS_ALLOW_LIST: str = "allow-list"
+EGRESS_ALLOW_ANY: str = "allow-any"
+
 #: The pinned constants the sovereign profile forces regardless of config.
-_PINNED_NETWORK_EGRESS = "deny-all"
 _PINNED_CATALOG_MODE = "offline"
 _PINNED_COMPLIANCE_PACK = "regulated"
 
@@ -109,6 +131,51 @@ _IDENTITY_PUBLIC_NAME = "sovereign-identity-public.pem"
 
 _RECORD_KIND_ATTESTATION = "sovereign_attestation"
 _RECORD_KIND_DRIFT = "sovereign_drift"
+
+#: Every field a persisted attestation must carry before it is trusted at all.
+#: A record missing any of them is not a signed record; it is a JSON file.
+_REQUIRED_ATTESTATION_FIELDS: tuple[str, ...] = (
+    "record_kind",
+    "profile",
+    "schema_version",
+    "posture_hash",
+    "effective_policy",
+    "timestamp",
+    "signature",
+    "signer_public_key_pem",
+)
+
+#: Fields every chain-anchored signed body carries, whatever its kind.
+_REQUIRED_BODY_FIELDS: tuple[str, ...] = (
+    "record_kind",
+    "schema_version",
+    "profile",
+    "effective_policy",
+    "timestamp",
+)
+
+#: Per-kind required fields. A drift record must carry its full refusal
+#: vocabulary: omitting ``diverging_keys`` or ``violations`` would let a record
+#: satisfy the "names a reason to refuse" check purely by absence.
+_REQUIRED_ATTESTATION_BODY_FIELDS: tuple[str, ...] = (*_REQUIRED_BODY_FIELDS, "posture_hash")
+_REQUIRED_DRIFT_BODY_FIELDS: tuple[str, ...] = (
+    *_REQUIRED_BODY_FIELDS,
+    "attested_hash",
+    "observed_hash",
+    "diverging_keys",
+    "violations",
+)
+
+
+class SovereignConfigError(RuntimeError):
+    """Raised when the sovereign source configuration is missing or unreadable.
+
+    The posture document is a projection of ``bernstein.yaml``. If that file
+    cannot be read, the projection is not "the empty config" - it is *unknown*,
+    and an unknown posture must never be attested, enforced, or spawned
+    against. Callers on the sovereign path load the snapshot with
+    ``require=True`` and turn this into a refusal.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +240,15 @@ def _egress_token_is_local(token: str) -> bool:
         host = tok[1 : tok.index("]")]
     elif tok.count(":") == 1:  # host:port (single colon => not bare IPv6)
         host = tok.rsplit(":", 1)[0]
-    return is_local_or_eu_host(host)
+    # Classify a bare IP literal directly. ``is_local_or_eu_host`` parses a URL,
+    # and a bare IPv6 literal is not a parseable authority there (``//::1``
+    # yields no hostname), so delegating would mark loopback ``[::1]`` and
+    # unique-local ``[fd00::1]`` as non-local and refuse an honest config.
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return is_local_or_eu_host(host)
+    return ip.is_loopback or ip.is_private
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +291,8 @@ class EffectivePolicy:
             "storage_backend": self.storage_backend,
             "residency_enforce_strict": self.residency_enforce_strict,
             "residency_regions": list(self.residency_regions),
-            "model_endpoints": [dict(e) for e in self.model_endpoints],
-            "catalogs": [dict(c) for c in self.catalogs],
+            "model_endpoints": [e.copy() for e in self.model_endpoints],
+            "catalogs": [c.copy() for c in self.catalogs],
         }
 
     def posture_hash(self) -> str:
@@ -233,17 +308,16 @@ class EffectivePolicy:
         on-disk receipts) is checked separately by
         :func:`endpoint_certification_violations`.
         """
-        problems: list[str] = []
         # Egress may be deny-all, or an allow-list of self-hosted / EU-region
         # destinations (a residency deployment must reach its own model server
         # on an RFC-1918 address). A public destination in the allow-list is a
         # violation; the allow-list itself is attested so the claim is truthful.
-        for token in self.egress_allowlist:
-            if not _egress_token_is_local(token):
-                problems.append(
-                    f"egress allow-list entry {token!r} is neither self-hosted nor EU-region; "
-                    "sovereign permits only local / EU-region egress destinations"
-                )
+        problems: list[str] = [
+            f"egress allow-list entry {token!r} is neither self-hosted nor EU-region; "
+            "sovereign permits only local / EU-region egress destinations"
+            for token in self.egress_allowlist
+            if not _egress_token_is_local(token)
+        ]
         if self.catalog_mode != _PINNED_CATALOG_MODE:
             problems.append(f"catalog mode is {self.catalog_mode!r}, sovereign requires offline")
         if self.storage_backend not in LOCAL_STORAGE_BACKENDS:
@@ -294,7 +368,7 @@ def _project_endpoints(config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
             if isinstance(profile, Mapping):
                 base_url = profile.get("base_url", base_url)
                 model = profile.get("model", model)
-        if base_url is None and model is None and profile_name is None:
+        if base_url is model is profile_name is None:
             # A role that only pins cli/effort with no endpoint is not
             # residency-relevant; skip it so the projection stays stable.
             continue
@@ -306,7 +380,7 @@ def _project_endpoints(config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
                 "model": str(model) if model is not None else "",
             }
         )
-    projected.sort(key=lambda e: (e["role"], e["base_url"], e["model"]))
+    projected.sort(key=operator.itemgetter("role", "base_url", "model"))
     return tuple(projected)
 
 
@@ -320,7 +394,7 @@ def _project_catalogs(config: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
         if not isinstance(item, Mapping):
             continue
         projected.append({"name": str(item.get("name", "")), "enabled": bool(item.get("enabled", True))})
-    projected.sort(key=lambda c: c["name"])
+    projected.sort(key=operator.itemgetter("name"))
     return tuple(projected)
 
 
@@ -339,13 +413,30 @@ def _project_residency(config: Mapping[str, Any]) -> tuple[bool, tuple[str, ...]
 
 
 def sovereign_egress_allowlist(config_snapshot: Mapping[str, Any] | None) -> tuple[str, ...]:
-    """Return the sorted, de-duplicated ``sovereign.allowed_egress`` tokens.
+    """Return the normalised ``sovereign.allowed_egress`` tokens.
 
     This is the single source of truth for sovereign egress: the runtime
     network policy is installed from it and the effective policy attests it, so
     the attested ``network_egress`` can never claim deny-all while the runtime
     allows a destination. ``--allow-network`` is rejected under sovereign
     precisely so the CLI and the attested config cannot diverge.
+
+    Tokens are stripped, de-duplicated, and sorted (as before), and the vacuous
+    ``none`` token is dropped. Dropping ``none`` is what makes the attestation
+    truthful rather than merely tidy:
+    :meth:`NetworkPolicy.from_specs <bernstein.core.security.network_policy.NetworkPolicy.from_specs>`
+    discards ``none`` from its ``rules``, so a list that still carried it would
+    attest a token the runtime never enforces - and an all-``none`` list would
+    attest ``allow-list`` over a runtime that is deny-all. The result is exactly
+    the tuple the runtime keeps as its ``rules``, so
+    :func:`egress_attestation_mismatch` compares equal tuples.
+
+    Token *case* is deliberately preserved. The runtime never case-folds
+    (``from_specs`` keeps ``rules`` verbatim and ``to_env_value`` /
+    ``policy_from_env`` round-trip them unchanged), so folding here would be an
+    asymmetric normalisation - and it would move ``posture_hash`` for configs
+    whose attestation was already truthful. The ``none`` comparison stays
+    case-insensitive because the runtime's own check is.
     """
     config: Mapping[str, Any] = config_snapshot or {}
     block = config.get("sovereign")
@@ -355,7 +446,48 @@ def sovereign_egress_allowlist(config_snapshot: Mapping[str, Any] | None) -> tup
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         return ()
     tokens = {str(t).strip() for t in raw if str(t).strip()}
-    return tuple(sorted(tokens))
+    return tuple(sorted(t for t in tokens if t.lower() != "none"))
+
+
+def enforced_egress_posture(policy: NetworkPolicy) -> tuple[str, tuple[str, ...]]:
+    """Project a live runtime policy onto the attestation's egress vocabulary.
+
+    Returns ``(mode, tokens)`` where *mode* is one of :data:`EGRESS_DENY_ALL`,
+    :data:`EGRESS_ALLOW_LIST`, or :data:`EGRESS_ALLOW_ANY`. This is the
+    *enforced* half of the attested-equals-enforced invariant: it reads the
+    policy object the adapters and the socket guard actually consult, so it
+    cannot agree with the attestation by construction - only by fact.
+
+    The normalisation here mirrors :func:`sovereign_egress_allowlist` exactly -
+    strip, drop ``none`` case-insensitively, sort, preserve case. An asymmetry
+    between the two would reject honest records rather than catch dishonest
+    ones.
+    """
+    if policy.allow_any:
+        return EGRESS_ALLOW_ANY, ()
+    rules = tuple(sorted(r.strip() for r in policy.rules if r.strip() and r.strip().lower() != "none"))
+    if not rules:
+        return EGRESS_DENY_ALL, ()
+    return EGRESS_ALLOW_LIST, rules
+
+
+def egress_attestation_mismatch(policy: EffectivePolicy, runtime: NetworkPolicy) -> str | None:
+    """Return a reason string iff the attested egress differs from the enforced one.
+
+    The core invariant of the sovereign profile: an attestation that claims a
+    posture the runtime does not enforce is worse than no attestation, because
+    an auditor stops looking once they see a signature. Checked before the
+    posture is sealed and again at every spawn, so neither activation nor drift
+    can leave a false claim standing.
+    """
+    attested = (policy.network_egress, policy.egress_allowlist)
+    enforced = enforced_egress_posture(runtime)
+    if attested == enforced:
+        return None
+    return (
+        f"attested egress posture {attested[0]!r} {list(attested[1])} does not equal the enforced "
+        f"runtime policy {enforced[0]!r} {list(enforced[1])}; the attestation would not be truthful"
+    )
 
 
 def resolve_effective_policy(profile_name: str, config_snapshot: Mapping[str, Any] | None) -> EffectivePolicy:
@@ -382,7 +514,7 @@ def resolve_effective_policy(profile_name: str, config_snapshot: Mapping[str, An
     return EffectivePolicy(
         profile=profile_name,
         schema_version=EFFECTIVE_POLICY_SCHEMA_VERSION,
-        network_egress=_PINNED_NETWORK_EGRESS if not egress else "allow-list",
+        network_egress=EGRESS_DENY_ALL if not egress else EGRESS_ALLOW_LIST,
         egress_allowlist=egress,
         catalog_mode=_PINNED_CATALOG_MODE,
         compliance_pack=_PINNED_COMPLIANCE_PACK,
@@ -424,23 +556,81 @@ def endpoint_certification_violations(policy: EffectivePolicy, *, workdir: Path)
 # ---------------------------------------------------------------------------
 
 
-def load_config_snapshot(workdir: Path) -> dict[str, Any]:
+def load_config_snapshot(workdir: Path, *, require: bool = False) -> dict[str, Any]:
     """Return the raw parsed ``bernstein.yaml`` mapping under *workdir*.
 
     Reads the file verbatim (no env expansion, no pydantic validation) so the
     projection matches exactly what an auditor recomputes from the same file.
-    A missing or non-mapping config yields ``{}``.
+
+    Args:
+        workdir: Project root holding ``bernstein.yaml``.
+        require: When True the loader fails closed - a missing, unreadable,
+            malformed, or non-mapping config raises :class:`SovereignConfigError`
+            instead of yielding ``{}``. Every sovereign caller (activation,
+            network-policy install, spawn-time drift gate) passes ``True``,
+            because ``{}`` projects to a *compliant-looking* default posture:
+            local storage, no catalogs, no endpoints, deny-all egress. Attesting
+            that for a config nobody could read would be the untruthful
+            attestation this profile exists to prevent. When False the legacy
+            lenient behaviour is kept for read-only reporting surfaces.
+
+    Raises:
+        SovereignConfigError: When *require* is True and the config is not a
+            readable mapping.
     """
     import yaml
 
     path = workdir / "bernstein.yaml"
     if not path.is_file():
+        if require:
+            raise SovereignConfigError(
+                f"sovereign source configuration is missing: {path} does not exist; "
+                "the residency posture cannot be resolved from an absent config"
+            )
         return {}
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, yaml.YAMLError) as exc:
+        if require:
+            raise SovereignConfigError(
+                f"sovereign source configuration is unreadable: {path} ({type(exc).__name__}: {exc})"
+            ) from exc
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        if require:
+            raise SovereignConfigError(
+                f"sovereign source configuration is unreadable: {path} does not parse to a mapping "
+                f"(got {type(data).__name__})"
+            )
+        return {}
+    return data
+
+
+def sovereign_posture_violations(
+    policy: EffectivePolicy,
+    *,
+    workdir: Path,
+    runtime_policy: NetworkPolicy | None = None,
+) -> tuple[str, ...]:
+    """Return every reason *policy* fails the sovereign profile, in one place.
+
+    Aggregates the three families the profile enforces so activation and the
+    spawn gate cannot check different subsets and disagree about what
+    "compliant" means:
+
+    1. config-only violations (:meth:`EffectivePolicy.violations`),
+    2. endpoint certification against the on-disk receipts,
+    3. the attested-equals-enforced egress invariant, when a runtime policy is
+       available to compare against.
+    """
+    # ``violations()`` already returns a fresh list, so this owns it outright.
+    problems = policy.violations()
+    problems.extend(endpoint_certification_violations(policy, workdir=workdir))
+    if runtime_policy is not None:
+        mismatch = egress_attestation_mismatch(policy, runtime_policy)
+        if mismatch:
+            problems.append(mismatch)
+    return tuple(problems)
 
 
 # ---------------------------------------------------------------------------
@@ -506,15 +696,70 @@ class PostureAttestation:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> PostureAttestation:
+        """Parse a persisted attestation, validating the full record contract.
+
+        Every field of the signed record is required and type-checked before
+        the record is materialised, and the self-consistency the signature does
+        not cover (posture hash equals the hash of the recorded document) is
+        re-derived here. A record that is merely well-formed JSON is not an
+        attestation: the seal fields must be non-empty, the schema version must
+        be the one this build signs, and the profile must be the sovereign
+        profile. Signature verification itself happens in
+        :func:`read_posture_attestation`, which owns the key material.
+
+        Raises:
+            ValueError: On any missing field, wrong type, unknown schema
+                version, foreign profile, blank seal, or hash mismatch.
+        """
+        if not isinstance(raw, Mapping):
+            raise ValueError("attestation record is not a mapping")
+        missing = [f for f in _REQUIRED_ATTESTATION_FIELDS if f not in raw]
+        if missing:
+            raise ValueError(f"attestation record is missing required field(s): {sorted(missing)}")
+        schema_version = raw["schema_version"]
+        if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+            raise ValueError("attestation schema_version is not an integer")
+        if schema_version != EFFECTIVE_POLICY_SCHEMA_VERSION:
+            raise ValueError(
+                f"attestation schema_version {schema_version} is not the supported "
+                f"version {EFFECTIVE_POLICY_SCHEMA_VERSION}"
+            )
+        timestamp = raw["timestamp"]
+        if not isinstance(timestamp, int) or isinstance(timestamp, bool):
+            raise ValueError("attestation timestamp is not an integer")
+        effective_policy = raw["effective_policy"]
+        if not isinstance(effective_policy, Mapping):
+            raise ValueError("attestation effective_policy is not a mapping")
+        profile = raw["profile"]
+        if not isinstance(profile, str) or profile != SOVEREIGN_PROFILE:
+            raise ValueError(f"attestation profile {profile!r} is not {SOVEREIGN_PROFILE!r}")
+        # Validate the persisted record_kind rather than silently regenerating
+        # it in signed_body(): a drift record renamed into an attestation must
+        # be rejected here, not quietly reinterpreted.
+        if raw["record_kind"] != _RECORD_KIND_ATTESTATION:
+            raise ValueError(f"attestation record_kind {raw['record_kind']!r} is not {_RECORD_KIND_ATTESTATION!r}")
+        for seal in ("posture_hash", "signature", "signer_public_key_pem"):
+            value = raw[seal]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"attestation {seal} is empty; an unsigned record is not an attestation")
+        posture_hash = str(raw["posture_hash"])
+        recomputed = _sha256_of(effective_policy)
+        if posture_hash != recomputed:
+            raise ValueError(
+                f"attestation posture_hash {posture_hash} does not match the recorded document hash {recomputed}"
+            )
+        journal_entry_hash = raw.get("journal_entry_hash", "")
+        if not isinstance(journal_entry_hash, str):
+            raise ValueError("attestation journal_entry_hash is not a string")
         return cls(
-            profile=str(raw["profile"]),
-            schema_version=int(raw["schema_version"]),
-            posture_hash=str(raw["posture_hash"]),
-            effective_policy=dict(raw["effective_policy"]),
-            timestamp=int(raw["timestamp"]),
-            signer_public_key_pem=str(raw.get("signer_public_key_pem", "")),
-            signature=str(raw.get("signature", "")),
-            journal_entry_hash=str(raw.get("journal_entry_hash", "")),
+            profile=profile,
+            schema_version=schema_version,
+            posture_hash=posture_hash,
+            effective_policy=dict(effective_policy),
+            timestamp=timestamp,
+            signer_public_key_pem=str(raw["signer_public_key_pem"]),
+            signature=str(raw["signature"]),
+            journal_entry_hash=journal_entry_hash,
         )
 
 
@@ -584,15 +829,87 @@ def build_posture_attestation(
     return sealed
 
 
-def read_posture_attestation(workdir: Path) -> PostureAttestation | None:
-    """Return the persisted attestation under *workdir*, or ``None``."""
+def _normalised_pem(pem: str) -> str:
+    """Return *pem* with whitespace differences collapsed, for comparison."""
+    return "".join(pem.split())
+
+
+def installed_sovereign_public_key(workdir: Path) -> str:
+    """Return the install's sovereign public key PEM, or ``""`` if not present.
+
+    Read-only on purpose: unlike
+    :func:`load_or_create_sovereign_identity` this never generates a key. A
+    verification path that created the trust anchor it is about to check
+    against would anchor to whatever it just made up.
+    """
+    path = workdir.joinpath(*_ATTESTATION_SUBDIR, _IDENTITY_PUBLIC_NAME)
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _read_posture_attestation_with_reason(workdir: Path) -> tuple[PostureAttestation | None, str]:
+    """Return ``(attestation, rejection_reason)`` for the persisted record.
+
+    The full trust decision lives here. The record must exist, satisfy the
+    signed-record contract (:meth:`PostureAttestation.from_dict`), carry an
+    Ed25519 signature that verifies over its canonical signed body, **and** be
+    signed by this install's sovereign identity.
+
+    The last step is what makes the check adversarial rather than merely
+    structural. Verifying a signature against the public key carried inside the
+    same file proves only self-consistency: anyone who can write the file can
+    generate a fresh keypair, re-sign a forged posture with it, and hand over a
+    document that verifies perfectly. Anchoring the embedded key to the
+    install's own public key on disk means a forged posture must also be signed
+    by the install's identity to be believed.
+
+    Any failure yields ``(None, reason)`` - the caller treats an untrusted
+    record exactly like an absent one and refuses. The reason is carried into
+    the signed refusal record so the forensic trail says *why* the record was
+    not trusted rather than only that the posture was unattested.
+    """
+    from bernstein.core.skills.catalog.signature import verify_payload
+
     path = attestation_path(workdir)
     if not path.is_file():
-        return None
+        return None, ""
     try:
-        return PostureAttestation.from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-        return None
+        attestation = PostureAttestation.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        return None, f"posture attestation at {path} is not a valid signed record ({exc})"
+    outcome = verify_payload(
+        _canonical_bytes(attestation.signed_body()),
+        attestation.signature,
+        attestation.signer_public_key_pem,
+        allow_unverified=True,
+    )
+    if not outcome.verified:
+        return None, f"posture attestation at {path} failed signature verification ({outcome.reason})"
+    trusted_pem = installed_sovereign_public_key(workdir)
+    if not trusted_pem.strip():
+        return None, (
+            f"posture attestation at {path} cannot be anchored: this install has no sovereign "
+            "identity public key on disk to check the signer against"
+        )
+    if _normalised_pem(trusted_pem) != _normalised_pem(attestation.signer_public_key_pem):
+        return None, (
+            f"posture attestation at {path} is signed by a key that is not this install's "
+            "sovereign identity; the record verifies against its own embedded key only"
+        )
+    return attestation, ""
+
+
+def read_posture_attestation(workdir: Path) -> PostureAttestation | None:
+    """Return the persisted attestation under *workdir*, or ``None``.
+
+    ``None`` means "no attestation this install is willing to trust": absent,
+    contract-incomplete, self-inconsistent, or not validly signed all collapse
+    to the same fail-closed answer. Use
+    :func:`_read_posture_attestation_with_reason` when the reason matters.
+    """
+    return _read_posture_attestation_with_reason(workdir)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +951,12 @@ class DriftEvaluation:
     diverging_keys: tuple[str, ...]
     observed_policy: EffectivePolicy
     violations: tuple[str, ...] = ()
+    #: Why an attestation that *exists on disk* was not trusted (bad contract,
+    #: bad signature, foreign signer). Empty when the record was trusted or when
+    #: there is genuinely no record. Callers must not infer "never activated"
+    #: from an empty ``attested_hash`` alone: a rejected record also has no
+    #: attested hash, and the two mean very different things to an auditor.
+    attestation_rejected: str = ""
 
     @property
     def should_refuse(self) -> bool:
@@ -646,27 +969,67 @@ def _diverging_keys(attested: Mapping[str, Any], observed: Mapping[str, Any]) ->
     return tuple(sorted(k for k in keys if attested.get(k) != observed.get(k)))
 
 
-def evaluate_posture_drift(*, workdir: Path, config_snapshot: Mapping[str, Any] | None) -> DriftEvaluation:
+def _live_runtime_policy() -> NetworkPolicy | None:
+    """Return the enforced policy when this process carries a profile marker.
+
+    Outside a profile-marked process there is no enforced posture to compare
+    against (the ambient allow-all default is not a claim anybody made), so the
+    egress invariant is skipped rather than reported as a false mismatch. A
+    half-set marker pair raises, and the caller turns that into a refusal.
+    """
+    from bernstein.core.security.network_policy import is_airgap_profile, policy_from_env
+
+    return policy_from_env() if is_airgap_profile() else None
+
+
+def evaluate_posture_drift(
+    *,
+    workdir: Path,
+    config_snapshot: Mapping[str, Any] | None,
+    runtime_policy: NetworkPolicy | None = None,
+    extra_violations: Sequence[str] = (),
+) -> DriftEvaluation:
     """Recompute the live posture and compare it to the stored attestation.
 
-    An absent attestation is itself drift (the posture was never attested). Live
-    compliance is re-checked every call -- including endpoint certification
-    against the on-disk receipts -- so a revoked or deleted receipt is caught
-    even when the config (and therefore the posture hash) is unchanged.
+    An absent *or untrusted* attestation is itself drift (the posture was never
+    attested, or the record on disk is not one this install will believe). Live
+    compliance is re-checked every call -- config projection, endpoint
+    certification against the on-disk receipts, and the attested-equals-enforced
+    egress invariant against the live network policy -- so a revoked receipt or
+    an egress posture that no longer matches the attestation is caught even when
+    the config (and therefore the posture hash) is unchanged.
+
+    Args:
+        workdir: Project root holding the attestation and receipts.
+        config_snapshot: Parsed config, or ``None`` when it could not be read
+            (pair that with an *extra_violations* entry naming the failure).
+        runtime_policy: Enforced policy to compare the attested egress against.
+            Defaults to the live process policy when a profile marker is
+            present; ``None`` skips the invariant.
+        extra_violations: Refusal reasons computed by the caller (a half-set
+            marker pair, an unreadable config) folded into the signed record so
+            the receipt names them.
     """
     observed = resolve_effective_policy(SOVEREIGN_PROFILE, config_snapshot)
     observed_hash = observed.posture_hash()
-    violations = tuple(observed.violations()) + tuple(endpoint_certification_violations(observed, workdir=workdir))
-    attestation = read_posture_attestation(workdir)
+    effective_runtime = runtime_policy if runtime_policy is not None else _live_runtime_policy()
+    violations = tuple(extra_violations) + sovereign_posture_violations(
+        observed, workdir=workdir, runtime_policy=effective_runtime
+    )
+    attestation, rejection = _read_posture_attestation_with_reason(workdir)
     if attestation is None:
+        reason = rejection or (
+            "no posture attestation on disk; the sovereign profile was never activated for this workspace"
+        )
         return DriftEvaluation(
             drifted=True,
-            reason="no posture attestation on disk; the sovereign profile was never activated for this workspace",
+            reason=reason,
             attested_hash="",
             observed_hash=observed_hash,
             diverging_keys=(),
             observed_policy=observed,
-            violations=violations,
+            violations=violations + ((rejection,) if rejection else ()),
+            attestation_rejected=rejection,
         )
     if attestation.posture_hash == observed_hash:
         return DriftEvaluation(
@@ -719,7 +1082,7 @@ def record_and_sign_drift(
         "timestamp": timestamp,
     }
     signature = sign_payload(_canonical_bytes(signed_body), private_pem)
-    record = dict(signed_body)
+    record = signed_body.copy()
     record["signer_public_key_pem"] = public_pem
     record["signature"] = signature
     record_sha256 = _sha256_of(record)
@@ -776,11 +1139,42 @@ def verify_sovereign_attestations(audit_dir: Path, *, key: bytes | None = None) 
     att_events = log.query(event_type=EVENT_SOVEREIGN_ATTESTATION)
     drift_events = log.query(event_type=EVENT_SOVEREIGN_DRIFT)
     errors: list[str] = []
+    if not att_events and not drift_events:
+        return SovereignVerifyResult(ok=True, errors=[], attestation_count=0, drift_count=0)
+
+    # Anchor the signer the same way the on-disk attestation path does. Without
+    # this, a rewritten chain row re-signed with a freshly generated keypair
+    # (embedding its own public key) verifies clean, which would make the
+    # Ed25519 layer worthless in exactly the two situations it exists for:
+    # ``--merkle-only`` runs that skip the HMAC check, and a compromised HMAC
+    # key. ``audit_dir`` is ``<workdir>/.sdd/audit``.
+    workdir = audit_dir.parent.parent
+    trusted_pem = installed_sovereign_public_key(workdir)
+    if not trusted_pem.strip():
+        errors.append(
+            f"sovereign records are present but this install has no sovereign identity public key "
+            f"under {workdir / '.sdd' / 'sovereign'} to anchor their signatures against"
+        )
+        return SovereignVerifyResult(
+            ok=False, errors=errors, attestation_count=len(att_events), drift_count=len(drift_events)
+        )
 
     for event in att_events:
-        _verify_one_record(event.details, kind=_RECORD_KIND_ATTESTATION, errors=errors, verify_payload=verify_payload)
+        _verify_one_record(
+            event.details,
+            kind=_RECORD_KIND_ATTESTATION,
+            errors=errors,
+            verify_payload=verify_payload,
+            trusted_pem=trusted_pem,
+        )
     for event in drift_events:
-        _verify_one_record(event.details, kind=_RECORD_KIND_DRIFT, errors=errors, verify_payload=verify_payload)
+        _verify_one_record(
+            event.details,
+            kind=_RECORD_KIND_DRIFT,
+            errors=errors,
+            verify_payload=verify_payload,
+            trusted_pem=trusted_pem,
+        )
 
     return SovereignVerifyResult(
         ok=not errors,
@@ -796,6 +1190,7 @@ def _verify_one_record(
     kind: str,
     errors: list[str],
     verify_payload: Any,
+    trusted_pem: str,
 ) -> None:
     body = details.get("signed_body")
     signature = details.get("signature")
@@ -813,12 +1208,50 @@ def _verify_one_record(
     if not outcome.verified:
         errors.append(f"{kind} {subject}: signature check failed ({outcome.reason})")
         return
+    # A signature that verifies against a key carried by the record proves only
+    # that whoever wrote the record also chose the key. Anchor it.
+    if not isinstance(public_key, str) or _normalised_pem(public_key) != _normalised_pem(trusted_pem):
+        errors.append(
+            f"{kind} {subject}: signed by a key that is not this install's sovereign identity; "
+            "the record verifies against its own embedded key only"
+        )
+        return
+    # The signature proves the body was not edited; it does not prove the body
+    # is a complete record of the expected kind. Both are required before the
+    # record is allowed to stand as evidence, so a record missing its posture
+    # document (or a drift record replayed as an attestation) fails here rather
+    # than passing on the strength of a valid signature over a partial body.
+    is_drift = kind == _RECORD_KIND_DRIFT
+    hash_field = "observed_hash" if is_drift else "posture_hash"
+    required = _REQUIRED_DRIFT_BODY_FIELDS if is_drift else _REQUIRED_ATTESTATION_BODY_FIELDS
+    missing = [f for f in required if f not in body]
+    if missing:
+        errors.append(f"{kind} {subject}: record is missing required field(s) {sorted(missing)}")
+        return
+    if body.get("record_kind") != kind:
+        errors.append(f"{kind} {subject}: record_kind is {body.get('record_kind')!r}, expected {kind!r}")
+        return
+    if body.get("schema_version") != EFFECTIVE_POLICY_SCHEMA_VERSION:
+        errors.append(
+            f"{kind} {subject}: schema_version {body.get('schema_version')!r} is not "
+            f"the supported version {EFFECTIVE_POLICY_SCHEMA_VERSION}"
+        )
+        return
+    if body.get("profile") != SOVEREIGN_PROFILE:
+        errors.append(f"{kind} {subject}: profile is {body.get('profile')!r}, expected {SOVEREIGN_PROFILE!r}")
+        return
+    timestamp = body.get("timestamp")
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool):
+        errors.append(f"{kind} {subject}: timestamp is not an integer")
+        return
     effective_policy = body.get("effective_policy")
-    if isinstance(effective_policy, Mapping):
-        recomputed = _sha256_of(effective_policy)
-        recorded = str(body.get("observed_hash") if kind == _RECORD_KIND_DRIFT else body.get("posture_hash"))
-        if recorded != recomputed:
-            errors.append(f"{kind} {subject}: recorded hash {recorded} does not match recomputed {recomputed}")
+    if not isinstance(effective_policy, Mapping):
+        errors.append(f"{kind} {subject}: effective_policy is not a mapping")
+        return
+    recomputed = _sha256_of(effective_policy)
+    recorded = str(body.get(hash_field))
+    if recorded != recomputed:
+        errors.append(f"{kind} {subject}: recorded hash {recorded} does not match recomputed {recomputed}")
     if kind == _RECORD_KIND_DRIFT:
         diverging = body.get("diverging_keys")
         raw_violations = body.get("violations")

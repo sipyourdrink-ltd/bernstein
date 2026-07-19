@@ -419,8 +419,13 @@ class RecipeRegistry:
 
     # -- projection ---------------------------------------------------------
 
-    def _lifecycle_events(self) -> list[dict[str, Any]]:
-        """Return every recipe-lifecycle chain event in chain order."""
+    def _lifecycle_events(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        """Return every recipe-lifecycle chain event in chain order.
+
+        ``include_archived`` widens the read to archived segments. The
+        projection reasons about *linkage* between receipts, so after audit
+        retention a live-only read can make an intact lineage look broken.
+        """
         from bernstein.core.security.audit_chain import (
             EVENT_RECIPE_PAUSE,
             EVENT_RECIPE_REGISTER,
@@ -439,7 +444,7 @@ class RecipeRegistry:
         }
         out: list[dict[str, Any]] = []
         for event_type in sorted(wanted):
-            for ev in chain.query(event_type=event_type):
+            for ev in chain.query(event_type=event_type, include_archived=include_archived):
                 out.append(
                     {
                         "event_type": ev.event_type,
@@ -466,6 +471,17 @@ class RecipeRegistry:
         )
 
         events = [ev for ev in self._lifecycle_events() if str(ev["details"].get("name", "")) == name]
+        if events and not _lineage_is_complete(events):
+            # A receipt names a predecessor the live segments cannot produce.
+            # Before treating that as a broken lineage, look where ``verify``
+            # looks: it has replayed archived segments since #1835, so after
+            # retention the missing predecessor is usually simply archived.
+            # Only paid when the linkage is actually incomplete.
+            widened = [
+                ev for ev in self._lifecycle_events(include_archived=True) if str(ev["details"].get("name", "")) == name
+            ]
+            if len(widened) > len(events):
+                events = widened
         # Order the name's receipts by their per-name lineage linkage: each
         # receipt names the hmac of its predecessor, so a linked list rebuild
         # is order-independent of how query() grouped them.
@@ -798,6 +814,27 @@ class RecipeRegistry:
             concurrency_cap=int(body.get("concurrency_cap", 1)),
             pins=pins,
         )
+
+
+def _lineage_is_complete(events: list[dict[str, Any]]) -> bool:
+    """Return whether every receipt is reachable from the genesis link.
+
+    False means at least one receipt names a predecessor that is not in
+    *events* - normally because the segment holding it has been archived out
+    of the default query window.
+    """
+    by_prev: dict[str, dict[str, Any]] = {}
+    for ev in events:
+        by_prev.setdefault(str(ev["details"].get("prev_receipt_digest", "")), ev)
+    reached: set[str] = set()
+    cursor = ""
+    while cursor in by_prev:
+        hmac = str(by_prev[cursor]["hmac"])
+        if hmac in reached:
+            break
+        reached.add(hmac)
+        cursor = hmac
+    return len(reached) == len(events)
 
 
 def _order_by_lineage(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

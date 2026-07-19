@@ -67,13 +67,18 @@ from bernstein.core.orchestration.activity import (
     TerminalState,
     evidence_set_hash,
 )
+from bernstein.core.orchestration.browser_check import (
+    BrowserFlowReport,
+    BrowserFlowVerdict,
+    verify_browser_flow_report,
+)
 from bernstein.core.orchestration.research_report import (
     ClaimVerdict,
     ResearchReport,
     ResearchReportVerdict,
     verify_research_report,
 )
-from bernstein.core.replay.journal import load_events, verify_journal
+from bernstein.core.replay.journal import JournalPathError, load_events, run_journal_path, verify_journal
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -275,6 +280,24 @@ class BrowserActivity(_ObservationCollector):
             The content-addressed :class:`Observation` for the decision step.
         """
         return self._capture(obs_kind="snapshot", ref=step, content=snapshot)
+
+    def receipt(self, *, step: str, receipt: bytes) -> Observation:
+        """Record the action receipt a decision step produced (#2523).
+
+        The receipt bytes are the action-anchor preimage: the prior anchor, the
+        observation hash, and the canonical action. Content-addressing them makes
+        the *decision* evidence in its own right rather than a log line beside the
+        pixels, so the evidence set covers what the worker did as well as what it
+        saw.
+
+        Args:
+            step: The decision-step label (provenance -- not part of the hash).
+            receipt: The action receipt bytes.
+
+        Returns:
+            The content-addressed :class:`Observation` for the receipt.
+        """
+        return self._capture(obs_kind="action_receipt", ref=step, content=receipt)
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +746,8 @@ class StageVerdict:
             from the store and its plan + input/output signatures re-verified.
         claim_verdicts: Per-claim citation verdicts for a research stage
             (empty for other modalities), in the report's claim order.
+        browser_verdict: Per-step and per-check verdicts for a browser stage
+            (``None`` for other modalities), resolved offline from the store.
         reason: A short human-readable explanation on failure, else empty.
     """
 
@@ -732,6 +757,7 @@ class StageVerdict:
     evidence_reattached: bool
     signed_receipt_verified: bool = False
     claim_verdicts: tuple[ClaimVerdict, ...] = ()
+    browser_verdict: BrowserFlowVerdict | None = None
     reason: str = ""
 
 
@@ -782,7 +808,18 @@ def verify_run_activities(
         An :class:`ActivityVerifyResult`. ``found`` is ``False`` when no journal
         or no activity entry exists.
     """
-    journal_path = sdd_dir / "runs" / run_id / "journal.jsonl"
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        # A run id that escapes the runs root names no run of ours; report it
+        # as absent rather than verifying a journal outside the tree.
+        return ActivityVerifyResult(
+            run_id=run_id,
+            found=False,
+            ok=False,
+            chain_ok=False,
+            reason=f"invalid run id: {exc}",
+        )
     if not journal_path.exists():
         return ActivityVerifyResult(
             run_id=run_id,
@@ -872,6 +909,23 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
                     reason=reason,
                 )
 
+    # Browser flow lineage (#2523): resolve the anchored action chain and
+    # re-evaluate every recorded check against the reattached bytes first, so a
+    # tampered observation fails naming the exact step index (and a forged verdict
+    # fails naming the check) rather than as an anonymous reattach failure.
+    browser_verdict: BrowserFlowVerdict | None = None
+    if store is not None and kind == ActivityKind.BROWSER.value:
+        browser_verdict = _verify_browser_stage(row, store=store)
+        if browser_verdict is not None and not browser_verdict.ok:
+            return StageVerdict(
+                stage_id=stage_id,
+                kind=kind,
+                ok=False,
+                evidence_reattached=False,
+                browser_verdict=browser_verdict,
+                reason=browser_verdict.reason or "browser flow verification failed",
+            )
+
     reattached = False
     if store is not None:
         for obs in rebuilt:
@@ -884,6 +938,7 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
                     ok=False,
                     evidence_reattached=False,
                     claim_verdicts=claim_verdicts,
+                    browser_verdict=browser_verdict,
                     reason=f"evidence bytes missing from store for {obs.ref!r}",
                 )
             recomputed_hash = "sha256:" + _sha256_hex(content)
@@ -894,6 +949,7 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
                     ok=False,
                     evidence_reattached=False,
                     claim_verdicts=claim_verdicts,
+                    browser_verdict=browser_verdict,
                     reason=f"content hash mismatch reattaching {obs.ref!r}",
                 )
         reattached = bool(rebuilt)
@@ -919,7 +975,42 @@ def _verify_stage(row: dict[str, Any], *, store: ContentStore | None, chain_ok: 
         evidence_reattached=reattached,
         signed_receipt_verified=receipt_verified,
         claim_verdicts=claim_verdicts,
+        browser_verdict=browser_verdict,
     )
+
+
+def _verify_browser_stage(row: dict[str, Any], *, store: ContentStore) -> BrowserFlowVerdict | None:
+    """Reattach and re-resolve a browser flow's anchored action chain (#2523).
+
+    The flow report's canonical bytes were stored content-addressed under the
+    stage's ``artifact_hash``. This reattaches them by that hash, confirms they
+    still hash to the anchored value (tamper of the report itself), parses the
+    report, and resolves the whole flow offline against the store: every step's
+    screenshot and DOM bytes are re-hashed, every anchor is recomputed from its
+    predecessor, and every recorded check verdict is re-evaluated against the
+    reattached bytes. Returns ``None`` when no report is stored (a legacy or
+    non-report browser row), so the generic evidence check stands alone.
+    """
+    artifact_hash = str(row.get("artifact_hash", ""))
+    digest = artifact_hash.split(":", 1)[-1]
+    # Realpath-contain the store lookup: the hash comes from the journal, so only
+    # a bare sha256 hex digest may address a blob (no path separators).
+    if not _SHA256_HEX.match(digest):
+        return BrowserFlowVerdict(ok=False, reason=f"malformed artifact_hash for browser stage: {artifact_hash!r}")
+    try:
+        report_bytes = store.get(artifact_hash)
+    except KeyError:
+        return None
+    if "sha256:" + _sha256_hex(report_bytes) != artifact_hash:
+        return BrowserFlowVerdict(
+            ok=False,
+            reason=f"flow report bytes do not match anchored artifact_hash {artifact_hash!r}",
+        )
+    try:
+        report = BrowserFlowReport.from_dict(json.loads(report_bytes))
+    except (ValueError, TypeError) as exc:
+        return BrowserFlowVerdict(ok=False, reason=f"stored flow report is not valid JSON: {type(exc).__name__}")
+    return verify_browser_flow_report(report, store=store)
 
 
 def _verify_data_ops_stage(row: dict[str, Any], *, store: ContentStore) -> DataOpsVerdict | None:

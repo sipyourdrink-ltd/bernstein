@@ -25,7 +25,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -206,6 +206,43 @@ def _isolate_agent_card_keystore(
     from bernstein.core.routes import well_known as _wk
 
     _wk._reset_signing_keypair_for_tests(key_dir)
+
+
+_NETWORK_POSTURE_ENV_VARS = (
+    "BERNSTEIN_PROFILE_MODE",
+    "BERNSTEIN_NETWORK_POLICY",
+    "BERNSTEIN_SOVEREIGN_MODE",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_network_posture_env() -> Iterator[None]:
+    """Put the profile / policy / sovereign env vars back after every test.
+
+    ``install_policy()`` and the sovereign branch of ``_install_network_policy()``
+    write straight to ``os.environ`` on purpose - spawned adapters inherit the
+    posture that way - and there is no uninstall counterpart. Tests that call
+    those installers clean up with a ``monkeypatch.delenv(..., raising=False)``
+    preamble, which looks like it covers the case but does not:
+    ``MonkeyPatch.delitem`` only records an undo entry when the key is already
+    present, so on a clean environment it registers nothing and the values
+    written *afterwards* by the installer survive the test.
+
+    A leaked ``BERNSTEIN_SOVEREIGN_MODE=1`` makes ``is_sovereign_profile()`` true
+    for the rest of the session, which turns the spawner's posture-drift
+    preflight from a no-op into a hard refusal for every later test whose
+    workspace has no attestation. Snapshot and restore here so the trap is
+    closed for any test that touches these vars, however it sets them.
+    """
+    saved = {name: os.environ.get(name) for name in _NETWORK_POSTURE_ENV_VARS}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 @pytest.fixture(autouse=True)

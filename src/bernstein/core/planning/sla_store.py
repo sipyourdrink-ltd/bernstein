@@ -36,13 +36,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any, Literal, cast
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +68,44 @@ AXIS_FREQUENCY = "fire_frequency"
 AXIS_FRESHNESS = "artifact_freshness"
 AXIS_SPEND_RATE = "spend_rate"
 
-_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,256}$")
+#: Anchored with ``\Z``, not ``$``: in Python ``$`` also matches immediately
+#: before a trailing newline, so ``$`` would admit a trailing control character
+#: into a value that reaches log records.
+_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,256}\Z")
+
+#: A contract id is derived from the body digest, so the only well-formed shape
+#: is the prefix plus lowercase hex. Every id that addresses a file on disk is
+#: matched against this before it is joined onto the store directory.
+_CONTRACT_ID_RE = re.compile(rf"^{re.escape(_SLA_ID_PREFIX)}[0-9a-f]{{{_SLA_ID_HEX_LEN}}}\Z")
 
 
 class SLAContractError(ValueError):
     """Raised when a contract body fails validation."""
+
+
+class SLAContractIdError(SLAContractError):
+    """Raised when a contract id is not a well-formed derived id.
+
+    Subclasses :class:`SLAContractError` so a caller that already handles
+    contract validation failures keeps handling this one.
+    """
+
+
+def _single_line(value: object, *, limit: int = 256) -> str:
+    """Return *value* as a single-line, control-character-free log token.
+
+    Contract ids and store paths reach log records, and a log record is
+    newline-delimited both for an operator reading the file and for any shipper
+    parsing it. A value carrying CR or LF could therefore append a forged
+    record after the real one. Line breaks are escaped first, every remaining
+    non-printable character is hex-escaped, and the result is length-capped, so
+    an untrusted value always occupies exactly one line of bounded width.
+    """
+    text = str(value).replace("\r", "\\r").replace("\n", "\\n")
+    text = "".join(ch if ch.isprintable() else f"\\x{ord(ch):02x}" for ch in text)
+    if len(text) > limit:
+        text = text[:limit] + "...(truncated)"
+    return text
 
 
 @dataclass(frozen=True)
@@ -345,7 +377,32 @@ class SLAStore:
         return self._sdd_dir
 
     def _path_for(self, contract_id: str) -> Path:
-        return self._dir / f"{contract_id}.json"
+        """Return the store path for ``contract_id``, refusing anything else.
+
+        Contract ids arrive from operator input and from request paths, and
+        both ``get`` and ``remove`` turn one into a filesystem operation, so an
+        unchecked id would read or unlink a file anywhere the process can
+        reach. Two independent checks stand between the id and the filesystem:
+        the id must match the derived-id shape (which admits no separator, dot
+        segment, or control character), and the normalised path must sit
+        directly in the store directory.
+
+        Normalisation is lexical (``os.path.normpath``, not ``Path.resolve``)
+        and both checks complete before anything touches the filesystem, so a
+        symlink planted in the store cannot be walked during validation and
+        the check cannot be subverted by what is on disk.
+
+        Raises:
+            SLAContractIdError: If the id is not a well-formed derived id, or
+                if it does not land directly in the store directory.
+        """
+        if not _CONTRACT_ID_RE.match(contract_id):
+            raise SLAContractIdError(f"invalid SLA contract id '{_single_line(contract_id)}'")
+        base = os.path.normpath(str(self._dir))
+        candidate = os.path.normpath(os.path.join(base, f"{contract_id}.json"))
+        if not candidate.startswith(base + os.sep) or os.path.dirname(candidate) != base:
+            raise SLAContractIdError(f"SLA contract id '{_single_line(contract_id)}' escapes the contract store")
+        return Path(candidate)
 
     def add(self, contract: SLAContract, *, now: float | None = None) -> SLAContract:
         """Persist a contract; idempotent by derived id."""
@@ -397,7 +454,7 @@ def _load_contract(path: Path) -> SLAContract | None:
     try:
         raw: Any = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Could not load SLA contract %s: %s", path, exc)
+        logger.warning("Could not load SLA contract %s: %s", _single_line(path), _single_line(exc))
         return None
     if not isinstance(raw, dict):
         return None
@@ -405,7 +462,7 @@ def _load_contract(path: Path) -> SLAContract | None:
     try:
         return contract_from_dict(data)
     except SLAContractError as exc:
-        logger.warning("Malformed SLA contract %s: %s", path, exc)
+        logger.warning("Malformed SLA contract %s: %s", _single_line(path), _single_line(exc))
         return None
 
 
@@ -427,6 +484,7 @@ __all__ = [
     "BurnTier",
     "SLAContract",
     "SLAContractError",
+    "SLAContractIdError",
     "SLAStore",
     "build_contract",
     "compute_contract_id",

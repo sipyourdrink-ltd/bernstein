@@ -523,3 +523,46 @@ def test_capsule_store_roundtrip(tmp_path: Path) -> None:
     loaded = read_capsule(_sdd(tmp_path), _TASK_ID)
     assert loaded is not None
     assert loaded.to_dict() == cap.to_dict()
+
+
+def test_verify_refuses_a_run_journal_planted_outside_the_runs_root(tmp_path: Path) -> None:
+    """The conformance verifier must not read a journal outside ``<sdd>/runs``.
+
+    Pins the routing of ``verify_intent_conformance`` through the shared
+    containment barrier. The journal's own Merkle chain is intact here - it
+    is written by the real writer - so ``verify_journal`` cannot tell it
+    apart from ours; only containment can. Reverting the routing to a raw
+    join makes this verify a planted journal and fails the test.
+    """
+    import pytest
+
+    chain = _chain(tmp_path)
+    cap, _ = approve_and_capsule(
+        chain=chain,
+        sdd_dir=_sdd(tmp_path),
+        plan=_plan(),
+        task_id=_TASK_ID,
+        run_id=_RUN_ID,
+        allowed_action_classes=["fs.read", "fs.write", "git.commit"],
+        file_scope_globs=["src/pricing/**"],
+        permitted_adapters=["claude"],
+        egress_classes=[],
+        expiry_ts=_FUTURE_EXPIRY,
+    )
+    journal = _build_run_journal(tmp_path, capsule_h=capsule_hash(cap), drift=False)
+
+    # Move the whole run directory out of the runs root and symlink to it.
+    run_dir = journal.path.parent
+    outside = tmp_path / "outside_runs"
+    run_dir.rename(outside)
+    try:
+        run_dir.symlink_to(outside, target_is_directory=True)
+    except OSError:  # pragma: no cover - platform dependent
+        pytest.skip("cannot create symlinks on this platform")
+
+    result = verify_intent_conformance(sdd_dir=_sdd(tmp_path), chain=_chain(tmp_path), task_id=_TASK_ID)
+
+    # Unrouted, this journal reads cleanly and reports ok/conformant.
+    assert not result.ok
+    assert not result.conformant
+    assert "invalid run id" in result.reason

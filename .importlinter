@@ -44,6 +44,7 @@ modules =
     bernstein.adapters.amp
     bernstein.adapters.auggie
     bernstein.adapters.autohand
+    bernstein.adapters.capability_profile
     bernstein.adapters.charm
     bernstein.adapters.claude
     bernstein.adapters.cline

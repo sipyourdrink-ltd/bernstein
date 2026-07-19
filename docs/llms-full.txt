@@ -1,11 +1,13 @@
 # Bernstein
 
-> Forward-deployed engineering, with a coding swarm that fits in your `.sdd/`.
+> Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code,
+> Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the
+> coordination loop - so runs are reproducible end to end.
 >
-> Bernstein is an open-source multi-agent orchestration platform for AI coding
-> agents. Deterministic scheduling, 40+ CLI adapters, pluggable sandbox backends,
-> cloud artifact storage sinks, progressive-disclosure skill packs, zero vendor
-> lock-in. Apache 2.0 licensed.
+> Every task runs in its own git worktree behind lint/type/test gates. An
+> always-on lineage spine and replay journal record what happened; an opt-in
+> HMAC-chained audit log and signed receipts make results independently
+> verifiable, offline if needed. Air-gap install profile included. Apache-2.0.
 
 This document is the long-form `llms-full.txt` variant per the llms.txt spec
 (<https://llmstxt.org/>). It expands on the short `llms.txt` with more context
@@ -26,25 +28,24 @@ reproducible. Every step is logged and replayable.
 - File-based state in `.sdd/`. No database. Inspect with `cat`, back up with
   `cp -r`.
 
-## Forward-deployed engineering use case
+## Dropping into an unfamiliar repo
 
-Bernstein is built for the forward-deployed engineering pattern:
-parachute onto a client repo and stand up an AI engineering crew in
-minutes. State lives in `.sdd/` - no server to provision. Per-agent
-credential scoping keeps your keys out of the client's environment.
-The multi-adapter spread means the swarm runs on whichever CLI agent
-the client already trusts (Claude Code, Codex, Gemini CLI, Aider,
-and more). Every step is an HMAC-signed audit record, replayable
-for client compliance review.
+Bernstein stands up an AI engineering crew in minutes. State lives in
+`.sdd/` - no server to provision. Per-agent credential scoping keeps your
+keys out of the target environment. The multi-adapter spread means the crew
+runs on whichever CLI agent the repo's owners already trust (Claude Code,
+Codex, Gemini CLI, Aider, and more). Every step lands in the always-on
+replay journal and lineage spine; run with `--audit` and every step is also
+an HMAC-signed audit record, replayable for compliance review.
 
 ## Primary use cases
 
-- **Forward-deployed engineering** - drop the swarm onto a client repo when
-  you arrive, take it with you when you leave.
+- **Client and contract work** - drop the crew onto a repo when you arrive,
+  take it with you when you leave.
 - **Self-evolving projects** - point Bernstein at its own repo and let it
   execute the backlog.
-- **CI fleets** - run a swarm of agents in parallel on PRs, with per-agent
-  credential scoping and signed audit trail.
+- **CI fleets** - run a crew of agents in parallel on PRs, with per-agent
+  credential scoping and an opt-in signed audit trail.
 
 ## Install
 

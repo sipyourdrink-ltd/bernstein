@@ -119,7 +119,7 @@ manager agent needed; the plan is the decomposition.
 | Plan YAML (`bernstein run --from-plan`) | Yes | Read in `plan_loader._parse_step`. Stored on the resulting `Task` row. |
 | `POST /tasks` on the task server | Yes | The HTTP payload accepts the same keys; the planner forwards them when it creates child tasks (`planner.py:86`). |
 | Manager-emitted plans | Yes | When the manager agent decomposes a goal it can stamp `cli` and `model` on individual steps. |
-| Workflow manifests (`templates/workflows/*.yaml`) | No | The Archon-style manifest schema validates with `extra="forbid"` (`workflow_spec.py`). Per-node routing is tracked separately; use a plan YAML when you need it today. |
+| Workflow manifests (`templates/workflows/*.yaml`) | No | The declarative manifest schema validates with `extra="forbid"` (`workflow_spec.py`). Per-node routing is tracked separately; use a plan YAML when you need it today. |
 | `bernstein.yaml` | Top-level only | The seed file has one global `cli:`. Per-step routing belongs on the plan or task. |
 
 If you write a workflow manifest and need per-step routing, the

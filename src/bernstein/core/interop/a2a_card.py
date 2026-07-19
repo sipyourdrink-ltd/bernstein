@@ -35,6 +35,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -46,12 +47,16 @@ from bernstein.core.security.agent_card_signer import (
 
 __all__ = [
     "CAPABILITY_CARD_TYP",
+    "DEFAULT_ADVERTISED_COST_CAP_USD",
+    "DEFAULT_ADVERTISED_REDACTION_TIER",
+    "DEFAULT_ADVERTISED_SANDBOX_PROFILE",
     "DEFAULT_CARD_TTL_SECONDS",
     "CapabilityCard",
     "CardPolicies",
     "SignedCapabilityCard",
     "card_public_key_fingerprint",
     "issue_capability_card",
+    "resolve_advertised_card_policies",
     "verify_capability_card",
 ]
 
@@ -286,6 +291,68 @@ class SignedCapabilityCard:
     def from_json(cls, text: str) -> SignedCapabilityCard:
         """Parse a signed card from a JSON string."""
         return cls.from_dict(json.loads(text))
+
+
+#: Environment variables an operator sets to declare the delegation policy
+#: this node ADVERTISES on its capability card. Reading them from config
+#: rather than freezing literals means the signed card states a policy an
+#: operator actually chose, from a single source, instead of a constant no
+#: configuration backs.
+_ADVERTISED_COST_CAP_ENV = "BERNSTEIN_A2A_COST_CAP_USD"
+_ADVERTISED_REDACTION_ENV = "BERNSTEIN_A2A_REDACTION_TIER"
+_ADVERTISED_SANDBOX_ENV = "BERNSTEIN_A2A_SANDBOX_PROFILE"
+
+#: Defaults applied when the operator sets no override.
+DEFAULT_ADVERTISED_COST_CAP_USD: float = 0.0
+DEFAULT_ADVERTISED_REDACTION_TIER: str = "standard"
+DEFAULT_ADVERTISED_SANDBOX_PROFILE: str = "container"
+
+
+def _resolve_advertised_cost_cap() -> float:
+    """Return the advertised cost cap from the env override, else the default.
+
+    A malformed or negative override falls back to the default so a bad env
+    value cannot make the identity route raise while serving the card.
+    """
+    raw = os.environ.get(_ADVERTISED_COST_CAP_ENV, "").strip()
+    if not raw:
+        return DEFAULT_ADVERTISED_COST_CAP_USD
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_ADVERTISED_COST_CAP_USD
+    return value if value >= 0 else DEFAULT_ADVERTISED_COST_CAP_USD
+
+
+def _resolve_advertised_str(env: str, default: str) -> str:
+    """Return a non-empty env override for ``env``, else ``default``."""
+    return os.environ.get(env, "").strip() or default
+
+
+def resolve_advertised_card_policies() -> CardPolicies:
+    """Return the delegation policy this node advertises on its capability card.
+
+    The values come from operator configuration (environment) rather than
+    frozen literals, so one source declares the terms a peer gates on via
+    :func:`bernstein.core.interop.a2a_consume.policies_meet_requirements`
+    before delegating work to this node.
+
+    These are ADVERTISED ceilings, not values this function enforces:
+    enforcement of the cost cap, redaction tier, and sandbox profile lives in
+    the execution path. An operator running a concrete policy sets the
+    matching env var so the signed card states what delegated work actually
+    runs under.
+
+    Cost-cap semantics: on the capability card a *lower* cap is stricter, and
+    a peer with ceiling ``C`` accepts any advertised cap ``<= C``. This is
+    unrelated to the autofix-config convention where ``0`` means "unlimited";
+    the two fields share a name but not a meaning.
+    """
+    return CardPolicies(
+        cost_cap_usd=_resolve_advertised_cost_cap(),
+        redaction_tier=_resolve_advertised_str(_ADVERTISED_REDACTION_ENV, DEFAULT_ADVERTISED_REDACTION_TIER),
+        sandbox_profile=_resolve_advertised_str(_ADVERTISED_SANDBOX_ENV, DEFAULT_ADVERTISED_SANDBOX_PROFILE),
+    )
 
 
 def card_public_key_fingerprint(public_key_pem: str | bytes) -> str:

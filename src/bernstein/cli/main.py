@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- declarative agent orchestration.
+"""CLI entry point for Bernstein -- deterministic, verifiable orchestration for CLI coding agents.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -383,7 +383,7 @@ def print_rich_help() -> None:
     c.print(
         Panel(
             "[bold]bernstein[/bold]  deterministic Python scheduler for CLI coding agents.\n"
-            "  43 adapters, parallel git worktrees, HMAC-SHA256 audit chain (RFC 2104).",
+            "  40+ adapters, parallel git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
             expand=False,
@@ -730,7 +730,7 @@ def cli(
     refine_spec: str | None,
     unsafe_allow_unicode_tags: bool,
 ) -> None:
-    """Declarative agent orchestration for engineering teams."""
+    """Deterministic, verifiable orchestration for CLI coding agents."""
     # The skill-pack invisible-Unicode sanitizer reads its opt-out from this
     # env var; set it as early as possible so any later import that triggers a
     # SkillLoader sees the operator's choice. Default is OFF (sanitize on).
@@ -1116,6 +1116,12 @@ cli.add_command(acp_group, "acp")
 from bernstein.cli.commands.interop_cmd import interop_group  # noqa: E402
 
 cli.add_command(interop_group, "interop")
+
+# A2A node surface: publish this node to agent registries, verify the
+# lineage receipts it returns on inbound tasks.
+from bernstein.cli.commands.a2a_cmd import a2a_group  # noqa: E402
+
+cli.add_command(a2a_group, "a2a")
 
 # release/1.9: outbound notification drivers (Telegram, Slack, Discord, Email, Webhook, Shell).
 from bernstein.cli.commands.notify_cmd import notify_group  # noqa: E402

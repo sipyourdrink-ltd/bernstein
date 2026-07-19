@@ -1558,6 +1558,8 @@ def verify_intent_conformance(
     conformant. A drifted-but-untampered run returns ``ok=False`` with
     ``conformant=False`` and a divergence-naming reason.
     """
+    from bernstein.core.replay.journal import JournalPathError, run_journal_path
+
     capsule, sidecar_run_id = read_capsule_binding(sdd_dir, task_id)
     if capsule is None:
         return IntentVerifyResult(ok=False, conformant=False, reason="no intent capsule for task")
@@ -1592,6 +1594,33 @@ def verify_intent_conformance(
             conformant=False,
             reason=f"drift: {len(verdict.divergences)} action(s) outside the capsule ({classes})",
             verdict=verdict,
+            capsule=capsule,
+            run_id=run_id,
+            seal_state=binding.seal_state,
+        )
+
+    # A clean verdict is only worth honouring when the journal it was read from
+    # sits inside the runs root and is still present. The binding resolved the
+    # journal through a plain path join; re-derive it here with the containment
+    # guard so an escaped or vanished journal cannot pass a truncated run off as
+    # conformant. This runs only after drift is ruled out, so a genuine
+    # divergence is never suppressed by a path defect.
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        return IntentVerifyResult(
+            ok=False,
+            conformant=False,
+            reason=f"invalid run id: {exc}",
+            capsule=capsule,
+            run_id=run_id,
+            seal_state=binding.seal_state,
+        )
+    if not journal_path.exists():
+        return IntentVerifyResult(
+            ok=False,
+            conformant=False,
+            reason=f"run journal for {run_id!r} is missing; cannot recompute conformance",
             capsule=capsule,
             run_id=run_id,
             seal_state=binding.seal_state,

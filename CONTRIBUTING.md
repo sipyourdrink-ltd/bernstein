@@ -158,7 +158,7 @@ When adding a new CLI command, create a new `*_cmd.py` module in `cli/commands/`
 
 ## Supported CLI Adapters
 
-Bernstein ships with 44 adapters (43 named + 1 generic catch-all). Before writing a new adapter, check `src/bernstein/adapters/registry.py` for the full list - a subset is shown here for orientation:
+Bernstein ships with 40+ CLI agent adapters, plus a generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
 
 | Adapter | File | Agent |
 |---------|------|-------|
