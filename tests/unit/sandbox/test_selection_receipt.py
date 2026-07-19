@@ -8,11 +8,14 @@ mutated byte fails verification, and a NaN score is refused at build time.
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bernstein.core.sandbox.selection_receipt import (
     RaceCandidate,
+    SelectionReceipt,
     SelectionReceiptError,
     build_selection_receipt,
     canonical_receipt_bytes,
@@ -31,10 +34,13 @@ _D = "0123456789abcdef" * 4  # a 64-char hex-ish stand-in digest
 
 
 def _cand(task_id: str, digest: str, tests: bool = True) -> RaceCandidate:
+    # Keys are deliberately NOT in alphabetical insertion order so that the
+    # canonical-ordering guard in RaceCandidate.to_dict is actually exercised
+    # by every fixture that flows through this helper (#2706 item 3).
     return RaceCandidate(
         task_id=task_id,
         terminal_snapshot_digest=digest,
-        score_vector={"correctness": 1.0 if tests else 0.0, "cost": 0.0, "reversibility": 1.0},
+        score_vector={"reversibility": 1.0, "correctness": 1.0 if tests else 0.0, "cost": 0.0},
     )
 
 
@@ -228,3 +234,100 @@ def test_signing_key_is_created_and_reused(tmp_path) -> None:
     k2 = load_or_create_signing_key(key_path)
     # Same key material reused -> same public bytes.
     assert k1.public_key().public_bytes_raw() == k2.public_key().public_bytes_raw()
+
+
+# ---------------------------------------------------------------------------
+# #2706 item 2: the Ed25519 signature as the SOLE line of defence
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_signature_is_wrong_and_verification_fails() -> None:
+    """A receipt that is internally consistent in every respect *except* the
+    Ed25519 signature must fail verification, and the signature check must be
+    the only thing that fails.
+
+    This is the case #2706 item 2 says was missing: every other verify path
+    (payload-digest recompute, keyid/embedded-key agreement, winner and loser
+    cross-checks) passes, so removing the signature check entirely would leave
+    the rest of the suite green. Here the signature is the last remaining
+    guard, so the whole selection-receipt guarantee rides on it alone.
+    """
+    key = Ed25519PrivateKey.generate()
+    signed = _build_signed(key)
+    # Baseline: the genuine receipt verifies. The only delta below is the
+    # signature bytes, so any failure must be attributable to them.
+    assert verify_receipt(signed).ok, verify_receipt(signed).errors
+
+    # Corrupt exactly one byte of the otherwise-genuine signature. It stays the
+    # correct length and valid base64; the embedded public key, keyid, and
+    # payload_digest are all left untouched and still describe `key`.
+    data = receipt_to_dict(signed)
+    raw = bytearray(base64.b64decode(data["signature_b64"]))
+    raw[0] ^= 0x01
+    data["signature_b64"] = base64.b64encode(bytes(raw)).decode("ascii")
+    forged = receipt_from_dict(data)
+
+    result = verify_receipt(forged)
+    assert not result.ok
+    # Sole line of defence: the signature is the *only* failing check. If any
+    # earlier check also tripped, this receipt would not isolate the signature
+    # as the guarantee, and the test would not pin item 2.
+    assert result.errors == ("Ed25519 signature does not verify",)
+
+
+# ---------------------------------------------------------------------------
+# #2706 item 3: score_vector keys are canonically sorted (non-alpha fixture)
+# ---------------------------------------------------------------------------
+
+
+def test_to_dict_sorts_non_alphabetical_score_vector_keys() -> None:
+    """``RaceCandidate.to_dict`` must emit the score-vector keys in sorted
+    order regardless of the caller's insertion order.
+
+    The fixture's keys are built in NON-alphabetical order on purpose. This is
+    the revert-sensitive guard for the ``sorted()`` in ``to_dict`` (#2706 item
+    3): drop that ``sorted()`` and the emitted order follows insertion order,
+    failing this assertion. A digest/canonical-bytes comparison cannot catch
+    the regression - ``json.dumps(sort_keys=True)`` re-sorts nested keys during
+    serialisation and masks it - which is exactly why the pre-existing fixtures
+    were vacuous.
+    """
+    unsorted = {"reversibility": 1.0, "correctness": 0.5, "cost": 0.25}
+    # Guard the fixture itself: if a future edit tidies these into alphabetical
+    # order, this test stops exercising the sort and must fail loudly here.
+    assert list(unsorted) != sorted(unsorted)
+
+    cand = RaceCandidate(
+        task_id="candidate-0",
+        terminal_snapshot_digest="b" * 64,
+        score_vector=unsorted,
+    )
+    emitted = list(cand.to_dict()["score_vector"].keys())
+    assert emitted == ["correctness", "cost", "reversibility"]
+
+
+def test_canonical_digest_is_independent_of_score_vector_key_order() -> None:
+    """A receipt built from a non-alphabetical score_vector is byte-identical
+    to its sorted twin: two operators who assembled the same score vector in
+    different key orders sign the same canonical envelope and payload digest.
+
+    (Order-independence here is defence-in-depth from both the ``to_dict``
+    sort and ``json.dumps(sort_keys=True)``; the single-line revert guard for
+    the ``to_dict`` sort lives in the test above.)
+    """
+    key = Ed25519PrivateKey.generate()
+
+    def _build(score_vector: dict[str, float]) -> SelectionReceipt:
+        return build_selection_receipt(
+            base_snapshot_digest="a" * 64,
+            candidates=[RaceCandidate("candidate-0", "b" * 64, score_vector)],
+            winner_task_id="candidate-0",
+            ranker_profile={"method": "topsis", "criteria": []},
+            public_key=key.public_key(),
+        )
+
+    unsorted = _build({"reversibility": 1.0, "correctness": 0.5, "cost": 0.25})
+    sorted_twin = _build({"correctness": 0.5, "cost": 0.25, "reversibility": 1.0})
+
+    assert canonical_receipt_bytes(unsorted) == canonical_receipt_bytes(sorted_twin)
+    assert unsorted.payload_digest == sorted_twin.payload_digest
