@@ -139,6 +139,102 @@ def test_missing_bearer_header_returns_401() -> None:
     assert response.status_code == 401
 
 
+def _app_with_gui_shell(legacy_token: str = "secret") -> TestClient:
+    """FastAPI app guarded by SSOAuthMiddleware that mounts GUI-shell routes."""
+    app = FastAPI()
+    app.add_middleware(SSOAuthMiddleware, legacy_token=legacy_token)
+
+    @app.get("/ui")
+    @app.get("/ui/{full_path:path}")
+    async def ui(full_path: str = "") -> dict[str, str]:
+        del full_path
+        return {"shell": "ok"}
+
+    @app.get("/favicon.ico")
+    async def favicon() -> dict[str, str]:
+        return {"icon": "ok"}
+
+    @app.get("/manifest.webmanifest")
+    async def manifest() -> dict[str, str]:
+        return {"manifest": "ok"}
+
+    @app.get("/sw.js")
+    async def service_worker() -> dict[str, str]:
+        return {"sw": "ok"}
+
+    @app.get("/offline.html")
+    async def offline() -> dict[str, str]:
+        return {"offline": "ok"}
+
+    @app.get("/tasks")
+    async def tasks() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    return TestClient(app)
+
+
+def test_gui_shell_and_pwa_assets_are_public_without_auth() -> None:
+    """The static GUI shell + PWA assets serve anonymously with auth configured.
+
+    Regression for the dashboard-auth self-lockout: a plain browser navigation
+    to /ui (and the browser's automatic /favicon.ico probe) previously
+    dead-ended on a bare 401 so the operator could never reach the app's own
+    token-entry screen.
+    """
+    client = _app_with_gui_shell()
+    for path in (
+        "/ui",
+        "/ui/",
+        "/ui/assets/index-abc123.js",
+        "/ui/icon-192.png",
+        "/favicon.ico",
+        "/manifest.webmanifest",
+        "/sw.js",
+        "/offline.html",
+    ):
+        assert client.get(path).status_code == 200, path
+
+
+def test_public_gui_shell_does_not_open_data_routes_or_siblings() -> None:
+    """Serving the shell publicly must not weaken the posture.
+
+    An unauthenticated (e.g. external, tokenless) request to a data route still
+    401s, and a ``/ui``-prefixed sibling that is not a true ``/ui/`` descendant
+    (``/uitasks``) is NOT made public by the prefix rule.
+    """
+    client = _app_with_gui_shell()
+    assert client.get("/tasks").status_code == 401
+    assert client.get("/uitasks").status_code == 401
+
+
+def test_bearer_auth_middleware_mirror_serves_shell_and_gates_data() -> None:
+    """The re-exported BearerAuthMiddleware keeps /ui + favicon public while
+    /tasks stays gated, so a downstream embedding does not dead-end the GUI."""
+    from bernstein.core.server.server_middleware import BearerAuthMiddleware
+
+    app = FastAPI()
+    app.add_middleware(BearerAuthMiddleware, auth_token="secret")
+
+    @app.get("/ui")
+    @app.get("/ui/{full_path:path}")
+    async def ui(full_path: str = "") -> dict[str, str]:
+        del full_path
+        return {"shell": "ok"}
+
+    @app.get("/favicon.ico")
+    async def favicon() -> dict[str, str]:
+        return {"icon": "ok"}
+
+    @app.get("/tasks")
+    async def tasks() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    client = TestClient(app)
+    assert client.get("/ui/").status_code == 200
+    assert client.get("/favicon.ico").status_code == 200
+    assert client.get("/tasks").status_code == 401
+
+
 def test_jwt_user_without_permission_gets_403() -> None:
     """A validated JWT still gets 403 when the user lacks the required permission."""
 

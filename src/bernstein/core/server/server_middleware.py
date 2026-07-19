@@ -45,8 +45,26 @@ _PUBLIC_PATHS = frozenset(
         "/redoc",
         "/openapi.json",
         "/openapi.yaml",
+        # Static operator GUI shell + PWA assets. The SPA bundle carries no
+        # run data and authenticates its own API calls with a Bearer token,
+        # so serving the shell anonymously does not expose state. Kept in
+        # sync with ``AUTH_PUBLIC_PATHS`` in
+        # ``bernstein.core.security.auth_middleware`` (the middleware
+        # ``create_app`` actually installs); mirrored here so the re-exported
+        # ``BearerAuthMiddleware`` does not dead-end /ui on a bare 401.
+        "/ui",
+        "/favicon.ico",
+        "/manifest.webmanifest",
+        "/sw.js",
+        "/offline.html",
     }
 )
+
+# Public path prefixes: static GUI shell assets under ``/ui/`` (hashed
+# bundles, PWA icons, service worker, offline page). Matches ``/ui/...`` but
+# not the bare ``/ui`` (an exact ``_PUBLIC_PATHS`` entry) nor siblings like
+# ``/uitasks``.
+_PUBLIC_PATH_PREFIXES = ("/ui/",)
 
 # HMAC-authenticated paths: handler verifies a shared-secret HMAC and rejects
 # unsigned requests with 401.  Listed here so the bearer middleware does not
@@ -88,7 +106,12 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             return response
 
         path = request.url.path
-        if path in _PUBLIC_PATHS or path in _HMAC_AUTH_PATHS or path.startswith(_HMAC_AUTH_PATH_PREFIXES):
+        if (
+            path in _PUBLIC_PATHS
+            or path in _HMAC_AUTH_PATHS
+            or path.startswith(_HMAC_AUTH_PATH_PREFIXES)
+            or path.startswith(_PUBLIC_PATH_PREFIXES)
+        ):
             response = await call_next(request)
             return response
 

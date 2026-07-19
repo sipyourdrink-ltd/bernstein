@@ -119,6 +119,21 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/api/v1/dashboard/auth/login",
         "/api/v1/dashboard/auth/logout",
         "/api/v1/dashboard/auth/status",
+        # Static operator GUI shell + PWA assets. The single-page-app bundle
+        # carries no run data and authenticates its OWN API calls with a
+        # Bearer token it reads from localStorage, so the shell is safe to
+        # serve anonymously - every data route (/tasks, /dashboard/*, the
+        # /api/v1/* data endpoints, /status, ...) stays behind the bearer
+        # check in ``dispatch``. Without this, a plain browser navigation to
+        # /ui dead-ends on a bare 401 instead of loading the app (and its
+        # token-entry screen), and the browser's automatic /favicon.ico probe
+        # 401s on every page load. ``/ui`` itself is the exact SPA entry; its
+        # sub-paths are covered by ``AUTH_PUBLIC_PATH_PREFIXES`` below.
+        "/ui",
+        "/favicon.ico",
+        "/manifest.webmanifest",
+        "/sw.js",
+        "/offline.html",
     }
 )
 
@@ -155,6 +170,14 @@ AUTH_HMAC_PATHS = frozenset(
 # Path prefixes whose handlers perform their own HMAC verification.
 # Used for routes with path parameters (e.g. /hooks/{session_id}).
 AUTH_HMAC_PATH_PREFIXES = ("/hooks/",)
+
+# Public path prefixes served without auth: the static GUI shell's own assets
+# under ``/ui/`` (hashed JS/CSS bundles, PWA icons, service worker, offline
+# page). This matches ``/ui/...`` but deliberately NOT the bare ``/ui`` (that
+# exact path is in ``AUTH_PUBLIC_PATHS``) and NOT sibling paths such as
+# ``/uitasks`` - only true descendants of ``/ui/`` are public. See the
+# ``AUTH_PUBLIC_PATHS`` comment for why the shell is safe to serve anonymously.
+AUTH_PUBLIC_PATH_PREFIXES = ("/ui/",)
 
 # Opt-out flag: when set to a truthy value, auth is disabled and the
 # middleware passes every request through (with a loud warning on startup).
@@ -442,6 +465,13 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
 
         # Truly-public paths are always accessible.
         if path in AUTH_PUBLIC_PATHS:
+            response = await call_next(request)
+            return response
+
+        # Static GUI shell assets under /ui/ are public (see
+        # AUTH_PUBLIC_PATH_PREFIXES). The shell authenticates its own data
+        # calls; the data routes themselves stay gated below.
+        if path.startswith(AUTH_PUBLIC_PATH_PREFIXES):
             response = await call_next(request)
             return response
 

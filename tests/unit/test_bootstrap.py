@@ -12,8 +12,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from bernstein.core.bootstrap import bootstrap_from_goal, bootstrap_from_seed
+from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.seed import SeedConfig
 from bernstein.core.server_launch import BootstrapResult
+
+from bernstein.core.orchestration.bootstrap import _post_plan_tasks
 
 
 class _CompletedFuture:
@@ -232,3 +235,61 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
 
     assert result.manager_task_id == "mgr-1"
     mock_autowrite.assert_called_once_with(tmp_path)
+
+
+def _plan_task() -> Task:
+    """A minimal plan-file Task for _post_plan_tasks auth tests."""
+    return Task(
+        id="t1",
+        title="Do the thing",
+        description="details",
+        role="backend",
+        priority=1,
+        scope=Scope.MEDIUM,
+        complexity=Complexity.MEDIUM,
+    )
+
+
+def test_post_plan_tasks_authenticates_to_its_own_server() -> None:
+    """Plan-file task POSTs carry the spawned server's bearer token.
+
+    Regression for the dashboard-auth self-lockout: ``bernstein run <plan.yaml>``
+    spawns an auth-enabled task server, so the CLI's own ``/tasks`` writes must
+    present the token or the server 401s the CLI against its own server.
+    """
+    captured: dict[str, str | None] = {}
+
+    async def _fake_post(client: Any, server_url: str, task: Any, **_kw: Any) -> str:
+        del server_url, task
+        captured["auth"] = client.headers.get("authorization")
+        return "srv-1"
+
+    with patch("bernstein.core.planner._post_task_to_server", _fake_post):
+        _post_plan_tasks(
+            [_plan_task()],
+            "http://server",
+            SimpleNamespace(arrow_right=">"),
+            auth_token="secret-token",
+        )
+
+    assert captured["auth"] == "Bearer secret-token"
+
+
+def test_post_plan_tasks_sends_no_header_when_auth_disabled() -> None:
+    """With no token configured the POST stays unauthenticated (loopback default)."""
+    captured: dict[str, str | None] = {}
+
+    async def _fake_post(client: Any, server_url: str, task: Any, **_kw: Any) -> str:
+        del server_url, task
+        captured["auth"] = client.headers.get("authorization")
+        return "srv-1"
+
+    with patch("bernstein.core.planner._post_task_to_server", _fake_post):
+        _post_plan_tasks(
+            [_plan_task()],
+            "http://server",
+            SimpleNamespace(arrow_right=">"),
+            auth_token=None,
+        )
+
+    assert captured["auth"] is None

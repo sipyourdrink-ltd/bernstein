@@ -72,6 +72,20 @@ from bernstein.core.server_supervisor import supervised_server
 logger = logging.getLogger(__name__)
 
 
+def _bearer_headers(auth_token: str | None) -> dict[str, str]:
+    """Authorization header for the CLI's own calls to its auth-enabled server.
+
+    ``bernstein run`` / ``conduct`` spawn the task server themselves and, when
+    dashboard auth is configured, hand it a bearer token (see
+    :func:`~bernstein.core.server.server_launch._resolve_auth_token`). The same
+    process must present that token on its own client calls - posting plan
+    tasks, importing workflow items - or the server 401s the CLI against its
+    own task server. Returns an empty dict when no token is configured so the
+    unauthenticated (loopback, no-auth) path is unchanged.
+    """
+    return {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+
+
 # ---------------------------------------------------------------------------
 # Singleton PID lock
 # ---------------------------------------------------------------------------
@@ -436,7 +450,7 @@ def _sync_and_plan_tasks(
     try:
         from bernstein.core.workflow_importer import import_workflow_tasks
 
-        with httpx.Client(timeout=10.0) as _wf_client:
+        with httpx.Client(timeout=10.0, headers=_bearer_headers(auth_token)) as _wf_client:
             _wf_imported = import_workflow_tasks(workdir, _wf_client, server_url)
         if _wf_imported:
             console.print(f"  [dim]workflow[/dim] {_wf_imported} task(s) from workflow file(s)")
@@ -998,7 +1012,7 @@ def _goal_sync_and_plan(
     try:
         from bernstein.core.workflow_importer import import_workflow_tasks
 
-        with httpx.Client(timeout=10.0) as _wf_client:
+        with httpx.Client(timeout=10.0, headers=_bearer_headers(auth_token)) as _wf_client:
             _wf_imported = import_workflow_tasks(workdir, _wf_client, server_url)
         if _wf_imported:
             console.print(f"[green]{icons.arrow_right}[/green] Imported {_wf_imported} task(s) from workflow file(s)")
@@ -1024,7 +1038,7 @@ def _goal_sync_and_plan(
             f"({completed_count} task(s) already completed - skipping re-planning)"
         )
     elif tasks:
-        _post_plan_tasks(tasks, server_url, icons)
+        _post_plan_tasks(tasks, server_url, icons, auth_token)
         backlog_count = len(tasks)
     elif backlog_count > 0:
         console.print(
@@ -1046,8 +1060,13 @@ def _goal_sync_and_plan(
     return backlog_count, manager_task_id, sync_result
 
 
-def _post_plan_tasks(tasks: list[Task], server_url: str, icons: Any) -> None:
-    """Post pre-defined plan tasks to the server."""
+def _post_plan_tasks(tasks: list[Task], server_url: str, icons: Any, auth_token: str | None = None) -> None:
+    """Post pre-defined plan tasks to the server.
+
+    ``auth_token`` is the bearer token the CLI handed to its own spawned task
+    server; it must ride along on these POSTs or an auth-enabled server rejects
+    the CLI's own ``/tasks`` writes with 401 (the dashboard-auth self-lockout).
+    """
     import asyncio
 
     from bernstein.core.planner import _post_task_to_server
@@ -1055,7 +1074,7 @@ def _post_plan_tasks(tasks: list[Task], server_url: str, icons: Any) -> None:
     with Status(f"[bold]Posting {len(tasks)} tasks to server...[/bold]", console=console):
 
         async def _post_all() -> None:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, headers=_bearer_headers(auth_token)) as client:
                 id_map: dict[str, str] = {}
                 for t in tasks:
                     t.depends_on = [id_map.get(dep, dep) for dep in t.depends_on]
