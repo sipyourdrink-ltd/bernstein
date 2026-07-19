@@ -24,7 +24,7 @@ OWNED_WORKFLOWS = (
     "sonar-hotspot-review.yml",
     "docs-observability-snapshot.yml",
     "pr-observability-summary.yml",
-    "glitchtip-ingester.yml",
+    "glitchtip.yml",
     "nightly-canary.yml",
     "sonar-code-scanning.yml",
 )
@@ -79,7 +79,7 @@ def test_owned_workflows_do_not_install_uv_with_unpinned_pip(workflow_name: str)
         "sonar-hotspot-review.yml",
         "docs-observability-snapshot.yml",
         "pr-observability-summary.yml",
-        "glitchtip-ingester.yml",
+        "glitchtip.yml",
         "nightly-canary.yml",
         "sonar-code-scanning.yml",
     ),
