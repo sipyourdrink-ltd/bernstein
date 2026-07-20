@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,24 @@ from bernstein.gui import cli as gui_cli
 # The suite disables auth by default (autouse ``_disable_auth_for_tests``);
 # these tests assert the real enforced posture, so opt back into auth.
 pytestmark = pytest.mark.auth_enabled
+
+
+@pytest.fixture(autouse=True)
+def _isolate_minted_bearer_env() -> Iterator[None]:
+    """Restore ``BERNSTEIN_AUTH_TOKEN`` to its pre-test state after each test.
+
+    ``serve()`` exports the minted bearer via a raw ``os.environ`` assignment,
+    which ``monkeypatch`` teardown cannot undo when the key was absent before
+    the test (``delenv(raising=False)`` records no undo action). Without this
+    guard the minted token leaks into later randomly-ordered tests in the same
+    session.
+    """
+    before = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    yield
+    if before is None:
+        os.environ.pop("BERNSTEIN_AUTH_TOKEN", None)
+    else:
+        os.environ["BERNSTEIN_AUTH_TOKEN"] = before
 
 
 def _build_app(sdd: Path):
