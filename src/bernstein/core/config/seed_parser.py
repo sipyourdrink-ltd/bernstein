@@ -710,8 +710,90 @@ def _parse_bridge_settings(raw: object) -> BridgeConfigSet | None:
     return BridgeConfigSet(openclaw=_parse_openclaw_runtime_config(data.get("openclaw")))
 
 
-def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str | int | dict[str, object]]] | None:
-    """Parse optional role-specific provider/model overrides."""
+# Keys accepted on a ``local_endpoints.<name>`` profile. Mirrors
+# ``LocalEndpointProfileSchema`` (config_schema.py) which is ``extra="forbid"``,
+# so the seed parser and the pydantic schema reject the same malformed
+# profiles. ``base_url``/``model`` are required; the rest are optional.
+_LOCAL_ENDPOINT_KEYS: tuple[str, ...] = ("base_url", "model", "api_key_env", "engine", "timeout")
+
+
+def _parse_local_endpoints(raw: object) -> dict[str, dict[str, str]] | None:
+    """Parse the optional ``local_endpoints`` section (issue #2356).
+
+    Named OpenAI-compatible endpoint profiles referenced from
+    ``role_model_policy.<role>.endpoint``. This mirrors
+    :class:`bernstein.core.config.config_schema.LocalEndpointProfileSchema`
+    so a seed file parses via ``parse_seed`` (the runtime spawn path)
+    exactly as it validates via ``load_and_validate``.
+
+    Returns a mapping of profile name -> resolved endpoint fields
+    (``base_url`` and ``model`` always present; ``api_key_env`` only when
+    the profile declares one). ``engine``/``timeout`` are validated for
+    shape but not carried onto role entries - they are provenance/runtime
+    metadata the seed's role-policy consumers do not read.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError("local_endpoints must be a mapping of profile-name -> settings")
+
+    profiles: dict[str, dict[str, str]] = {}
+    for name, settings in raw.items():
+        if not isinstance(name, str) or not name:
+            raise SeedError("local_endpoints keys must be non-empty profile-name strings")
+        if not isinstance(settings, dict):
+            raise SeedError(f"local_endpoints[{name!r}] must be a mapping")
+
+        resolved: dict[str, str] = {}
+        for key in ("base_url", "model"):
+            value = settings.get(key)
+            if not isinstance(value, str) or not value:
+                raise SeedError(f"local_endpoints[{name!r}][{key!r}] must be a non-empty string")
+            resolved[key] = value
+
+        api_key_env = settings.get("api_key_env")
+        if api_key_env is not None:
+            if not isinstance(api_key_env, str) or not api_key_env:
+                raise SeedError(f"local_endpoints[{name!r}]['api_key_env'] must be a non-empty string")
+            # Reuse the adapter's fail-closed credential-name allowlist so an
+            # unrelated host secret cannot be forwarded to an endpoint by
+            # hiding it in a profile instead of an inline role entry.
+            from bernstein.adapters.openai_agents_runner import validate_api_key_env_name
+
+            try:
+                validate_api_key_env_name(api_key_env)
+            except RuntimeError as exc:
+                raise SeedError(f"local_endpoints[{name!r}][api_key_env]: {exc}") from exc
+            resolved["api_key_env"] = api_key_env
+
+        engine = settings.get("engine")
+        if engine is not None and (not isinstance(engine, str) or not engine):
+            raise SeedError(f"local_endpoints[{name!r}]['engine'] must be a non-empty string")
+
+        timeout = settings.get("timeout")
+        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0):
+            raise SeedError(f"local_endpoints[{name!r}]['timeout'] must be a positive number")
+
+        unknown_keys = sorted(set(settings) - set(_LOCAL_ENDPOINT_KEYS))
+        if unknown_keys:
+            raise SeedError(f"local_endpoints[{name!r}] has unknown keys: {', '.join(unknown_keys)}")
+
+        profiles[name] = resolved
+    return profiles
+
+
+def _parse_role_model_policy(
+    raw: object,
+    *,
+    local_endpoints: dict[str, dict[str, str]] | None = None,
+) -> dict[str, dict[str, str | int | dict[str, object]]] | None:
+    """Parse optional role-specific provider/model overrides.
+
+    ``local_endpoints`` is the parsed ``local_endpoints`` section (profile
+    name -> resolved endpoint fields). It is threaded through so a role's
+    ``endpoint`` reference can be validated against the declared profiles
+    and resolved onto the entry - see :func:`_parse_single_role_policy`.
+    """
     if raw is None:
         return None
     if not isinstance(raw, dict):
@@ -721,7 +803,7 @@ def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str | int | dic
     for role, settings in raw.items():
         if not isinstance(role, str) or not role:
             raise SeedError("role_model_policy keys must be non-empty role strings")
-        parsed[role] = _parse_single_role_policy(role, settings)
+        parsed[role] = _parse_single_role_policy(role, settings, local_endpoints=local_endpoints)
     return parsed
 
 
@@ -757,6 +839,21 @@ _ROLE_POLICY_STYLE_KEY = "response_style"
 # is carved out of the unknown-keys check in ``_parse_single_role_policy``
 # rather than added to ``_ROLE_POLICY_KEYS``.
 _ROLE_POLICY_COUNCIL_KEY = "council"
+
+# ``endpoint`` names a ``local_endpoints`` profile this role runs on (issue
+# #2356). The referenced profile's ``base_url``/``model``/``api_key_env`` are
+# materialized onto the entry at parse time, so downstream consumers see one
+# resolved shape - matching the pydantic schema's
+# ``BernsteinConfig._resolve_local_endpoint_references``. Without this branch a
+# seed file setting ``role_model_policy.<role>.endpoint`` was rejected at parse
+# time with "unknown keys: endpoint" (parser/schema divergence fixed here),
+# even though the schema path (``load_and_validate``) accepted the same file.
+_ROLE_POLICY_ENDPOINT_KEY = "endpoint"
+
+# Endpoint fields that the ``endpoint`` profile reference pins; setting any of
+# them inline alongside ``endpoint`` is a conflict (the profile is the single
+# source of truth for the certified endpoint).
+_ROLE_POLICY_ENDPOINT_PINNED_KEYS: tuple[str, ...] = ("base_url", "model", "api_key_env")
 
 _COUNCIL_CANDIDATE_KEYS: tuple[str, ...] = ("model", "base_url", "api_key_env")
 
@@ -846,8 +943,22 @@ def _parse_council(role: str, raw: object) -> dict[str, object]:
     return parsed
 
 
-def _parse_single_role_policy(role: str, settings: object) -> dict[str, str | int | dict[str, object]]:
+def _parse_single_role_policy(
+    role: str,
+    settings: object,
+    *,
+    local_endpoints: dict[str, dict[str, str]] | None = None,
+) -> dict[str, str | int | dict[str, object]]:
     """Parse and validate a single role's model policy settings.
+
+    ``endpoint`` names a ``local_endpoints`` profile (see
+    :func:`_parse_local_endpoints`) this role runs on. It must reference a
+    declared profile and is mutually exclusive with an inline
+    ``base_url``/``model``/``api_key_env`` (the profile pins the certified
+    endpoint). On success the profile's endpoint fields are materialized
+    onto the returned entry, so downstream consumers see the same resolved
+    shape the pydantic schema produces via
+    :meth:`bernstein.core.config.config_schema.BernsteinConfig._resolve_local_endpoint_references`.
 
     ``base_url`` and ``api_key_env`` are optional per-role endpoint
     overrides that flow through the spawn path into the adapter manifest
@@ -931,8 +1042,36 @@ def _parse_single_role_policy(role: str, settings: object) -> dict[str, str | in
     if raw_council is not None:
         normalized[_ROLE_POLICY_COUNCIL_KEY] = _parse_council(role, raw_council)
 
+    raw_endpoint = settings.get(_ROLE_POLICY_ENDPOINT_KEY)
+    if raw_endpoint is not None:
+        if not isinstance(raw_endpoint, str) or not raw_endpoint:
+            raise SeedError(f"role_model_policy[{role!r}][{_ROLE_POLICY_ENDPOINT_KEY!r}] must be a non-empty string")
+        profiles = local_endpoints or {}
+        profile = profiles.get(raw_endpoint)
+        if profile is None:
+            known = ", ".join(sorted(profiles)) or "(none defined)"
+            raise SeedError(
+                f"role_model_policy[{role!r}].endpoint references unknown local_endpoints "
+                f"profile {raw_endpoint!r}. Known profiles: {known}."
+            )
+        # The profile is the single source of truth for the endpoint: the
+        # certification receipt is keyed on its exact (base_url, model) pair,
+        # so an inline base_url/model/api_key_env alongside it is a conflict.
+        conflicts = sorted(key for key in _ROLE_POLICY_ENDPOINT_PINNED_KEYS if key in normalized)
+        if conflicts:
+            raise SeedError(
+                f"role_model_policy[{role!r}]: {', '.join(conflicts)} cannot be set inline together "
+                f"with endpoint={raw_endpoint!r}; the profile pins the certified endpoint. "
+                "Move the overrides into the local_endpoints profile."
+            )
+        normalized[_ROLE_POLICY_ENDPOINT_KEY] = raw_endpoint
+        for key, value in profile.items():
+            normalized[key] = value
+
     allowed_keys = (
-        set(_ROLE_POLICY_KEYS) | set(_ROLE_POLICY_INT_KEYS) | {_ROLE_POLICY_COUNCIL_KEY, _ROLE_POLICY_STYLE_KEY}
+        set(_ROLE_POLICY_KEYS)
+        | set(_ROLE_POLICY_INT_KEYS)
+        | {_ROLE_POLICY_COUNCIL_KEY, _ROLE_POLICY_STYLE_KEY, _ROLE_POLICY_ENDPOINT_KEY}
     )
     unknown_keys = sorted(set(settings) - allowed_keys)
     if unknown_keys:
@@ -1873,7 +2012,10 @@ def parse_seed(path: Path) -> SeedConfig:
 
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
-    role_model_policy = _parse_role_model_policy(role_policy_raw)
+    # ``local_endpoints`` profiles are parsed first so a role's ``endpoint``
+    # reference can be validated and resolved against them (issue #2356).
+    local_endpoints = _parse_local_endpoints(data.get("local_endpoints"))
+    role_model_policy = _parse_role_model_policy(role_policy_raw, local_endpoints=local_endpoints)
 
     # AC4: every declared response_style
     # must be renderable from the mode-profile templates visible from the

@@ -233,6 +233,114 @@ class TestParseSeedValid:
 
 
 # ---------------------------------------------------------------------------
+# parse_seed - local_endpoints profiles (issue #2356)
+# ---------------------------------------------------------------------------
+
+
+_LOCAL_ENDPOINTS_YAML = (
+    "local_endpoints:\n"
+    "  workhorse:\n"
+    "    base_url: http://127.0.0.1:11434/v1\n"
+    "    model: qwen2.5-coder\n"
+    "    engine: ollama\n"
+    "    timeout: 120\n"
+)
+
+
+class TestRoleModelPolicyLocalEndpoints:
+    """``role_model_policy.<role>.endpoint`` -> ``local_endpoints`` profile.
+
+    The seed parser must accept and resolve the same profile references the
+    pydantic ``BernsteinConfig`` schema already validates, so the shipped
+    ``examples/local-fleet/bernstein.yaml`` parses via ``parse_seed`` (the
+    runtime spawn path) and not only via ``load_and_validate``.
+    """
+
+    def test_endpoint_reference_resolves_profile_onto_entry(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n' + _LOCAL_ENDPOINTS_YAML + "role_model_policy:\n  linter:\n    endpoint: workhorse\n"
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.role_model_policy is not None
+        entry = cfg.role_model_policy["linter"]
+        # The profile is the single source of truth: base_url/model are
+        # materialised onto the entry (same shape the schema produces).
+        assert entry["endpoint"] == "workhorse"
+        assert entry["base_url"] == "http://127.0.0.1:11434/v1"
+        assert entry["model"] == "qwen2.5-coder"
+
+    def test_endpoint_reference_carries_profile_api_key_env(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n'
+            "local_endpoints:\n"
+            "  gateway:\n"
+            "    base_url: http://127.0.0.1:8000/v1\n"
+            "    model: gpt-5\n"
+            "    api_key_env: OPENROUTER_API_KEY\n"
+            "role_model_policy:\n  backend:\n    endpoint: gateway\n"
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.role_model_policy is not None
+        assert cfg.role_model_policy["backend"]["api_key_env"] == "OPENROUTER_API_KEY"
+
+    def test_endpoint_reference_to_unknown_profile_rejected(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n' + _LOCAL_ENDPOINTS_YAML + "role_model_policy:\n  linter:\n    endpoint: missing\n"
+        )
+        with pytest.raises(SeedError, match="unknown local_endpoints profile"):
+            parse_seed(seed_file)
+
+    def test_endpoint_with_inline_endpoint_fields_rejected(self, seed_file: Path) -> None:
+        # The profile pins the certified endpoint; setting base_url/model
+        # inline alongside it is rejected (mirrors the schema).
+        seed_file.write_text(
+            'goal: "T"\n'
+            + _LOCAL_ENDPOINTS_YAML
+            + "role_model_policy:\n  linter:\n    endpoint: workhorse\n    model: gpt-5\n"
+        )
+        with pytest.raises(SeedError, match="cannot be set inline"):
+            parse_seed(seed_file)
+
+    def test_endpoint_must_be_a_string(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n' + _LOCAL_ENDPOINTS_YAML + "role_model_policy:\n  linter:\n    endpoint: 123\n"
+        )
+        with pytest.raises(SeedError, match="endpoint.*non-empty string"):
+            parse_seed(seed_file)
+
+    def test_local_endpoints_profile_requires_base_url(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nlocal_endpoints:\n  workhorse:\n    model: qwen2.5-coder\n')
+        with pytest.raises(SeedError, match="base_url"):
+            parse_seed(seed_file)
+
+    def test_local_endpoints_profile_rejects_unknown_keys(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n'
+            "local_endpoints:\n"
+            "  workhorse:\n"
+            "    base_url: http://127.0.0.1:11434/v1\n"
+            "    model: qwen2.5-coder\n"
+            "    bogus: yes\n"
+        )
+        with pytest.raises(SeedError, match="unknown keys: bogus"):
+            parse_seed(seed_file)
+
+    def test_local_endpoints_profile_rejects_non_credential_api_key_env(self, seed_file: Path) -> None:
+        # Fail-closed: an unrelated host secret name must not slip through by
+        # hiding in a local_endpoints profile instead of an inline entry.
+        seed_file.write_text(
+            'goal: "T"\n'
+            "local_endpoints:\n"
+            "  gateway:\n"
+            "    base_url: http://127.0.0.1:8000/v1\n"
+            "    model: gpt-5\n"
+            "    api_key_env: GITHUB_TOKEN\n"
+        )
+        with pytest.raises(SeedError, match="allowed credential variable name"):
+            parse_seed(seed_file)
+
+
+# ---------------------------------------------------------------------------
 # parse_seed - invalid inputs
 # ---------------------------------------------------------------------------
 

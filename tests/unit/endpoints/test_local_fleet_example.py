@@ -15,6 +15,8 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from bernstein.core.seed import parse_seed
+
 from bernstein.core.config.config_schema import load_and_validate
 from bernstein.core.endpoints.conformance import LOCAL_TIER_ROLES
 from tests.unit.endpoints.stub_endpoint import EndpointBehavior, stub_endpoint_server
@@ -37,6 +39,21 @@ def test_example_config_exists_and_validates_with_defaults() -> None:
         assert role in LOCAL_TIER_ROLES
     assert policy["manager"].endpoint is None, "the manager must stay on the API endpoint"
     assert policy["manager"].base_url is not None
+
+
+def test_example_config_parses_via_seed_parser() -> None:
+    # The runtime spawn path (parse_seed) must accept the shipped example,
+    # not just the pydantic validation path (load_and_validate). Regression
+    # for role_model_policy.<role>.endpoint being rejected as an unknown key.
+    seed = parse_seed(_EXAMPLE)
+    policy = seed.role_model_policy or {}
+    for role in _WORKER_ROLES:
+        assert policy[role]["endpoint"] == "workhorse"
+        # The profile's base_url/model are materialised onto the entry.
+        assert policy[role]["base_url"], f"{role} must inherit the profile base_url"
+        assert policy[role]["model"], f"{role} must inherit the profile model"
+    assert "endpoint" not in policy["manager"], "the manager must stay on the API endpoint"
+    assert policy["manager"]["base_url"]
 
 
 def _complete_subtask(base_url: str, model: str, role: str) -> str:
