@@ -22,7 +22,7 @@ All magic numbers, timeouts, and thresholds are centralized in `src/bernstein/co
 `bernstein.yaml` is the main run-time input. Typical keys include:
 
 - `goal`
-- `tasks`
+- `cells` (number of parallel work cells; work is decomposed from `goal`)
 - `workspace`
 - `role_model_policy`
 - `local_endpoints`
@@ -31,17 +31,16 @@ All magic numbers, timeouts, and thresholds are centralized in `src/bernstein/co
 - `network` (IP allowlist)
 - `tuning` (override defaults from `core/defaults.py`)
 
+Unknown top-level keys are ignored but logged: the parser emits a warning
+naming the unrecognised key and, where possible, the closest known key
+(for example `tasks` suggests `cells`). A typo such as `max_agnets` no
+longer silently drops the setting; check the run log if a section seems
+to have no effect.
+
 Minimal example:
 
 ```yaml
 goal: "Implement API auth and integration tests"
-
-tasks:
-  - title: "Add auth middleware"
-    role: backend
-    priority: 1
-    scope: medium
-    complexity: medium
 
 role_model_policy:
   backend:

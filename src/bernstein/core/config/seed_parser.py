@@ -7,6 +7,7 @@ backward compatibility.
 
 from __future__ import annotations
 
+import difflib
 import ipaddress
 import logging
 import os
@@ -1812,6 +1813,144 @@ def _parse_mcp_signing_mode(data: dict[str, object]) -> Literal["warn", "strict"
     return cast("Literal['warn', 'strict', 'off']", candidate)
 
 
+# Every top-level key ``parse_seed`` consumes, directly or via a helper
+# that receives the whole mapping. Any new ``data.get(...)`` read must be
+# added here; keys outside the known set trigger the unknown-key warning
+# in ``_warn_unknown_top_level_keys`` so a typo or an unsupported section
+# cannot silently drop configuration from the run.
+_PARSED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
+    {
+        "agent_catalog",
+        "batch",
+        "bridges",
+        "budget",
+        "catalogs",
+        "cells",
+        "cli",
+        "cluster",
+        "compliance",
+        "constraints",
+        "context_files",
+        "cors",
+        "cost",
+        "cost_autopilot",
+        "cost_tags",
+        "dashboard_auth",
+        "deployment_strategy",
+        "formal_verification",
+        "github",
+        "goal",
+        "internal_llm_model",
+        "internal_llm_provider",
+        "judge_model",
+        "judge_provider",
+        "key_rotation",
+        "max_agents",
+        "max_cost_per_agent",
+        "mcp",
+        "mcp_allowlist",
+        "mcp_servers",
+        "metrics",
+        "model",
+        "model_fallback",
+        "model_policy",
+        "network",
+        "notify",
+        "org_policies",
+        "provider_availability",
+        "quality_gates",
+        "rate_limit",
+        "repos",
+        "role_model_policy",
+        "sandbox",
+        "secrets",
+        "session",
+        "smtp",
+        "storage",
+        "team",
+        "team_manifest",
+        "tenants",
+        "test_agent",
+        "tuning",
+        "visual",
+        "webhooks",
+        "workspace",
+        "worktree_setup",
+    }
+)
+
+# Top-level sections consumed by subsystems that read bernstein.yaml
+# directly instead of going through ``parse_seed``. Each entry names its
+# reader so a removed section can be retired from this set alongside it.
+_SECTION_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
+    {
+        "approvals",  # core/approval/gate.py
+        "autofix",  # core/autofix/ladder.py, core/autofix/telemetry_grounded.py
+        "chat",  # core/chat/permissions.py
+        "embedding",  # core/routes/embedding.py
+        "evolve",  # cli/commands/evolve_cmd.py
+        "hooks",  # cli/commands/hooks_cmd.py
+        "keybindings",  # tui/keybinding_config.py
+        "mcp_compositions",  # core/protocols/mcp/mcp_composition.py
+        "mcp_sandbox",  # core/protocols/mcp/mcp_sandbox.py
+        "mouse",  # tui/mouse_support.py
+        "permissions",  # core/security/permission_policy.py
+        "plan",  # core/planning/vertical_slice.py
+        "plugins",  # plugins/manager.py
+        "preview",  # core/preview/command_discovery.py
+        "security",  # core/security/compliance_library.py
+        "tls",  # core/security/compliance_library.py
+        "warm_pool",  # core/agents/warm_pool.py
+    }
+)
+
+# Keys operators plausibly reach for that map to a schema key covering the
+# same intent. Consulted before the fuzzy match because edit distance
+# cannot connect these pairs.
+_TOP_LEVEL_KEY_ALIASES: dict[str, str] = {
+    "tasks": "cells",
+}
+
+
+def _known_top_level_keys() -> frozenset[str]:
+    """Return every top-level bernstein.yaml key a shipped subsystem consumes.
+
+    Unions the keys this parser reads, the sections read out-of-band by
+    other subsystems, and the fields of the Pydantic schema
+    (``BernsteinConfig``) so schema additions never produce false
+    unknown-key warnings here. The schema import is deferred to keep this
+    module's import graph unchanged.
+    """
+    from bernstein.core.config.config_schema import BernsteinConfig
+
+    return _PARSED_TOP_LEVEL_KEYS | _SECTION_TOP_LEVEL_KEYS | frozenset(BernsteinConfig.model_fields)
+
+
+def _warn_unknown_top_level_keys(data: dict[str, object]) -> None:
+    """Warn about top-level keys nothing in the codebase consumes.
+
+    A warning, never an error: existing seeds must keep parsing. The
+    parse result is unaffected; unknown keys stay ignored exactly as
+    before, they are just no longer silent.
+    """
+    known = _known_top_level_keys()
+    unknown = [key for key in data if not (isinstance(key, str) and key in known)]
+    for key in sorted(unknown, key=str):
+        key_text = key if isinstance(key, str) else str(key)
+        suggestion = _TOP_LEVEL_KEY_ALIASES.get(key_text)
+        if suggestion is None:
+            matches = difflib.get_close_matches(key_text, sorted(known), n=1)
+            suggestion = matches[0] if matches else None
+        if suggestion is not None:
+            logger.warning(
+                "Ignoring unknown top-level key %r in seed file; did you mean %r?",
+                key_text,
+                suggestion,
+            )
+        else:
+            logger.warning("Ignoring unknown top-level key %r in seed file.", key_text)
+
+
 def parse_seed(path: Path) -> SeedConfig:
     """Parse a bernstein.yaml seed file into a validated SeedConfig.
 
@@ -1841,6 +1980,8 @@ def parse_seed(path: Path) -> SeedConfig:
         raise SeedError(f"Seed file must be a YAML mapping, got {type(data_raw).__name__}")
 
     data: dict[str, object] = cast("_StrObjDict", data_raw)
+
+    _warn_unknown_top_level_keys(data)
 
     # --- Required fields ---
     goal: object = data.get("goal")

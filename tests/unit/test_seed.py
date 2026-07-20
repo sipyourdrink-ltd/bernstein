@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -758,3 +759,71 @@ class TestResolveSeedPathWorkdirFallback:
 
         assert resolved.is_absolute()
         assert resolved == (tmp_path / "bernstein.yaml").resolve()
+
+
+# ---------------------------------------------------------------------------
+# parse_seed - unknown top-level keys
+# ---------------------------------------------------------------------------
+
+_SEED_PARSER_LOGGER = "bernstein.core.config.seed_parser"
+
+
+class TestParseSeedUnknownTopLevelKeys:
+    """Unknown top-level keys warn (never fail) and suggest the nearest known key."""
+
+    def test_unknown_key_warns_and_names_it(self, seed_file: Path, caplog: pytest.LogCaptureFixture) -> None:
+        seed_file.write_text('goal: "Test"\nmax_agnets: 3\n')
+
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            cfg = parse_seed(seed_file)
+
+        assert cfg.goal == "Test"
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("max_agnets" in m for m in messages)
+
+    def test_unknown_key_suggests_nearest_match(self, seed_file: Path, caplog: pytest.LogCaptureFixture) -> None:
+        seed_file.write_text('goal: "Test"\nmax_agnets: 3\n')
+
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            parse_seed(seed_file)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("max_agnets" in m and "max_agents" in m for m in messages)
+
+    def test_tasks_key_suggests_cells(self, seed_file: Path, caplog: pytest.LogCaptureFixture) -> None:
+        seed_file.write_text('goal: "Test"\ntasks:\n  - id: t1\n    description: x\n')
+
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            parse_seed(seed_file)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("tasks" in m and "cells" in m for m in messages)
+
+    def test_valid_seed_warns_nothing(self, seed_file: Path, caplog: pytest.LogCaptureFixture) -> None:
+        seed_file.write_text(FULL_YAML)
+
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            parse_seed(seed_file)
+
+        assert not caplog.records
+
+    def test_parse_result_unchanged_by_unknown_key(self, seed_file: Path, caplog: pytest.LogCaptureFixture) -> None:
+        seed_file.write_text(MINIMAL_YAML)
+        baseline = parse_seed(seed_file)
+
+        seed_file.write_text(MINIMAL_YAML + "tasks: [{id: t1, description: x}]\n")
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            with_unknown = parse_seed(seed_file)
+
+        assert with_unknown == baseline
+
+    def test_unknown_key_without_close_match_still_warns(
+        self, seed_file: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        seed_file.write_text('goal: "Test"\nzzqqxx: 1\n')
+
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            parse_seed(seed_file)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("zzqqxx" in m for m in messages)
