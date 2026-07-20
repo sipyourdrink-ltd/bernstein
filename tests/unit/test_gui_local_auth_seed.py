@@ -180,7 +180,11 @@ def test_serve_non_loopback_configured_never_auto_mints(tmp_path: Path, monkeypa
     opened: list[str] = []
     monkeypatch.setattr(webbrowser, "open", lambda u, *a, **k: opened.append(u) or True)
 
-    result = CliRunner().invoke(gui_cli.serve, ["--host", "0.0.0.0", "--port", "8052", "--no-open"])
+    # No --no-open: the auto-open path IS exercised, yet a routable bind still
+    # must not mint a bearer nor seed a token-bearing URL.
+    result = CliRunner().invoke(gui_cli.serve, ["--host", "0.0.0.0", "--port", "8052"])
     assert result.exit_code == 0, result.output
     # No bearer minted on a routable interface, even with no token supplied.
     assert not os.environ.get("BERNSTEIN_AUTH_TOKEN"), "must not auto-mint on a non-loopback bind"
+    # If a browser was opened at all, it carried no token fragment.
+    assert all("#t=" not in u for u in opened), opened

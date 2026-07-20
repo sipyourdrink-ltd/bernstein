@@ -410,13 +410,17 @@ def serve(
     # operator token issued and printed once.
     _enforce_dashboard_posture(host, Path.cwd())
 
-    # Local-dashboard unlock: on a loopback bind with no BERNSTEIN_AUTH_TOKEN
-    # supplied, mint an ephemeral operator bearer and export it BEFORE
-    # create_app() so the general /api/v1 surface the SPA's panels poll
-    # accepts it. The same token is seeded into the operator's browser below
-    # (via _resolve_local_open_url), so the panels return 200 with zero manual
-    # steps. No-op on routable binds and when a bearer is already configured.
-    _ensure_loopback_api_token(host)
+    # We auto-open (and seed) the operator's own browser only on a plain local
+    # serve - never with --no-open / --dev / --tunnel, which have their own
+    # onboarding story. The loopback bearer mint is coupled to that path: an
+    # auto-minted token is only useful when it is actually delivered to a
+    # browser via the opened URL, so mint only when we will open one. Export it
+    # BEFORE create_app() so the general /api/v1 surface the SPA's panels poll
+    # accepts it; _resolve_local_open_url below seeds the identical token into
+    # the opened URL. No-op on routable binds and when a bearer already exists.
+    auto_open = not no_open and not dev and not tunnel
+    if auto_open:
+        _ensure_loopback_api_token(host)
 
     if minimal:
         app = FastAPI(title="Bernstein", description="Operator GUI (minimal)")
@@ -463,7 +467,7 @@ def serve(
         click.echo(f"Tunnel ({handle.provider}) up: {handle.public_url}")
         _print_onboarding(onboarding_url, issue.passphrase)
 
-    if not no_open and not dev and not tunnel:
+    if auto_open:
         # Seed the SPA on loopback so its /api/v1 XHRs authenticate; the token
         # rides the browser URL fragment only, never the console URL above.
         open_url = _resolve_local_open_url(host=host, port=port)
