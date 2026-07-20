@@ -25,6 +25,7 @@ from bernstein.cli.helpers import (
     console,
     find_seed_file,
     print_banner,
+    print_startup_banner,
     server_get,
 )
 from bernstein.cli.run_preflight import (
@@ -1708,7 +1709,7 @@ def _run_impl(
     # for subcommand invocations, so `bernstein run` lost the banner entirely.
     ctx = click.get_current_context(silent=True)
     if ctx is None or not (ctx.obj and ctx.obj.get("_BANNER_PRINTED")):
-        print_banner()
+        print_startup_banner()
 
     # Set process title so orchestrator is visible in Activity Monitor / ps
     with suppress(ImportError):

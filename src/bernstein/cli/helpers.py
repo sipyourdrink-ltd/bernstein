@@ -74,6 +74,29 @@ def print_banner() -> None:
     console.print(f"[blue]{BANNER}[/blue]")
 
 
+def print_startup_banner() -> None:
+    """Show the program-load banner: the block-art ASCII wordmark on an
+    interactive terminal, the compact box banner otherwise.
+
+    The compact splash renders the full block-art logo on a real TTY; on
+    non-interactive output (CI, pipes, captured test output) it collapses to a
+    dense one-liner, so we fall through to the box banner there. That keeps CI
+    logs terse and preserves the ``Agent Orchestra`` marker the run-banner
+    regression guard asserts, while interactive operators get the wordmark back
+    at ``bernstein run`` time (the premium splash only fires on the bare
+    ``bernstein`` invocation).
+    """
+    if console.is_terminal:
+        try:
+            from bernstein.cli.display.splash import splash as _compact_splash
+
+            _compact_splash(console, skip_animation=True)
+            return
+        except Exception:
+            pass
+    print_banner()
+
+
 def auth_headers() -> dict[str, str]:
     """Return Authorization header dict if BERNSTEIN_AUTH_TOKEN is set."""
     token = os.environ.get("BERNSTEIN_AUTH_TOKEN")

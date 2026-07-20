@@ -28,6 +28,46 @@ def _detect_terminal_width(console: Console) -> int:
         return 80
 
 
+def _block_logo_lines() -> list[str]:
+    """The multi-line block-art BERNSTEIN logo, or ``[]`` when unavailable.
+
+    Reuses the same packaged asset the premium splash renders so both tiers
+    show the identical wordmark. ``_load_logo`` returns a single-line text
+    fallback (``["  BERNSTEIN"]``) when the asset is missing; only the real
+    multi-line art is worth drawing here, so a shorter result yields ``[]``.
+    """
+    try:
+        from bernstein.cli.display.splash_v2 import _load_logo
+
+        lines = _load_logo()
+    except Exception:
+        return []
+    return lines if len(lines) > 1 else []
+
+
+def _print_block_logo(console: Console, width: int) -> None:
+    """Draw the block-art logo when the terminal can actually show it.
+
+    Gated on an interactive terminal wide enough to hold the art: non-TTY
+    output (CI logs, pipes) and narrow terminals keep the dense one-liner so
+    scrollback and captured logs stay compact.
+    """
+    if not console.is_terminal:
+        return
+    lines = _block_logo_lines()
+    if not lines:
+        return
+    logo_w = max(len(line) for line in lines)
+    if width < logo_w + 2:
+        return
+
+    from rich.text import Text
+
+    pad = max(0, (min(width, 80) - logo_w) // 2)
+    for line in lines:
+        console.print(Text(" " * pad + line, style="bold cyan"))
+
+
 def _print_agents_block(
     console: Console,
     agents: list[dict[str, Any]],
@@ -90,6 +130,7 @@ def splash(
 
     sep = f"[dim]{_SEP_CHAR}[/dim]" * min(56, width - 2)
     console.print(sep)
+    _print_block_logo(console, width)
     ver = f" v{version}" if version else ""
     console.print(f"  [bold blue]BERNSTEIN[/bold blue][dim]{ver}  declarative agent orchestration[/dim]")
     console.print(sep)
