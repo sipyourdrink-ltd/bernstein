@@ -136,16 +136,16 @@ jq -r '"\(.ts | localtime) \(.outcome) \(.strategy) \(.cls) \(.rationale)"' \
 
 ### Emergency revert
 
-The frozen v1 workflow lives at `.github/workflows/auto-heal-v1.yml`
-with all jobs gated by `if: false`. To revert, swap the v2 file out of
-the workflows directory and re-enable v1 by replacing the static
-`false` gates with the original guards from git history.
+The v1 workflow file has been removed from the tree (deleted in #1501).
+To revert, recover `.github/workflows/auto-heal-v1.yml` from git history,
+restore its original job guards, and swap the v2 file out of the
+workflows directory.
 
 ## v1 vs v2
 
 | Aspect | v1 | v2 |
 |--------|----|----|
-| Workflow file | `auto-heal.yml` (kept frozen as `auto-heal-v1.yml`) | `auto-heal.yml` |
+| Workflow file | `auto-heal.yml` (removed; recover from git history) | `auto-heal.yml` |
 | Repair strategies | 4 hardcoded recipes | bandit-selected from a growing set |
 | Confidence | Flat safe/heuristic/risky | Numeric Bayesian per-class |
 | Flake handling | None | non-adjacent-failure heuristic |
