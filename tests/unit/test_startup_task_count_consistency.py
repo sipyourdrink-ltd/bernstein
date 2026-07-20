@@ -31,7 +31,6 @@ from bernstein.cli.run_preflight import (
     _estimate_task_count,
     console,
 )
-from bernstein.core.orchestration.bootstrap import _describe_cost_estimate
 
 _COUNT_RE = re.compile(r"\d+\s+task")
 
@@ -125,7 +124,7 @@ def test_preflight_cost_line_says_unknown_instead_of_inventing(tmp_path: Path) -
 
 
 def test_bootstrap_cost_uses_submitted_count() -> None:
-    text = _describe_cost_estimate(3, "sonnet")
+    text = bootstrap_mod._describe_cost_estimate(3, "sonnet")
     assert "3 task(s)" in text
     assert "5" not in text.split("$")[0]  # no stray placeholder before the price
     counts = _COUNT_RE.findall(text)
@@ -133,14 +132,14 @@ def test_bootstrap_cost_uses_submitted_count() -> None:
 
 
 def test_bootstrap_cost_unknown_count_without_model() -> None:
-    text = _describe_cost_estimate(0, None)
+    text = bootstrap_mod._describe_cost_estimate(0, None)
     assert "no model configured" in text
     assert "pending planning" in text
     assert not _COUNT_RE.search(text), text
 
 
 def test_bootstrap_cost_unknown_count_with_model_shows_per_task_rate() -> None:
-    text = _describe_cost_estimate(0, "sonnet")
+    text = bootstrap_mod._describe_cost_estimate(0, "sonnet")
     assert "per task" in text
     assert "pending planning" in text
     assert not _COUNT_RE.search(text), text
