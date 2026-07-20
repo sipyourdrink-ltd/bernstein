@@ -5421,9 +5421,7 @@ if __name__ == "__main__":
                 # is only a fallback. Without this, ``bernstein run --idle``
                 # (which exports BERNSTEIN_ADAPTER=mock) is silently overridden
                 # by the seed default and spawns real Claude agents.
-                adapter_name = _resolve_spawner_adapter_name(
-                    args.adapter, getattr(seed, "cli", None)
-                )
+                adapter_name = _resolve_spawner_adapter_name(args.adapter, getattr(seed, "cli", None))
                 _seed_role_model_policy = getattr(seed, "role_model_policy", None)
                 if not _seed_role_model_policy:
                     print(
