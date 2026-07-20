@@ -222,6 +222,57 @@ def _effective_api_token() -> str:
     return os.environ.get("BERNSTEIN_AUTH_TOKEN", "").strip()
 
 
+def _ensure_loopback_api_token(host: str) -> str | None:
+    """Mint + export an ephemeral operator bearer on an unconfigured loopback bind.
+
+    Closes the local-dashboard lockout: the SPA's data panels poll the
+    SSO-gated *general* API (``/api/v1/agents`` / ``/api/v1/tasks`` / ...),
+    which accepts only the process ``BERNSTEIN_AUTH_TOKEN`` bearer. A #2366
+    dashboard scoped token (or ``BERNSTEIN_DASHBOARD_PASSWORD``) unlocks the
+    ``/api/v1/dashboard/*`` mirror but *not* those general routes, so an
+    operator who configured dashboard auth yet left ``BERNSTEIN_AUTH_TOKEN``
+    unset hit a 401 wall on every panel.
+
+    On a loopback bind with no bearer supplied, this mints a fresh URL-safe
+    token (the same primitive the tunnel onboarding uses), exports it into
+    ``BERNSTEIN_AUTH_TOKEN`` so a subsequent :func:`create_app` resolves it as
+    the general-API bearer, and returns it so the caller can seed the operator's
+    own browser with the identical token. The token is a standalone process
+    credential - it is deliberately *not* written to the #2366 dashboard token
+    journal, so an already-configured install's signed grant count is untouched.
+
+    Posture is preserved, not weakened:
+
+    * A **non-loopback** bind never auto-mints (returns ``None``) - a routable
+      interface still refuses to start without operator-configured auth
+      (enforced upstream in :func:`_enforce_dashboard_posture`), and a bearer
+      is never conjured for it.
+    * When ``BERNSTEIN_AUTH_TOKEN`` is **already supplied**, it is respected
+      verbatim (returns ``None``; no fresh mint).
+    * When auth is **explicitly disabled** (``BERNSTEIN_AUTH_DISABLED``) there
+      is no gate to satisfy, so nothing is minted (returns ``None``).
+
+    Args:
+        host: Bind host the server is about to listen on.
+
+    Returns:
+        The freshly minted bearer when one was exported, else ``None``.
+    """
+    from bernstein.core.security.auth_middleware import auth_disabled_via_opt_out
+    from bernstein.core.server.dashboard_tokens import is_loopback_host
+    from bernstein.gui import pwa
+
+    if not is_loopback_host(host):
+        return None
+    if _effective_api_token():
+        return None
+    if auth_disabled_via_opt_out():
+        return None
+    token = pwa.new_auth_token()
+    os.environ["BERNSTEIN_AUTH_TOKEN"] = token
+    return token
+
+
 def _resolve_local_open_url(*, host: str, port: int, echo: Callable[[str], object] | None = None) -> str:
     """Choose the URL the local (non-tunnel) browser auto-open should target.
 
@@ -229,21 +280,22 @@ def _resolve_local_open_url(*, host: str, port: int, echo: Callable[[str], objec
     ``/ui/`` with no credential, so the SPA shell loaded (200) but every
     ``/api/v1`` XHR 401'd - the operator had no in-browser way to authenticate.
 
-    When an API bearer is configured (``BERNSTEIN_AUTH_TOKEN``) and the bind is
-    loopback, the SPA is seeded through the existing onboarding-fragment
-    mechanism (:func:`bernstein.gui.pwa.compose_onboarding_url`) so its XHRs
-    carry the bearer and stop 401-ing. The configured token is reused verbatim
-    - no fresh credential is minted per serve - and the token travels only in
-    the opened browser's URL fragment (which the SPA scrubs from the address
-    bar after capture); the console URL printed above stays bare, so the token
-    never lands in a terminal log or an access log.
+    When an API bearer is present (``BERNSTEIN_AUTH_TOKEN`` - operator-supplied,
+    or minted for this loopback serve by :func:`_ensure_loopback_api_token`) and
+    the bind is loopback, the SPA is seeded through the existing onboarding-
+    fragment mechanism (:func:`bernstein.gui.pwa.compose_onboarding_url`) so its
+    XHRs carry the bearer and stop 401-ing. The token is used verbatim, and it
+    travels only in the opened browser's URL fragment (which the SPA scrubs from
+    the address bar after capture); the console URL printed above stays bare, so
+    the token never lands in a terminal log or an access log. A short positive
+    line confirms the browser was authenticated automatically.
 
-    When no token is configured the bare ``/ui/`` URL is returned together with
-    an operator hint: the shell loads but the data panels 401 until
-    ``BERNSTEIN_AUTH_TOKEN`` is set (or ``BERNSTEIN_AUTH_DISABLED=1`` for a
-    dev-only open bind). Posture is untouched either way - this only changes
-    which URL the operator's own browser is pointed at; an external, tokenless
-    request still 401s at the auth middleware exactly as before.
+    When no token is present the bare ``/ui/`` URL is returned together with an
+    operator hint - this path is now reached only on a routable bind or when
+    auth is explicitly disabled, since loopback binds auto-mint a bearer
+    upstream. Posture is untouched either way - this only changes which URL the
+    operator's own browser is pointed at; an external, tokenless request still
+    401s at the auth middleware exactly as before.
 
     Args:
         host: Bind host the server is listening on.
@@ -263,6 +315,7 @@ def _resolve_local_open_url(*, host: str, port: int, echo: Callable[[str], objec
     if token and is_loopback_host(host):
         # Reuse the onboarding fragment the SPA already parses on boot so the
         # bearer reaches localStorage without a new login surface.
+        emit(f"Dashboard ready at {local_url} (browser authenticated automatically).")
         return pwa.compose_onboarding_url(f"http://{host}:{port}", token)
     if not token:
         emit(
@@ -356,6 +409,14 @@ def serve(
     # dashboard auth configured; unconfigured loopback binds get a scoped
     # operator token issued and printed once.
     _enforce_dashboard_posture(host, Path.cwd())
+
+    # Local-dashboard unlock: on a loopback bind with no BERNSTEIN_AUTH_TOKEN
+    # supplied, mint an ephemeral operator bearer and export it BEFORE
+    # create_app() so the general /api/v1 surface the SPA's panels poll
+    # accepts it. The same token is seeded into the operator's browser below
+    # (via _resolve_local_open_url), so the panels return 200 with zero manual
+    # steps. No-op on routable binds and when a bearer is already configured.
+    _ensure_loopback_api_token(host)
 
     if minimal:
         app = FastAPI(title="Bernstein", description="Operator GUI (minimal)")

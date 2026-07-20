@@ -102,17 +102,29 @@ bearer. (A `bernstein auth dashboard-token` scoped token only unlocks the
 `/api/v1/dashboard/*` mirror - not these routes.) A bare local `serve` used to
 open `/ui/` with no credential, so the browser had nothing to send.
 
-**Fix.** Set the token before serving; the launcher then opens the browser
-pre-seeded so the SPA stores the bearer and its XHRs authenticate:
+**Fix (automatic on loopback).** On a loopback bind (`127.0.0.1` / `localhost` /
+`::1`) with no `BERNSTEIN_AUTH_TOKEN` set, `serve` now mints an ephemeral
+operator bearer, exports it for the API, and opens the browser pre-seeded with
+the same token - the panels authenticate with zero manual steps. `serve` prints
+`Dashboard ready at http://127.0.0.1:8052/ui/ (browser authenticated
+automatically).` to confirm. Nothing to configure:
+
+```bash
+bernstein gui serve
+```
+
+To pin a fixed bearer instead (for example to re-pair a device or share the
+same token across restarts), set it explicitly and `serve` reuses it verbatim:
 
 ```bash
 BERNSTEIN_AUTH_TOKEN=<your-secret> bernstein gui serve
 ```
 
-The token rides the opened browser's URL fragment only (the SPA scrubs it from
-the address bar after capture) - it never appears in the console URL or the
-access log. When `BERNSTEIN_AUTH_TOKEN` is unset, `serve` prints a hint instead
-of a silent 401 wall.
+Either way the token rides the opened browser's URL fragment only (the SPA
+scrubs it from the address bar after capture) - it never appears in the console
+URL or the access log. Posture is unchanged: a non-loopback bind still refuses
+to start without configured auth and is never auto-minted a bearer, and an
+external, tokenless `/api/v1/*` request still returns `401`.
 
 Manual fallback (any bundle): set the key the API reads and reload.
 
