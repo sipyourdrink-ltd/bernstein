@@ -5238,6 +5238,35 @@ def _collect_smtp_targets(seed: Any, targets: list[NotificationTarget]) -> None:
     )
 
 
+def _resolve_spawner_adapter_name(
+    explicit_adapter: str | None,
+    seed_cli: str | None,
+) -> str | None:
+    """Resolve the orchestrator's adapter with explicit-override precedence.
+
+    An adapter supplied out-of-band -- the ``--adapter`` flag or the
+    ``BERNSTEIN_ADAPTER`` env var, both surfaced here as ``explicit_adapter``
+    -- always wins over the seed's ``cli`` field. The seed value is only a
+    fallback for when no adapter was passed explicitly.
+
+    This mirrors the run-model precedence (``args.model or seed.model``) and
+    is load-bearing for ``bernstein run --idle``: that mode exports
+    ``BERNSTEIN_ADAPTER=mock`` precisely so the orchestrator never spawns real
+    Claude agents (and burns tokens / 401s) when the resolved
+    ``bernstein.yaml`` leaves ``cli`` at its ``auto`` default. Letting the
+    seed's ``cli`` clobber an explicit adapter silently defeats that contract.
+
+    Returns ``None`` only when neither source configured an adapter, which the
+    caller treats as a fatal misconfiguration (Bernstein never defaults to
+    Claude).
+    """
+    explicit = (explicit_adapter or "").strip()
+    if explicit:
+        return explicit
+    seed_value = (seed_cli or "").strip()
+    return seed_value or None
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -5387,7 +5416,14 @@ if __name__ == "__main__":
             )
             try:
                 seed = parse_seed(seed_path)
-                adapter_name = getattr(seed, "cli", adapter_name)
+                # An explicit --adapter / BERNSTEIN_ADAPTER wins over the
+                # seed's ``cli`` (which defaults to ``auto``); the seed value
+                # is only a fallback. Without this, ``bernstein run --idle``
+                # (which exports BERNSTEIN_ADAPTER=mock) is silently overridden
+                # by the seed default and spawns real Claude agents.
+                adapter_name = _resolve_spawner_adapter_name(
+                    args.adapter, getattr(seed, "cli", None)
+                )
                 _seed_role_model_policy = getattr(seed, "role_model_policy", None)
                 if not _seed_role_model_policy:
                     print(
