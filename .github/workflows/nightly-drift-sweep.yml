@@ -2,7 +2,7 @@ name: Nightly drift sweep
 
 # Runs `bernstein agents-md sync` + `ruff format` against main once a day
 # and opens a sync PR when drift accumulated overnight. Complements the
-# per-PR `pre-merge-autosync` workflow:
+# per-PR autosync steps in `pr-policy.yml`:
 #
 #   * Per-PR autosync covers drift introduced by the active PR.
 #   * Nightly sweep covers drift that accumulated from PRs that bypassed

@@ -35,7 +35,7 @@ name: CI topology heal
 #
 # Token requirements
 # ------------------
-# BERNSTEIN_AUTOSYNC_TOKEN (the same PAT pre-merge-autosync uses; needs
+# BERNSTEIN_AUTOSYNC_TOKEN (the same PAT the pr-policy autosync uses; needs
 # contents:write + pull-requests:write on this repo) is preferred for both
 # the PR creation and the auto-merge enable: PRs created with GITHUB_TOKEN
 # do not trigger pull_request workflows, so their required checks never

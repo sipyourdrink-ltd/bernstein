@@ -2,7 +2,7 @@ name: Trunk Health SLO
 
 # Compute the last-24h main-red rate (failed CI runs / total CI runs on
 # main) and toggle the repo variable TRUNK_UNSTABLE accordingly. A
-# companion gate workflow (`trunk-andon-gate.yml`) keys off that
+# companion gate step (the trunk andon gate in `pr-policy.yml`) keys off that
 # variable to hold merges on every PR until the trunk recovers, unless
 # the PR carries the `hotfix-cleared` label.
 #

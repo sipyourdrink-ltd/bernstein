@@ -27,7 +27,7 @@ the script exits with status 1; a clean run exits 0.
 
 The script never reads PR labels. Label-based opt-out lives in the
 workflow that calls this script (see
-``.github/workflows/pr-text-hygiene.yml``).
+``.github/workflows/pr-policy.yml``).
 
 Run locally::
 
