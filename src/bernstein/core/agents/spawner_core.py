@@ -2901,6 +2901,28 @@ class AgentSpawner:
             if preferred_provider:
                 provider_name = preferred_provider
             routing_source = "operator-config" if role_policy.get("model") else "heuristic"
+            # Adapter-aware heuristic (issue #2743): the batch/heuristic
+            # selectors and role templates emit Claude tier names
+            # (opus/sonnet/haiku) with no adapter awareness. When the
+            # run-level adapter is authoritative (no provider redirection)
+            # and no operator pin is in play, resolve the adapter's own
+            # default_model here so the routing decision - and the log line
+            # below - never proposes an unpinned tier name a non-Claude
+            # adapter cannot run. Claude-compatible adapters and non-tier
+            # models pass through byte-identical; a tier name with no
+            # default anywhere still refuses (ModelNotConfiguredError),
+            # same as the downstream guard it front-runs.
+            if routing_source == "heuristic" and provider_name is None:
+                _task_metadata = tasks[0].metadata or {}
+                _model_unpinned = not _task_metadata.get("pinned_model") and (
+                    not tasks[0].model or tasks[0].model in _CLAUDE_TIER_MODELS
+                )
+                if _model_unpinned:
+                    model_config = _coerce_model_for_non_claude_adapter(
+                        model_config,
+                        adapter_name=self._adapter.name(),
+                        adapter_default_model=self._default_model or getattr(self._adapter, "default_model", None),
+                    )
             logger.info(
                 "Router skipped for role=%s (adapter=%s): using %s/%s (source=%s)",
                 tasks[0].role,

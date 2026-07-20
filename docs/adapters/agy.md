@@ -53,6 +53,10 @@ agy -p "<prompt>" --sandbox --dangerously-skip-permissions [--print-timeout <N>s
 
 Model selection is server-side: the CLI exposes no model flag, so
 Bernstein's `model` setting never reaches the argv for this adapter.
+The adapter declares `default` as its model default (the same sentinel
+the conformance canary pins), so a run with no model in the seed config
+resolves a spawnable config: the session records `default` and the
+backend picks the actual model.
 
 Session identifiers: the CLI mints its own conversation ids
 (`--conversation <id>` resumes one). Native resume is not wired yet --
