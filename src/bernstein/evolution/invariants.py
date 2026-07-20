@@ -43,8 +43,19 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+# Missing-file warnings already emitted this process, keyed by absolute path.
+# Startup verifies the lockfile and then rewrites it, hashing the same tree
+# twice; each missing file should be reported once, not once per pass.
+_warned_missing: set[str] = set()
+
+
 def compute_invariants(repo_root: Path) -> dict[str, str]:
     """Compute SHA256 hashes for all locked files.
+
+    Missing files are only warned about when ``repo_root`` contains a
+    bernstein source tree: a workspace that never had the locked files is
+    normal and stays quiet. Deletion after locking is still reported by
+    :func:`verify_invariants` as a MISSING violation.
 
     Args:
         repo_root: Repository root directory.
@@ -53,11 +64,13 @@ def compute_invariants(repo_root: Path) -> dict[str, str]:
         Dict mapping relative file path to SHA256 hex digest.
     """
     hashes: dict[str, str] = {}
+    source_tree = (repo_root / "src" / "bernstein").is_dir()
     for rel_path in LOCKED_FILES:
         full_path = repo_root / rel_path
         if full_path.exists():
             hashes[rel_path] = _sha256(full_path)
-        else:
+        elif source_tree and str(full_path) not in _warned_missing:
+            _warned_missing.add(str(full_path))
             logger.warning("Locked file not found: %s", rel_path)
     return hashes
 
