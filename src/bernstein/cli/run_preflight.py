@@ -410,7 +410,19 @@ def _finalize_run_output(*, quiet: bool) -> None:
             # TTY but Textual not supported -- use Rich fallback (TUI-003)
             _try_fallback_display()
         else:
+            # Non-interactive output detaches from the run immediately, so a
+            # spawn refusal in the background orchestrator would never reach
+            # the terminal (gh-2744).  Wait briefly for the first spawn
+            # outcome and surface a refusal as a non-zero exit.
+            from bernstein.cli.run_bootstrap import _await_first_spawn_outcome
+
+            outcome, reason = _await_first_spawn_outcome()
             _show_run_summary()
+            if outcome == "refused":
+                console.print(f"[red]Run failed before any work started:[/red] {reason}")
+                console.print("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md")
+                raise SystemExit(1)
+            console.print("Run continues in the background (check: bernstein status).")
     finally:
         _drain_completed_backlog_files()
 

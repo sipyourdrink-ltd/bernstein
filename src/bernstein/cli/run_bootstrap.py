@@ -1029,6 +1029,80 @@ def _wait_for_run_completion(
     return last_status
 
 
+#: How long the exiting CLI waits for the first spawn outcome (roughly one
+#: spawner tick plus slack) before detaching without a verdict.
+_FIRST_SPAWN_WAIT_S = 10.0
+#: Delay between first-spawn outcome polls.
+_FIRST_SPAWN_POLL_S = 0.5
+#: Consecutive unreachable-server polls before giving up early.
+_FIRST_SPAWN_MAX_UNREACHABLE = 3
+#: Failed tasks older than this are attributed to a previous run and ignored.
+_FIRST_SPAWN_FRESHNESS_S = 300.0
+
+
+def _await_first_spawn_outcome(
+    *,
+    timeout_s: float = _FIRST_SPAWN_WAIT_S,
+    poll_interval_s: float = _FIRST_SPAWN_POLL_S,
+) -> tuple[str, str | None]:
+    """Briefly poll the task server for the outcome of the first agent spawn.
+
+    The CLI detaches right after bootstrap, so a spawn refusal in the
+    background orchestrator would otherwise never reach the terminal and
+    ``bernstein run`` would exit 0 with an empty summary (gh-2744).
+
+    A failed task counts only when its failure reason is a spawn failure and
+    it completed recently; failed tasks reloaded from a previous run are
+    ignored.  Transient spawn failures are given the rest of the window to
+    recover before being reported.
+
+    Args:
+        timeout_s: Maximum total time to wait for a verdict.
+        poll_interval_s: Delay between polls.
+
+    Returns:
+        ``("spawned", None)`` once at least one agent is live,
+        ``("refused", reason)`` when the first spawn attempt failed before
+        any agent did work, or ``("unknown", None)`` when no verdict arrived
+        within ``timeout_s`` (including an unreachable server).
+    """
+    deadline = time.time() + timeout_s
+    transient_reason: str | None = None
+    unreachable_polls = 0
+    while True:
+        health = server_get("/health")
+        if not isinstance(health, dict):
+            unreachable_polls += 1
+            if unreachable_polls >= _FIRST_SPAWN_MAX_UNREACHABLE:
+                return "unknown", None
+        else:
+            unreachable_polls = 0
+            if int(health.get("agent_count", 0) or 0) > 0:
+                return "spawned", None
+            failed_page: Any = server_get("/tasks?status=failed&limit=50")
+            entries = failed_page.get("tasks", []) if isinstance(failed_page, dict) else []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                reason = str(entry.get("result_summary") or "")
+                if not reason.startswith("Spawn failed"):
+                    continue
+                completed_at = float(entry.get("completed_at") or 0.0)
+                if completed_at < time.time() - _FIRST_SPAWN_FRESHNESS_S:
+                    continue
+                if "(transient" in reason:
+                    # A retry may still succeed - keep polling until deadline.
+                    transient_reason = reason
+                    continue
+                return "refused", reason
+        if time.time() >= deadline:
+            break
+        time.sleep(poll_interval_s)
+    if transient_reason is not None:
+        return "refused", transient_reason
+    return "unknown", None
+
+
 def exec_restart() -> None:
     """Re-exec the current process as ``bernstein run`` (full stack restart).
 

@@ -119,6 +119,17 @@ when cumulative routed spend crosses the threshold. Precedence is
 `BERNSTEIN_MAX_COST_USD` > `run_config.json` > `seed.budget_usd`
 > default (0 = unlimited). Non-positive values normalise to 0.
 
+**Non-interactive output (pipes, CI).** When stdout is not a terminal the
+CLI detaches after bootstrap instead of opening the dashboard. Before
+exiting it waits up to ~10 seconds for the first spawn outcome:
+
+- If the first spawn attempt was refused or errored before any work
+  started, the failure reason is printed and the command exits `1`.
+  Details: `bernstein status` or `.sdd/runtime/retrospective.md`.
+- Otherwise the summary is followed by an explicit detach notice; the run
+  continues in the background and the command exits `0`. Check progress
+  with `bernstein status`.
+
 #### `bernstein stop`
 
 Graceful or force stop.
