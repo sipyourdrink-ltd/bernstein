@@ -41,15 +41,15 @@ context_files:
 - CLAUDE.md
 agency:
   path: ${BERNSTEIN_AGENCY_PATH:-./external/agency-agents}  # replace with your agency-agents clone path
-# OTLP exporter with OpenTelemetry GenAI semantic conventions.
-# Spans are emitted only when ``endpoint`` is set (or the BERNSTEIN_OTEL_ENDPOINT
-# env var is exported); otherwise Bernstein keeps writing local JSONL traces.
-# Install the optional extras with: pip install 'bernstein[otel]'.
-observability:
-  otlp:
-    endpoint: ${BERNSTEIN_OTEL_ENDPOINT:-}        # e.g. http://otel-collector:4317
-    service_name: ${BERNSTEIN_OTEL_SERVICE_NAME:-bernstein}
-    insecure: true                                # skip TLS verify on local collectors
+
+# OTLP export (OpenTelemetry GenAI semantic conventions) is configured
+# through environment variables, not a seed section:
+#   BERNSTEIN_OTEL_ENDPOINT      OTLP/gRPC collector URL, e.g. http://otel-collector:4317.
+#                                Unset -> spans are disabled and Bernstein keeps
+#                                writing local JSONL traces under .sdd/traces/.
+#   BERNSTEIN_OTEL_SERVICE_NAME  service.name resource attribute (default: bernstein).
+# Install the exporter extras with: pip install 'bernstein[otel]'.
+# TLS verification is skipped for local collectors by default.
 
 # Autofix daemon - escalation ladder for self-driving CI repair.
 # The ladder is feature-flagged off until three PRs run clean; flip

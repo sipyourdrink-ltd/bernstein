@@ -29,12 +29,7 @@ cluster:
   # application-level identity for audit (see docs/cluster/mtls-setup.md).
   tls: null
 
-worker:
-  role: backend
-  capacity:
-    max_agents: 4
-    gpu_available: false
-    supported_models: ["sonnet"]
-  labels:
-    deployment: tailscale-overlay
-    region: contractor-laptop
+# The worker's role is passed on the command line (`--role backend`, shown
+# above), and its capacity and labels are advertised to the central server
+# when the worker registers. None of that is read from this seed file, so
+# there is no `worker:` section here.
