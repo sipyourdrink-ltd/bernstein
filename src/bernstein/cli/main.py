@@ -779,7 +779,7 @@ def cli(
     _splash_future = executor.submit(_background_startup, workdir)
 
     # Show splash immediately (gradient + logo) - no agent data needed for visuals.
-    splash(
+    banner_shown = splash(
         console,
         version="",
         agents=[],
@@ -788,9 +788,15 @@ def cli(
         budget=budget,
         task_count=0,
     )
-    # Mark that the premium splash has been shown so the inner ``run`` callback
-    # invoked below does not also print the compact banner (double-banner).
-    ctx.obj["_BANNER_PRINTED"] = True
+    # Mark that a startup banner has already been shown so the inner ``run``
+    # callback invoked below does not also print the compact box banner
+    # (double-banner). When the splash is disabled (``visual.splash=false`` /
+    # ``BERNSTEIN_NO_SPLASH``) it renders nothing and returns ``False`` -- in
+    # that case we must leave the flag unset so the durable box banner still
+    # prints. Otherwise the bare ``bernstein`` invocation showed no startup
+    # banner at all while ``bernstein run`` still did (regression).
+    if banner_shown:
+        ctx.obj["_BANNER_PRINTED"] = True
 
     # Show immediate feedback while background finishes - no black screen.
     console.print("[dim]Preparing...[/dim]", end="\r")

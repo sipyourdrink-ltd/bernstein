@@ -73,9 +73,17 @@ class SplashRenderer:
         self._skip = skip_animation
         self._config = config or VisualConfig()
 
-    def render(self, context: SplashContext | None = None) -> None:
+    def render(self, context: SplashContext | None = None) -> bool:
+        """Render the startup splash.
+
+        Returns ``True`` when a banner was actually emitted, ``False`` when
+        the splash is disabled (``visual.splash=false`` / ``BERNSTEIN_NO_SPLASH``)
+        and nothing was written. Callers use the return value to decide whether
+        a durable fallback banner still needs printing, so a disabled splash
+        does not silently leave the user with no startup banner at all.
+        """
         if not self._config.splash:
-            return
+            return False
         ctx = context or SplashContext()
         tier = self._select_tier()
         if self._skip or os.environ.get("CI"):
@@ -86,6 +94,7 @@ class SplashRenderer:
             self._render_tier2(ctx)
         else:
             self._render_tier3(ctx)
+        return True
 
     def _select_tier(self) -> str:
         if self._config.splash_tier != "auto":
@@ -275,10 +284,15 @@ def render_startup_splash(
     task_count: int = 0,
     skip_animation: bool = False,
     config: VisualConfig | None = None,
-) -> None:
-    """Compatibility entrypoint for main.py and splash_screen.py."""
+) -> bool:
+    """Compatibility entrypoint for main.py and splash_screen.py.
+
+    Returns ``True`` when a banner was emitted and ``False`` when the splash
+    is disabled (nothing rendered), so the caller can fall back to the
+    durable box banner instead of showing no startup banner at all.
+    """
     renderer = SplashRenderer(console, skip_animation=skip_animation, config=config)
-    renderer.render(
+    return renderer.render(
         SplashContext(
             version=version,
             agents=[a.copy() for a in (agents or [])],

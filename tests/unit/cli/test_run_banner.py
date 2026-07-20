@@ -148,3 +148,98 @@ def test_run_subcommand_skips_banner_when_splash_already_printed(tmp_path: Any) 
             assert banner_spy.call_count == 0, "banner was double-printed despite splash flag"
     finally:
         os.chdir(cwd)
+
+
+# ---------------------------------------------------------------------------
+# Bare ``bernstein`` (no subcommand) contract when the splash is disabled
+# ---------------------------------------------------------------------------
+
+
+def _invoke_bare_plan_only(tmp_path: Any) -> str:
+    """Invoke the bare ``bernstein --plan-only`` entry point (no subcommand).
+
+    This is the ``ctx.invoked_subcommand is None`` branch of ``main.cli`` --
+    the "general program load" path that shows the startup splash and then
+    chains into the run callback.  ``--plan-only`` exits before any agent is
+    spawned.
+    """
+    seed = tmp_path / "bernstein.yaml"
+    seed.write_text("goal: banner-bare-regression\ntasks: []\n")
+
+    runner = CliRunner()
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        result = runner.invoke(cli, ["--plan-only"], catch_exceptions=False)
+    finally:
+        os.chdir(cwd)
+    return result.output or ""
+
+
+def test_bare_invocation_prints_banner_when_splash_disabled(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare ``bernstein`` with the splash disabled must still print the box banner.
+
+    Regression: ``main.cli`` set ``ctx.obj["_BANNER_PRINTED"] = True``
+    unconditionally right after calling ``splash()``.  When the splash was
+    disabled (``BERNSTEIN_NO_SPLASH`` / ``visual.splash=false``) it rendered
+    nothing, yet the flag still suppressed the inner run callback's box
+    banner -- so the bare invocation showed *no* startup banner at all while
+    ``bernstein run`` still did.  ``splash()`` now reports whether it emitted
+    a banner and ``main.cli`` only sets the flag when it did.
+    """
+    monkeypatch.setenv("BERNSTEIN_NO_SPLASH", "1")
+    output = _invoke_bare_plan_only(tmp_path)
+    assert "Bernstein" in output, output
+    assert "Agent Orchestra" in output, output
+
+
+def test_bare_invocation_does_not_double_print_when_splash_enabled(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the splash enabled, the bare path must not *also* print the box banner.
+
+    Pins the other side of the fix: when the splash actually renders (here the
+    compact fallback, since CliRunner's stdout is not a TTY), the durable box
+    banner (``BANNER`` / "Agent Orchestra") must stay suppressed so the operator
+    never sees two banners stacked.
+    """
+    monkeypatch.delenv("BERNSTEIN_NO_SPLASH", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    output = _invoke_bare_plan_only(tmp_path)
+    # The compact splash marker is present ...
+    assert "declarative agent orchestration" in output, output
+    # ... but the box banner's title-case subtitle must NOT be (no double-print).
+    assert "Agent Orchestra" not in output, output
+
+
+# ---------------------------------------------------------------------------
+# ``splash()`` return-value contract (the mechanism main.cli relies on)
+# ---------------------------------------------------------------------------
+
+
+def test_splash_reports_false_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``splash()`` returns ``False`` when disabled so callers can fall back.
+
+    The bare ``cli()`` path branches on this value; if the splash ever again
+    returns ``None``/truthy while rendering nothing, the box-banner fallback
+    silently breaks.  This locks the contract at the unit level.
+    """
+    from rich.console import Console
+
+    from bernstein.cli.display.splash_screen import splash as splash_fn
+
+    monkeypatch.setenv("BERNSTEIN_NO_SPLASH", "1")
+    con = Console(file=io.StringIO(), force_terminal=True)
+    assert splash_fn(con, version="1.0", agents=[], skip_animation=True) is False
+
+
+def test_splash_reports_true_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``splash()`` returns ``True`` when it actually emits a banner."""
+    from rich.console import Console
+
+    from bernstein.cli.display.splash_screen import splash as splash_fn
+
+    monkeypatch.delenv("BERNSTEIN_NO_SPLASH", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    con = Console(file=io.StringIO(), force_terminal=True)
+    assert splash_fn(con, version="1.0", agents=[], skip_animation=True) is True

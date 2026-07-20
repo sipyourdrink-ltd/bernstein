@@ -660,7 +660,7 @@ def splash(
     budget: float = 0.0,
     task_count: int = 0,
     skip_animation: bool = False,
-) -> None:
+) -> bool:
     """Show the startup splash, falling back to compact on any error.
 
     The bare ``except Exception`` below is load-bearing: any renderer crash
@@ -668,6 +668,13 @@ def splash(
     where the premium splash silently turns into the compact one (the
     "where is my banner" class of bug).  Set ``BERNSTEIN_DEBUG_SPLASH=1``
     to surface the underlying error to stderr instead of swallowing it.
+
+    Returns ``True`` when a banner was emitted (premium or compact fallback)
+    and ``False`` when the splash is disabled (``visual.splash=false`` /
+    ``BERNSTEIN_NO_SPLASH``) so nothing was rendered.  The bare ``cli()``
+    entry point uses this to decide whether the durable box banner still
+    needs printing -- a disabled splash must not leave the operator with no
+    startup banner at all.
     """
     try:
         from pathlib import Path
@@ -687,7 +694,7 @@ def splash(
         else:
             config = resolve_visual_config(None)
 
-        render_startup_splash(
+        return render_startup_splash(
             console,
             version=version,
             agents=agents,
@@ -719,3 +726,5 @@ def splash(
             budget=budget,
             task_count=task_count,
         )
+        # The compact fallback emitted a banner, so report success.
+        return True
