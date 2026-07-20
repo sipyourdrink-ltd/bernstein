@@ -88,6 +88,31 @@ runs so the macOS pool does not hold a queue.
 Background: see issue #1273 for the wave-merge race and the
 PR-vs-push split.
 
+## Per-PR meta lanes
+
+Every PR event used to fan out one single-step workflow run per meta
+check, each spending most of its wall time on checkout + bootstrap
+while holding a runner slot. These are consolidated into two
+workflows so the shared runner pool serves the test matrix first:
+
+| Lane | Workflow | Jobs | Contains |
+|------|----------|------|----------|
+| Policy | `pr-policy.yml` | 1 | text hygiene, main-red-guard (advisory), trunk andon gate, pre-merge autosync |
+| Labels | `pr-labels.yml` (`pull_request_target`) | 1 | area labels (`actions/labeler`), size label (`pr-size-labeler`) |
+| Docs | `docs-drift.yml` | 1 | drift check + data-freshness check (folded into one job) |
+
+Step-level gating inside `pr-policy.yml` preserves the original
+per-check semantics (bot-author skips, `skip-text-hygiene` /
+`skip-autosync` labels, same-repo-only autosync). None of these
+checks is required by branch protection; the required contexts remain
+`CI gate` and `review-bot-ack` only.
+
+Advisory scanners that duplicate other signal do not run per PR:
+the vulture / refurb / perflint jobs in
+`static-analysis-extended.yml` run on the weekly schedule only, and
+the refurb SARIF upload is filtered to error-level results so style
+findings stay out of the code-scanning alert feed.
+
 ## Required check
 
 Branch protection points at a single status check, `CI gate`, which

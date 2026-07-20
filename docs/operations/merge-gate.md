@@ -8,8 +8,8 @@ steps required to enable each layer.
 
 | Layer | Workflow | Trigger | What it does | Failure mode |
 |---|---|---|---|---|
-| 1. Pre-merge autosync | `.github/workflows/pre-merge-autosync.yml` | `pull_request: [opened, synchronize, ready_for_review]` | Runs `bernstein agents-md sync` and `ruff format`, pushes any drift back to the PR head | Mirror docs go stale and `Repo hygiene` / `docs-drift` fail post-merge |
-| 2. Main-red guard | `.github/workflows/main-red-guard.yml` | `pull_request: [opened, synchronize, ready_for_review, auto_merge_enabled]` | Fails when the most recent completed CI run on main is red and main HEAD still pins the failing SHA | A red main keeps absorbing fresh PR merges instead of being repaired |
+| 1. Pre-merge autosync | `.github/workflows/pr-policy.yml` (autosync steps) | `pull_request` (acts on `opened, synchronize, ready_for_review`) | Runs `bernstein agents-md sync` and `ruff format`, pushes any drift back to the PR head | Mirror docs go stale and `Repo hygiene` / `docs-drift` fail post-merge |
+| 2. Main-red guard | `.github/workflows/pr-policy.yml` (main-red-guard step) | `pull_request` (PRs targeting `main`) | Warns when the most recent completed CI run on main is red and main HEAD still pins the failing SHA | A red main keeps absorbing fresh PR merges instead of being repaired |
 | 3. Merge queue + `merge_group:` CI | GitHub-native + `.github/workflows/ci.yml` | `merge_group:` | Re-runs the full CI suite on the combined branch GitHub computes for the queued merge group | Cancelled-by-newer-push races: "green CI" never matches the SHA that actually merges |
 | 4. Nightly drift sweep | `.github/workflows/nightly-drift-sweep.yml` | `schedule: 13 6 * * *` + `workflow_dispatch:` | Opens a sync PR when overnight drift accumulated on main | Drift from fork PRs / `skip-autosync` PRs / autosync failures piles up between PR pushes |
 
@@ -28,7 +28,7 @@ Each layer fixes one of those four holes.
 
 ### 1. Provision `BERNSTEIN_AUTOSYNC_TOKEN` (optional but recommended)
 
-The auto-amend push in `pre-merge-autosync.yml` and the nightly sweep in `nightly-drift-sweep.yml` both prefer a named token over `GITHUB_TOKEN`. Without the named token everything still works, but amend commits authored by `GITHUB_TOKEN` will NOT trigger downstream workflow runs on the source PR (GitHub recursion protection). That means the PR's CI checks will appear stuck on the previous SHA until something else pushes to the branch.
+The auto-amend push (the autosync steps in `pr-policy.yml`) and the nightly sweep in `nightly-drift-sweep.yml` both prefer a named token over `GITHUB_TOKEN`. Without the named token everything still works, but amend commits authored by `GITHUB_TOKEN` will NOT trigger downstream workflow runs on the source PR (GitHub recursion protection). That means the PR's CI checks will appear stuck on the previous SHA until something else pushes to the branch.
 
 Choose one of the following:
 
@@ -82,21 +82,20 @@ gh api -X PATCH "repos/sipyourdrink-ltd/bernstein/branches/main/protection" \
   -H "Accept: application/vnd.github+json" \
   -f required_status_checks.strict=true \
   -F required_status_checks.contexts[]='CI gate' \
-  -F required_status_checks.contexts[]='review-bot-ack' \
-  -F required_status_checks.contexts[]='main-red-guard'
+  -F required_status_checks.contexts[]='review-bot-ack'
 ```
 
 Notes:
 
 - `CI gate` covers `Repo hygiene`, `Lint`, `Type check report`, `Workflow lint`, `Lineage Gate`, `Bandit (security)`, `pip-audit (deps)`, the full sharded test matrix, and the rest of the `ci.yml` jobs it declares in `needs:`.
-- `review-bot-ack` and `main-red-guard` run on `pull_request` only. They belong in the legacy branch-protection list above (queue entry), never in the merge-queue ruleset, which must require `CI gate` only; a PR-only check on the ruleset makes the queue wait forever.
+- `review-bot-ack` runs on `pull_request` only. It belongs in the legacy branch-protection list above (queue entry), never in the merge-queue ruleset, which must require `CI gate` only; a PR-only check on the ruleset makes the queue wait forever. The main-red-guard step in `pr-policy.yml` is advisory (it warns, never fails) and is not a required context.
 - `docs-drift / Run drift check` is path-filtered (it does not report on PRs that touch no docs-relevant paths), so it must not be a blanket required check; its main-branch failure mode is the post-merge gate described in the TL;DR.
-- `pre-merge-autosync` is intentionally NOT required. The job runs to amend the PR; if the amend fails (e.g. branch-protection rejects the push) we want the next push to retry rather than blocking the merge.
+- `PR policy` (the consolidated per-PR policy job that carries the autosync steps) is intentionally NOT required. The autosync steps run to amend the PR; if the amend fails (e.g. branch-protection rejects the push) we want the next push to retry rather than blocking the merge.
 
 ### 4. Verify the layers work end to end
 
-1. Open a PR that intentionally diverges `AGENTS.md` from canonical IR. Confirm `pre-merge-autosync` runs and amends the PR head with a regen commit.
-2. Cause `ci.yml` on main to fail (e.g. force-push a known-bad commit to a sandbox branch, then merge with admin override). Open a fresh PR. Confirm `main-red-guard` fails the PR with a clear error pointing at the failing SHA.
+1. Open a PR that intentionally diverges `AGENTS.md` from canonical IR. Confirm the `PR policy` job runs the autosync steps and amends the PR head with a regen commit.
+2. Cause `ci.yml` on main to fail (e.g. force-push a known-bad commit to a sandbox branch, then merge with admin override). Open a fresh PR. Confirm the main-red-guard step in `PR policy` emits a warning and job summary pointing at the failing SHA.
 3. Trigger the nightly sweep manually via `gh workflow run nightly-drift-sweep.yml`. Confirm it either no-ops (no drift) or opens a sweep PR labelled `automated`.
 4. Queue two PRs via auto-merge. Confirm GitHub batches them into a single merge-group CI run via the new `merge_group:` trigger.
 
@@ -169,8 +168,7 @@ with the failing run URL. The lane immediately returns to advisory.
 
 ## Files in this stack
 
-- `.github/workflows/pre-merge-autosync.yml`
-- `.github/workflows/main-red-guard.yml`
+- `.github/workflows/pr-policy.yml` (consolidated per-PR policy job: text hygiene, main-red-guard, trunk andon gate, pre-merge autosync)
 - `.github/workflows/nightly-drift-sweep.yml`
 - `.github/workflows/ci.yml` (`merge_group:` trigger added under `on:`; Windows test step gated by `scripts/windows_lane_gate.py`)
 - `scripts/windows_lane_gate.py` (self-promoting Windows-lane gate)

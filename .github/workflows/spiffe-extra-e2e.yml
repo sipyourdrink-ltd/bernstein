@@ -25,7 +25,11 @@ on:
       - "tests/unit/identity/test_grants.py"
       - "tests/unit/identity/spiffe/**"
       - "tests/unit/security/test_secrets_broker_grants.py"
-      - "pyproject.toml"
+      # NOTE: bare `pyproject.toml` is deliberately NOT in this list. It
+      # fired the wheel-build e2e on every dependency bump even when the
+      # spiffe extra was untouched. Changes to the extra's declaration
+      # ship together with the source paths above; push-to-main and
+      # workflow_dispatch remain available for manual verification.
       - ".github/workflows/spiffe-extra-e2e.yml"
   push:
     branches: [main]

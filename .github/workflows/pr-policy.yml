@@ -1,0 +1,414 @@
+name: PR policy
+
+# Consolidated per-PR policy lane. One runner job replaces four
+# single-job workflows that each spent most of their wall time on
+# checkout + bootstrap overhead while holding a runner slot:
+#
+#   * text-hygiene       (was pr-text-hygiene.yml)
+#   * main-red-guard     (was main-red-guard.yml)
+#   * trunk andon gate   (was trunk-andon-gate.yml)
+#   * pre-merge autosync (was pre-merge-autosync.yml)
+#
+# Consolidating them into sequential steps cuts three runner slots per
+# PR event and reduces queue wait on the shared runner pool. None of
+# these checks is in the required-status-check list ("CI gate" and
+# "review-bot-ack" are the only required contexts), so the check-name
+# change is safe for branch protection.
+#
+# Step gating preserves the original per-workflow semantics:
+#
+#   * text-hygiene: skipped for bot authors and the `skip-text-hygiene`
+#     label; runs on opened/edited/synchronize/reopened actions.
+#   * main-red-guard: advisory; PRs targeting main only.
+#   * andon gate: fails while TRUNK_UNSTABLE == 'true' unless the PR
+#     carries `hotfix-cleared`.
+#   * autosync: same-repo non-bot PRs without `skip-autosync`, on
+#     opened/synchronize/ready_for_review actions; pushes regen commits
+#     with BERNSTEIN_AUTOSYNC_TOKEN only (never GITHUB_TOKEN).
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
+      - unlabeled
+      - auto_merge_enabled
+
+concurrency:
+  group: pr-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Default-deny at workflow scope; the job re-asserts the scopes it
+# actually needs (Scorecard token-permissions).
+permissions:
+  contents: read
+
+jobs:
+  pr-policy:
+    name: PR policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # contents: write is required by the autosync push path only; the
+      # push itself refuses to run without the named autosync token.
+      contents: write
+      pull-requests: read
+      actions: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Classify applicable policy steps
+        id: gates
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          ACTION: ${{ github.event.action }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          run_hygiene=true
+          run_autosync=true
+
+          # Bot-authored PRs skip text hygiene and autosync (feedback-loop
+          # guard carried over from the source workflows).
+          case "${AUTHOR}" in
+            "dependabot[bot]"|"renovate[bot]"|"github-actions[bot]"|"bernstein[bot]"|"bernstein-orchestrator[bot]")
+              run_hygiene=false
+              run_autosync=false
+              ;;
+          esac
+
+          # Preserve the per-check event-action scope of the source
+          # workflows so label churn does not re-run expensive steps.
+          case "${ACTION}" in
+            opened|edited|synchronize|reopened) : ;;
+            *) run_hygiene=false ;;
+          esac
+          case "${ACTION}" in
+            opened|synchronize|ready_for_review) : ;;
+            *) run_autosync=false ;;
+          esac
+
+          if printf '%s' "${PR_LABELS}" | jq -e 'index("skip-text-hygiene")' >/dev/null 2>&1; then
+            run_hygiene=false
+          fi
+          if printf '%s' "${PR_LABELS}" | jq -e 'index("skip-autosync")' >/dev/null 2>&1; then
+            run_autosync=false
+          fi
+          # Fork PRs: the autosync push has no write access to the fork's
+          # head ref; docs-drift comments the regen instructions instead.
+          if [ "${HEAD_REPO}" != "${BASE_REPO}" ]; then
+            run_autosync=false
+          fi
+
+          {
+            echo "run_hygiene=${run_hygiene}"
+            echo "run_autosync=${run_autosync}"
+          } >> "$GITHUB_OUTPUT"
+          echo "run_hygiene=${run_hygiene} run_autosync=${run_autosync}"
+
+      # ─── Text hygiene (read-only scan of PR text) ─────────────────────
+
+      - name: Checkout PR head for policy scan
+        if: steps.gates.outputs.run_hygiene == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        if: steps.gates.outputs.run_hygiene == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+
+      - name: Collect commit messages
+        if: steps.gates.outputs.run_hygiene == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/text-hygiene
+          # Format every commit as subject + body separated by `---`.
+          git log --format='%B%n---' "${BASE_SHA}..${HEAD_SHA}" \
+            > .ci/text-hygiene/commits.txt
+
+      - name: Run text hygiene scan
+        if: steps.gates.outputs.run_hygiene == 'true'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_TEXT_HYGIENE_DENYLIST: ${{ vars.PR_TEXT_HYGIENE_DENYLIST }}
+        run: |
+          set -euo pipefail
+          # The deny-list is a repository variable (not a secret), so it is
+          # not masked by default. Register it as a masked value and pass
+          # only the env-var *name* to the script, so the phrase list is
+          # never echoed into public CI logs even if a later step prints
+          # the environment.
+          if [ -n "${PR_TEXT_HYGIENE_DENYLIST:-}" ]; then
+            echo "::add-mask::${PR_TEXT_HYGIENE_DENYLIST}"
+          fi
+          python scripts/check_pr_text_hygiene.py \
+            --title "${PR_TITLE}" \
+            --body "${PR_BODY:-}" \
+            --branch "${PR_BRANCH}" \
+            --commit-messages-file .ci/text-hygiene/commits.txt \
+            --denylist-env-var PR_TEXT_HYGIENE_DENYLIST
+
+      # ─── main-red-guard (advisory, API-only) ──────────────────────────
+
+      - name: Inspect the most recent completed CI run on main
+        # Advisory guard: warns (does NOT block) when the most recent CI
+        # run on main is failed or cancelled and main HEAD has NOT yet
+        # advanced past the failing SHA. PRs against other base branches
+        # are out of scope.
+        if: github.event.pull_request.base.ref == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Query the last 10 CI runs on main and pick the most recent one
+          # whose top-level status is 'completed'. Pending / in-progress
+          # runs are ignored - they will be observed on the next PR event.
+          API_PATH="repos/${REPO}/actions/workflows/ci.yml/runs?branch=main&per_page=10"
+          RUNS_JSON="$(gh api "${API_PATH}")"
+          # Filter to completed runs.
+          LATEST="$(printf '%s' "${RUNS_JSON}" | jq -r '
+            [.workflow_runs[] | select(.status == "completed")]
+            | sort_by(.run_started_at) | reverse
+            | .[0] // empty
+          ')"
+          if [ -z "${LATEST}" ] || [ "${LATEST}" = "null" ]; then
+            echo "::notice::No completed CI run on main was found in the last 10 runs; gate is a no-op PASS."
+            {
+              echo "## main-red-guard"
+              echo ""
+              echo "Status: PASS (no completed CI run on main found in the last 10 runs)"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          CONCLUSION="$(printf '%s' "${LATEST}" | jq -r '.conclusion')"
+          RUN_SHA="$(printf '%s' "${LATEST}" | jq -r '.head_sha')"
+          RUN_URL="$(printf '%s' "${LATEST}" | jq -r '.html_url')"
+          RUN_ID="$(printf '%s' "${LATEST}" | jq -r '.id')"
+          echo "Latest completed CI on main: conclusion=${CONCLUSION} sha=${RUN_SHA} run=${RUN_ID}"
+          # Resolve current main HEAD via the refs API (no checkout needed).
+          MAIN_HEAD="$(gh api "repos/${REPO}/commits/main" --jq '.sha')"
+          echo "Current main HEAD: ${MAIN_HEAD}"
+          # PASS when the latest completed CI on main succeeded.
+          if [ "${CONCLUSION}" = "success" ]; then
+            {
+              echo "## main-red-guard"
+              echo ""
+              echo "Status: PASS"
+              echo ""
+              echo "Latest CI on main conclusion: \`success\` (sha \`${RUN_SHA}\`)"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # PASS when main has rolled forward past the failing SHA.
+          if [ "${MAIN_HEAD}" != "${RUN_SHA}" ]; then
+            {
+              echo "## main-red-guard"
+              echo ""
+              echo "Status: PASS (main rolled forward past the failing SHA)"
+              echo ""
+              echo "- Latest completed CI on main: \`${CONCLUSION}\` (sha \`${RUN_SHA}\`)"
+              echo "- Current main HEAD: \`${MAIN_HEAD}\`"
+              echo "- Run URL: ${RUN_URL}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # main HEAD still pins the failing SHA: surface it loudly.
+          {
+            echo "## main-red-guard"
+            echo ""
+            echo "Status: FAIL"
+            echo ""
+            echo "Most recent completed CI on main is \`${CONCLUSION}\` and main HEAD still points at the failing SHA."
+            echo ""
+            echo "- Failing SHA: \`${RUN_SHA}\`"
+            echo "- Current main HEAD: \`${MAIN_HEAD}\`"
+            echo "- Failing run: ${RUN_URL}"
+            echo ""
+            echo "Either land a fix commit on main, or wait for a fresh green CI run, before this PR can merge."
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Advisory only: warn but do not fail. The FAIL summary above is
+          # kept verbatim so the operator still sees the full detail.
+          echo "::warning::main is red (CI conclusion=${CONCLUSION} on ${RUN_SHA}). See ${RUN_URL}."
+          exit 0
+
+      # ─── Trunk andon gate ─────────────────────────────────────────────
+
+      - name: Check TRUNK_UNSTABLE
+        # Fails on every PR while TRUNK_UNSTABLE == 'true' unless the PR
+        # carries `hotfix-cleared`. Companion to trunk-health-slo.yml.
+        env:
+          # Read-only access to repo variables suffices.
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+
+          UNSTABLE=$(gh api "repos/${REPO}/actions/variables/TRUNK_UNSTABLE" \
+            --jq '.value' 2>/dev/null || echo "false")
+
+          echo "TRUNK_UNSTABLE=${UNSTABLE}"
+
+          if [ "${UNSTABLE}" != "true" ]; then
+            echo "Trunk healthy. Gate passes."
+            exit 0
+          fi
+
+          # Trunk red: only `hotfix-cleared`-labeled PRs may merge.
+          if echo "${PR_LABELS}" | jq -e 'index("hotfix-cleared")' >/dev/null 2>&1; then
+            echo "::notice::Trunk unstable, but PR is labeled hotfix-cleared. Gate passes."
+            exit 0
+          fi
+
+          echo "::error::Trunk is in an unstable state (TRUNK_UNSTABLE=true)."
+          echo "Merge held by Andon gate. Land the hotfix first (or apply the 'hotfix-cleared' label if this PR IS the hotfix)."
+          exit 1
+
+      # ─── Pre-merge autosync (same-repo PRs only) ──────────────────────
+      #
+      # Auto-amends PR branches with the output of `bernstein agents-md
+      # sync` and `ruff check --fix` / `ruff format`, so mirror docs and
+      # formatting cannot drift onto main post-merge. Push requires
+      # BERNSTEIN_AUTOSYNC_TOKEN; the workflow refuses to push with
+      # GITHUB_TOKEN because those commits do not retrigger the source
+      # PR's downstream checks.
+
+      - name: Skip if PR already merged or head ref deleted
+        id: premerge_guard
+        if: steps.gates.outputs.run_autosync == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # Fail open ONLY on positive evidence that the PR was merged or the
+          # head branch was deleted mid-run (the merge-burst race). Any API
+          # ambiguity (network blip, 5xx) falls through to a normal run so
+          # real failures still surface.
+          set -uo pipefail
+          skip=false
+
+          merged="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.merged' 2>/dev/null)"
+          merged_rc=$?
+          if [ "${merged_rc}" -eq 0 ] && [ "${merged}" = "true" ]; then
+            echo "::notice::PR #${PR_NUMBER} is already merged; skipping autosync."
+            skip=true
+          fi
+
+          if [ "${skip}" != "true" ]; then
+            ref_err="$(gh api "repos/${REPO}/git/ref/heads/${HEAD_REF}" 2>&1 >/dev/null)"
+            ref_rc=$?
+            if [ "${ref_rc}" -ne 0 ]; then
+              if printf '%s' "${ref_err}" | grep -qiE 'HTTP 404|not found'; then
+                echo "::notice::Head ref ${HEAD_REF} not found (branch deleted); skipping autosync."
+                skip=true
+              fi
+            fi
+          fi
+
+          echo "skip=${skip}" >> "$GITHUB_OUTPUT"
+
+      - name: Require named autosync token
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+        env:
+          BERNSTEIN_AUTOSYNC_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BERNSTEIN_AUTOSYNC_TOKEN}" ]; then
+            echo "::error::BERNSTEIN_AUTOSYNC_TOKEN is required for autosync pushes; refusing to push with GITHUB_TOKEN."
+            exit 1
+          fi
+
+      # Persist credentials so the post-step push lands on the PR head ref.
+      # Use the named PAT/App token so the amend commit triggers downstream
+      # workflows on the PR.
+      - name: Checkout PR head
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7  # zizmor: ignore[artipacked]
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
+
+      - uses: ./.github/actions/bootstrap
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+
+      - name: Install project (for the bernstein CLI)
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+        run: uv sync --no-dev --frozen
+
+      - name: Regenerate AGENTS.md mirrors
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+        run: uv run bernstein agents-md sync --workdir .
+
+      - name: Run ruff fix and format
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          uv run ruff check . --fix --unsafe-fixes
+          uv run ruff format .
+
+      - name: Detect drift
+        id: drift
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No drift; nothing to amend."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short
+          fi
+
+      - name: Commit and push regen to PR head ref
+        if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true' && steps.drift.outputs.changed == 'true'
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(auto): regenerate AGENTS.md mirrors + ruff format"
+          # Regular push (not force). The PR head ref only ever fast-forwards
+          # from autosync because we just rebuilt mirrors from the current
+          # tree. If a concurrent push from the PR author moved the tip,
+          # let the push fail and the next pull_request.synchronize event
+          # will re-run the job.
+          set +e
+          git push origin "HEAD:${PR_HEAD_REF}"
+          push_rc=$?
+          set -e
+          if [ "${push_rc}" -ne 0 ]; then
+            # Fail open ONLY on positive evidence the branch is gone: a merge
+            # that deleted the head ref mid-run is benign. A real conflict
+            # (author pushed) leaves the ref present, so the failure stays
+            # red and the next synchronize event re-runs the job.
+            if git ls-remote --exit-code --heads origin "${PR_HEAD_REF}" >/dev/null 2>&1; then
+              echo "::error::push to ${PR_HEAD_REF} failed and the ref still exists; leaving job red."
+              exit "${push_rc}"
+            fi
+            echo "::notice::push failed but ${PR_HEAD_REF} no longer exists (branch deleted / PR merged mid-run); treating as benign."
+          fi

@@ -77,15 +77,15 @@ clean.
 
 ## CI workflows
 
-Two workflows drive the integration:
+One workflow drives the integration:
 
 - `.github/workflows/sonar-scan.yml` runs after the main CI workflow
   succeeds on `main`, downloads the coverage artifact, and pushes a
   scan to the Sonar server. Triggered via `workflow_run`.
-- `.github/workflows/sonar-pr-comment.yml` runs on `pull_request`
-  (same-repo only; forks are skipped because they cannot access the
-  Sonar token). It posts a sticky comment summarising the current
-  project measures and never sets a failing check.
+
+Findings surface through the code-scanning (SARIF) path; there is no
+per-PR comment workflow. Run `bernstein doctor sonar` locally for the
+current project measures.
 
 ## Troubleshooting
 
@@ -94,7 +94,6 @@ Two workflows drive the integration:
 | `Sonar integration not configured` | Env vars unset | Export `SONAR_HOST_URL` / `SONAR_TOKEN`. |
 | `server unreachable or project not yet scanned` | Project key not yet present on the server | Wait for the next `sonar-scan` workflow run on `main`. |
 | `403` from `/api/measures/component` | Token lacks `Browse` permission | Regenerate the token with the right scope. |
-| Sticky PR comment missing on a fork PR | Forks cannot read repo secrets | Expected. The workflow opts out for fork PRs. |
 
 ## Implementation map
 
@@ -104,4 +103,3 @@ Two workflows drive the integration:
 | `src/bernstein/cli/commands/doctor_sonar_cmd.py` | Click command + Rich renderer. |
 | `tests/unit/cli/doctor/test_sonar.py` | Coverage for the client, baseline, nudge, and CLI wiring. |
 | `.github/workflows/sonar-scan.yml` | Scan workflow (push to main). |
-| `.github/workflows/sonar-pr-comment.yml` | Sticky advisory PR comment. |

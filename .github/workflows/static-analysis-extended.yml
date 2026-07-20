@@ -9,6 +9,14 @@ name: static-analysis (extended)
 # Each job runs in parallel and uploads SARIF to GitHub Code
 # Scanning so the Security tab is the single source of truth.
 #
+# Lane split (issue #2764): the security-signal jobs (semgrep, trivy-fs,
+# trivy-iac) run on push / merge_group / schedule. The advisory
+# style-and-hygiene jobs (vulture, refurb, perflint) run on the weekly
+# schedule and workflow_dispatch only, so merge-queue runs stay lean and
+# the code-scanning alert feed stays a security signal. The refurb SARIF
+# upload is additionally filtered to error-level results so its style
+# findings no longer create alerts that bury real security findings.
+#
 # Ref: .sdd/backlog/open/2026-05-19-feat-ci-semgrep-trivy-pipaudit.md
 
 on:
@@ -270,7 +278,9 @@ jobs:
     # within a file; vulture spots unused functions/classes/vars
     # across the 40-adapter tree. Findings are advisory (job does
     # not fail) until the existing dead-code follow-ups land.
+    # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: vulture (dead code)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -333,7 +343,9 @@ jobs:
     # Outdated-idiom detection. refurb flags constructs that have
     # cleaner modern Python equivalents (e.g. `list(map(...))` ->
     # list comprehension). Advisory.
+    # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: refurb (idioms)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -369,6 +381,29 @@ jobs:
         run: |
           python3 scripts/sarif_drop_suppressed.py \
             refurb.sarif > refurb.filtered.sarif
+      - name: Keep error-level results only (#2764)
+        # refurb findings convert to SARIF at warning level; ingesting
+        # them as code-scanning alerts buried the small number of real
+        # security findings in the feed. Keep only error-level results in
+        # the upload so the alert feed stays a security signal; the full
+        # text output remains available in the workflow artifact below.
+        if: always()
+        run: |
+          python3 - <<'FILTER'
+          import json
+
+          with open("refurb.filtered.sarif", encoding="utf-8") as fh:
+              doc = json.load(fh)
+          dropped = 0
+          for run in doc.get("runs", []):
+              results = run.get("results", [])
+              kept = [r for r in results if r.get("level") == "error"]
+              dropped += len(results) - len(kept)
+              run["results"] = kept
+          with open("refurb.filtered.sarif", "w", encoding="utf-8") as fh:
+              json.dump(doc, fh)
+          print(f"dropped {dropped} non-error refurb results from the upload")
+          FILTER
       - name: Upload SARIF to Code Scanning
         if: always()
         uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
@@ -391,7 +426,9 @@ jobs:
     # have measurable cost in tight loops (string concat in loops,
     # try/except in hot paths, etc.). Matters for the orchestrator
     # tick loop. Advisory.
+    # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: perflint (hot-path antipatterns)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

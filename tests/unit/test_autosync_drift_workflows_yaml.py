@@ -28,7 +28,9 @@ class WorkflowFile(TypedDict, total=False):
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PRE_MERGE = REPO_ROOT / ".github" / "workflows" / "pre-merge-autosync.yml"
+# The pre-merge autosync steps live in the consolidated per-PR policy
+# workflow (pr-policy.yml); the structural guarantees below are unchanged.
+PRE_MERGE = REPO_ROOT / ".github" / "workflows" / "pr-policy.yml"
 NIGHTLY = REPO_ROOT / ".github" / "workflows" / "nightly-drift-sweep.yml"
 
 
@@ -60,7 +62,7 @@ def _run(step: WorkflowStep) -> str:
 
 
 def test_pre_merge_setup_and_format_fail_before_commit() -> None:
-    steps = _steps(PRE_MERGE, "autosync")
+    steps = _steps(PRE_MERGE, "pr-policy")
     install = _step(steps, "Install project (for the bernstein CLI)")
     formatter = _step(steps, "Run ruff fix and format")
 
@@ -72,7 +74,7 @@ def test_pre_merge_setup_and_format_fail_before_commit() -> None:
 
 
 def test_pre_merge_push_requires_named_autosync_token() -> None:
-    steps = _steps(PRE_MERGE, "autosync")
+    steps = _steps(PRE_MERGE, "pr-policy")
     checkout = _step(steps, "Checkout PR head")
     require_token = _step(steps, "Require named autosync token")
     push = _step(steps, "Commit and push regen to PR head ref")

@@ -38,15 +38,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | push | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
+| .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 1 |
 | .github/workflows/docs-observability-snapshot.yml | Observability daily snapshot | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
 | .github/workflows/flake-quarantine.yml | Flake quarantine | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "flake-quarantine"} | 1 |
 | .github/workflows/glitchtip.yml | GlitchTip | schedule, workflow_dispatch | - | 2 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
-| .github/workflows/labeler.yml | PR Labeler | pull_request_target | {"cancel-in-progress": "true", "group": "labeler-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/license-compliance.yml | License Compliance | pull_request, push | {"cancel-in-progress": "true", "group": "license-${{ github.ref }}"} | 1 |
-| .github/workflows/main-red-guard.yml | main-red-guard | pull_request | {"cancel-in-progress": "true", "group": "main-red-guard-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/main-sha-marker.yml | Main SHA marker | push | {"cancel-in-progress": "false", "group": "main-sha-marker-${{ github.sha }}"} | 1 |
 | .github/workflows/mutation-fixed.yml | Mutation (fixed critical paths) | merge_group, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "mutation-fixed-${{ github.workflow }}-${{ github.ref }}"} | 2 |
 | .github/workflows/nightly-canary.yml | Nightly real-run canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-canary"} | 1 |
@@ -55,10 +53,9 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/notify-other-failures.yml | Telegram nightly-fanout notifications | workflow_run | {"cancel-in-progress": "true", "group": "notify-other-${{ github.event.workflow_run.name }}-${{ github.event.workflow_run.head_branch }}"} | 1 |
 | .github/workflows/pentest.yml | Adversarial Pen-Test Suite | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "pentest-${{ github.ref }}"} | 1 |
 | .github/workflows/post-ci-dispatcher.yml | Post-CI dispatcher | workflow_run | {"cancel-in-progress": "false", "group": "post-ci-dispatcher-${{ github.event.workflow_run.head_sha }}"} | 6 |
+| .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-observability-summary.yml | PR observability summary | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "pr-observability-${{ github.event.pull_request.number \|\| github.event.inputs.pr_number }}"} | 1 |
-| .github/workflows/pr-size.yml | PR Size Labeler | pull_request | {"cancel-in-progress": "true", "group": "pr-size-${{ github.event.pull_request.number }}"} | 1 |
-| .github/workflows/pr-text-hygiene.yml | PR text hygiene | pull_request | {"cancel-in-progress": "true", "group": "pr-text-hygiene-${{ github.event.pull_request.number }}"} | 1 |
-| .github/workflows/pre-merge-autosync.yml | Pre-merge autosync | pull_request | {"cancel-in-progress": "true", "group": "pre-merge-autosync-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "true", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, release | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
@@ -74,7 +71,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/soc2-evidence-nightly.yml | soc2-evidence-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
 | .github/workflows/sonar-code-scanning.yml | Sonar findings to code scanning | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "sonar-code-scanning-${{ github.ref }}"} | 1 |
 | .github/workflows/sonar-hotspot-review.yml | SonarQube hotspot review | workflow_dispatch | {"cancel-in-progress": "false", "group": "sonar-hotspot-review"} | 1 |
-| .github/workflows/sonar-pr-comment.yml | SonarQube PR insights comment | pull_request | {"cancel-in-progress": "true", "group": "sonar-pr-comment-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/sonar-scan.yml | SonarQube scan | schedule, workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-scan-${{ github.ref }}"} | 1 |
 | .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
@@ -82,7 +78,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/telegram-notify.yml | Telegram CI Notifications | workflow_call | - | 1 |
 | .github/workflows/trend-scan.yml | Trend scan | workflow_dispatch | {"cancel-in-progress": "false", "group": "trend-scan"} | 1 |
 | .github/workflows/trufflehog.yml | trufflehog (secret scanning) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trufflehog-${{ github.ref }}"} | 1 |
-| .github/workflows/trunk-andon-gate.yml | Trunk Andon Gate | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-andon-gate-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/trunk-health-slo.yml | Trunk Health SLO | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-health-slo"} | 1 |
 | .github/workflows/typecheck-ts.yml | TypeScript typecheck | pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/zizmor.yml | zizmor (workflow static analysis) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "zizmor-${{ github.ref }}"} | 1 |
@@ -118,15 +113,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/coverage-ratchet.yml | ratchet: Total coverage ratchet |
 | .github/workflows/dependabot-auto-merge.yml | auto-merge |
 | .github/workflows/dependency-review.yml | review: Dependency review |
-| .github/workflows/docs-drift.yml | docs-data-freshness: Data freshness (advisory)<br>drift-check: Run drift check |
+| .github/workflows/docs-drift.yml | drift-check: Run drift check |
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture daily snapshot |
 | .github/workflows/eval-nightly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
 | .github/workflows/flake-quarantine.yml | detect-and-quarantine: Detect flaky tests and open quarantine PR |
 | .github/workflows/glitchtip.yml | ingest: Ingest GlitchTip events<br>sweep: sweep |
 | .github/workflows/hotfix-r-tracker.yml | track: Detect hotfix-begets-hotfix |
-| .github/workflows/labeler.yml | label |
 | .github/workflows/license-compliance.yml | license-check |
-| .github/workflows/main-red-guard.yml | guard: main-red-guard |
 | .github/workflows/main-sha-marker.yml | marker: Main SHA marker |
 | .github/workflows/mutation-fixed.yml | mutate: ${{ matrix.module }}<br>summary: Summary + PR comment |
 | .github/workflows/nightly-canary.yml | canary: Real-run canary |
@@ -135,10 +128,9 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/notify-other-failures.yml | notify |
 | .github/workflows/pentest.yml | pentest: Pen-test: ${{ github.event.inputs.suite \|\| 'all' }} |
 | .github/workflows/post-ci-dispatcher.yml | auto-heal: Auto-heal v2<br>auto-release: Auto-release<br>bernstein-ci-fix: Bernstein CI fix<br>bisect-on-red: Bisect on red<br>meta: Resolve upstream metadata<br>telegram-notify: Telegram notify |
+| .github/workflows/pr-labels.yml | label |
 | .github/workflows/pr-observability-summary.yml | summary: Sticky observability comment |
-| .github/workflows/pr-size.yml | labeler |
-| .github/workflows/pr-text-hygiene.yml | text-hygiene: text-hygiene |
-| .github/workflows/pre-merge-autosync.yml | autosync: Regenerate mirrors and format |
+| .github/workflows/pr-policy.yml | pr-policy: PR policy |
 | .github/workflows/publish-docker.yml | publish: Build and push image to GHCR |
 | .github/workflows/publish-extension.yml | publish |
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
@@ -154,7 +146,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/soc2-evidence-nightly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
 | .github/workflows/sonar-code-scanning.yml | sonar-sarif: Upload Sonar SARIF to code scanning |
 | .github/workflows/sonar-hotspot-review.yml | review: Apply hotspot review manifest |
-| .github/workflows/sonar-pr-comment.yml | comment: Sonar smells delta comment |
 | .github/workflows/sonar-scan.yml | scan: SonarQube scan |
 | .github/workflows/spiffe-extra-e2e.yml | spiffe-extra-e2e: SPIFFE extra E2E (built wheel, extra-present + no-extra suites) |
 | .github/workflows/stale.yml | stale |
@@ -162,7 +153,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/telegram-notify.yml | notify |
 | .github/workflows/trend-scan.yml | scan: Run trend scan |
 | .github/workflows/trufflehog.yml | trufflehog: trufflehog scan |
-| .github/workflows/trunk-andon-gate.yml | gate: Andon gate |
 | .github/workflows/trunk-health-slo.yml | compute: Compute trunk red-rate and toggle TRUNK_UNSTABLE |
 | .github/workflows/typecheck-ts.yml | typecheck: typecheck (${{ matrix.package }}) |
 | .github/workflows/zizmor.yml | zizmor: zizmor static analysis |
@@ -198,15 +188,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/coverage-ratchet.yml | ratchet: {"actions": "read", "contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
-| .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>docs-data-freshness: {"contents": "read", "issues": "write"}<br>drift-check: {"contents": "read", "pull-requests": "write"} | - |
+| .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | DT_API_KEY, DT_API_URL, GITHUB_TOKEN, GLITCHTIP_API_TOKEN, SONAR_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED, GLITCHTIP_DSN |
 | .github/workflows/flake-quarantine.yml | workflow: {"contents": "read"}<br>detect-and-quarantine: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/glitchtip.yml | workflow: {"contents": "read"}<br>ingest: {"contents": "write", "pull-requests": "write"}<br>sweep: {"contents": "read", "issues": "write"} | GITHUB_TOKEN, GLITCHTIP_API_TOKEN |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
-| .github/workflows/labeler.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/license-compliance.yml | workflow: {"contents": "read"}<br>license-check: {"contents": "read"} | - |
-| .github/workflows/main-red-guard.yml | workflow: {"actions": "read", "contents": "read"}<br>guard: {"actions": "read", "contents": "read"} | - |
 | .github/workflows/main-sha-marker.yml | - | - |
 | .github/workflows/mutation-fixed.yml | workflow: {"contents": "read"}<br>mutate: {"contents": "read"}<br>summary: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/nightly-canary.yml | workflow: {"contents": "read"} | GLITCHTIP_DSN |
@@ -215,10 +203,9 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/notify-other-failures.yml | workflow: {"actions": "read", "contents": "read"} | TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/pentest.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"contents": "write", "issues": "write"}<br>bernstein-ci-fix: {"actions": "read", "contents": "write", "issues": "write", "pull-requests": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read"}<br>telegram-notify: {"actions": "read", "contents": "read"} | GEMINI_API_KEY, GLITCHTIP_DSN, OPENROUTER_API_KEY_FREE, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
+| .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"contents": "read", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_GLITCHTIP_TOKEN, DTRACK_TOKEN, GITHUB_TOKEN, SONAR_TOKEN |
-| .github/workflows/pr-size.yml | workflow: {"contents": "read"}<br>labeler: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
-| .github/workflows/pr-text-hygiene.yml | workflow: {"contents": "read", "pull-requests": "read"} | - |
-| .github/workflows/pre-merge-autosync.yml | workflow: {"contents": "read"}<br>autosync: {"contents": "write", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
+| .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "write", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "write"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
@@ -234,7 +221,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/soc2-evidence-nightly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED |
 | .github/workflows/sonar-code-scanning.yml | workflow: {"contents": "read"}<br>sonar-sarif: {"contents": "read", "security-events": "write"} | SONAR_TOKEN |
 | .github/workflows/sonar-hotspot-review.yml | workflow: {"contents": "read"} | SONAR_TOKEN |
-| .github/workflows/sonar-pr-comment.yml | workflow: {"contents": "read", "issues": "write", "pull-requests": "write"} | SONAR_TOKEN |
 | .github/workflows/sonar-scan.yml | workflow: {"actions": "read", "contents": "read"} | GITHUB_TOKEN, SONAR_TOKEN |
 | .github/workflows/spiffe-extra-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/stale.yml | workflow: {"issues": "write", "pull-requests": "write"} | - |
@@ -242,7 +228,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/telegram-notify.yml | workflow: {"actions": "read", "contents": "read"} | TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/trend-scan.yml | scan: {"contents": "read"} | - |
 | .github/workflows/trufflehog.yml | workflow: {"contents": "read"}<br>trufflehog: {"contents": "read", "pull-requests": "read"} | - |
-| .github/workflows/trunk-andon-gate.yml | gate: {"contents": "read", "pull-requests": "read"} | - |
 | .github/workflows/trunk-health-slo.yml | compute: {"actions": "read"} | BOT_PAT |
 | .github/workflows/typecheck-ts.yml | workflow: {"contents": "read"}<br>typecheck: {"contents": "read"} | - |
 | .github/workflows/zizmor.yml | workflow: {"contents": "read"}<br>zizmor: {"actions": "read", "contents": "read", "security-events": "write"} | - |

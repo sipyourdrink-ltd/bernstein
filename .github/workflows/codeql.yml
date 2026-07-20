@@ -8,15 +8,23 @@ on:
       - "tests/**"
       - "scripts/**"
       - "pyproject.toml"
-  # No `paths:` filter on pull_request: branch protection on `main` lists
-  # `CodeQL` and `CodeQL (python)` as required status checks. If this
-  # workflow is path-filtered out of a PR (e.g. docs-only or workflow-only
-  # change), the required checks never appear and the PR sits BLOCKED
-  # indefinitely. Running CodeQL on every PR costs 2-3 min of CI but
-  # eliminates the deadlock; analysis is cheap when no Python source has
-  # changed because CodeQL re-uses its cached database.
+  # Path-scoped on pull_request: CodeQL analyzes Python sources only, so
+  # PRs that touch no analyzable path (docs-only, workflow-only) skip the
+  # run and free a runner slot. This is safe for branch protection: the
+  # required status checks on `main` are `CI gate` and `review-bot-ack`
+  # only, so a skipped CodeQL run cannot deadlock a PR. Push-to-main and
+  # the weekly schedule keep full-coverage analysis on everything that
+  # lands.
   pull_request:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/codeql.yml"
+      - ".github/codeql/**"
   schedule:
     - cron: "0 4 * * 1"  # Weekly Monday 4 AM UTC
 

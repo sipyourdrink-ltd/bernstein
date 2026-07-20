@@ -62,6 +62,21 @@ name: "Contract Drift Autofix"
 on:
   pull_request:
     types: [opened, synchronize]
+    # Path-scoped to the surfaces the three drift detectors watch. PRs
+    # that cannot produce contract drift skip this workflow entirely,
+    # freeing a runner slot; the same contract tests still run inside the
+    # ci.yml test shards on every code PR, so drift is never missed -
+    # only the auto-patch convenience is path-gated.
+    paths:
+      - "src/bernstein/cli/**"
+      - "src/bernstein/core/routes/**"
+      - "src/bernstein/core/server/**"
+      - "README.md"
+      - "tests/unit/test_readme_api_coverage.py"
+      - "tests/unit/test_api_v1_routing.py"
+      - "tests/unit/test_cli_run_params.py"
+      - "scripts/regen_contract_drift.py"
+      - ".github/workflows/contract-drift-autofix.yml"
 
 concurrency:
   group: contract-drift-${{ github.event.pull_request.number }}

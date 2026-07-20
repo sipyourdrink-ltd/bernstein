@@ -37,9 +37,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Module-level pytest.skipif handles Windows; covering ubuntu and
-        # macOS here gives confidence on both POSIX targets.
-        os: [ubuntu-latest, macos-latest]
+        # Module-level pytest.skipif handles Windows. PRs run ubuntu only
+        # to keep the scarce macOS hosted-runner pool free; the nightly
+        # schedule and workflow_dispatch runs cover both POSIX targets.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
