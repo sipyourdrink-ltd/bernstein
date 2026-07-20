@@ -22,14 +22,29 @@ from bernstein.core.models import (
 
 logger = logging.getLogger(__name__)
 
+#: Preflight hints already surfaced this process, so repeated seed parses
+#: (bootstrap, ``create_app`` CORS read, the app-startup seed reload) do not
+#: re-log the same notice. ``bernstein gui serve`` parses the seed twice, which
+#: used to print the internal-LLM notice twice; dedupe on the hint text.
+_emitted_internal_llm_hints: set[str] = set()
+
+
+def reset_internal_llm_preflight_cache() -> None:
+    """Clear the per-process preflight-dedup memory (test helper)."""
+    _emitted_internal_llm_hints.clear()
+
 
 def check_internal_llm_preflight(provider: str) -> str | None:
-    """Return a migration hint if ``provider`` needs env vars that are missing.
+    """Return a heads-up if ``provider`` needs env vars that are missing.
 
-    a fresh clone with ``internal_llm_provider: openrouter_free``
-    but no ``OPENROUTER_API_KEY_FREE`` / ``OPENROUTER_API_KEY_PAID`` crashes
-    on the first LLM call. Callers (seed parser, orchestrator bootstrap) can
-    invoke this to emit the hint early and suggest switching to ``'none'``.
+    A fresh clone with ``internal_llm_provider: openrouter_free`` but no
+    ``OPENROUTER_API_KEY_FREE`` / ``OPENROUTER_API_KEY_PAID`` cannot reach the
+    internal model, so evolution and auto_decompose stay unavailable. Callers
+    (seed parser, orchestrator bootstrap) can invoke this to surface the notice
+    early and suggest switching to ``'none'``.
+
+    This function is pure -- it never logs. Use
+    :func:`warn_internal_llm_preflight_once` for the deduped emission.
 
     Args:
         provider: The configured ``internal_llm_provider`` value.
@@ -41,13 +56,32 @@ def check_internal_llm_preflight(provider: str) -> str | None:
         os.environ.get("OPENROUTER_API_KEY_FREE") or os.environ.get("OPENROUTER_API_KEY_PAID")
     ):
         return (
-            "internal_llm_provider='openrouter_free' requires "
-            "OPENROUTER_API_KEY_FREE or OPENROUTER_API_KEY_PAID in the "
-            "environment. Either export one of those variables or set "
-            "'internal_llm_provider: none' in bernstein.yaml to disable "
-            "evolution and auto_decompose gracefully."
+            "internal_llm_provider is set to 'openrouter_free' but neither "
+            "OPENROUTER_API_KEY_FREE nor OPENROUTER_API_KEY_PAID is set. "
+            "Evolution and auto_decompose stay disabled until you export one "
+            "of those keys, or set 'internal_llm_provider: none' in "
+            "bernstein.yaml to run without them."
         )
     return None
+
+
+def warn_internal_llm_preflight_once(provider: str) -> str | None:
+    """Log the internal-LLM preflight notice at most once per process.
+
+    The seed is parsed several times per process, and each ``SeedConfig``
+    construction used to log the notice -- so ``bernstein gui serve`` emitted
+    it twice (once when ``create_app`` reads CORS, once during the
+    app-startup seed reload). Dedupe on the hint text so the operator sees it
+    at most once. Returns the hint (whether or not it was newly logged) so
+    callers can still react to it.
+    """
+    hint = check_internal_llm_preflight(provider)
+    if hint is None:
+        return None
+    if hint not in _emitted_internal_llm_hints:
+        _emitted_internal_llm_hints.add(hint)
+        logger.warning("preflight: %s", hint)
+    return hint
 
 
 if TYPE_CHECKING:
@@ -421,7 +455,5 @@ class SeedConfig:
     mcp_signing_mode: Literal["warn", "strict", "off"] = "warn"
 
     def __post_init__(self) -> None:
-        """Emit preflight warnings for provider/env mismatches."""
-        hint = check_internal_llm_preflight(self.internal_llm_provider)
-        if hint is not None:
-            logger.warning(" preflight: %s", hint)
+        """Emit preflight warnings for provider/env mismatches (once/process)."""
+        warn_internal_llm_preflight_once(self.internal_llm_provider)
