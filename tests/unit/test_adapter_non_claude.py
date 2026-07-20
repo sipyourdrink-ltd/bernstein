@@ -479,7 +479,7 @@ class TestQwenAdapterSpawn:
         # is enabled.
         assert "--tavily-api-key" not in inner
         assert "tv-key-xyz" not in inner
-        assert "--web-search-default" in inner
+        assert "--web-search-default" not in inner
         env = popen.call_args.kwargs.get("env", {})
         assert env.get("TAVILY_API_KEY") == "tv-key-xyz"
 

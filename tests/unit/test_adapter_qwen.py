@@ -202,7 +202,7 @@ class TestQwenAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert inner[inner.index("--model") + 1] == "qwen3.6-plus"
 
-    def test_tavily_flags_when_key_set(self, tmp_path: Path) -> None:
+    def test_tavily_key_does_not_add_removed_cli_flag(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=108)
         settings = _default_settings(tavily_api_key="tvly-test")
@@ -217,9 +217,9 @@ class TestQwenAdapterSpawn:
                 session_id="qwen-s9",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        # The non-sensitive selector flag is still on argv.
-        assert "--web-search-default" in inner
-        assert inner[inner.index("--web-search-default") + 1] == "tavily"
+        # Qwen Code reads the key from the environment; current releases no
+        # longer accept the old selector flag.
+        assert "--web-search-default" not in inner
         # SECURITY: the Tavily key must NEVER reach argv (visible via ps).
         assert "--tavily-api-key" not in inner
         assert "tvly-test" not in inner

@@ -118,8 +118,7 @@ class QwenAdapter(CLIAdapter):
         The Tavily API key is never placed on argv (it would be visible to
         any user with ``ps`` access on the host). It is forwarded to the
         spawned process via the ``TAVILY_API_KEY`` environment variable in
-        :meth:`spawn`. Only the non-sensitive ``--web-search-default``
-        selector is added to argv.
+        :meth:`spawn`.
 
         Args:
             mcp_config: Per-spawn config that may carry ``temperature``/
@@ -139,9 +138,6 @@ class QwenAdapter(CLIAdapter):
 
         if provider != "default":
             cmd.extend(["--auth-type", "openai"])
-
-        if settings.tavily_api_key:
-            cmd.extend(["--web-search-default", "tavily"])
 
         if mcp_config:
             temperature = mcp_config.get("temperature")
