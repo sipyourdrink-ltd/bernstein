@@ -1,9 +1,9 @@
 name: Auto-heal v2
 
 # Self-healing CI workflow, version 2. The v1 workflow (zero-LLM,
-# four repair recipes) is kept under .github/workflows/auto-heal-v1.yml
-# as an emergency fallback (gated behind ``if: false``) so an operator
-# can revert by flipping a single boolean.
+# four repair recipes) has been removed from the tree; recover it from
+# git history (.github/workflows/auto-heal-v1.yml, deleted in #1501)
+# if an emergency fallback is ever needed.
 #
 # v2 splits the heal pipeline into four layers (detection / classification
 # / repair / safety) and wires in Bernstein-native primitives:

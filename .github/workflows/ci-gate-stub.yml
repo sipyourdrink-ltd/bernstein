@@ -71,9 +71,7 @@ on:
       - ".github/FUNDING.yml"
       - ".github/CODEOWNERS"
       - ".github/pull_request_template.md"
-      - ".github/dependabot.yml"
       - ".github/labeler.yml"
-      - ".github/release-drafter.yml"
       - ".github/copilot-instructions.md"
       - ".github/codeql/**"
       # Non-code project files
