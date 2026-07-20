@@ -613,8 +613,8 @@ jobs:
       - name: Upload built wheel for downstream install-smoke jobs
         # Shared artifact consumed by install-smoke-pipx and
         # install-smoke-uv. Building once and reusing avoids running
-        # `uv build` on every matrix cell (6 + 2 = 8 cells today) and
-        # ensures every smoke runs against bit-identical wheels.
+        # `uv build` on every matrix cell (2 cells on PRs, 6 on push)
+        # and ensures every smoke runs against bit-identical wheels.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-smoke-wheel
@@ -643,12 +643,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # PR lane installs one representative cell (ubuntu / 3.13): the
+        # packaging regression class this job catches (package-data,
+        # console_scripts, entry points) is OS- and interpreter-agnostic
+        # in practice, so one cell per PR is enough signal. The full
+        # 4-cell matrix runs on every push to main and on dispatch.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
         # Matrix tracks `requires-python = ">=3.12"` in pyproject.toml.
         # 3.11 is intentionally excluded: pipx / uv install would refuse
         # the wheel for a Python the package does not support, which
         # would just confirm the floor we already pin.
-        python-version: ["3.12", "3.13"]
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.13"]') || fromJSON('["3.12", "3.13"]') }}
     steps:
       - name: Harden runner (audit mode)
         if: runner.os == 'Linux'
@@ -768,7 +773,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # PR lane: ubuntu only; both OS cells run on push to main and on
+        # dispatch (see the install-smoke-pipx matrix note above).
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     steps:
       - name: Harden runner (audit mode)
         if: runner.os == 'Linux'
@@ -1372,7 +1379,13 @@ jobs:
         # the event is a push. ci-macos-nightly.yml provides a daily
         # safety-net run of the full macOS matrix.
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.12", "3.13"]
+        # PR lane runs the primary interpreter (3.13) only; the 3.12 row
+        # runs on every push to main (and merge_group / dispatch), so
+        # each merged commit still carries the full interpreter matrix
+        # and a 3.12-only regression surfaces at most one merge later.
+        # This halves the ubuntu shard fan-out per PR push and frees
+        # runner-pool slots during burst waves.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.13"]') || fromJSON('["3.12", "3.13"]') }}
         # Fan the per-file suite out across 4 deterministic shards per
         # cell. Keep this list in sync with TEST_SHARD_COUNT above.
         shard: [1, 2, 3, 4]
@@ -1729,89 +1742,6 @@ jobs:
   # which on a CI failure first attempts an auto-heal PR and only falls
   # back to opening a `ci-fix` issue when no diff is produced.
 
-  pr-summary:
-    name: PR CI summary
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    needs:
-      - repo-hygiene
-      - lint
-      - typecheck
-      - test
-      - test-macos
-      - spelling
-      - dead-code
-      - actionlint
-      - dist-size
-      - property-tests
-      - snapshot-tests
-      - schemathesis-smoke
-      - semgrep
-      - bandit
-      - pip-audit
-      - beartype
-      - pyright-strict-zone
-    timeout-minutes: 5
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const marker = '<!-- ci-summary -->';
-            const jobs = [
-              { name: 'Repo hygiene', result: '${{ needs.repo-hygiene.result }}' },
-              { name: 'Lint', result: '${{ needs.lint.result }}' },
-              { name: 'Type check report', result: '${{ needs.typecheck.result }}' },
-              { name: 'Tests', result: '${{ needs.test.result }}' },
-              { name: 'Tests (macOS)', result: '${{ needs.test-macos.result }}' },
-              { name: 'Spelling', result: '${{ needs.spelling.result }}' },
-              { name: 'Dead code', result: '${{ needs.dead-code.result }}' },
-              { name: 'Workflow lint', result: '${{ needs.actionlint.result }}' },
-              { name: 'Dist size', result: '${{ needs.dist-size.result }}' },
-              { name: 'Property (Hypothesis)', result: '${{ needs.property-tests.result }}' },
-              { name: 'Snapshot (syrupy)', result: '${{ needs.snapshot-tests.result }}' },
-              { name: 'Schemathesis smoke', result: '${{ needs.schemathesis-smoke.result }}' },
-              { name: 'Semgrep custom', result: '${{ needs.semgrep.result }}' },
-              { name: 'Bandit', result: '${{ needs.bandit.result }}' },
-              { name: 'pip-audit', result: '${{ needs.pip-audit.result }}' },
-              { name: 'Beartype', result: '${{ needs.beartype.result }}' },
-              { name: 'Pyright strict zone', result: '${{ needs.pyright-strict-zone.result }}' },
-            ];
-            const icon = (r) => r === 'success' ? '✅' : r === 'failure' ? '❌' : r === 'skipped' ? '⏭️' : '⚠️';
-            let body = `${marker}\n### CI Summary\n\n`;
-            body += '| Check | Result |\n|-------|--------|\n';
-            for (const j of jobs) {
-              body += `| ${j.name} | ${icon(j.result)} ${j.result} |\n`;
-            }
-            body += '\nCoverage and detailed reports are available via Codecov and the Checks tab.';
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find(c => c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
-
   # ─── Aggregator gate (closes #1273) ────────────────────────────────────
   #
   # SINGLE required status check for branch protection.
@@ -1840,7 +1770,6 @@ jobs:
   # Excluded from `needs:`:
   #   * `autofix`        - runs only on push to main, mutates the tree
   #   * `close-ci-issues` - post-gate issue update, must not gate merges
-  #   * `pr-summary`     - cosmetic PR comment, must not gate merges
   #   * `typecheck`      - advisory report while repo-wide pyright is being typed
   #   * `mutmut-diff`    - advisory report until mutation score enforcement is enabled
   #   * `diff-coverage`  - advisory report until PR coverage artifacts are reliable
