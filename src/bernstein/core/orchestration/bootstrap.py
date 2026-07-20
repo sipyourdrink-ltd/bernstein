@@ -494,6 +494,36 @@ def _sync_and_plan_tasks(
     return backlog_count, manager_task_id, prior_session
 
 
+def _describe_cost_estimate(backlog_count: int, model: str | None) -> str:
+    """Build the startup cost-estimate fragment from the synced task count.
+
+    ``backlog_count`` is the number of tasks actually submitted to the task
+    server (backlog sync or plan-file post), so the printed count can never
+    disagree with the run's real task list. When it is zero the manager
+    agent has not planned yet: the count is unknown, so a per-task rate is
+    shown and no count is printed.
+
+    Args:
+        backlog_count: Tasks synced/posted to the server; 0 means planning
+            is deferred to the manager agent.
+        model: Configured model name, or ``None``/empty when unset.
+
+    Returns:
+        Plain-text fragment for the startup cost line.
+    """
+    from bernstein.core.cost import estimate_run_cost
+
+    if backlog_count > 0:
+        if model:
+            low, high = estimate_run_cost(backlog_count, model)
+            return f"~${low:.2f}-${high:.2f} ({backlog_count} task(s), {model})"
+        return f"unknown (no model configured, {backlog_count} task(s))"
+    if model:
+        low, high = estimate_run_cost(1, model)
+        return f"~${low:.2f}-${high:.2f} per task ({model}, task count pending planning)"
+    return "unknown (no model configured, task count pending planning)"
+
+
 def _record_team_manifest_lineage(seed: SeedConfig, workdir: Path) -> None:
     """Anchor a run's team manifest in the audit chain (issue #2248, AC3).
 
@@ -663,16 +693,9 @@ def bootstrap_from_seed(
         worker_role=worker_role,
     )
 
-    # Cost estimate (single compact line)
-    from bernstein.core.cost import estimate_run_cost
-
-    est_count = backlog_count if backlog_count > 0 else 5
-    est_model = seed.model
-    if est_model:
-        low, high = estimate_run_cost(est_count, est_model)
-        console.print(f"  [dim]cost[/dim]    ~${low:.2f}-${high:.2f} ({est_count} tasks, {est_model})")
-    else:
-        console.print(f"  [dim]cost[/dim]    unknown (no model configured, {est_count} tasks)")
+    # Cost estimate (single compact line). Derived from the synced task
+    # count so it can never disagree with the submitted backlog.
+    console.print(f"  [dim]cost[/dim]    {_describe_cost_estimate(backlog_count, seed.model)}")
 
     # 5. Start spawner + watchdog
     # Propagate the resolved adapter (e.g. ``mock`` from ``--idle``) explicitly so
@@ -1235,20 +1258,9 @@ def _bootstrap_from_goal_impl(
         icons=_icons,
     )
 
-    # Cost estimation - show before spawning agents
-    from bernstein.core.cost import estimate_run_cost
-
-    est_task_count = backlog_count if backlog_count > 0 else 5  # default estimate for manager-planned
-    if model:
-        low, high = estimate_run_cost(est_task_count, model)
-        console.print(
-            f"[bold yellow]Cost estimate:[/bold yellow] ${low:.2f}-${high:.2f} "
-            f"({est_task_count} task(s), {model} model)"
-        )
-    else:
-        console.print(
-            f"[bold yellow]Cost estimate:[/bold yellow] unknown - no model configured ({est_task_count} task(s))"
-        )
+    # Cost estimation - show before spawning agents. Derived from the synced
+    # task count so it can never disagree with the submitted backlog.
+    console.print(f"[bold yellow]Cost estimate:[/bold yellow] {_describe_cost_estimate(backlog_count, model)}")
 
     cell_label = f"{cells} cells" if cells > 1 else "single cell"
     # Propagate the resolved cli adapter explicitly so the orchestrator

@@ -82,7 +82,9 @@ class RunCostEstimate:
     """Preflight cost estimate for a pending run.
 
     Attributes:
-        task_count: Number of tasks the run will spawn.
+        task_count: Number of tasks the run will spawn, or ``None`` when the
+            count is not yet known (inline goal that the manager agent plans
+            after startup). ``low_usd``/``high_usd`` are then per-task rates.
         model: Display label for the model (``"adapter/model"`` or model).
         low_usd: Legacy single-point low estimate (kept for back-compat).
         high_usd: Legacy single-point high estimate (kept for back-compat).
@@ -90,22 +92,29 @@ class RunCostEstimate:
             legacy callers can leave it unset.
     """
 
-    task_count: int
+    task_count: int | None
     model: str
     low_usd: float
     high_usd: float
     band: CostBand | None = None
 
 
-def _estimate_task_count(workdir: Path, plan_file: Path | None, goal: str | None) -> int:
-    """Estimate the number of tasks from plan file or backlog."""
+def _estimate_task_count(workdir: Path, plan_file: Path | None, goal: str | None) -> int | None:
+    """Count tasks from the plan file or the synced backlog.
+
+    Returns:
+        The task count when it is knowable (explicit plan file or non-empty
+        backlog), or ``None`` when planning has not happened yet (inline
+        goal, unreadable plan file, empty backlog). ``None`` means unknown;
+        callers must not substitute a made-up number for display.
+    """
     if plan_file is not None:
         try:
             return max(1, len(load_plan_from_yaml(plan_file)))
         except Exception:
-            return 5
+            return None
     if goal is not None:
-        return 5
+        return None
     count = 0
     for subdir in ("open", "issues"):
         backlog_dir = workdir / ".sdd" / "backlog" / subdir
@@ -113,7 +122,7 @@ def _estimate_task_count(workdir: Path, plan_file: Path | None, goal: str | None
             count += len(list(backlog_dir.glob("*.md")))
             count += len(list(backlog_dir.glob("*.yaml")))
             count += len(list(backlog_dir.glob("*.yml")))
-    return max(1, count)
+    return count if count > 0 else None
 
 
 def _resolve_model_and_cli(
@@ -207,6 +216,9 @@ def _estimate_run_preview(
         Cost estimate using the best available task count and model hint.
     """
     est_task_count = _estimate_task_count(workdir, plan_file, goal)
+    # Unknown count: compute a per-task rate (count of 1) but keep
+    # ``task_count=None`` so display code says "unknown" instead of a number.
+    billable_count = est_task_count if est_task_count is not None else 1
     est_model, est_cli, est_role = _resolve_model_and_cli(seed_file, model_override)
 
     if est_cli in _FREE_ADAPTERS:
@@ -221,12 +233,12 @@ def _estimate_run_preview(
             model=est_model,
         )
     else:
-        low_usd, high_usd = estimate_run_cost(est_task_count, est_model)
+        low_usd, high_usd = estimate_run_cost(billable_count, est_model)
         band = compute_band(
             role=est_role,
             adapter=est_cli,
             model=est_model,
-            task_count=est_task_count,
+            task_count=billable_count,
             metrics_dir=workdir / ".sdd" / "metrics",
         )
     display_model = f"{est_cli}/{est_model}" if est_cli != "claude" else est_model
@@ -270,19 +282,22 @@ def _emit_preflight_runtime_warnings(
     disk_usage_gb = directory_size_bytes(sdd_dir) / (1024**3)
     band = estimate.band
     if not quiet:
+        # Only print a count that came from the plan/backlog; when the count
+        # is unknown (planning happens after startup) say so explicitly
+        # instead of substituting a made-up number.
+        if estimate.task_count is not None:
+            basis = f"based on {estimate.task_count} task(s) at {estimate.model} pricing"
+        else:
+            basis = f"per task at {estimate.model} pricing, task count not yet planned"
         if band is not None:
             console.print(f"[bold yellow]{format_band(band)}[/bold yellow]")
             samples_note = (
                 f"{band.samples} historical sample(s)" if not band.cold_start else "no history yet - using heuristic"
             )
-            console.print(
-                f"[dim]based on {estimate.task_count} task(s) at {estimate.model} pricing, {samples_note}[/dim]"
-            )
+            console.print(f"[dim]{basis}, {samples_note}[/dim]")
         else:
             console.print(
-                "[bold yellow]Estimated cost:[/bold yellow] "
-                f"${estimate.low_usd:.2f}-${estimate.high_usd:.2f} "
-                f"based on {estimate.task_count} task(s) at {estimate.model} pricing"
+                f"[bold yellow]Estimated cost:[/bold yellow] ${estimate.low_usd:.2f}-${estimate.high_usd:.2f} {basis}"
             )
         if disk_usage_gb >= 1.0:
             console.print(
