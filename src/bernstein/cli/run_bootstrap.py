@@ -29,6 +29,7 @@ from bernstein.cli.helpers import (
     server_get,
 )
 from bernstein.cli.run_preflight import (
+    _abort_if_default_branch_merge_target,
     _configure_quality_gate_bypass,
     _emit_preflight_runtime_warnings,
     _estimate_run_preview,
@@ -1875,6 +1876,12 @@ def _run_impl(
 
     workdir = Path.cwd()
     if not plan_only:
+        # Fail fast when agent merges would target the repository default
+        # branch (gh-2756): without this every agent does its work and the
+        # spawner merge guard then silently discards it at reap time.
+        # Applies only to modes that merge agent work back -- --dry-run
+        # returned above and --plan-only skips this block.
+        _abort_if_default_branch_merge_target(workdir)
         estimate = _estimate_run_preview(
             workdir=workdir,
             plan_file=plan_file,
