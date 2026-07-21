@@ -26,6 +26,8 @@ from bernstein.core.agent_discovery import (
     short_model,
 )
 
+from bernstein.core.agents import agent_discovery
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -392,6 +394,7 @@ class TestDetectAider:
 
 
 class TestDiscoverAgents:
+    @patch("bernstein.core.agents.agent_discovery._detect_registry_cli", return_value=(None, []))
     @patch("bernstein.core.agents.agent_discovery._detect_aider", return_value=(None, []))
     @patch("bernstein.core.agents.agent_discovery._detect_qwen", return_value=(None, []))
     @patch("bernstein.core.agents.agent_discovery._detect_opencode", return_value=(None, []))
@@ -437,6 +440,7 @@ class TestDiscoverAgents:
             patch("bernstein.core.agents.agent_discovery._detect_opencode", return_value=(None, [])),
             patch("bernstein.core.agents.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agents.agent_discovery._detect_aider", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_registry_cli", return_value=(None, [])),
         ):
             result = discover_agents()
 
@@ -457,10 +461,110 @@ class TestDiscoverAgents:
             patch("bernstein.core.agents.agent_discovery._detect_opencode", return_value=(None, [])),
             patch("bernstein.core.agents.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agents.agent_discovery._detect_aider", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_registry_cli", return_value=(None, [])),
         ):
             result = discover_agents()
 
         assert result.agents == []  # No crash
+
+
+# ---------------------------------------------------------------------------
+# Registry sweep: adapters without a dedicated detector
+# ---------------------------------------------------------------------------
+
+
+_RICH_DETECTOR_PATCHES = (
+    "_detect_claude",
+    "_detect_codex",
+    "_detect_cursor",
+    "_detect_gemini",
+    "_detect_kilo",
+    "_detect_kiro",
+    "_detect_opencode",
+    "_detect_qwen",
+    "_detect_aider",
+)
+
+
+class TestRegistrySweep:
+    def test_discover_agents_covers_registry_adapters(self) -> None:
+        """An adapter that only exists in the registry (agy) surfaces in discovery."""
+        version_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="agy 1.0.0\n", stderr="")
+
+        def fake_which(binary: str) -> str | None:
+            return "/usr/local/bin/agy" if binary == "agy" else None
+
+        with (
+            patch("bernstein.core.agents.agent_discovery.shutil.which", side_effect=fake_which),
+            patch("bernstein.core.agents.agent_discovery._run_probe", return_value=version_ok),
+            # Rich detectors consult env/config; silence them so only the
+            # registry sweep contributes agents.
+            _patch_rich_detectors(),
+        ):
+            result = discover_agents()
+
+        names = {a.name for a in result.agents}
+        assert "agy" in names
+        agy = next(a for a in result.agents if a.name == "agy")
+        assert agy.binary == "/usr/local/bin/agy"
+        assert agy.version == "1.0.0"
+        assert agy.logged_in is True
+
+    def test_registry_cli_detector_returns_none_when_binary_missing(self) -> None:
+        with patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None):
+            agent, warnings = agent_discovery._detect_registry_cli("agy")
+        assert agent is None
+        assert warnings == []
+
+    def test_registry_cli_detector_reports_functional_binary(self) -> None:
+        version_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="agy 2.3.4\n", stderr="")
+        with (
+            patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/agy"),
+            patch("bernstein.core.agents.agent_discovery._run_probe", return_value=version_ok),
+        ):
+            agent, warnings = agent_discovery._detect_registry_cli("agy")
+        assert agent is not None
+        assert agent.name == "agy"
+        assert agent.version == "2.3.4"
+        assert agent.logged_in is True
+        assert warnings == []
+
+    def test_registry_cli_detector_flags_broken_binary(self) -> None:
+        """A binary on PATH whose --version probe fails is reported as not functional."""
+        with (
+            patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/agy"),
+            patch("bernstein.core.agents.agent_discovery._run_probe", return_value=None),
+        ):
+            agent, warnings = agent_discovery._detect_registry_cli("agy")
+        assert agent is not None
+        assert agent.logged_in is False
+        assert warnings == []
+
+    def test_sweep_skips_internal_adapters(self) -> None:
+        """mock/generic/openai_agents never surface even when their binary resolves."""
+        version_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="1.0.0\n", stderr="")
+        with (
+            patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/bin/anything"),
+            patch("bernstein.core.agents.agent_discovery._run_probe", return_value=version_ok),
+            _patch_rich_detectors(),
+        ):
+            result = discover_agents()
+
+        names = {a.name for a in result.agents}
+        assert "mock" not in names
+        assert "generic" not in names
+        assert "openai_agents" not in names
+        assert "agy" in names
+
+
+def _patch_rich_detectors() -> Any:
+    """Patch every dedicated detector to report nothing found."""
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    for detector in _RICH_DETECTOR_PATCHES:
+        stack.enter_context(patch(f"bernstein.core.agents.agent_discovery.{detector}", return_value=(None, [])))
+    return stack
 
 
 # ---------------------------------------------------------------------------

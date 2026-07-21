@@ -682,43 +682,128 @@ def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
 # Main discovery entry point
 # ---------------------------------------------------------------------------
 
-# All detectors, executed in order.
-_DETECTORS: list[tuple[str, type[None]]] = []  # unused, kept for potential plugin registration
+# Adapters with a dedicated detector above, keyed by registry name. Values
+# are module attribute names resolved at call time (not captured at import
+# time) so tests can monkeypatch the individual ``_detect_*`` functions.
+_RICH_DETECTOR_NAMES: dict[str, str] = {
+    "aider": "_detect_aider",
+    "claude": "_detect_claude",
+    "codex": "_detect_codex",
+    "cursor": "_detect_cursor",
+    "gemini": "_detect_gemini",
+    "kilo": "_detect_kilo",
+    "kiro": "_detect_kiro",
+    "opencode": "_detect_opencode",
+    "qwen": "_detect_qwen",
+}
+
+# Registry entries that never resolve to a probeable dedicated CLI binary:
+# internal test/wrapper adapters, and SDK adapters that ride a shared host
+# runtime (``python``) whose presence proves nothing about the agent.
+_SWEEP_EXCLUDED: frozenset[str] = frozenset({"mock", "generic", "openai_agents"})
+
+
+def _registry_binary_for(name: str) -> str:
+    """Resolve the expected CLI binary name for a registry adapter.
+
+    Delegates to the adapter report's mapping (explicit overrides, then the
+    adapter's capability-profile declaration, then the registry key itself)
+    so discovery and ``bernstein adapters list`` agree on which binary
+    proves an adapter is installed.
+
+    Args:
+        name: Adapter registry name (e.g. ``"agy"``).
+
+    Returns:
+        The binary name to look up on PATH, or ``""`` when the adapter has
+        no binary at all.
+    """
+    from bernstein.adapters.report import _binary_for_adapter  # pyright: ignore[reportPrivateUsage]
+
+    return _binary_for_adapter(name)
+
+
+def _detect_registry_cli(name: str) -> tuple[AgentCapabilities | None, list[str]]:
+    """Probe a registry adapter that has no dedicated detector.
+
+    Generic PATH probe: resolves the adapter's expected binary and, when
+    present, captures a best-effort version. A succeeding ``--version``
+    probe marks the CLI as functional (the same posture the aider detector
+    takes). Auth-state probing stays adapter-specific, so generic probes
+    never emit not-authenticated warnings.
+
+    Args:
+        name: Adapter registry name (e.g. ``"agy"``).
+
+    Returns:
+        Tuple of (capabilities or None, warnings). Warnings are always
+        empty for generic probes.
+    """
+    binary_name = _registry_binary_for(name)
+    if not binary_name:
+        return None, []
+    binary = shutil.which(binary_name)
+    if binary is None:
+        return None, []
+
+    version_probe = _run_probe([Path(binary).name, "--version"])
+    functional = version_probe is not None and version_probe.returncode == 0
+
+    return AgentCapabilities(
+        name=name,
+        binary=binary,
+        version=_extract_version(version_probe),
+        logged_in=functional,
+        login_method="CLI" if functional else "",
+        # Model selection is adapter-specific; the registry sweep only
+        # proves installation, so conservative placeholders are used.
+        available_models=["default"],
+        default_model="default",
+        supports_headless=True,  # every registered adapter is driven headless
+        supports_sandbox=False,
+        supports_mcp=False,
+        max_context_tokens=128_000,
+        reasoning_strength="medium",
+        best_for=[],
+        cost_tier="moderate",
+    ), []
 
 
 def discover_agents() -> DiscoveryResult:
-    """Scan system for all available CLI coding agents.
+    """Scan the system for every registered CLI coding agent.
 
-    Probes each known CLI binary (claude, codex, cursor, gemini, kilo, kiro,
-    opencode, qwen, aider), checks login
-    status, and returns structured capabilities.  The entire scan targets < 2 s
-    wall-clock time by using short subprocess timeouts.
+    Enumerates the full adapter registry
+    (:func:`bernstein.adapters.registry.iter_adapter_specs`) instead of a
+    hardcoded subset. Adapters with a dedicated detector get full login and
+    model probing; every other registry adapter gets a generic PATH plus
+    version probe, so newly registered adapters surface in discovery (and
+    the startup "Found:" line) without needing a per-adapter detector.
+    Subprocess probes use short timeouts and only run for binaries actually
+    present on PATH.
 
     Returns:
         DiscoveryResult with discovered agents and any warnings.
     """
+    from bernstein.adapters.registry import iter_adapter_specs
+
     start = time.monotonic()
     agents: list[AgentCapabilities] = []
     warnings: list[str] = []
+    module_globals = globals()
 
-    for detector in (
-        _detect_claude,
-        _detect_codex,
-        _detect_cursor,
-        _detect_gemini,
-        _detect_kilo,
-        _detect_kiro,
-        _detect_opencode,
-        _detect_qwen,
-        _detect_aider,
-    ):
+    for name, _entry in iter_adapter_specs():
+        detector_name = _RICH_DETECTOR_NAMES.get(name)
+        if detector_name is None and name in _SWEEP_EXCLUDED:
+            continue
         try:
-            agent, agent_warnings = detector()
+            if detector_name is not None:
+                agent, agent_warnings = module_globals[detector_name]()
+            else:
+                agent, agent_warnings = _detect_registry_cli(name)
             if agent is not None:
                 agents.append(agent)
             warnings.extend(agent_warnings)
         except Exception:
-            name = getattr(detector, "__name__", repr(detector))
             logger.warning("Agent detection failed for %s", name, exc_info=True)
 
     elapsed_ms = (time.monotonic() - start) * 1000
@@ -770,10 +855,14 @@ def detect_auth_status() -> dict[str, tuple[bool, bool]]:
             "aider": (True, True),      # installed and authenticated
         }
     """
+    from bernstein.adapters.registry import iter_adapter_specs
+
     discovery = discover_agents_cached()
 
-    # All known agents to report on, even if not found
-    all_agents = {"claude", "codex", "cursor", "gemini", "kilo", "kiro", "opencode", "qwen", "aider"}
+    # All registry adapters are reported, even if not found. Internal
+    # adapters without a probeable binary use the same exclusions as the
+    # discovery sweep.
+    all_agents = {name for name, _ in iter_adapter_specs() if name not in _SWEEP_EXCLUDED}
 
     result: dict[str, tuple[bool, bool]] = {}
 

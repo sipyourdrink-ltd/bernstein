@@ -9,7 +9,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from bernstein.core.preflight import _check_api_key, _check_binary, _check_port_free, preflight_checks
+from bernstein.core.preflight import (
+    _check_api_key,
+    _check_binary,
+    _check_port_free,
+    _preflight_auto_mode,
+    preflight_checks,
+)
 
 
 def test_check_binary_exits_with_actionable_error_when_missing() -> None:
@@ -76,3 +82,44 @@ def test_preflight_checks_auto_mode_fails_when_no_agents_are_installed() -> None
         pytest.raises(SystemExit),
     ):
         preflight_checks("auto", 8052)
+
+
+def _fake_agent(name: str) -> SimpleNamespace:
+    return SimpleNamespace(name=name, logged_in=True, available_models=["model-a"])
+
+
+def _printed_lines(console: MagicMock) -> str:
+    return " ".join(str(call.args[0]) for call in console.print.call_args_list)
+
+
+def test_preflight_auto_mode_states_adapter_pin() -> None:
+    """The startup line names an explicit BERNSTEIN_ADAPTER pin instead of claiming auto-routing."""
+    discovery = SimpleNamespace(agents=[_fake_agent("claude"), _fake_agent("agy")], warnings=[])
+
+    with (
+        patch.dict(os.environ, {"BERNSTEIN_ADAPTER": "agy"}),
+        patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+        patch("bernstein.core.orchestration.preflight.console") as console,
+    ):
+        _preflight_auto_mode()
+
+    printed = _printed_lines(console)
+    assert "Adapter pinned: agy." in printed
+    assert "auto-routing" not in printed
+
+
+def test_preflight_auto_mode_claims_auto_routing_without_pin() -> None:
+    """Without an adapter pin, multi-agent discovery still advertises auto-routing."""
+    discovery = SimpleNamespace(agents=[_fake_agent("claude"), _fake_agent("agy")], warnings=[])
+    env = {k: v for k, v in os.environ.items() if k != "BERNSTEIN_ADAPTER"}
+
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+        patch("bernstein.core.orchestration.preflight.console") as console,
+    ):
+        _preflight_auto_mode()
+
+    printed = _printed_lines(console)
+    assert "Using auto-routing." in printed
+    assert "Agy" in printed  # registry-discovered adapters reach the Found line
