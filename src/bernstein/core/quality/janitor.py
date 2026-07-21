@@ -266,14 +266,19 @@ def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
         workdir: Project root for path resolution.
 
     Returns:
-        Tuple of (all_passed, list_of_failed_signal_descriptions).
-        If no signals defined, returns (True, []).
+        Tuple of (all_passed, list_of_failed_signal_descriptions). Failed
+        descriptions carry the evaluation detail so actionable causes (e.g.
+        a gitignore-excluded deliverable the merge-back never staged) reach
+        retry/fail surfaces. If no signals defined, returns (True, []).
     """
     failed: list[str] = []
     for signal in task.completion_signals:
-        passed, _detail = evaluate_signal(signal, workdir)
+        passed, detail = evaluate_signal(signal, workdir)
         if not passed:
-            failed.append(f"{signal.type}: {signal.value}")
+            desc = f"{signal.type}: {signal.value}"
+            if detail:
+                desc = f"{desc} ({detail})"
+            failed.append(desc)
     all_passed = len(failed) == 0
     return all_passed, failed
 
@@ -1042,6 +1047,159 @@ def _resolve(path_str: str, workdir: Path) -> Path:
     return workdir / p
 
 
+# --- issue #2760: worktree-internal signal paths ---
+#
+# Agent worktrees live under ``<workdir>/.sdd/worktrees/<session>/`` (legacy)
+# or ``<workdir>/.sdd/runtime/worktrees/<session>/`` and are deleted after the
+# run. A filesystem signal whose path points inside one of them (managers
+# routinely emit the path the agent reported, which is worktree-absolute) only
+# proves the agent wrote the file at some instant -- not that the git-based
+# merge-back delivered it to the operator checkout. If the file is
+# gitignore-excluded, merge-back stages nothing, the worktree is deleted, and
+# a naive check would still report done/HEALTHY with zero deliverable.
+#
+# Fix: translate any worktree-internal signal path to its repo-relative form
+# and verify THAT against the checkout the janitor was pointed at. Existence
+# only inside a worktree never counts as delivered; glob and fuzzy fallbacks
+# likewise never match worktree-internal files.
+
+_WORKTREE_BASE_MARKERS: tuple[tuple[str, ...], ...] = (
+    (".sdd", "runtime", "worktrees"),
+    (".sdd", "worktrees"),
+)
+
+
+def _split_worktree_path(path_str: str) -> str | None:
+    """Return the repo-relative remainder of a worktree-internal path.
+
+    Recognizes both worktree layouts (``.sdd/worktrees/<session>/...`` and
+    ``.sdd/runtime/worktrees/<session>/...``) anywhere in the path, so
+    absolute and repo-relative signal values both translate.
+
+    Args:
+        path_str: Raw signal path.
+
+    Returns:
+        The path relative to the worktree root (i.e. relative to the repo),
+        or None when the path does not point inside a worktree or has no
+        remainder after the session directory.
+    """
+    parts = Path(path_str).parts
+    for i, part in enumerate(parts):
+        if part != ".sdd":
+            continue
+        for marker in _WORKTREE_BASE_MARKERS:
+            if tuple(parts[i : i + len(marker)]) == marker:
+                remainder = parts[i + len(marker) + 1 :]
+                if remainder:
+                    return str(Path(*remainder))
+    return None
+
+
+def _translate_worktree_signal_path(path_str: str, workdir: Path) -> tuple[str, bool]:
+    """Translate a worktree-internal signal path to its repo-relative form.
+
+    Args:
+        path_str: Raw signal path.
+        workdir: Checkout the signal is being verified against.
+
+    Returns:
+        Tuple of (path to verify, translated). When ``translated`` is True
+        the returned path is repo-relative and must be resolved against
+        *workdir*; otherwise ``path_str`` is returned unchanged.
+    """
+    remainder = _split_worktree_path(path_str)
+    if remainder is None:
+        return path_str, False
+    logger.warning(
+        "janitor: signal path %r points inside an ephemeral agent worktree; "
+        "verifying repo-relative path %r against %s instead -- existence only "
+        "in a worktree does not count as delivered",
+        path_str,
+        remainder,
+        workdir,
+    )
+    return remainder, True
+
+
+def _is_worktree_internal(path: Path, workdir: Path) -> bool:
+    """True when *path* is inside one of *workdir*'s agent worktree bases."""
+    return any(path.is_relative_to(workdir.joinpath(*marker)) for marker in _WORKTREE_BASE_MARKERS)
+
+
+def _gitignore_exclusion(path_str: str, workdir: Path) -> str | None:
+    """Return the gitignore rule excluding *path_str* from git, if any.
+
+    Args:
+        path_str: Path to test, relative to *workdir* or absolute inside it.
+        workdir: Repository root to run ``git check-ignore`` in.
+
+    Returns:
+        The matching rule as ``<source>:<line>:<pattern>``, or None when the
+        path is not ignored, lies outside *workdir*, or git is unavailable.
+    """
+    candidate = Path(path_str)
+    if candidate.is_absolute():
+        try:
+            candidate = candidate.relative_to(workdir)
+        except ValueError:
+            return None
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "--verbose", "--", str(candidate)],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("janitor: git check-ignore failed for %r in %s: %s", path_str, workdir, exc)
+        return None
+    if result.returncode != 0:
+        return None
+    lines = result.stdout.strip().splitlines()
+    if not lines:
+        return None
+    # Output format: <source>:<linenum>:<pattern>\t<pathname>
+    return lines[0].split("\t", 1)[0]
+
+
+def _path_miss_detail(path_str: str, workdir: Path, worktree_original: str | None) -> str:
+    """Build the failure detail for a path_exists miss.
+
+    Keeps the bare ``"not found"`` wire format for the ordinary case; adds
+    an actionable cause when the signal path pointed inside an ephemeral
+    worktree and/or the deliverable is excluded by a gitignore rule (so the
+    git-based merge-back never staged it).
+
+    Args:
+        path_str: The path that was actually verified (post-translation).
+        workdir: Checkout the path was verified against.
+        worktree_original: The raw signal value when it pointed inside a
+            worktree, else None.
+
+    Returns:
+        Human-readable failure detail.
+    """
+    rule = _gitignore_exclusion(path_str, workdir)
+    if rule is None and worktree_original is None:
+        return "not found"
+    fragments: list[str] = []
+    if worktree_original is not None:
+        fragments.append(
+            f"signal path {worktree_original!r} pointed inside an ephemeral agent worktree; "
+            f"repo-relative path {path_str!r} does not exist in the operator checkout"
+        )
+    else:
+        fragments.append(f"{path_str!r} does not exist in the operator checkout")
+    if rule is not None:
+        fragments.append(
+            f"the path matches gitignore rule [{rule}], so the git-based merge-back never "
+            "stages it; write the deliverable to a non-ignored path or amend the ignore rule"
+        )
+    return "not found: " + "; ".join(fragments)
+
+
 _GLOB_CHARS = frozenset("*?[")
 
 
@@ -1095,11 +1253,24 @@ def _check_path_exists(path_str: str, workdir: Path) -> tuple[bool, str]:
          fires, a WARNING log names the literal miss, the pattern, and the
          path that satisfied the check.
 
+    Delivery contract (issue #2760): a signal path pointing inside an
+    ephemeral agent worktree is first translated to its repo-relative form
+    (:func:`_translate_worktree_signal_path`) and verified against
+    ``workdir``; glob and fuzzy fallbacks never match worktree-internal
+    files. Existence only in a worktree is not delivery -- the worktree is
+    deleted after the run.
+
     Returns:
         (passed, detail). ``detail`` is "exists"/"not found" for the
         literal case (unchanged wire format) and a longer message
-        identifying the matched path when a glob or fuzzy match passed.
+        identifying the matched path when a glob or fuzzy match passed,
+        or naming the delivery failure cause (worktree-only path,
+        gitignore exclusion) when that is determinable on a miss.
     """
+    original = path_str
+    path_str, translated = _translate_worktree_signal_path(path_str, workdir)
+    worktree_original = original if translated else None
+
     has_glob_syntax = any(c in _GLOB_CHARS for c in path_str)
 
     # Literal-first: a literal path always wins, even when it contains a glob
@@ -1112,9 +1283,12 @@ def _check_path_exists(path_str: str, workdir: Path) -> tuple[bool, str]:
 
     if has_glob_syntax:
         # Literal miss AND the criterion contains explicit glob syntax: honor
-        # it as a glob pattern (opt-in per-check by construction).
+        # it as a glob pattern (opt-in per-check by construction). Matches
+        # inside an agent worktree are excluded -- they are not deliveries.
         glob_pattern = str(workdir / path_str)
-        glob_matches = sorted(globmod.glob(glob_pattern, recursive=True))
+        glob_matches = sorted(
+            m for m in globmod.glob(glob_pattern, recursive=True) if not _is_worktree_internal(Path(m), workdir)
+        )
         if glob_matches:
             matched = glob_matches[0]
             logger.info(
@@ -1128,10 +1302,10 @@ def _check_path_exists(path_str: str, workdir: Path) -> tuple[bool, str]:
             path_str,
             workdir,
         )
-        return False, "not found"
+        return False, _path_miss_detail(path_str, workdir, worktree_original)
 
     if not _fuzzy_paths_enabled():
-        return False, "not found"
+        return False, _path_miss_detail(path_str, workdir, worktree_original)
 
     # Opt-in fuzzy basename fallback. Split the basename on the FIRST dot,
     # not the last: multi-part suffixes like ".test.ts" / ".spec.tsx" are
@@ -1149,10 +1323,12 @@ def _check_path_exists(path_str: str, workdir: Path) -> tuple[bool, str]:
             "janitor path_exists: literal miss for %r and no basename to fuzzy-match",
             path_str,
         )
-        return False, "not found"
+        return False, _path_miss_detail(path_str, workdir, worktree_original)
     fuzzy_pattern = f"**/{stem}*{suffix}" if suffix else f"**/{stem}*"
     full_fuzzy_pattern = str(workdir / fuzzy_pattern)
-    fuzzy_matches = sorted(globmod.glob(full_fuzzy_pattern, recursive=True))
+    fuzzy_matches = sorted(
+        m for m in globmod.glob(full_fuzzy_pattern, recursive=True) if not _is_worktree_internal(Path(m), workdir)
+    )
     if fuzzy_matches:
         matched = fuzzy_matches[0]
         logger.warning(
@@ -1170,13 +1346,19 @@ def _check_path_exists(path_str: str, workdir: Path) -> tuple[bool, str]:
         path_str,
         fuzzy_pattern,
     )
-    return False, "not found"
+    return False, _path_miss_detail(path_str, workdir, worktree_original)
 
 
 def _check_glob_exists(pattern: str, workdir: Path) -> bool:
-    """Check if at least one file matches the glob pattern."""
+    """Check if at least one file matches the glob pattern.
+
+    Worktree-internal signal patterns are translated to their repo-relative
+    form and matches inside an agent worktree are excluded (issue #2760):
+    the worktree is deleted after the run, so files there are not deliveries.
+    """
+    pattern, _ = _translate_worktree_signal_path(pattern, workdir)
     full_pattern = str(workdir / pattern)
-    matches = globmod.glob(full_pattern, recursive=True)
+    matches = [m for m in globmod.glob(full_pattern, recursive=True) if not _is_worktree_internal(Path(m), workdir)]
     return len(matches) > 0
 
 
@@ -1425,7 +1607,10 @@ def _check_file_contains(spec: str, workdir: Path) -> bool:
     if len(parts) != 2:
         return False
     path_str, needle = parts
-    target = _resolve(path_str.strip(), workdir)
+    # Worktree-internal paths verify the delivered copy, not the ephemeral
+    # worktree one (issue #2760, same contract as _check_path_exists).
+    path_str, _ = _translate_worktree_signal_path(path_str.strip(), workdir)
+    target = _resolve(path_str, workdir)
     if not target.is_file():
         return False
     try:

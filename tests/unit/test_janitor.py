@@ -259,6 +259,166 @@ class TestPathExistsGlobAndFuzzy:
         assert "glob pattern matched" in detail
 
 
+class TestWorktreeSignalDelivery:
+    """Issue #2760: filesystem completion signals that point inside an
+    ephemeral agent worktree (``.sdd/worktrees/<session>/`` or
+    ``.sdd/runtime/worktrees/<session>/``) must be translated to their
+    repo-relative form and verified against the operator checkout.
+    Existence only in the worktree proves the agent wrote the file at
+    some instant, not that merge-back delivered it -- the worktree is
+    deleted after the run."""
+
+    _SESSION = "manager-e2760abc"
+
+    def _write_worktree_file(self, tmp_path: Path, rel: str, *, runtime_layout: bool = False) -> Path:
+        """Create *rel* inside a fake agent worktree and return its path."""
+        base = (".sdd", "runtime", "worktrees") if runtime_layout else (".sdd", "worktrees")
+        target = tmp_path.joinpath(*base, self._SESSION, rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("deliverable\n")
+        return target
+
+    def test_worktree_only_file_fails_relative_signal(self, tmp_path: Path) -> None:
+        """The exact #2760 shape: the file exists ONLY in the worktree."""
+        self._write_worktree_file(tmp_path, "hello.txt")
+
+        signal = CompletionSignal(type="path_exists", value=f".sdd/worktrees/{self._SESSION}/hello.txt")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert "worktree" in detail
+        assert "hello.txt" in detail
+
+    def test_worktree_only_file_fails_absolute_signal(self, tmp_path: Path) -> None:
+        worktree_file = self._write_worktree_file(tmp_path, "hello.txt")
+
+        signal = CompletionSignal(type="path_exists", value=str(worktree_file))
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert "worktree" in detail
+
+    def test_merged_file_passes(self, tmp_path: Path) -> None:
+        """After merge-back delivered the file, the translated check passes."""
+        self._write_worktree_file(tmp_path, "hello.txt")
+        (tmp_path / "hello.txt").write_text("deliverable\n")
+
+        signal = CompletionSignal(type="path_exists", value=f".sdd/worktrees/{self._SESSION}/hello.txt")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert detail == "exists"
+
+    def test_merged_file_passes_after_worktree_deleted(self, tmp_path: Path) -> None:
+        """Delivered artifact verifies even when the worktree is already gone."""
+        (tmp_path / "hello.txt").write_text("deliverable\n")
+
+        signal = CompletionSignal(type="path_exists", value=f".sdd/worktrees/{self._SESSION}/hello.txt")
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+
+    def test_runtime_worktree_layout_also_translated(self, tmp_path: Path) -> None:
+        self._write_worktree_file(tmp_path, "hello.txt", runtime_layout=True)
+
+        rel = f".sdd/runtime/worktrees/{self._SESSION}/hello.txt"
+        signal = CompletionSignal(type="path_exists", value=rel)
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert "worktree" in detail
+
+    def test_nested_deliverable_keeps_subdirectories(self, tmp_path: Path) -> None:
+        self._write_worktree_file(tmp_path, "docs/report.md")
+        delivered = tmp_path / "docs" / "report.md"
+        delivered.parent.mkdir(parents=True)
+        delivered.write_text("deliverable\n")
+
+        rel = f".sdd/worktrees/{self._SESSION}/docs/report.md"
+        signal = CompletionSignal(type="path_exists", value=rel)
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+
+    def test_gitignored_deliverable_names_cause(self, tmp_path: Path) -> None:
+        """A miss whose path matches a .gitignore rule must say WHY the
+        merge-back never delivered it."""
+        _run_git(["init", "-q"], tmp_path)
+        (tmp_path / ".gitignore").write_text("hello.txt\n")
+        self._write_worktree_file(tmp_path, "hello.txt")
+
+        signal = CompletionSignal(type="path_exists", value=f".sdd/worktrees/{self._SESSION}/hello.txt")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert "gitignore" in detail
+        assert "merge-back" in detail
+        assert ".gitignore:1:hello.txt" in detail
+
+    def test_plain_miss_detail_unchanged(self, tmp_path: Path) -> None:
+        """A miss outside any worktree keeps the original wire format."""
+        signal = CompletionSignal(type="path_exists", value="missing.txt")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_non_worktree_sdd_path_not_translated(self, tmp_path: Path) -> None:
+        """Other .sdd paths (backlog, metrics, ...) are untouched."""
+        target = tmp_path / ".sdd" / "backlog" / "open" / "t.yaml"
+        target.parent.mkdir(parents=True)
+        target.write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value=".sdd/backlog/open/t.yaml")
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+
+    def test_glob_fallback_ignores_worktree_matches(self, tmp_path: Path) -> None:
+        """A path_exists glob must not be satisfied by worktree-internal files."""
+        self._write_worktree_file(tmp_path, "hello.txt")
+
+        signal = CompletionSignal(type="path_exists", value="**/hello.txt")
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+
+    def test_fuzzy_fallback_ignores_worktree_matches(self, tmp_path: Path) -> None:
+        self._write_worktree_file(tmp_path, "hello-final.txt")
+
+        signal = CompletionSignal(type="path_exists", value="hello.txt")
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+
+    def test_glob_exists_signal_ignores_worktree_matches(self, tmp_path: Path) -> None:
+        self._write_worktree_file(tmp_path, "hello.txt")
+
+        signal = CompletionSignal(type="glob_exists", value="**/hello.txt")
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+
+    def test_file_contains_checks_operator_copy(self, tmp_path: Path) -> None:
+        self._write_worktree_file(tmp_path, "hello.txt")
+
+        value = f".sdd/worktrees/{self._SESSION}/hello.txt :: deliverable"
+        signal = CompletionSignal(type="file_contains", value=value)
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+
+        (tmp_path / "hello.txt").write_text("deliverable\n")
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+
+    def test_verify_task_failure_carries_actionable_detail(self, tmp_path: Path) -> None:
+        """The failed-signal description surfaced to retry/fail paths names
+        the worktree cause, not just the raw signal value."""
+        self._write_worktree_file(tmp_path, "hello.txt")
+        task = _make_task(
+            signals=[
+                CompletionSignal(
+                    type="path_exists",
+                    value=f".sdd/worktrees/{self._SESSION}/hello.txt",
+                )
+            ]
+        )
+
+        passed, failed = verify_task(task, tmp_path)
+        assert passed is False
+        assert len(failed) == 1
+        assert "worktree" in failed[0]
+
+
 # --- glob_exists ---
 
 
