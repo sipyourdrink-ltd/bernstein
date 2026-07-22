@@ -196,7 +196,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `run.py`                | Enhanced run output for ``bernstein run`` |
 | `run_archive.py`        | Export full run archive as ZIP |
 | `run_bootstrap.py`      | Main Click commands and execution bootstrap for Bernstein runs |
-| `run_cmd.py`            | Run commands: init, conduct, downbeat (legacy start), and the main CLI group |
+| `run_cmd.py`            | Run commands: init, run, serve, start (legacy), and the main CLI group |
 | `run_confirm.py`        | Recipe/cook commands, demo, and confirmation helpers for Bernstein runs |
 | `run_names.py`          | Memorable deterministic run names for user-facing surfaces (#1626) |
 | `run_preflight.py`      | Preflight cost estimation and runtime warnings for Bernstein runs |
