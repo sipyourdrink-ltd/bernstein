@@ -43,9 +43,13 @@ EXPOSE 8052 50051
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:8052/health || exit 1
 
-# Default: all-in-one mode (reads bernstein.yaml, starts server + agents)
-# Override CMD in docker-compose / Helm to run individual components:
-#   Server only:     python -m uvicorn bernstein.core.server:app --host 0.0.0.0 --port 8052
-#   Orchestrator:    python -m bernstein.core.orchestrator
+# Default: run the task server in the foreground so PID 1 stays alive and the
+# container can host a long-lived central/coordinator node whose /health
+# endpoint (probed above) stays reachable. Bind all interfaces and enable
+# cluster endpoints via env, e.g.:
+#   docker run -e BERNSTEIN_BIND_HOST=0.0.0.0 -e BERNSTEIN_CLUSTER_ENABLED=1 \
+#     -p 8052:8052 ghcr.io/sipyourdrink-ltd/bernstein
+# Override CMD in docker-compose / Helm to run other components, e.g.:
+#   Orchestrated run: bernstein run plan.yaml --remote
 ENTRYPOINT ["bernstein"]
-CMD ["conduct"]
+CMD ["serve"]

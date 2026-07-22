@@ -175,6 +175,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Core session
         "init",
         "start",
+        "serve",
         "status",
         # Operator experience
         "pr",

@@ -1,4 +1,4 @@
-"""Run commands: init, conduct, downbeat (legacy start), and the main CLI group.
+"""Run commands: init, run, serve, start (legacy), and the main CLI group.
 
 This module is a thin re-export shim.  The actual implementations live in:
 - ``run_preflight`` - cost estimation, preflight checks, quality-gate bypass
@@ -28,6 +28,7 @@ from bernstein.cli.run_bootstrap import _wait_for_run_completion as _wait_for_ru
 from bernstein.cli.run_bootstrap import exec_restart as exec_restart
 from bernstein.cli.run_bootstrap import init as init
 from bernstein.cli.run_bootstrap import run as run
+from bernstein.cli.run_bootstrap import serve as serve
 from bernstein.cli.run_bootstrap import start as start
 
 # --- run_confirm ---

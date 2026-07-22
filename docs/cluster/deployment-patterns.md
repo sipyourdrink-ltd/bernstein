@@ -40,6 +40,19 @@ bernstein cluster bootstrap-ca \
 BERNSTEIN_BIND_HOST=0.0.0.0 bernstein start
 ```
 
+> **Containers:** `bernstein start` detaches the task server and returns, so
+> inside a container (where the CLI is PID 1) it exits immediately and takes the
+> server with it. Use the foreground command instead so PID 1 stays alive:
+>
+> ```bash
+> docker run -e BERNSTEIN_BIND_HOST=0.0.0.0 -e BERNSTEIN_CLUSTER_ENABLED=1 \
+>     -p 8052:8052 ghcr.io/sipyourdrink-ltd/bernstein serve
+> ```
+>
+> `serve` is also the image's default `CMD`, so `docker run ... <image>` with no
+> arguments starts the same long-lived coordinator whose `/health` endpoint the
+> image `HEALTHCHECK` probes.
+
 mTLS is not configured with CLI flags: wire the CA, server cert, and
 server key into `ClusterConfig.tls` as shown in
 [`mtls-setup.md`](./mtls-setup.md).
