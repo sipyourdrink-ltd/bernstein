@@ -5844,6 +5844,12 @@ if __name__ == "__main__":
             sandbox_options={"image": _container_image} if _docker_sandbox_backend is not None else None,
             sandbox_server_port=args.port,
             default_model=run_model,
+            # Explicit adapter selection (--adapter / BERNSTEIN_ADAPTER / a
+            # non-"auto" seed cli) must never be overridden by model-name
+            # inference at spawn time (#2751). "auto" is the only unpinned
+            # state - adapter_name is guaranteed non-empty by the fatal
+            # check above.
+            adapter_pinned=adapter_name != "auto",
         )
         run_config_budget_usd: float | None = None
         dry_run = False

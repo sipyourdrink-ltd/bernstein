@@ -983,10 +983,11 @@ class SecretsBroker:
 
         if getattr(grant, "task_id", None) != task_id:
             return False, "task_mismatch"
-        # Grant records only ever carry the digest of secret_name (never the
-        # raw backend key/env var name -- see grants.digest_secret_name), so
-        # the comparison digests the requested name the same way.
-        if getattr(grant, "secret_name", None) != _grants.digest_secret_name(secret_name):
+        # Grant records only ever carry a salted reference to secret_name
+        # (never the raw backend key/env var name -- see
+        # grants.hash_secret_name), so the comparison re-derives the requested
+        # name under the salt carried in the record.
+        if not _grants.secret_name_matches(str(getattr(grant, "secret_name", "") or ""), secret_name):
             return False, "secret_mismatch"
         if self._grant_ledger is None:
             return False, "no_ledger"

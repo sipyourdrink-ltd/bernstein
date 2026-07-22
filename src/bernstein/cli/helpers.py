@@ -8,12 +8,14 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 import click
 import httpx
 from rich.console import Console
 
+from bernstein.core.defaults import SDD_SERVER_PORT
 from bernstein.core.platform_compat import kill_process, kill_process_group
 from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
 
@@ -105,10 +107,49 @@ def auth_headers() -> dict[str, str]:
     return {}
 
 
+def resolve_server_url(workdir: Path | None = None) -> str:
+    """Resolve the task server URL from env, the active workspace, or default."""
+    configured = os.environ.get("BERNSTEIN_SERVER_URL")
+    if configured:
+        return configured.rstrip("/")
+
+    port_path = (workdir or Path.cwd()) / SDD_SERVER_PORT
+    try:
+        port = int(port_path.read_text().strip())
+        if 1 <= port <= 65535:
+            return f"http://127.0.0.1:{port}"
+    except (OSError, ValueError):
+        pass
+    return "http://127.0.0.1:8052"
+
+
+def persist_server_port(port: int, workdir: Path | None = None) -> Path:
+    """Persist the effective run port for follow-up CLI commands."""
+    if not 1 <= port <= 65535:
+        raise ValueError(f"server port must be between 1 and 65535, got {port}")
+    path = (workdir or Path.cwd()) / SDD_SERVER_PORT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f"{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as stream:
+        stream.write(f"{port}\n")
+        temporary = Path(stream.name)
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
 def server_get(path: str) -> dict[str, Any] | None:
     """GET from the task server.  Returns None if server is unreachable."""
     try:
-        resp = httpx.get(f"{SERVER_URL}{path}", timeout=5.0, headers=auth_headers())
+        resp = httpx.get(f"{resolve_server_url()}{path}", timeout=5.0, headers=auth_headers())
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
     except httpx.ConnectError:
@@ -121,7 +162,7 @@ def server_get(path: str) -> dict[str, Any] | None:
 def server_post(path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     """POST to the task server.  Returns None if server is unreachable."""
     try:
-        resp = httpx.post(f"{SERVER_URL}{path}", json=payload, timeout=5.0, headers=auth_headers())
+        resp = httpx.post(f"{resolve_server_url()}{path}", json=payload, timeout=5.0, headers=auth_headers())
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
     except httpx.ConnectError:

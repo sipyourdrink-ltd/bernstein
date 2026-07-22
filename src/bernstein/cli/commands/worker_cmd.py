@@ -84,6 +84,10 @@ class WorkerLoop:
         self._pool_hash = pool_hash
         self._enrolment_keyid: str | None = None
         self._adapter_name = adapter or _detect_worker_adapter()
+        # An adapter passed explicitly to the worker is an operator pin and
+        # must not be overridden by model-name inference at spawn time
+        # (#2751); an auto-detected adapter is not a pin.
+        self._adapter_pinned = adapter is not None
         # Prefer explicit PollConfig; fall back to legacy poll_interval (seconds).
         if poll_config is not None:
             self._poll_config = poll_config
@@ -323,6 +327,7 @@ class WorkerLoop:
                 adapter=adapter,
                 templates_dir=get_templates_dir(self._workdir) / "roles",
                 workdir=self._workdir,
+                adapter_pinned=self._adapter_pinned,
             )
             # Spawned agents reach the central server through the standard
             # env vars. Adapters launch agents with an allowlist-filtered

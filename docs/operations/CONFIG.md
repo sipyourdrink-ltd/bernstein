@@ -365,6 +365,14 @@ a `init.defaultBranch` fallback). The refusal is recorded to
 `.sdd/runtime/refused_merges.jsonl` and the merge is reported as failed rather
 than silently landing unreviewed commits on the trunk.
 
+`bernstein run` also checks this **before spawning any agent**: when the
+default branch is checked out and the override below is unset, the run aborts
+immediately instead of letting every agent work and then discarding the
+result at merge time. Modes that never merge back (`--dry-run`,
+`--plan-only`) are unaffected. If a refusal still happens mid-run, it is
+printed in the end-of-run summary and the run health verdict is downgraded to
+UNHEALTHY.
+
 Check out a non-default branch before merging, or opt in explicitly:
 
 ```bash

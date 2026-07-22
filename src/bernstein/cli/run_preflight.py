@@ -7,9 +7,10 @@ import io
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -25,26 +26,117 @@ from bernstein.core.cost.preflight import CostBand, compute_band, format_band
 from bernstein.core.plan_loader import load_plan_from_yaml
 from bernstein.core.runtime_state import directory_size_bytes
 
+if TYPE_CHECKING:
+    from rich.console import Console
+
 logger = logging.getLogger(__name__)
+
+#: When this module was imported, which is when the CLI process started.
+#: Used to ignore merge-refusal journal entries left over from previous runs
+#: when surfacing refusals in the end-of-run summary.
+_CLI_RUN_EPOCH = time.time()
 
 # ---------------------------------------------------------------------------
 # Post-run summary helper
 # ---------------------------------------------------------------------------
 
 
+def _abort_if_default_branch_merge_target(workdir: Path) -> None:
+    """Abort before any agent spawns when merges would land on the default branch.
+
+    The spawner merge guard (``spawner_merge._run_merge_and_push``) refuses to
+    merge agent work onto the repository's protected default branch. When the
+    run starts with that branch checked out and the override env var unset,
+    every agent would do its work and then have it silently discarded at
+    merge time (gh-2756). Detect that state up front and abort with the
+    remedy instead.
+
+    Only wired into run modes that merge agent work back into the checked-out
+    branch; ``--dry-run`` and ``--plan-only`` never reach this check.
+
+    Args:
+        workdir: Repository root the run would merge agent work into.
+
+    Raises:
+        SystemExit: When the checked-out branch is a protected default branch
+            and ``BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH`` is not set.
+    """
+    from bernstein.core.agents.spawner_merge import (
+        ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH,
+        _allow_merge_to_default_branch,
+    )
+    from bernstein.core.git_ops import current_branch, protected_default_branches
+
+    branch = current_branch(workdir)
+    if branch is None:
+        # Detached HEAD or not a git repo: mirror the merge guard, which only
+        # refuses when a named protected branch is checked out.
+        return
+    if branch not in protected_default_branches(workdir):
+        return
+    if _allow_merge_to_default_branch():
+        return
+    console.print(
+        f"[bold red]Refusing to start:[/bold red] the checked-out branch {branch!r} is the "
+        "repository default branch, so every agent's work would be refused by the merge "
+        "guard and discarded instead of merged."
+    )
+    console.print(
+        "Fix: check out a working branch first (git checkout -b <branch>), or set "
+        f"{ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 to explicitly allow merging to the default branch."
+    )
+    raise SystemExit(1)
+
+
+def _surface_merge_refusals(workdir: Path, *, since_ts: float, console: Console) -> None:
+    """Print a loud warning for agent merges the merge guard refused this run.
+
+    The spawner merge guard refuses to land agent work on the repository's
+    protected default branch and records each refusal to
+    ``.sdd/runtime/refused_merges.jsonl``. Without this warning the refusal
+    is only visible in the spawner log, so the run ends looking clean while
+    the work was discarded (gh-2756).
+
+    Args:
+        workdir: Repository root of the run.
+        since_ts: Only refusals recorded at or after this timestamp are
+            shown, filtering out journal entries from previous runs.
+        console: Console to print the warning to.
+    """
+    from bernstein.core.agents.spawner_merge import ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH
+    from bernstein.core.quality.retrospective import read_merge_refusals
+
+    refusals = read_merge_refusals(workdir / ".sdd" / "runtime", since_ts=since_ts)
+    if not refusals:
+        return
+    branches = sorted({r.branch for r in refusals if r.branch})
+    branch_note = f" onto default branch {', '.join(repr(b) for b in branches)}" if branches else ""
+    console.print(
+        f"[bold red]Merge refused:[/bold red] agent work from {len(refusals)} session(s) was NOT "
+        f"merged{branch_note} and was discarded (details: .sdd/runtime/refused_merges.jsonl)."
+    )
+    console.print(
+        "Check out a working branch first (git checkout -b <branch>), or set "
+        f"{ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 and re-run."
+    )
+
+
 def _show_run_summary() -> None:
     """Fetch final status from the task server and render a summary.
 
-    Silently returns if the server is unreachable (e.g. already stopped).
+    Silently skips the status table when the server is unreachable (e.g.
+    already stopped). Merge refusals recorded during this run are surfaced
+    even then -- a run whose work was discarded must not end with a clean,
+    silent summary (gh-2756).
     """
     from bernstein.cli.helpers import server_get
 
-    data = server_get("/status")
-    if data is None:
-        return
     force_no_color = not sys.stdout.isatty()
     con = make_console(no_color=force_no_color)
-    render_run_summary_from_dict(data, console=con)
+    data = server_get("/status")
+    if data is not None:
+        render_run_summary_from_dict(data, console=con)
+    _surface_merge_refusals(Path.cwd(), since_ts=_CLI_RUN_EPOCH, console=con)
 
 
 def _drain_completed_backlog_files() -> None:
