@@ -8,39 +8,39 @@
     },
     "claude": {
       "binary": "claude",
-      "receipt_sha256": "2aaa0eadfccaf4143e884c3fc91b7e1861b5450c77e5c7dcd8deda9353af8685",
-      "recorded_at": "2026-07-21T07:27:47Z",
-      "version": "2.1.216"
+      "receipt_sha256": "488c43fbfbc02929d3b3b202416d0397b8668cb7ad4f84c548ae4651576a9fbf",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "2.1.217"
     },
     "codex": {
       "binary": "codex",
-      "receipt_sha256": "27771557ee4a67b3264f0168796e9b4a6b0ba9dcafc5c6f2620b67b82d1d2000",
-      "recorded_at": "2026-07-21T07:27:47Z",
-      "version": "0.144.6"
+      "receipt_sha256": "43296bc25996c21523e4358fb4d3dabf2f60a41ae1b2ec503e268e3c1d5098ee",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "0.145.0"
     },
     "copilot": {
       "binary": "copilot",
-      "receipt_sha256": "83762c810d6d64e581e48d27334b48aa23854dc058b4fe92f880f90c6ab0071e",
-      "recorded_at": "2026-07-21T07:27:47Z",
+      "receipt_sha256": "44eab25c7282fe6ed5217fe86fbfa0adca2a06f205c8834b4afbce7213221aa6",
+      "recorded_at": "2026-07-22T07:30:14Z",
       "version": "1.0.73"
     },
     "gemini": {
       "binary": "gemini",
-      "receipt_sha256": "8a7bbaba1323f208165b754d2e3480092227abfa168f3bc669ddf061a1cb144e",
-      "recorded_at": "2026-07-21T07:27:47Z",
+      "receipt_sha256": "2297afc04c972a24de9e8adf6fd67412d01c1f1c8bf43058e27cb24e9bb08a10",
+      "recorded_at": "2026-07-22T07:30:14Z",
       "version": "0.51.0"
     },
     "opencode": {
       "binary": "opencode",
-      "receipt_sha256": "f7a2d09e31052a93060be55b76908f6e8db95011b7a6d1a558ba86b1db8c25c9",
-      "recorded_at": "2026-07-21T07:27:47Z",
+      "receipt_sha256": "0afcf47d5f8a69879a1110dd424ce7e4f2f446f4707f7fb2985ae6238b42ebe0",
+      "recorded_at": "2026-07-22T07:30:14Z",
       "version": "1.18.4"
     },
     "qwen": {
       "binary": "qwen",
-      "receipt_sha256": "622c8e2d608c34a92f1745b7a2ed32dea1288480cd20df3fec1614fab106eeb7",
-      "recorded_at": "2026-07-21T07:27:47Z",
-      "version": "0.20.0"
+      "receipt_sha256": "91dd44fccd33915d32a189cbb61b3fb0aab20951f603f0af9468424f3d175940",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "0.20.1"
     }
   },
   "schema_version": 1
