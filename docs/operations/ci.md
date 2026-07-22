@@ -9,6 +9,8 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 | Topic | Status | Where |
 |-------|--------|-------|
 | Per-PR macOS matrix | Gated (#1468) | `.github/workflows/ci.yml` |
+| Per-PR Python matrix | 3.13 only; 3.12 on push | `.github/workflows/ci.yml` |
+| Per-PR install smoke | 1 pipx + 1 uv cell; full 6 on push | `.github/workflows/ci.yml` |
 | macOS safety net | Nightly + push-on-sensitive | `.github/workflows/ci-macos-nightly.yml` |
 | Required check | Single `CI gate` job | `.github/workflows/ci.yml` |
 | Concurrency | PR-scoped cancel, push-scoped non-cancel | `.github/workflows/ci.yml` |
@@ -75,6 +77,28 @@ re-used while the break persists; close it after the fix lands.
 
 Manual dispatch and push-event runs do NOT open issues, to keep the
 operator-driven feedback loop quiet.
+
+## Python and install-smoke matrix policy
+
+The `test`, `install-smoke-pipx`, and `install-smoke-uv` matrices are
+event-conditional (via `fromJSON` expressions on `github.event_name`):
+
+| Job | PR lane | push / merge_group / dispatch |
+|-----|---------|-------------------------------|
+| `test` | ubuntu + windows, Python 3.13, 4 shards each (8 jobs) | full matrix incl. the ubuntu 3.12 row (12 jobs) |
+| `install-smoke-pipx` | ubuntu / 3.13 (1 cell) | ubuntu + macos x 3.12 + 3.13 (4 cells) |
+| `install-smoke-uv` | ubuntu (1 cell) | ubuntu + macos (2 cells) |
+
+Rationale: PR pushes are the high-frequency event on the shared
+runner pool, and the slimmed rows re-run on every push to main, so a
+row-specific regression (a 3.12-only failure, a macOS packaging
+break) surfaces at most one merge later and is attributable to a
+single commit. `ci-macos-nightly.yml` and `nightly-deep-tests.yml`
+remain the scheduled safety nets.
+
+The CI gate aggregation is unchanged: `ci-gate` still rolls up
+`needs.*.result` for every job (all remaining matrix cells included)
+and still reports on `pull_request` and `merge_group`.
 
 ## Concurrency policy
 

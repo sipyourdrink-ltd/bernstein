@@ -50,6 +50,9 @@ COPILOT_DEFAULT_MODEL: Final[str] = "auto"
 """Copilot model used when no operator-pinned model reaches the adapter; ``auto``
 lets Copilot's own router pick the best available model."""
 
+SDD_SERVER_PORT: Final[str] = ".sdd/runtime/server.port"
+"""Workspace-relative file containing the active task-server port."""
+
 COPILOT_CLAUDE_TIER_MODELS: Final[frozenset[str]] = frozenset({"opus", "sonnet", "haiku"})
 """Claude cascade tier names that are not valid Copilot model ids; any that reach
 the Copilot adapter are remapped to ``COPILOT_DEFAULT_MODEL``."""

@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.security.path_containment import PathContainmentError, contained_path
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -246,6 +247,7 @@ class EventJournal:
         self._index = 0
         self._head = _GENESIS_HASH
         self._start_ts: float = time.time()
+        self._observer: Callable[[dict[str, Any]], None] | None = None
         self._prune_old_runs()
 
     @classmethod
@@ -309,6 +311,18 @@ class EventJournal:
         """
         return self._head
 
+    def set_observer(self, observer: Callable[[dict[str, Any]], None] | None) -> None:
+        """Register a post-append observer (or clear it with ``None``).
+
+        The observer receives each successfully appended entry dict (chain
+        fields included) after the append commits. It is a read-only tap
+        for projections such as live OTel export (#2526): observer
+        exceptions are swallowed with a warning and can never fail or
+        reorder an append. Single observer; the journal stays a
+        single-writer structure.
+        """
+        self._observer = observer
+
     def record(self, event: str, **data: Any) -> None:
         """Append one Merkle-chained event to the journal.
 
@@ -346,6 +360,17 @@ class EventJournal:
                 return
             self._index = index + 1
             self._head = e_hash
+            # Dispatch while the append lock still establishes total order.
+            # Calling after releasing it lets a later writer deliver index N+1
+            # before index N, which corrupts order-sensitive projections such
+            # as the incremental OTel span tree. The live observer only queues
+            # onto BatchSpanProcessor, so it performs no network I/O here.
+            observer = self._observer
+            if observer is not None:
+                try:
+                    observer(entry)
+                except Exception as exc:
+                    logger.warning("EventJournal observer failed for event %r: %s", event, exc)
 
     def event_count(self) -> int:
         """Return the number of events recorded so far."""

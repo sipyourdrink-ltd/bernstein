@@ -119,7 +119,7 @@ jobs:
 
       - name: Checkout PR head for policy scan
         if: steps.gates.outputs.run_hygiene == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -345,7 +345,7 @@ jobs:
       # workflows on the PR.
       - name: Checkout PR head
         if: steps.gates.outputs.run_autosync == 'true' && steps.premerge_guard.outputs.skip != 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7  # zizmor: ignore[artipacked]
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.ref }}

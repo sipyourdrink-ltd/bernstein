@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -392,3 +393,59 @@ async def test_gitlab_webhook_rejects_stale_timestamp_when_supplied(
         },
     )
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# #2763: the webhook secret never reaches a log record
+# ---------------------------------------------------------------------------
+
+_WEBHOOKS_LOGGER = "bernstein.core.routes.webhooks"
+
+
+@pytest.mark.anyio
+async def test_unconfigured_webhook_refusal_log_interpolates_nothing(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The 503 refusal log is fully literal - no value flows into the call.
+
+    A logging call that interpolates a secret-shaped binding can leak it
+    into persisted log sinks; keeping the refusal message literal makes
+    that impossible by construction.
+    """
+    monkeypatch.delenv("BERNSTEIN_WEBHOOK_SECRET", raising=False)
+    body = json.dumps(_WEBHOOK_PAYLOAD).encode()
+    with caplog.at_level(logging.ERROR, logger=_WEBHOOKS_LOGGER):
+        resp = await client.post("/webhook", content=body, headers={"content-type": "application/json"})
+    assert resp.status_code == 503
+    refusals = [r for r in caplog.records if r.name == _WEBHOOKS_LOGGER]
+    assert refusals, "expected the unconfigured-endpoint refusal to be logged"
+    for record in refusals:
+        assert not record.args, "refusal log must not interpolate any value"
+
+
+@pytest.mark.anyio
+async def test_webhook_secret_absent_from_all_log_records(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No record captured while handling POST /webhook contains the secret.
+
+    Exercises the accepted, forged-signature, and unsigned paths and then
+    checks every captured record - message and interpolation args alike -
+    for the raw secret value.
+    """
+    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", _WEBHOOK_SECRET)
+    body = json.dumps(_WEBHOOK_PAYLOAD).encode()
+    with caplog.at_level(logging.DEBUG):
+        accepted = await client.post("/webhook", content=body, headers=_signed(body))
+        forged = await client.post("/webhook", content=body, headers=_signed(body, secret="wrong-secret"))
+        unsigned = await client.post("/webhook", content=body, headers={"content-type": "application/json"})
+    assert accepted.status_code == 201
+    assert forged.status_code == 401
+    assert unsigned.status_code == 401
+    for record in caplog.records:
+        assert _WEBHOOK_SECRET not in record.getMessage()
+        assert _WEBHOOK_SECRET not in repr(record.args)

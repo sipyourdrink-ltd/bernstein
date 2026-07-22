@@ -21,8 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,6 +37,11 @@ from bernstein.core.lineage.c2pa import (
     verify_manifest,
 )
 from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.install_key import (
+    InstallKeyError,
+    load_or_create_install_key,
+    signing_key_path,
+)
 from bernstein.core.security.sanitize import sanitize_log
 
 if TYPE_CHECKING:
@@ -46,8 +49,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-INSTALL_SIGNING_KEY_ENV = "BERNSTEIN_CREDENTIAL_SIGNING_KEY"
-DEFAULT_INSTALL_SIGNING_KEY = ".sdd/runtime/credential/install.key"
 MANIFEST_SUFFIX = ".c2pa.json"
 
 
@@ -242,10 +243,7 @@ def _load_hmac_key() -> bytes:
 
 
 def _signing_key_path(root: Path) -> Path:
-    override = os.environ.get(INSTALL_SIGNING_KEY_ENV)
-    if override:
-        return Path(override).expanduser()
-    return root / DEFAULT_INSTALL_SIGNING_KEY
+    return signing_key_path(root)
 
 
 def _keyid(root: Path) -> str:
@@ -258,42 +256,14 @@ def _keyid(root: Path) -> str:
 def _load_or_create_install_key(path: Path) -> Ed25519PrivateKey:
     """Load or generate the install Ed25519 signing key at ``path``.
 
-    Reuses an existing 32-byte seed when present; generates a fresh
-    keypair otherwise and persists the raw seed with mode 0600. The same
-    key anchors the install identity so the manifest signature and the
-    identity share one attestation root (AC5).
+    Delegates to :func:`bernstein.core.security.install_key.load_or_create_install_key`
+    (same location, format, and permissions), translating failures into
+    CLI-friendly errors.
     """
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    if path.exists():
-        try:
-            # Read the seed exactly as written: the create path below persists
-            # the raw 32-byte private seed with no trailing delimiter, so the
-            # bytes on disk ARE the key. Do NOT strip(): a random Ed25519 seed
-            # ends (or starts) with an ASCII-whitespace byte (0x09, 0x0a, 0x0b,
-            # 0x0c, 0x0d, 0x20) ~4.7% of the time, and strip() would silently
-            # drop it, corrupting a valid key into a "not 32 raw bytes" error.
-            raw = path.read_bytes()
-        except OSError as exc:
-            raise click.ClickException(f"cannot read signing key {sanitize_log(str(path))}: {exc}") from exc
-        if len(raw) != 32:
-            raise click.ClickException(
-                f"install signing key {sanitize_log(str(path))} is not 32 raw bytes; refusing to use it",
-            )
-        return Ed25519PrivateKey.from_private_bytes(raw)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with suppress(OSError):
-        path.parent.chmod(0o700)
-    priv = Ed25519PrivateKey.generate()
-    raw_bytes = priv.private_bytes_raw()
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        os.write(fd, raw_bytes)
-    finally:
-        os.close(fd)
-    path.chmod(0o600)
-    return priv
+        return load_or_create_install_key(path)
+    except InstallKeyError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
 
 
 def _load_install_rev() -> str:

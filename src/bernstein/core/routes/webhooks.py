@@ -96,11 +96,13 @@ def _verify_generic_webhook_secret(request: Request, body: bytes) -> tuple[JSONR
 
     configured_secret = os.environ.get(_GENERIC_WEBHOOK_SECRET_ENV, "")
     if not configured_secret:
+        # Fully literal message, matching the GitHub/GitLab handlers: no
+        # binding flows into the logging call, so no secret-shaped value
+        # can ever reach a persisted log sink (#2763).
         logger.error(
-            "Rejecting POST /webhook: %s is not configured. "
-            "Set the env var to enable the endpoint; unsigned "
+            "Rejecting POST /webhook: BERNSTEIN_WEBHOOK_SECRET is not "
+            "configured. Set the env var to enable the endpoint; unsigned "
             "webhooks are not accepted.",
-            _GENERIC_WEBHOOK_SECRET_ENV,
         )
         return (
             JSONResponse(

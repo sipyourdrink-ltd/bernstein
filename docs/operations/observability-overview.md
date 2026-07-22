@@ -257,6 +257,23 @@ recording the run id, the journal head, the derived trace id, the span count,
 and the sha256 of the signed span set, so an operator can confirm from the
 chain alone that a trace faithfully projects the journal.
 
+### Live OTLP streaming of the projection
+
+With `BERNSTEIN_OTEL_ENDPOINT` set, `core/observability/otel_bridge.py`
+streams that same projection to the collector *during* the run: each
+appended journal entry is projected incrementally (the streaming projector
+is property-tested equal to the batch projection) and exported with the
+identical journal-derived ids, plus `bernstein.audit.anchor` (the first-entry
+projection anchor) and `bernstein.run.id` on every span. The trace id derived
+from that anchor joins the spans to the completed `otel.projection` audit
+event, which records the final journal head. Set
+`BERNSTEIN_OTEL_GENAI_STABILITY=false` to omit Development-stage GenAI
+attributes without changing identity. Off by default -- no endpoint means no
+exporter initialisation and no network attempts. Backfill a completed run
+with `bernstein telemetry export-otel --run <run_id>`
+(`--dry-run` prints the OTLP/JSON without exporting). Full guide:
+[OTLP export](../observability/otlp-export.md).
+
 ## SLO tracking
 
 `core/observability/slo.py` defines targets, computes status, and tracks

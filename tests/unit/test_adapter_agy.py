@@ -92,7 +92,13 @@ class TestResolveAgyBinary:
 class TestAgyAdapterSpawn:
     """spawn() builds the print-mode invocation with sandbox pinned."""
 
-    def _spawn(self, tmp_path: Path, *, timeout_seconds: int = 0) -> list[str]:
+    def _spawn(
+        self,
+        tmp_path: Path,
+        *,
+        timeout_seconds: int = 0,
+        model: str = "default",
+    ) -> list[str]:
         adapter = AgyAdapter()
         proc_mock = _make_popen_mock(pid=310)
         with (
@@ -102,7 +108,7 @@ class TestAgyAdapterSpawn:
             adapter.spawn(
                 prompt="fix the bug",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="default", effort="high"),
+                model_config=ModelConfig(model=model, effort="high"),
                 session_id="agy-s1",
                 timeout_seconds=timeout_seconds,
             )
@@ -124,11 +130,12 @@ class TestAgyAdapterSpawn:
         inner = _inner_cmd(self._spawn(tmp_path))
         assert "--sandbox" in inner
 
-    def test_no_model_flag_reaches_argv(self, tmp_path: Path) -> None:
-        # Model selection is server-side; the CLI has no model flag.
-        inner = _inner_cmd(self._spawn(tmp_path))
-        assert "-m" not in inner
-        assert "--model" not in inner
+    def test_model_reaches_argv(self, tmp_path: Path) -> None:
+        inner = _inner_cmd(self._spawn(tmp_path, model="gemini-3.1-pro"))
+        assert inner[inner.index("--model") + 1] == "gemini-3.1-pro"
+
+    def test_default_model_keeps_server_side_selection(self, tmp_path: Path) -> None:
+        assert "--model" not in _inner_cmd(self._spawn(tmp_path))
 
     def test_timeout_mirrored_onto_print_timeout(self, tmp_path: Path) -> None:
         inner = _inner_cmd(self._spawn(tmp_path, timeout_seconds=600))

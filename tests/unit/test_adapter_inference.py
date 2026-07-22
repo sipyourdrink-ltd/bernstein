@@ -37,6 +37,20 @@ def _make_spawner(tmp_path: Path) -> AgentSpawner:
     return AgentSpawner(adapter, templates_dir, tmp_path)
 
 
+def _make_pinned_spawner(tmp_path: Path, adapter_name: str) -> AgentSpawner:
+    """Spawner whose run-level adapter is an explicit operator pin.
+
+    Mirrors the orchestrator construction path for ``--adapter`` /
+    ``BERNSTEIN_ADAPTER`` / a non-``auto`` seed ``cli`` value, all of which
+    set ``adapter_pinned=True`` on the spawner.
+    """
+    adapter = MagicMock()
+    adapter.name.return_value = adapter_name
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    return AgentSpawner(adapter, templates_dir, tmp_path, adapter_pinned=True)
+
+
 def test_openai_agents_provider_routes_to_openai_agents_adapter(tmp_path: Path) -> None:
     """provider='openai_agents' must not be swallowed by the 'openai' check."""
     spawner = _make_spawner(tmp_path)
@@ -87,6 +101,43 @@ def test_registry_gpt_oss_excluded_from_gpt_alias() -> None:
     'gpt' alias match when the model text contains 'gpt-oss'."""
     assert registry.adapter_name_for_provider(None, "gpt-oss:20b") != "codex"
     assert registry.adapter_name_for_provider(None, "gpt-5.5") == "codex"
+
+
+def test_pinned_adapter_wins_over_model_namespace_substring(tmp_path: Path) -> None:
+    """Regression (#2751): an explicit adapter pin must never be hijacked by
+    model-name substring inference. With the run pinned to qwen and no
+    per-spawn provider (task cli 'auto'), an OpenRouter route id like
+    'openai/gpt-oss-20b:free' used to substring-match the 'openai' alias and
+    misroute the spawn to codex."""
+    spawner = _make_pinned_spawner(tmp_path, "qwen")
+    result = spawner._infer_adapter_name_for_provider(None, "openai/gpt-oss-20b:free")
+    assert result == "qwen"
+
+
+def test_pinned_adapter_explicit_provider_still_wins_over_pin(tmp_path: Path) -> None:
+    """A per-spawn provider selection (task `cli:` / role_model_policy
+    provider) is more specific than the run-level pin and must still resolve
+    to its own adapter via exact alias lookup."""
+    spawner = _make_pinned_spawner(tmp_path, "qwen")
+    result = spawner._infer_adapter_name_for_provider("codex", "openai/gpt-oss-20b:free")
+    assert result == "codex"
+
+
+def test_pinned_adapter_provider_lookup_never_consults_model_text(tmp_path: Path) -> None:
+    """Under a pin, an unrecognized per-spawn provider must fall back to the
+    pinned adapter - never to an adapter substring-inferred from the model
+    string."""
+    spawner = _make_pinned_spawner(tmp_path, "qwen")
+    result = spawner._infer_adapter_name_for_provider("totally-unknown-provider", "openai/gpt-oss-20b:free")
+    assert result == "qwen"
+
+
+def test_unpinned_model_name_inference_is_unchanged(tmp_path: Path) -> None:
+    """When nothing is pinned anywhere (adapter_pinned defaults to False),
+    model-name inference keeps working exactly as before."""
+    spawner = _make_spawner(tmp_path)
+    assert spawner._infer_adapter_name_for_provider(None, "gpt-5.5") == "codex"
+    assert spawner._infer_adapter_name_for_provider(None, "qwen3-coder") == "qwen"
 
 
 def test_unrecognized_provider_falls_back_to_current_adapter(tmp_path: Path) -> None:

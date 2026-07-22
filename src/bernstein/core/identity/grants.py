@@ -46,8 +46,9 @@ One JSONL line per record under ``<root>/grants/<run_id>.jsonl``::
       "kind": "grant_issued",           # issued | exchanged | revoked | refused
       "grant_id": "...",
       "task_id": "t-42",
-      "secret_name": "sha256:<hex>",    # digest only -- the raw backend
-                                         # secret/key name is never persisted
+      "secret_name": "scrypt:<salt>:<hex>",  # salted hash only -- the raw
+                                             # backend secret/key name is
+                                             # never persisted
       "audience": "api.anthropic.com",
       "expiry": 1730000900,             # epoch seconds; 0 == no explicit expiry
       "capability_ceiling": ["read"],   # sorted, canonical
@@ -67,6 +68,7 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import json
+import secrets as _secrets
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -91,8 +93,10 @@ __all__ = [
     "default_ledger",
     "digest_secret_name",
     "find_active_grant",
+    "hash_secret_name",
     "install_grant_signer",
     "render_report",
+    "secret_name_matches",
     "verify_grant_chain",
     "verify_grant_signature",
 ]
@@ -164,17 +168,84 @@ def _compute_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
     return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
 
-def digest_secret_name(secret_name: str) -> str:
-    """Return a ``sha256:<hex>`` reference for ``secret_name``, safe to persist.
+#: Salted-reference format written to new records. ``sha256:`` (unsalted) is
+#: the legacy format older releases wrote; it is still matched on read so
+#: pre-existing chains stay usable, but it is never written anymore.
+_SALTED_PREFIX: Final[str] = "scrypt:"
+_LEGACY_PREFIX: Final[str] = "sha256:"
+
+_SALT_BYTES: Final[int] = 16
+#: RFC 7914 interactive-use parameters (16 MiB, well under OpenSSL's default
+#: 32 MiB maxmem). Grants are minted once per task spawn, so the cost budget
+#: is per-spawn, not per-request.
+_SCRYPT_N: Final[int] = 2**14
+_SCRYPT_R: Final[int] = 8
+_SCRYPT_P: Final[int] = 1
+_SCRYPT_DKLEN: Final[int] = 32
+
+
+def _scrypt_hex(secret_name: str, salt: bytes) -> str:
+    """Return the hex scrypt derivation of ``secret_name`` under ``salt``."""
+    return hashlib.scrypt(
+        secret_name.encode("utf-8"),
+        salt=salt,
+        n=_SCRYPT_N,
+        r=_SCRYPT_R,
+        p=_SCRYPT_P,
+        dklen=_SCRYPT_DKLEN,
+    ).hex()
+
+
+def hash_secret_name(secret_name: str) -> str:
+    """Return a salted ``scrypt:<salt-hex>:<hash-hex>`` reference safe to persist.
 
     The backing-store secret name (e.g. an env var or Vault path) is never
-    written to a chain record, receipt, report, or log in clear text -- only
-    this deterministic digest is. The digest is stable, so matching a grant
-    by ``(task_id, secret_name)`` still works by comparing digests; the raw
-    name itself is only ever held in memory for the duration of the call that
-    computes this digest. An empty name digests to an empty string so an
-    absent/optional ``secret_name`` stays absent rather than becoming the
-    digest of the empty string.
+    written to a chain record, receipt, report, or log in clear text. Backing
+    names are low-entropy, so an unsalted digest would be reversible with a
+    precomputed dictionary; each call draws a fresh random salt, which also
+    keeps records for the same name from correlating across grants. Matching
+    a grant by ``(task_id, secret_name)`` goes through
+    :func:`secret_name_matches`, which re-derives under the salt carried in
+    the stored value. An empty name maps to an empty string so an
+    absent/optional ``secret_name`` stays absent.
+    """
+    if not secret_name:
+        return ""
+    salt = _secrets.token_bytes(_SALT_BYTES)
+    return f"{_SALTED_PREFIX}{salt.hex()}:{_scrypt_hex(secret_name, salt)}"
+
+
+def secret_name_matches(stored: str, secret_name: str) -> bool:
+    """Return True when ``stored`` is a persisted reference for ``secret_name``.
+
+    Accepts both the salted ``scrypt:<salt>:<hash>`` format new records carry
+    and the legacy unsalted ``sha256:<hex>`` format written by earlier
+    releases, so chains recorded before salting keep matching. Empty matches
+    only empty (an absent name is not a wildcard); anything malformed never
+    matches.
+    """
+    if not stored or not secret_name:
+        return stored == "" and secret_name == ""
+    if stored.startswith(_SALTED_PREFIX):
+        parts = stored.split(":")
+        if len(parts) != 3:
+            return False
+        try:
+            salt = bytes.fromhex(parts[1])
+        except ValueError:
+            return False
+        return _hmac.compare_digest(_scrypt_hex(secret_name, salt), parts[2])
+    if stored.startswith(_LEGACY_PREFIX):
+        return _hmac.compare_digest(digest_secret_name(secret_name), stored)
+    return False
+
+
+def digest_secret_name(secret_name: str) -> str:
+    """Return the legacy unsalted ``sha256:<hex>`` reference for ``secret_name``.
+
+    Kept only so :func:`secret_name_matches` can match records written by
+    releases that predate salting. Never use this for new persistence -- new
+    records go through :func:`hash_secret_name`.
     """
     if not secret_name:
         return ""
@@ -414,16 +485,16 @@ class GrantLedger:
         prev_hmac, record_index = self._tail(run_id)
         ts = int(created if created is not None else time.time())
         # The raw secret_name is used only transiently, right here, to derive
-        # the digest that actually gets signed and persisted; it is never
-        # itself written into `signed` (and therefore never into the chain
-        # record, the receipt, or a rendered report).
+        # the salted reference that actually gets signed and persisted; it is
+        # never itself written into `signed` (and therefore never into the
+        # chain record, the receipt, or a rendered report).
         signed = {
             "run_id": run_id,
             "record_index": record_index,
             "kind": kind,
             "grant_id": grant_id,
             "task_id": task_id,
-            "secret_name": digest_secret_name(secret_name),
+            "secret_name": hash_secret_name(secret_name),
             "audience": audience,
             "expiry": expiry,
             "capability_ceiling": sorted(capability_ceiling),
@@ -721,13 +792,13 @@ def find_active_grant(
     # Index the issued records so we can return the receipt itself.
     issued: dict[str, GrantReceipt] = {r.grant_id: r for r in result.records if r.kind == GRANT_ISSUED}
     best: GrantReceipt | None = None
-    # Records only ever carry the digest (see digest_secret_name), so the
-    # lookup key is digested here too rather than the raw secret name.
-    wanted_secret = digest_secret_name(secret_name)
+    # Records only ever carry a salted reference (see hash_secret_name), so
+    # matching re-derives the requested name under each record's own salt
+    # rather than comparing against a single precomputed digest.
     for grant_id, state in life.items():
         if not state["issued"] or state["revoked"]:
             continue
-        if state["task_id"] != task_id or state["secret_name"] != wanted_secret:
+        if state["task_id"] != task_id or not secret_name_matches(str(state["secret_name"]), secret_name):
             continue
         expiry = int(state["expiry"])
         if expiry and current >= expiry:

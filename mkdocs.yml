@@ -343,6 +343,7 @@ nav:
           - LLM watcher: observability/llm-watcher.md
           - Ticket bundle: observability/ticket-bundle.md
           - Trace store: observability/trace-store.md
+          - OTLP export: observability/otlp-export.md
           - Trends: observability/trends.md
           - Progress watch: observability/progress-watch.md
           - Task artifacts and progress: observability/task-artifacts.md

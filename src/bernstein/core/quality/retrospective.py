@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -254,7 +255,82 @@ def classify_task_terminator(task: Task) -> str:
     return TERMINATOR_AGENT_COMPLETED
 
 
-def compute_run_health(all_tasks: list[Task], n_unresolved: int = 0) -> tuple[bool, dict[str, int]]:
+#: Journal the spawner merge guard appends one JSON line to for every merge
+#: it refuses (see ``spawner_merge._record_merge_refusal``). Lives in
+#: ``.sdd/runtime/`` next to the retrospective this module writes.
+REFUSED_MERGES_FILENAME = "refused_merges.jsonl"
+
+
+@dataclass(frozen=True)
+class MergeRefusal:
+    """One refused agent-work merge read back from the runtime journal.
+
+    Attributes:
+        session_id: Agent session whose merge was refused.
+        branch: Branch the merge would have landed on.
+        reason: Machine-readable refusal reason recorded by the guard.
+        ts: Unix timestamp when the refusal was recorded.
+    """
+
+    session_id: str
+    branch: str
+    reason: str
+    ts: float
+
+
+def read_merge_refusals(runtime_dir: Path, since_ts: float = 0.0) -> list[MergeRefusal]:
+    """Read merge refusals recorded by the spawner merge guard.
+
+    The guard appends one JSON line per refused merge to
+    ``.sdd/runtime/refused_merges.jsonl``. The journal persists across runs,
+    so callers pass ``since_ts`` (typically the run start) to see only the
+    current run's refusals. Malformed or timestamp-less lines are skipped;
+    a missing or unreadable journal yields an empty list. Never raises.
+
+    Args:
+        runtime_dir: The ``.sdd/runtime`` directory of the run.
+        since_ts: Only entries recorded at or after this Unix timestamp are
+            returned.
+
+    Returns:
+        Refusals recorded at or after ``since_ts``, in journal order.
+    """
+    path = runtime_dir / REFUSED_MERGES_FILENAME
+    refusals: list[MergeRefusal] = []
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return refusals
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        entry_dict = cast("dict[str, object]", entry)
+        ts = entry_dict.get("ts")
+        if not isinstance(ts, (int, float)) or ts < since_ts:
+            continue
+        refusals.append(
+            MergeRefusal(
+                session_id=str(entry_dict.get("session_id", "")),
+                branch=str(entry_dict.get("branch", "")),
+                reason=str(entry_dict.get("reason", "")),
+                ts=float(ts),
+            )
+        )
+    return refusals
+
+
+def compute_run_health(
+    all_tasks: list[Task],
+    n_unresolved: int = 0,
+    n_refused_merges: int = 0,
+) -> tuple[bool, dict[str, int]]:
     """Compute the run-health verdict and per-terminator-category counts.
 
     Args:
@@ -265,13 +341,19 @@ def compute_run_health(all_tasks: list[Task], n_unresolved: int = 0) -> tuple[bo
             ``collector.complete_task()`` call (see
             ``generate_retrospective``'s reconciliation block). Treated as
             additional non-agent-verified terminations for health purposes.
+        n_refused_merges: Count of agent-work merges the spawner merge guard
+            refused this run (see :func:`read_merge_refusals`). Refused
+            merges discard completed work without producing a failed task,
+            so any refusal forces ``healthy`` to ``False`` -- including for
+            an otherwise-empty 0/0 run (gh-2756).
 
     Returns:
         Tuple of ``(healthy, counts)`` where ``counts`` maps each
         ``TERMINATOR_*`` category to the number of tasks in it.
 
         Hard rule (bug fix): ``healthy`` is ``False`` whenever ANY task
-        has status FAILED, or ``n_unresolved > 0``, or there is at least
+        has status FAILED, or ``n_unresolved > 0``, or
+        ``n_refused_merges > 0``, or there is at least
         one ``TERMINATOR_AUTO_COMPLETED_AFTER_DEATH`` -- regardless of the
         text-pattern classification below. This does not depend on
         ``classify_task_terminator`` finding a forced-kill marker in the
@@ -287,6 +369,13 @@ def compute_run_health(all_tasks: list[Task], n_unresolved: int = 0) -> tuple[bo
     counts: dict[str, int] = defaultdict(int)
     for t in all_tasks:
         counts[classify_task_terminator(t)] += 1
+
+    # Hard rule (gh-2756): a refused merge means completed agent work was
+    # discarded, and the affected task never shows up as FAILED -- checked
+    # before the vacuous-empty return so a 0/0 run with discarded work is
+    # never reported HEALTHY.
+    if n_refused_merges > 0:
+        return False, counts.copy()
 
     total = len(all_tasks) + n_unresolved
     if total == 0:
@@ -306,9 +395,10 @@ def _write_run_health_section(
     lines: list[str],
     all_tasks: list[Task],
     n_unresolved: int = 0,
+    n_refused_merges: int = 0,
 ) -> tuple[bool, dict[str, int]]:
     """Write the Run Health section and return (healthy, counts) for reuse in Recommendations."""
-    healthy, counts = compute_run_health(all_tasks, n_unresolved=n_unresolved)
+    healthy, counts = compute_run_health(all_tasks, n_unresolved=n_unresolved, n_refused_merges=n_refused_merges)
     total = len(all_tasks) + n_unresolved
     agent_completed = counts.get(TERMINATOR_AGENT_COMPLETED, 0)
     watchdog_killed = counts.get(TERMINATOR_WATCHDOG_KILLED, 0)
@@ -322,7 +412,7 @@ def _write_run_health_section(
     logger.info(
         "run health: %d/%d agent-completed, %d watchdog-killed, %d janitor-rejected, "
         "%d timeout-killed, %d other-forced, %d auto-completed-after-death, "
-        "%d agent-reported-failure, %d unresolved-in-metrics -> %s",
+        "%d agent-reported-failure, %d unresolved-in-metrics, %d merges-refused -> %s",
         agent_completed,
         total,
         watchdog_killed,
@@ -332,6 +422,7 @@ def _write_run_health_section(
         auto_completed,
         agent_reported_failure,
         n_unresolved,
+        n_refused_merges,
         verdict,
     )
 
@@ -350,9 +441,20 @@ def _write_run_health_section(
             f"| Auto-completed after agent death | {auto_completed} |",
             f"| Other forced termination | {other_forced} |",
             f"| Unresolved in metrics (started, outcome never reconciled) | {n_unresolved} |",
+            f"| Merge refused by guard (agent work discarded) | {n_refused_merges} |",
             "",
         )
     )
+    if n_refused_merges > 0:
+        lines.extend(
+            (
+                f"- **Warning:** {n_refused_merges} completed merge attempt(s) were refused because "
+                "the run targeted the repository default branch, and the agent work was discarded "
+                "(see .sdd/runtime/refused_merges.jsonl). Check out a working branch or set "
+                "BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH=1 before re-running.",
+                "",
+            )
+        )
     if not healthy:
         lines.extend(
             (
@@ -694,6 +796,26 @@ def generate_retrospective(
             unresolved_task_ids,
         )
 
+    # ------------------------------------------------------------------
+    # Refused merges: agent work discarded by the spawner merge guard
+    # ------------------------------------------------------------------
+    #
+    # The merge guard refuses to land agent work on the repository's default
+    # branch and records each refusal to .sdd/runtime/refused_merges.jsonl
+    # (spawner_merge._record_merge_refusal). A refused session produces no
+    # FAILED task -- the run can end 0 done / 0 failed -- so without this the
+    # retrospective reported HEALTHY while every artefact was discarded
+    # (gh-2756). The journal persists across runs; filter to this run.
+    merge_refusals = read_merge_refusals(runtime_dir, since_ts=run_start_ts)
+    n_refused_merges = len(merge_refusals)
+    if n_refused_merges:
+        logger.warning(
+            "retrospective: %d merge(s) of agent work were refused by the merge guard this run "
+            "(branches=%s) -- counting them against run health; see .sdd/runtime/refused_merges.jsonl.",
+            n_refused_merges,
+            sorted({r.branch for r in merge_refusals}),
+        )
+
     n_done = len(done_tasks)
     n_failed = len(failed_tasks) + n_unresolved
     total = len(all_tasks) + n_unresolved
@@ -845,7 +967,12 @@ def generate_retrospective(
     _section(f"- **Wall-clock duration:** {duration_str}")
     _section("")
 
-    run_healthy, terminator_counts = _write_run_health_section(lines, all_tasks, n_unresolved=n_unresolved)
+    run_healthy, terminator_counts = _write_run_health_section(
+        lines,
+        all_tasks,
+        n_unresolved=n_unresolved,
+        n_refused_merges=n_refused_merges,
+    )
 
     _write_failure_analysis(lines, done_tasks, failed_tasks)
     _write_performance_section(lines, task_metrics, all_tasks)

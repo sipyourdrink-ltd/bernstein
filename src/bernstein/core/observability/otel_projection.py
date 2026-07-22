@@ -58,9 +58,13 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "ATTR_GEN_AI_OPERATION_NAME",
+    "ATTR_GEN_AI_SYSTEM",
     "ATTR_JOURNAL_ENTRY_HASH",
     "ATTR_JOURNAL_INDEX",
     "ATTR_JOURNAL_RUN_HEAD",
+    "DEFAULT_GEN_AI_SYSTEM",
+    "EVENT_TO_OPERATION",
     "GENAI_ATTR_NAMESPACE",
     "OP_CHAT",
     "OP_EXECUTE_TOOL",
@@ -117,19 +121,19 @@ ATTR_JOURNAL_RUN_HEAD: str = "bernstein.journal.run_head"
 
 #: GenAI semantic-convention attribute names re-exported so the projection
 #: does not need a hard dependency on the OTel SDK.
-_ATTR_GEN_AI_OPERATION_NAME: str = "gen_ai.operation.name"
-_ATTR_GEN_AI_SYSTEM: str = "gen_ai.system"
+ATTR_GEN_AI_OPERATION_NAME: str = "gen_ai.operation.name"
+ATTR_GEN_AI_SYSTEM: str = "gen_ai.system"
 
 #: Default ``gen_ai.system`` for projected spans. The journal is not tied
 #: to one provider, so the system tag identifies the producer, not a model
 #: vendor; operators filter Bernstein traffic on it.
-_DEFAULT_SYSTEM: str = "bernstein"
+DEFAULT_GEN_AI_SYSTEM: str = "bernstein"
 
 #: Deterministic mapping from journal event type to GenAI operation layer.
 #: Events not in the map project no span (control-plane bookkeeping such as
 #: ``tick_start`` and WAL recovery is not GenAI activity). The map is
 #: additive: new event types can be added without changing existing ids.
-_EVENT_TO_OPERATION: dict[str, str] = {
+EVENT_TO_OPERATION: dict[str, str] = {
     "run_started": OP_INVOKE_WORKFLOW,
     "run_completed": OP_INVOKE_WORKFLOW,
     "agent_spawned": OP_INVOKE_AGENT,
@@ -317,7 +321,7 @@ def project_spans(
 
     for index, row in enumerate(events):
         event_type = str(row.get("event", ""))
-        operation = _EVENT_TO_OPERATION.get(event_type)
+        operation = EVENT_TO_OPERATION.get(event_type)
         if operation is None:
             continue
         entry_hash = str(row.get("event_hash", ""))
@@ -340,8 +344,8 @@ def project_spans(
         if parent == "":
             attributes[ATTR_JOURNAL_RUN_HEAD] = root_hash
         if genai_stability:
-            attributes[_ATTR_GEN_AI_OPERATION_NAME] = operation
-            attributes[_ATTR_GEN_AI_SYSTEM] = _DEFAULT_SYSTEM
+            attributes[ATTR_GEN_AI_OPERATION_NAME] = operation
+            attributes[ATTR_GEN_AI_SYSTEM] = DEFAULT_GEN_AI_SYSTEM
 
         spans.append(
             ProjectedSpan(

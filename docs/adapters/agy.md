@@ -38,7 +38,7 @@ bernstein run --cli gemini "fix the flaky test"
 The harness path is the CLI's print mode:
 
 ```
-agy -p "<prompt>" --sandbox --dangerously-skip-permissions [--print-timeout <N>s]
+agy -p "<prompt>" --sandbox --dangerously-skip-permissions [--model <model>] [--print-timeout <N>s]
 ```
 
 * `-p` / `--print` -- run a single prompt non-interactively and print
@@ -47,16 +47,15 @@ agy -p "<prompt>" --sandbox --dangerously-skip-permissions [--print-timeout <N>s
   unattended runs stay inside the workspace.
 * `--dangerously-skip-permissions` -- auto-approve tool permission
   prompts so the run never blocks unattended.
+* `--model` -- select the resolved model when one is explicitly configured.
 * `--print-timeout` -- Bernstein mirrors its watchdog bound
   (`timeout_seconds`) onto the CLI's own print-mode timeout so both
   sides agree.
 
-Model selection is server-side: the CLI exposes no model flag, so
-Bernstein's `model` setting never reaches the argv for this adapter.
 The adapter declares `default` as its model default (the same sentinel
-the conformance canary pins), so a run with no model in the seed config
-resolves a spawnable config: the session records `default` and the
-backend picks the actual model.
+the conformance canary pins). A run with no model in the seed config omits
+`--model` and lets the backend select one; an explicit model is passed to
+the CLI.
 
 Session identifiers: the CLI mints its own conversation ids
 (`--conversation <id>` resumes one). Native resume is not wired yet --

@@ -8,39 +8,39 @@
     },
     "claude": {
       "binary": "claude",
-      "receipt_sha256": "c6d5cd1a5cbf0b1c10c14e2f8726497517bdb5c4c224a542f18e4df9bb84976d",
-      "recorded_at": "2026-07-20T07:53:19Z",
-      "version": "2.1.215"
+      "receipt_sha256": "488c43fbfbc02929d3b3b202416d0397b8668cb7ad4f84c548ae4651576a9fbf",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "2.1.217"
     },
     "codex": {
       "binary": "codex",
-      "receipt_sha256": "96a548b4a95bbf0821c126973933606fe4f1d2c692fc8b03d4fc303f46a3c10c",
-      "recorded_at": "2026-07-20T07:53:19Z",
-      "version": "0.144.6"
+      "receipt_sha256": "43296bc25996c21523e4358fb4d3dabf2f60a41ae1b2ec503e268e3c1d5098ee",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "0.145.0"
     },
     "copilot": {
       "binary": "copilot",
-      "receipt_sha256": "d2dd2be5963409b305e02ad6177b6f6cdbb2ff73f3df2215f4edc0d1b9c72cb5",
-      "recorded_at": "2026-07-20T07:53:19Z",
-      "version": "1.0.71"
+      "receipt_sha256": "44eab25c7282fe6ed5217fe86fbfa0adca2a06f205c8834b4afbce7213221aa6",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "1.0.73"
     },
     "gemini": {
       "binary": "gemini",
-      "receipt_sha256": "3347c25a8288411616e34d789947134301e1d7b5a82083c38c75beaa15e87545",
-      "recorded_at": "2026-07-20T07:53:19Z",
+      "receipt_sha256": "2297afc04c972a24de9e8adf6fd67412d01c1f1c8bf43058e27cb24e9bb08a10",
+      "recorded_at": "2026-07-22T07:30:14Z",
       "version": "0.51.0"
     },
     "opencode": {
       "binary": "opencode",
-      "receipt_sha256": "8151b6c98ceffdc769aad0c01260c704ea770cb913625db54f411e2cdccd8fbe",
-      "recorded_at": "2026-07-20T07:53:19Z",
-      "version": "1.18.3"
+      "receipt_sha256": "0afcf47d5f8a69879a1110dd424ce7e4f2f446f4707f7fb2985ae6238b42ebe0",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "1.18.4"
     },
     "qwen": {
       "binary": "qwen",
-      "receipt_sha256": "442d8be820dc41ccf651611c8caef88a1ffd65810bcf655a804ad3eef3c4dacc",
-      "recorded_at": "2026-07-20T07:53:19Z",
-      "version": "0.20.0"
+      "receipt_sha256": "91dd44fccd33915d32a189cbb61b3fb0aab20951f603f0af9468424f3d175940",
+      "recorded_at": "2026-07-22T07:30:14Z",
+      "version": "0.20.1"
     }
   },
   "schema_version": 1

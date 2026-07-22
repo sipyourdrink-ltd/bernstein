@@ -568,6 +568,37 @@ find . -name "*<basename-without-extension>*"
 
 ---
 
+## 22. Task Fails Verification with "pointed inside an ephemeral agent worktree" or a Gitignore Cause
+
+**Symptom:** A task the agent reported as complete fails janitor verification
+with a `path_exists` detail like `signal path '...' pointed inside an
+ephemeral agent worktree; repo-relative path '...' does not exist in the
+operator checkout`, possibly followed by `matches gitignore rule [...]`. See
+issue [#2760](https://github.com/sipyourdrink-ltd/bernstein/issues/2760).
+
+**Cause:** Filesystem completion signals (`path_exists`, `glob_exists`,
+`file_contains`) are verified against the operator checkout, not the agent's
+worktree. Agent worktrees (`.sdd/worktrees/<session>/`,
+`.sdd/runtime/worktrees/<session>/`) are deleted after the run, so a file
+that exists only there was never delivered. Signals whose path points inside
+a worktree are translated to their repo-relative form and checked against
+the merged result. The most common delivery failure is a `.gitignore` rule
+matching the deliverable: the git-based merge-back stages only tracked-able
+files, so an ignored artifact silently never leaves the worktree. Previously
+this reported done/HEALTHY with zero deliverable in the checkout; now it
+fails verification with the cause named.
+
+**Resolution:**
+- If the detail names a gitignore rule, either write the deliverable to a
+  non-ignored path or amend the ignore rule, then rerun.
+- If no gitignore rule is named, the artifact was not merged back at all -
+  check `merge_preflight` lines in `.sdd/runtime/*.log` for a refused or
+  conflicted merge (see also issue #2756).
+- Verify delivery manually: the path in the detail message is repo-relative;
+  check it exists in your checkout after the run.
+
+---
+
 ## Quick Reference: Exit Codes
 
 | Exit code | Meaning | Likely cause |

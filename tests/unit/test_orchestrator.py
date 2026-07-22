@@ -1633,6 +1633,29 @@ class TestReaping:
 
 
 class TestRunStop:
+    def test_live_otel_stream_attaches_and_finalizes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The orchestrator wires journal appends and finalizes the live stream."""
+        rows: list[dict[str, Any]] = []
+        stream = MagicMock()
+
+        def attach(journal: Any, *, workdir: Path) -> MagicMock:
+            assert workdir == tmp_path
+            journal.set_observer(rows.append)
+            return stream
+
+        monkeypatch.setattr("bernstein.core.observability.otel_bridge.attach_live_export", attach)
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        config = OrchestratorConfig(
+            poll_interval_s=0,
+            server_url="http://testserver",
+            dry_run=True,
+        )
+        orch = _build_orchestrator(tmp_path, transport, config=config)
+        orch.run()
+
+        assert [row["event"] for row in rows] == ["run_started", "tick_start", "run_completed"]
+        stream.finalize.assert_called_once_with()
+
     def test_stop_breaks_loop(self, tmp_path: Path) -> None:
         transport = _mock_transport(
             {

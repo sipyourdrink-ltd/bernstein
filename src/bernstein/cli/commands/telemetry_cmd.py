@@ -16,6 +16,7 @@ tests against the ``status`` command.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -348,6 +349,146 @@ def telemetry_disable(home: Path | None) -> None:
     click.echo(f"telemetry: share_with_maintainer = false (written to {path}).")
 
 
+@telemetry_group.command("export-otel")
+@click.option("--run", "run_id", required=True, help="Run id whose event journal to export.")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--endpoint",
+    default=None,
+    help="OTLP/gRPC collector endpoint (defaults to BERNSTEIN_OTEL_ENDPOINT).",
+)
+@click.option(
+    "--no-genai-stability",
+    "no_stability",
+    is_flag=True,
+    default=False,
+    help="Omit the (Development-stage) GenAI convention attributes; ids stay journal-anchored.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print the OTLP/JSON spans to stdout instead of exporting; no network, no audit event.",
+)
+def telemetry_export_otel(
+    run_id: str,
+    workdir: str,
+    endpoint: str | None,
+    no_stability: bool,
+    dry_run: bool,
+) -> None:
+    """Backfill a completed run's journal-anchored spans over OTLP (#2526).
+
+    Projects ``--run``'s event journal into the deterministic span set
+    (span ids derived from journal entry hashes, every span carrying
+    ``bernstein.journal.entry_hash`` and the ``bernstein.audit.anchor``
+    run-head hash), exports it to the collector, and records the
+    ``otel.projection`` audit event binding the exported trace to the
+    chain. Re-running over the same journal exports byte-identical spans.
+
+    Exit codes: 0 = exported, 1 = no journal / no endpoint / bad input.
+    """
+    from bernstein.core.observability.otel_bridge import (
+        JournalOTLPBridge,
+        OTLPExportError,
+        projection_to_otlp_json_spans,
+        record_projection_audit_event,
+    )
+    from bernstein.core.observability.otel_projection import (
+        ProjectionError,
+        project_spans,
+        sign_projection,
+    )
+    from bernstein.core.observability.otlp_exporter import OTLPExporterConfig
+    from bernstein.core.replay.journal import JournalPathError, load_events, run_journal_path
+    from bernstein.core.security.audit_dsse import keyid_from_public_key
+    from bernstein.core.security.install_key import (
+        InstallKeyError,
+        load_or_create_install_key,
+        signing_key_path,
+    )
+    from bernstein.core.security.sanitize import sanitize_log
+
+    root = Path(workdir).resolve()
+    try:
+        journal_path = run_journal_path(root / ".sdd", run_id)
+    except JournalPathError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
+    events = load_events(journal_path)
+    if not events:
+        raise click.ClickException(
+            f"no event journal for run {sanitize_log(run_id)} at {sanitize_log(str(journal_path))}",
+        )
+
+    try:
+        key = load_or_create_install_key(signing_key_path(root))
+    except InstallKeyError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
+
+    try:
+        projection = project_spans(
+            events,
+            run_id=run_id,
+            genai_stability=not no_stability,
+            keyid=keyid_from_public_key(key.public_key()),
+        )
+    except ProjectionError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
+    signed = sign_projection(projection, signing_key=key)
+
+    if dry_run:
+        click.echo(json.dumps(projection_to_otlp_json_spans(signed, events), sort_keys=True, indent=2))
+        return
+
+    base = OTLPExporterConfig.from_env()
+    # Preserve every env-derived field (headers/auth, insecure/TLS,
+    # resource attributes); only the endpoint is overridden. Rebuilding a
+    # fresh config would silently drop those.
+    config = base if endpoint is None else dataclasses.replace(base, endpoint=endpoint)
+    if config.endpoint is None:
+        raise click.ClickException(
+            "no OTLP endpoint configured; set BERNSTEIN_OTEL_ENDPOINT or pass --endpoint (or use --dry-run)",
+        )
+    bridge = JournalOTLPBridge(config, batch=False)
+    if not bridge.enabled:
+        raise click.ClickException(
+            "OTLP exporter unavailable; install 'bernstein[otel]' for opentelemetry-exporter-otlp-proto-grpc",
+        )
+    try:
+        count = bridge.export_projection(signed, events)
+    except OTLPExportError as exc:
+        # The collector returned FAILURE (unreachable / rejected): do not
+        # report success and do not record an audit event for undelivered
+        # spans. Exit nonzero so scripts can detect the failed export.
+        raise click.ClickException(
+            f"OTLP export failed; no spans delivered and no audit event recorded: {sanitize_log(str(exc))}",
+        ) from exc
+    finally:
+        bridge.shutdown()
+
+    try:
+        record_projection_audit_event(
+            workdir=root,
+            journal_path=journal_path,
+            run_id=run_id,
+            genai_stability=not no_stability,
+        )
+    except Exception as exc:  # pragma: no cover - defensive; export is primary
+        click.echo(f"warning: otel projection audit record failed: {sanitize_log(str(exc))}", err=True)
+
+    click.echo(
+        f"exported {count} journal-anchored spans for run {sanitize_log(run_id)} "
+        f"(trace {signed.trace_id[:16]}...) to {sanitize_log(config.endpoint)}"
+    )
+
+
 @telemetry_group.command("tail")
 @click.option(
     "-n",
@@ -403,6 +544,7 @@ __all__ = [
     "telemetry_disable",
     "telemetry_enable",
     "telemetry_export",
+    "telemetry_export_otel",
     "telemetry_group",
     "telemetry_off",
     "telemetry_on",

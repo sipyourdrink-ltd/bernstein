@@ -11,6 +11,7 @@ failure naming the offending record.
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -58,8 +59,8 @@ class TestGrantIssuance:
             capability_ceiling=("read", "list"),
         )
         assert g.task_id == "t-42"
-        # The persisted/returned secret_name is a digest, never the raw name.
-        assert g.secret_name == grants.digest_secret_name("K")
+        # The persisted/returned secret_name is a salted hash, never the raw name.
+        assert grants.secret_name_matches(g.secret_name, "K")
         assert g.secret_name != "K"
         assert g.audience == "vault.internal"
         assert g.expiry == 1_900_000_000
@@ -84,7 +85,7 @@ class TestGrantIssuance:
 
     def test_persisted_record_never_contains_raw_secret_name(self, ledger) -> None:
         """No persisted surface (JSONL entry, receipt, or report) carries the
-        raw secret name in clear text -- only its ``sha256:`` digest.
+        raw secret name in clear text -- only its salted ``scrypt:`` reference.
         """
         raw_secret = "ANTHROPIC_API_KEY_SUPER_SECRET_VALUE"
         g = ledger.issue_grant(
@@ -100,11 +101,11 @@ class TestGrantIssuance:
         # On-disk JSONL (the audit chain entry) never contains the raw name.
         raw_file = ledger.receipt_path("run-1").read_text(encoding="utf-8")
         assert raw_secret not in raw_file
-        assert grants.digest_secret_name(raw_secret) in raw_file
+        assert g.secret_name in raw_file
 
         # Neither does the in-memory receipt returned to the caller, nor its
         # serialized JSONL entry.
-        assert g.secret_name == grants.digest_secret_name(raw_secret)
+        assert grants.secret_name_matches(g.secret_name, raw_secret)
         assert raw_secret not in g.secret_name
         assert raw_secret not in json.dumps(g.to_entry())
 
@@ -112,6 +113,61 @@ class TestGrantIssuance:
         result = grants.verify_grant_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
         report = grants.render_report(result, run_id="run-1")
         assert raw_secret not in report
+
+
+class TestSecretNameAtRest:
+    """The persisted secret_name reference must not be derivable without the record.
+
+    An unsalted digest of a low-entropy backing name (an env var name or a
+    vault path) is reversible with a precomputed dictionary, so the store must
+    hold a salted derivation instead and comparison must go through the salt
+    held in the record.
+    """
+
+    def test_no_file_written_by_store_contains_raw_or_unsalted_digest(self, ledger) -> None:
+        raw_secret = "VAULT_PATH_TO_PRODUCTION_SIGNING_KEY"
+        unsalted = "sha256:" + hashlib.sha256(raw_secret.encode("utf-8")).hexdigest()
+        g = ledger.issue_grant(
+            run_id="run-1",
+            task_id="t-1",
+            secret_name=raw_secret,
+            audience="aud",
+            expiry=2_000_000_000,
+        )
+        ledger.record_exchange(run_id="run-1", grant_id=g.grant_id, token_id="brn-tok-1")
+        ledger.record_refusal(run_id="run-2", task_id="t-2", secret_name=raw_secret, reason="no_grant")
+        ledger.revoke_grant(run_id="run-1", grant_id=g.grant_id, reason="task-exit", secret_name=raw_secret)
+
+        written = [p for p in ledger.root.rglob("*") if p.is_file()]
+        assert written, "the store wrote no files"
+        for path in written:
+            content = path.read_text(encoding="utf-8")
+            assert raw_secret not in content, f"raw secret name persisted in {path}"
+            assert unsalted not in content, f"dictionary-attackable unsalted digest persisted in {path}"
+
+    def test_stored_reference_is_salted_per_grant(self, ledger) -> None:
+        a = ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=0)
+        b = ledger.issue_grant(run_id="run-1", task_id="t-2", secret_name="K", audience="aud", expiry=0)
+        # Same backing name, different salts: records must not correlate.
+        assert a.secret_name != b.secret_name
+        assert grants.secret_name_matches(a.secret_name, "K")
+        assert grants.secret_name_matches(b.secret_name, "K")
+
+    def test_secret_name_matches_semantics(self, ledger) -> None:
+        g = ledger.issue_grant(run_id="run-1", task_id="t-1", secret_name="K", audience="aud", expiry=0)
+        assert grants.secret_name_matches(g.secret_name, "K")
+        assert not grants.secret_name_matches(g.secret_name, "J")
+        # Legacy records written before salting carry an unsalted sha256
+        # digest; they must still match so pre-existing chains stay usable.
+        assert grants.secret_name_matches(grants.digest_secret_name("K"), "K")
+        assert not grants.secret_name_matches(grants.digest_secret_name("K"), "J")
+        # Absent names stay absent on both sides.
+        assert grants.secret_name_matches("", "")
+        assert not grants.secret_name_matches("", "K")
+        assert not grants.secret_name_matches(g.secret_name, "")
+        # Garbage stored values never match anything.
+        assert not grants.secret_name_matches("scrypt:zz:zz", "K")
+        assert not grants.secret_name_matches("plaintext-K", "K")
 
 
 class TestOfflineReconstruction:

@@ -48,7 +48,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           persist-credentials: false
 
@@ -82,7 +82,7 @@ jobs:
           uv run python scripts/sweep_sonar_findings.py --emit-sarif sonar.sarif
 
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
         with:
           sarif_file: sonar.sarif
           category: sonarqube
