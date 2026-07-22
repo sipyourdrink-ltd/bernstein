@@ -1,6 +1,6 @@
 {
   "name": "bernstein",
-  "version": "3.8.2",
+  "version": "3.8.3",
   "description": "Multi-agent orchestration for CLI coding agents. Spawn parallel agents, verify their work, and merge results.",
   "author": {
     "name": "chernistry",
