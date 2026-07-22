@@ -72,6 +72,25 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 
+def adapter_cli_choice() -> click.Choice[str]:
+    """Build the ``--cli`` option type from the live adapter registry.
+
+    Returns a :class:`click.Choice` whose options are every selectable
+    adapter (:func:`bernstein.adapters.registry.selectable_adapter_names`)
+    plus the ``auto`` auto-detection sentinel, so ``--cli`` accepts any
+    registered adapter instead of a stale hardcoded subset (issue #2781).
+    The adapters package is imported lazily here so importing this helper
+    module does not pull it in.
+
+    Returns:
+        A case-insensitive ``click.Choice`` over the selectable adapter
+        names plus ``"auto"``.
+    """
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    return click.Choice(sorted({*selectable_adapter_names(), "auto"}), case_sensitive=False)
+
+
 def print_banner() -> None:
     console.print(f"[blue]{BANNER}[/blue]")
 

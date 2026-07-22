@@ -384,7 +384,11 @@ class SeedConfig:
     team: Literal["auto"] | list[str] = "auto"
     team_manifest: str | None = None
     team_manifest_digest: str | None = None
-    cli: Literal["claude", "codex", "gemini", "qwen", "auto"] = "auto"
+    # Any selectable adapter registry name (see
+    # ``bernstein.adapters.registry.selectable_adapter_names``) or the
+    # ``auto`` auto-detection sentinel; validated in ``_parse_cli`` against
+    # the live registry rather than a hardcoded subset (issue #2781).
+    cli: str = "auto"
     max_agents: int = 6
     model: str | None = None
     constraints: tuple[str, ...] = ()

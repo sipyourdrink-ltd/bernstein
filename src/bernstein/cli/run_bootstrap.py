@@ -21,6 +21,7 @@ from bernstein.cli.first_run_guard import handle_first_run_exception
 from bernstein.cli.helpers import (
     SDD_DIRS,
     SERVER_URL,
+    adapter_cli_choice,
     auth_headers,
     console,
     find_seed_file,
@@ -1170,7 +1171,7 @@ def exec_restart() -> None:
 @click.option(
     "--cli",
     default=None,
-    type=click.Choice(["auto", "claude", "codex", "gemini", "aider", "qwen"], case_sensitive=False),
+    type=adapter_cli_choice(),
     help="Force specific CLI agent (overrides auto-detection and config file).",
 )
 @click.option(

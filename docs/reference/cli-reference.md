@@ -36,7 +36,7 @@ Bernstein ships a large surface of CLI commands registered in `cli/main.py`. Thi
 | `--auto-approve` | off | Skip confirmation prompt before execution. |
 | `--approval {auto\|review\|pr}` | auto | Approval gate: merge immediately / pause for review / open GitHub PR. |
 | `--merge {pr\|direct}` | pr | Merge strategy: open a PR, or push directly to main. |
-| `--cli {claude\|codex\|gemini\|qwen\|auto}` | none | Force a specific agent (overrides auto-detection). |
+| `--cli NAME` | none | Force a specific agent: any adapter from `bernstein adapters list`, or `auto` (overrides auto-detection). |
 | `--model NAME` | none | Force a specific model (e.g. `opus`, `sonnet`, `o3`). |
 | `--workflow {governed}` | none | Activate governed workflow mode. |
 | `-v, --verbose` | off | Show debug-level output. |
@@ -101,7 +101,7 @@ The full flag list is large (28 flags inherited from the root group and re-expos
 | `PLAN_FILE` | none | A YAML plan to execute. Optional. |
 | `--budget USD` | 0.0 | Cost cap. 0 = unlimited. |
 | `--max-cost-usd N` | unset | Hard cap on cumulative routed model spend; aborts the run when crossed. Sets `BERNSTEIN_MAX_COST_USD`. |
-| `--cli` | auto | Force agent (claude/codex/gemini/qwen/auto). |
+| `--cli` | auto | Force agent: any registered adapter name (see `bernstein adapters list`) or `auto`. |
 | `--model` | none | Force a specific model. |
 | `--approval {auto\|review\|pr}` | auto | Approval gate. |
 | `--merge {pr\|direct}` | pr | Merge strategy. |

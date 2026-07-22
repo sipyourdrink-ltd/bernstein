@@ -68,7 +68,9 @@ type _StrObjDict = dict[str, object]
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
 _ENV_REF_RE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
-_VALID_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "opencode", "aider", "auto"})
+# The ``cli:`` auto-detection sentinel: accepted alongside every selectable
+# adapter but not itself a registered adapter (see ``valid_cli_selections``).
+_AUTO_CLI = "auto"
 _ALLOWED_WEBHOOK_EVENTS = frozenset(
     {
         "run.started",
@@ -1867,11 +1869,32 @@ def _parse_cost_envelopes(data: dict[str, object]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _parse_cli(data: dict[str, object]) -> Literal["claude", "codex", "gemini", "qwen", "auto"]:
-    cli_raw: object = data.get("cli", "auto")
-    if cli_raw not in _VALID_CLIS:
-        raise SeedError(f"cli must be one of {sorted(_VALID_CLIS)}, got: {cli_raw!r}")
-    return cast("Literal['claude', 'codex', 'gemini', 'qwen', 'auto']", cli_raw)
+def valid_cli_selections() -> frozenset[str]:
+    """Return the set of values accepted by ``cli:`` in a seed file.
+
+    The set is the live selectable adapter registry
+    (:func:`bernstein.adapters.registry.selectable_adapter_names`) plus the
+    ``auto`` auto-detection sentinel. The adapters package is imported on
+    demand here so importing the seed parser never pulls it in (matching the
+    lazy-import discipline the rest of this module follows), and a newly
+    registered adapter is accepted by ``cli:`` without editing a hardcoded
+    list (issue #2781).
+
+    Returns:
+        Frozen set of accepted ``cli:`` values: every selectable adapter
+        registry name plus ``"auto"``.
+    """
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    return selectable_adapter_names() | {_AUTO_CLI}
+
+
+def _parse_cli(data: dict[str, object]) -> str:
+    cli_raw: object = data.get("cli", _AUTO_CLI)
+    valid = valid_cli_selections()
+    if not isinstance(cli_raw, str) or cli_raw not in valid:
+        raise SeedError(f"cli must be one of {sorted(valid)}, got: {cli_raw!r}")
+    return cli_raw
 
 
 def _parse_max_agents(data: dict[str, object]) -> int:

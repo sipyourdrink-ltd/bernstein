@@ -272,6 +272,7 @@ from bernstein.cli.helpers import (
     SDD_PID_WATCHDOG,
     SERVER_URL,
     STATUS_COLORS,
+    adapter_cli_choice,
     auth_headers,
     console,
     find_seed_file,
@@ -615,7 +616,7 @@ def _validate_evolve_mode(evolve: bool, budget: float, max_cycles: int, yes: boo
 @click.option(
     "--cli",
     "cli_override",
-    type=click.Choice(["claude", "codex", "gemini", "qwen", "auto"]),
+    type=adapter_cli_choice(),
     default=None,
     help="Force a specific agent (overrides auto-detection).",
 )

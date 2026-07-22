@@ -45,7 +45,6 @@ from bernstein.core.config.seed_parser import (  # noqa: F401
     _BUDGET_RE,
     _DEFAULT_RATE_LIMIT_PATHS,
     _ENV_REF_RE,
-    _VALID_CLIS,
     _WEBHOOK_EVENT_ALIASES,
     _expand_env_value,
     _normalize_webhook_event,
@@ -66,6 +65,7 @@ from bernstein.core.config.seed_parser import (  # noqa: F401
     _parse_team,
     _parse_tenants,
     parse_seed,
+    valid_cli_selections,
 )
 from bernstein.core.models import (
     Complexity,

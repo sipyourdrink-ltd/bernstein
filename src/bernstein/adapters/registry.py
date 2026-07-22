@@ -269,6 +269,35 @@ def iter_adapter_specs() -> Iterator[tuple[str, type[CLIAdapter] | CLIAdapter]]:
         yield name, _ADAPTERS[name]
 
 
+#: Registry names that are not user-selectable coding agents. ``mock`` is the
+#: test-only stub adapter (zero-API-key demos, fixtures, and the conformance
+#: harness): it lives in the registry so ``bernstein adapters list`` and the
+#: conformance suite can see it, but it is never a real target an operator
+#: pins a run to. Excluded from :func:`selectable_adapter_names` so selection
+#: surfaces reject it while enumeration surfaces still show it.
+_NON_AGENT_STUBS: frozenset[str] = frozenset({"mock"})
+
+
+def selectable_adapter_names() -> frozenset[str]:
+    """Return the adapter registry names an operator may select for a run.
+
+    The set is the live adapter registry - the same source
+    :func:`iter_adapter_specs` and ``bernstein adapters list`` enumerate -
+    minus the non-agent stubs in :data:`_NON_AGENT_STUBS`. It is the single
+    source of truth the seed ``cli:`` allowlist and every ``--cli``
+    ``click.Choice`` derive from, so a newly registered adapter becomes
+    selectable on every surface at once instead of being rejected by a
+    stale hardcoded list (issue #2781).
+
+    The ``auto`` sentinel (auto-detection, not a registered adapter) is not
+    included; callers that accept it add it themselves.
+
+    Returns:
+        Frozen set of selectable adapter registry names.
+    """
+    return frozenset(name for name, _ in iter_adapter_specs() if name not in _NON_AGENT_STUBS)
+
+
 def _register_provider_alias(alias: str, adapter_name: str) -> None:
     """Register a single provider-name alias into the provider alias table.
 

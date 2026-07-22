@@ -25,7 +25,7 @@ from pathlib import Path
 
 import click
 
-from bernstein.cli.helpers import console
+from bernstein.cli.helpers import adapter_cli_choice, console
 from bernstein.core.run_session import RunSession, sessions_dir_for
 
 
@@ -96,7 +96,7 @@ def session_show(session_id: str) -> None:
 @click.option(
     "--cli",
     default=None,
-    type=click.Choice(["auto", "claude", "codex", "gemini", "aider", "qwen"], case_sensitive=False),
+    type=adapter_cli_choice(),
     help="Force specific CLI agent (overrides session default).",
 )
 @click.option(
