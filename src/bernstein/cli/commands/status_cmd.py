@@ -13,6 +13,7 @@ from typing import Any, cast
 import click
 
 from bernstein.cli.helpers import (
+    ServerAuthError,
     console,
     is_json,
     is_process_alive,
@@ -168,7 +169,17 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     """
     from bernstein.core.view_mode import ViewMode, get_view_config, load_view_mode
 
-    data = server_get("/status")
+    try:
+        data = server_get("/status", raise_on_auth_error=True)
+    except ServerAuthError:
+        if as_json or is_json():
+            print_json({"error": "Server is running but rejected credentials"})
+        else:
+            console.print(
+                "[red]Server is running but rejected credentials.[/red] "
+                "Run [bold]bernstein[/bold] in this workspace, or set BERNSTEIN_AUTH_TOKEN to match the server."
+            )
+        raise SystemExit(1) from None
     if data is None:
         if as_json or is_json():
             print_json({"error": "Cannot reach task server"})

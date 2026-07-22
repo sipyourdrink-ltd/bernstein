@@ -100,6 +100,20 @@ def server_unreachable() -> BernsteinError:
     )
 
 
+def server_rejected_credentials() -> BernsteinError:
+    """Return a BernsteinError when the server is up but rejects credentials.
+
+    Distinct from :func:`server_unreachable` so a ``401`` does not misreport a
+    running server as down (issue #2794).
+    """
+    return BernsteinError(
+        what="The Bernstein task server rejected the request's credentials",
+        why="The server is running but the client presented no matching auth token",
+        fix="Run monitor commands from the run's workspace, or set BERNSTEIN_AUTH_TOKEN to match the server",
+        exit_code=ExitCode.AUTH,
+    )
+
+
 def no_seed_or_goal() -> BernsteinError:
     """Return a BernsteinError when neither seed file nor goal is provided."""
     return BernsteinError(

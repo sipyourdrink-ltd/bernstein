@@ -133,14 +133,19 @@ def ensure_sdd(workdir: Path, *, model: str | None = None) -> bool:
             f"# Bernstein workspace config\nserver_port: 8052\nmax_workers: 4\n{model_line}default_effort: max\n"
         )
 
-    # .gitignore for runtime dir - ensure session.json is always listed.
+    # .gitignore for runtime dir - ensure secret/state files are always
+    # listed. ``auth.token`` holds the run's Bearer credential (issue #2794)
+    # and must never be committed (secret-at-rest, #2762).
     gi_path = workdir / ".sdd" / "runtime" / ".gitignore"
+    _runtime_gitignore_required = ("*.pid", "*.log", "tasks.jsonl", "session.json", "auth.token")
     if not gi_path.exists():
-        gi_path.write_text("*.pid\n*.log\ntasks.jsonl\nsession.json\n")
+        gi_path.write_text("\n".join(_runtime_gitignore_required) + "\n")
     else:
         existing = gi_path.read_text()
-        if "session.json" not in existing:
-            gi_path.write_text(existing.rstrip("\n") + "\nsession.json\n")
+        existing_lines = {line.strip() for line in existing.splitlines()}
+        missing = [entry for entry in _runtime_gitignore_required if entry not in existing_lines]
+        if missing:
+            gi_path.write_text(existing.rstrip("\n") + "\n" + "\n".join(missing) + "\n")
 
     # Apply any pending on-disk state migrations on load. On a fresh install
     # this stamps the latest schema version; on an existing install it walks
@@ -623,7 +628,7 @@ def _resolve_bind_host() -> str:
     return os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1")
 
 
-def _resolve_auth_token() -> str | None:
+def _resolve_auth_token(workdir: Path | None = None) -> str | None:
     """Resolve the Bearer token used by bootstrap to talk to its own server.
 
     Precedence:
@@ -631,9 +636,21 @@ def _resolve_auth_token() -> str | None:
         2. Ephemeral auto-generated token when auth is enabled but no token is
            set and no opt-out is active. The generated token is written into
            ``os.environ`` so both the server subprocess (which inherits env in
-           ``_start_server``) and the bootstrap client see the same value.
+           ``_start_server``) and the bootstrap client see the same value, and
+           - when *workdir* is given - also persisted to a ``0600`` file under
+           ``.sdd/runtime`` so out-of-process CLI monitors (``status`` /
+           ``recap`` / ``checkpoint``) and the TUI poller can authenticate
+           without inheriting the launcher env (issue #2794).
         3. ``None`` when ``BERNSTEIN_AUTH_DISABLED=1`` - the middleware
            short-circuits in that mode so no header is required.
+
+    Args:
+        workdir: Project root whose ``.sdd/runtime`` receives the persisted
+            token file. When ``None`` the token is kept in the environment
+            only (back-compat with callers that cannot supply a workspace).
+
+    Returns:
+        The resolved Bearer token, or ``None`` when auth is disabled.
     """
     existing = os.environ.get("BERNSTEIN_AUTH_TOKEN")
     if existing:
@@ -646,9 +663,19 @@ def _resolve_auth_token() -> str | None:
 
     token = secrets.token_urlsafe(32)
     os.environ["BERNSTEIN_AUTH_TOKEN"] = token
+    persisted = False
+    if workdir is not None:
+        from bernstein.core.run_auth_token import persist_run_auth_token
+
+        # Best-effort: the token also lives in os.environ, so a persistence
+        # failure never blocks the run - it only degrades out-of-process
+        # monitor auth back to the pre-#2794 behaviour.
+        persisted = persist_run_auth_token(workdir, token) is not None
+    where = "persisted 0600 to .sdd/runtime for local CLI monitors" if persisted else "kept in this process env only"
     logger.info(
-        "Auto-generated BERNSTEIN_AUTH_TOKEN for this session (not persisted; "
+        "Auto-generated BERNSTEIN_AUTH_TOKEN for this session (%s; "
         "set BERNSTEIN_AUTH_TOKEN to pin or BERNSTEIN_AUTH_DISABLED=1 to opt out).",
+        where,
     )
     return token
 

@@ -29,15 +29,20 @@ _SPARK_CHARS = "▁▂▃▄▅▆▇█"
 
 
 def _auth_headers() -> dict[str, str]:
-    """Return Authorization header when ``BERNSTEIN_AUTH_TOKEN`` is set.
+    """Return the Authorization header for dashboard polling.
 
-    The TUI runs inside the main Bernstein process, so it inherits the
+    The TUI usually runs inside the main Bernstein process, so it inherits the
     token that ``_resolve_auth_token`` stashes into ``os.environ`` during
-    bootstrap (see ``core.server.server_launch``). Without this header the
-    SSO middleware rejects every request with 401, leaving the Tasks
-    panel empty.
+    bootstrap (see ``core.server.server_launch``). When it runs out-of-process
+    it falls back to the persisted run token file under ``.sdd/runtime``
+    (issue #2794). Without this header the SSO middleware rejects every
+    request with 401, leaving the Tasks panel empty.
     """
     token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    if not token:
+        from bernstein.core.run_auth_token import read_run_auth_token
+
+        token = read_run_auth_token(Path.cwd())
     if token:
         return {"Authorization": f"Bearer {token}"}
     return {}

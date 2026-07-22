@@ -27,6 +27,7 @@ import httpx
 
 from bernstein.cli.helpers import (
     SERVER_URL,
+    ServerAuthError,
     console,
     find_seed_file,
     print_banner,
@@ -1197,7 +1198,13 @@ def recap(archive: str, as_json: bool) -> None:
 
     Reads the task archive and prints a summary of what happened.
     """
-    data = server_get("/recap")
+    try:
+        data = server_get("/recap", raise_on_auth_error=True)
+    except ServerAuthError:
+        from bernstein.cli.errors import server_rejected_credentials
+
+        server_rejected_credentials().print()
+        raise SystemExit(1) from None
     if data is None:
         from bernstein.cli.errors import server_unreachable
 

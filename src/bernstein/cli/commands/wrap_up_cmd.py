@@ -13,7 +13,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from bernstein.cli.helpers import console, server_get
+from bernstein.cli.helpers import console, require_server_reachable, server_get
 from bernstein.core.session import WrapUpBrief, save_wrapup
 
 
@@ -223,9 +223,7 @@ def wrap_up(do_stop: bool, timeout: int) -> None:
     workdir = Path.cwd()
 
     # 1. Check server reachability
-    if server_get("/status") is None:
-        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
-        raise SystemExit(1)
+    require_server_reachable()
 
     # 2. Gather tasks
     done_tasks = _fetch_tasks_by_status("done")

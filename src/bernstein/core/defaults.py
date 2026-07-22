@@ -53,6 +53,14 @@ lets Copilot's own router pick the best available model."""
 SDD_SERVER_PORT: Final[str] = ".sdd/runtime/server.port"
 """Workspace-relative file containing the active task-server port."""
 
+SDD_AUTH_TOKEN: Final[str] = ".sdd/runtime/auth.token"
+"""Workspace-relative ``0600`` file holding the active run's Bearer token.
+
+Written on startup when the launcher auto-generates a token so out-of-process
+CLI monitors (``status``/``recap``/``checkpoint``) and the TUI poller can
+authenticate to the local server without inheriting the launcher env. The
+token *value* must never be logged (see #2762 / #2763)."""
+
 COPILOT_CLAUDE_TIER_MODELS: Final[frozenset[str]] = frozenset({"opus", "sonnet", "haiku"})
 """Claude cascade tier names that are not valid Copilot model ids; any that reach
 the Copilot adapter are remapped to ``COPILOT_DEFAULT_MODEL``."""

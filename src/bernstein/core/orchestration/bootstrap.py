@@ -598,7 +598,7 @@ def bootstrap_from_seed(
 
     # Resolve cluster-aware settings
     bind_host = "0.0.0.0" if remote else _resolve_bind_host()
-    auth_token = _resolve_auth_token()
+    auth_token = _resolve_auth_token(workdir)
     server_url = _resolve_server_url(port)
 
     # ── Compact bootstrap: all steps on one screen ──
@@ -1287,7 +1287,7 @@ def _bootstrap_from_goal_impl(
     _register_ci_parsers()
 
     bind_host = _resolve_bind_host()
-    auth_token = _resolve_auth_token()
+    auth_token = _resolve_auth_token(workdir)
     server_url = _resolve_server_url(port)
 
     with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
