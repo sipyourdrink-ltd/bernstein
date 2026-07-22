@@ -25,6 +25,7 @@ from bernstein.core.evidence.run_artifacts import (
     ArtifactPayload,
     ArtifactTooLargeError,
     ArtifactValidationError,
+    RunArtifactRecordDict,
     post_run_artifact,
     read_artifact_rows,
     verify_run_artifacts,
@@ -271,7 +272,7 @@ def build_progress_response(sdd_dir: Path, task_id: str, *, run_id: str = "") ->
 def _artifact_to_response(
     request: Request | None,
     task_id: str,
-    record: dict[str, Any],
+    record: RunArtifactRecordDict,
     *,
     verified: bool,
     reason: str,

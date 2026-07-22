@@ -61,6 +61,18 @@ CLI monitors (``status``/``recap``/``checkpoint``) and the TUI poller can
 authenticate to the local server without inheriting the launcher env. The
 token *value* must never be logged (see #2762 / #2763)."""
 
+JOURNAL_EVENT_ARTIFACT_POSTED: Final[str] = "artifact_posted"
+"""Journal event emitted when a worker posts a task artifact."""
+
+ARTIFACT_TYPE_REPORT: Final[str] = "report"
+ARTIFACT_TYPE_TABLE: Final[str] = "table"
+ARTIFACT_TYPE_LINK: Final[str] = "link"
+ARTIFACT_TYPES: Final[frozenset[str]] = frozenset({ARTIFACT_TYPE_REPORT, ARTIFACT_TYPE_TABLE, ARTIFACT_TYPE_LINK})
+"""Artifact types accepted by the worker posting boundary."""
+
+LINK_KINDS: Final[frozenset[str]] = frozenset({"preview", "dashboard", "document"})
+"""Declared kinds accepted for link artifacts."""
+
 COPILOT_CLAUDE_TIER_MODELS: Final[frozenset[str]] = frozenset({"opus", "sonnet", "haiku"})
 """Claude cascade tier names that are not valid Copilot model ids; any that reach
 the Copilot adapter are remapped to ``COPILOT_DEFAULT_MODEL``."""

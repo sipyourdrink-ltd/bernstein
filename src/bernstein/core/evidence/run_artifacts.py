@@ -34,8 +34,16 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
+from bernstein.core.defaults import (
+    ARTIFACT_TYPE_LINK,
+    ARTIFACT_TYPE_REPORT,
+    ARTIFACT_TYPE_TABLE,
+    ARTIFACT_TYPES,
+    JOURNAL_EVENT_ARTIFACT_POSTED,
+    LINK_KINDS,
+)
 from bernstein.core.evidence.bundle import DEFAULT_MAX_BLOB_BYTES, EvidenceStore
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
@@ -66,20 +74,6 @@ def _post_lock(task_id: str, key: str) -> threading.Lock:
             _post_locks[ident] = lock
         return lock
 
-
-#: The journal event type for a posted artifact. Kept in lockstep with
-#: :data:`bernstein.core.replay.progress.EVENT_ARTIFACT_POSTED` (progress must
-#: prove it ignores this row).
-JOURNAL_EVENT_ARTIFACT_POSTED = "artifact_posted"
-
-#: The three artifact types a worker may post.
-ARTIFACT_TYPE_REPORT = "report"
-ARTIFACT_TYPE_TABLE = "table"
-ARTIFACT_TYPE_LINK = "link"
-ARTIFACT_TYPES: frozenset[str] = frozenset({ARTIFACT_TYPE_REPORT, ARTIFACT_TYPE_TABLE, ARTIFACT_TYPE_LINK})
-
-#: The declared kinds a ``link`` artifact may carry.
-LINK_KINDS: frozenset[str] = frozenset({"preview", "dashboard", "document"})
 
 #: Artifact key alphabet: a single safe path-ish segment, no leading dot, no
 #: separators, so it can be embedded in a spine artifact path unescaped.
@@ -114,6 +108,48 @@ class ArtifactTooLargeError(ArtifactError):
 
 class ArtifactClaimError(ArtifactError):
     """A caller tried to post against a task whose claim it does not hold."""
+
+
+class ReportArtifactContent(TypedDict):
+    """Canonical wire payload for a markdown report artifact."""
+
+    type: Literal["report"]
+    body: str
+
+
+class TableArtifactContent(TypedDict):
+    """Canonical wire payload for a table artifact."""
+
+    type: Literal["table"]
+    columns: list[str]
+    rows: list[list[str]]
+
+
+class LinkArtifactContent(TypedDict):
+    """Canonical wire payload for a link artifact."""
+
+    type: Literal["link"]
+    url: str
+    kind: str
+
+
+type ArtifactContent = ReportArtifactContent | TableArtifactContent | LinkArtifactContent
+
+
+class RunArtifactRecordDict(TypedDict):
+    """JSON representation shared by artifact API, SSE, and CLI boundaries."""
+
+    task_id: str
+    key: str
+    artifact_type: str
+    content_hash: str
+    version: int
+    prev_version_hash: str
+    spine_entry_hash: str
+    journal_index: int
+    journal_event_hash: str
+    link_kind: str
+    size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,18 +201,24 @@ class ArtifactPayload:
             raise ArtifactValidationError(f"link kind {kind!r} is not one of {sorted(LINK_KINDS)}")
         return ArtifactPayload(artifact_type=ARTIFACT_TYPE_LINK, url=url, link_kind=kind)
 
-    def to_content_dict(self) -> dict[str, Any]:
+    def to_content_dict(self) -> ArtifactContent:
         """Return the type-specific fields that define the artifact content."""
         if self.artifact_type == ARTIFACT_TYPE_REPORT:
-            return {"type": ARTIFACT_TYPE_REPORT, "body": self.body}
+            return cast(ReportArtifactContent, {"type": ARTIFACT_TYPE_REPORT, "body": self.body})
         if self.artifact_type == ARTIFACT_TYPE_TABLE:
-            return {
-                "type": ARTIFACT_TYPE_TABLE,
-                "columns": list(self.columns),
-                "rows": [list(r) for r in self.rows],
-            }
+            return cast(
+                TableArtifactContent,
+                {
+                    "type": ARTIFACT_TYPE_TABLE,
+                    "columns": list(self.columns),
+                    "rows": [list(r) for r in self.rows],
+                },
+            )
         if self.artifact_type == ARTIFACT_TYPE_LINK:
-            return {"type": ARTIFACT_TYPE_LINK, "url": self.url, "kind": self.link_kind}
+            return cast(
+                LinkArtifactContent,
+                {"type": ARTIFACT_TYPE_LINK, "url": self.url, "kind": self.link_kind},
+            )
         raise ArtifactValidationError(f"unknown artifact type {self.artifact_type!r}")
 
     def canonical_bytes(self) -> bytes:
@@ -216,7 +258,7 @@ class RunArtifactRecord:
     link_kind: str = ""
     size: int = 0
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> RunArtifactRecordDict:
         """Return the JSON body served by the API / SSE / CLI."""
         return {
             "task_id": self.task_id,
@@ -685,12 +727,14 @@ __all__ = [
     "JOURNAL_EVENT_ARTIFACT_POSTED",
     "LINK_KINDS",
     "ArtifactClaimError",
+    "ArtifactContent",
     "ArtifactError",
     "ArtifactPayload",
     "ArtifactTooLargeError",
     "ArtifactValidationError",
     "ArtifactVerifyResult",
     "RunArtifactRecord",
+    "RunArtifactRecordDict",
     "latest_versions",
     "live_artifact_content_hashes",
     "post_run_artifact",

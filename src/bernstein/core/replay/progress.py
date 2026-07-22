@@ -28,6 +28,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.defaults import JOURNAL_EVENT_ARTIFACT_POSTED as EVENT_ARTIFACT_POSTED
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
@@ -39,10 +41,9 @@ PROGRESS_SCHEMA_VERSION = 1
 # ---------------------------------------------------------------------------
 # Journal event wire strings the fold recognises.
 #
-# These are stable wire contracts owned by other modules; they are duplicated
-# here (rather than imported) to keep this projection a lightweight, pure
-# module with no heavy import graph. ``tests/unit/test_run_progress.py`` asserts
-# each equals its source-of-truth constant, so drift is caught at test time.
+# These are stable wire contracts owned by other modules. The artifact event
+# comes from the central defaults module; tests assert the remaining local
+# names equal their source-of-truth constants so drift is caught.
 # ---------------------------------------------------------------------------
 
 #: A worker checkpoint row, from ``checkpoint_retry.JOURNAL_EVENT_CHECKPOINT``.
@@ -54,9 +55,8 @@ EVENT_DIFF_CAPTURED = "task_diff_captured"
 #: A gate/review decision, from ``review_board.EVENT_TASK_REVIEW_DECISION``.
 EVENT_REVIEW_DECISION = "task_review_decision"
 
-#: The agent-posted artifact row. Named here **only** so the fold can prove it
-#: is ignored -- posting artifacts must never move progress (#2553 AC4).
-EVENT_ARTIFACT_POSTED = "artifact_posted"
+#: The imported agent-posted artifact row is named here only so the fold can
+#: prove it is ignored -- posting artifacts must never move progress (#2553 AC4).
 
 #: Work-ledger phases considered terminal. Once a task reaches one, its run is
 #: over: the vector's ``terminal`` flag latches True.
