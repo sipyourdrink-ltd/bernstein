@@ -537,10 +537,13 @@ def merge_worktree_branch(
                 ", ".join(result.conflicting_files),
             )
         else:
-            logger.warning("Merge failed for %s: %s", session_id, result.error)
+            # issue #2792: a non-conflict merge-back failure discards committed
+            # work and blocks the task; it is an error-level event, not a soft
+            # warning, so a run that is silently losing output is visible.
+            logger.error("Merge failed for %s: %s", session_id, result.error)
         return result
     except Exception as exc:
-        logger.warning("Merge failed for %s: %s", session_id, exc)
+        logger.error("Merge failed for %s: %s", session_id, exc)
         return MergeResult(success=False, conflicting_files=[], error=str(exc))
 
 

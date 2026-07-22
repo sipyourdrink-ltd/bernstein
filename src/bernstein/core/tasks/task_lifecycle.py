@@ -2983,10 +2983,14 @@ def _reap_and_cleanup_session(
     skip_merge: bool,
     _completion_data: CompletionData | None,
     cache_diff_lines: int,
-) -> tuple[bool, int]:
+) -> tuple[bool, int, bool]:
     """Reap agent, handle merge, cleanup worktree.
 
-    Returns (cache_verified, cache_diff_lines).
+    Returns ``(cache_verified, cache_diff_lines, merge_failed)`` where
+    ``merge_failed`` is True only when a merge-back was attempted and failed
+    for a non-conflict reason (issue #2792). The caller routes that case
+    through the bounded reopen/permanent-fail budget instead of leaving the
+    task on the open queue for uncapped retry.
     """
     merge_result: MergeResult | None = orch._spawner.reap_completed_agent(
         session,
@@ -3026,8 +3030,31 @@ def _reap_and_cleanup_session(
     # and verify it against a detached run. Fail-open: never blocks completion.
     _capture_review_diff(orch, task, session)
 
-    orch._spawner.cleanup_worktree(session.id)
-    return cache_verified, cache_diff_lines
+    # issue #2792: a merge-back that failed for a *non-conflict* reason (an
+    # untracked operator-tree file, the forbidden-path guard, unrelated
+    # histories, a missing branch) leaves the worker's only committed copy on
+    # the agent/<id> branch. ``cleanup_worktree`` force-deletes both the
+    # worktree and that branch, so gating it on merge success preserves the
+    # committed work for inspection or a resolver. Conflicts are handled by
+    # ``_handle_merge_result`` (a resolver task) and a merge that was
+    # intentionally skipped (approval-gate PR path) is not a failure; both
+    # still clean up as before.
+    merge_failed = (
+        not skip_merge and merge_result is not None and not merge_result.success and not merge_result.conflicting_files
+    )
+    if merge_failed:
+        assert merge_result is not None  # narrowed above
+        logger.error(
+            "Merge-back failed for task %s (session %s); preserving worktree and "
+            "branch agent/%s so the committed work is not force-deleted: %s",
+            task.id,
+            session.id,
+            session.id,
+            merge_result.error or "unknown reason",
+        )
+    else:
+        orch._spawner.cleanup_worktree(session.id)
+    return cache_verified, cache_diff_lines, merge_failed
 
 
 def _capture_review_diff(orch: Any, task: Task, session: AgentSession) -> None:
@@ -3116,7 +3143,19 @@ def _handle_merge_result(
     """Handle merge conflicts and return whether merge succeeded."""
     if merge_result is None or merge_result.success:
         return True
-    if not merge_result.conflicting_files or skip_merge:
+    if skip_merge:
+        return False
+    if not merge_result.conflicting_files:
+        # issue #2792: non-conflict merge-back failure (untracked operator-tree
+        # file, forbidden-path guard, unrelated histories, missing branch). The
+        # worker's only committed copy is preserved on agent/<id> by the caller;
+        # surface the failure loudly so a run does not report a healthy state
+        # while work is being held back.
+        orch._post_bulletin(
+            "alert",
+            f"merge-back failed (non-conflict) for task {task.id}: "
+            f"{merge_result.error or 'unknown reason'} - worktree/branch preserved for recovery",
+        )
         return False
     create_conflict_resolution_task(
         task,
@@ -3785,6 +3824,7 @@ def _process_single_completed_task(
     cache_verified = False
     cache_diff_lines = 0
     qg_result: Any = None
+    merge_failed = False
 
     # DEFECT 30 FIX: the alive-exit /complete path runs the janitor+verdict
     # action here. Log at INFO so a silent no-op in the orchestrator tick
@@ -3837,7 +3877,7 @@ def _process_single_completed_task(
         _record_bandit_outcome(orch, task, session, janitor_passed)
 
         skip_merge = _evaluate_approval_gate(orch, task, session, completion_data, janitor_passed)
-        cache_verified, cache_diff_lines = _reap_and_cleanup_session(
+        cache_verified, cache_diff_lines, merge_failed = _reap_and_cleanup_session(
             orch,
             task,
             session,
@@ -3868,7 +3908,16 @@ def _process_single_completed_task(
 
     _record_evolution_completion(orch, task, session, task_m, cost_usd, janitor_passed)
 
-    _apply_janitor_verdict_action(orch, task, janitor_passed)
+    # issue #2792: when the worker's own work passed the janitor but the
+    # merge-back failed for a non-conflict reason, the task must not silently
+    # return to the open queue for uncapped retry. Route it through the same
+    # bounded reopen/permanent-fail budget as a janitor FAIL. A janitor FAIL
+    # takes precedence (it already reopens/fails) so the two paths never both
+    # act on the same completion.
+    if janitor_passed and merge_failed:
+        _apply_merge_failure_action(orch, task)
+    else:
+        _apply_janitor_verdict_action(orch, task, janitor_passed)
 
 
 _JANITOR_REOPEN_MAX_DEFAULT = 2
@@ -3975,6 +4024,89 @@ def _apply_janitor_verdict_action(orch: Any, task: Task, janitor_passed: bool) -
             return
         logger.info(
             "janitor_verdict_action: task=%s verdict=FAIL action=permanent_fail reason=reopen_budget_exhausted",
+            task.id,
+        )
+
+
+def _apply_merge_failure_action(orch: Any, task: Task) -> None:
+    """Route a non-conflict merge-back failure through the bounded retry budget.
+
+    Issue #2792: a merge-back that failed for a non-conflict reason leaves the
+    worker's committed work only on ``agent/<id>`` (preserved by
+    :func:`_reap_and_cleanup_session`) and the task DONE-but-unmerged. Without
+    this the claim is released back to the open queue and the same merge fails
+    on every subsequent worker with no cap. Reopen the task under the same
+    bounded budget as a janitor FAIL (``BERNSTEIN_JANITOR_REOPEN_MAX``, shared
+    ``metadata['janitor_reopen_count']``) and permanently fail it once the
+    budget is spent, so the loop terminates and the failure is visible instead
+    of silently burning workers.
+
+    Args:
+        orch: Orchestrator instance.
+        task: The completed task whose merge-back failed for a non-conflict
+            reason.
+    """
+    server_url: str | None = getattr(orch._config, "server_url", None)
+    if not server_url:
+        logger.error(
+            "merge_failure_action: task=%s action=skip reason=no_server_url",
+            task.id,
+        )
+        return
+
+    max_cycles = _janitor_reopen_max()
+    prior_cycles = int(task.metadata.get("janitor_reopen_count", 0) or 0)
+
+    if prior_cycles < max_cycles:
+        cycle = prior_cycles + 1
+        try:
+            resp = orch._client.post(
+                f"{server_url}/tasks/{task.id}/reopen",
+                json={"reason": f"merge-back failed (non-conflict); bounded retry (reopen cycle {cycle}/{max_cycles})"},
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.error(
+                "merge_failure_action: task=%s action=reopen cycle=%d/%d FAILED: %s",
+                task.id,
+                cycle,
+                max_cycles,
+                exc,
+            )
+            return
+        # Allow the re-completed task to be verified again on the next
+        # completion instead of being skipped as already-processed.
+        try:
+            orch._processed_done_tasks.pop(task.id, None)
+        except Exception:  # pragma: no cover - defensive, dict-like expected
+            logger.debug("merge_failure_action: could not clear processed marker for %s", task.id)
+        logger.warning(
+            "merge_failure_action: task=%s action=reopen cycle=%d/%d reason=merge_back_failed",
+            task.id,
+            cycle,
+            max_cycles,
+        )
+    else:
+        try:
+            resp = orch._client.post(
+                f"{server_url}/tasks/{task.id}/fail",
+                json={
+                    "reason": (
+                        f"merge_back_failed: non-conflict merge-back failed after "
+                        f"{prior_cycles} reopen cycle(s) (max {max_cycles})"
+                    )
+                },
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.error(
+                "merge_failure_action: task=%s action=permanent_fail reason=merge_back_failed FAILED: %s",
+                task.id,
+                exc,
+            )
+            return
+        logger.error(
+            "merge_failure_action: task=%s action=permanent_fail reason=merge_back_failed_budget_exhausted",
             task.id,
         )
 

@@ -437,6 +437,61 @@ def _count_unmerged_commits(repo_root: Path, branch: str, base: str = "main") ->
         return -1 if _branch_exists(repo_root, branch) else 0
 
 
+def _count_orphan_commits(repo_root: Path, branch: str) -> int:
+    """Return how many commits on *branch* are reachable from no other branch.
+
+    These are the commits that ``git branch -D <branch>`` would orphan (make
+    unreachable and gc-eligible). Computed as
+    ``git rev-list <branch> --not --exclude=<branch> --branches --count`` so a
+    branch whose work is already merged into ``main`` *or any other local
+    branch* (the operator may run on a feature branch) reports ``0`` and is
+    safe to delete without preservation - avoiding a false positive on the
+    success path.
+
+    Unlike :func:`_count_unmerged_commits` this does not assume a single
+    ``main`` baseline, which is why it is used by :meth:`WorktreeManager.cleanup`
+    (invoked on every branch delete, including successful merges) rather than
+    only by the startup stale sweep.
+
+    Returns the real count, ``0`` when the branch is gone or reachable
+    elsewhere, and ``-1`` when the branch still exists but the count could not
+    be computed. Callers treat any non-zero result, including ``-1``, as
+    "preserve" so committed work is never silently dropped.
+
+    Args:
+        repo_root: Repository root directory.
+        branch: Branch name to check (e.g. ``agent/<sid>``).
+
+    Returns:
+        Number of orphan commits; ``0`` when nothing is at risk; ``-1`` when
+        the check was inconclusive but the branch exists.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", branch, "--not", f"--exclude={branch}", "--branches", "--count"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("orphan rev-list for %s failed: %s", branch, exc)
+        return -1 if _branch_exists(repo_root, branch) else 0
+    if result.returncode != 0:
+        logger.debug("orphan rev-list for %s exited %d: %s", branch, result.returncode, result.stderr.strip())
+        return -1 if _branch_exists(repo_root, branch) else 0
+    raw = result.stdout.strip()
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        logger.debug("orphan rev-list for %s produced non-integer output: %r", branch, raw)
+        return -1 if _branch_exists(repo_root, branch) else 0
+
+
 def _resolve_ref(repo_root: Path, ref: str) -> str | None:
     """Resolve *ref* to a SHA via ``git rev-parse``; return ``None`` on failure."""
     try:
@@ -891,6 +946,32 @@ class WorktreeManager:
                     "Residual worktree directory could not be removed for %s: %s",
                     session_id,
                     worktree_path,
+                )
+
+        # 1c. Preserve committed-but-unmerged work to the graveyard before the
+        #     force branch delete (issue #2792). The step-0 salvage only
+        #     captures *uncommitted* state, so a worker that committed its work
+        #     and then had its merge-back fail would otherwise lose that commit
+        #     to ``git branch -D``. When the branch still exists and holds
+        #     commits reachable from no other branch, rescue them to
+        #     ``refs/graveyard/<sid>-<ts>`` + a bundle. Gated on the same flag
+        #     as the uncommitted salvage; a merged branch (the success path)
+        #     reports zero orphan commits and is deleted as before.
+        if self._salvage_on_cleanup:
+            try:
+                orphan = _count_orphan_commits(self.repo_root, branch_name)
+                if orphan != 0:
+                    logger.warning(
+                        "Branch %s has %s committed-but-unmerged commit(s); preserving to graveyard before delete",
+                        branch_name,
+                        orphan if orphan > 0 else "an unknown number of",
+                    )
+                    preserve_branch_to_graveyard(self.repo_root, session_id, branch=branch_name)
+            except Exception as exc:  # defensive - never let preservation block cleanup
+                logger.warning(
+                    "Committed-work graveyard preservation crashed for %s (continuing cleanup): %s",
+                    session_id,
+                    exc,
                 )
 
         # 2. Delete the branch
