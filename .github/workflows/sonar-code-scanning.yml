@@ -82,7 +82,7 @@ jobs:
           uv run python scripts/sweep_sonar_findings.py --emit-sarif sonar.sarif
 
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
         with:
           sarif_file: sonar.sarif
           category: sonarqube
