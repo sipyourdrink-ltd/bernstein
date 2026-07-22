@@ -338,7 +338,10 @@ class Orchestrator:
         self._tick_count = 0
         self._consecutive_server_failures: int = 0
         self._cached_critical_path_ids: set[str] = set()
-        self._dependency_scanner = DependencyVulnerabilityScanner(workdir)
+        self._dependency_scanner = DependencyVulnerabilityScanner(
+            workdir,
+            enabled=config.dependency_scan_enabled,
+        )
         # Track spawn failures per batch for backoff: task_ids -> (fail_count, last_fail_ts)
         self._spawn_failures: dict[frozenset[str], tuple[int, float]] = {}
         self._spawn_failure_history: dict[frozenset[str], list[Any]] = {}

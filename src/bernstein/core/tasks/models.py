@@ -1408,6 +1408,10 @@ class OrchestratorConfig:
     # Default off; enable once multi-tenant workloads exist.
     fair_scheduling_enabled: bool = False
     cost_autopilot: bool = False  # Wire CostAutopilot when True
+    # Scheduled dependency vulnerability scan. Off by default so a scoped run
+    # is never given unrequested background maintenance tasks; enable only when
+    # the target repo declares Python dependencies that should be audited.
+    dependency_scan_enabled: bool = False
     # Janitor LLM-judge model/provider override, threaded from the seed's
     # ``judge_model``/``judge_provider`` (bernstein.yaml). None = fall back
     # to the janitor's hardcoded JUDGE_MODEL/JUDGE_PROVIDER defaults.

@@ -180,6 +180,88 @@ def read_latest_dependency_scan(sdd_dir: Path) -> DependencyScanResult | None:
     return DependencyScanResult.from_dict(payload_map)
 
 
+_REQUIREMENTS_GLOB = "requirements*.txt"
+_PROJECT_MARKERS = ("pyproject.toml", "setup.py", "setup.cfg", "Pipfile")
+_LOCKFILES = ("poetry.lock", "uv.lock", "pdm.lock", "Pipfile.lock")
+
+
+@dataclass(frozen=True)
+class DependencyScanTargets:
+    """Python dependency manifests declared by the target repo under work.
+
+    The scheduled scan audits these declared manifests, never the
+    orchestrator's own installed environment. When nothing is declared the
+    scan skips instead of falling back to auditing the active venv.
+    """
+
+    requirements_files: tuple[Path, ...] = ()
+    project_path: Path | None = None
+    has_lockfile: bool = False
+
+    @property
+    def declared(self) -> bool:
+        """Return True when the target repo declares any Python dependencies."""
+        return bool(self.requirements_files) or self.project_path is not None
+
+
+def discover_dependency_scan_targets(workdir: Path) -> DependencyScanTargets:
+    """Discover the Python dependency manifests declared in ``workdir``.
+
+    Args:
+        workdir: The target repository root under work.
+
+    Returns:
+        The discovered manifests. ``DependencyScanTargets.declared`` is False
+        when the repo has no ``requirements*.txt``, project file, or lockfile,
+        which signals the scan to skip rather than audit the active venv.
+    """
+    requirements_files = tuple(sorted((p for p in workdir.glob(_REQUIREMENTS_GLOB) if p.is_file()), key=str))
+    has_project_marker = any((workdir / marker).is_file() for marker in _PROJECT_MARKERS)
+    has_lockfile = any((workdir / lock).is_file() for lock in _LOCKFILES)
+    project_path = workdir if (has_project_marker or has_lockfile) else None
+    return DependencyScanTargets(
+        requirements_files=requirements_files,
+        project_path=project_path,
+        has_lockfile=has_lockfile,
+    )
+
+
+def _targeted_argv(command: DependencyScanCommand, targets: DependencyScanTargets) -> tuple[str, ...] | None:
+    """Return scanner argv aimed at the declared manifests, or None to skip.
+
+    ``pip-audit`` and ``safety`` audit the active Python environment unless an
+    explicit target is supplied, so a command with no derivable target is
+    dropped rather than run against the orchestrator's own venv.
+    """
+    if targets.requirements_files:
+        argv = list(command.argv)
+        for requirement in targets.requirements_files:
+            argv += ["-r", str(requirement)]
+        return tuple(argv)
+    # Only pip-audit can audit a bare project directory (pyproject / lockfile);
+    # safety needs a requirements file, so it is skipped for project-only repos
+    # rather than allowed to fall back to auditing the active environment.
+    if command.name == "pip-audit" and targets.project_path is not None:
+        argv = [*command.argv, str(targets.project_path)]
+        if targets.has_lockfile:
+            argv.append("--locked")
+        return tuple(argv)
+    return None
+
+
+def _build_targeted_commands(
+    base_commands: tuple[DependencyScanCommand, ...],
+    targets: DependencyScanTargets,
+) -> list[DependencyScanCommand]:
+    """Build scanner commands aimed at the target repo's declared manifests."""
+    commands: list[DependencyScanCommand] = []
+    for base in base_commands:
+        argv = _targeted_argv(base, targets)
+        if argv is not None:
+            commands.append(DependencyScanCommand(name=base.name, argv=argv))
+    return commands
+
+
 class DependencyVulnerabilityScanner:
     """Run weekly dependency vulnerability scans and persist their results."""
 
@@ -189,9 +271,11 @@ class DependencyVulnerabilityScanner:
         *,
         interval_s: int = DEFAULT_DEPENDENCY_SCAN_INTERVAL_S,
         timeout_s: int = DEFAULT_DEPENDENCY_SCAN_TIMEOUT_S,
+        enabled: bool = True,
         runner: DependencyCommandRunner | None = None,
     ) -> None:
         self._workdir = workdir
+        self._enabled = enabled
         self._sdd_dir = workdir / ".sdd"
         self._runtime_dir = self._sdd_dir / "runtime"
         self._metrics_dir = self._sdd_dir / "metrics"
@@ -207,10 +291,20 @@ class DependencyVulnerabilityScanner:
         )
 
     def is_due(self, *, now: float | None = None) -> bool:
-        """Return True when the next scheduled scan should run."""
+        """Return True when the next scheduled scan should run.
+
+        A disabled scanner is never due. A fresh workspace with no recorded
+        baseline (``last_scan_at <= 0``) is treated as "no baseline yet", not
+        "overdue", so it does not fire on the first tick; ``run_if_due``
+        records the baseline instead.
+        """
+        if not self._enabled:
+            return False
         last_scan_at = self._read_last_scan_at()
+        if last_scan_at <= 0:
+            return False
         current_time = time.time() if now is None else now
-        return last_scan_at <= 0 or (current_time - last_scan_at) >= self._interval_s
+        return (current_time - last_scan_at) >= self._interval_s
 
     def run_if_due(
         self,
@@ -219,23 +313,41 @@ class DependencyVulnerabilityScanner:
         audit_log: AuditLog | None = None,
         now: float | None = None,
     ) -> DependencyScanResult | None:
-        """Run the dependency scan if its weekly schedule is due."""
+        """Run the dependency scan if enabled and its weekly schedule is due.
+
+        On the first tick of a fresh workspace no scan runs: a baseline
+        ``last_scan_at`` is recorded so the weekly interval applies from then
+        on. This stops a freshly scoped run from being flooded on its first
+        normal tick.
+        """
+        if not self._enabled:
+            return None
         current_time = time.time() if now is None else now
+        if self._read_last_scan_at() <= 0:
+            # No baseline yet: record one and skip this tick.
+            self._write_state(current_time)
+            return None
         if not self.is_due(now=current_time):
             return None
         result = self.run_scan(create_fix_task=create_fix_task, audit_log=audit_log, now=current_time)
         self._write_state(current_time)
         return result
 
-    def _run_scanners(self) -> tuple[list[DependencyVulnerabilityFinding], list[str], list[str], int, int]:
-        """Execute all scanner commands. Returns (findings, errors, scanners_run, successful, unavailable)."""
+    def _run_scanners(
+        self,
+        commands: list[DependencyScanCommand],
+    ) -> tuple[list[DependencyVulnerabilityFinding], list[str], list[str], int, int]:
+        """Execute the given scanner commands.
+
+        Returns ``(findings, errors, scanners_run, successful, unavailable)``.
+        """
         findings: list[DependencyVulnerabilityFinding] = []
         errors: list[str] = []
         scanners_run: list[str] = []
         successful_scanners = 0
         unavailable_scanners = 0
 
-        for command in self._commands:
+        for command in commands:
             execution = self._runner(command, cwd=self._workdir, timeout_s=self._timeout_s)
             if _command_unavailable(command, execution):
                 unavailable_scanners += 1
@@ -279,34 +391,53 @@ class DependencyVulnerabilityScanner:
         audit_log: AuditLog | None = None,
         now: float | None = None,
     ) -> DependencyScanResult:
-        """Run one dependency vulnerability scan immediately."""
+        """Run one dependency vulnerability scan immediately.
+
+        The scan is scoped to the target repo's declared manifests. When the
+        repo declares no Python dependencies the scan is skipped with zero
+        findings, so no remediation tasks are created and the orchestrator's
+        own tool venv is never audited.
+        """
         current_time = time.time() if now is None else now
 
-        findings, errors, scanners_run, successful_scanners, unavailable_scanners = self._run_scanners()
+        targets = discover_dependency_scan_targets(self._workdir)
+        commands = _build_targeted_commands(self._commands, targets)
+        if not commands:
+            # The target repo declares no Python dependencies: skip with zero
+            # findings so no remediation tasks are created and the active
+            # environment (the orchestrator's own tool venv) is never audited.
+            result = DependencyScanResult(
+                scan_id=uuid.uuid4().hex[:12],
+                scanned_at=current_time,
+                status=DependencyScanStatus.SKIPPED,
+                summary="Dependency scan skipped: target repo declares no Python dependency manifest",
+            )
+        else:
+            findings, errors, scanners_run, successful_scanners, unavailable_scanners = self._run_scanners(commands)
+            deduped_findings = _dedupe_findings(findings)
+            created_task_titles: list[str] = []
+            if create_fix_task is not None:
+                created_task_titles = self._create_fix_tasks(deduped_findings, create_fix_task)
 
-        deduped_findings = _dedupe_findings(findings)
-        created_task_titles: list[str] = []
-        if create_fix_task is not None:
-            created_task_titles = self._create_fix_tasks(deduped_findings, create_fix_task)
+            status = _determine_scan_status(
+                findings=deduped_findings,
+                successful_scanners=successful_scanners,
+                unavailable_scanners=unavailable_scanners,
+                total_scanners=len(commands),
+                errors=errors,
+            )
+            summary = _build_summary(status, deduped_findings, scanners_run, errors)
+            result = DependencyScanResult(
+                scan_id=uuid.uuid4().hex[:12],
+                scanned_at=current_time,
+                status=status,
+                summary=summary,
+                findings=tuple(deduped_findings),
+                scanners_run=tuple(scanners_run),
+                errors=tuple(errors),
+                created_task_titles=tuple(created_task_titles),
+            )
 
-        status = _determine_scan_status(
-            findings=deduped_findings,
-            successful_scanners=successful_scanners,
-            unavailable_scanners=unavailable_scanners,
-            total_scanners=len(self._commands),
-            errors=errors,
-        )
-        summary = _build_summary(status, deduped_findings, scanners_run, errors)
-        result = DependencyScanResult(
-            scan_id=uuid.uuid4().hex[:12],
-            scanned_at=current_time,
-            status=status,
-            summary=summary,
-            findings=tuple(deduped_findings),
-            scanners_run=tuple(scanners_run),
-            errors=tuple(errors),
-            created_task_titles=tuple(created_task_titles),
-        )
         self._persist_result(result)
         if audit_log is not None:
             audit_log.log(

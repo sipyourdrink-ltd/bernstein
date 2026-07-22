@@ -692,6 +692,21 @@ dependency_scan:
     - "ISC"
 ```
 
+#### Scheduled scan scope
+
+The orchestrator's scheduled (weekly) dependency scan is separate from the
+compliance scan above and is **off by default**
+(`OrchestratorConfig.dependency_scan_enabled = False`), so a scoped run is
+never given unrequested remediation tasks. When it is enabled:
+
+- It audits only the dependencies the target repo declares
+  (`requirements*.txt`, `pyproject.toml`, `setup.py`/`setup.cfg`, or a
+  lockfile). A repo with no Python dependency manifest is skipped rather than
+  having the orchestrator's own tool environment audited.
+- The first tick of a fresh run records a baseline instead of firing
+  immediately, so the weekly interval starts from that baseline rather than
+  treating a missing scan state as overdue.
+
 ### Data residency
 
 Restrict agent operations to specific regions in multi-region deployments:
