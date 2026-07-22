@@ -1,0 +1,12 @@
+# .mailmap - canonical contributor identity map.
+#
+# Resolves author, committer, and co-author records to a single canonical
+# identity per contributor in `git shortlog`, `git blame --use-mailmap`, and
+# the GitHub contributors graph, so identity variants committed from different
+# machines do not fragment attribution. This maps display only; it does not
+# rewrite history.
+#
+# Format: Canonical Name <canonical-email> <other-email>
+# See `git help shortlog` (MAPPING AUTHORS) and `git help check-mailmap`.
+
+chernistry <73943355+chernistry@users.noreply.github.com> <alex.chernysh@aporianetworks.com>
