@@ -261,3 +261,39 @@ class TestMockOrchestrator:
 
         task = _run(orch.process_one("qa"))
         assert task is None  # Only 1 QA task
+
+
+# ---------------------------------------------------------------------------
+# Production MockAgentAdapter default_model (issue #2799)
+# ---------------------------------------------------------------------------
+
+
+def test_mock_adapter_declares_non_claude_default_model() -> None:
+    """MockAgentAdapter must declare a non-Claude-tier default_model.
+
+    Regression for issue #2799: the spawn-time model gate refuses to spawn when
+    a Claude cascade tier (opus/sonnet/haiku) reaches a non-Claude adapter that
+    has no default_model, so ``bernstein demo`` failed every task. A declared
+    default lets the gate coerce the tier name instead of refusing.
+    """
+    from bernstein.adapters.mock import MockAgentAdapter
+    from bernstein.core.agents.spawner_warm_pool import _CLAUDE_TIER_MODELS
+
+    assert MockAgentAdapter.default_model
+    assert MockAgentAdapter.default_model not in _CLAUDE_TIER_MODELS
+
+
+def test_mock_default_model_coerces_claude_tier_instead_of_refusing() -> None:
+    """The model gate coerces a Claude tier to the mock default rather than raising."""
+    from bernstein.core.models import ModelConfig
+
+    from bernstein.adapters.mock import MockAgentAdapter
+    from bernstein.core.agents.spawner_warm_pool import _coerce_model_for_non_claude_adapter
+
+    selected = ModelConfig(model="sonnet", effort="high")
+    coerced = _coerce_model_for_non_claude_adapter(
+        selected,
+        adapter_name="mock",
+        adapter_default_model=MockAgentAdapter.default_model,
+    )
+    assert coerced.model == MockAgentAdapter.default_model

@@ -1166,7 +1166,10 @@ def _bootstrap_from_goal_impl(
         console.print(agents_note)
 
     _icons = get_icons()
-    console.print(f"[green]{_icons.arrow_right}[/green] Goal: [bold]{goal[:80]}[/bold]")
+    # Callers that drive a pre-seeded backlog (e.g. the mock demo) pass no goal
+    # on purpose; don't print an empty "Goal:" line in that case.
+    if goal.strip():
+        console.print(f"[green]{_icons.arrow_right}[/green] Goal: [bold]{goal[:80]}[/bold]")
     try:
         from bernstein.core.complexity_advisor import ComplexityMode, suggest_goal_execution_mode
 

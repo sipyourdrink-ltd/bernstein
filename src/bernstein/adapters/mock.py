@@ -56,6 +56,14 @@ class MockAgentAdapter(CLIAdapter):
     pre-scripted bug fixes to the demo project and exits successfully.
     """
 
+    # Default model when no operator-pinned model reaches this adapter. Read by
+    # the spawner to substitute Claude cascade tier names (opus/sonnet/haiku)
+    # for this non-Claude adapter. Without it the spawn-time model gate refuses
+    # to spawn a Claude tier on the mock adapter, so ``bernstein demo`` fails
+    # every task (issue #2799). The mock ignores the model at runtime; the name
+    # only has to be a non-Claude-tier placeholder the gate can coerce to.
+    default_model = "mock"
+
     def spawn(
         self,
         *,
