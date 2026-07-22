@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.observability.otel_projection import (
@@ -85,11 +86,16 @@ __all__ = [
     "JournalOTLPBridge",
     "LiveJournalSpanStream",
     "OTLPExportError",
+    "ParsedExportedSpan",
+    "SpanParseError",
+    "SpanVerification",
     "attach_live_export",
     "build_bridge_from_env",
+    "parse_exported_span",
     "projection_to_otlp_json_spans",
     "projection_to_readable_spans",
     "record_projection_audit_event",
+    "verify_exported_span",
 ]
 
 
@@ -732,4 +738,258 @@ def record_projection_audit_event(
         trace_id=signed.trace_id,
         span_count=len(signed.spans),
         projection_sha256=hashlib.sha256(canonical_projection_bytes(signed)).hexdigest(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Span verification (#2526 Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class SpanParseError(ValueError):
+    """Raised when pasted span JSON is not a recognisable OTLP span."""
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedExportedSpan:
+    """The identity-bearing fields lifted from an exported OTLP span.
+
+    Attributes:
+        span_id: Lower-case hex span id (``spanId``).
+        trace_id: Lower-case hex trace id, or ``""`` when absent.
+        parent_span_id: Lower-case hex parent span id, or ``""``.
+        entry_hash: The ``bernstein.journal.entry_hash`` attribute.
+        anchor: The ``bernstein.audit.anchor`` attribute.
+        run_id: The ``bernstein.run.id`` attribute, or ``""``.
+        index: The ``bernstein.journal.index`` attribute, or ``-1``.
+        attributes: The flattened attribute map.
+    """
+
+    span_id: str
+    trace_id: str
+    parent_span_id: str
+    entry_hash: str
+    anchor: str
+    run_id: str
+    index: int
+    attributes: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class SpanVerification:
+    """Outcome of :func:`verify_exported_span`.
+
+    ``ok`` is the accept/reject verdict. When ``ok`` is ``False`` and
+    ``unverifiable`` is set the span could not be proven either way (no
+    journal, or the run was never anchored into the audit chain); otherwise
+    the span is a positive forgery. Both non-ok outcomes are nonzero exits on
+    the CLI -- a real rejection is never softened into a pass.
+    """
+
+    ok: bool
+    reason: str
+    unverifiable: bool = False
+    span_id: str = ""
+    entry_hash: str = ""
+    anchor: str = ""
+    trace_id: str = ""
+    index: int = -1
+    chain_trace_id: str = ""
+
+
+def _otlp_scalar(value: Any) -> Any:
+    """Unwrap an OTLP ``AnyValue`` dict to its scalar, or pass a plain value through."""
+    if isinstance(value, dict):
+        for key in ("stringValue", "intValue", "boolValue", "doubleValue"):
+            if key in value:
+                return value[key]
+        return ""
+    return value
+
+
+def _flatten_attributes(raw: Any) -> dict[str, Any]:
+    """Return a flat ``{name: scalar}`` map from either attribute shape.
+
+    Accepts both the OTLP/JSON list form (``[{"key": k, "value": {...}}]`` -- what a
+    stock collector emits) and a plain object (``{k: v}`` -- what an operator may
+    hand-simplify), so a span copied from any pipeline parses.
+    """
+    out: dict[str, Any] = {}
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict) and "key" in item:
+                out[str(item["key"])] = _otlp_scalar(item.get("value"))
+    elif isinstance(raw, dict):
+        for key, value in raw.items():
+            out[str(key)] = _otlp_scalar(value)
+    return out
+
+
+def _hex(value: Any) -> str:
+    """Normalise a hex id/hash for comparison (hex is case-insensitive)."""
+    return str(value if value is not None else "").strip().lower()
+
+
+def parse_exported_span(payload: Any) -> ParsedExportedSpan:
+    """Lift the identity-bearing fields from a pasted OTLP span.
+
+    Args:
+        payload: A single decoded OTLP span object (camelCase ``spanId`` or
+            snake ``span_id``; attributes in either OTLP/JSON list form or a
+            flat object).
+
+    Returns:
+        The parsed span.
+
+    Raises:
+        SpanParseError: When ``payload`` is not an object or carries no span id.
+    """
+    if not isinstance(payload, dict):
+        raise SpanParseError("exported span must be a JSON object")
+    span_id = _hex(payload.get("spanId") or payload.get("span_id"))
+    if not span_id:
+        raise SpanParseError("exported span carries no spanId")
+    attributes = _flatten_attributes(payload.get("attributes"))
+    index_raw = attributes.get(ATTR_JOURNAL_INDEX)
+    try:
+        index = int(str(index_raw)) if index_raw is not None else -1
+    except (TypeError, ValueError):
+        index = -1
+    return ParsedExportedSpan(
+        span_id=span_id,
+        trace_id=_hex(payload.get("traceId") or payload.get("trace_id")),
+        parent_span_id=_hex(payload.get("parentSpanId") or payload.get("parent_span_id")),
+        entry_hash=_hex(attributes.get(ATTR_JOURNAL_ENTRY_HASH)),
+        anchor=_hex(attributes.get(ATTR_AUDIT_ANCHOR)),
+        run_id=str(attributes.get(ATTR_RUN_ID, "")).strip(),
+        index=index,
+        attributes=attributes,
+    )
+
+
+def _forged(reason: str, span: ParsedExportedSpan) -> SpanVerification:
+    return SpanVerification(
+        ok=False,
+        reason=reason,
+        unverifiable=False,
+        span_id=span.span_id,
+        entry_hash=span.entry_hash,
+        anchor=span.anchor,
+    )
+
+
+def _unverifiable(reason: str, span: ParsedExportedSpan) -> SpanVerification:
+    return SpanVerification(
+        ok=False,
+        reason=reason,
+        unverifiable=True,
+        span_id=span.span_id,
+        entry_hash=span.entry_hash,
+        anchor=span.anchor,
+    )
+
+
+def verify_exported_span(
+    span: ParsedExportedSpan,
+    events: Sequence[dict[str, Any]],
+    projections: Sequence[Mapping[str, Any]],
+    *,
+    run_id: str,
+) -> SpanVerification:
+    """Prove one exported span against the journal and the audit chain.
+
+    Re-derives the span id from the ``bernstein.journal.entry_hash`` the span
+    carries with :func:`otel_projection.derive_span_id` -- the *same* function
+    the export bridge used, so the verify path can never drift from the
+    producing path -- confirms that entry exists in ``run_id``'s journal, and
+    checks the ``bernstein.audit.anchor`` resolves through
+    :func:`otel_projection.derive_trace_id` to the run's ``otel.projection``
+    audit event.
+
+    Args:
+        span: The parsed exported span (see :func:`parse_exported_span`).
+        events: The run's journal rows in append order.
+        projections: The ``details`` payloads of the run's ``otel.projection``
+            audit events (each carrying ``run_id`` / ``trace_id`` /
+            ``journal_head``).
+        run_id: The run whose journal and chain the span is checked against.
+
+    Returns:
+        The verdict. ``ok`` is the accept/reject decision; a rejection with
+        ``unverifiable`` set means the span could not be proven either way (no
+        journal, or the export was never anchored), never that it passed.
+    """
+    if span.run_id and span.run_id != run_id:
+        return _forged(
+            f"span carries {ATTR_RUN_ID}={span.run_id!r} but was checked against run {run_id!r}",
+            span,
+        )
+    if not events:
+        return _unverifiable(
+            f"no event journal for run {run_id!r}; span identity cannot be recomputed",
+            span,
+        )
+
+    index_by_hash = {str(row.get("event_hash", "")): i for i, row in enumerate(events) if row.get("event_hash")}
+    root_hash = str(events[0].get("event_hash", ""))
+
+    if not span.entry_hash:
+        return _forged(f"span carries no {ATTR_JOURNAL_ENTRY_HASH}; it is unbindable to the journal", span)
+    if span.entry_hash not in index_by_hash:
+        return _forged(
+            f"{ATTR_JOURNAL_ENTRY_HASH} {span.entry_hash} is absent from run {run_id!r}'s journal",
+            span,
+        )
+
+    expected_span_id = derive_span_id(span.entry_hash)
+    if span.span_id != expected_span_id:
+        return _forged(
+            f"span id {span.span_id} does not recompute from entry_hash {span.entry_hash} "
+            f"(expected {expected_span_id})",
+            span,
+        )
+
+    if not span.anchor:
+        return _forged(f"span carries no {ATTR_AUDIT_ANCHOR}; its trace is unanchored", span)
+    if span.anchor != root_hash:
+        return _forged(
+            f"{ATTR_AUDIT_ANCHOR} {span.anchor} does not match run {run_id!r}'s journal head {root_hash}",
+            span,
+        )
+
+    expected_trace = derive_trace_id(span.anchor)
+    if span.trace_id and span.trace_id != expected_trace:
+        return _forged(
+            f"traceId {span.trace_id} does not derive from the anchor (expected {expected_trace})",
+            span,
+        )
+
+    run_projections = [p for p in projections if str(p.get("run_id", "")) == run_id]
+    if not run_projections:
+        return _unverifiable(
+            f"no otel.projection audit event for run {run_id!r}; the export was never anchored into the chain",
+            span,
+        )
+    matching = [p for p in run_projections if _hex(p.get("trace_id")) == expected_trace]
+    if not matching:
+        return _forged(
+            f"anchor-derived trace {expected_trace} matches no otel.projection audit event for run {run_id!r}",
+            span,
+        )
+    journal_head = str(events[-1].get("event_hash", ""))
+    if not any(str(p.get("journal_head", "")) == journal_head for p in matching):
+        return _forged(
+            f"otel.projection audit event for trace {expected_trace} anchors a different journal head",
+            span,
+        )
+
+    return SpanVerification(
+        ok=True,
+        reason="span id recomputes from the journal entry and its anchor matches the audit chain",
+        span_id=span.span_id,
+        entry_hash=span.entry_hash,
+        anchor=span.anchor,
+        trace_id=expected_trace,
+        index=index_by_hash[span.entry_hash],
+        chain_trace_id=expected_trace,
     )

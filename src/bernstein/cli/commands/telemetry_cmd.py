@@ -489,6 +489,119 @@ def telemetry_export_otel(
     )
 
 
+def _read_span_source(source: str) -> str:
+    """Return the raw span JSON text from a file path or stdin.
+
+    ``-`` or ``@-`` reads stdin; a leading ``@`` names a file (curl-style);
+    anything else is treated as a file path.
+    """
+    if source in {"-", "@-"}:
+        return click.get_text_stream("stdin").read()
+    from bernstein.core.security.sanitize import sanitize_log
+
+    path = source[1:] if source.startswith("@") else source
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise click.ClickException(f"cannot read span file: {sanitize_log(str(exc))}") from exc
+
+
+def _single_exported_span(payload: Any) -> Any:
+    """Unwrap a one-element JSON array so operators can paste either shape."""
+    if isinstance(payload, list):
+        if len(payload) == 1:
+            return payload[0]
+        raise click.ClickException(f"expected a single exported span, got a JSON array of {len(payload)}")
+    return payload
+
+
+def _render_span_verdict(result: Any, *, run_id: str, journal_path: Path) -> list[str]:
+    """Render the human-facing verdict lines for a span verification."""
+    if result.ok:
+        return [
+            "VERDICT: genuine",
+            f"  span {result.span_id} recomputes from journal entry_hash {result.entry_hash} (index {result.index})",
+            f"  anchor {result.anchor} resolves to otel.projection trace {result.chain_trace_id}",
+            f"  run {run_id} journal {journal_path}",
+        ]
+    label = "unverifiable" if result.unverifiable else "forged"
+    return [f"VERDICT: {label}", f"  reason: {result.reason}"]
+
+
+@telemetry_group.command("verify-span")
+@click.option("--run", "run_id", required=True, help="Run id whose journal and audit chain prove the span.")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--span",
+    "span_source",
+    required=True,
+    metavar="PATH|@-",
+    help="Exported OTLP span JSON: a file path, or '-' / '@-' to read from stdin.",
+)
+@click.pass_context
+def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_source: str) -> None:
+    """Prove an exported OTLP span against the run journal and chain (#2526).
+
+    Reads a single OTLP span (its id plus attributes, as JSON copied out of a
+    tracing pipeline) and recomputes its identity: the span id must derive
+    from the ``bernstein.journal.entry_hash`` it carries -- using the same
+    derivation the export bridge used -- that entry must exist in ``--run``'s
+    journal, and the ``bernstein.audit.anchor`` must resolve to the run's
+    ``otel.projection`` audit event. A span whose id does not recompute, or
+    whose anchor mismatches, is rejected as a forgery.
+
+    Exit codes: 0 = genuine, 1 = forged / unverifiable / bad input.
+    """
+    from bernstein.core.observability.otel_bridge import (
+        SpanParseError,
+        parse_exported_span,
+        verify_exported_span,
+    )
+    from bernstein.core.replay.journal import JournalPathError, load_events, run_journal_path
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.security.audit_chain import EVENT_OTEL_PROJECTION, AuditChainStore
+    from bernstein.core.security.sanitize import sanitize_log
+
+    raw = _read_span_source(span_source)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"span is not valid JSON: {sanitize_log(str(exc))}") from exc
+    payload = _single_exported_span(payload)
+    try:
+        span = parse_exported_span(payload)
+    except SpanParseError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
+
+    root = Path(workdir).resolve()
+    try:
+        journal_path = run_journal_path(root / ".sdd", run_id)
+    except JournalPathError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
+    events = load_events(journal_path)
+
+    projections: list[dict[str, Any]] = []
+    try:
+        chain = AuditChainStore(root / ".sdd" / "audit", key=load_or_create_audit_key())
+        projections = [event.details for event in chain.query(event_type=EVENT_OTEL_PROJECTION)]
+    except Exception as exc:
+        # A missing or unreadable chain leaves ``projections`` empty, so the
+        # verdict is "unverifiable" (never a silent pass) -- report and continue.
+        click.echo(f"warning: could not read audit chain: {sanitize_log(str(exc))}", err=True)
+
+    result = verify_exported_span(span, events, projections, run_id=run_id)
+    for line in _render_span_verdict(result, run_id=run_id, journal_path=journal_path):
+        click.echo(line)
+    ctx.exit(0 if result.ok else 1)
+
+
 @telemetry_group.command("tail")
 @click.option(
     "-n",
@@ -551,4 +664,5 @@ __all__ = [
     "telemetry_probe",
     "telemetry_status",
     "telemetry_tail",
+    "telemetry_verify_span",
 ]

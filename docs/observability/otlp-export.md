@@ -85,21 +85,39 @@ OTLP/JSON and records nothing.
 
 ## Verifying an exported span
 
-The offline projection tooling remains the verification surface:
+Copy a span out of your tracing UI (its id plus attributes, as JSON) and
+prove it against the run journal and the audit chain:
+
+```bash
+bernstein telemetry verify-span --run <run_id> --span span.json   # from a file
+pbpaste | bernstein telemetry verify-span --run <run_id> --span -  # from stdin
+```
+
+`--span` accepts a file path, or `-` / `@-` to read the span JSON from
+stdin. The span JSON may be the OTLP/JSON object your collector emits
+(`spanId` plus an `attributes` list, exactly what `export-otel --dry-run`
+prints), so a round-trip through the wire stays checkable.
+
+The command recomputes the span's identity with the *same* derivation the
+export bridge used and prints one verdict:
+
+- **genuine** (exit 0) - the span id recomputes from the
+  `bernstein.journal.entry_hash` it carries, that entry exists in the run's
+  journal, and `bernstein.audit.anchor` derives the trace id recorded by the
+  run's `otel.projection` audit event.
+- **forged** (exit 1) - the span id does not recompute, the referenced entry
+  is absent from the journal, or the anchor does not match the chain. A real
+  rejection is a hard failure, never a warning.
+- **unverifiable** (exit 1) - the run's journal is absent, or the run was
+  never anchored into the audit chain, so the span cannot be proven either
+  way.
+
+The offline projection tooling remains available for the whole-run surface:
 
 ```bash
 bernstein trace project <run_id>            # signed projection.otel.json + audit event
 bernstein trace verify-projection <run_id>  # recompute ids from the journal, check signature
 ```
-
-A span in your tracing UI is genuine iff its span id recomputes from the
-`bernstein.journal.entry_hash` it carries and that hash exists in the run's
-journal chain. The verifier derives the trace id from
-`bernstein.audit.anchor`, matches the `otel.projection` event by trace and
-run id, and checks that event's final journal head. A dedicated
-`bernstein telemetry verify-span` subcommand that
-performs this proof from a pasted span JSON lands in the follow-up phase of
-issue #2526.
 
 ## Relationship to the raw GenAI exporter
 
