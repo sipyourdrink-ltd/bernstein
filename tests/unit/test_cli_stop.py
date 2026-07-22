@@ -291,7 +291,7 @@ class TestHardStopFallbacks:
                 pid=11,
                 ppid=1,
                 pgid=11,
-                command="/usr/bin/python -m bernstein.core.bootstrap --watchdog --port 8052",
+                command="/usr/bin/python -m bernstein.core.orchestration.bootstrap --watchdog --port 8052",
             ),
             stop_cmd_module._ProcessSnapshot(  # pyright: ignore[reportPrivateUsage]
                 pid=12,
@@ -309,7 +309,7 @@ class TestHardStopFallbacks:
                 pid=14,
                 ppid=1,
                 pgid=14,
-                command="/usr/bin/python -m bernstein.core.bootstrap --watchdog --port 8052",
+                command="/usr/bin/python -m bernstein.core.orchestration.bootstrap --watchdog --port 8052",
             ),
         ]
 

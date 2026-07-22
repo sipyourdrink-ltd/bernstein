@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import types
 from contextlib import ExitStack
@@ -16,7 +17,7 @@ from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.seed import SeedConfig
 from bernstein.core.server_launch import BootstrapResult
 
-from bernstein.core.orchestration.bootstrap import _post_plan_tasks
+from bernstein.core.orchestration.bootstrap import _post_plan_tasks, _start_watchdog
 
 
 class _CompletedFuture:
@@ -293,3 +294,100 @@ def test_post_plan_tasks_sends_no_header_when_auth_disabled() -> None:
         )
 
     assert captured["auth"] is None
+
+
+class _FakeWatchdogProc:
+    """Minimal ``subprocess.Popen`` stand-in for ``_start_watchdog`` tests."""
+
+    def __init__(self, pid: int = 4242, *, exit_code: int | None = None) -> None:
+        self.pid = pid
+        self._exit_code = exit_code
+
+    def wait(self, timeout: float | None = None) -> int:
+        """Mirror ``Popen.wait``: raise ``TimeoutExpired`` while still running."""
+        if self._exit_code is None:
+            raise subprocess.TimeoutExpired(cmd="watchdog", timeout=timeout or 0.0)
+        return self._exit_code
+
+    def poll(self) -> int | None:
+        return self._exit_code
+
+
+def test_start_watchdog_launches_a_runpy_runnable_module(tmp_path: Path) -> None:
+    """The watchdog launcher must target a module ``runpy`` can execute.
+
+    Regression guard for issue #2795: the launcher spawned
+    ``python -m bernstein.core.bootstrap``, but that name is a compatibility
+    redirect alias whose loader returns no code object, so ``runpy`` raised
+    "No code object available for bernstein.core.bootstrap" and the watchdog
+    died on arrival. Run the exact ``python -m <module>`` the launcher targets
+    in a fresh interpreter (the alias is unimported there, as in a real wheel
+    launch) and assert it loads. ``--watchdog`` is deliberately omitted so the
+    module exits instead of entering the monitor loop; the "No code object"
+    failure is raised at load time, before argument parsing, so its absence is
+    what the guard checks -- a future rename or redirect cannot silently rebreak
+    the launch.
+    """
+    (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
+    captured: dict[str, list[str]] = {}
+
+    def _fake_popen(argv: list[str], **_kwargs: Any) -> _FakeWatchdogProc:
+        captured["argv"] = argv
+        return _FakeWatchdogProc()
+
+    with (
+        patch("bernstein.core.orchestration.bootstrap.subprocess.Popen", _fake_popen),
+        patch("bernstein.core.orchestration.bootstrap.console") as mock_console,
+        patch("bernstein.core.orchestration.bootstrap.logger") as mock_logger,
+    ):
+        _start_watchdog(tmp_path, 8052)
+
+    argv = captured["argv"]
+    module_name = argv[argv.index("-m") + 1]
+
+    result = subprocess.run(
+        [sys.executable, "-m", module_name],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert "No code object available" not in output, (
+        f"python -m {module_name} is not runpy-runnable (#2795): {output.strip()}"
+    )
+    assert result.returncode == 0, f"python -m {module_name} exited {result.returncode}: {output.strip()}"
+
+    # A healthy launch stays quiet: no operator-facing failure is surfaced.
+    mock_logger.error.assert_not_called()
+    mock_console.print.assert_not_called()
+
+
+def test_start_watchdog_surfaces_a_dead_on_arrival_watchdog(tmp_path: Path) -> None:
+    """A watchdog that exits immediately is surfaced, not swallowed.
+
+    Regression guard for issue #2795: a broken launch left one line in
+    ``watchdog.log`` and a dead pid file while the run reported itself healthy.
+    The launcher must detect the immediate exit and raise the alarm at an
+    operator-visible level (error log plus console), not only inside the log
+    file that nobody reads.
+    """
+    (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
+
+    def _fake_popen(argv: list[str], *, stdout: Any = None, **_kwargs: Any) -> _FakeWatchdogProc:
+        del argv
+        # Model the real child: it writes its failure to the log sink and exits.
+        if stdout is not None:
+            stdout.write("No code object available for bernstein.core.bootstrap\n")
+        return _FakeWatchdogProc(exit_code=1)
+
+    with (
+        patch("bernstein.core.orchestration.bootstrap.subprocess.Popen", _fake_popen),
+        patch("bernstein.core.orchestration.bootstrap.console") as mock_console,
+        patch("bernstein.core.orchestration.bootstrap.logger") as mock_logger,
+    ):
+        _start_watchdog(tmp_path, 8052)
+
+    assert mock_logger.error.called, "dead-on-arrival watchdog must log an operator-visible error"
+    assert mock_console.print.called, "dead-on-arrival watchdog must be surfaced to the console"

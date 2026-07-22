@@ -538,7 +538,9 @@ def _classify_and_kill_process(
         _kill_agent_pid(snapshot.pid, f"orphan-{snapshot.pid}", killed)
         return
 
-    is_watchdog = "bernstein.core.bootstrap" in command and "--watchdog" in command
+    # Matches the launcher argv in ``_start_watchdog`` (issue #2795): the watchdog
+    # runs as ``python -m bernstein.core.orchestration.bootstrap --watchdog``.
+    is_watchdog = "bernstein.core.orchestration.bootstrap" in command and "--watchdog" in command
     is_orchestrator = "bernstein.core.orchestrator" in command
     is_server = "uvicorn bernstein.core.server:app" in command
 

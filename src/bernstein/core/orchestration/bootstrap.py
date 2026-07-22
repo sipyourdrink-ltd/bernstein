@@ -747,6 +747,39 @@ def bootstrap_from_seed(
     return result
 
 
+_WATCHDOG_MODULE = "bernstein.core.orchestration.bootstrap"
+"""Runnable module for the ``python -m`` watchdog launch (issue #2795).
+
+Must resolve to a real code object under ``runpy``. The historical
+``bernstein.core.bootstrap`` name is a compatibility redirect alias whose loader
+returns no code object, so launching it via ``-m`` fails with "No code object
+available" and the watchdog never starts. This module carries the
+``if __name__ == "__main__":`` watchdog entrypoint.
+"""
+
+_WATCHDOG_LAUNCH_GRACE_S: float = 0.5
+"""Seconds to wait for the watchdog to prove it survived launch (issue #2795)."""
+
+
+def _read_watchdog_log_tail(log_path: Path, *, max_chars: int = 500) -> str:
+    """Return the tail of ``watchdog.log`` for a failed-launch error message.
+
+    Args:
+        log_path: Path to the watchdog log sink.
+        max_chars: Cap on returned characters, taken from the end of the file.
+
+    Returns:
+        The trailing log content, or a placeholder when it is empty or unreadable.
+    """
+    try:
+        text = log_path.read_text(errors="replace").strip()
+    except OSError:
+        return "<unavailable>"
+    if not text:
+        return "<empty>"
+    return text[-max_chars:]
+
+
 def _start_watchdog(
     workdir: Path,
     port: int,
@@ -777,7 +810,11 @@ def _start_watchdog(
     argv = [
         sys.executable,
         "-m",
-        "bernstein.core.bootstrap",
+        # Must be a module ``runpy`` can execute. ``bernstein.core.bootstrap`` is
+        # only a compatibility redirect alias whose loader returns no code object,
+        # so ``python -m`` on it raises "No code object available" and the
+        # watchdog never starts; target the real runnable module (issue #2795).
+        _WATCHDOG_MODULE,
         "--watchdog",
         "--port",
         str(port),
@@ -800,6 +837,27 @@ def _start_watchdog(
     )
     log_fh.close()
     pid_path.write_text(str(proc.pid))
+
+    # Confirm the watchdog survived launch. A module-name or import failure makes
+    # the child exit within milliseconds; without this check the failure is
+    # silent -- one line in watchdog.log plus a dead pid file -- while the run
+    # reports itself healthy despite having lost its crash/stall recovery layer
+    # (issue #2795).
+    try:
+        returncode = proc.wait(timeout=_WATCHDOG_LAUNCH_GRACE_S)
+    except subprocess.TimeoutExpired:
+        return proc.pid  # still running after the grace window -> launched OK
+
+    log_tail = _read_watchdog_log_tail(log_path)
+    logger.error(
+        "Recovery watchdog exited immediately (code %s); this run has no crash or stall recovery. watchdog.log: %s",
+        returncode,
+        log_tail,
+    )
+    console.print(
+        f"[bold red]Recovery watchdog failed to start (exit {returncode}); "
+        f"this run has no automatic crash or stall recovery.[/bold red]"
+    )
     return proc.pid
 
 
