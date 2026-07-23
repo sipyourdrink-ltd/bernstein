@@ -37,6 +37,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,8 @@ __all__ = [
     "LAST_GREEN_DOC_PATH",
     "LAST_GREEN_END",
     "LAST_GREEN_JSON_PATH",
+    "LAST_GREEN_STALE_DAYS",
+    "SKIP_ISSUE_THRESHOLD",
     "CanaryOutcome",
     "CanaryTarget",
     "LastGreenEntry",
@@ -62,7 +65,10 @@ __all__ = [
     "build_canary_receipt",
     "canary_issue_body",
     "canary_issue_title",
+    "canary_skip_issue_body",
+    "canary_skip_issue_title",
     "failure_fingerprint",
+    "last_green_is_stale",
     "load_canary_state",
     "load_last_green",
     "probe_binary_version",
@@ -72,6 +78,7 @@ __all__ = [
     "run_matrix",
     "save_canary_state",
     "save_last_green",
+    "skip_fingerprint",
     "update_last_green",
     "verify_canary_receipt",
     "write_canary_receipt",
@@ -88,6 +95,20 @@ CANARY_GOAL = "Reply with exactly the word BERNSTEIN-CANARY and stop."
 #: Consecutive failures required before the canary proposes an issue.
 #: One upstream flake or a transient install problem never pages anyone.
 FAILURE_ISSUE_THRESHOLD = 2
+
+#: Consecutive same-reason skips required before the canary proposes a
+#: skip-tracking issue. A degraded (``skip``) probe is not a conformance
+#: break, but an adapter that skips for the same reason night after night
+#: is silently unverified -- the blind spot the canary exists to close. The
+#: threshold is higher than :data:`FAILURE_ISSUE_THRESHOLD`: a skip is a
+#: weaker signal than a confirmed drift, so it must persist longer before it
+#: is worth an operator's attention.
+SKIP_ISSUE_THRESHOLD = 3
+
+#: A last-green row older than this many days is flagged stale. The canary
+#: refreshes passing rows nightly, so a row that has not moved in this long
+#: is no longer evidence the installed surface still conforms.
+LAST_GREEN_STALE_DAYS = 7
 
 #: Markers delimiting the generated last-green table inside the docs page.
 LAST_GREEN_BEGIN = "<!-- last-green:begin -->"
@@ -167,6 +188,15 @@ class CanaryOutcome:
             ``None``. Recorded so the last-green guard can reject a below-floor
             version regardless of the conformance verdict.
         refused_below_floor: Whether this outcome is a below-floor refusal.
+        skip_reason: Stable, path-independent reason for a ``skip`` verdict
+            (``None`` for every other verdict). It is the dedupe key for the
+            skip-streak escalation (:func:`skip_fingerprint`): the same
+            degraded reason repeating night after night fingerprints
+            identically, so a chronic skip escalates exactly once. It is
+            deliberately *not* folded into the receipt preimage
+            (:func:`build_canary_receipt`) -- the human-readable reason
+            already rides in ``transcript`` -- so adding it does not perturb
+            any receipt hash.
     """
 
     adapter: str
@@ -179,6 +209,7 @@ class CanaryOutcome:
     transcript: tuple[str, ...] = ()
     security_floor: str | None = None
     refused_below_floor: bool = False
+    skip_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -303,7 +334,13 @@ def run_canary_target(
             installed_version=None,
             verdict="skip",
             transcript=tuple(transcript),
+            skip_reason="binary not on PATH",
         )
+
+    # Record which file was actually probed. A shadowed or wrong binary on
+    # PATH produces an inconclusive skip that is indistinguishable from real
+    # drift unless the resolved path is in the receipt (#2842).
+    transcript.append(f"{target.binary} resolved: {binary_resolved}")
 
     installed_version = probe_binary_version(binary_resolved)
     transcript.append(f"{target.binary} --version: {installed_version or 'unknown'}")
@@ -369,6 +406,12 @@ def run_canary_target(
             verdict="pass",
             transcript=tuple(transcript),
         )
+    # The skip reason is the report detail when present (e.g. "probe
+    # inconclusive (...)", "no contract", "binary missing"). It is stable for
+    # a given adapter on a given host, so the same degraded surface repeating
+    # across nights fingerprints identically and the streak escalates exactly
+    # once. The resolved path stays out of the reason (it rides in the
+    # transcript for forensics) so the dedupe key does not churn on paths.
     return CanaryOutcome(
         adapter=target.adapter,
         binary=target.binary,
@@ -377,6 +420,7 @@ def run_canary_target(
         installed_version=installed_version,
         verdict="skip",
         transcript=tuple(transcript),
+        skip_reason=detail or "conformance skip",
     )
 
 
@@ -479,6 +523,24 @@ def failure_fingerprint(outcome: CanaryOutcome) -> str:
     )
 
 
+def skip_fingerprint(outcome: CanaryOutcome) -> str:
+    """Stable dedupe key for one degraded-skip shape.
+
+    Depends on the adapter and the skip reason (not the version or any
+    resolved path): the same degraded reason repeating night after night
+    fingerprints identically, so a chronic skip escalates exactly once,
+    while a different degradation restarts the streak and reports afresh.
+    """
+    return _sha256_hex(
+        _canonical_bytes(
+            {
+                "adapter": outcome.adapter,
+                "skip_reason": outcome.skip_reason or "",
+            }
+        )
+    )
+
+
 def apply_canary_outcome(
     state: dict[str, dict[str, Any]],
     outcome: CanaryOutcome,
@@ -486,42 +548,77 @@ def apply_canary_outcome(
     """Fold one outcome into the canary state; decide whether to report.
 
     State shape (per adapter): ``{"consecutive_failures": int,
-    "last_fingerprint": str, "reported_fingerprint": str}``.
+    "last_fingerprint": str, "reported_fingerprint": str,
+    "consecutive_skips": int, "last_skip_fingerprint": str,
+    "reported_skip_fingerprint": str}``.
 
     Rules:
 
-    * ``pass`` resets the failure counter and clears both fingerprints.
-    * ``skip`` leaves the state untouched (an uninstalled binary is not
-      evidence either way).
-    * ``fail`` counts consecutively *per fingerprint*: a failure that
-      fingerprints differently from the previous one restarts the count
-      at 1, so a churning upstream must fail the same way twice in a row
-      before anything is reported. Reporting triggers only when the
-      counter reaches :data:`FAILURE_ISSUE_THRESHOLD` AND this
-      fingerprint has not been reported yet.
+    * ``pass`` resets both the failure and the skip counters and clears
+      every fingerprint: a green run is positive evidence that supersedes
+      any prior degraded or failing streak.
+    * ``refuse`` (#2515) leaves the state untouched: a below-floor version
+      is an operator-environment issue, not an upstream signal.
+    * ``fail`` counts consecutively *per failure fingerprint*: a failure
+      that fingerprints differently from the previous one restarts the
+      count at 1, so a churning upstream must fail the same way twice in a
+      row before anything is reported. Reporting triggers only when the
+      counter reaches :data:`FAILURE_ISSUE_THRESHOLD` AND this fingerprint
+      has not been reported yet.
+    * ``skip`` counts consecutively *per skip fingerprint*, mirroring the
+      failure path on its own counter and threshold
+      (:data:`SKIP_ISSUE_THRESHOLD`): a degraded probe that repeats for the
+      same reason becomes visible instead of being silently voided, while a
+      one-off skip never pages anyone. The skip counters are independent of
+      the failure counters, so a skip never perturbs the failure path (and
+      vice versa).
 
     Returns:
         ``(new_state, should_open_issue)``. The input mapping is not
-        mutated.
+        mutated. ``should_open_issue`` is set for both a threshold-crossing
+        fail and a threshold-crossing skip; the caller distinguishes them by
+        ``outcome.verdict`` to pick the issue title/body.
     """
     new_state = {name: entry.copy() for name, entry in state.items()}
-    if outcome.verdict in ("skip", "refuse"):
-        # ``skip``: an uninstalled binary is not evidence either way.
-        # ``refuse`` (#2515): a below-floor version is an operator-environment
-        # issue, not an upstream regression, so it never counts toward the
-        # issue-opening threshold. The refusal is still sealed as a receipt by
-        # ``run_matrix``; it just does not page anyone as a conformance break.
+    if outcome.verdict == "refuse":
+        # A below-floor version is an operator-environment issue, not an
+        # upstream regression, so it never counts toward any threshold. The
+        # refusal is still sealed as a receipt by ``run_matrix``.
         return new_state, False
 
     entry = new_state.setdefault(
         outcome.adapter,
-        {"consecutive_failures": 0, "last_fingerprint": "", "reported_fingerprint": ""},
+        {
+            "consecutive_failures": 0,
+            "last_fingerprint": "",
+            "reported_fingerprint": "",
+            "consecutive_skips": 0,
+            "last_skip_fingerprint": "",
+            "reported_skip_fingerprint": "",
+        },
     )
     if outcome.verdict == "pass":
         entry["consecutive_failures"] = 0
         entry["last_fingerprint"] = ""
         entry["reported_fingerprint"] = ""
+        entry["consecutive_skips"] = 0
+        entry["last_skip_fingerprint"] = ""
+        entry["reported_skip_fingerprint"] = ""
         return new_state, False
+
+    if outcome.verdict == "skip":
+        fingerprint = skip_fingerprint(outcome)
+        if entry.get("last_skip_fingerprint") == fingerprint:
+            entry["consecutive_skips"] = int(entry.get("consecutive_skips", 0)) + 1
+        else:
+            entry["consecutive_skips"] = 1
+            entry["last_skip_fingerprint"] = fingerprint
+        should_open = (
+            entry["consecutive_skips"] >= SKIP_ISSUE_THRESHOLD and entry.get("reported_skip_fingerprint") != fingerprint
+        )
+        if should_open:
+            entry["reported_skip_fingerprint"] = fingerprint
+        return new_state, should_open
 
     fingerprint = failure_fingerprint(outcome)
     if entry.get("last_fingerprint") == fingerprint:
@@ -581,6 +678,60 @@ def canary_issue_body(outcome: CanaryOutcome, *, receipt_sha: str) -> str:
     ]
     lines.extend(f"- {failure}" for failure in outcome.failures)
     lines.extend(["", "## Probe transcript", "", "```"])
+    lines.extend(outcome.transcript)
+    lines.extend(
+        [
+            "```",
+            "",
+            f"Receipt: `sha256:{receipt_sha}` (canary run artifact; verify with "
+            "`bernstein.adapters.canary.verify_canary_receipt`).",
+            "",
+            "Last-green reference: docs/adapters/conformance-canary.md.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def canary_skip_issue_title(outcome: CanaryOutcome) -> str:
+    """Deterministic title for a chronic-skip tracking issue.
+
+    Distinct from :func:`canary_issue_title` -- it says "skip", never
+    "regression" -- so a degraded probe is never conflated with a confirmed
+    drift. The workflow's title-based dedupe keeps one open issue per
+    adapter skip streak.
+    """
+    return f"Adapter conformance canary skip streak: {outcome.adapter}"
+
+
+def canary_skip_issue_body(outcome: CanaryOutcome, *, receipt_sha: str) -> str:
+    """Issue body for a chronic skip: the degraded reason plus transcript.
+
+    A ``skip`` is not a confirmed conformance break; it is a probe that
+    could not decide (an uninstalled binary, a broken or wholesale-redesigned
+    ``--help``, a shadowed binary on ``PATH``). A skip that repeats for the
+    same reason past :data:`SKIP_ISSUE_THRESHOLD` nights means the adapter is
+    silently unverified and needs an operator to investigate -- which the
+    transcript (carrying the resolved binary path) makes reproducible.
+    """
+    lines = [
+        f"The nightly adapter conformance canary has recorded `{outcome.adapter}` "
+        f"({outcome.installed_version or 'unknown version'}) as a degraded `skip` for "
+        f"the same reason on {SKIP_ISSUE_THRESHOLD} consecutive runs, so it is "
+        "currently unverified rather than confirmed-passing.",
+        "",
+        "This is not a confirmed conformance regression. A chronic skip usually "
+        "means an uninstalled binary, a broken or wholesale-redesigned `--help`, "
+        "or a shadowed/wrong binary on `PATH`. Investigate using the transcript "
+        "below; the last-green table will not advance until a green run.",
+        "",
+        "## Skip reason",
+        "",
+        f"- {outcome.skip_reason or 'unknown'}",
+        "",
+        "## Probe transcript",
+        "",
+        "```",
+    ]
     lines.extend(outcome.transcript)
     lines.extend(
         [
@@ -690,12 +841,48 @@ def save_last_green(path: Path, entries: dict[str, LastGreenEntry]) -> None:
     tmp.replace(path)
 
 
-def render_last_green_table(entries: dict[str, LastGreenEntry]) -> str:
+def _parse_recorded_at(value: str) -> datetime | None:
+    """Parse a last-green ``recorded_at`` stamp, tolerating a trailing ``Z``.
+
+    Returns ``None`` for an unparseable value (treated as stale by callers:
+    a timestamp that cannot be read cannot be proven fresh).
+    """
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def last_green_is_stale(
+    recorded_at: str,
+    *,
+    now: datetime,
+    max_age_days: int = LAST_GREEN_STALE_DAYS,
+) -> bool:
+    """Return whether a last-green row is older than ``max_age_days``.
+
+    Time is injected (``now``) so the decision is deterministic and testable;
+    the canary passes its run timestamp and the doctor passes ``datetime.now``.
+    An unparseable ``recorded_at`` is treated as stale (fail-visible).
+    """
+    recorded = _parse_recorded_at(recorded_at)
+    if recorded is None:
+        return True
+    return (now - recorded).days > max_age_days
+
+
+def render_last_green_table(entries: dict[str, LastGreenEntry], *, now: datetime | None = None) -> str:
     """Render the per-adapter last-green table as Markdown.
 
     Rows sort by adapter name so regeneration is deterministic; each row
-    names the receipt hash prefix that attested it.
+    names the receipt hash prefix that attested it. A row whose
+    ``recorded_at`` is older than :data:`LAST_GREEN_STALE_DAYS` (as of
+    ``now``) is annotated ``(stale)`` so a frozen row stops reading as
+    automation-fresh. ``now`` is injected for deterministic tests and set to
+    the run timestamp by the canary; it defaults to the current UTC time.
     """
+    current = now if now is not None else datetime.now(UTC)
     lines = [
         "| Adapter | Binary | Last-green version | Verified | Receipt |",
         "|---|---|---|---|---|",
@@ -704,18 +891,22 @@ def render_last_green_table(entries: dict[str, LastGreenEntry]) -> str:
         lines.append("| _none yet_ | - | - | - | - |")
     for name in sorted(entries):
         entry = entries[name]
+        verified = entry.recorded_at
+        if last_green_is_stale(entry.recorded_at, now=current):
+            verified = f"{entry.recorded_at} (stale)"
         lines.append(
-            f"| {entry.adapter} | `{entry.binary}` | {entry.version} "
-            f"| {entry.recorded_at} | `{entry.receipt_sha256[:12]}` |"
+            f"| {entry.adapter} | `{entry.binary}` | {entry.version} | {verified} | `{entry.receipt_sha256[:12]}` |"
         )
     return "\n".join(lines)
 
 
-def write_last_green_doc(doc_path: Path, entries: dict[str, LastGreenEntry]) -> None:
+def write_last_green_doc(doc_path: Path, entries: dict[str, LastGreenEntry], *, now: datetime | None = None) -> None:
     """Regenerate the last-green table between the doc's markers.
 
-    Idempotent: regenerating with the same entries leaves the file
-    byte-identical. Content outside the markers is preserved verbatim.
+    Idempotent for a fixed ``now``: regenerating with the same entries and
+    timestamp leaves the file byte-identical. Content outside the markers is
+    preserved verbatim. ``now`` is threaded into the staleness annotation so
+    the regenerated table is a deterministic function of ``(entries, now)``.
 
     Raises:
         ValueError: If the doc is missing either marker.
@@ -727,7 +918,7 @@ def write_last_green_doc(doc_path: Path, entries: dict[str, LastGreenEntry]) -> 
         raise ValueError(f"{doc_path} is missing the last-green table markers")
     head = text[: begin + len(LAST_GREEN_BEGIN)]
     tail = text[end:]
-    table = render_last_green_table(entries)
+    table = render_last_green_table(entries, now=now)
     doc_path.write_text(f"{head}\n{table}\n{tail}", encoding="utf-8")
 
 
@@ -791,16 +982,29 @@ def run_matrix(
         if outcome.refused_below_floor:
             result.refusals.append(outcome.adapter)
         if should_open:
-            result.issues_to_open.append(
-                {
-                    "title": canary_issue_title(outcome),
-                    "body": canary_issue_body(outcome, receipt_sha=sha),
-                }
-            )
+            # A threshold-crossing skip and a threshold-crossing fail are both
+            # reported here; the verdict picks the distinctly-labeled payload so
+            # a degraded probe is never conflated with a confirmed drift.
+            if outcome.verdict == "skip":
+                result.issues_to_open.append(
+                    {
+                        "title": canary_skip_issue_title(outcome),
+                        "body": canary_skip_issue_body(outcome, receipt_sha=sha),
+                    }
+                )
+            else:
+                result.issues_to_open.append(
+                    {
+                        "title": canary_issue_title(outcome),
+                        "body": canary_issue_body(outcome, receipt_sha=sha),
+                    }
+                )
         last_green = update_last_green(last_green, outcome, receipt_sha=sha, recorded_at=generated_at)
 
     save_canary_state(state_path, state)
     save_last_green(last_green_path, last_green)
     if docs_path is not None:
-        write_last_green_doc(docs_path, last_green)
+        # Evaluate staleness as-of the run timestamp so the regenerated table
+        # is a deterministic function of the run inputs.
+        write_last_green_doc(docs_path, last_green, now=_parse_recorded_at(generated_at))
     return result

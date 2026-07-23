@@ -34,12 +34,16 @@ from bernstein.adapters.canary import (
     CANARY_MATRIX,
     CANARY_SCHEMA_VERSION,
     FAILURE_ISSUE_THRESHOLD,
+    LAST_GREEN_STALE_DAYS,
+    SKIP_ISSUE_THRESHOLD,
     CanaryOutcome,
     CanaryTarget,
     apply_canary_outcome,
     build_canary_receipt,
     canary_issue_body,
     canary_issue_title,
+    canary_skip_issue_body,
+    canary_skip_issue_title,
     failure_fingerprint,
     load_canary_state,
     load_last_green,
@@ -49,6 +53,7 @@ from bernstein.adapters.canary import (
     run_matrix,
     save_canary_state,
     save_last_green,
+    skip_fingerprint,
     update_last_green,
     verify_canary_receipt,
     write_canary_receipt,
@@ -88,6 +93,7 @@ def _outcome(
     verdict: str = "fail",
     version: str | None = "1.4.0",
     failures: tuple[str, ...] = ("required flag missing from --help: --output-format",),
+    skip_reason: str | None = None,
 ) -> CanaryOutcome:
     return CanaryOutcome(
         adapter=adapter,
@@ -98,6 +104,7 @@ def _outcome(
         verdict=verdict,
         failures=failures if verdict == "fail" else (),
         transcript=(f"{adapter} --help: probe", "verdict: " + verdict),
+        skip_reason=skip_reason if verdict == "skip" else None,
     )
 
 
@@ -240,6 +247,23 @@ class TestRunCanaryTarget:
         assert outcome.verdict == "skip"
         assert outcome.failures == ()
         assert any("none of" in line for line in outcome.transcript)
+        # The skip carries a stable reason so a chronic skip streak can escalate.
+        assert outcome.skip_reason is not None
+
+    def test_skip_transcript_carries_resolved_binary_path(self, tmp_path: Path) -> None:
+        """The resolved binary path rides into the skip transcript.
+
+        An operator must be able to tell a shadowed/wrong binary on PATH
+        from real drift: the receipt records exactly which file was probed.
+        """
+        bin_dir = tmp_path / "bin"
+        stub = _write_stub_cli(bin_dir, "aider", version="3.13", help_text="aider 3.13 - no advertised surface")
+        contracts = tmp_path / "contracts"
+        _write_contract(contracts, "aider", ["--model", "--message"], binary=stub)
+        target = CanaryTarget(adapter="aider", binary="aider", model="gpt-5-mini")
+        outcome = run_canary_target(target, which=lambda _n: str(stub), contracts_dir=contracts)
+        assert outcome.verdict == "skip"
+        assert any(str(stub) in line for line in outcome.transcript)
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +385,121 @@ class TestFailureThresholdAndDedupe:
 
 
 # ---------------------------------------------------------------------------
+# Skip-streak escalation
+# ---------------------------------------------------------------------------
+
+
+class TestSkipStreakEscalation:
+    """A chronic same-reason skip must become visible, mirroring fails.
+
+    A degraded (``skip``) probe is not a conformance break, but an adapter
+    that skips for the same reason night after night is silently unverified
+    -- exactly the blind spot the canary exists to close. The skip streak
+    escalates on its own counter and threshold, distinct from the fail path.
+    """
+
+    def _skip(self, *, adapter: str = "aider", reason: str = "probe inconclusive (all_absent)") -> CanaryOutcome:
+        return _outcome(adapter=adapter, verdict="skip", failures=(), version=None, skip_reason=reason)
+
+    def test_single_skip_never_escalates(self) -> None:
+        state, should_open = apply_canary_outcome({}, self._skip())
+        assert should_open is False
+        assert state["aider"]["consecutive_skips"] == 1
+
+    def test_threshold_same_reason_skips_escalate_once(self) -> None:
+        assert SKIP_ISSUE_THRESHOLD >= 3
+        state: dict = {}
+        opens: list[bool] = []
+        for _ in range(SKIP_ISSUE_THRESHOLD):
+            state, should_open = apply_canary_outcome(state, self._skip())
+            opens.append(should_open)
+        # Exactly one escalation, fired on the threshold-crossing night.
+        assert opens.count(True) == 1
+        assert opens[-1] is True
+        assert state["aider"]["consecutive_skips"] == SKIP_ISSUE_THRESHOLD
+        # A further same-reason skip does not re-open (deduped by fingerprint).
+        state, again = apply_canary_outcome(state, self._skip())
+        assert again is False
+
+    def test_new_skip_reason_restarts_the_streak(self) -> None:
+        state: dict = {}
+        for _ in range(SKIP_ISSUE_THRESHOLD):
+            state, _ = apply_canary_outcome(state, self._skip(reason="probe inconclusive (all_absent)"))
+        state, should_open = apply_canary_outcome(state, self._skip(reason="binary not on PATH"))
+        assert should_open is False
+        assert state["aider"]["consecutive_skips"] == 1
+
+    def test_pass_resets_skip_streak(self) -> None:
+        state: dict = {}
+        for _ in range(SKIP_ISSUE_THRESHOLD - 1):
+            state, _ = apply_canary_outcome(state, self._skip())
+        state, _ = apply_canary_outcome(state, _outcome(adapter="aider", verdict="pass", failures=()))
+        assert state["aider"]["consecutive_skips"] == 0
+        # After a reset it takes another full streak to escalate again.
+        opens: list[bool] = []
+        for _ in range(SKIP_ISSUE_THRESHOLD):
+            state, should_open = apply_canary_outcome(state, self._skip())
+            opens.append(should_open)
+        assert opens.count(True) == 1
+
+    def test_refuse_still_never_escalates(self) -> None:
+        refusal = _outcome(adapter="aider", verdict="refuse", failures=(), version="0.1.0")
+        state, should_open = apply_canary_outcome({}, refusal)
+        assert should_open is False
+        assert "consecutive_skips" not in state.get("aider", {})
+
+    def test_skip_streak_does_not_touch_fail_counter(self) -> None:
+        state, _ = apply_canary_outcome({}, _outcome())  # one fail for agy
+        state, _ = apply_canary_outcome(state, self._skip(adapter="agy"))
+        assert state["agy"]["consecutive_failures"] == 1
+
+    def test_skip_fingerprint_depends_on_adapter_and_reason(self) -> None:
+        a = skip_fingerprint(self._skip(adapter="aider", reason="probe inconclusive (all_absent)"))
+        b = skip_fingerprint(self._skip(adapter="aider", reason="binary not on PATH"))
+        c = skip_fingerprint(self._skip(adapter="agy", reason="probe inconclusive (all_absent)"))
+        assert len({a, b, c}) == 3
+
+    def test_skip_issue_title_and_body_are_distinct_from_regression(self) -> None:
+        outcome = self._skip()
+        title = canary_skip_issue_title(outcome)
+        body = canary_skip_issue_body(
+            outcome, receipt_sha=receipt_sha256(build_canary_receipt(outcome, generated_at=_GENERATED_AT))
+        )
+        assert "aider" in title
+        assert "skip" in title.lower()
+        # Must not read as a confirmed drift regression.
+        assert "regression" not in title.lower()
+        assert "probe inconclusive (all_absent)" in body
+
+    def test_run_matrix_escalates_a_chronic_skip(self, tmp_path: Path) -> None:
+        """A workflow-shaped run opens exactly one skip issue at the threshold."""
+        bin_dir = tmp_path / "bin"
+        # A stub whose --help advertises none of the required tokens is an
+        # inconclusive skip (report.py), the aider blind-spot shape.
+        stub = _write_stub_cli(bin_dir, "aider", version="0.86.2", help_text="usage: aider [options]")
+        contracts = tmp_path / "contracts"
+        _write_contract(contracts, "aider", ["--yes-always", "--message"], binary=stub)
+        targets = (CanaryTarget(adapter="aider", binary="aider", model="gpt-5-mini"),)
+        kwargs = {
+            "receipts_dir": tmp_path / "receipts",
+            "state_path": tmp_path / "state.json",
+            "last_green_path": tmp_path / "last_green.json",
+            "docs_path": None,
+            "generated_at": _GENERATED_AT,
+            "which": lambda _n: str(stub),
+            "contracts_dir": contracts,
+        }
+        results = [run_matrix(targets, **kwargs) for _ in range(SKIP_ISSUE_THRESHOLD)]
+        # Never a regression (advisory-green preserved), no fail escalation.
+        assert all(r.regressions == [] for r in results)
+        opened = [issue for r in results for issue in r.issues_to_open]
+        assert len(opened) == 1
+        assert "skip" in opened[0]["title"].lower()
+        # The receipt still records the degraded probe.
+        assert all(o.verdict == "skip" for r in results for o in r.outcomes)
+
+
+# ---------------------------------------------------------------------------
 # Last-green table
 # ---------------------------------------------------------------------------
 
@@ -406,18 +545,38 @@ class TestLastGreen:
         assert "1.4.0" in table
         assert ("cd" * 32)[:12] in table  # receipt anchor visible in docs
 
+    def test_render_table_marks_stale_rows(self) -> None:
+        from datetime import UTC, datetime
+
+        entries = update_last_green(
+            {}, _outcome(verdict="pass", failures=()), receipt_sha="cd" * 32, recorded_at="2026-07-01T00:00:00Z"
+        )
+        # A "now" well past the staleness window flags the row.
+        stale_now = datetime(2026, 7, 1, tzinfo=UTC).replace(day=1 + LAST_GREEN_STALE_DAYS + 5)
+        table = render_last_green_table(entries, now=stale_now)
+        assert "stale" in table.lower()
+        # A "now" inside the window leaves the same row unmarked.
+        fresh_now = datetime(2026, 7, 2, tzinfo=UTC)
+        assert "stale" not in render_last_green_table(entries, now=fresh_now).lower()
+
     def test_write_last_green_doc_is_idempotent(self, tmp_path: Path) -> None:
+        from datetime import UTC, datetime
+
         doc = tmp_path / "conformance-canary.md"
         doc.write_text(
-            "# Canary\n\n<!-- last-green:begin -->\nstale\n<!-- last-green:end -->\ntail\n",
+            "# Canary\n\n<!-- last-green:begin -->\nplaceholder\n<!-- last-green:end -->\ntail\n",
             encoding="utf-8",
         )
         outcome = _outcome(verdict="pass", failures=())
         entries = update_last_green({}, outcome, receipt_sha="ef" * 32, recorded_at=_GENERATED_AT)
-        write_last_green_doc(doc, entries)
+        # A "now" inside the freshness window keeps the fixed row unmarked, so
+        # the regeneration is a deterministic function of (entries, now).
+        now = datetime(2026, 7, 12, tzinfo=UTC)
+        write_last_green_doc(doc, entries, now=now)
         once = doc.read_text(encoding="utf-8")
-        write_last_green_doc(doc, entries)
+        write_last_green_doc(doc, entries, now=now)
         assert doc.read_text(encoding="utf-8") == once
+        assert "placeholder" not in once
         assert "stale" not in once
         assert "1.4.0" in once
         assert once.endswith("tail\n")
@@ -666,19 +825,75 @@ class TestDoctorAheadOfLastGreen:
         assert "1.4.0" in row["detail"]
 
     def test_installed_at_last_green_passes(self) -> None:
+        from datetime import UTC, datetime
+
         from bernstein.cli.commands import doctor_cmd
 
         def fake_which(binary: str) -> str | None:
             return "/usr/local/bin/agy" if binary == "agy" else None
 
+        # Evaluate staleness as-of a "now" inside the freshness window so the
+        # fixed _GENERATED_AT row is not flagged stale here.
+        now = datetime(2026, 7, 12, tzinfo=UTC)
         with (
             patch.object(doctor_cmd.shutil, "which", side_effect=fake_which),
             patch.object(doctor_cmd, "_probe_adapter_version", return_value="1.4.0"),
             patch("bernstein.adapters.canary.load_last_green", return_value=self._entries()),
         ):
-            rows = doctor_cmd.check_canary_last_green()
+            rows = doctor_cmd.check_canary_last_green(now=now)
         assert len(rows) == 1
         assert rows[0]["status"] == "PASS"
+
+    def test_installed_adapter_absent_from_last_green_warns(self) -> None:
+        """An installed matrix adapter with no last-green row surfaces as WARN.
+
+        Closes the "aider absent" blind spot: aider is a primary matrix
+        adapter but carries no last-green row, so it never surfaced for a
+        local operator -- not even as "no data".
+        """
+        from datetime import UTC, datetime
+
+        from bernstein.cli.commands import doctor_cmd
+
+        def fake_which(binary: str) -> str | None:
+            return "/usr/local/bin/aider" if binary == "aider" else None
+
+        now = datetime(2026, 7, 12, tzinfo=UTC)
+        with (
+            patch.object(doctor_cmd.shutil, "which", side_effect=fake_which),
+            patch("bernstein.adapters.canary.load_last_green", return_value=self._entries()),
+        ):
+            rows = doctor_cmd.check_canary_last_green(now=now)
+        aider_rows = [r for r in rows if "aider" in r["name"]]
+        assert len(aider_rows) == 1
+        assert aider_rows[0]["status"] == "WARN"
+        assert "last-green" in aider_rows[0]["detail"].lower()
+
+    def test_stale_last_green_row_warns(self) -> None:
+        """A last-green row older than the staleness window surfaces as WARN.
+
+        Closes the "agy stale" blind spot: agy's row froze weeks ago and
+        read as automation-fresh with no marker.
+        """
+        from datetime import UTC, datetime
+
+        from bernstein.cli.commands import doctor_cmd
+
+        def fake_which(binary: str) -> str | None:
+            return "/usr/local/bin/agy" if binary == "agy" else None
+
+        # _GENERATED_AT is 2026-07-11; evaluate well past the window.
+        now = datetime(2026, 8, 1, tzinfo=UTC)
+        with (
+            patch.object(doctor_cmd.shutil, "which", side_effect=fake_which),
+            patch.object(doctor_cmd, "_probe_adapter_version", return_value="1.4.0"),
+            patch("bernstein.adapters.canary.load_last_green", return_value=self._entries()),
+        ):
+            rows = doctor_cmd.check_canary_last_green(now=now)
+        agy_rows = [r for r in rows if "agy" in r["name"]]
+        assert len(agy_rows) == 1
+        assert agy_rows[0]["status"] == "WARN"
+        assert "stale" in agy_rows[0]["detail"].lower()
 
     def test_missing_binary_omitted(self) -> None:
         from bernstein.cli.commands import doctor_cmd
