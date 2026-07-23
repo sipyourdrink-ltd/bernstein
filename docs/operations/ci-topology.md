@@ -39,7 +39,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 1 |
-| .github/workflows/docs-observability-snapshot.yml | Observability daily snapshot | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
+| .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
 | .github/workflows/flake-quarantine.yml | Flake quarantine | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "flake-quarantine"} | 1 |
 | .github/workflows/glitchtip.yml | GlitchTip | schedule, workflow_dispatch | - | 2 |
@@ -114,7 +114,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependabot-auto-merge.yml | auto-merge |
 | .github/workflows/dependency-review.yml | review: Dependency review |
 | .github/workflows/docs-drift.yml | drift-check: Run drift check |
-| .github/workflows/docs-observability-snapshot.yml | snapshot: Capture daily snapshot |
+| .github/workflows/docs-observability-snapshot.yml | snapshot: Capture snapshot |
 | .github/workflows/eval-nightly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
 | .github/workflows/flake-quarantine.yml | detect-and-quarantine: Detect flaky tests and open quarantine PR |
 | .github/workflows/glitchtip.yml | ingest: Ingest GlitchTip events<br>sweep: sweep |
