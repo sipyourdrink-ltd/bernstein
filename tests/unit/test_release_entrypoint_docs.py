@@ -22,7 +22,6 @@ RELEASE_ENTRYPOINTS: dict[str, tuple[str, ...]] = {
     "reconcile-release.yml": ("schedule", "workflow_dispatch"),
     "publish-docker.yml": ("release", "workflow_dispatch"),
     "publish-homebrew.yml": ("release", "workflow_dispatch"),
-    "sbom-upload.yml": ("push", "release"),
 }
 
 
