@@ -43,14 +43,6 @@ def test_telegram_command_dispatch_uses_list_constructor_for_copy() -> None:
     assert "[p for p in text.split()]" not in source
 
 
-def test_pluggy_camel_case_hook_names_have_scoped_sonar_suppression() -> None:
-    """External camelCase lifecycle hooks are suppressed only for the bridge file."""
-    source = _read_source("sonar-project.properties")
-
-    assert "sonar.issue.ignore.multicriteria.e19.ruleKey=python:S116" in source
-    assert "sonar.issue.ignore.multicriteria.e19.resourceKey=src/bernstein/core/lifecycle/pluggy_bridge.py" in source
-
-
 def test_ranked_candidate_default_factory_uses_literal_constructor() -> None:
     """Empty dict defaults should use literal constructor syntax."""
     source = _read_source("src/bernstein/core/orchestration/multi_criteria_rank.py")

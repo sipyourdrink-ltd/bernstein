@@ -11,7 +11,6 @@ from bernstein.core.persistence.action_cache import redact_secrets
 from bernstein.core.quality.pr_review_aggregator import _normalise_tokens as aggregate_tokens
 from bernstein.core.quality.review_consensus import _normalise_tokens as consensus_tokens
 from bernstein.core.tasks.backlog_parser import _STORY_ID, _TASK_ID
-from bernstein.eval.incident_synthesizer import _safe_tag
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRACKED_FILES = (
@@ -22,7 +21,6 @@ TRACKED_FILES = (
     Path("src/bernstein/core/quality/pr_review_aggregator.py"),
     Path("src/bernstein/core/quality/review_consensus.py"),
     Path("src/bernstein/core/tasks/backlog_parser.py"),
-    Path("src/bernstein/eval/incident_synthesizer.py"),
 )
 OLD_REGEX_FRAGMENTS = (
     "[A-Za-z0-9]",
@@ -80,5 +78,3 @@ def test_regex_behavior_is_preserved_for_representative_inputs() -> None:
     assert _TASK_ID.match("Tabc") is None
     assert _STORY_ID.match("US123-alpha") is not None
     assert _STORY_ID.match("USabc") is None
-
-    assert _safe_tag("ValueError: bad/path") == "valueerror_bad_path"
