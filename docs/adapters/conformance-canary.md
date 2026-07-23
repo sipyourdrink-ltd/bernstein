@@ -49,11 +49,30 @@ reconstructable offline rather than living only in a CI log.
   operator must investigate, rather than genuine per-flag drift. A
   *partial* miss (at least one required token still present) remains a
   real drift `fail`. The `skip` is independent of the process exit code.
+  The skip transcript records the **resolved binary path**, so a
+  shadowed/wrong binary on `PATH` is distinguishable from real drift.
 * Issues are **deduped on the failure fingerprint** (adapter + version +
   failure lines): the same regression never opens two issues, while a
   new upstream version failing fresh reports again.
 * The opened issue carries the failing conformance transcript and the
   receipt hash, so the finding is reproducible from the issue alone.
+
+## Chronic-skip handling
+
+A `skip` is not a conformance break, but an adapter that skips for the
+**same reason on three consecutive runs** is silently unverified -- the
+blind spot the canary exists to close. Such a streak opens a
+distinctly-labeled tracking issue (title: *"Adapter conformance canary
+skip streak"*, never *"regression"*), so a degraded probe becomes visible
+without being conflated with confirmed drift:
+
+* The skip streak counts on its own counter and threshold
+  (`SKIP_ISSUE_THRESHOLD`), independent of the failure path, and is
+  deduped on an (adapter, skip-reason) fingerprint so it opens **one**
+  issue per chronic reason.
+* A `pass` resets the streak; a different skip reason restarts it.
+* A chronic skip never reddens the job -- the workflow stays advisory;
+  escalation-to-issue is the mechanism, not a red cron.
 
 ## Last-green table
 
@@ -62,16 +81,36 @@ is a projection, never a hand-maintained list. Primary adapters without
 a passing receipt (currently `aider`) have no last-green row, so the
 primary-adapter list above and this table diverge until the next green
 canary run for that adapter. Each row names the
-receipt hash prefix that attested it. `bernstein doctor` reads the same
-projection (shipped as `src/bernstein/adapters/last_green.json`) and
-warns when a locally installed agent version is *ahead* of last-green:
-the canary has not verified that release yet, so unattended runs are
-one upstream regression away from failing without warning.
+receipt hash prefix that attested it. A row whose `recorded_at` is older
+than seven days is annotated `(stale)`: the canary refreshes passing rows
+nightly, so a frozen row is no longer evidence the surface still conforms.
+
+`bernstein doctor` reads the same projection (shipped as
+`src/bernstein/adapters/last_green.json`) and, for every locally installed
+matrix adapter, warns when the installed version is *ahead* of last-green
+(the canary has not verified that release yet), when the adapter has **no
+last-green row at all** (installed but never certified -- e.g. `aider`),
+and when its last-green row is **stale**. So an operator sees an absent or
+frozen adapter locally, not only in this table.
+
+### Adapters with no automated last-green
+
+* **`aider`** -- a `--help` that advertises none of its required tokens
+  probes as an inconclusive `skip`, so `aider` earns no last-green row
+  until a green canary run. A chronic skip is now tracked (see
+  *Chronic-skip handling*).
+* **`agy`** (Antigravity) is closed-source with a **manual, no-CI install
+  path** (`install.method: manual`, empty spec in
+  `tests/contract/contracts/agy.yaml`): the CI runner cannot install it,
+  so its last-green row is refreshed only by an operator running the canary
+  locally and can freeze while peer rows refresh nightly. Its row is
+  therefore expected to read `(stale)` on the CI-shipped projection; treat
+  `agy` as an operator-verified local check, not an automation-fresh row.
 
 <!-- last-green:begin -->
 | Adapter | Binary | Last-green version | Verified | Receipt |
 |---|---|---|---|---|
-| agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z | `006fb946868d` |
+| agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z (stale) | `006fb946868d` |
 | claude | `claude` | 2.1.217 | 2026-07-22T07:30:14Z | `488c43fbfbc0` |
 | codex | `codex` | 0.145.0 | 2026-07-22T07:30:14Z | `43296bc25996` |
 | copilot | `copilot` | 1.0.73 | 2026-07-22T07:30:14Z | `44eab25c7282` |
