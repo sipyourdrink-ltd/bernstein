@@ -1,8 +1,10 @@
 # Contract for the Qwen CLI (adapter: qwen).
 #
 # Always-passed surface from src/bernstein/adapters/qwen.py::_build_command:
-# ``qwen --approval-mode yolo --model <resolved> [--auth-type openai] [--web-search-default tavily]``.
-# ``--approval-mode yolo`` and ``--model`` are always passed. Only ``--model``
+# ``qwen --approval-mode yolo --output-format stream-json --model <resolved> [--auth-type openai]``.
+# ``--approval-mode yolo``, ``--output-format stream-json`` and ``--model`` are
+# always passed (stream-json makes qwen emit the token accounting the cost path
+# recovers, issue #2797). Only ``--model``
 # is in ``required_flags`` because ``qwen --help`` does not enumerate the
 # approval-mode flag at the top level (in any spelling: -y / --yolo /
 # --approval-mode), so it cannot be drift-checked via help text; it is the

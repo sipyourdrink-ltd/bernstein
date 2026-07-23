@@ -788,10 +788,31 @@ def compute_savings_vs_opus(records: list[dict[str, Any]]) -> float:
     return savings
 
 
+def _record_is_completed(rec: dict[str, Any]) -> bool:
+    """Return whether a task record counts as a completed task.
+
+    Reconciles with ``bernstein cost``'s ``_count_task_status`` so the manual-
+    savings figure and the ``Tasks: N completed`` line are computed from the
+    same completion-aware view (issue #2797): an explicit ``status`` wins, and
+    only when no status was recorded does a nonzero ``cost_usd`` stand in as
+    "this task did real work". A free-route run that recorded neither a
+    ``done`` status nor any spend is therefore not counted, so no savings
+    figure is claimed for ``0`` completed tasks.
+    """
+    status = str(rec.get("status", "") or "").strip().lower()
+    if status:
+        return status == "done"
+    return float(rec.get("cost_usd", 0.0) or 0.0) > 0.0
+
+
 def compute_savings_vs_manual(records: list[dict[str, Any]], hourly_rate: float = 100.0) -> dict[str, float]:
     """Estimate savings vs manual coding.
 
-    Calculates: estimated_manual_hours * hourly_rate - api_cost.
+    Calculates: estimated_manual_hours * hourly_rate - api_cost. Manual hours
+    are summed only over completed task records (see
+    :func:`_record_is_completed`) so the savings figure reconciles with the
+    completed-task count instead of claiming hours for tasks that never
+    completed.
 
     Args:
         records: Task metric records from tasks.jsonl.
@@ -804,6 +825,8 @@ def compute_savings_vs_manual(records: list[dict[str, Any]], hourly_rate: float 
     api_cost = 0.0
     for rec in records:
         api_cost += float(rec.get("cost_usd", 0.0) or 0.0)
+        if not _record_is_completed(rec):
+            continue
         # Check if explicitly recorded, otherwise estimate based on scope
         recorded_hours = float(rec.get("estimated_manual_hours", 0.0) or 0.0)
         if recorded_hours <= 0:

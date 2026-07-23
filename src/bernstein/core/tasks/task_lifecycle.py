@@ -3346,7 +3346,23 @@ def _record_completion_metrics(
             dead_model,
         )
     if sidecar_session is not None:
+        from pathlib import Path as _CliPath
+
         from bernstein.core.agents.agent_lifecycle import _read_runner_cost_usd
+        from bernstein.core.cost.cli_adapter_usage import capture_cli_adapter_usage
+
+        # Issue #2797: plain CLI adapters (qwen etc.) write no .tokens sidecar
+        # during the run, so recover per-call usage from the adapter's
+        # structured session log and materialise the sidecar the recovery
+        # below already consumes. No-op when a sidecar already exists
+        # (openai_agents / Claude wrapper wrote one) so counts are never
+        # double-recorded. Also yields the model/route id for attribution.
+        _cli_session_log = getattr(session, "log_path", "") or ""
+        _cli_in, _cli_out, _cli_model = capture_cli_adapter_usage(
+            orch._workdir,
+            str(getattr(sidecar_session, "id", "") or ""),
+            _CliPath(_cli_session_log) if _cli_session_log else None,
+        )
 
         sidecar_cost, sidecar_in, sidecar_out = _read_runner_cost_usd(orch._workdir, sidecar_session, task.id)
         if sidecar_cost > cost_usd or (cost_usd <= 0.0 and (sidecar_in > 0 or sidecar_out > 0)):
@@ -3363,6 +3379,10 @@ def _record_completion_metrics(
                 task_m.tokens_prompt = sidecar_in
                 task_m.tokens_completion = sidecar_out
                 task_m.tokens_used = sidecar_in + sidecar_out
+        # Attribute the model/route where the CLI log knows it but the record
+        # does not (dead-session completions record model=None -> "unknown").
+        if _cli_model and task_m is not None and not (task_m.model or "").strip():
+            task_m.model = _cli_model
     logger.info(
         "completion_cost_source: task_id=%s agent_id=%s source=%s cost_usd=%.6f tokens_prompt=%d tokens_completion=%d",
         task.id,
@@ -3541,7 +3561,13 @@ def _record_evolution_completion(
                 duration_seconds=round(duration, 2),
                 cost_usd=cost_usd,
                 janitor_passed=janitor_passed,
-                model=session.model_config.model if session else None,
+                # Fall back to the record's model when the session is gone
+                # (dead-session completions) so a known CLI-adapter route id,
+                # recovered from the session log in _record_completion_metrics,
+                # is attributed instead of writing model=None -> "unknown"
+                # (issue #2797).
+                model=(session.model_config.model if session else None)
+                or (str(getattr(task_m, "model", "") or "") or None if task_m else None),
                 provider=session.provider if session else None,
                 # task_m was reconciled with the runner's .tokens sidecar in
                 # _record_completion_metrics, so these carry the real token

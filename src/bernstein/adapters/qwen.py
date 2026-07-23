@@ -129,7 +129,14 @@ class QwenAdapter(CLIAdapter):
         # in qwen-code (the unified form; the older ``-y`` / ``--yolo`` spellings
         # are no longer shown in ``qwen --help``). ``--approval-mode`` is the
         # stable flag the adapter contract verifies against the CLI help.
-        cmd: list[str] = ["qwen", "--approval-mode", "yolo"]
+        # ``--output-format stream-json`` makes qwen-code emit line-delimited
+        # JSON whose ``stats.models[<route>].tokens`` breakdown and per-call
+        # ``usage`` blocks carry the provider's own token accounting. The
+        # completion path recovers those counts from the session log so
+        # ``bernstein cost`` shows real ``Tokens In`` / ``Tokens Out`` for
+        # CLI-adapter runs instead of ``0`` / ``0`` (issue #2797). Streaming
+        # is preserved: records arrive line by line rather than buffered.
+        cmd: list[str] = ["qwen", "--approval-mode", "yolo", "--output-format", "stream-json"]
 
         # Map abstract/alias names to real Qwen API model IDs.
         # Always pass --model explicitly to avoid relying on settings.json.

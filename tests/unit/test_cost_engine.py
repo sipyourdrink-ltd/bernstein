@@ -723,3 +723,34 @@ class TestComputeSavingsVsManual:
         assert res["manual_cost_usd"] == pytest.approx(750.0)
         assert res["api_cost_usd"] == pytest.approx(4.0)
         assert res["savings_usd"] == pytest.approx(746.0)
+
+    def test_no_savings_when_no_task_completed(self) -> None:
+        # Issue #2797: a free-route run records real token usage but no
+        # ``status`` and ``$0`` cost, so nothing is "completed". The savings
+        # figure must reconcile with that instead of claiming manual hours
+        # for tasks that never completed.
+        from bernstein.core.cost import compute_savings_vs_manual
+
+        records = [
+            {"cost_usd": 0.0, "tokens_prompt": 5120, "tokens_completion": 880, "scope": "large"},
+            {"cost_usd": 0.0, "tokens_prompt": 1200, "tokens_completion": 340, "scope": "medium"},
+        ]
+        res = compute_savings_vs_manual(records)
+        assert res["manual_hours"] == pytest.approx(0.0)
+        assert res["savings_usd"] == pytest.approx(0.0)
+
+    def test_counts_only_done_status_records(self) -> None:
+        # Explicit status wins over the cost>0 fallback: a failed task with
+        # real spend must not contribute manual-savings hours.
+        from bernstein.core.cost import compute_savings_vs_manual
+
+        records = [
+            {"cost_usd": 0.0, "status": "done", "scope": "medium"},  # 1.5 hr
+            {"cost_usd": 2.0, "status": "failed", "scope": "large"},  # excluded
+        ]
+        res = compute_savings_vs_manual(records)
+        assert res["manual_hours"] == pytest.approx(1.5)
+        # Manual cost = 1.5 hr * $100 = $150; api_cost still sums real spend
+        # across all records (including the failed one) = $2.0.
+        assert res["api_cost_usd"] == pytest.approx(2.0)
+        assert res["savings_usd"] == pytest.approx(148.0)

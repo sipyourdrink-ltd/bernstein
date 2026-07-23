@@ -116,6 +116,27 @@ class TestQwenAdapterSpawn:
         assert "-y" not in inner
         assert "--yolo" not in inner
 
+    def test_stream_json_output_format_present(self, tmp_path: Path) -> None:
+        # Issue #2797: the adapter requests structured stream-json output so
+        # the completion path can recover real per-call token usage from the
+        # session log.
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=112)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-sjson",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--output-format" in inner
+        assert inner[inner.index("--output-format") + 1] == "stream-json"
+
     def test_prompt_appended_last(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=103)
