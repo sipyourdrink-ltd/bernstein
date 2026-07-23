@@ -110,11 +110,15 @@ jobs:
     needs: meta
     if: needs.meta.outputs.head_branch == 'main'
     # Union of permissions the called workflow's jobs request: it tags
-    # the release commit (contents:write) and opens / closes the
-    # auto-release-skipped issue (issues:write).
+    # the release commit (contents:write), opens / closes the
+    # auto-release-skipped issue (issues:write), and dispatches the
+    # publish chain (actions:write). Granting less than any callee job
+    # requests rejects the call at boot: the whole dispatcher run ends
+    # as conclusion: startup_failure with zero check_runs.
     permissions:
       contents: write
       issues: write
+      actions: write
     uses: ./.github/workflows/auto-release.yml
     # GITHUB_TOKEN is provided automatically to reusable workflows.
     with:
