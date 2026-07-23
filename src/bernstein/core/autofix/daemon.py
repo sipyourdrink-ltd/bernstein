@@ -257,7 +257,7 @@ def _capture_autofix_fault(
     """Forward an unexpected autofix-daemon fault to the operator error sink.
 
     A repo source or dispatch that raises is an unexpected daemon fault,
-    not a handled CI outcome, so it belongs in GlitchTip. The capture
+    not a handled CI outcome, so it belongs in the error sink. The capture
     helper is fail-closed, and the call is wrapped so the daemon's own
     resilience (it logs and continues) is never compromised by telemetry.
     """

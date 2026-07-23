@@ -18,7 +18,7 @@ handful of patterns repeat across them verbatim:
 Centralising these primitives here lets each backend module focus on
 the truly provider-specific bits (the SDK import, the Sandbox-class
 lookup, the exec signature) without repeating shared scaffolding. It
-also keeps SonarCloud duplication noise off backends that must
+also keeps static-analysis duplication noise off backends that must
 necessarily conform to the same protocol shape.
 """
 

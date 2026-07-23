@@ -55,12 +55,6 @@ on:
           on the BERNSTEIN_CI_SELF_DRIVE feature flag, so this secret
           is only consulted when the flag is set to "tier3".
         required: false
-      GLITCHTIP_DSN:
-        description: >-
-          Sentry-protocol DSN for the operator error sink. Optional -
-          when unset the heal step runs without routing orchestration
-          crashes, so forks stay green.
-        required: false
 
 # Workflow-level permissions are minimal; each job below declares
 # the narrower scopes it actually needs (zizmor excessive-permissions).
@@ -285,10 +279,6 @@ jobs:
           # stages the diff into a dedicated `auto-heal/<sha>` branch and
           # opens a PR (see "Push auto-heal branch and open PR" below).
           BERNSTEIN_SKIP_AUTO_COMMIT: "true"
-          # Route unexpected orchestration crashes (agent abort, dead-letter,
-          # autofix daemon faults) to the operator error sink. No-op when the
-          # secret is unset, so forks stay green.
-          BERNSTEIN_TELEMETRY_DSN: ${{ secrets.GLITCHTIP_DSN }}
 
       - name: Detect changes
         id: diff

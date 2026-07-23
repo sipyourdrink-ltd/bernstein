@@ -65,7 +65,6 @@ on:
       - "action/**"
       # CI tool configs
       - "codecov.yml"
-      - "sonar-project.properties"
       # GitHub meta
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/FUNDING.yml"

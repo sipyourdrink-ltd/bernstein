@@ -6,10 +6,7 @@ The daily observability workflow appends one JSON snapshot per day under
 turns the two most recent snapshots into signals the self-improvement loop can
 consume:
 
-* :func:`coverage_delta_fraction` - the signed Sonar coverage change as a
-  fraction, matching the ``test_coverage_delta`` domain of
-  ``RiskScorer.score_proposal``.
-* :func:`detect_regressions` - security or coverage regressions worth an
+* :func:`detect_regressions` - security regressions worth an
   ``ImprovementOpportunity``.
 
 Everything is best-effort and guarded: a missing directory, fewer than two
@@ -36,26 +33,21 @@ _SECURITY_METRICS: dict[tuple[str, str], str] = {
     ("dt", "high_vulns"): "high",
     ("code-scanning", "critical_alerts"): "high",
     ("code-scanning", "high_alerts"): "high",
-    ("sonar", "vulnerabilities"): "medium",
-    ("sonar", "security_hotspots"): "medium",
     ("dt", "medium_vulns"): "low",
     ("code-scanning", "open_alerts"): "low",
 }
 
-#: Coverage drop (percentage points) that warrants an opportunity.
-_COVERAGE_DROP_PT = 1.0
-
 
 @dataclass(frozen=True)
 class ObservabilityRegression:
-    """A security or coverage regression derived from two snapshots."""
+    """A security regression derived from two snapshots."""
 
     backend: str
     metric: str
     prev: float | None
     curr: float
     delta: float
-    kind: str  # "security" | "coverage"
+    kind: str  # "security"
     severity: str  # "high" | "medium" | "low"
 
 
@@ -108,25 +100,8 @@ def _metric_numeric(payload: dict[str, Any] | None, backend: str, metric: str) -
     return None
 
 
-def coverage_delta_fraction(snapshots_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> float:
-    """Return the signed Sonar coverage change as a fraction in ``[-1, 1]``.
-
-    Positive means coverage improved. Sonar reports coverage in percent, so the
-    percentage-point delta is divided by 100 to match the fraction domain of
-    ``RiskScorer.score_proposal``. Returns ``0.0`` when the delta cannot be
-    computed (no directory, fewer than two snapshots, coverage missing).
-    """
-
-    prev, curr = latest_two_snapshots(snapshots_dir)
-    prev_cov = _metric_numeric(prev, "sonar", "coverage_pct")
-    curr_cov = _metric_numeric(curr, "sonar", "coverage_pct")
-    if prev_cov is None or curr_cov is None:
-        return 0.0
-    return (curr_cov - prev_cov) / 100.0
-
-
 def detect_regressions(snapshots_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> list[ObservabilityRegression]:
-    """Return security or coverage regressions from the two latest snapshots.
+    """Return security regressions from the two latest snapshots.
 
     A regression requires a real day-over-day baseline: a metric present only
     in the newer snapshot (for example a backend that just gained credentials)
@@ -138,23 +113,6 @@ def detect_regressions(snapshots_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> list[Obse
         return []
 
     regressions: list[ObservabilityRegression] = []
-
-    prev_cov = _metric_numeric(prev, "sonar", "coverage_pct")
-    curr_cov = _metric_numeric(curr, "sonar", "coverage_pct")
-    if prev_cov is not None and curr_cov is not None:
-        delta = curr_cov - prev_cov
-        if delta <= -_COVERAGE_DROP_PT:
-            regressions.append(
-                ObservabilityRegression(
-                    backend="sonar",
-                    metric="coverage_pct",
-                    prev=prev_cov,
-                    curr=curr_cov,
-                    delta=delta,
-                    kind="coverage",
-                    severity="medium",
-                )
-            )
 
     for (backend, metric), severity in _SECURITY_METRICS.items():
         prev_num = _metric_numeric(prev, backend, metric)

@@ -35,7 +35,7 @@ from bernstein.core.observability.sidechannel import (
     parse_dsn,
 )
 
-VALID_DSN = "https://abc123@glitchtip.example.com/42"
+VALID_DSN = "https://abc123@errors.example.com/42"
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ def test_parse_dsn_wellformed() -> None:
     assert dsn == Dsn(
         scheme="https",
         public_key="abc123",
-        host="glitchtip.example.com",
+        host="errors.example.com",
         project_id="42",
         port=None,
     )
@@ -93,7 +93,7 @@ def test_parse_dsn_with_port() -> None:
 
 
 def test_store_url_derivation() -> None:
-    assert parse_dsn(VALID_DSN).store_url == "https://glitchtip.example.com/api/42/store/"
+    assert parse_dsn(VALID_DSN).store_url == "https://errors.example.com/api/42/store/"
 
 
 def test_auth_header_shape() -> None:
@@ -361,7 +361,7 @@ def test_end_to_end_real_http_backend_receives_event() -> None:
     """Drive the live HTTP transport against a localhost stand-in for the
     Sentry store endpoint.
 
-    GlitchTip and any Sentry-compatible backend ingest the same store
+    Any Sentry-compatible backend ingests the same store
     payload over HTTP. By spinning up a tiny ``http.server`` on a random
     local port and pointing a DSN at it, we exercise the entire pipeline
     (build sink, render payload, POST via httpx, parse store URL and auth

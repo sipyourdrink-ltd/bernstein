@@ -19,13 +19,13 @@ name: Coverage ratchet (total)
 # Why a PR (not a direct push): main is protected by required status
 # checks, so a bot commit pushed straight to main would be rejected (it
 # has not passed `CI gate`). Opening a PR is the protection-safe path and
-# matches the repo convention (sonar sweeper, weekly floor bump). It also
+# matches the repo convention (weekly floor bump). It also
 # makes every baseline movement a reviewable, auditable artifact - the
 # ratchet click is a PR, not a silent rewrite.
 #
 # Trigger: push to main, then resolve the freshest CI run that actually
-# uploaded a coverage-report artifact. This mirrors sonar-scan.yml: under
-# the rapid-merge cadence ci.yml's cancel-in-progress concurrency cancels
+# uploaded a coverage-report artifact. Under the rapid-merge cadence
+# ci.yml's cancel-in-progress concurrency cancels
 # most main CI runs, so a `workflow_run`/`conclusion == success` trigger
 # almost never fires. Searching recent runs for the artifact (cancelled
 # runs may still have uploaded it) is the robust pattern. Keeping the
@@ -79,7 +79,7 @@ jobs:
           # Search the last 20 main CI runs for one that uploaded the
           # coverage-report artifact. Cancelled runs can still have
           # uploaded it if the coverage step ran before cancellation, so
-          # we do not filter by status (mirrors sonar-scan.yml).
+          # we do not filter by status.
           found=""
           for run_id in $(gh run list \
               --repo "${{ github.repository }}" \

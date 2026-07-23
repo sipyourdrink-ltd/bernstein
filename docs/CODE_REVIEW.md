@@ -36,7 +36,6 @@ can merge:
 
 - CI (`.github/workflows/ci.yml`)
 - CodeQL (`.github/workflows/codeql.yml`)
-- SonarQube quality gate (self-hosted; `sonar-scan.yml` `workflow_run` on CI)
 - Architecture contracts (`lint-imports`)
 - Type checks (`pyright src/`)
 

@@ -143,7 +143,6 @@ live under `.github/workflows/`.
 | CodeQL     | `.github/workflows/codeql.yml`                       | Python; runs on every PR + push to `main` and weekly cron. Config: `.github/codeql/codeql-config.yml`. |
 | Bandit     | Pinned in `pyproject.toml` dev extras                | Runs in CI lint stage. |
 | Semgrep    | Installed via `uv tool install semgrep` in CI        | Pattern packs run in the CI hardening stage. |
-| SonarCloud | Project `sipyourdrink-ltd_bernstein` on SonarCloud   | Quality gate posts back to PRs via the `SONAR_TOKEN` secret. |
 
 ### Fuzzing and property tests
 
@@ -177,9 +176,9 @@ review. Security-touching changes (`SECURITY.md`, `.github/workflows/**`,
 reviewer approvals or operator-only direct push from a signed commit. Full
 process: [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md).
 
-Branch protection on `main` enforces required status checks (CI, CodeQL,
-SonarCloud) and at least one approving review before merge. Configuration is
-maintained by repo admins via GitHub repo settings.
+Branch protection on `main` enforces required status checks (`CI gate` and
+`review-bot-ack`) and at least one approving review before merge.
+Configuration is maintained by repo admins via GitHub repo settings.
 
 ### OpenSSF Best Practices Badge
 

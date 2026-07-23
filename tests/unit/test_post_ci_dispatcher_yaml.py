@@ -39,8 +39,8 @@ CHILDREN = (
 EXPECTED_CHILD_SECRETS: dict[str, frozenset[str]] = {
     "telegram-notify": frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}),
     "auto-release": frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}),
-    "auto-heal": frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GLITCHTIP_DSN"}),
-    "bernstein-ci-fix": frozenset({"GEMINI_API_KEY", "GLITCHTIP_DSN"}),
+    "auto-heal": frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}),
+    "bernstein-ci-fix": frozenset({"GEMINI_API_KEY"}),
     "bisect-on-red": frozenset(),
 }
 

@@ -45,7 +45,7 @@ registration time). Unrelated keys are preserved verbatim.
 ## Telemetry DSN
 
 To route Bernstein's side-channel telemetry (lineage, cost, run lifecycle,
-tracker events) into your own GlitchTip project when a wrapper launches
+tracker events) into any Sentry-compatible error tracker when a wrapper launches
 Bernstein from Aider, export `BERNSTEIN_TELEMETRY_DSN` in the wrapper's
 environment before invoking Bernstein:
 

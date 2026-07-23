@@ -49,7 +49,7 @@ Reopen the project in Claude Code so it reloads `.mcp.json`.
 ## Telemetry DSN
 
 To route Bernstein's side-channel telemetry (lineage, cost, run lifecycle,
-tracker events) from Claude Code into your own GlitchTip project, add an
+tracker events) from Claude Code into any Sentry-compatible error tracker, add an
 `env` block to the `bernstein` entry with `BERNSTEIN_TELEMETRY_DSN` set to a
 Sentry-compatible DSN:
 

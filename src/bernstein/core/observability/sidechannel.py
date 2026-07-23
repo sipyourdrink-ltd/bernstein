@@ -8,8 +8,8 @@ the operator controls, with a single contract that is identical across
 every host:
 
 * One environment variable everywhere: ``BERNSTEIN_TELEMETRY_DSN``.
-* One wire format: the Sentry store protocol (GlitchTip-compatible).
-* One default backend: GlitchTip behind a Sentry-compatible DSN.
+* One wire format: the Sentry store protocol.
+* One backend contract: any Sentry-compatible sink behind a DSN.
 
 The full contract is documented in ``docs/observability/side-channel.md``.
 
@@ -78,11 +78,11 @@ TIMEOUT_SECONDS: Final[float] = 5.0
 FLUSH_DEADLINE_SECONDS: Final[float] = 5.0
 
 #: Sentry client identifier sent in the auth header. Operators see this in
-#: the GlitchTip UI so they can tell Bernstein-shipped events apart.
+#: their error-tracker UI so they can tell Bernstein-shipped events apart.
 SENTRY_CLIENT: Final[str] = "bernstein-sidechannel/1"
 
 #: Sentry store-protocol version. ``7`` is the long-standing default that
-#: GlitchTip and Sentry both accept.
+#: Sentry-compatible backends accept.
 SENTRY_PROTOCOL_VERSION: Final[str] = "7"
 
 #: Maximum number of events kept in the offline preview ring buffer.
@@ -250,7 +250,7 @@ class SideChannelEvent:
 
         ``logger`` carries the emitter category (``lineage``, ``cost``,
         ``run``, ``tracker``, ...) so operators can filter one stream by
-        source in the GlitchTip UI. The ``bernstein.category`` tag carries
+        source in their error-tracker UI. The ``bernstein.category`` tag carries
         the same value for tag-based search.
         """
         tags = self.tags.copy()

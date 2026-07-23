@@ -125,7 +125,7 @@ def test_capture_exception_sidechannel_still_fires_when_sdk_inactive(
 
     This is the worker-subprocess case: the CLI ``sentry_sdk.init`` never ran,
     but the DSN is exported, so the dependency-free side channel must still
-    deliver the event. This is the gap that left GlitchTip empty.
+    deliver the event. This is the gap that left the error sink empty.
     """
     recorder = _install_fake_sentry(monkeypatch, active=False)
     calls = _install_recording_sidechannel(monkeypatch)

@@ -3,7 +3,7 @@
 The first-run guard converts top-level exceptions into a Rich hint panel
 plus a ``SystemExit``. Because the conversion swallows the original
 exception, the default ``sys.excepthook`` never fires for these paths
-and the configured GlitchTip / Sentry-compatible sink would otherwise
+and the configured Sentry-compatible sink would otherwise
 miss every CLI crash.
 
 These tests pin the explicit ``sentry_sdk.capture_exception`` call so

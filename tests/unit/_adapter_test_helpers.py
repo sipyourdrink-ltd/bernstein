@@ -3,7 +3,7 @@
 Every ``test_adapter_*.py`` has the same three primitives: a fixture that
 patches out the timeout watchdog thread, a ``Popen`` mock factory, and a
 helper that extracts the inner CLI command from the worker-wrapped
-``subprocess.Popen`` argv.  Extracted here so Sonar's new-code
+``subprocess.Popen`` argv.  Extracted here so static-analysis new-code
 duplication stops flagging each new adapter test as a 20-line clone.
 """
 

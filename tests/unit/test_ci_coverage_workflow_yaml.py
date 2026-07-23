@@ -72,7 +72,7 @@ def test_ubuntu_313_shards_upload_coverage_data(ci_doc: dict[str, object]) -> No
 
 
 def test_coverage_report_job_merges_shard_data(ci_doc: dict[str, object]) -> None:
-    """A separate push-only job must combine shard data into Sonar's coverage.xml."""
+    """A separate push-only job must combine shard data into a single coverage.xml."""
     coverage_job = _jobs(ci_doc).get("coverage-report")
     assert isinstance(coverage_job, dict), "CI workflow must define a coverage-report job"
     assert coverage_job.get("name") == "Coverage report"

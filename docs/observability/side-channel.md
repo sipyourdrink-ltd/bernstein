@@ -10,8 +10,8 @@ contract that makes the side channel behave identically across every host.
 ## TL;DR
 
 - One env var everywhere: `BERNSTEIN_TELEMETRY_DSN` (a Sentry-compatible URL).
-- One wire format: the Sentry store protocol (GlitchTip-compatible).
-- One default backend: GlitchTip behind a Sentry-compatible DSN.
+- One wire format: the Sentry store protocol.
+- One backend contract: any Sentry-compatible sink behind a DSN.
 - Default state is off. With no DSN set, nothing is emitted and no network is
   touched.
 - Fail-closed: a misconfigured DSN or an unreachable backend never crashes a
@@ -40,12 +40,9 @@ BERNSTEIN_TELEMETRY_DSN=https://abc123@errors.example.com/42
 
 The store endpoint derived from that DSN is
 `https://errors.example.com/api/42/store/`, and each event carries an
-`X-Sentry-Auth` header so GlitchTip (or any Sentry-protocol backend) accepts
-it.
+`X-Sentry-Auth` header so any Sentry-protocol backend accepts it.
 
-The legacy `GLITCHTIP_DSN` variable is still honoured as a fallback for the
-import-time error sink, but `BERNSTEIN_TELEMETRY_DSN` is the single,
-host-agnostic contract and takes precedence.
+`BERNSTEIN_TELEMETRY_DSN` is the single, host-agnostic contract.
 
 ## Event contract
 
@@ -146,8 +143,8 @@ services:
 ```
 
 Because the variable name and wire format are the same everywhere, an operator
-running several hosts in parallel can point them all at one GlitchTip project
-and review every agent's activity in a single stream.
+running several hosts in parallel can point them all at one error-tracker
+project and review every agent's activity in a single stream.
 
 ## Failure behaviour
 
@@ -159,8 +156,8 @@ and review every agent's activity in a single stream.
 
 ## Scope
 
-- Backend stays GlitchTip plus a Sentry-compatible URL. Other backends are a
-  follow-up.
+- Backend is any Sentry-compatible sink behind a DSN. Other wire formats are
+  a follow-up.
 - The lineage chain itself stays in `core/lineage/`. Tamper detections are
   mirrored onto the side channel, but the chain is not re-implemented here.
 

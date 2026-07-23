@@ -20,13 +20,9 @@ BOOTSTRAP_ACTION = REPO_ROOT / ".github" / "actions" / "bootstrap" / "action.yml
 PINNED_UV_VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
 
 OWNED_WORKFLOWS = (
-    "sonar-scan.yml",
-    "sonar-hotspot-review.yml",
     "docs-observability-snapshot.yml",
     "pr-observability-summary.yml",
-    "glitchtip.yml",
     "nightly-canary.yml",
-    "sonar-code-scanning.yml",
 )
 
 CURL_PIPE_SH_RE = re.compile(r"curl\b[^\n|]*\|\s*(?:ba)?sh\b")
@@ -75,13 +71,9 @@ def test_owned_workflows_do_not_install_uv_with_unpinned_pip(workflow_name: str)
 @pytest.mark.parametrize(
     "workflow_name",
     (
-        "sonar-scan.yml",
-        "sonar-hotspot-review.yml",
         "docs-observability-snapshot.yml",
         "pr-observability-summary.yml",
-        "glitchtip.yml",
         "nightly-canary.yml",
-        "sonar-code-scanning.yml",
     ),
 )
 def test_project_install_workflows_use_local_bootstrap_action(workflow_name: str) -> None:

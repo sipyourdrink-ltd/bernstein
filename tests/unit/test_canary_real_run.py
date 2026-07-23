@@ -8,8 +8,8 @@ workflow depends on, *without* any network or real telemetry DSN:
 
 * the success path runs every registered flow and returns exit code 0;
 * an injected flow failure returns a non-zero exit code, emits exactly
-  one telemetry event carrying enough context for the GlitchTip-to-eval
-  ingester to synthesise a regression case (flow name, exception type,
+  one telemetry event carrying enough context to triage the failure
+  (flow name, exception type,
   top frame, ``environment=canary``), and leaves no worktree / temp-dir
   behind.
 

@@ -1,6 +1,6 @@
 # Telemetry-grounded autofix
 
-Status: MVP. Operator-flagged off per source. Sentry / GlitchTip and
+Status: MVP. Operator-flagged off per source. Sentry-protocol and
 GitHub Actions failure adapters ship with full dispatch wiring. Datadog,
 Loki, and custom-JSONL adapters ship as stubs - the audit chain records
 the would-be escalation but no agent is spawned.
@@ -28,8 +28,8 @@ uses. The dispatch loop is identical to the CI flow:
 | `loki`        | stubbed  | `/webhooks/telemetry/loki/`             | `BERNSTEIN_LOKI_WEBHOOK_SECRET`             |
 | `custom_jsonl`| stubbed  | `/webhooks/telemetry/custom_jsonl/`     | `BERNSTEIN_CUSTOM_JSONL_WEBHOOK_SECRET`     |
 
-The `sentry` adapter covers both Sentry SaaS and the Sentry-compatible
-self-hosted GlitchTip - the issue-alert webhook envelope is identical.
+The `sentry` adapter covers Sentry SaaS and any Sentry-compatible
+self-hosted backend - the issue-alert webhook envelope is identical.
 
 ## Configuration
 
@@ -64,9 +64,9 @@ Fields:
 | `fingerprint_path` | Optional dotted path into the payload that overrides the adapter's default fingerprint extraction. |
 | `cost_cap_usd`     | Hard per-event cap. Zero refuses to spawn. |
 
-## Setup: Sentry / GlitchTip
+## Setup: Sentry-protocol backend
 
-1. In Sentry / GlitchTip, create an Internal Integration or a
+1. In your Sentry-compatible backend, create an Internal Integration or a
    project-level webhook with the *Issue alert created* trigger.
 2. Set the webhook URL to
    `https://<your-host>/webhooks/telemetry/sentry/`.

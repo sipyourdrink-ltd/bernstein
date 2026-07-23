@@ -73,9 +73,9 @@ class TestRedactApiKeys:
 
 class TestRedactTokens:
     def test_token_env_var(self) -> None:
-        text = "SONAR_TOKEN=sqp_abc123def456"
+        text = "SERVICE_TOKEN=sk_abc123def456"
         result, count = redact_secrets(text)
-        assert "sqp_abc123def456" not in result
+        assert "sk_abc123def456" not in result
         assert count >= 1
 
     def test_bearer_token(self) -> None:

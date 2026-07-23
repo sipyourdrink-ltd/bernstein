@@ -325,14 +325,14 @@ def _init_error_telemetry() -> None:
     """Initialise the operator-managed error-telemetry sink, if configured.
 
     Wires sentry-sdk to a Sentry-protocol-compatible error sink whose DSN is
-    supplied via the portable ``BERNSTEIN_TELEMETRY_DSN`` (preferred) or the
-    legacy ``GLITCHTIP_DSN``.  The portable variable is the single, host-
-    agnostic contract documented in ``docs/observability/side-channel.md``;
-    ``GLITCHTIP_DSN`` is honoured as a fallback for existing deployments.
+    supplied via the portable ``BERNSTEIN_TELEMETRY_DSN``.  This is the single,
+    host-agnostic contract documented in
+    ``docs/observability/side-channel.md``.
 
     The function is a no-op when:
 
-    * neither DSN variable is set (operator has not yet stood up the sink), or
+    * ``BERNSTEIN_TELEMETRY_DSN`` is not set (operator has not yet stood up the
+      sink), or
     * the ``sentry-sdk`` package is not importable (minimal install without
       the ``observability`` extra).
 
@@ -343,7 +343,7 @@ def _init_error_telemetry() -> None:
     """
     import os
 
-    dsn = os.environ.get("BERNSTEIN_TELEMETRY_DSN") or os.environ.get("GLITCHTIP_DSN")
+    dsn = os.environ.get("BERNSTEIN_TELEMETRY_DSN")
     if not dsn:
         return
     try:
@@ -945,9 +945,7 @@ cli.add_command(plugins_cmd, "plugins")
 cli.add_command(doctor)
 
 # Attach observability doctor subcommands (dt, code-scanning, observe)
-# to the doctor group. Sonar and glitchtip are wired up by their own
-# modules when present (sibling agents own those). See
-# docs/observability/unified-doctor.md.
+# to the doctor group. See docs/observability/unified-doctor.md.
 from bernstein.cli.commands.doctor.code_scanning import (  # noqa: E402
     register as _register_doctor_code_scanning,
 )

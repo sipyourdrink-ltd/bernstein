@@ -62,12 +62,6 @@ on:
       TELEGRAM_CHAT_ID:
         description: Telegram chat id that receives heal alerts.
         required: false
-      GLITCHTIP_DSN:
-        description: >-
-          Sentry-protocol DSN for the operator error sink. Optional -
-          when unset the heal orchestration runs without routing crashes,
-          so forks stay green.
-        required: false
 
 permissions: {}
 
@@ -75,9 +69,6 @@ env:
   # cost_guard reads this; the hard cap counts every LLM round-trip
   # this workflow may make today. Set to 0 to disable LLM paths entirely.
   BERNSTEIN_AUTOHEAL_BUDGET_USD: "1.00"
-  # Route unexpected heal-orchestration crashes to the operator error sink.
-  # No-op when the secret is unset, so forks stay green.
-  BERNSTEIN_TELEMETRY_DSN: ${{ secrets.GLITCHTIP_DSN }}
 
 jobs:
   triage:

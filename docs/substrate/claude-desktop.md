@@ -48,7 +48,7 @@ Restart Claude Desktop after registering so it reloads its config.
 ## Telemetry DSN
 
 To route Bernstein's side-channel telemetry (lineage, cost, run lifecycle,
-tracker events) from Claude Desktop into your own GlitchTip project, add an
+tracker events) from Claude Desktop into any Sentry-compatible error tracker, add an
 `env` block to the `bernstein` entry with `BERNSTEIN_TELEMETRY_DSN` set to a
 Sentry-compatible DSN:
 

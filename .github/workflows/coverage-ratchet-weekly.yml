@@ -34,8 +34,8 @@ concurrency:
 permissions: {}
 
 env:
-  # Gated like the Sonar sweeper: a scheduled run is a no-op until an
-  # operator opts in via a follow-up PR that flips this to "1". The job
+  # Opt-in gate: a scheduled run is a no-op until an operator opts in
+  # via a follow-up PR that flips this to "1". The job
   # `if:` cannot read env directly, so the gate is the first job step.
   ENABLE_CRON: "0"
 

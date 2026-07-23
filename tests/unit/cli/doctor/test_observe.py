@@ -37,8 +37,6 @@ from bernstein.cli.commands.doctor.backends import (
     load_previous,
     probe_code_scanning,
     probe_dt,
-    probe_glitchtip,
-    probe_sonar,
     save_snapshot,
 )
 
@@ -46,8 +44,6 @@ from bernstein.cli.commands.doctor.backends import (
 @pytest.mark.parametrize(
     ("probe", "env"),
     [
-        (probe_sonar, {}),
-        (probe_glitchtip, {}),
         (probe_dt, {}),
         (probe_code_scanning, {}),
     ],
@@ -63,16 +59,6 @@ def test_each_probe_soft_fails_with_empty_env(
     assert report.status == ProbeStatus.SKIPPED
     assert report.metrics == []
     assert report.error is None
-
-
-def test_probe_sonar_soft_fails_when_only_host_set() -> None:
-    report = probe_sonar(env={"SONAR_HOST_URL": "https://sonar.example.com"})
-    assert report.status == ProbeStatus.SKIPPED
-
-
-def test_probe_glitchtip_soft_fails_without_token() -> None:
-    report = probe_glitchtip(env={"BERNSTEIN_GLITCHTIP_DSN": "https://x@example.com/1"})
-    assert report.status == ProbeStatus.SKIPPED
 
 
 def test_probe_dt_soft_fails_with_partial_config() -> None:
@@ -162,9 +148,6 @@ def test_observe_command_registered_under_doctor() -> None:
 def test_observe_command_renders_table_with_skipped_probes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     for key in (
-        "SONAR_HOST_URL",
-        "SONAR_TOKEN",
-        "BERNSTEIN_GLITCHTIP_TOKEN",
         "DTRACK_URL",
         "GITHUB_TOKEN",
         "GITHUB_REPOSITORY",
@@ -174,16 +157,13 @@ def test_observe_command_renders_table_with_skipped_probes(tmp_path: Path, monke
     runner = CliRunner()
     result = runner.invoke(doctor_group, ["observe", "--no-persist"])
     assert result.exit_code == 0, result.output
-    for label in ("sonar", "glitchtip", "dt", "code-scanning"):
+    for label in ("dt", "code-scanning"):
         assert label in result.output
 
 
 def test_observe_command_emits_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     for key in (
-        "SONAR_HOST_URL",
-        "SONAR_TOKEN",
-        "BERNSTEIN_GLITCHTIP_TOKEN",
         "DTRACK_URL",
         "DTRACK_TOKEN",
         "DTRACK_PROJECT",
@@ -198,12 +178,10 @@ def test_observe_command_emits_json(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     payload = json.loads(result.output)
     assert [b["backend"] for b in payload["backends"]] == [
-        "sonar",
-        "glitchtip",
         "dt",
         "code-scanning",
     ]
-    assert payload["summary"]["skipped"] == 4
+    assert payload["summary"]["skipped"] == 2
     assert payload["summary"]["error"] == 0
     assert payload["summary"]["fail"] == 0
 

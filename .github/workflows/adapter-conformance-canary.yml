@@ -31,8 +31,8 @@ name: Adapter conformance canary
 on:
   schedule:
     # 04:53 UTC daily. Off-peak and off-pattern from the 05:41 real-run
-    # canary, the 06:17 Sonar sweeper, and the 06:00/14:00/22:00 contract
-    # drift runs so the scheduled jobs do not contend for runners.
+    # canary and the 06:00/14:00/22:00 contract drift runs so the
+    # scheduled jobs do not contend for runners.
     - cron: '53 4 * * *'
   workflow_dispatch: {}
 

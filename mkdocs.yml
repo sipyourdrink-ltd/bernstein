@@ -351,10 +351,6 @@ nav:
           - Unified doctor: observability/unified-doctor.md
           - Telemetry share: observability/telemetry-share.md
           - Cluster observability: observability/cluster.md
-          - GlitchTip setup: operations/glitchtip-setup.md
-          - GlitchTip ingester: operations/glitchtip-ingester.md
-          - GlitchTip insights: observability/glitchtip-insights.md
-          - Sonar: observability/sonar.md
       - Merge & review automation:
           - Merge queue: operations/merge-queue.md
           - Merge gate: operations/merge-gate.md
@@ -365,7 +361,6 @@ nav:
           - Review responder: operations/review-responder.md
           - Review-bot acknowledgement: operations/review-bot-ack.md
           - Coverage ratchet: operations/coverage-ratchet.md
-          - Sonar sweeper: operations/sonar-sweeper.md
           - Nightly canary: operations/nightly-canary.md
           - CI: operations/ci.md
           - CI topology: operations/ci-topology.md

@@ -17,17 +17,14 @@ name: Nightly real-run canary
 #
 # On any flow failure the script emits a structured event tagged
 # `environment=canary` to the operator's error sink via the existing
-# observability client. The DSN comes only from `secrets.GLITCHTIP_DSN`
-# (no hostname is hardcoded here); with the secret unset the client is a
-# no-op, mirroring the rest of the observability boundary. The
-# GlitchTip-to-eval ingester then turns the captured event into a P1
-# regression eval case automatically.
+# host-agnostic telemetry client, when a `BERNSTEIN_TELEMETRY_DSN` is
+# configured. With no DSN the client is a no-op, mirroring the rest of
+# the observability boundary.
 
 on:
   schedule:
-    # 05:41 UTC daily. Off-peak and off-pattern from the 06:17 Sonar
-    # sweeper and the 06:23 GlitchTip ingester so the three jobs do not
-    # contend for runners or interleave their PRs.
+    # 05:41 UTC daily. Off-peak so the job does not contend for runners
+    # with other scheduled workflows.
     - cron: '41 5 * * *'
   workflow_dispatch: {}
 
@@ -73,11 +70,6 @@ jobs:
 
       - name: Run real-run canary
         env:
-          # Indirection only: the DSN never appears in this file. With the
-          # secret unset the observability client is a no-op, so a missing
-          # DSN keeps the canary green on its own merits rather than failing
-          # on telemetry wiring.
-          BERNSTEIN_TELEMETRY_DSN: ${{ secrets.GLITCHTIP_DSN }}
           # Block-on-full so a slow sink does not silently drop the one
           # failure event the ingester needs; bounded internally to ~1s.
           BERNSTEIN_TELEMETRY_BACKPRESSURE: queue

@@ -7,18 +7,15 @@ SBOM tracker.
 
 Bernstein ships a Sentry-protocol-compatible error sink wired through
 `sentry-sdk`, with a dependency-free side-channel fallback for worker
-subprocesses. Export the project DSN as `BERNSTEIN_TELEMETRY_DSN` (the
-legacy `GLITCHTIP_DSN` name is still honoured as a deprecated fallback);
-when neither is set the sink is a no-op and `sentry-sdk` is never
+subprocesses. Export the project DSN as `BERNSTEIN_TELEMETRY_DSN`;
+when it is unset the sink is a no-op and `sentry-sdk` is never
 imported, so minimal installs pay zero overhead. Sample rates are zero,
 so events fire only on unhandled exceptions or explicit
 `sentry_sdk.capture_*` calls -- no performance probes, no PII.
 
-For the full operator flow -- project provisioning, DSN distribution,
-the CI contexts that carry the DSN, how failure signals route, and event
-verification -- see [GlitchTip setup](glitchtip-setup.md). The broader
-telemetry contract (env-var resolution and the side-channel transport)
-lives in [the telemetry side channel](../observability/side-channel.md).
+The telemetry contract (env-var resolution and the side-channel
+transport) lives in
+[the telemetry side channel](../observability/side-channel.md).
 
 ## SBOM upload to operator Dependency-Track
 

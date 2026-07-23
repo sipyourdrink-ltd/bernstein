@@ -181,8 +181,8 @@ dev = [
     "pytest-json-report>=1.5",
     # Error-telemetry SDK for the operator-managed Sentry-protocol-compatible
     # error sink. Imported lazily in src/bernstein/cli/main.py and only
-    # initialised when GLITCHTIP_DSN is set. Kept in dev so the test-suite
-    # can exercise the no-op + initialised paths.
+    # initialised when BERNSTEIN_TELEMETRY_DSN is set. Kept in dev so the
+    # test-suite can exercise the no-op + initialised paths.
     "sentry-sdk[fastapi]>=2.20",
     # NOTE: semgrep is intentionally NOT a dev dep. Its transitive pins
     # (click<8.2, opentelemetry-sdk<1.38) collide with our production
@@ -280,8 +280,8 @@ otel = [
 ]
 # Error-telemetry SDK wired to an operator-managed Sentry-protocol-compatible
 # error sink (src/bernstein/cli/main.py:_init_error_telemetry). The SDK is
-# imported lazily and only initialises when GLITCHTIP_DSN is set, so minimal
-# installs pay zero overhead. Enable with:
+# imported lazily and only initialises when BERNSTEIN_TELEMETRY_DSN is set, so
+# minimal installs pay zero overhead. Enable with:
 #   pip install 'bernstein[observability]'
 observability = [
     "sentry-sdk[fastapi]>=2.20",
@@ -676,8 +676,8 @@ exclude = [
     "src/bernstein/core/routes/custom_metrics.py",
     # Agent-merged additions (2026-04-11) pending type-annotation cleanup.
     # Pyright strict flagged 551 reportUnknown* errors across these modules
-    # after the latest PR wave; excluded to unblock push for SonarCloud
-    # remediation. Remove as each module is cleaned up.
+    # after the latest PR wave; excluded to unblock the push. Remove as each
+    # module is cleaned up.
     "src/bernstein/core/agent_session_token_breakdown.py",
     "src/bernstein/core/apm_integration.py",
     "src/bernstein/core/arch_conformance.py",

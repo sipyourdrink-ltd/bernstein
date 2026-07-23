@@ -1,9 +1,8 @@
 """``bernstein doctor observe`` -- unified observability surface.
 
-Runs every per-backend probe in order (Sonar, GlitchTip,
-Dependency-Track, Code Scanning), aggregates them into a single
-operator-facing table, and supports JSON output plus a ``--watch`` mode
-that re-runs every 60s.
+Runs every per-backend probe in order (Dependency-Track, Code
+Scanning), aggregates them into a single operator-facing table, and
+supports JSON output plus a ``--watch`` mode that re-runs every 60s.
 
 Each backend soft-fails to ``SKIPPED`` when its credentials are not
 configured, so the umbrella keeps running and the operator sees which
@@ -27,20 +26,15 @@ from bernstein.cli.commands.doctor.backends import (
     ProbeStatus,
     probe_code_scanning,
     probe_dt,
-    probe_glitchtip,
-    probe_sonar,
 )
 from bernstein.cli.helpers import console
 
 _LOGGER = logging.getLogger(__name__)
 
 #: Backend order matters: it controls table grouping and the JSON
-#: serialisation order. Sonar first (quality gate is the headline),
-#: GlitchTip second (runtime errors), then supply-chain and code
-#: scanning.
+#: serialisation order. Supply-chain (Dependency-Track) first, then
+#: code scanning.
 DEFAULT_PROBES: tuple[tuple[str, Callable[[], BackendReport]], ...] = (
-    ("sonar", probe_sonar),
-    ("glitchtip", probe_glitchtip),
     ("dt", probe_dt),
     ("code-scanning", probe_code_scanning),
 )
@@ -114,7 +108,7 @@ def collect_reports(
     help="Do not write the snapshot cache used for delta-since-last-check.",
 )
 def observe_cmd(as_json: bool, watch: bool, interval: int, no_persist: bool) -> None:
-    """Aggregate Sonar / GlitchTip / Dependency-Track / Code Scanning.
+    """Aggregate Dependency-Track / Code Scanning.
 
     \b
     The umbrella runs each per-backend probe in order. Backends that

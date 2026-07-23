@@ -47,7 +47,7 @@ Restart Cursor (or reload the MCP servers panel) so it reloads the config.
 ## Telemetry DSN
 
 To route Bernstein's side-channel telemetry (lineage, cost, run lifecycle,
-tracker events) from Cursor into your own GlitchTip project, add an `env`
+tracker events) from Cursor into any Sentry-compatible error tracker, add an `env`
 block to the `bernstein` entry with `BERNSTEIN_TELEMETRY_DSN` set to a
 Sentry-compatible DSN:
 

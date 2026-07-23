@@ -94,50 +94,18 @@ def test_ok_to_warn_flip_is_warn_severity() -> None:
 
 
 # --------------------------------------------------------------------------
-# coverage drop
-# --------------------------------------------------------------------------
-
-
-def test_coverage_drop_past_floor_warns_even_while_ok() -> None:
-    prev = _snapshot(_backend("sonar", "ok", [_metric("coverage_pct", 82.0, "ok", "80.0%")]))
-    curr = _snapshot(_backend("sonar", "ok", [_metric("coverage_pct", 80.6, "ok", "80.0%")]))
-
-    regs = gate.detect_regressions(prev, curr)
-
-    assert len(regs) == 1
-    assert regs[0].metric == "coverage_pct"
-    assert regs[0].severity == "warn"
-    assert regs[0].delta is not None
-    assert regs[0].delta < 0
-
-
-def test_coverage_improvement_is_not_a_regression() -> None:
-    prev = _snapshot(_backend("sonar", "ok", [_metric("coverage_pct", 80.6, "ok", "80.0%")]))
-    curr = _snapshot(_backend("sonar", "ok", [_metric("coverage_pct", 82.0, "ok", "80.0%")]))
-
-    assert gate.detect_regressions(prev, curr) == []
-
-
-def test_small_coverage_wobble_within_tolerance_stays_quiet() -> None:
-    prev = _snapshot(_backend("sonar", "ok", [_metric("coverage_pct", 81.0, "ok", "80.0%")]))
-    curr = _snapshot(_backend("sonar", "ok", [_metric("coverage_pct", 80.5, "ok", "80.0%")]))
-
-    assert gate.detect_regressions(prev, curr) == []
-
-
-# --------------------------------------------------------------------------
 # new / increased vulnerability
 # --------------------------------------------------------------------------
 
 
 def test_new_vulnerability_is_flagged() -> None:
-    prev = _snapshot(_backend("sonar", "ok", [_metric("vulnerabilities", 0.0, "ok")]))
-    curr = _snapshot(_backend("sonar", "warn", [_metric("vulnerabilities", 3.0, "warn")]))
+    prev = _snapshot(_backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]))
+    curr = _snapshot(_backend("code-scanning", "warn", [_metric("open_alerts", 3.0, "warn")]))
 
     regs = gate.detect_regressions(prev, curr)
 
     assert len(regs) == 1
-    assert regs[0].metric == "vulnerabilities"
+    assert regs[0].metric == "open_alerts"
     assert regs[0].severity == "warn"
     assert regs[0].delta == 3.0
 
@@ -159,13 +127,13 @@ def test_increased_critical_dt_vulns_is_fail_severity() -> None:
 
 
 def test_backend_lost_creds_is_flagged() -> None:
-    prev = _snapshot(_backend("glitchtip", "ok", [_metric("issues_24h", 0.0, "ok")]))
-    curr = _snapshot(_backend("glitchtip", "skipped", []))
+    prev = _snapshot(_backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]))
+    curr = _snapshot(_backend("code-scanning", "skipped", []))
 
     regs = gate.detect_regressions(prev, curr)
 
     assert len(regs) == 1
-    assert regs[0].backend == "glitchtip"
+    assert regs[0].backend == "code-scanning"
     assert regs[0].severity == "warn"
     assert "lost creds" in regs[0].reason
 
@@ -188,12 +156,10 @@ def test_backend_disappearing_entirely_is_flagged() -> None:
 
 def test_flat_green_snapshots_produce_no_regressions() -> None:
     prev = _snapshot(
-        _backend("sonar", "ok", [_metric("coverage_pct", 81.0, "ok", "80.0%"), _metric("bugs", 0.0, "ok")]),
         _backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok"), _metric("high_vulns", 0.0, "ok")]),
         _backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]),
     )
     curr = _snapshot(
-        _backend("sonar", "ok", [_metric("coverage_pct", 81.0, "ok", "80.0%"), _metric("bugs", 0.0, "ok")]),
         _backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok"), _metric("high_vulns", 0.0, "ok")]),
         _backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]),
     )

@@ -5,21 +5,13 @@ the operator-facing observability surface.
 
 Currently registered subcommands:
 
-* ``bernstein doctor glitchtip`` -- GlitchTip issue counts and the top
-  unresolved issues for the last 24h, plus a 7-day trend.
 * ``bernstein doctor dt`` -- Dependency-Track vulnerability counts by
   severity for the configured project.
 * ``bernstein doctor code-scanning`` -- GitHub Code Scanning alerts by
   severity for the current repository.
 * ``bernstein doctor observe`` -- umbrella that runs every backend
-  probe (Sonar, GlitchTip, Dependency-Track, Code Scanning) and renders
-  one aggregated table. Supports ``--json`` and ``--watch``.
-
-The Sonar probe lives in a separate module
-(``bernstein.cli.commands.doctor.sonar``) when present, owned by its
-sibling agent. The umbrella picks it up at runtime via
-``bernstein.cli.commands.doctor.backends`` so the doctor surface stays
-uniform.
+  probe (Dependency-Track, Code Scanning) and renders one aggregated
+  table. Supports ``--json`` and ``--watch``.
 
 Each per-backend module exposes a ``register(parent_group)`` helper
 that the CLI bootstrap calls from
@@ -40,8 +32,6 @@ from bernstein.cli.commands.doctor.backends import (
     load_previous,
     probe_code_scanning,
     probe_dt,
-    probe_glitchtip,
-    probe_sonar,
     save_snapshot,
 )
 from bernstein.cli.commands.doctor.code_scanning import (
@@ -55,12 +45,6 @@ from bernstein.cli.commands.doctor.dt import (
 )
 from bernstein.cli.commands.doctor.dt import (
     register as register_dt,
-)
-from bernstein.cli.commands.doctor.glitchtip import (
-    glitchtip_cmd,
-)
-from bernstein.cli.commands.doctor.glitchtip import (
-    register as register_glitchtip,
 )
 from bernstein.cli.commands.doctor.observe import (
     observe_cmd,
@@ -79,16 +63,12 @@ __all__ = [
     "apply_deltas",
     "code_scanning_cmd",
     "dt_cmd",
-    "glitchtip_cmd",
     "load_previous",
     "observe_cmd",
     "probe_code_scanning",
     "probe_dt",
-    "probe_glitchtip",
-    "probe_sonar",
     "register_code_scanning",
     "register_dt",
-    "register_glitchtip",
     "register_observe",
     "save_snapshot",
 ]
@@ -97,7 +77,6 @@ __all__ = [
 def register_all(parent_group: click.Group) -> None:
     """Attach every per-backend subcommand to a Click group."""
 
-    register_glitchtip(parent_group)
     register_dt(parent_group)
     register_code_scanning(parent_group)
     register_observe(parent_group)

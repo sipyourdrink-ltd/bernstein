@@ -151,9 +151,6 @@ class EvolutionLoop:
             analysis_dir=self._analysis_dir,
             observability_snapshots_dir=self._observability_snapshots_dir,
         )
-        # Cached signed Sonar coverage delta (fraction) read from the two most
-        # recent observe snapshots; populated lazily by _coverage_delta().
-        self._coverage_delta_cache: float | None = None
         self._feature_discovery = FeatureDiscovery(
             repo_root=self._repo_root,
             backlog_dir=state_dir / "backlog",
@@ -1171,29 +1168,8 @@ class EvolutionLoop:
         return self._risk_scorer.score_proposal(
             target_files=target_files,
             diff_size=diff_estimate,
-            test_coverage_delta=self._coverage_delta(),
+            test_coverage_delta=0.0,
         )
-
-    def _coverage_delta(self) -> float:
-        """Signed Sonar coverage delta (fraction) from the two latest snapshots.
-
-        Reads the daily observe snapshot corpus so the risk scorer weighs a
-        real coverage trend instead of a hardcoded zero. Cached per loop
-        instance. Returns ``0.0`` when the delta cannot be computed (no
-        snapshots, coverage missing, malformed JSON).
-        """
-
-        if self._coverage_delta_cache is not None:
-            return self._coverage_delta_cache
-        try:
-            from bernstein.evolution.observability_signals import coverage_delta_fraction
-
-            delta = coverage_delta_fraction(self._observability_snapshots_dir)
-        except Exception:
-            logger.exception("coverage delta read failed")
-            delta = 0.0
-        self._coverage_delta_cache = delta
-        return delta
 
     @staticmethod
     def _classify_risk_route(composite_risk: float) -> str:

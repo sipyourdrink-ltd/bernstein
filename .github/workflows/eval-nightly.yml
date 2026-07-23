@@ -115,9 +115,6 @@ jobs:
       EVAL_BUDGET_USD: "5"
       # Adapter set to evaluate. Override via repo variable EVAL_ADAPTERS.
       EVAL_ADAPTERS: ${{ vars.EVAL_ADAPTERS || 'claude,codex,ollama' }}
-      # Route unexpected eval-orchestration crashes to the operator error
-      # sink. No-op when the secret is unset, so forks stay green.
-      BERNSTEIN_TELEMETRY_DSN: ${{ secrets.GLITCHTIP_DSN }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0

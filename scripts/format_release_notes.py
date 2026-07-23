@@ -41,7 +41,7 @@ _SKIP_PREFIXES: tuple[str, ...] = ("chore: auto-bump",)
 _BATCH_SUMMARY_PREFIXES: tuple[str, ...] = ("audit batch ", "batch ")
 # Trailing PR ref, e.g. " (#123)". Inputs come from ``git log --pretty='%s'``
 # so subjects are a single line - the explicit ``[^\n]`` bound and required
-# single leading space avoid any quadratic-backtracking surface Sonar flags.
+# single leading space avoid any quadratic-backtracking surface a static analyzer flags.
 _PR_SUFFIX_RE = re.compile(r" \(#\d+\)$")
 # Trailing parenthesised single internal-ticket ref, e.g. " (audit-123)".
 # Single-pass only - for multi-ticket refs ``_strip_internal_refs`` loops.
@@ -94,7 +94,7 @@ def _is_batch_summary(subject: str) -> bool:
 
     Uses plain string ops (no regex) because the pattern is a fixed
     prefix followed by bounded keywords, and we want to keep the file
-    free of Sonar ReDoS hotspots.
+    free of static-analysis ReDoS hotspots.
     """
     lowered = subject.lower()
     if not lowered.startswith(_BATCH_SUMMARY_PREFIXES):

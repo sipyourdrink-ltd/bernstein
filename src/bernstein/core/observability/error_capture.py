@@ -1,6 +1,6 @@
 """Shared routing helper for genuine, unexpected failure signals.
 
-Bernstein's error sink (a GlitchTip / Sentry-protocol backend behind the
+Bernstein's error sink (any Sentry-protocol backend behind the
 single portable ``BERNSTEIN_TELEMETRY_DSN`` contract) only ever sees an
 event when something explicitly forwards one. The CLI's top-level barrier
 already does this for unhandled command exceptions
@@ -109,8 +109,8 @@ def capture_exception(
 
     Fans out to ``sentry-sdk`` (when initialised) and the side channel.
     The side-channel mirror carries ``category`` as the logger suffix so
-    operators can filter one stream by failure surface in the GlitchTip
-    UI. Both transports are fail-closed: this never raises.
+    operators can filter one stream by failure surface in their
+    error-tracker UI. Both transports are fail-closed: this never raises.
 
     Args:
         exc: The unexpected exception to report.

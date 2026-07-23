@@ -54,21 +54,6 @@ _SEVERITY_RISK: dict[str, Literal["low", "medium", "high"]] = {
 def _regression_to_opportunity(reg: ObservabilityRegression) -> ImprovementOpportunity:
     """Map an observability regression to an ``ImprovementOpportunity``."""
 
-    if reg.kind == "coverage":
-        prev_txt = "n/a" if reg.prev is None else f"{reg.prev:.1f}%"
-        return ImprovementOpportunity(
-            category=UpgradeCategory.POLICY_UPDATE,
-            title="Restore test coverage",
-            description=(
-                f"Sonar coverage fell {reg.delta:+.1f} points ({prev_txt} -> {reg.curr:.1f}%) "
-                "between the two most recent observability snapshots."
-            ),
-            expected_improvement="Return coverage to its prior level and lower regression risk",
-            confidence=0.75,
-            risk_level="medium",
-            affected_components=[reg.backend],
-        )
-
     prev_txt = "n/a" if reg.prev is None else f"{reg.prev:g}"
     return ImprovementOpportunity(
         category=UpgradeCategory.POLICY_UPDATE,

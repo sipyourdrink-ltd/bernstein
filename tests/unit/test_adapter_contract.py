@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -22,8 +22,6 @@ from bernstein.core.models import ModelConfig
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.registry import _ADAPTERS, get_adapter
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,26 +39,6 @@ def _popen_path(adapter: CLIAdapter) -> str:
     """Return the module path for patching subprocess.Popen for a given adapter."""
     mod = type(adapter).__module__
     return f"{mod}.subprocess.Popen"
-
-
-def _sonar_properties() -> dict[str, str]:
-    """Return logical key-value entries from sonar-project.properties."""
-    properties: dict[str, str] = {}
-    pending = ""
-    for raw_line in (PROJECT_ROOT / "sonar-project.properties").read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.endswith("\\"):
-            pending += line[:-1]
-            continue
-        line = f"{pending}{line}"
-        pending = ""
-        if "=" not in line:
-            continue
-        key, value = line.split("=", maxsplit=1)
-        properties[key.strip()] = value.strip()
-    return properties
 
 
 # ---------------------------------------------------------------------------
@@ -239,27 +217,6 @@ class TestAdapterContract:
             from bernstein.core.models import ApiTierInfo
 
             assert isinstance(result, ApiTierInfo)
-
-
-def test_sonar_s2638_exclusion_is_scoped_to_adapter_spawn_contracts() -> None:
-    """Adapter overrides keep the base signature; the Sonar exclusion stays narrow."""
-    properties = _sonar_properties()
-    criteria = [item.strip() for item in properties["sonar.issue.ignore.multicriteria"].split(",")]
-    matching_resource_keys = [
-        properties[f"sonar.issue.ignore.multicriteria.{criterion}.resourceKey"]
-        for criterion in criteria
-        if properties.get(f"sonar.issue.ignore.multicriteria.{criterion}.ruleKey") == "python:S2638"
-    ]
-
-    assert matching_resource_keys == ["src/bernstein/adapters/*.py"]
-
-
-def test_sonar_s2638_exclusion_matches_top_level_adapters() -> None:
-    """The scoped S2638 exclusion must match Sonar's top-level adapter paths."""
-    properties = _sonar_properties()
-    resource_key = properties["sonar.issue.ignore.multicriteria.e18.resourceKey"]
-
-    assert PurePosixPath("src/bernstein/adapters/aichat.py").match(resource_key)
 
 
 # ---------------------------------------------------------------------------

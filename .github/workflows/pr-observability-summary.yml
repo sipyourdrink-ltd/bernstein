@@ -60,12 +60,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
-          BERNSTEIN_GLITCHTIP_TOKEN: ${{ secrets.BERNSTEIN_GLITCHTIP_TOKEN }}
-          BERNSTEIN_GLITCHTIP_BASE_URL: ${{ vars.BERNSTEIN_GLITCHTIP_BASE_URL }}
-          BERNSTEIN_GLITCHTIP_ORG: ${{ vars.BERNSTEIN_GLITCHTIP_ORG }}
           DTRACK_URL: ${{ vars.DTRACK_URL }}
           DTRACK_TOKEN: ${{ secrets.DTRACK_TOKEN }}
           DTRACK_PROJECT: ${{ vars.DTRACK_PROJECT }}

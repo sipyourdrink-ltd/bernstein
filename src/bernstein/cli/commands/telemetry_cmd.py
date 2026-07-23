@@ -228,7 +228,7 @@ def telemetry_probe(message: str) -> None:
     sink.close()
     if accepted:
         click.echo(f"telemetry probe: event {event.event_id} queued for delivery.")
-        click.echo("Check your GlitchTip project; the event carries logger=bernstein.probe.")
+        click.echo("Check your error-tracker project; the event carries logger=bernstein.probe.")
     else:
         click.echo("telemetry probe: event was dropped under backpressure.")
 

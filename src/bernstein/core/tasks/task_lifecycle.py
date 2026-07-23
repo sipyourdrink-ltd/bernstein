@@ -709,7 +709,7 @@ def _capture_dead_letter(entry: Any, *, original_error: str) -> None:
     """Forward a dead-letter entry to the operator error sink, best-effort.
 
     A task reaching the DLQ has exhausted every retry; that is an
-    unexpected terminal failure worth surfacing in GlitchTip. The capture
+    unexpected terminal failure worth surfacing in the error sink. The capture
     helper is fail-closed, but the import is wrapped too so a missing
     optional dependency cannot disturb the primary failure path.
     """
@@ -790,7 +790,7 @@ def _enqueue_dlq_if_workdir(
 
     # A task reaching the dead-letter queue is a terminal, unexpected
     # failure: every retry has been exhausted. Route it to the operator's
-    # error sink so it surfaces in GlitchTip rather than only on disk.
+    # error sink so it surfaces there rather than only on disk.
     # The helper is itself fail-closed; it never breaks this path.
     _capture_dead_letter(entry, original_error=original_error)
 

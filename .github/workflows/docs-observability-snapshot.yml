@@ -43,16 +43,10 @@ jobs:
 
       - name: Capture observe snapshot
         id: capture
-        continue-on-error: true  # `doctor observe` returns 1 on Sonar WARN; snapshot still valid.
+        continue-on-error: true  # `doctor observe` may return 1 on a backend WARN; snapshot still valid.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
-          BERNSTEIN_GLITCHTIP_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
-          BERNSTEIN_GLITCHTIP_BASE_URL: ${{ vars.BERNSTEIN_GLITCHTIP_BASE_URL }}
-          BERNSTEIN_GLITCHTIP_ORG: ${{ vars.BERNSTEIN_GLITCHTIP_ORG }}
           DTRACK_URL: ${{ secrets.DT_API_URL }}
           DTRACK_TOKEN: ${{ secrets.DT_API_KEY }}
           DTRACK_PROJECT: ${{ vars.DTRACK_PROJECT }}

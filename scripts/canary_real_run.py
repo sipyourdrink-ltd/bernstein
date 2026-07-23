@@ -9,8 +9,7 @@ append-then-verify, a real lineage receipt -- stay invisible until a user
 hits them. This script closes that gap: it drives a small, representative
 set of genuinely-runtime paths against the deterministic stub adapter, with
 no LLM API key and no network egress, and turns any failure into a
-structured telemetry event so the GlitchTip-to-eval ingester can synthesise
-a regression case automatically.
+structured telemetry event on the operator's error sink.
 
 Design
 ------
@@ -25,11 +24,8 @@ Design
   is re-verified through the same gate an auditor would use.
 * **Fail-loud, report-rich.** On any flow exception the runner records a
   telemetry event tagged ``environment=canary`` carrying the flow name,
-  exception type, and the failing top frame -- exactly the fields the
-  ingester (``scripts/scrape_glitchtip_events.py`` ->
-  :class:`bernstein.eval.incident_synthesizer.GlitchTipIncident`) reads to
-  build a minimal reproduction prompt. The process then exits non-zero so
-  the scheduled workflow goes red.
+  exception type, and the failing top frame. The process then exits
+  non-zero so the scheduled workflow goes red.
 * **No leaks.** Every flow runs inside a temporary directory it owns and
   tears down, and the worktree flow removes its worktree + branch before
   returning, even on failure.
@@ -66,11 +62,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("bernstein.canary")
 
 #: Telemetry category for every canary event. Becomes ``logger=bernstein.canary``
-#: in the GlitchTip UI so an operator can filter the canary stream.
+#: in the error-tracker UI so an operator can filter the canary stream.
 CANARY_CATEGORY = "canary"
 
-#: Sentry-protocol ``environment`` tag. The ingester reads this to mark the
-#: synthesised eval case ``env_canary``; it also keeps canary noise out of the
+#: Sentry-protocol ``environment`` tag, marking canary events ``env_canary``;
+#: it also keeps canary noise out of the
 #: production error stream.
 CANARY_ENVIRONMENT = "canary"
 

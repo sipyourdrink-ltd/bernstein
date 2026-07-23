@@ -74,8 +74,8 @@ def _capture_to_telemetry_sink(exc: BaseException) -> None:
 
     This is the explicit-capture counterpart to ``sys.excepthook``: the
     default hook never fires for exceptions caught by the CLI's
-    first-run barrier, so without this call no event reaches GlitchTip
-    even though the SDK is initialised. The function is a no-op when:
+    first-run barrier, so without this call no event reaches the error
+    sink even though the SDK is initialised. The function is a no-op when:
 
     * ``sentry-sdk`` is not installed (minimal install without the
       ``observability`` extra), or
@@ -129,7 +129,7 @@ def handle_first_run_exception(
     if isinstance(exc, SystemExit):
         raise exc
 
-    # Forward to GlitchTip / Sentry-compatible sink before the pretty
+    # Forward to the Sentry-compatible sink before the pretty
     # print. The default ``sys.excepthook`` never sees this exception
     # because we are about to convert it into a SystemExit, so explicit
     # capture is required to keep the error sink in the loop.

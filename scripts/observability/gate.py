@@ -9,7 +9,6 @@ turns the verdict into an actionable signal:
 
 * a ``threshold_status`` flip for the worse (``ok -> warn`` / ``* -> fail``),
 * a numeric worsening of a security metric (new or increased vulns/alerts),
-* a coverage drop beyond a small tolerance (early warning, before it fails),
 * a backend that silently lost its credentials (``ok -> skipped/error``).
 
 The numeric delta is computed here from the two snapshot files rather than
@@ -38,14 +37,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-#: Coverage is the only metric where a higher value is better. A drop of at
-#: least this many points trips an early-warning regression even while the
-#: metric is still inside its ``ok`` band.
-COVERAGE_FLOOR = -1.0
-
-#: Metrics where a higher number is better. Everything else is "lower better".
-_UP_METRICS: frozenset[str] = frozenset({"coverage_pct"})
-
 #: ``(backend, metric)`` security signals whose increase is release-blocking.
 _FAIL_ON_INCREASE: frozenset[tuple[str, str]] = frozenset(
     {
@@ -59,8 +50,6 @@ _FAIL_ON_INCREASE: frozenset[tuple[str, str]] = frozenset(
 #: ``(backend, metric)`` security signals whose increase is worth a warning.
 _WARN_ON_INCREASE: frozenset[tuple[str, str]] = frozenset(
     {
-        ("sonar", "vulnerabilities"),
-        ("sonar", "security_hotspots"),
         ("dt", "medium_vulns"),
         ("code-scanning", "open_alerts"),
     }
@@ -121,9 +110,7 @@ def _classify_metric(
     p_num = _num(prev)
     delta = c_num - p_num if (c_num is not None and p_num is not None) else None
 
-    worse = False
-    if delta is not None:
-        worse = delta < 0 if metric in _UP_METRICS else delta > 0
+    worse = delta is not None and delta > 0
 
     key = (backend, metric)
     candidates: list[tuple[str, str]] = []
@@ -140,9 +127,6 @@ def _classify_metric(
     # New or increased lower-severity security signals warn.
     if key in _WARN_ON_INCREASE and worse and delta is not None:
         candidates.append(("warn", f"{metric} {_fmt_delta(delta)}"))
-    # Coverage drop past the floor warns even while still inside the ok band.
-    if metric == "coverage_pct" and delta is not None and delta <= COVERAGE_FLOOR:
-        candidates.append(("warn", f"coverage {delta:+.1f}pt"))
 
     if not candidates:
         return None

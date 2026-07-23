@@ -4,9 +4,7 @@ Audience: operators who rely on agents + CI and never run the program by
 hand. This canary executes a real end-to-end orchestration on a schedule
 so integration-level runtime breaks surface before a user hits them.
 
-Companion to [`ci.md`](./ci.md) (the PR gate) and
-[`glitchtip-ingester.md`](./glitchtip-ingester.md) (where a canary
-failure ends up).
+Companion to [`ci.md`](./ci.md) (the PR gate).
 
 ## TL;DR
 
@@ -18,7 +16,6 @@ failure ends up).
 | Posture | ADVISORY -- reports red, does NOT block merges |
 | Cost | none (deterministic stub adapter, no LLM key, no network egress) |
 | On failure | emits one `environment=canary` event to the error sink, exits non-zero |
-| Feeds | the GlitchTip-to-eval ingester -> a P1 regression eval case |
 
 ## Why it exists
 
@@ -46,11 +43,11 @@ single run surfaces every broken surface, not just the first.
 
 | Variable | Source | Effect if unset |
 |----------|--------|-----------------|
-| `BERNSTEIN_TELEMETRY_DSN` | `secrets.GLITCHTIP_DSN` (workflow indirection) | telemetry client is a no-op; canary still runs and still red/green on its own merits |
+| `BERNSTEIN_TELEMETRY_DSN` | operator-configured (unset in CI by default) | telemetry client is a no-op; canary still runs and still red/green on its own merits |
 | `BERNSTEIN_TELEMETRY_BACKPRESSURE` | set to `queue` in the workflow | block-on-full (bounded ~1s) so the one failure event is not dropped |
 
 No backend hostname is hardcoded anywhere. The DSN reaches the script
-only through the secret; the script uses the existing observability
+only through the environment; the script uses the existing observability
 client (`error_capture.capture_exception`) and invents no new emitter.
 
 ## How to read a canary failure
@@ -76,20 +73,17 @@ client (`error_capture.capture_exception`) and invents no new emitter.
 
    Exit `0` = all flows green; exit `1` = at least one flow failed.
 
-## How it feeds the GlitchTip ingester
+## How it emits a failure event
 
 ```
 canary flow raises
    -> error_capture.capture_exception(category="canary", tags={environment: canary, ...})
-   -> side channel POSTs a Sentry-protocol event to the GlitchTip DSN
-   -> GlitchTip groups it into an issue (exception type + top frame + environment tag)
-   -> scripts/scrape_glitchtip_events.py (06:23 ingester) reads it
-   -> IncidentSynthesizer writes a P1 regression eval case
-      under src/bernstein/eval/cases/incidents/ (env_canary tag)
+   -> side channel POSTs a Sentry-protocol event to the configured DSN
+      (no-op when BERNSTEIN_TELEMETRY_DSN is unset)
 ```
 
 The `environment=canary` tag keeps canary noise out of the production
-error stream and lets the synthesised case be recognised as canary-origin.
+error stream.
 
 ## How to promote it to a required check later
 

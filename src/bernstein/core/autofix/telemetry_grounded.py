@@ -2,8 +2,8 @@
 
 This module extends the existing autofix daemon with telemetry-driven
 triggers. When an error or alert fires from a configured upstream
-(Sentry / GlitchTip, GitHub Actions failure, Datadog, Loki, custom
-JSONL logs), an adapter normalises the webhook payload into a typed
+(any Sentry-protocol error tracker, GitHub Actions failure, Datadog,
+Loki, custom JSONL logs), an adapter normalises the webhook payload into a typed
 :class:`TelemetryEvent`. A small grounding retriever pulls a window of
 recent log lines around the event fingerprint plus a short snapshot
 of recent commits. The grounded prompt is handed to the existing
@@ -12,7 +12,7 @@ audit / cost-cap primitives it already uses for CI failures.
 
 Scope: MVP.
 
-* Sentry / GlitchTip adapter is wired end-to-end.
+* Sentry-protocol adapter is wired end-to-end.
 * GitHub Actions failure adapter is wired end-to-end.
 * Datadog, Loki, and custom JSONL adapters are stubbed - the protocol
   is in place and the dispatcher will record ``stubbed`` outcomes so
@@ -53,9 +53,9 @@ logger = logging.getLogger(__name__)
 # Source identifiers
 # ---------------------------------------------------------------------------
 
-#: One of the supported telemetry sources. ``sentry`` covers both
-#: Sentry SaaS and the Sentry-compatible self-host GlitchTip - their
-#: webhook payloads share the issue-alert shape this MVP parses.
+#: One of the supported telemetry sources. ``sentry`` covers Sentry SaaS
+#: and any Sentry-compatible self-hosted backend - their webhook payloads
+#: share the issue-alert shape this MVP parses.
 TelemetrySourceId = Literal[
     "sentry",
     "gha_failure",
@@ -289,9 +289,9 @@ def _dig(payload: dict[str, object], dotted_path: str) -> object | None:
 
 
 class SentrySource:
-    """Adapter for the Sentry / GlitchTip issue-alert webhook.
+    """Adapter for the Sentry-protocol issue-alert webhook.
 
-    Sentry SaaS and the Sentry-compatible self-host GlitchTip emit the
+    Sentry SaaS and any Sentry-compatible self-hosted backend emit the
     same envelope:
 
     .. code-block:: json
@@ -504,7 +504,7 @@ def verify_webhook_signature(
 ) -> bool:
     """Constant-time HMAC verification for telemetry webhooks.
 
-    Sentry, GlitchTip, and Datadog all sign requests with an
+    Sentry-protocol trackers and Datadog all sign requests with an
     HMAC-<digest> hex string in a custom header. The header may or
     may not be prefixed with ``"sha256="``; both forms are accepted.
 

@@ -60,7 +60,7 @@ autofix:
   ladder:
     enabled: false
   # Telemetry-grounded autofix sources. Each entry wires one
-  # adapter (Sentry/GlitchTip, GitHub Actions failure, ...).
+  # adapter (any Sentry-protocol tracker, GitHub Actions failure, ...).
   # Every source is opt-in - set enabled to true and configure
   # secret_env before the receiver will dispatch.
   # MVP: sentry and gha_failure ship with full dispatch wiring;

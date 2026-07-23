@@ -183,7 +183,6 @@ jobs:
     secrets:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
     with:
       head_sha: ${{ needs.meta.outputs.head_sha }}
       run_id: ${{ needs.meta.outputs.run_id }}
@@ -226,7 +225,6 @@ jobs:
     # on a non-empty value rather than failing the whole reusable call.
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
       # OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
       # Re-enable the pass once OPENROUTER_API_KEY_FREE is defined on
       # the repo. The Tier-3 shadow-mode job (#1715) gates on

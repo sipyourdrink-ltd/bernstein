@@ -46,7 +46,7 @@ Restart Zed after registering so it reloads its settings.
 ## Telemetry DSN
 
 To route Bernstein's side-channel telemetry (lineage, cost, run lifecycle,
-tracker events) from Zed into your own GlitchTip project, add an `env`
+tracker events) from Zed into any Sentry-compatible error tracker, add an `env`
 block to the `bernstein` entry with `BERNSTEIN_TELEMETRY_DSN` set to a
 Sentry-compatible DSN:
 

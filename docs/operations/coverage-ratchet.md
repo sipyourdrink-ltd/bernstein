@@ -99,7 +99,7 @@ Flow (`.github/workflows/coverage-ratchet.yml`, triggered on push to
 
 1. Resolve the freshest CI run that actually uploaded a `coverage-report`
    artifact and download it (the same `coverage.xml` the shard produced).
-   This mirrors `sonar-scan.yml`: under the rapid-merge cadence ci.yml's
+   Under the rapid-merge cadence ci.yml's
    `cancel-in-progress` concurrency cancels most main CI runs, so a
    `workflow_run`/`conclusion == success` trigger almost never fires;
    searching recent runs for the artifact (cancelled runs may still carry
@@ -117,7 +117,7 @@ Flow (`.github/workflows/coverage-ratchet.yml`, triggered on push to
 The bump is a **PR, not a direct push**: `main` is protected by required
 status checks, so a bot commit pushed straight to `main` would be rejected.
 Opening a PR is the protection-safe path and matches the repo convention
-(sonar sweeper, weekly floor bump). Every baseline movement is therefore a
+(weekly floor bump). Every baseline movement is therefore a
 reviewable, auditable artifact rather than a silent rewrite. Merge the PR
 to record the new high-water mark.
 
@@ -147,8 +147,8 @@ false-fail on a push that legitimately produced no coverage.
 
 **Cron is disabled by default.** `ENABLE_CRON` is `"0"` in the workflow
 file. A scheduled fire is a no-op until an operator flips it to `"1"` in a
-follow-up PR, after a clean `workflow_dispatch` smoke run. This mirrors the
-Sonar sweeper rollout and bounds first-day blast radius.
+follow-up PR, after a clean `workflow_dispatch` smoke run. This bounds
+first-day blast radius.
 
 To smoke-test: run the workflow via **Actions -> Coverage ratchet (weekly
 floor bump) -> Run workflow**. Confirm the review PR looks right, then flip

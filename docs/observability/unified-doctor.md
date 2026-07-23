@@ -1,18 +1,16 @@
 # Unified observability doctor
 
-`bernstein doctor observe` aggregates the four observability backends that
-Bernstein integrates with into a single operator-facing table: Sonar,
-GlitchTip, Dependency-Track, and GitHub Code Scanning.
+`bernstein doctor observe` aggregates the observability backends that
+Bernstein integrates with into a single operator-facing table:
+Dependency-Track and GitHub Code Scanning.
 
 ## TL;DR
 
 | Command | What it does |
 | --- | --- |
-| `bernstein doctor observe` | Run all four backends, render one Rich table |
+| `bernstein doctor observe` | Run all backends, render one Rich table |
 | `bernstein doctor observe --json` | Same data as JSON for jq / CI consumption |
 | `bernstein doctor observe --watch` | Refresh every 60s until Ctrl-C |
-| `bernstein doctor sonar` | Sonar-only deep dive (when wired) |
-| `bernstein doctor glitchtip` | GlitchTip-only deep dive (when wired) |
 | `bernstein doctor dt` | Dependency-Track-only deep dive |
 | `bernstein doctor code-scanning` | GitHub Code Scanning-only deep dive |
 
@@ -26,8 +24,6 @@ you have; missing ones soft-fail without error.
 
 | Backend | Required env-vars | Optional env-vars |
 | --- | --- | --- |
-| `sonar` | `SONAR_HOST_URL`, `SONAR_TOKEN` | `SONAR_PROJECT_KEY` |
-| `glitchtip` | `BERNSTEIN_GLITCHTIP_TOKEN` | `BERNSTEIN_GLITCHTIP_BASE_URL`, `BERNSTEIN_GLITCHTIP_ORG` |
 | `dt` | `DTRACK_URL`, `DTRACK_TOKEN`, `DTRACK_PROJECT` | - |
 | `code-scanning` | `GITHUB_TOKEN`, `GITHUB_REPOSITORY` | `GITHUB_API_URL` |
 
@@ -42,10 +38,8 @@ Every probe contributes rows to a single table:
 
 ```
 backend         metric             value     delta    threshold   status
-sonar           coverage_pct       87.5%     +0.4     80.0%       ok
-sonar           code_smells        42        +3       50          ok
-glitchtip       issues_24h         3         -2       0           warn
 dt              critical_vulns     0         0        0           ok
+dt              high_vulns         2         +1       5           warn
 code-scanning   open_alerts        1         new      0           warn
 ```
 
@@ -59,16 +53,16 @@ the write (handy in CI). Delete the file to reset the baseline.
 
 ```json
 {
-  "summary": {"ok": 1, "warn": 1, "fail": 0, "skipped": 2, "error": 0},
+  "summary": {"ok": 1, "warn": 0, "fail": 0, "skipped": 1, "error": 0},
   "backends": [
     {
-      "backend": "sonar",
+      "backend": "dt",
       "status": "ok",
       "detail": "project bernstein",
       "error": null,
       "metrics": [
-        {"name": "coverage_pct", "value": "87.5%", "numeric": 87.5,
-         "threshold": "80.0%", "threshold_status": "ok", "delta": "+0.4"}
+        {"name": "critical_vulns", "value": "0", "numeric": 0.0,
+         "threshold": "0", "threshold_status": "ok", "delta": "0"}
       ]
     }
   ]
@@ -83,8 +77,7 @@ is warn/fail/error.
 Two workflows ship alongside the command:
 
 - `.github/workflows/pr-observability-summary.yml`: posts a sticky
-  comment on every pull request with the observe table and any
-  branch-tagged GlitchTip issues. Triggered on
+  comment on every pull request with the observe table. Triggered on
   `pull_request: [opened, synchronize, reopened]` and via
   `workflow_dispatch` for backfills.
 - `.github/workflows/docs-observability-snapshot.yml`: cron job at
@@ -95,9 +88,8 @@ Two workflows ship alongside the command:
   which diffs today's snapshot against yesterday's and reports
   regressions by reading each row's `threshold_status` and computing the
   numeric delta from the two files. It flags a status flip for the worse
-  (`ok -> warn`, `* -> fail`), a coverage drop past a small tolerance, a
-  new or increased security finding, and a backend that lost its
-  credentials. On a fail-severity regression the step pushes a Telegram
+  (`ok -> warn`, `* -> fail`), a new or increased security finding, and a
+  backend that lost its credentials. On a fail-severity regression the step pushes a Telegram
   message (`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`); it is non-blocking,
   so the snapshot pull request still opens and warn-level drift is
   recorded in the run summary.
@@ -108,9 +100,9 @@ Two workflows ship alongside the command:
 Rich table in place. Useful while triaging an incident:
 
 ```sh
-SONAR_HOST_URL=https://sonar.example.com \
-SONAR_TOKEN=$(pass sonar/token) \
-BERNSTEIN_GLITCHTIP_TOKEN=$(pass glitchtip/read) \
+DTRACK_URL=https://dtrack.example.com \
+DTRACK_TOKEN=$(pass dtrack/token) \
+DTRACK_PROJECT=<uuid> \
 bernstein doctor observe --watch --interval 30
 ```
 

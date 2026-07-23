@@ -3,10 +3,8 @@
 Covers ``src/bernstein/evolution/observability_signals.py`` and the
 ``OpportunityDetector.identify_observability_opportunities`` wiring:
 
-- ``coverage_delta_fraction`` returns a signed fraction (pt / 100) and a
-  ``0.0`` fallback when a snapshot or coverage row is missing,
-- ``detect_regressions`` flags a coverage drop and a security increase but
-  stays quiet on a flat / improved / single-snapshot corpus,
+- ``detect_regressions`` flags a security increase but stays quiet on a
+  flat / improved / single-snapshot corpus,
 - ``OpportunityDetector`` only emits observability opportunities when a
   snapshots directory is configured (opt-in; default stays a no-op).
 """
@@ -36,42 +34,8 @@ def _write(dir_: Path, day: str, *backends: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------
-# coverage_delta_fraction
-# --------------------------------------------------------------------------
-
-
-def test_coverage_delta_is_signed_fraction(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 82.0, "ok")]))
-    _write(tmp_path, "2026-07-11", _backend("sonar", "warn", [_metric("coverage_pct", 80.6, "ok")]))
-
-    delta = sig.coverage_delta_fraction(tmp_path)
-
-    assert abs(delta - (-0.014)) < 1e-9
-
-
-def test_coverage_delta_zero_when_missing(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-11", _backend("sonar", "ok", [_metric("coverage_pct", 80.6, "ok")]))
-
-    # Only one snapshot -> no delta.
-    assert sig.coverage_delta_fraction(tmp_path) == 0.0
-    # Absent directory -> no delta.
-    assert sig.coverage_delta_fraction(tmp_path / "nope") == 0.0
-
-
-# --------------------------------------------------------------------------
 # detect_regressions
 # --------------------------------------------------------------------------
-
-
-def test_detect_regressions_flags_coverage_drop(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 82.0, "ok")]))
-    _write(tmp_path, "2026-07-11", _backend("sonar", "warn", [_metric("coverage_pct", 80.5, "ok")]))
-
-    regs = sig.detect_regressions(tmp_path)
-
-    assert len(regs) == 1
-    assert regs[0].kind == "coverage"
-    assert regs[0].delta < 0
 
 
 def test_detect_regressions_flags_security_increase(tmp_path: Path) -> None:
@@ -88,15 +52,15 @@ def test_detect_regressions_flags_security_increase(tmp_path: Path) -> None:
 
 
 def test_detect_regressions_quiet_on_flat_and_improved(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 80.0, "ok")]))
-    _write(tmp_path, "2026-07-11", _backend("sonar", "ok", [_metric("coverage_pct", 83.0, "ok")]))
+    _write(tmp_path, "2026-07-10", _backend("dt", "warn", [_metric("high_vulns", 3.0, "warn")]))
+    _write(tmp_path, "2026-07-11", _backend("dt", "ok", [_metric("high_vulns", 1.0, "warn")]))
 
     assert sig.detect_regressions(tmp_path) == []
 
 
 def test_detect_regressions_skips_first_observation(tmp_path: Path) -> None:
     # dt only appears in the newer snapshot -> first observation, not a regression.
-    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 80.0, "ok")]))
+    _write(tmp_path, "2026-07-10", _backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]))
     _write(tmp_path, "2026-07-11", _backend("dt", "warn", [_metric("high_vulns", 3.0, "warn")]))
 
     assert sig.detect_regressions(tmp_path) == []

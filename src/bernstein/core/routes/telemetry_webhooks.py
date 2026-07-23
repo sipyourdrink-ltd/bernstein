@@ -227,8 +227,7 @@ def _extract_signature_header(request: Request) -> str:
     """
     headers_lower = {k.lower(): v for k, v in request.headers.items()}
     for header_name in (
-        "sentry-hook-signature",  # Sentry / GlitchTip integrations
-        "x-glitchtip-hook-signature",
+        "sentry-hook-signature",  # Sentry-protocol integrations
         "x-hub-signature-256",  # GitHub workflow_run webhook
         "x-datadog-signature",  # Datadog
         "x-bernstein-telemetry-signature",  # custom / loki / jsonl
@@ -241,7 +240,7 @@ def _extract_signature_header(request: Request) -> str:
 
 @router.post("/webhooks/telemetry/sentry/")
 async def telemetry_sentry(request: Request) -> JSONResponse:
-    """Receive a Sentry / GlitchTip issue-alert webhook."""
+    """Receive a Sentry-protocol issue-alert webhook."""
     return await _handle_source(request, "sentry")
 
 
