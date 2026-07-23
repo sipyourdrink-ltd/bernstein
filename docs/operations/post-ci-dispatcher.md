@@ -6,13 +6,13 @@
 |------|-------|
 | File | `.github/workflows/post-ci-dispatcher.yml` |
 | Trigger | `workflow_run: CI completed` on `main` |
-| Children | `auto-release`, `auto-heal`, `bernstein-ci-fix`, `bisect-on-red`, `telegram-notify` |
+| Children | `auto-release`, `auto-heal`, `bernstein-ci-fix`, `bisect-on-red` |
 | Boots paid | 1 per CI completion (was 5) |
 
 Single `workflow_run: CI completed` listener that resolves the upstream
-metadata once and routes to five reusable workflows via `workflow_call`.
-Replaces five sibling listeners that each paid an independent runner
-cold start plus a GHA token mint per CI completion.
+metadata once and routes to the reusable child workflows via
+`workflow_call`. Replaces the sibling listeners that each paid an
+independent runner cold start plus a GHA token mint per CI completion.
 
 ## What changed
 
@@ -27,7 +27,6 @@ instead of `on: workflow_run:`; the dispatcher owns the upstream event.
 | `auto-heal.yml` | `workflow_run: CI completed` | `workflow_call` |
 | `bernstein-ci-fix.yml` | `workflow_run: CI completed` | `workflow_call` |
 | `bisect-on-red.yml` | `workflow_run: CI completed` | `workflow_call` |
-| `telegram-notify.yml` | `workflow_run: CI completed` | `workflow_call` |
 | `post-ci-dispatcher.yml` | n/a (new) | `workflow_run: CI completed` |
 
 ## Sequence
@@ -44,17 +43,17 @@ CI run completes on main
 |     display_title, ...    |
 +-------------+-------------+
               |
-   +----------+----------+----------+----------+-----------+
-   |          |          |          |          |           |
-   v          v          v          v          v           v
-telegram-  auto-      auto-heal  bernstein-  bisect-     (dispatcher
-notify     release               ci-fix     on-red       outputs)
-(non-      (main      (failure,  (failure,  (failure,
- success)   branch)    canonical  canonical  main)
-                       repo)      repo,
-                                  and auto-heal
-                                  did NOT open
-                                  a PR)
+   +----------+----------+----------+-----------+
+   |          |          |          |           |
+   v          v          v          v           v
+auto-      auto-heal  bernstein-  bisect-     (dispatcher
+release               ci-fix     on-red       outputs)
+(main      (failure,  (failure,  (failure,
+ branch)    canonical  canonical  main)
+            repo)      repo,
+                       and auto-heal
+                       did NOT open
+                       a PR)
 ```
 
 ## Race resolution
@@ -77,11 +76,11 @@ inputs once and passes them to each child:
 
 | Input | Used by |
 |---|---|
-| `conclusion` | telegram-notify, auto-release |
-| `head_branch` | telegram-notify, auto-release, bernstein-ci-fix |
+| `conclusion` | auto-release |
+| `head_branch` | auto-release, bernstein-ci-fix |
 | `head_sha` | every child |
 | `run_id` | every child |
-| `html_url` | telegram-notify, auto-release, bisect-on-red |
+| `html_url` | auto-release, bisect-on-red |
 | `display_title` | auto-heal, bernstein-ci-fix (recursion guards) |
 | `actor_login` | bernstein-ci-fix (bot filtering) |
 
@@ -107,9 +106,8 @@ forwards only those:
 
 | Child | Secrets forwarded |
 |---|---|
-| `telegram-notify` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
-| `auto-release` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
-| `auto-heal` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (both optional) |
+| `auto-release` | none |
+| `auto-heal` | none |
 | `bernstein-ci-fix` | `GEMINI_API_KEY` (optional) |
 | `bisect-on-red` | none |
 

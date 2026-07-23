@@ -32,7 +32,7 @@ class CostDecision:
     """Outcome of the cost check.
 
     ``allowed`` is the only field the workflow strictly needs; the rest
-    are surfaced in the audit log and Telegram alert for transparency.
+    are surfaced in the audit log for transparency.
     """
 
     allowed: bool

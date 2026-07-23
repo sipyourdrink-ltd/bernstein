@@ -15,7 +15,7 @@ Update this table whenever a release workflow is added, renamed, or moved.
 | `.github/workflows/reconcile-release.yml` | Reconcile release drift | `schedule`, `workflow_dispatch` | Compares `pyproject.toml`, PyPI, and GitHub Release assets to detect missed publish work. | Opens or updates a `release-drift` issue when published state is inconsistent. |
 | `.github/workflows/publish-docker.yml` | Publish Docker Image | `release`, `workflow_dispatch` | Publishes the GHCR image and image provenance for a released tag. | Runs after a GitHub Release is published, or manually for a selected tag. |
 | `.github/workflows/publish-homebrew.yml` | Publish Homebrew Formula | `release`, `workflow_dispatch` | Updates the Homebrew tap formula for a released version. | Runs after a GitHub Release is published, or manually for a selected version. |
-| `.github/workflows/sbom-upload.yml` | SBOM upload | `push`, `release` | Generates and uploads the CycloneDX SBOM when the Dependency-Track endpoint is configured. | Runs on main updates and after a GitHub Release is published. |
+| `.github/workflows/sbom.yml` | SBOM | `release`, `workflow_dispatch` | Generates SPDX + CycloneDX SBOMs and attaches them as release assets. | Runs after a GitHub Release is published, or manually for a selected ref. |
 
 ## Bumping the version
 

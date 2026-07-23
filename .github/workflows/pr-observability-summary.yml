@@ -60,9 +60,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          DTRACK_URL: ${{ vars.DTRACK_URL }}
-          DTRACK_TOKEN: ${{ secrets.DTRACK_TOKEN }}
-          DTRACK_PROJECT: ${{ vars.DTRACK_PROJECT }}
         run: |
           set -euo pipefail
           mkdir -p .ci/observability

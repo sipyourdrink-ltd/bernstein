@@ -40,8 +40,6 @@ from typing import Any
 #: ``(backend, metric)`` security signals whose increase is release-blocking.
 _FAIL_ON_INCREASE: frozenset[tuple[str, str]] = frozenset(
     {
-        ("dt", "critical_vulns"),
-        ("dt", "high_vulns"),
         ("code-scanning", "critical_alerts"),
         ("code-scanning", "high_alerts"),
     }
@@ -50,7 +48,6 @@ _FAIL_ON_INCREASE: frozenset[tuple[str, str]] = frozenset(
 #: ``(backend, metric)`` security signals whose increase is worth a warning.
 _WARN_ON_INCREASE: frozenset[tuple[str, str]] = frozenset(
     {
-        ("dt", "medium_vulns"),
         ("code-scanning", "open_alerts"),
     }
 )

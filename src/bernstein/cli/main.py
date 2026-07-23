@@ -944,13 +944,10 @@ cli.add_command(install_hooks, "install-hooks")
 cli.add_command(plugins_cmd, "plugins")
 cli.add_command(doctor)
 
-# Attach observability doctor subcommands (dt, code-scanning, observe)
+# Attach observability doctor subcommands (code-scanning, observe)
 # to the doctor group. See docs/observability/unified-doctor.md.
 from bernstein.cli.commands.doctor.code_scanning import (  # noqa: E402
     register as _register_doctor_code_scanning,
-)
-from bernstein.cli.commands.doctor.dt import (  # noqa: E402
-    register as _register_doctor_dt,
 )
 from bernstein.cli.commands.doctor.migrations import (  # noqa: E402
     register as _register_doctor_migrations,
@@ -959,7 +956,6 @@ from bernstein.cli.commands.doctor.observe import (  # noqa: E402
     register as _register_doctor_observe,
 )
 
-_register_doctor_dt(doctor)
 _register_doctor_code_scanning(doctor)
 _register_doctor_observe(doctor)
 _register_doctor_migrations(doctor)

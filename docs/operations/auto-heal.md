@@ -39,7 +39,6 @@ flowchart LR
     BR -- ok --> PR[Open heal PR]
     PR --> AT[SLSA attestation]
     PR --> LOG[Audit + lineage + decision + calibration]
-    LOG --> TG[Telegram alert]
 ```
 
 ## The 26-capability matrix
@@ -68,7 +67,7 @@ shipped, workflow wiring deferred), `deferred` (planned for v3).
 | 17 | Decision-log entry | shipped | `core.autoheal.wire` writes `autoheal_strategy` rows |
 | 18 | Calibration tracking | shipped | `core.autoheal.wire` writes predicted/observed pairs |
 | 19 | SLSA build-provenance attestation | shipped | `actions/attest-build-provenance` |
-| 20 | Structured Telegram alert | shipped | workflow step |
+| 20 | Structured operator alert | retired | CI alert surface removed |
 | 21 | Operator-readable audit ledger | shipped | `.sdd/autoheal-history.jsonl` |
 | 22 | Shadow-mode quarantine + promote | shipped | `core.autoheal.shadow_mode` |
 | 23 | One-button kill switch | shipped | `.sdd/autoheal-disabled` + `core.autoheal.kill_switch` |

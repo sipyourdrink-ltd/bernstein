@@ -71,14 +71,14 @@ def _snapshot(*backends: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_ok_to_fail_flip_is_fail_severity() -> None:
-    prev = _snapshot(_backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok")]))
-    curr = _snapshot(_backend("dt", "fail", [_metric("critical_vulns", 1.0, "fail")]))
+    prev = _snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
+    curr = _snapshot(_backend("code-scanning", "fail", [_metric("critical_alerts", 1.0, "fail")]))
 
     regs = gate.detect_regressions(prev, curr)
 
     assert len(regs) == 1
-    assert regs[0].backend == "dt"
-    assert regs[0].metric == "critical_vulns"
+    assert regs[0].backend == "code-scanning"
+    assert regs[0].metric == "critical_alerts"
     assert regs[0].severity == "fail"
     assert regs[0].delta == 1.0
 
@@ -110,9 +110,9 @@ def test_new_vulnerability_is_flagged() -> None:
     assert regs[0].delta == 3.0
 
 
-def test_increased_critical_dt_vulns_is_fail_severity() -> None:
-    prev = _snapshot(_backend("dt", "fail", [_metric("critical_vulns", 1.0, "fail")]))
-    curr = _snapshot(_backend("dt", "fail", [_metric("critical_vulns", 4.0, "fail")]))
+def test_increased_critical_alerts_is_fail_severity() -> None:
+    prev = _snapshot(_backend("code-scanning", "fail", [_metric("critical_alerts", 1.0, "fail")]))
+    curr = _snapshot(_backend("code-scanning", "fail", [_metric("critical_alerts", 4.0, "fail")]))
 
     regs = gate.detect_regressions(prev, curr)
 
@@ -139,13 +139,13 @@ def test_backend_lost_creds_is_flagged() -> None:
 
 
 def test_backend_disappearing_entirely_is_flagged() -> None:
-    prev = _snapshot(_backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok")]))
+    prev = _snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
     curr = _snapshot()
 
     regs = gate.detect_regressions(prev, curr)
 
     assert len(regs) == 1
-    assert regs[0].backend == "dt"
+    assert regs[0].backend == "code-scanning"
     assert regs[0].severity == "warn"
 
 
@@ -156,28 +156,45 @@ def test_backend_disappearing_entirely_is_flagged() -> None:
 
 def test_flat_green_snapshots_produce_no_regressions() -> None:
     prev = _snapshot(
-        _backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok"), _metric("high_vulns", 0.0, "ok")]),
-        _backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]),
+        _backend(
+            "code-scanning",
+            "ok",
+            [
+                _metric("critical_alerts", 0.0, "ok"),
+                _metric("high_alerts", 0.0, "ok"),
+                _metric("open_alerts", 0.0, "ok"),
+            ],
+        ),
     )
     curr = _snapshot(
-        _backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok"), _metric("high_vulns", 0.0, "ok")]),
-        _backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]),
+        _backend(
+            "code-scanning",
+            "ok",
+            [
+                _metric("critical_alerts", 0.0, "ok"),
+                _metric("high_alerts", 0.0, "ok"),
+                _metric("open_alerts", 0.0, "ok"),
+            ],
+        ),
     )
 
     assert gate.detect_regressions(prev, curr) == []
 
 
 def test_backend_gaining_creds_is_not_a_regression() -> None:
-    prev = _snapshot(_backend("dt", "skipped", []))
-    curr = _snapshot(_backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok")]))
+    prev = _snapshot(_backend("code-scanning", "skipped", []))
+    curr = _snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
 
     assert gate.detect_regressions(prev, curr) == []
 
 
 def test_missing_previous_snapshot_only_flags_hard_fails() -> None:
     curr = _snapshot(
-        _backend("dt", "fail", [_metric("critical_vulns", 2.0, "fail")]),
-        _backend("code-scanning", "warn", [_metric("open_alerts", 3.0, "warn")]),
+        _backend(
+            "code-scanning",
+            "fail",
+            [_metric("critical_alerts", 2.0, "fail"), _metric("open_alerts", 3.0, "warn")],
+        ),
     )
 
     regs = gate.detect_regressions(None, curr)
@@ -185,7 +202,7 @@ def test_missing_previous_snapshot_only_flags_hard_fails() -> None:
     # The brand-new warn metric must not fire; only the fail-status one does.
     assert len(regs) == 1
     assert regs[0].severity == "fail"
-    assert regs[0].backend == "dt"
+    assert regs[0].backend == "code-scanning"
 
 
 # --------------------------------------------------------------------------
@@ -196,7 +213,7 @@ def test_missing_previous_snapshot_only_flags_hard_fails() -> None:
 def test_load_two_latest_orders_by_date(tmp_path: Path) -> None:
     (tmp_path / "2026-07-10.json").write_text(json.dumps(_snapshot()), encoding="utf-8")
     (tmp_path / "2026-07-14.json").write_text(
-        json.dumps(_snapshot(_backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok")]))),
+        json.dumps(_snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))),
         encoding="utf-8",
     )
     (tmp_path / "notes.json").write_text("{}", encoding="utf-8")  # non-dated ignored
@@ -205,7 +222,7 @@ def test_load_two_latest_orders_by_date(tmp_path: Path) -> None:
 
     assert prev is not None
     assert curr is not None
-    assert curr["backends"][0]["backend"] == "dt"
+    assert curr["backends"][0]["backend"] == "code-scanning"
     assert prev["backends"] == []
 
 
@@ -220,11 +237,11 @@ def test_load_two_latest_handles_single_snapshot(tmp_path: Path) -> None:
 
 def test_main_exit_code_and_output(tmp_path: Path) -> None:
     (tmp_path / "2026-07-13.json").write_text(
-        json.dumps(_snapshot(_backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok")]))),
+        json.dumps(_snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))),
         encoding="utf-8",
     )
     (tmp_path / "2026-07-14.json").write_text(
-        json.dumps(_snapshot(_backend("dt", "fail", [_metric("critical_vulns", 2.0, "fail")]))),
+        json.dumps(_snapshot(_backend("code-scanning", "fail", [_metric("critical_alerts", 2.0, "fail")]))),
         encoding="utf-8",
     )
     out = tmp_path / "regressions.json"

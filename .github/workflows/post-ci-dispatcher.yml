@@ -1,13 +1,12 @@
 name: Post-CI dispatcher
 
 # Single workflow_run: CI completed listener that consolidates the fanout
-# previously paid out across five sibling workflows (auto-release, auto-heal,
-# bernstein-ci-fix, bisect-on-red, telegram-notify). Each child is now a
-# reusable workflow (on: workflow_call:) and runs only when the dispatcher's
-# routing logic selects it.
+# previously paid out across sibling workflows (auto-release, auto-heal,
+# bernstein-ci-fix, bisect-on-red). Each child is now a reusable workflow
+# (on: workflow_call:) and runs only when the dispatcher's routing logic
+# selects it.
 #
 # Routing summary:
-#   - telegram-notify    -> fires on any non-success, non-skipped conclusion.
 #   - auto-release       -> fires on the main branch only.
 #   - auto-heal          -> fires on failure on main, gated on canonical repo
 #                            and recursion guards.
@@ -106,32 +105,6 @@ jobs:
             echo "event=${EVENT}"
           } >> "$GITHUB_OUTPUT"
 
-  telegram-notify:
-    name: Telegram notify
-    needs: meta
-    if: >-
-      needs.meta.outputs.conclusion != 'success' &&
-      needs.meta.outputs.conclusion != 'skipped' &&
-      needs.meta.outputs.conclusion != 'neutral'
-    # Union of permissions the called workflow's jobs request.
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/telegram-notify.yml
-    # Pass only the secrets this child actually reads. Avoids the
-    # `secrets: inherit` blanket pass that zizmor flags as
-    # `secrets-inherit`: every secret in the repo would otherwise be
-    # silently available to the called workflow.
-    secrets:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-    with:
-      conclusion: ${{ needs.meta.outputs.conclusion }}
-      head_branch: ${{ needs.meta.outputs.head_branch }}
-      head_sha: ${{ needs.meta.outputs.head_sha }}
-      run_id: ${{ needs.meta.outputs.run_id }}
-      html_url: ${{ needs.meta.outputs.html_url }}
-
   auto-release:
     name: Auto-release
     needs: meta
@@ -143,11 +116,7 @@ jobs:
       contents: write
       issues: write
     uses: ./.github/workflows/auto-release.yml
-    # auto-release only needs Telegram credentials for its alert job.
     # GITHUB_TOKEN is provided automatically to reusable workflows.
-    secrets:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     with:
       conclusion: ${{ needs.meta.outputs.conclusion }}
       head_branch: ${{ needs.meta.outputs.head_branch }}
@@ -177,12 +146,7 @@ jobs:
       id-token: write
       actions: read
     uses: ./.github/workflows/auto-heal.yml
-    # auto-heal optionally pings Telegram on heal outcomes. GITHUB_TOKEN
-    # is auto-provided. Both Telegram secrets are declared `required:
-    # false` on the called workflow so unset repos still run cleanly.
-    secrets:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    # GITHUB_TOKEN is auto-provided to the reusable workflow.
     with:
       head_sha: ${{ needs.meta.outputs.head_sha }}
       run_id: ${{ needs.meta.outputs.run_id }}

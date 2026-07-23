@@ -219,7 +219,6 @@ CAPABILITY_ASSERTIONS: list[tuple[str, str]] = [
     ("c16_lineage_v2", "autoheal-history.jsonl"),
     ("c17_decision_log", "decision_log"),
     # Operator-experience layer
-    ("c20_telegram_payload", "telegram"),
     ("c21_audit_ledger", "autoheal-history.jsonl"),
     ("c23_kill_switch", "autoheal-disabled"),
     # Reliability layer

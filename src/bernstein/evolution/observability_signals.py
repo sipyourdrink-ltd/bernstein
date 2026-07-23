@@ -29,11 +29,8 @@ DEFAULT_SNAPSHOTS_DIR = Path("docs/_internal/observability/snapshots")
 
 #: ``(backend, metric)`` security signals and the severity of an increase.
 _SECURITY_METRICS: dict[tuple[str, str], str] = {
-    ("dt", "critical_vulns"): "high",
-    ("dt", "high_vulns"): "high",
     ("code-scanning", "critical_alerts"): "high",
     ("code-scanning", "high_alerts"): "high",
-    ("dt", "medium_vulns"): "low",
     ("code-scanning", "open_alerts"): "low",
 }
 

@@ -33,13 +33,6 @@ on:
         description: HTML URL of the upstream CI run.
         required: true
         type: string
-    secrets:
-      TELEGRAM_BOT_TOKEN:
-        description: Telegram bot token used for release alerts.
-        required: true
-      TELEGRAM_CHAT_ID:
-        description: Telegram chat id that receives release alerts.
-        required: true
 
 permissions: {}
 
@@ -72,31 +65,6 @@ jobs:
           SHA: ${{ inputs.head_sha }}
         run: |
           echo "::error::release skipped - CI conclusion was ${STATUS} on ${SHA}"
-
-      - name: Telegram alert
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          STATUS: ${{ inputs.conclusion }}
-          BRANCH: ${{ inputs.head_branch }}
-          SHA: ${{ inputs.head_sha }}
-          HTML_URL: ${{ inputs.html_url }}
-          REPO: ${{ github.repository }}
-        run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram not configured; skipping."
-            exit 0
-          fi
-          SHORT_SHA="${SHA:0:7}"
-          TEXT="📦 auto-release skipped on ${BRANCH}
-          CI conclusion: ${STATUS}
-          Commit: ${SHORT_SHA}
-          ${HTML_URL}"
-          KEYBOARD='{"inline_keyboard":[[{"text":"🔄 View Run","url":"'"${HTML_URL}"'"}]]}'
-          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${TEXT}\",\"reply_markup\":${KEYBOARD}}" \
-            || echo "Telegram notification failed"
 
       - name: Open or update tracking issue
         env:

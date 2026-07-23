@@ -202,23 +202,3 @@ jobs:
           } >> "${GITHUB_ENV}"
 
           echo "Digest #${DIGEST_NUMBER} published (real failures: ${REAL_FAILURES})."
-
-      - name: Threshold alert (Telegram)
-        if: ${{ env.HAS_SIGNAL == 'true' }}
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          REPO: ${{ github.repository }}
-        run: |
-          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
-            echo "Telegram not configured; skipping."
-            exit 0
-          fi
-          TEXT=$(cat "${ALERT_FILE}" 2>/dev/null \
-            || echo "CI weekly digest: ${REAL_FAILURES} real failure(s) on main")
-          TEXT="${TEXT}
-          https://github.com/${REPO}/issues/${DIGEST_NUMBER}"
-          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=${TEXT}" \
-            || echo "Telegram notification failed"

@@ -21,7 +21,6 @@ name: Auto-heal v2
 #   * Blast-radius gate (blast_radius)
 #   * Kill switch (autoheal-disabled)
 #   * Idempotency via content-hashed branch key (ci-heal/<short_sha>)
-#   * Telegram structured payload alert (telegram)
 #
 # All Python state lives under .sdd/ which is gitignored. The workflow
 # never commits state - only patches that pass the cordon and self-test.
@@ -55,13 +54,6 @@ on:
           failed_validation. Consumed by post-ci-dispatcher to decide
           whether bernstein-ci-fix should run as a fallback fixer.
         value: ${{ jobs.heal.outputs.outcome }}
-    secrets:
-      TELEGRAM_BOT_TOKEN:
-        description: Telegram bot token used for heal alerts.
-        required: false
-      TELEGRAM_CHAT_ID:
-        description: Telegram chat id that receives heal alerts.
-        required: false
 
 permissions: {}
 
@@ -645,31 +637,3 @@ jobs:
             "candidates": ["ruff-format", "agents-md-sync", "typos-allowlist"]
           }
           JSON
-
-      - name: Capability 20 - structured Telegram alert
-        if: always()
-        env:
-          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
-          STRATEGY: ${{ needs.triage.outputs.strategy }}
-          OUTCOME: ${{ steps.outcome.outputs.outcome }}
-          PR_URL: ${{ steps.open_pr.outputs.pr_url }}
-        run: |
-          # The telegram step is best-effort: missing secrets are not
-          # a failure condition. The payload is structured so any
-          # downstream bot can parse it deterministically.
-          if [ -z "${TG_TOKEN}" ] || [ -z "${TG_CHAT}" ]; then
-            echo "::notice::telegram secrets absent -- skipping alert"
-            exit 0
-          fi
-          MSG=$(cat <<MSG
-          autoheal-v2
-          strategy=${STRATEGY}
-          outcome=${OUTCOME}
-          pr=${PR_URL}
-          MSG
-          )
-          curl -sS --max-time 10 \
-            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d "chat_id=${TG_CHAT}" \
-            --data-urlencode "text=${MSG}" || true

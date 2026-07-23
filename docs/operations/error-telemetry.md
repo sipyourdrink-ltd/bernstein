@@ -1,7 +1,7 @@
-# Error telemetry and SBOM upload
+# Error telemetry and SBOM
 
 Audience: SREs wiring Bernstein into an operator-managed error sink and
-SBOM tracker.
+consuming release SBOMs.
 
 ## Error telemetry DSN flow
 
@@ -17,17 +17,15 @@ The telemetry contract (env-var resolution and the side-channel
 transport) lives in
 [the telemetry side channel](../observability/side-channel.md).
 
-## SBOM upload to operator Dependency-Track
+## Release SBOMs
 
-The `.github/workflows/sbom-upload.yml` workflow:
+The `.github/workflows/sbom.yml` workflow:
 
-* triggers on `push` to `main` and on `release: published`,
-* generates a CycloneDX SBOM via `cyclonedx-bom`,
-* uploads the SBOM to a Dependency-Track instance addressed by
-  `DT_API_URL` (required, no default; e.g. `https://dt.example.com`) using the
-  `DT_API_KEY` secret.
+* triggers on `release: published` (and `workflow_dispatch`),
+* generates SPDX and CycloneDX SBOMs for the release build,
+* attaches both SBOMs as release assets and uploads them as workflow
+  artifacts.
 
-The upload step is gated on both `DT_API_URL` and `DT_API_KEY` being
-non-empty.  If either is unset the workflow generates the SBOM and exits
-cleanly without uploading, so the pipeline is green even before the
-operator has stood up Dependency-Track.
+Downstream consumers can ingest these SBOMs into whatever SCA tooling
+they run (Grype, Trivy, etc.). No SBOM data is sent anywhere by the
+project itself.

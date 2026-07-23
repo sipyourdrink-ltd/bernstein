@@ -39,35 +39,35 @@ def _write(dir_: Path, day: str, *backends: dict[str, Any]) -> None:
 
 
 def test_detect_regressions_flags_security_increase(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-10", _backend("dt", "ok", [_metric("high_vulns", 0.0, "ok")]))
-    _write(tmp_path, "2026-07-11", _backend("dt", "warn", [_metric("high_vulns", 2.0, "warn")]))
+    _write(tmp_path, "2026-07-10", _backend("code-scanning", "ok", [_metric("high_alerts", 0.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("code-scanning", "warn", [_metric("high_alerts", 2.0, "warn")]))
 
     regs = sig.detect_regressions(tmp_path)
 
     assert len(regs) == 1
     assert regs[0].kind == "security"
-    assert regs[0].backend == "dt"
+    assert regs[0].backend == "code-scanning"
     assert regs[0].severity == "high"
     assert regs[0].delta == 2.0
 
 
 def test_detect_regressions_quiet_on_flat_and_improved(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-10", _backend("dt", "warn", [_metric("high_vulns", 3.0, "warn")]))
-    _write(tmp_path, "2026-07-11", _backend("dt", "ok", [_metric("high_vulns", 1.0, "warn")]))
+    _write(tmp_path, "2026-07-10", _backend("code-scanning", "warn", [_metric("high_alerts", 3.0, "warn")]))
+    _write(tmp_path, "2026-07-11", _backend("code-scanning", "ok", [_metric("high_alerts", 1.0, "warn")]))
 
     assert sig.detect_regressions(tmp_path) == []
 
 
 def test_detect_regressions_skips_first_observation(tmp_path: Path) -> None:
-    # dt only appears in the newer snapshot -> first observation, not a regression.
+    # high_alerts only appears in the newer snapshot -> first observation, not a regression.
     _write(tmp_path, "2026-07-10", _backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]))
-    _write(tmp_path, "2026-07-11", _backend("dt", "warn", [_metric("high_vulns", 3.0, "warn")]))
+    _write(tmp_path, "2026-07-11", _backend("code-scanning", "warn", [_metric("high_alerts", 3.0, "warn")]))
 
     assert sig.detect_regressions(tmp_path) == []
 
 
 def test_detect_regressions_empty_without_two_snapshots(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-11", _backend("dt", "fail", [_metric("critical_vulns", 5.0, "fail")]))
+    _write(tmp_path, "2026-07-11", _backend("code-scanning", "fail", [_metric("critical_alerts", 5.0, "fail")]))
 
     assert sig.detect_regressions(tmp_path) == []
 
@@ -91,16 +91,16 @@ def test_detector_no_op_without_snapshots_dir() -> None:
 
 
 def test_detector_emits_opportunity_for_regression(tmp_path: Path) -> None:
-    _write(tmp_path, "2026-07-10", _backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok")]))
-    _write(tmp_path, "2026-07-11", _backend("dt", "fail", [_metric("critical_vulns", 2.0, "fail")]))
+    _write(tmp_path, "2026-07-10", _backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("code-scanning", "fail", [_metric("critical_alerts", 2.0, "fail")]))
 
     detector = OpportunityDetector(_collector_stub(), observability_snapshots_dir=tmp_path)
     opps = detector.identify_observability_opportunities()
 
     assert len(opps) == 1
-    assert opps[0].affected_components == ["dt"]
+    assert opps[0].affected_components == ["code-scanning"]
     assert opps[0].risk_level == "high"
-    assert "critical_vulns" in opps[0].title
+    assert "critical_alerts" in opps[0].title
 
     # It also flows through the umbrella identify_opportunities().
-    assert any("critical_vulns" in o.title for o in detector.identify_opportunities())
+    assert any("critical_alerts" in o.title for o in detector.identify_opportunities())

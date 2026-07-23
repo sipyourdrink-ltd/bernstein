@@ -2,7 +2,7 @@ name: SBOM
 
 # Generate SPDX + CycloneDX SBOMs for each published release and attach them
 # as release assets. Downstream consumers can ingest these into their own
-# SCA tooling (Dependency-Track, Grype, etc.).
+# SCA tooling (Grype, Trivy, etc.).
 #
 # Ref: #1273
 

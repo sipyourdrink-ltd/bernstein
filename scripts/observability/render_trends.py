@@ -29,7 +29,6 @@ from typing import Any
 # Headline metrics by backend. The trend renderer pulls these out of
 # each daily snapshot and plots them as sparklines.
 HEADLINE_METRICS: dict[str, list[str]] = {
-    "dt": ["critical_vulns", "high_vulns", "medium_vulns"],
     "code-scanning": ["open_alerts", "critical_alerts", "high_alerts"],
 }
 

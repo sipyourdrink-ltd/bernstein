@@ -1,10 +1,10 @@
 """Structural assertions on ``.github/workflows/post-ci-dispatcher.yml``.
 
-The dispatcher consolidates five sibling ``workflow_run: CI completed``
-listeners (auto-release, auto-heal, bernstein-ci-fix, bisect-on-red,
-telegram-notify) into a single boot that calls each child via
-``workflow_call``. The acceptance criteria are encoded as tests here so
-the consolidation cannot silently regress.
+The dispatcher consolidates the sibling ``workflow_run: CI completed``
+listeners (auto-release, auto-heal, bernstein-ci-fix, bisect-on-red)
+into a single boot that calls each child via ``workflow_call``. The
+acceptance criteria are encoded as tests here so the consolidation
+cannot silently regress.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ CHILDREN = (
     "auto-heal",
     "bernstein-ci-fix",
     "bisect-on-red",
-    "telegram-notify",
 )
 
 
@@ -37,9 +36,8 @@ CHILDREN = (
 # `secrets: inherit` would otherwise leak every repository secret to every
 # called workflow). GITHUB_TOKEN is auto-provided and never appears here.
 EXPECTED_CHILD_SECRETS: dict[str, frozenset[str]] = {
-    "telegram-notify": frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}),
-    "auto-release": frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}),
-    "auto-heal": frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}),
+    "auto-release": frozenset(),
+    "auto-heal": frozenset(),
     "bernstein-ci-fix": frozenset({"GEMINI_API_KEY"}),
     "bisect-on-red": frozenset(),
 }
@@ -164,7 +162,6 @@ def test_dispatcher_workflow_permissions_minimal(dispatcher: dict[str, Any]) -> 
         ".github/workflows/auto-heal.yml",
         ".github/workflows/bernstein-ci-fix.yml",
         ".github/workflows/bisect-on-red.yml",
-        ".github/workflows/telegram-notify.yml",
     ],
 )
 def test_children_expose_workflow_call(child_yaml: str) -> None:

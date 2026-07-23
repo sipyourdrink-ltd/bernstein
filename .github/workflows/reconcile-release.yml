@@ -3,8 +3,8 @@ name: Reconcile release drift
 # Daily safety net for the silent-skip class of bugs (#1273).
 # If `pyproject.toml` on main declares a version that PyPI does NOT
 # yet have AND the version commit is older than ~24h, something
-# upstream (CI / auto-release) silently dropped the publish. Alert
-# the operator + open an issue. Re-running on the same day must not
+# upstream (CI / auto-release) silently dropped the publish. Open a
+# tracking issue for the operator. Re-running on the same day must not
 # spam.
 
 on:
@@ -135,29 +135,6 @@ jobs:
           drift = version_drift or missing_assets
           print(f"drift={'true' if drift else 'false'}")
           PY
-
-      - name: Telegram alert (drift detected)
-        if: steps.cmp.outputs.drift == 'true'
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PJ: ${{ steps.cmp.outputs.pj_version }}
-          PYPI: ${{ steps.cmp.outputs.pypi_version }}
-          AGE: ${{ steps.cmp.outputs.pj_age_hours }}
-          REPO: ${{ github.repository }}
-        run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram not configured; skipping."
-            exit 0
-          fi
-          TEXT="📦 release drift detected
-          pyproject: ${PJ}
-          pypi:      ${PYPI}
-          age:       ${AGE}h since pyproject bump"
-          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${TEXT}\"}" \
-            || echo "Telegram notification failed"
 
       - name: Open or update drift issue (idempotent)
         if: steps.cmp.outputs.drift == 'true'

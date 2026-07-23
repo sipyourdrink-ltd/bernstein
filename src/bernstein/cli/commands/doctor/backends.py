@@ -154,77 +154,6 @@ def _security_fail_threshold(severity: str) -> int | None:
     return None
 
 
-def probe_dt(env: dict[str, str] | None = None) -> BackendReport:
-    """Probe Dependency-Track for vulnerability counts.
-
-    Reads ``DTRACK_URL``, ``DTRACK_TOKEN``, and ``DTRACK_PROJECT`` (uuid)
-    from env. Soft-fails if not configured.
-    """
-
-    env = env or os.environ.copy()
-    url = (env.get("DTRACK_URL") or "").strip()
-    token = (env.get("DTRACK_TOKEN") or "").strip()
-    project = (env.get("DTRACK_PROJECT") or "").strip()
-    if not url or not token or not project:
-        return BackendReport(
-            backend="dt",
-            status=ProbeStatus.SKIPPED,
-            detail="DTRACK_URL/TOKEN/PROJECT not set",
-        )
-    try:
-        import httpx
-    except ImportError:
-        return BackendReport(backend="dt", status=ProbeStatus.ERROR, error="httpx not installed")
-    try:
-        resp = httpx.get(
-            f"{url.rstrip('/')}/api/v1/finding/project/{project}",
-            headers={"X-Api-Key": token},
-            timeout=5.0,
-        )
-        resp.raise_for_status()
-        findings = resp.json()
-    except Exception as exc:
-        return BackendReport(backend="dt", status=ProbeStatus.ERROR, error=str(exc))
-
-    if not isinstance(findings, list):
-        return BackendReport(
-            backend="dt",
-            status=ProbeStatus.ERROR,
-            error="unexpected response shape",
-        )
-
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "unassigned": 0}
-    for f in findings:
-        vuln = f.get("vulnerability") or {}
-        sev = (vuln.get("severity") or "unassigned").lower()
-        counts[sev] = counts.get(sev, 0) + 1
-    overall = ProbeStatus.OK
-    if counts["critical"] > 0:
-        overall = ProbeStatus.FAIL
-    elif counts["high"] > 0:
-        overall = ProbeStatus.WARN
-    rows: list[MetricRow] = [
-        MetricRow(
-            name=f"{sev}_vulns",
-            value=str(value),
-            numeric=float(value),
-            threshold="0" if sev in ("critical", "high") else "",
-            threshold_status=_classify(
-                float(value),
-                warn_above=1 if sev in ("critical", "high", "medium") else None,
-                fail_above=_security_fail_threshold(sev),
-            ),
-        )
-        for sev, value in counts.items()
-    ]
-    return BackendReport(
-        backend="dt",
-        status=overall,
-        detail=f"{sum(counts.values())} total finding(s)",
-        metrics=rows,
-    )
-
-
 def probe_code_scanning(env: dict[str, str] | None = None) -> BackendReport:
     """Probe GitHub Code Scanning alerts.
 
@@ -324,6 +253,5 @@ __all__ = [
     "apply_deltas",
     "load_previous",
     "probe_code_scanning",
-    "probe_dt",
     "save_snapshot",
 ]
