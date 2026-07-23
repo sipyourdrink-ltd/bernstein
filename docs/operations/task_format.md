@@ -15,6 +15,21 @@ for the DAG walker and CLI.
 Both fields are persisted on the `Task` dataclass and round-trip through
 `Task.from_dict`.
 
+## Required backlog file format
+
+Files under `.sdd/backlog/open/` (and `.sdd/backlog/issues/`) must be one of
+two shapes so the orchestrator can extract a title and route the task:
+
+1. **YAML frontmatter** - a `---` delimited block at the top of the file
+   (see [YAML frontmatter](#yaml-frontmatter-ticket-format-v1) below).
+2. **Markdown fields** - a `# ` heading for the title plus optional
+   `**Role:**` / `**Priority:**` / `**Scope:**` / `**Complexity:**` lines.
+
+A file that is neither (for example a plain YAML file with no `---` block and
+no `# ` heading) cannot be parsed as a ticket. It is skipped rather than
+spawned, and `bernstein --dry-run` prints a warning naming the file so the
+gap is visible instead of silent.
+
 ## YAML frontmatter (Ticket Format v1)
 
 ```yaml

@@ -396,6 +396,15 @@ def print_dry_run_table(workdir: Path) -> None:
         bt = parse_backlog_file(backlog_file)
         if bt is not None:
             tasks.append(bt)
+        else:
+            # A backlog file that is not the expected frontmatter/markdown
+            # format (e.g. plain YAML with no `---` block and no `# ` title)
+            # would otherwise be silently skipped (issue #2785). Surface it so
+            # the operator can see the ticket will not be picked up.
+            console.print(
+                f"[yellow]Warning:[/yellow] {backlog_file.name} could not be parsed as a backlog ticket "
+                "(expected YAML frontmatter delimited by '---' or a Markdown '# ' title); skipping."
+            )
 
     console.print("\n[bold cyan][DRY RUN] Planned task spawns:[/bold cyan]")
 

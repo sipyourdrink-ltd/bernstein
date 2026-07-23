@@ -809,6 +809,12 @@ def cli(
     executor.shutdown(wait=False)
 
     if dry_run:
+        # Validate the seed with the same rules the real run uses before
+        # rendering the preview, so --dry-run cannot report success on a
+        # seed the run would reject (issue #2785).
+        from bernstein.cli.run_preflight import validate_seed_or_exit
+
+        validate_seed_or_exit(str(seed_path) if seed_path else None)
         print_dry_run_table(workdir)
         return
 

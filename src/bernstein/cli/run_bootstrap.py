@@ -39,6 +39,7 @@ from bernstein.cli.run_preflight import (
     _make_profile_ctx,
     _quiet_bootstrap_console,
     _show_run_summary,
+    validate_seed_or_exit,
 )
 from bernstein.core.cost import estimate_run_cost
 from bernstein.core.manager_parsing import _resolve_depends_on  # pyright: ignore[reportPrivateUsage]
@@ -1884,12 +1885,22 @@ def _run_impl(
         # Applies only to modes that merge agent work back -- --dry-run
         # returned above and --plan-only skips this block.
         _abort_if_default_branch_merge_target(workdir)
+        # Validate the seed before estimating cost (issue #2785): a seed the
+        # run would reject must not first print an estimate "at sonnet
+        # pricing", and the estimate must reflect the validated seed's
+        # effective default model rather than the sonnet fallback. Only seed
+        # mode is validated here; inline-goal, --plan-file and --from-plan
+        # runs carry no seed to validate at this point.
+        validated_seed = None
+        if goal is None and plan_file is None and from_plan is None:
+            validated_seed = validate_seed_or_exit(seed_file)
         estimate = _estimate_run_preview(
             workdir=workdir,
             plan_file=plan_file,
             goal=goal,
             seed_file=seed_file,
             model_override=model,
+            seed=validated_seed,
         )
         _emit_preflight_runtime_warnings(
             workdir=workdir,

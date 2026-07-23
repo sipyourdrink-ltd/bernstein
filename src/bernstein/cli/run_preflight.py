@@ -29,7 +29,46 @@ from bernstein.core.runtime_state import directory_size_bytes
 if TYPE_CHECKING:
     from rich.console import Console
 
+    from bernstein.core.config.seed import SeedConfig
+
 logger = logging.getLogger(__name__)
+
+
+def validate_seed_or_exit(seed_file: str | None) -> SeedConfig | None:
+    """Parse and validate the seed file with the same rules the real run uses.
+
+    Resolves the seed path (falling back to :func:`find_seed_file` when
+    ``seed_file`` is ``None``) and parses it through
+    :func:`bernstein.core.seed.parse_seed` -- the single shared validation
+    boundary. A :class:`~bernstein.core.seed.SeedError` is surfaced as the
+    same structured CLI error the real run raises and aborts the process, so
+    ``--dry-run`` can no longer report success on a seed the run would reject
+    (issue #2785).
+
+    Args:
+        seed_file: Explicit seed path, or ``None`` to auto-discover one.
+
+    Returns:
+        The parsed :class:`SeedConfig` when a seed file exists and validates,
+        or ``None`` when no seed file is present (inline-goal and empty-backlog
+        modes validate elsewhere).
+
+    Raises:
+        SystemExit: When the seed file exists but fails validation.
+    """
+    from bernstein.core.config.seed import SeedError, parse_seed
+
+    seed_path = Path(seed_file) if seed_file is not None else find_seed_file()
+    if seed_path is None or not seed_path.exists():
+        return None
+    try:
+        return parse_seed(seed_path)
+    except SeedError as exc:
+        from bernstein.cli.utils.errors import seed_parse_error
+
+        seed_parse_error(exc).print()
+        raise SystemExit(1) from exc
+
 
 #: When this module was imported, which is when the CLI process started.
 #: Used to ignore merge-refusal journal entries left over from previous runs
@@ -220,8 +259,19 @@ def _estimate_task_count(workdir: Path, plan_file: Path | None, goal: str | None
 def _resolve_model_and_cli(
     seed_file: str | None,
     model_override: str | None,
+    seed: SeedConfig | None = None,
 ) -> tuple[str, str, str]:
     """Resolve model, CLI adapter, and dominant role from seed or defaults.
+
+    Args:
+        seed_file: Explicit seed path, or ``None`` to auto-discover one.
+        model_override: Explicit ``--model`` override; short-circuits seed
+            inspection when set.
+        seed: A seed already parsed by the shared validation boundary
+            (:func:`validate_seed_or_exit`). When supplied it is used
+            directly, so the estimate reflects the seed's effective default
+            model instead of falling back to the sonnet heuristic on a
+            re-parse failure (issue #2785).
 
     Returns:
         Tuple of ``(model, cli, role)``. ``role`` defaults to ``"backend"``
@@ -233,15 +283,20 @@ def _resolve_model_and_cli(
     if model_override is not None:
         return est_model, est_cli, est_role
 
-    seed_path = Path(seed_file) if seed_file is not None else find_seed_file()
-    if seed_path is None or not seed_path.exists():
-        return est_model, est_cli, est_role
+    if seed is None:
+        seed_path = Path(seed_file) if seed_file is not None else find_seed_file()
+        if seed_path is None or not seed_path.exists():
+            return est_model, est_cli, est_role
+        try:
+            from bernstein.core.config.seed import parse_seed
+
+            seed = parse_seed(seed_path)
+        except Exception:
+            return "sonnet", est_cli, est_role
 
     try:
         from bernstein.core.cost.cost import _model_cost
-        from bernstein.core.seed import parse_seed
 
-        seed = parse_seed(seed_path)
         if seed.model:
             est_model = seed.model
         if seed.role_model_policy:
@@ -287,6 +342,7 @@ def _estimate_run_preview(
     goal: str | None,
     seed_file: str | None,
     model_override: str | None,
+    seed: SeedConfig | None = None,
 ) -> RunCostEstimate:
     """Estimate run cost before bootstrapping the orchestrator.
 
@@ -303,6 +359,9 @@ def _estimate_run_preview(
         goal: Optional inline goal.
         seed_file: Optional seed path override.
         model_override: Optional CLI ``--model`` override.
+        seed: Seed already parsed by the shared validation boundary. When
+            supplied, the estimate reflects the seed's effective default
+            model rather than re-parsing (issue #2785).
 
     Returns:
         Cost estimate using the best available task count and model hint.
@@ -311,7 +370,7 @@ def _estimate_run_preview(
     # Unknown count: compute a per-task rate (count of 1) but keep
     # ``task_count=None`` so display code says "unknown" instead of a number.
     billable_count = est_task_count if est_task_count is not None else 1
-    est_model, est_cli, est_role = _resolve_model_and_cli(seed_file, model_override)
+    est_model, est_cli, est_role = _resolve_model_and_cli(seed_file, model_override, seed=seed)
 
     if est_cli in _FREE_ADAPTERS:
         low_usd, high_usd = 0.0, 0.0
