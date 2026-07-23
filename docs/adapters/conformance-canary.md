@@ -33,8 +33,14 @@ surface at the same timestamp produce byte-identical receipts; a
 mutated receipt fails verification
 (`bernstein.adapters.canary.verify_canary_receipt`) exactly like a
 tampered chain entry. Receipt hashes are mirrored into the HMAC audit
-chain (`adapter.canary_receipt` events), so a canary finding is
-reconstructable offline rather than living only in a CI log.
+chain (`adapter.canary_receipt` events) by the nightly entrypoint
+(`scripts/adapter_canary.py`), so a canary finding is reconstructable
+offline rather than living only in a CI log. The chain segment is
+written under the run's `receipts/audit-chain/` directory and uploaded
+with the receipts artifact, so the receipt-to-chain binding survives the
+ephemeral runner: recompute a receipt file's SHA-256 and match it
+against the `receipt_sha256` of the persisted `adapter.canary_receipt`
+entry.
 
 ## Regression handling
 

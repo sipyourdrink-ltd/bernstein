@@ -30,6 +30,7 @@ import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -40,6 +41,77 @@ from bernstein.adapters.canary import (  # noqa: E402
     LAST_GREEN_JSON_PATH,
     run_matrix,
 )
+from bernstein.core.security.audit_chain import AuditChainStore  # noqa: E402
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from bernstein.adapters.canary import CanaryTarget, MatrixRunResult
+
+
+def run_nightly_canary(
+    targets: tuple[CanaryTarget, ...],
+    *,
+    out_dir: Path,
+    generated_at: str,
+    update_docs: bool = False,
+    which: Callable[[str], str | None] | None = None,
+    contracts_dir: Path | None = None,
+    audit_key: bytes | None = None,
+    audit_key_path: Path | None = None,
+) -> MatrixRunResult:
+    """Run the canary matrix with every receipt anchored into the HMAC chain.
+
+    This is the nightly entrypoint's core: it constructs the run's
+    :class:`AuditChainStore` and threads it through :func:`run_matrix` so
+    each sealed receipt hash is mirrored into the HMAC audit chain (the
+    ``adapter.canary_receipt`` event), making the docstring/docs claim
+    true for the automated path -- not only when a chain is passed by an
+    in-run caller.
+
+    Durability: the chain's JSONL segments are written under
+    ``<out_dir>/receipts/audit-chain`` so the existing "Upload receipts"
+    workflow step captures them as an artifact. The receipt->chain
+    binding therefore survives the ephemeral CI runner with no workflow
+    change: a verifier holding a receipt file can recompute its hash and
+    match it against a persisted chain entry offline.
+
+    Args:
+        targets: The canary matrix targets to probe.
+        out_dir: Run scratch directory for receipts, state, and the
+            audit-chain segment.
+        generated_at: Deterministic UTC timestamp stamped into every
+            receipt (drives the content-addressed receipt identity).
+        update_docs: When true, write the packaged last-green projection
+            (JSON + docs table) in place; otherwise keep it scratch-local.
+        which: Optional binary resolver override (hermetic tests).
+        contracts_dir: Optional contracts directory override (hermetic
+            tests).
+        audit_key: Optional raw HMAC key. When omitted the store loads or
+            creates a key via the canonical resolver.
+        audit_key_path: Optional HMAC key file path override.
+
+    Returns:
+        The :class:`MatrixRunResult` produced by :func:`run_matrix`.
+    """
+    audit_chain = AuditChainStore(
+        audit_dir=out_dir / "receipts" / "audit-chain",
+        key=audit_key,
+        key_path=audit_key_path,
+    )
+    return run_matrix(
+        targets,
+        receipts_dir=out_dir / "receipts",
+        state_path=out_dir / "state.json",
+        # --update-docs writes the packaged projection in place (the
+        # workflow commits it via PR); otherwise keep the run scratch-local.
+        last_green_path=LAST_GREEN_JSON_PATH if update_docs else out_dir / "last_green.json",
+        docs_path=LAST_GREEN_DOC_PATH if update_docs else None,
+        generated_at=generated_at,
+        which=which,
+        contracts_dir=contracts_dir,
+        audit_chain=audit_chain,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -76,15 +148,11 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    result = run_matrix(
+    result = run_nightly_canary(
         targets,
-        receipts_dir=out_dir / "receipts",
-        state_path=out_dir / "state.json",
-        # --update-docs writes the packaged projection in place (the
-        # workflow commits it via PR); otherwise keep the run scratch-local.
-        last_green_path=LAST_GREEN_JSON_PATH if args.update_docs else out_dir / "last_green.json",
-        docs_path=LAST_GREEN_DOC_PATH if args.update_docs else None,
+        out_dir=out_dir,
         generated_at=generated_at,
+        update_docs=args.update_docs,
     )
 
     issues_path = out_dir / "issues_to_open.json"

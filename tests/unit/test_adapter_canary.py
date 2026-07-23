@@ -18,10 +18,12 @@ same regression never opens two.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import stat
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -54,9 +56,30 @@ from bernstein.adapters.canary import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from types import ModuleType
 
 _GENERATED_AT = "2026-07-11T00:00:00Z"
+
+_ADAPTER_CANARY_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "adapter_canary.py"
+
+
+def _load_adapter_canary_script() -> ModuleType:
+    """Import ``scripts/adapter_canary.py`` as a module by file path.
+
+    The nightly entrypoint lives outside the importable package, so it is
+    loaded via an explicit spec. The module is cached in ``sys.modules``
+    under a private name so repeated loads are cheap.
+    """
+    mod_name = "_adapter_canary_script_under_test"
+    cached = sys.modules.get(mod_name)
+    if cached is not None:
+        return cached
+    spec = importlib.util.spec_from_file_location(mod_name, _ADAPTER_CANARY_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _outcome(
@@ -518,6 +541,100 @@ class TestAuditChainMirror:
         assert details["verdict"] == "fail"
         assert details["receipt_sha256"] == "ab" * 32
         assert "prev_chain_digest" in details
+
+
+# ---------------------------------------------------------------------------
+# Nightly entrypoint anchors receipts into the HMAC audit chain (#2843)
+# ---------------------------------------------------------------------------
+
+
+class TestNightlyAnchorsReceipts:
+    """The nightly path must anchor every receipt into the HMAC chain.
+
+    ``scripts/adapter_canary.py`` is the only caller that drives the
+    canary in CI. If it does not pass an ``AuditChainStore`` to
+    ``run_matrix`` the receipts are self-hashed but never anchored, so
+    the docstring/docs claim (receipt hashes mirrored into the HMAC
+    audit chain) is false for the automated path.
+    """
+
+    def test_nightly_run_anchors_every_receipt_and_verifies(self, tmp_path: Path) -> None:
+        from bernstein.core.security.audit_chain import (
+            EVENT_ADAPTER_CANARY_RECEIPT,
+            AuditChainStore,
+        )
+
+        script = _load_adapter_canary_script()
+
+        bin_dir = tmp_path / "bin"
+        good = _write_stub_cli(bin_dir, "agy", version="1.4.0", help_text="usage: agy -p --output-format")
+        bad = _write_stub_cli(bin_dir, "claude", version="2.0.0", help_text="usage: claude -p")
+        contracts = tmp_path / "contracts"
+        _write_contract(contracts, "agy", ["-p", "--output-format"], binary=good)
+        _write_contract(contracts, "claude", ["-p", "--output-format"], binary=bad)
+        stubs = {"agy": str(good), "claude": str(bad)}
+
+        def which(name: str) -> str | None:
+            return stubs.get(name)
+
+        targets = (
+            CanaryTarget(adapter="agy", binary="agy", model="default"),
+            CanaryTarget(adapter="claude", binary="claude", model="default"),
+        )
+
+        out_dir = tmp_path / "adapter-canary"
+        key = b"K" * 32
+        result = script.run_nightly_canary(
+            targets,
+            out_dir=out_dir,
+            generated_at=_GENERATED_AT,
+            which=which,
+            contracts_dir=contracts,
+            audit_key=key,
+        )
+        assert len(result.receipt_paths) == 2
+
+        # The chain segment must be persisted under the receipts directory
+        # so the existing "Upload receipts" artifact step captures it.
+        chain_dir = out_dir / "receipts" / "audit-chain"
+        assert chain_dir.is_dir()
+
+        # Reopen the persisted chain with the same key and verify integrity.
+        chain = AuditChainStore(chain_dir, key=key)
+        ok, errors = chain.verify()
+        assert ok, errors
+
+        anchored = {row.details["receipt_sha256"] for row in chain.query(event_type=EVENT_ADAPTER_CANARY_RECEIPT)}
+        assert len(anchored) == 2
+
+        # REAL recompute: every sealed receipt file's content hash must be
+        # present as an anchor in the persisted chain.
+        for receipt_path in result.receipt_paths:
+            doc = json.loads(receipt_path.read_text(encoding="utf-8"))
+            assert verify_canary_receipt(doc)
+            recomputed = receipt_sha256(doc["receipt"])
+            assert recomputed in anchored
+
+    def test_main_wires_audit_chain_into_run_matrix(self, tmp_path: Path) -> None:
+        """The CLI ``main`` must route through the anchoring helper."""
+        script = _load_adapter_canary_script()
+
+        captured: dict[str, object] = {}
+
+        def fake_run_nightly(targets: object, **kwargs: object) -> object:
+            captured["kwargs"] = kwargs
+            from bernstein.adapters.canary import MatrixRunResult
+
+            return MatrixRunResult()
+
+        with patch.object(script, "run_nightly_canary", side_effect=fake_run_nightly):
+            rc = script.main(["--adapter", "agy", "--out-dir", str(tmp_path / "out")])
+
+        assert rc == 0
+        kwargs = captured["kwargs"]
+        assert isinstance(kwargs, dict)
+        assert "out_dir" in kwargs
+        assert "generated_at" in kwargs
 
 
 # ---------------------------------------------------------------------------
