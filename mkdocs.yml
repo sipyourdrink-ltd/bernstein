@@ -405,6 +405,7 @@ nav:
           - Lineage export: compliance/lineage-export.md
           - Lineage v1 (user reference): lineage.md
           - Lineage v2: operations/lineage-v2.md
+          - Artifact contract: operations/artifacts.md
           - Lineage conflict resolution: lineage/conflict-resolution.md
           - Tracker audit: lineage/tracker-audit.md
           - A2A message receipts: operations/a2a-message-receipts.md

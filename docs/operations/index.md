@@ -84,4 +84,12 @@ keeping it healthy, cheap, secure, and auditable.
 
     [:octicons-arrow-right-24: Compliance overview](compliance.md)
 
+- :material-file-sign:{ .lg .middle } **Artifacts**
+
+    ---
+
+    Signed, content-addressed non-coding artifacts and `artifact verify`.
+
+    [:octicons-arrow-right-24: Artifact contract](artifacts.md)
+
 </div>
