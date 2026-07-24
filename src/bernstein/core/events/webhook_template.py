@@ -28,6 +28,20 @@ class TemplatePathError(KeyError):
     """Raised internally when a required payload path is absent."""
 
 
+def _is_scalar_resource(value: Any) -> bool:
+    """Return whether ``value`` is a non-empty scalar usable as a resource id.
+
+    Only a non-empty ``str`` or an ``int`` (excluding ``bool``, an ``int``
+    subclass) qualifies. A dict/list would otherwise be ``str()``-ed into
+    ``resource_id`` verbatim, leaking the payload subtree into the feed.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, str) and bool(value)
+
+
 def _extract(payload: Any, dot_path: str) -> Any:
     """Resolve a dot-delimited path against a decoded JSON payload.
 
@@ -72,7 +86,7 @@ class WebhookRenderResult:
             failure ever records.
         event: The rendered canonical event mapping on success, else ``None``.
         error_kind: A short machine token on failure (``invalid_json`` /
-            ``missing_resource``), else ``None``.
+            ``missing_resource`` / ``invalid_resource``), else ``None``.
     """
 
     ok: bool
@@ -101,6 +115,11 @@ def render(template: WebhookTemplate, payload_bytes: bytes) -> WebhookRenderResu
         resource_raw = _extract(decoded, template.resource_path)
     except TemplatePathError:
         return WebhookRenderResult(ok=False, payload_digest=digest, error_kind="missing_resource")
+
+    if not _is_scalar_resource(resource_raw):
+        # Never str() a non-scalar into resource_id - that would copy the payload
+        # subtree into the feed. Fail carrying the digest only.
+        return WebhookRenderResult(ok=False, payload_digest=digest, error_kind="invalid_resource")
 
     related: set[str] = set()
     for path in template.related_paths:

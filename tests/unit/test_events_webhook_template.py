@@ -96,3 +96,30 @@ def test_missing_required_path_fails_with_digest() -> None:
     assert not result.ok
     assert result.error_kind == "missing_resource"
     assert result.payload_digest == content_address(payload)
+
+
+def test_non_scalar_resource_does_not_leak_payload() -> None:
+    # run.id resolves to a nested object; str()-ing it would serialise the whole
+    # subtree (including the secret) into resource_id (#2653).
+    payload = json.dumps({"run": {"id": {"nested": "s3cr3t-value"}}}).encode("utf-8")
+    result = render(_TEMPLATE, payload)
+    assert not result.ok
+    assert result.error_kind == "invalid_resource"
+    assert result.event is None
+    assert result.payload_digest == content_address(payload)
+
+
+def test_boolean_and_empty_resource_are_rejected() -> None:
+    for raw in (True, False, "", [1, 2], None):
+        payload = json.dumps({"run": {"id": raw}}).encode("utf-8")
+        result = render(_TEMPLATE, payload)
+        assert not result.ok, raw
+        assert result.error_kind == "invalid_resource", raw
+
+
+def test_integer_resource_is_accepted() -> None:
+    payload = json.dumps({"run": {"id": 4242}}).encode("utf-8")
+    result = render(_TEMPLATE, payload)
+    assert result.ok
+    assert result.event is not None
+    assert result.event["resource_id"] == "4242"
