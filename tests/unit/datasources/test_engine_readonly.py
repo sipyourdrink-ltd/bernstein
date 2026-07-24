@@ -90,6 +90,17 @@ def test_sqlite_engine_refuses_write(tmp_path: Path) -> None:
         engine.execute("DELETE FROM t")
 
 
+def test_write_pragma_surfaces_typed_readonly_error(tmp_path: Path) -> None:
+    # A value-setting PRAGMA leads with a read keyword, so the textual guard lets
+    # it through, but the mode=ro connection blocks the write at execution. That
+    # denial must surface as our typed ReadOnlyViolation, not a raw
+    # sqlite3.OperationalError -- the CLI only catches DataSourceError, so an
+    # untyped error would escape as an unhandled crash.
+    engine = SqliteEngine(_table_db(tmp_path))
+    with pytest.raises(ReadOnlyViolation):
+        engine.execute("PRAGMA user_version = 5")
+
+
 def test_sqlite_engine_opens_read_only(tmp_path: Path) -> None:
     # Even a hand-rolled write that somehow reached execute must fail: the
     # connection is opened mode=ro, so the file is physically read-only.

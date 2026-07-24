@@ -162,6 +162,45 @@ def test_tampered_chain_anchor_fails(tmp_path: Path, keypair, operator_key) -> N
     assert any(f.startswith("lineage_entry") for f in outcome.failures)
 
 
+def test_tampered_signature_fails_at_signature(tmp_path: Path, keypair, operator_key) -> None:
+    # Corrupt the detached JWS sidecar only: the log entry is untouched, so the
+    # anchor is still located and its content_hash still matches -- the sole
+    # failure is the Ed25519 signature check.
+    db = _make_db(tmp_path / "a.db", [(1, "a"), (2, "b")])
+    store = _store(tmp_path, keypair, operator_key)
+    _, receipt = _record(tmp_path, store, db)
+    (sig_path,) = list((store.root / "lineage" / "signatures").rglob("*.jws"))
+    header, empty, sig = sig_path.read_text().split(".", maxsplit=2)
+    flipped = ("A" if sig[0] != "A" else "B") + sig[1:]
+    sig_path.write_text(".".join([header, empty, flipped]))
+    outcome = store.verify(receipt.receipt_id)
+    assert not outcome.ok
+    assert any(f.startswith("signature") for f in outcome.failures)
+    assert outcome.checks.get("signature") is not True
+    assert outcome.checks.get("lineage_entry") is True
+
+
+def test_wrong_operator_key_fails_at_operator_hmac(tmp_path: Path, keypair, operator_key) -> None:
+    # A verifier holding the wrong operator HMAC key recomputes a different
+    # envelope: the Ed25519 signature still verifies (it is key-independent), so
+    # the named failure is operator_hmac alone.
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    store = _store(tmp_path, keypair, operator_key)
+    _, receipt = _record(tmp_path, store, db)
+    card, priv = keypair
+    wrong = QueryReceiptStore(
+        store.root,
+        agent_card=card,
+        private_key_pem=priv,
+        operator_hmac_key=b"j" * 32,
+    )
+    outcome = wrong.verify(receipt.receipt_id)
+    assert not outcome.ok
+    assert any(f.startswith("operator_hmac") for f in outcome.failures)
+    assert outcome.checks.get("operator_hmac") is not True
+    assert outcome.checks.get("signature") is True
+
+
 def test_removed_lineage_entry_is_unverifiable(tmp_path: Path, keypair, operator_key) -> None:
     db = _make_db(tmp_path / "a.db", [(1, "a")])
     store = _store(tmp_path, keypair, operator_key)
@@ -223,11 +262,16 @@ def test_truncated_receipt_distinct_from_full(tmp_path: Path, keypair, operator_
 
 
 def test_connection_secret_never_in_receipt_or_audit(tmp_path: Path, keypair, operator_key) -> None:
+    # AC5's secret-hygiene guarantee is specifically about the *connection* DSN:
+    # a receipt records only ``connection.id``, never the DSN, and the audit
+    # mirror stores hashes rather than raw query/params. Bind parameters, by
+    # contrast, ARE recorded in the receipt body on purpose -- the receipt attests
+    # the exact query+params that produced the result -- so the marker value below
+    # stands in for a DSN-borne secret and is asserted absent only where the
+    # contract forbids it (the receipt's DSN surface and the audit mirror).
     db = _make_db(tmp_path / "a.db", [(1, "a")])
     store = _store(tmp_path, keypair, operator_key)
-    secret = "sup3rs3cr3t"
-    # A connection whose id/description is what we persist; the DSN carries the
-    # secret and must never be written into any receipt/audit artefact.
+    dsn_marker = "sup3rs3cr3t"
     conn = DataSourceConnection(
         id="warehouse",
         driver="sqlite",
@@ -238,7 +282,7 @@ def test_connection_secret_never_in_receipt_or_audit(tmp_path: Path, keypair, op
     receipt = store.record(
         connection=conn,
         query_text="SELECT id, name FROM t",
-        params=[secret],  # even a secret bound param must not be exfiltrated via the DSN path
+        params=[dsn_marker],
         result=result,
         store_result_copy=True,
     )
@@ -250,7 +294,7 @@ def test_connection_secret_never_in_receipt_or_audit(tmp_path: Path, keypair, op
     audit_text = store.audit_path.read_text()
     assert "dsn" not in audit_text
     assert db not in audit_text
-    assert secret not in audit_text
+    assert dsn_marker not in audit_text
 
 
 def test_redacted_dsn_masks_password() -> None:

@@ -19,7 +19,12 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.datasources import result as R
-from bernstein.core.datasources.engine import InMemoryEngine, SqliteEngine
+from bernstein.core.datasources.engine import (
+    ColumnStoreEngine,
+    ColumnStoreTable,
+    InMemoryEngine,
+    SqliteEngine,
+)
 from bernstein.core.datasources.errors import NonCanonicalText, UnsupportedValue
 from bernstein.core.datasources.result import (
     NormalizedColumn,
@@ -128,6 +133,119 @@ def test_sqlite_content_hash_is_stable_across_runs(tmp_path: Path) -> None:
     h1 = content_hash(SqliteEngine(db).execute(_FIXTURE_SQL))
     h2 = content_hash(SqliteEngine(db).execute(_FIXTURE_SQL))
     assert h1 == h2
+
+
+# --- cross-engine reconciliation, two real engines (AC1) --------------------
+#
+# ``InMemoryEngine`` above proves the sqlite adapter matches a hand-written
+# NormalizedResult spec. It does not prove that a *second, genuinely different*
+# engine -- one with its own type vocabulary, its own cell coercion, and its own
+# query executor -- reconciles raw source data onto byte-identical canonical
+# output. ``ColumnStoreEngine`` closes that: it is fed the *same raw fixture*
+# sqlite is loaded from (flags as ``0``/``1`` ints, blobs as raw bytes), carries
+# an Arrow-style logical type system (``int64``/``utf8``/``float64``/``bool``/
+# ``binary``), and runs the *same SQL string* through its own projection + ORDER
+# BY executor. Identical ``content_hash`` is then a property proven across two
+# independent backends, not a hand-fed mirror.
+
+
+def test_sqlite_and_column_store_engines_agree(tmp_path: Path) -> None:
+    db = _sqlite_fixture(tmp_path)
+    sqlite_result = SqliteEngine(db).execute(_FIXTURE_SQL)
+
+    # Physical column order deliberately differs from the SELECT list and the
+    # rows are supplied out of id order: the executor must both reorder the
+    # projection and sort, so a match cannot be a pass-through of pre-shaped
+    # data. Values are raw (flag 0/1, not bool) -- the column store coerces them
+    # through its own type path, independently of sqlite.
+    store = ColumnStoreEngine(
+        {
+            "metrics": ColumnStoreTable(
+                columns=[
+                    ("raw", "binary"),
+                    ("note", "large_utf8"),
+                    ("flag", "bool"),
+                    ("ratio", "float64"),
+                    ("label", "utf8"),
+                    ("id", "int64"),
+                ],
+                rows=[
+                    (b"ff", None, 0, 0.5, "beta", 2),
+                    (b"\x00\x01", "x", 1, 0.25, "alpha", 1),
+                    (b"", "z", 1, 1.0, "gamma", 3),
+                ],
+            )
+        }
+    )
+    store_result = store.execute(_FIXTURE_SQL)
+
+    assert content_hash(sqlite_result) == content_hash(store_result)
+
+
+def test_column_store_executor_actually_projects_and_sorts() -> None:
+    # Guards against the match above being an accident of input ordering: the
+    # store engine really evaluates the projection order and ORDER BY.
+    store = ColumnStoreEngine(
+        {
+            "t": ColumnStoreTable(
+                columns=[("a", "int64"), ("b", "utf8")],
+                rows=[(3, "c"), (1, "a"), (2, "b")],
+            )
+        }
+    )
+    res = store.execute("SELECT b, a FROM t ORDER BY a")
+    assert [c.name for c in res.columns] == ["b", "a"]
+    assert res.rows == (("a", 1), ("b", 2), ("c", 3))
+
+
+def test_column_store_preserves_decimal_scale() -> None:
+    # sqlite cannot attest a fixed-scale decimal (NUMERIC affinity destroys the
+    # scale on insert). A decimal-carrying engine can: fed raw strings, the
+    # column store surfaces true ``Decimal`` cells whose scale survives into the
+    # hash -- the concrete, in-repo demonstration of the "any decimal-carrying
+    # engine" claim the sqlite NUMERIC note makes.
+    store = ColumnStoreEngine(
+        {
+            "m": ColumnStoreTable(
+                columns=[("amount", "decimal128")],
+                rows=[("0.00",), ("1.50",), ("2.00",)],
+            )
+        }
+    )
+    res = store.execute("SELECT amount FROM m")
+    assert res.columns[0].type == R.DECIMAL
+    assert [format(v, "f") for (v,) in res.rows] == ["0.00", "1.50", "2.00"]
+    # Mirror against a hand-specified decimal result (same engine row_cap): the
+    # raw strings reconcile onto scale-preserving Decimals byte-for-byte.
+    mirror = InMemoryEngine(
+        columns=[("amount", R.DECIMAL)],
+        rows=[(Decimal("0.00"),), (Decimal("1.50"),), (Decimal("2.00"),)],
+    ).execute("x")
+    assert content_hash(res) == content_hash(mirror)
+
+
+def test_column_store_refuses_write() -> None:
+    from bernstein.core.datasources.errors import ReadOnlyViolation
+
+    store = ColumnStoreEngine({"t": ColumnStoreTable(columns=[("a", "int64")], rows=[(1,)])})
+    with pytest.raises(ReadOnlyViolation):
+        store.execute("DELETE FROM t")
+
+
+def test_column_store_row_cap_truncates() -> None:
+    store = ColumnStoreEngine({"t": ColumnStoreTable(columns=[("a", "int64")], rows=[(1,), (2,), (3,)])})
+    res = store.execute("SELECT a FROM t ORDER BY a", row_cap=2)
+    assert res.truncated is True
+    assert res.row_count == 2
+    assert res.row_cap == 2
+
+
+def test_column_store_unsupported_query_shape_rejected() -> None:
+    from bernstein.core.datasources.errors import UnsupportedStatement
+
+    store = ColumnStoreEngine({"t": ColumnStoreTable(columns=[("a", "int64")], rows=[(1,)])})
+    with pytest.raises(UnsupportedStatement):
+        store.execute("SELECT a FROM t GROUP BY a")
 
 
 # --- truncation (AC4) -------------------------------------------------------

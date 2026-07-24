@@ -285,6 +285,11 @@ class QueryReceiptStore:
 
         artefact_path = _artefact_path(connection.id, qhash, phash)
         recorder = LineageRecorder(store=self._store, operator_hmac_key=self._operator_hmac_key)
+        # ``span_id`` is deliberately repurposed here: instead of an OTel span
+        # context, it carries the receipt-core ``binding`` digest so the binding
+        # is signed and HMAC'd along with the rest of the entry. The recorder's
+        # OTel path does not consume ``span_id`` (it neither opens a span with it
+        # nor emits it), so the repurposing has no telemetry side effect.
         lineage_entry_hash = recorder.record_write(
             artefact_path=artefact_path,
             new_content=canonical,

@@ -167,6 +167,14 @@ the connection and reports:
 The connection is looked up by the operator (or `--connection <id>`), never
 taken from the receipt, so re-execution never trusts a DSN from untrusted data.
 
+!!! warning "Ground on deterministic queries"
+    Drift is only meaningful for a query whose result is a pure function of the
+    data. A query that calls a non-deterministic function — `random()`,
+    `randomblob()`, `datetime('now')` and friends — hashes over volatile bytes,
+    so a re-execution reports `DRIFT` on every run even when nothing in the data
+    changed. Ground agents on deterministic `SELECT`s; treat drift on a
+    volatile-function query as expected noise, not a data-change signal.
+
 ---
 
 ## On-disk layout

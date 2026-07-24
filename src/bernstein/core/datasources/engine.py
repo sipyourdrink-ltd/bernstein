@@ -12,22 +12,36 @@ Reference engines shipped here:
   write action, and runs the query behind the textual read-only guard. No third
   party driver, no network.
 
-* :class:`InMemoryEngine` -- an independent reference producer used to prove the
-  canonical encoding is engine-agnostic: it builds a ``NormalizedResult`` from
-  in-process column/row data with no SQL engine at all. When it and
-  :class:`SqliteEngine` are handed a type-equivalent fixture they emit a
-  byte-identical ``content_hash``.
+* :class:`InMemoryEngine` -- a hand-specified reference producer: it builds a
+  ``NormalizedResult`` from pre-shaped column/row data with no SQL engine at
+  all. It proves the sqlite adapter matches an independent *spec* of the
+  canonical result, but because it is handed the already-canonical values it
+  does not, on its own, demonstrate cross-engine *type reconciliation*.
 
-Arrow-interchange warehouse adapters (DuckDB, Postgres, ...) are a noted
-follow-up: they slot in behind the same :class:`QueryEngine` protocol by
-normalising their result onto :class:`NormalizedResult`; the canonical
-encoding and receipt layers do not change.
+* :class:`ColumnStoreEngine` -- a second, genuinely independent engine used to
+  demonstrate that reconciliation empirically. It is fed the *raw* source data
+  (booleans as ``0``/``1`` ints, decimals as strings, blobs as raw bytes),
+  carries its own Arrow-style logical type system (``int64`` / ``utf8`` /
+  ``float64`` / ``bool`` / ``binary`` / ``decimal128``), coerces cells through
+  its own code path, and runs the *same SQL string* through its own projection +
+  ORDER BY executor. When :class:`SqliteEngine` and :class:`ColumnStoreEngine`
+  are loaded from the same fixture and run the same query, they emit a
+  byte-identical ``content_hash`` -- agreement across two backends with disjoint
+  type-resolution code, not a shared spec.
+
+A third-party Arrow-interchange warehouse adapter (DuckDB, Postgres, ...) is a
+noted follow-up (those drivers are absent from the pinned environment): it slots
+in behind the same :class:`QueryEngine` protocol by normalising its result onto
+:class:`NormalizedResult`; the canonical encoding and receipt layers do not
+change.
 """
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from decimal import Decimal
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from bernstein.core.datasources import result as _result
@@ -310,10 +324,16 @@ class SqliteEngine:
             try:
                 cur = conn.execute(statement, _as_bind(params))
             except sqlite3.DatabaseError as exc:
-                # An authorizer denial surfaces as ``not authorized``; re-raise
-                # as our typed read-only error rather than a raw sqlite error.
-                if "not authorized" in str(exc).lower():
-                    raise ReadOnlyViolation(f"statement denied by read-only authorizer: {exc}") from exc
+                # A write that slipped the textual guard is still stopped at the
+                # engine: the authorizer denial surfaces as ``not authorized`` and
+                # the ``mode=ro`` connection rejects a write (e.g. a value-setting
+                # ``PRAGMA``) with ``attempt to write a readonly database``. Both
+                # re-raise as our typed read-only error rather than a raw sqlite
+                # error, so the CLI's ``DataSourceError`` handler reports them as a
+                # named refusal instead of an unhandled crash.
+                message = str(exc).lower()
+                if "not authorized" in message or "readonly" in message or "read-only" in message:
+                    raise ReadOnlyViolation(f"statement denied by read-only enforcement: {exc}") from exc
                 raise
             columns = _sqlite_columns(conn, cur)
             rows: list[tuple[object, ...]] = []
@@ -424,8 +444,234 @@ class InMemoryEngine:
         return NormalizedResult(columns=self._columns, rows=rows, truncated=truncated, row_cap=row_cap)
 
 
+# --- columnar reference engine ----------------------------------------------
+
+# Arrow-style logical column types, resolved onto canonical types by *exact*
+# base name. This vocabulary is deliberately disjoint from sqlite's affinity
+# substrings (:data:`_SQLITE_AFFINITY`): the two engines share no
+# type-resolution code, so a matching ``content_hash`` is genuine cross-engine
+# agreement rather than a shared code path.
+_LOGICAL_TYPES: dict[str, str] = {
+    "int8": _result.INTEGER,
+    "int16": _result.INTEGER,
+    "int32": _result.INTEGER,
+    "int64": _result.INTEGER,
+    "uint32": _result.INTEGER,
+    "uint64": _result.INTEGER,
+    "float32": _result.FLOAT,
+    "float64": _result.FLOAT,
+    "double": _result.FLOAT,
+    "bool": _result.BOOLEAN,
+    "boolean": _result.BOOLEAN,
+    "utf8": _result.TEXT,
+    "large_utf8": _result.TEXT,
+    "string": _result.TEXT,
+    "binary": _result.BLOB,
+    "large_binary": _result.BLOB,
+    "decimal": _result.DECIMAL,
+    "decimal128": _result.DECIMAL,
+    "decimal256": _result.DECIMAL,
+}
+
+# The subset of SQL the reference executor understands. A query outside this
+# shape (JOIN, GROUP BY, WHERE, expressions, ...) is refused as unsupported --
+# the engine is a determinism reference, not a general SQL implementation.
+_COLUMNSTORE_QUERY_RE = re.compile(
+    r"^select\s+(?P<cols>.+?)\s+from\s+(?P<table>[a-z_][a-z0-9_]*)"
+    r"(?:\s+order\s+by\s+(?P<order>[a-z_][a-z0-9_]*)(?:\s+(?P<dir>asc|desc))?)?"
+    r"(?:\s+limit\s+(?P<limit>\d+))?$",
+    re.IGNORECASE | re.DOTALL,
+)
+_IDENT_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnStoreTable:
+    """One named table for :class:`ColumnStoreEngine`: typed columns + raw rows.
+
+    ``columns`` is ``(name, logical_type)`` in physical order; ``rows`` holds the
+    *raw* source values (ints for booleans, strings for decimals, raw ``bytes``
+    for binary) exactly as an external columnar store would hand them over. The
+    engine coerces them onto canonical values itself, so the fixture is source
+    data -- not a pre-canonicalised result.
+    """
+
+    columns: Sequence[tuple[str, str]]
+    rows: Sequence[Sequence[object]]
+
+
+@dataclass(frozen=True, slots=True)
+class _ColumnStorePlan:
+    projection: tuple[str, ...] | None  # None -> SELECT *
+    table: str
+    order_by: str | None
+    descending: bool
+    limit: int | None
+
+
+def _parse_columnstore_query(statement: str) -> _ColumnStorePlan:
+    text = statement.rstrip().rstrip(";").strip()
+    match = _COLUMNSTORE_QUERY_RE.match(text)
+    if match is None:
+        raise UnsupportedStatement(
+            "ColumnStoreEngine supports only 'SELECT <cols> FROM <table> [ORDER BY <col> [ASC|DESC]] [LIMIT <n>]'"
+        )
+    cols_src = match.group("cols").strip()
+    projection: tuple[str, ...] | None
+    if cols_src == "*":
+        projection = None
+    else:
+        parts = [c.strip() for c in cols_src.split(",")]
+        if not parts or not all(_IDENT_RE.fullmatch(c) for c in parts):
+            raise UnsupportedStatement("ColumnStoreEngine select list must be plain column names or '*'")
+        projection = tuple(parts)
+    limit_src = match.group("limit")
+    return _ColumnStorePlan(
+        projection=projection,
+        table=match.group("table"),
+        order_by=match.group("order"),
+        descending=(match.group("dir") or "").lower() == "desc",
+        limit=int(limit_src) if limit_src is not None else None,
+    )
+
+
+def _logical_canonical_type(logical: str) -> str:
+    """Canonical type for an Arrow-style logical type name (own resolution)."""
+    base = logical.strip().lower().split("(", 1)[0]
+    canon = _LOGICAL_TYPES.get(base)
+    if canon is None:
+        raise UnsupportedValue(f"unknown logical column type: {logical!r}")
+    return canon
+
+
+def _order_key(value: object) -> tuple[bool, object]:
+    """Sort key placing NULLs first on ascending order, matching sqlite."""
+    return (value is not None, value)
+
+
+def _coerce_columnstore_cell(canon_type: str, value: object) -> object:
+    """Coerce one raw source cell onto a canonical value (own coercion path).
+
+    Deliberately independent of :func:`_normalize_sqlite_cell`: a boolean column
+    materialises ``0``/``1`` ints as ``bool``; a decimal column parses a raw
+    string into a scale-preserving :class:`~decimal.Decimal`; a float column
+    widens ints. Types that already match pass through.
+    """
+    if value is None:
+        return None
+    if canon_type == _result.BOOLEAN:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return bool(value)
+        raise UnsupportedValue(f"boolean column cannot accept {type(value).__name__}")
+    if canon_type == _result.INTEGER:
+        if isinstance(value, bool):
+            raise UnsupportedValue("integer column cannot accept a bool")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            return int(value)
+        raise UnsupportedValue(f"integer column cannot accept {type(value).__name__}")
+    if canon_type == _result.FLOAT:
+        if isinstance(value, bool):
+            raise UnsupportedValue("float column cannot accept a bool")
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            return float(value)
+        raise UnsupportedValue(f"float column cannot accept {type(value).__name__}")
+    if canon_type == _result.DECIMAL:
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, str):
+            try:
+                return Decimal(value)
+            except InvalidOperation as exc:
+                raise UnsupportedValue(f"decimal column cannot parse {value!r}") from exc
+        if isinstance(value, int) and not isinstance(value, bool):
+            return Decimal(value)
+        raise UnsupportedValue(f"decimal column cannot accept {type(value).__name__}")
+    if canon_type == _result.TEXT:
+        if isinstance(value, str):
+            return value
+        raise UnsupportedValue(f"text column cannot accept {type(value).__name__}")
+    if canon_type == _result.BLOB:
+        if isinstance(value, (bytes, bytearray)):
+            return bytes(value)
+        raise UnsupportedValue(f"blob column cannot accept {type(value).__name__}")
+    raise UnsupportedValue(f"unhandled canonical type {canon_type!r}")
+
+
+class ColumnStoreEngine:
+    """Independent columnar reference engine -- no sqlite, no third-party driver.
+
+    Built from named :class:`ColumnStoreTable` fixtures of *raw* source values.
+    It exists to demonstrate cross-engine determinism empirically: given the same
+    fixture and the same SQL, its ``content_hash`` equals :class:`SqliteEngine`'s
+    even though the two share no type-resolution or cell-coercion code. Only a
+    documented SELECT subset is supported; anything else is refused as
+    unsupported. Every query still passes :func:`guard_read_only`, so the engine
+    refuses writes exactly like the sqlite reference.
+    """
+
+    def __init__(self, tables: Mapping[str, ColumnStoreTable]) -> None:
+        self._tables = dict(tables)
+
+    def execute(
+        self,
+        sql: str,
+        params: Sequence[object] | Mapping[str, object] | None = None,
+        *,
+        row_cap: int = DEFAULT_ROW_CAP,
+    ) -> NormalizedResult:
+        statement = guard_read_only(sql)
+        if params:
+            # No bind-placeholder support in this reference engine; a query that
+            # needs parameters is outside its documented subset.
+            raise UnsupportedStatement("ColumnStoreEngine does not bind parameters")
+        plan = _parse_columnstore_query(statement)
+        table = self._tables.get(plan.table)
+        if table is None:
+            raise UnsupportedStatement(f"unknown table {plan.table!r}")
+        return self._run(table, plan, row_cap)
+
+    def _run(self, table: ColumnStoreTable, plan: _ColumnStorePlan, row_cap: int) -> NormalizedResult:
+        phys = [(str(name), str(logical)) for name, logical in table.columns]
+        index_of = {name: i for i, (name, _logical) in enumerate(phys)}
+        if len(index_of) != len(phys):
+            raise UnsupportedValue("ColumnStoreTable has duplicate column names")
+
+        selected = [name for name, _logical in phys] if plan.projection is None else list(plan.projection)
+        for name in selected:
+            if name not in index_of:
+                raise UnsupportedStatement(f"unknown column {name!r}")
+
+        rows = [tuple(row) for row in table.rows]
+        if plan.order_by is not None:
+            if plan.order_by not in index_of:
+                raise UnsupportedStatement(f"unknown ORDER BY column {plan.order_by!r}")
+            order_index = index_of[plan.order_by]
+            rows.sort(key=lambda row: _order_key(row[order_index]), reverse=plan.descending)
+        if plan.limit is not None:
+            rows = rows[: plan.limit]
+
+        truncated = len(rows) > row_cap
+        rows = rows[:row_cap]
+
+        out_columns = tuple(
+            NormalizedColumn(name=name, type=_logical_canonical_type(phys[index_of[name]][1])) for name in selected
+        )
+        out_rows = tuple(
+            tuple(_coerce_columnstore_cell(col.type, row[index_of[col.name]]) for col in out_columns) for row in rows
+        )
+        return NormalizedResult(columns=out_columns, rows=out_rows, truncated=truncated, row_cap=row_cap)
+
+
 __all__ = [
     "DEFAULT_ROW_CAP",
+    "ColumnStoreEngine",
+    "ColumnStoreTable",
     "InMemoryEngine",
     "QueryEngine",
     "SqliteEngine",
