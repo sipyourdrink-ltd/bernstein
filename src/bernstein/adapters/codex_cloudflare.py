@@ -1,20 +1,33 @@
-"""Codex adapter for Cloudflare Sandbox execution.
+"""Codex adapter for Cloudflare Sandbox execution (experimental, non-functional).
 
-Spawns OpenAI Codex agents inside Cloudflare sandboxes rather than
-locally, leveraging the same infrastructure that Codex CLI uses
-for cloud execution.
+This adapter targeted ``https://api.cloudflare.com/client/v4/accounts/{id}/sandbox/...``,
+a REST route family that does not exist: an authenticated request returns HTTP
+400 with Cloudflare errors 7000/7003 ("No route for that URI"). Cloudflare's real
+sandbox/container product runs inside a Worker/Durable Object (the
+``@cloudflare/sandbox`` SDK), not a ``client/v4`` REST surface (issue #2783).
+
+Because the target API does not resolve to a route, no operation could ever
+populate a result. Rather than pretend, every public method refuses with an
+actionable error. A future implementation would drive a deployed worker (the
+pattern ``bernstein.bridges.cloudflare.CloudflareBridge`` already uses).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
-
-import httpx
 
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE_MSG = (
+    "Codex-on-Cloudflare adapter is experimental and currently non-functional: "
+    "it targets a Cloudflare sandbox REST API "
+    "(client/v4/accounts/{id}/sandbox/...) that does not exist, so no operation "
+    "can run or return a result (issue #2783). Cloudflare's real sandbox product "
+    "runs inside a Worker/Durable Object; drive a deployed worker via "
+    "`bernstein.bridges.cloudflare.CloudflareBridge`, or run Codex locally with "
+    "the `codex` adapter."
+)
 
 
 @dataclass(frozen=True)
@@ -47,21 +60,12 @@ class CodexSandboxResult:
 
 
 class CodexCloudflareAdapter:
-    """Spawn Codex agents in Cloudflare sandboxes.
+    """Experimental Codex-on-Cloudflare adapter that refuses every operation.
 
-    Combines Codex CLI capabilities with Cloudflare's isolated
-    sandbox infrastructure for secure, scalable code execution.
-
-    Usage:
-        adapter = CodexCloudflareAdapter(CodexSandboxConfig(
-            cloudflare_account_id="...",
-            cloudflare_api_token="...",
-            openai_api_key="...",
-        ))
-        result = await adapter.execute(
-            prompt="Add input validation to all API endpoints",
-            workspace_id="task-123",
-        )
+    The adapter's target REST API does not exist, so it cannot create a sandbox,
+    inject a command, poll status, or collect results. Every public method raises
+    a clear ``RuntimeError`` instead of issuing a request that Cloudflare cannot
+    route (issue #2783).
     """
 
     def __init__(self, config: CodexSandboxConfig) -> None:
@@ -80,184 +84,48 @@ class CodexCloudflareAdapter:
         model: str = "codex-mini",
         timeout_minutes: int | None = None,
     ) -> CodexSandboxResult:
-        """Execute Codex in a Cloudflare sandbox.
-
-        1. Creates sandbox instance
-        2. Syncs workspace from R2
-        3. Runs Codex with prompt
-        4. Collects results and modified files
-        5. Syncs changes back to R2
+        """Refuse to execute: the Cloudflare sandbox REST API does not exist.
 
         Args:
-            prompt: The task prompt to send to Codex.
-            workspace_id: Identifier for the workspace to sync from R2.
-            model: The Codex model to use.
-            timeout_minutes: Max execution time; defaults to config value.
-
-        Returns:
-            CodexSandboxResult with execution outcome.
+            prompt: The task prompt (unused).
+            workspace_id: Workspace identifier (unused).
+            model: The Codex model to use (unused).
+            timeout_minutes: Max execution time (unused).
 
         Raises:
-            httpx.HTTPStatusError: If Cloudflare API calls fail.
+            RuntimeError: Always, because the adapter is non-functional.
         """
-        timeout = timeout_minutes or self._config.max_execution_minutes
-        sandbox_id = await self._create_sandbox(workspace_id, timeout)
-        try:
-            await self._inject_codex_command(sandbox_id, prompt, model)
-            return await self._wait_for_completion(sandbox_id, timeout * 60)
-        except Exception:
-            await self._cleanup_sandbox(sandbox_id)
-            raise
+        raise RuntimeError(_UNAVAILABLE_MSG)
 
     async def get_status(self, sandbox_id: str) -> str:
-        """Get current sandbox execution status.
+        """Refuse: the sandbox status route does not exist.
 
         Args:
-            sandbox_id: The sandbox instance identifier.
+            sandbox_id: The sandbox instance identifier (unused).
 
-        Returns:
-            Status string: "running", "completed", "failed", or "timeout".
+        Raises:
+            RuntimeError: Always, because the adapter is non-functional.
         """
-        url = f"https://api.cloudflare.com/client/v4/accounts/{self._config.cloudflare_account_id}/sandbox/{sandbox_id}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(url, headers=self._headers())
-            resp.raise_for_status()
-            data = resp.json()
-        return str(data.get("result", {}).get("status", "unknown"))
+        raise RuntimeError(_UNAVAILABLE_MSG)
 
     async def cancel(self, sandbox_id: str) -> None:
-        """Cancel a running Codex sandbox execution.
+        """Refuse: the sandbox cancel route does not exist.
 
         Args:
-            sandbox_id: The sandbox instance identifier.
+            sandbox_id: The sandbox instance identifier (unused).
+
+        Raises:
+            RuntimeError: Always, because the adapter is non-functional.
         """
-        url = f"https://api.cloudflare.com/client/v4/accounts/{self._config.cloudflare_account_id}/sandbox/{sandbox_id}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.delete(url, headers=self._headers())
-            resp.raise_for_status()
-        logger.info("Cancelled sandbox %s", sandbox_id)
+        raise RuntimeError(_UNAVAILABLE_MSG)
 
     async def get_logs(self, sandbox_id: str) -> str:
-        """Get stdout/stderr from sandbox.
+        """Refuse: the sandbox logs route does not exist.
 
         Args:
-            sandbox_id: The sandbox instance identifier.
+            sandbox_id: The sandbox instance identifier (unused).
 
-        Returns:
-            Combined stdout and stderr output.
+        Raises:
+            RuntimeError: Always, because the adapter is non-functional.
         """
-        url = (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{self._config.cloudflare_account_id}/sandbox/{sandbox_id}/logs"
-        )
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(url, headers=self._headers())
-            resp.raise_for_status()
-            data = resp.json()
-        return str(data.get("result", {}).get("output", ""))
-
-    async def _create_sandbox(self, workspace_id: str, timeout_minutes: int) -> str:
-        """Create a Cloudflare sandbox configured for Codex.
-
-        Args:
-            workspace_id: Workspace identifier for R2 sync.
-            timeout_minutes: Sandbox timeout in minutes.
-
-        Returns:
-            The sandbox instance ID.
-        """
-        url = f"https://api.cloudflare.com/client/v4/accounts/{self._config.cloudflare_account_id}/sandbox"
-        payload: dict[str, Any] = {
-            "image": self._config.sandbox_image,
-            "memory_mb": self._config.memory_mb,
-            "cpu_cores": self._config.cpu_cores,
-            "timeout_seconds": timeout_minutes * 60,
-            "network_access": self._config.network_access,
-            "env": {
-                "OPENAI_API_KEY": self._config.openai_api_key,
-                "WORKSPACE_R2_BUCKET": self._config.r2_bucket,
-                "WORKSPACE_ID": workspace_id,
-            },
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, headers=self._headers(), json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        sandbox_id = str(data.get("result", {}).get("id", ""))
-        logger.info("Created sandbox %s for workspace %s", sandbox_id, workspace_id)
-        return sandbox_id
-
-    async def _inject_codex_command(self, sandbox_id: str, prompt: str, model: str) -> None:
-        """Send Codex execution command to sandbox.
-
-        Args:
-            sandbox_id: The sandbox instance identifier.
-            prompt: Task prompt for Codex.
-            model: Codex model name.
-        """
-        url = (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{self._config.cloudflare_account_id}/sandbox/{sandbox_id}/exec"
-        )
-        payload = {
-            "command": "codex",
-            "args": ["exec", "--full-auto", "-m", model, prompt],
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, headers=self._headers(), json=payload)
-            resp.raise_for_status()
-
-    async def _wait_for_completion(self, sandbox_id: str, timeout_seconds: int) -> CodexSandboxResult:
-        """Poll sandbox until execution completes or times out.
-
-        Args:
-            sandbox_id: The sandbox instance identifier.
-            timeout_seconds: Maximum wait time in seconds.
-
-        Returns:
-            CodexSandboxResult with final execution state.
-        """
-        elapsed = 0.0
-        poll_interval = 5.0
-        while elapsed < timeout_seconds:
-            status = await self.get_status(sandbox_id)
-            if status in ("completed", "failed"):
-                logs = await self.get_logs(sandbox_id)
-                return CodexSandboxResult(
-                    sandbox_id=sandbox_id,
-                    status=status,
-                    stdout=logs,
-                    execution_time_seconds=elapsed,
-                )
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-
-        # Timed out - cancel and return timeout result
-        await self._cleanup_sandbox(sandbox_id)
-        return CodexSandboxResult(
-            sandbox_id=sandbox_id,
-            status="timeout",
-            execution_time_seconds=elapsed,
-        )
-
-    async def _cleanup_sandbox(self, sandbox_id: str) -> None:
-        """Terminate and clean up sandbox resources.
-
-        Args:
-            sandbox_id: The sandbox instance identifier.
-        """
-        try:
-            await self.cancel(sandbox_id)
-        except Exception:
-            logger.warning("Failed to clean up sandbox %s", sandbox_id, exc_info=True)
-
-    def _headers(self) -> dict[str, str]:
-        """Build Cloudflare API request headers.
-
-        Returns:
-            Dictionary with Authorization and Content-Type headers.
-        """
-        return {
-            "Authorization": f"Bearer {self._config.cloudflare_api_token}",
-            "Content-Type": "application/json",
-        }
+        raise RuntimeError(_UNAVAILABLE_MSG)

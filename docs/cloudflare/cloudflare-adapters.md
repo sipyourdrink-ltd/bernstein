@@ -43,9 +43,26 @@ The registry key is `cloudflare` (see `bernstein.adapters.registry`); the module
 **Module:** `bernstein.adapters.codex_cloudflare`
 **Class:** `CodexCloudflareAdapter`
 
-Runs OpenAI Codex agents inside Cloudflare sandboxes rather than locally. Combines Codex CLI capabilities with Cloudflare's isolated sandbox infrastructure for secure, scalable code execution.
+!!! warning "Experimental — non-functional (issue #2783)"
+    This adapter drove every operation against
+    `https://api.cloudflare.com/client/v4/accounts/{id}/sandbox/...`, a REST
+    route family that **does not exist** — an authenticated request returns
+    HTTP 400 with Cloudflare errors 7000/7003 ("No route for that URI").
+    Cloudflare's real sandbox/container product runs inside a Worker/Durable
+    Object (the `@cloudflare/sandbox` SDK), not a `client/v4` REST surface.
+
+    Because the target API cannot be routed, no operation can run or populate a
+    result. Every public method (`execute`, `get_status`, `cancel`, `get_logs`)
+    now raises `RuntimeError` with an actionable message instead of issuing a
+    doomed request. To run Codex on Cloudflare, drive a deployed worker via
+    `bernstein.bridges.cloudflare.CloudflareBridge`; to run Codex locally, use
+    the `codex` adapter.
 
 ### Configuration
+
+`CodexSandboxConfig` and `CodexSandboxResult` remain importable so callers and
+a future real implementation keep a stable surface, but no method issues a
+request today.
 
 `CodexSandboxConfig` dataclass fields:
 
@@ -61,48 +78,10 @@ Runs OpenAI Codex agents inside Cloudflare sandboxes rather than locally. Combin
 | `network_access` | `str` | `"restricted"` | Network access level |
 | `r2_bucket` | `str` | `"bernstein-workspaces"` | R2 bucket for workspace sync |
 
-### Usage
-
-```python
-from bernstein.adapters.codex_cloudflare import (
-    CodexCloudflareAdapter,
-    CodexSandboxConfig,
-)
-
-adapter = CodexCloudflareAdapter(CodexSandboxConfig(
-    cloudflare_account_id="abc123",
-    cloudflare_api_token="cf_token_...",
-    openai_api_key="sk-...",
-    memory_mb=1024,
-    max_execution_minutes=60,
-))
-
-# Execute a task
-result = await adapter.execute(
-    prompt="Add input validation to all API endpoints",
-    workspace_id="task-123",
-    model="codex-mini",
-    timeout_minutes=45,
-)
-
-print(result.status)                # "completed", "failed", "timeout"
-print(result.files_changed)         # ["src/api/validation.py", ...]
-print(result.execution_time_seconds)
-print(result.stdout)
-```
-
-### Execution lifecycle
-
-1. **Create sandbox** -- provisions a Cloudflare sandbox container with the specified image, memory, CPU, and network settings. Injects `OPENAI_API_KEY`, `WORKSPACE_R2_BUCKET`, and `WORKSPACE_ID` as environment variables.
-2. **Sync workspace** -- the sandbox pulls workspace files from the configured R2 bucket.
-3. **Inject Codex command** -- sends `codex exec --full-auto -m <model> <prompt>` to the sandbox.
-4. **Poll for completion** -- checks sandbox status every 5 seconds until completed, failed, or timeout.
-5. **Collect results** -- fetches stdout/stderr logs from the sandbox.
-6. **Cleanup** -- terminates the sandbox on timeout or error.
-
 ### Result type
 
-`CodexSandboxResult` fields:
+`CodexSandboxResult` fields (populated only once a real sandbox surface is
+implemented):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -115,27 +94,10 @@ print(result.stdout)
 | `execution_time_seconds` | `float` | Wall-clock execution time |
 | `tokens_used` | `int` | Tokens consumed by Codex |
 
-### Management methods
-
-```python
-# Check status of a running sandbox
-status = await adapter.get_status("sandbox-id")
-
-# Cancel execution
-await adapter.cancel("sandbox-id")
-
-# Get logs
-logs = await adapter.get_logs("sandbox-id")
-```
-
 ---
 
 ## Choosing between adapters
 
-| Criterion | Cloudflare Agents | Codex-on-Cloudflare |
-|-----------|-------------------|---------------------|
-| LLM Provider | Any (via Worker) | OpenAI Codex |
-| Execution location | Local wrangler dev | Remote Cloudflare sandbox |
-| Isolation | Worker process | Full container sandbox |
-| Workspace sync | Manual | Automatic via R2 |
-| Best for | Development, testing | Production, untrusted code |
+Both Cloudflare adapters are experimental and non-functional at present (see the
+status notes above). Run agents locally (`claude`, `codex`, `aider`, `mock`) or
+drive a deployed worker via `bernstein.bridges.cloudflare.CloudflareBridge`.
