@@ -30,7 +30,11 @@ Module: `src/bernstein/core/protocols/payments/mandates.py`. CLI group:
   authorize the byte-identical action set. No LLM in the loop.
 - **Spend caps** - the cost ledger (`.sdd/cost/ledger.jsonl`) is the single
   enforcement point. A settlement whose cumulative task spend plus amount would
-  breach the intent's cap is refused.
+  breach the intent's cap is refused. The cap is enforced on the amount the
+  receipt binds: the cart amount and the settlement reference amount must
+  agree, so a cart cannot pass a small amount through the cap while the receipt
+  settles a larger one. A negative amount is refused outright rather than
+  clamped to `0`, so it cannot slip past the cap or mask real spend.
 - **Revocation** - `bernstein mandate revoke <mandate_hash>` appends a signed
   entry to `.sdd/mandates/revocations.jsonl` rather than mutating anything.
   Subsequent actions under the mandate are refused while the original stays
@@ -49,6 +53,12 @@ the mandate lineage spine (`run_id="mandates"`), and mirrors it into the
 HMAC-chained audit log (`mandate.consent_receipt`). Exit code `1` means the
 settlement was refused (cap breach, revocation, or a signature / intent-binding
 gate).
+
+The lineage-spine anchor is the source of truth; the audit-chain mirror is a
+best-effort second write. If the mirror fails, `emit` and `revoke` still exit
+`0` (the receipt / revocation is already committed) and print a distinct
+`WARNING` naming the mandate hash and the failure reason, rather than raising a
+traceback over an already-committed artefact.
 
 ## On-disk layout
 
