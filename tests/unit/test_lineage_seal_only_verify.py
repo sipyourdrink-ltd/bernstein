@@ -23,9 +23,7 @@ def _seal_only_spine(tmp_path: Path) -> LineageSpine:
     journal = EventJournal(run_id="run-seal-only", sdd_dir=sdd_dir)
     journal.record("run_started", run_id="run-seal-only")
     journal.record("run_completed", run_id="run-seal-only")
-    seal_journal_into_spine(
-        journal, lineage_root=lineage_root, hmac_key=_KEY, actor="orchestrator"
-    )
+    seal_journal_into_spine(journal, lineage_root=lineage_root, hmac_key=_KEY, actor="orchestrator")
     return LineageSpine(lineage_root, run_id="run-seal-only", hmac_key=_KEY)
 
 

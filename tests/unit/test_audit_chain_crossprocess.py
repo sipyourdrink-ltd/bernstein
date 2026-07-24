@@ -30,9 +30,7 @@ _KEY = b"cross-process-test-key-0123456789"
 
 
 @pytest.mark.audit_key_real
-def test_key_resolvers_agree_without_override(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_key_resolvers_agree_without_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_dashboard_hmac_key and load_or_create_audit_key agree (#2791).
 
     With no ``BERNSTEIN_AUDIT_KEY_PATH`` override, the dashboard/task-server
@@ -79,10 +77,7 @@ def test_concurrent_process_appends_verify(tmp_path: Path) -> None:
 
     ctx = mp.get_context("fork")
     barrier = ctx.Barrier(n_procs)
-    procs = [
-        ctx.Process(target=_append_worker, args=(str(audit_dir), _KEY, m_events, barrier))
-        for _ in range(n_procs)
-    ]
+    procs = [ctx.Process(target=_append_worker, args=(str(audit_dir), _KEY, m_events, barrier)) for _ in range(n_procs)]
     for p in procs:
         p.start()
     for p in procs:
@@ -92,8 +87,5 @@ def test_concurrent_process_appends_verify(tmp_path: Path) -> None:
     valid, errors = AuditLog(audit_dir, key=_KEY).verify()
     assert valid, f"chain forked under concurrent appends: {errors[:5]}"
 
-    total_lines = sum(
-        len([ln for ln in path.read_bytes().split(b"\n") if ln])
-        for path in audit_dir.glob("*.jsonl")
-    )
+    total_lines = sum(len([ln for ln in path.read_bytes().split(b"\n") if ln]) for path in audit_dir.glob("*.jsonl"))
     assert total_lines == n_procs * m_events

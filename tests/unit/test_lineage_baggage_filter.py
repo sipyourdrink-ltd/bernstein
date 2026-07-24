@@ -58,9 +58,7 @@ def test_foreign_baggage_is_not_sealed(tmp_path: Path, monkeypatch: pytest.Monke
     assert spine.verify().status is SpineStatus.OK
 
 
-def test_bernstein_baggage_survives_and_foreign_stripped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bernstein_baggage_survives_and_foreign_stripped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Orchestrator-controlled members are kept; foreign members are dropped."""
     monkeypatch.setenv("BERNSTEIN_LINEAGE_ENABLED", "1")
     monkeypatch.setenv("BAGGAGE", f"bernstein-run=r1,{_SENTRY_BAGGAGE}")
@@ -80,9 +78,7 @@ def test_bernstein_baggage_survives_and_foreign_stripped(
     assert spine.verify().status is SpineStatus.OK
 
 
-def test_ambient_traceparent_dropped_without_bernstein_baggage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ambient_traceparent_dropped_without_bernstein_baggage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """traceparent/tracestate are dropped when no bernstein baggage is present."""
     monkeypatch.setenv("BERNSTEIN_LINEAGE_ENABLED", "1")
     monkeypatch.delenv("BAGGAGE", raising=False)
