@@ -75,7 +75,6 @@ jobs:
           WEEK_LABEL=$(date -u +'%G-W%V')
           SINCE=$(date -u -d "${LOOKBACK_DAYS} days ago" +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
             || date -u -v-"${LOOKBACK_DAYS}"d +'%Y-%m-%dT%H:%M:%SZ')
-          SINCE_DATE="${SINCE%T*}"
           TITLE="CI weekly digest ${WEEK_LABEL}"
           export TITLE
 
@@ -83,23 +82,31 @@ jobs:
 
           # ----- collect: open + recently-closed auto-release-skipped issues.
           # Both states, so the digest reflects the week even when per-event
-          # issues self-closed during cleanup.
+          # issues self-closed during cleanup. The exact ${SINCE} timestamp
+          # (not a midnight-truncated date) enforces the precise 7-day cutoff,
+          # and an explicit --limit prevents the default 30-item cap from
+          # silently undercounting on a busy week. No `|| true`: a
+          # transport/auth/pagination error must fail the step rather than
+          # publish a false "clean" digest while still closing tracking issues.
           SKIPPED=$(gh issue list --repo "${REPO}" --state all \
-            --search "in:title auto-release skipped updated:>=${SINCE_DATE}" \
-            --json number --jq '[.[].number] | join(" ")' \
-            || true)
+            --search "in:title auto-release skipped updated:>=${SINCE}" \
+            --limit 100 \
+            --json number --jq '[.[].number] | join(" ")')
 
           # ----- collect: main-branch runs in the window. Server-side
           # `created` filter + --paginate means we see EVERY run in the
           # window, not just the most recent 100 (the previous single-page
-          # query silently dropped failures on busy weeks).
+          # query silently dropped failures on busy weeks). The full ${SINCE}
+          # timestamp keeps the cutoff exact; dropping `|| true` makes a failed
+          # collection fail the step instead of yielding an empty run set that
+          # reads as a clean week.
           RUNS_FILE="$(mktemp)"
           gh api --paginate -X GET "repos/${REPO}/actions/runs" \
             -f branch=main \
-            -f "created=>=${SINCE_DATE}" \
+            -f "created=>=${SINCE}" \
             -f per_page=100 \
             --jq '.workflow_runs[] | {id, conclusion, event, name, head_sha, html_url}' \
-            > "${RUNS_FILE}" || true
+            > "${RUNS_FILE}"
 
           # ----- classify + render (unit-tested, deterministic aggregation)
           BODY_FILE="$(mktemp)"
@@ -132,15 +139,23 @@ jobs:
             DIGEST_NUMBER="${EXISTING}"
           else
             echo "Creating new digest issue"
-            # `ci` is the only guaranteed label; fall back to no label so a
-            # missing label never blocks publishing.
-            DIGEST_URL=$(gh issue create --repo "${REPO}" \
-              --title "${TITLE}" \
-              --body-file "${BODY_FILE}" \
-              --label "ci" 2>/dev/null \
-              || gh issue create --repo "${REPO}" \
+            # Apply the `ci` label only when it is confirmed to exist. A blind
+            # `create --label ci || create` retries on *any* failure -- including
+            # a transport error that already created the issue -- and can open a
+            # duplicate digest. Probing the label first makes the choice
+            # deterministic: exactly one create runs, chosen by a real condition,
+            # never an error-triggered second attempt.
+            LABELS=$(gh label list --repo "${REPO}" --limit 100 --json name --jq '.[].name')
+            if grep -qxF "ci" <<<"${LABELS}"; then
+              DIGEST_URL=$(gh issue create --repo "${REPO}" \
+                --title "${TITLE}" \
+                --body-file "${BODY_FILE}" \
+                --label "ci")
+            else
+              DIGEST_URL=$(gh issue create --repo "${REPO}" \
                 --title "${TITLE}" \
                 --body-file "${BODY_FILE}")
+            fi
             DIGEST_NUMBER=$(basename "${DIGEST_URL}")
           fi
 
@@ -150,6 +165,7 @@ jobs:
           mapfile -t OLD_DIGESTS < <(
             gh issue list --repo "${REPO}" --state open \
               --search "in:title \"CI weekly digest\"" \
+              --limit 100 \
               --json number,title,author \
               --jq '.[]
                     | select(.author.is_bot == true)
@@ -171,6 +187,7 @@ jobs:
           mapfile -t OPEN_SKIPPED < <(
             gh issue list --repo "${REPO}" --state open \
               --search "in:title auto-release skipped" \
+              --limit 100 \
               --json number \
               --jq '.[].number' \
               || true
