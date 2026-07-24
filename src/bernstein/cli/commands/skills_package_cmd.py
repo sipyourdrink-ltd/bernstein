@@ -57,9 +57,16 @@ def _resolve_dest(
     dest: str | None,
     workdir: Path,
 ) -> tuple[Path, str, str]:
-    """Return ``(dest, host_label, scope_label)`` from the CLI selection."""
+    """Return ``(dest, host_label, scope_label)`` from the CLI selection.
+
+    An explicit ``--dest`` overrides ``--host``/``--scope`` (as documented on
+    the option), so the labels stamped into the receipt and audit event are
+    always ``('dest', 'dest')`` when a destination is given -- recording the
+    host/scope the operator also happened to pass would attribute an arbitrary
+    path to a host default it never touched (issue #2642).
+    """
     if dest is not None:
-        return Path(dest), host or "dest", "dest" if host is None else scope
+        return Path(dest), "dest", "dest"
     if host is None:
         raise click.ClickException("Provide --host (with optional --scope) or an explicit --dest.")
     try:

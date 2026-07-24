@@ -62,6 +62,41 @@ def test_install_to_dest_writes_receipt_and_verifies(tmp_path: Path) -> None:
     assert verify.exit_code == 0, verify.output
 
 
+def test_dest_overrides_host_scope_in_audit_labels(tmp_path: Path) -> None:
+    """An explicit --dest is documented to override --host/--scope; the audit
+    event and install_id must record the override, not the arbitrary host/scope
+    the operator also passed (data-integrity, issue #2642)."""
+    from bernstein.core.security.audit_chain import (
+        EVENT_PLUGIN_INSTALL_RECEIPT,
+        AuditChainStore,
+    )
+
+    workdir = _workdir(tmp_path)
+    dest = tmp_path / "explicit" / PACKAGED_SKILL_NAME
+    result = CliRunner().invoke(
+        package_group,
+        [
+            "install",
+            "--dest",
+            str(dest),
+            "--host",
+            "claude",
+            "--scope",
+            "user",
+            "--workdir",
+            str(workdir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    chain = AuditChainStore(workdir / ".sdd" / "audit", key=_KEY)
+    events = chain.query(event_type=EVENT_PLUGIN_INSTALL_RECEIPT)
+    assert len(events) == 1
+    assert events[0].details["host"] == "dest"
+    assert events[0].details["scope"] == "dest"
+    assert events[0].details["install_id"] == "agent-plugin-dest-dest"
+
+
 def test_install_host_scope_project_targets_host_dir(tmp_path: Path) -> None:
     workdir = _workdir(tmp_path)
     result = CliRunner().invoke(
