@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core import defaults as _defaults
 from bernstein.core.defaults import AGENT
+from bernstein.core.tasks.artifacts import ArtifactSpec
 
 if TYPE_CHECKING:
     from bernstein.core.persistence.cache_policy import CachePolicy
@@ -422,6 +423,12 @@ class Task:
     depends_on: list[str] = field(default_factory=list[str])
     parent_task_id: str | None = None
     completion_signals: list[CompletionSignal] = field(default_factory=list[CompletionSignal])
+    # Issue #2608: the typed artifact contract this task produces. Declares the
+    # expected ArtifactKind, its canonicalisation rule, and typed verification
+    # criteria over the artifact bytes. Defaults to ``code_diff`` so an existing
+    # coding task is unchanged (the git-diff path). Round-trips through
+    # ``Task.to_dict`` / ``Task.from_dict``.
+    artifact_spec: ArtifactSpec = field(default_factory=ArtifactSpec)
     owned_files: list[str] = field(default_factory=list[str])
     assigned_agent: str | None = None
     result_summary: str | None = None
@@ -522,6 +529,80 @@ class Task:
     # bypassing all scope/complexity-derived math. None = auto-compute as before.
     max_turns: int | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise a Task into a JSON-safe mapping that ``from_dict`` reads back.
+
+        The mapping mirrors every field :meth:`from_dict` consumes, so
+        ``Task.from_dict(task.to_dict())`` reconstructs the task faithfully
+        (including the :class:`ArtifactSpec`). Enums serialise to their string
+        values and nested specs to their own ``to_dict`` form.
+        """
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "role": self.role,
+            "priority": self.priority,
+            "scope": self.scope.value,
+            "complexity": self.complexity.value,
+            "estimated_minutes": self.estimated_minutes,
+            "status": self.status.value,
+            "task_type": self.task_type.value,
+            "upgrade_details": (asdict(self.upgrade_details) if self.upgrade_details is not None else None),
+            "depends_on": list(self.depends_on),
+            "parent_task_id": self.parent_task_id,
+            "completion_signals": [{"type": s.type, "value": s.value} for s in self.completion_signals],
+            "artifact_spec": self.artifact_spec.to_dict(),
+            "owned_files": list(self.owned_files),
+            "assigned_agent": self.assigned_agent,
+            "result_summary": self.result_summary,
+            "tenant_id": self.tenant_id,
+            "cell_id": self.cell_id,
+            "repo": self.repo,
+            "depends_on_repo": self.depends_on_repo,
+            "model": self.model,
+            "effort": self.effort,
+            "cli": self.cli,
+            "mcp_servers": list(self.mcp_servers),
+            "metadata": dict(self.metadata),
+            "batch_eligible": self.batch_eligible,
+            "eu_ai_act_risk": self.eu_ai_act_risk,
+            "approval_required": self.approval_required,
+            "approval_spec": (self.approval_spec.to_dict() if self.approval_spec is not None else None),
+            "cache_policy": (self.cache_policy.to_dict() if self.cache_policy is not None else None),
+            "risk_level": self.risk_level,
+            "max_output_tokens": self.max_output_tokens,
+            "meta_messages": list(self.meta_messages),
+            "created_at": self.created_at,
+            "claimed_at": self.claimed_at,
+            "completed_at": self.completed_at,
+            "closed_at": self.closed_at,
+            "deadline": self.deadline,
+            "progress_log": list(self.progress_log),
+            "version": self.version,
+            "claimed_by_session": self.claimed_by_session,
+            "parent_session_id": self.parent_session_id,
+            "execution_mode": self.execution_mode,
+            "verification_count": self.verification_count,
+            "flagged_unverified": self.flagged_unverified,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "retry_delay_s": self.retry_delay_s,
+            "terminal_reason": self.terminal_reason,
+            "subtask_wait_started_at": self.subtask_wait_started_at,
+            "parent_context": self.parent_context,
+            "requires": list(self.requires),
+            "tags": list(self.tags),
+            "best_of_n": self.best_of_n,
+            "refinement_rounds": self.refinement_rounds,
+            "agent_restart_between_retries": self.agent_restart_between_retries,
+            "parallel_safe": self.parallel_safe,
+            "story_id": self.story_id,
+            "attachments": list(self.attachments),
+            "evidence_producers": [dict(p) for p in self.evidence_producers],
+            "max_turns": self.max_turns,
+        }
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
         """Deserialise a server JSON response into a Task.
@@ -545,6 +626,18 @@ class Task:
                 signals.append(CompletionSignal(type=sig["type"], value=sig["value"]))
             except (KeyError, TypeError):
                 logger.warning("Invalid completion_signal entry: %r", sig)
+
+        raw_spec = raw.get("artifact_spec")
+        if isinstance(raw_spec, ArtifactSpec):
+            artifact_spec = raw_spec
+        elif isinstance(raw_spec, dict):
+            try:
+                artifact_spec = ArtifactSpec.from_dict(raw_spec)
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Invalid artifact_spec entry: %r - defaulting to code_diff", raw_spec)
+                artifact_spec = ArtifactSpec()
+        else:
+            artifact_spec = ArtifactSpec()
 
         upgrade_details: UpgradeProposalDetails | None = None
         raw_upgrade = raw.get("upgrade_details")
@@ -576,6 +669,7 @@ class Task:
             depends_on=raw.get("depends_on", []),
             parent_task_id=raw.get("parent_task_id"),
             completion_signals=signals,
+            artifact_spec=artifact_spec,
             owned_files=raw.get("owned_files", []),
             assigned_agent=raw.get("assigned_agent"),
             result_summary=raw.get("result_summary"),

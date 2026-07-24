@@ -18,6 +18,7 @@ from bernstein.core.tasks.models import (
     AgentCostSummary,
     ApprovalSpec,
     ClusterConfig,
+    CompletionSignal,
     ModelCostBreakdown,
     NodeInfo,
     OrchestratorConfig,
@@ -334,3 +335,70 @@ def test_run_cost_report_round_trip_without_projection() -> None:
     restored = RunCostReport.from_dict(report.to_dict())
     assert restored.projection is None
     assert restored.per_agent == []
+
+
+# ---------------------------------------------------------------------------
+# Task.artifact_spec round-trip through Task.to_dict / from_dict (#2608)
+# ---------------------------------------------------------------------------
+
+
+def test_task_defaults_to_code_diff_artifact_spec() -> None:
+    from bernstein.core.tasks.artifacts import ArtifactKind
+
+    task = Task.from_dict({"id": "x", "title": "T", "description": "D", "role": "backend"})
+    assert task.artifact_spec.kind is ArtifactKind.CODE_DIFF
+    assert task.artifact_spec.criteria == ()
+
+
+def test_task_to_dict_from_dict_round_trips_artifact_spec() -> None:
+    from bernstein.core.tasks.artifacts import ArtifactCriterion, ArtifactKind, ArtifactSpec
+
+    spec = ArtifactSpec(
+        kind=ArtifactKind.DATASET,
+        criteria=(ArtifactCriterion(type="hash_stable", value="sha256:abc"),),
+    )
+    task = Task(id="t1", title="Ttl", description="Desc", role="retrieval", artifact_spec=spec)
+    restored = Task.from_dict(task.to_dict())
+    assert restored.artifact_spec == spec
+    assert restored.artifact_spec.kind is ArtifactKind.DATASET
+
+
+def test_task_to_dict_from_dict_round_trips_core_fields() -> None:
+    task = Task(
+        id="t2",
+        title="Title",
+        description="Body",
+        role="backend",
+        priority=1,
+        estimated_minutes=45,
+        depends_on=["a", "b"],
+        owned_files=["src/x.py"],
+        tags=["fast"],
+    )
+    restored = Task.from_dict(task.to_dict())
+    assert restored.id == "t2"
+    assert restored.title == "Title"
+    assert restored.role == "backend"
+    assert restored.priority == 1
+    assert restored.estimated_minutes == 45
+    assert restored.depends_on == ["a", "b"]
+    assert restored.owned_files == ["src/x.py"]
+    assert restored.tags == ["fast"]
+
+
+def test_task_to_dict_is_json_serialisable() -> None:
+    import json
+
+    from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+    task = Task(
+        id="t3",
+        title="T",
+        description="D",
+        role="backend",
+        completion_signals=[CompletionSignal(type="path_exists", value="README.md")],
+        artifact_spec=ArtifactSpec(kind=ArtifactKind.REPORT),
+    )
+    # Must not raise - every value in the dict is a plain JSON type.
+    payload = json.dumps(task.to_dict())
+    assert '"artifact_spec"' in payload
