@@ -51,10 +51,28 @@ if [[ "${COSIGN_TLOG_UPLOAD:-}" == "true" ]]; then
   TLOG_FLAG="--tlog-upload=true"
 fi
 
+# cosign v3 flipped two sign-blob defaults that break keyed offline
+# detached signing (--tlog-upload=false + --output-signature):
+#   * --use-signing-config now defaults to true and rejects
+#     --tlog-upload=false outright;
+#   * --new-bundle-format now defaults to true and requires --bundle,
+#     so --output-signature alone errors out.
+# Opt back out of both when the installed cosign supports them.
+# --use-signing-config in the help text is the version signal: releases
+# that list it (v2.6+, v3) accept both opt-outs, while older releases
+# (<= v2.4.x) already default both behaviours off. --new-bundle-format
+# itself cannot be probed the same way -- v3 hides it from --help as
+# deprecated while still accepting it.
+COMPAT_FLAGS=()
+SIGN_BLOB_HELP="$(cosign sign-blob --help 2>&1 || true)"
+if [[ "$SIGN_BLOB_HELP" == *"--use-signing-config"* ]]; then
+  COMPAT_FLAGS+=("--use-signing-config=false" "--new-bundle-format=false")
+fi
+
 sign_blob() {
   local target="$1"
   local sig="${target}.sig"
-  cosign sign-blob --yes "$TLOG_FLAG" --key "$COSIGN_KEY" --output-signature "$sig" "$target" >/dev/null
+  cosign sign-blob --yes "$TLOG_FLAG" ${COMPAT_FLAGS[@]+"${COMPAT_FLAGS[@]}"} --key "$COSIGN_KEY" --output-signature "$sig" "$target" >/dev/null
   echo "signed: ${target##*/}"
 }
 
@@ -65,7 +83,7 @@ done
 
 manifest_target="$WHEELHOUSE_DIR/MANIFEST.json"
 manifest_sig="$WHEELHOUSE_DIR/MANIFEST.sig"
-cosign sign-blob --yes "$TLOG_FLAG" --key "$COSIGN_KEY" --output-signature "$manifest_sig" "$manifest_target" >/dev/null
+cosign sign-blob --yes "$TLOG_FLAG" ${COMPAT_FLAGS[@]+"${COMPAT_FLAGS[@]}"} --key "$COSIGN_KEY" --output-signature "$manifest_sig" "$manifest_target" >/dev/null
 echo "signed: MANIFEST.json -> MANIFEST.sig"
 
 echo

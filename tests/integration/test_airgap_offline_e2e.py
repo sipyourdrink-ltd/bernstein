@@ -23,6 +23,7 @@ boundary. This file is the proof harness.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import shutil
@@ -64,6 +65,34 @@ from tests.fixtures.airgap import WheelhouseFixture, build_wheelhouse
 _HAS_COSIGN: Final[bool] = shutil.which("cosign") is not None
 _HAS_GPG: Final[bool] = shutil.which("gpg") is not None or shutil.which("gpg2") is not None
 _IS_LINUX: Final[bool] = sys.platform.startswith("linux")
+
+
+@functools.cache
+def _cosign_sign_blob_compat_flags() -> tuple[str, ...]:
+    """Extra ``sign-blob`` flags for keyed offline detached signing.
+
+    cosign v3 flipped two defaults that break the
+    ``--tlog-upload=false`` + ``--output-signature`` invocation:
+    ``--use-signing-config`` (rejects ``--tlog-upload=false``) and
+    ``--new-bundle-format`` (requires ``--bundle``). Opt back out of
+    both when the installed cosign supports them. ``--use-signing-config``
+    in the help text is the version signal: releases that list it
+    (v2.6+, v3) accept both opt-outs, while older releases (<= v2.4.x)
+    already default both behaviours off. ``--new-bundle-format`` itself
+    cannot be probed the same way -- v3 hides it from ``--help`` as
+    deprecated while still accepting it. Mirrors
+    scripts/sign_airgap_wheelhouse.sh.
+    """
+    result = subprocess.run(
+        ["cosign", "sign-blob", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    help_text = result.stdout + result.stderr
+    if "--use-signing-config" in help_text:
+        return ("--use-signing-config=false", "--new-bundle-format=false")
+    return ()
 
 
 def _probe_unshare_capable() -> bool:
@@ -260,6 +289,7 @@ def test_real_cosign_sign_and_verify_passes(
                 "sign-blob",
                 "--yes",
                 "--tlog-upload=false",
+                *_cosign_sign_blob_compat_flags(),
                 "--key",
                 str(priv),
                 "--output-signature",
@@ -279,6 +309,7 @@ def test_real_cosign_sign_and_verify_passes(
             "sign-blob",
             "--yes",
             "--tlog-upload=false",
+            *_cosign_sign_blob_compat_flags(),
             "--key",
             str(priv),
             "--output-signature",
@@ -315,6 +346,7 @@ def test_real_cosign_detects_wheel_byte_tamper(
             "sign-blob",
             "--yes",
             "--tlog-upload=false",
+            *_cosign_sign_blob_compat_flags(),
             "--key",
             str(priv),
             "--output-signature",
@@ -352,6 +384,7 @@ def test_real_cosign_detects_manifest_sha_tamper(
             "sign-blob",
             "--yes",
             "--tlog-upload=false",
+            *_cosign_sign_blob_compat_flags(),
             "--key",
             str(priv),
             "--output-signature",
