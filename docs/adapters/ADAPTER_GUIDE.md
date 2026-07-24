@@ -51,7 +51,6 @@ This means you can run Bernstein with **zero Claude Code dependency** - use `qwe
 | `opencode` | Multi | Any configured provider | Inherited from model | $–$$$ | Full | JSON (`--format json`) | No | Multi-provider setups; single CLI interface |
 | `kiro` | AWS | AWS-managed models | ★★★ | $$ | Full | No | AWS-centric teams using AWS AI services |
 | `kilo` | Stackblitz | Any (via provider routing) | Inherited from model | $–$$$ | Full | No | Web development; Stackblitz-integrated teams |
-| `cloudflare` | Cloudflare | Workers AI models | ★★★ | Free–$$ | Full | No | Cloudflare Workers / Agents SDK users |
 | `iac` | N/A | N/A (Terraform/Pulumi) | N/A | N/A | IaC plan+apply | No | Infrastructure tasks - pair with LLM adapter for codegen |
 | `generic` | Any | Pass-through | Depends on CLI | Varies | Depends on CLI | No | Unlisted CLIs; prototyping new adapters |
 | `mock` | None | None (simulated) | N/A | Free | Simulated | Simulated | Unit and integration tests only |

@@ -38,7 +38,6 @@ Last updated: 2026-07-16
 | `pydantic_ai` | Multi (`<provider>:<model>`) | No | No |
 | `kiro` | AWS | No | No |
 | `kilo` | Stackblitz | No | Yes (ACP/MCP) |
-| `cloudflare` | Cloudflare | No | No |
 | `iac` | N/A (Terraform/Pulumi) | No | No |
 | `generic` | Any | Depends on CLI | No |
 

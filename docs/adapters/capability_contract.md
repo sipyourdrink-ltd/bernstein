@@ -104,7 +104,6 @@ adapters at a glance.
 | `claude` | flag | cli-flag | stream-json |
 | `cline` | unsupported | cli-flag | text-signals |
 | `clm` | unsupported | unsupported | text-signals |
-| `cloudflare` | unsupported | unsupported | hooks |
 | `codebuff` | unsupported | unsupported | text-signals |
 | `codex` | unsupported | cli-flag | text-signals |
 | `cody` | unsupported | unsupported | text-signals |

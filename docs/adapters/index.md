@@ -62,12 +62,6 @@ For air-gap or BYO-model scenarios.
 
 - `iac` - infrastructure-as-code (Terraform / Pulumi) with plan-before-apply.
 - `clm` - sovereign LLM gateway over mTLS for regulated deployments.
-- `cloudflare` - Cloudflare Agents SDK via wrangler. Experimental and
-  currently non-functional: `spawn()` refuses immediately, because the
-  adapter can only start a local `npx wrangler dev` server that never
-  triggers the worker or returns a result. To run agents on Cloudflare
-  today, deploy a worker implementing the `/agents/*` HTTP contract and
-  drive it with `bernstein.bridges.cloudflare.CloudflareBridge`.
 - `openai_agents` - in-process OpenAI Agents SDK v2 (requires the
   `[openai]` extra).
 - `computer_use` - fronts a third-party autonomous browser / computer-use
