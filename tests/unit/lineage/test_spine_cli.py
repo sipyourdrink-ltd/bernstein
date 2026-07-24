@@ -197,3 +197,52 @@ def test_verify_receipt_missing_hash_fails(tmp_path: Path, monkeypatch) -> None:
     result = _run(["verify", "run-1", "--workdir", str(tmp_path), "--receipt-hash", "sha256:deadbeef"])
     assert result.exit_code == 2
     assert "failed" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Read-only key handling (issue #2639): verify must never mint an HMAC key.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_missing_key_fails_closed_not_tamper(tmp_path: Path, monkeypatch) -> None:
+    # No key file exists at the resolved path. A read-only verify must fail
+    # closed with a clear key-missing error rather than minting a fresh key --
+    # a minted key cannot authenticate the existing chain, so every HMAC tag
+    # would fail and the setup error would be misreported as tamper.
+    key_path = tmp_path / "state" / "audit.key"
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_path))
+    _seed(tmp_path, "run-1")
+
+    result = _run(["verify", "run-1", "--workdir", str(tmp_path)])
+    assert result.exit_code == 3, result.output
+    assert "tamper" not in result.output.lower()
+    assert "key" in result.output.lower()
+    # The verify path must never create key material.
+    assert not key_path.exists()
+
+
+def test_verify_key_path_option_reads_named_key(tmp_path: Path, monkeypatch) -> None:
+    # The chain was written under a key stored at a non-default location; an
+    # auditor points --key-path at it to verify a handed-over evidence package.
+    monkeypatch.delenv("BERNSTEIN_AUDIT_KEY_PATH", raising=False)
+    key_file = tmp_path / "handover" / "audit.key"
+    key_file.parent.mkdir(parents=True)
+    key_file.write_bytes(_KEY)
+    key_file.chmod(0o600)
+    spine = _seed(tmp_path, "run-1")
+
+    result = _run(["verify", "run-1", "--workdir", str(tmp_path), "--key-path", str(key_file)])
+    assert result.exit_code == 0, result.output
+    assert spine.head_hash()[:16] in result.output
+    assert "OK" in result.output
+
+
+def test_verify_receipt_missing_key_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    key_path = tmp_path / "state" / "audit.key"
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_path))
+    entry_hash, _ = _seed_receipt(tmp_path, "run-1")
+
+    result = _run(["verify", "run-1", "--workdir", str(tmp_path), "--receipt-hash", entry_hash])
+    assert result.exit_code == 3, result.output
+    assert "key" in result.output.lower()
+    assert not key_path.exists()

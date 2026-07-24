@@ -26,10 +26,24 @@ from bernstein.cli.helpers import console
 from bernstein.core.lineage.spine import LineageSpine, SpineStatus
 
 
-def _load_hmac_key() -> bytes:
-    from bernstein.core.security.audit import load_or_create_audit_key
+def _load_hmac_key(key_path: Path | None = None) -> bytes:
+    """Load the audit HMAC key read-only for a verify pass.
 
-    return load_or_create_audit_key()
+    ``verify`` only reads the chain, so it must never mint key material.
+    ``load_or_create_audit_key`` would generate a fresh key on a machine that
+    has none -- and that key cannot authenticate a chain written under the real
+    key, so every HMAC tag would fail and a plain missing-key setup error would
+    be misreported as tamper (issue #2639). Load read-only and fail closed with
+    a clear "key missing" error and a distinct exit code instead.
+    """
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    try:
+        return load_audit_key(key_path)
+    except AuditKeyMissingError as exc:
+        console.print()
+        console.print(f"[yellow]CANNOT VERIFY[/yellow] -- {exc}")
+        raise SystemExit(3) from exc
 
 
 def _spine_dir(workdir: str) -> Path:
@@ -66,12 +80,21 @@ def _spine_dir(workdir: str) -> Path:
     default=None,
     help="Recovery receipt artifact JSON; content-addresses it against the anchored entry.",
 )
+@click.option(
+    "--key-path",
+    "key_path",
+    type=click.Path(dir_okay=False, exists=True),
+    default=None,
+    help="Audit HMAC key file the chain was written under (read-only; never mints a key). "
+    "Defaults to $BERNSTEIN_AUDIT_KEY_PATH or the XDG state key.",
+)
 def lineage_verify_cmd(
     run_id: str,
     workdir: str,
     public_key_path: str | None,
     receipt_hash: str | None,
     receipt_file: str | None,
+    key_path: str | None,
 ) -> None:
     """Verify the lineage spine for *run_id*.
 
@@ -80,16 +103,17 @@ def lineage_verify_cmd(
     Merkle-chained, HMAC-tagged spine entry.
 
     Exit codes: 0 = OK, 1 = no entries / seal-only (no artifact provenance) /
-    bad input, 2 = tamper detected.
+    bad input, 2 = tamper detected, 3 = cannot verify (audit key missing).
     """
+    key_path_resolved = Path(key_path) if key_path is not None else None
     lineage_root = _spine_dir(workdir)
     spine_path = lineage_root / run_id / "spine.jsonl"
 
     if receipt_hash is not None:
-        _verify_receipt(run_id, lineage_root, spine_path, receipt_hash, receipt_file)
+        _verify_receipt(run_id, lineage_root, spine_path, receipt_hash, receipt_file, key_path_resolved)
 
     if spine_path.exists():
-        spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key())
+        spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key(key_path_resolved))
         result = spine.verify()
         console.print()
         console.print(f"[bold]Lineage spine[/bold] run={run_id} entries={result.count} head={spine.head_hash()[:16]}")
@@ -126,10 +150,12 @@ def _verify_receipt(
     spine_path: Path,
     receipt_hash: str,
     receipt_file: str | None,
+    key_path: Path | None = None,
 ) -> None:
     """Resolve a recovery receipt hash against the run's spine (issue #2557).
 
-    Exit codes: 0 = receipt resolves on an intact chain, 2 = it does not.
+    Exit codes: 0 = receipt resolves on an intact chain, 2 = it does not,
+    3 = cannot verify (audit key missing).
     """
     from bernstein.core.planning.recovery_receipt import resolve_receipt_on_spine
 
@@ -138,7 +164,7 @@ def _verify_receipt(
         console.print(f"[red]No spine for run[/red] {run_id} -- cannot resolve receipt {receipt_hash}.")
         raise SystemExit(2)
 
-    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key())
+    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key(key_path))
     content = Path(receipt_file).read_bytes() if receipt_file is not None else None
     resolution = resolve_receipt_on_spine(spine, entry_hash=receipt_hash, receipt_content=content)
 

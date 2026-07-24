@@ -199,7 +199,10 @@ bernstein lineage verify <run_id> \
 ```
 
 Exit codes: `0` the receipt resolves on an intact chain (and, with
-`--receipt-file`, its content matches the anchored entry); `2` it does not.
+`--receipt-file`, its content matches the anchored entry); `2` it does not;
+`3` the audit key is missing so the chain cannot be verified. Verification
+loads the HMAC key read-only and never mints one -- pass `--key-path` to point
+at the key the chain was written under.
 
 Guarantees:
 

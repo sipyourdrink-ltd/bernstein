@@ -62,6 +62,26 @@ verify` reports that case as the distinct **`SEAL_ONLY`** status with a
 non-zero exit, rather than a clean `OK`, so a chain with no artifact
 provenance is never mistaken for "provenance confirmed".
 
+### The audit key is required (verify never mints one)
+
+Each spine entry is HMAC-tagged with the install's audit key. `verify` only
+reads the chain, so it loads that key **read-only** and never creates one: a
+freshly minted key cannot authenticate an existing chain, so every tag would
+fail and a plain missing-key setup error would be misreported as tamper. When
+no key is found, `verify` fails closed with a clear "key missing" message and
+exits `3` (distinct from `2` = tamper).
+
+The key is resolved from `$BERNSTEIN_AUDIT_KEY_PATH` or the XDG state path. An
+auditor verifying a handed-over evidence package points `--key-path` at the key
+the chain was written under:
+
+```bash
+bernstein lineage verify <run_id> --key-path ./handover/audit.key
+```
+
+Exit codes: `0` OK, `1` no entries / seal-only, `2` tamper detected,
+`3` cannot verify (audit key missing).
+
 ## Programmatic access
 
 ```python
