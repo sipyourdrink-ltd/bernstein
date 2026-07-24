@@ -138,6 +138,6 @@ capture_output  # noqa
 # which vulture's AST walker cannot resolve.
 JsonSchemaValidationError  # noqa
 
-# Refusal-stub keyword parameter kept for public API surface stability
-# (codex_cloudflare.execute refuses; callers may still pass the kwarg).
+# Optional keyword on adapter entry points that callers pass but in-repo
+# call sites often leave at the default (e.g. codex_cloudflare.execute).
 timeout_minutes  # noqa

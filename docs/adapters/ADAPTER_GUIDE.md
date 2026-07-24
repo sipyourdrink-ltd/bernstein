@@ -459,17 +459,35 @@ wrangler login
 
 ### codex_cloudflare (Codex on Cloudflare Sandboxes)
 
-Runs OpenAI Codex inside Cloudflare sandboxes for isolated, scalable execution.
+Runs OpenAI Codex inside a Cloudflare sandbox container, driven over HTTP through
+a bridge Worker the operator deploys (`@cloudflare/sandbox` 0.12.4, API contract
+`1.0.0`).
 
 **Unique features:**
-- Full container sandbox with configurable memory (default 512 MiB), CPU, and network access
-- Workspace synced via R2 (same bucket as other Cloudflare bridges)
-- Automatic cleanup on timeout or error
-- Polls sandbox status every 5 seconds until completion
+- Container-isolated execution off the orchestrator host, over REST + SSE
+- Output streamed as it arrives (base64 SSE frames decoded per chunk), not buffered to the end
+- Workspace seeded and collected as a tar (`hydrate` / `persist`), returning a real file diff
+- Cancellation issues the explicit sandbox delete, so remote work actually stops
+- Records content-addressed sandbox evidence that signs into a selection receipt
 
-**Configuration:** `CodexSandboxConfig` with `cloudflare_account_id`, `cloudflare_api_token`, `openai_api_key`, `sandbox_image`, `max_execution_minutes`, `memory_mb`, `cpu_cores`, `network_access`, `r2_bucket`.
+**Prerequisites:** a Cloudflare Workers Paid plan, an operator-deployed bridge
+Worker with its `SANDBOX_API_KEY` secret set, and a container image carrying the
+`codex` CLI at `instance_type` `standard-3` or larger. Unconfigured, every method
+refuses — it never falls back to local execution.
 
-**Best for:** Running Codex agents in isolated environments where you need container-level security and R2-based workspace sync. See the [Cloudflare Adapters guide](../cloudflare/cloudflare-adapters.md) for full details.
+**Configuration:** `CodexSandboxConfig` with `bridge_url`, `bridge_api_key`,
+`openai_api_key`, `workdir`, `agent_command`, `extra_env`,
+`max_execution_minutes`, `request_timeout_seconds`, `persist_excludes`,
+`require_supported_api_version`. Per-request memory/CPU sizing and network
+restriction are absent: container sizing is a deploy-time wrangler setting and the
+bridge applies no egress restrictions.
+
+**Status:** built against the published bridge contract with recorded HTTP and SSE
+fixtures; end-to-end verification against a live deployment is pending.
+
+**Best for:** running Codex off-host in a container you control, when you already
+run on Cloudflare. See [Codex on Cloudflare Sandboxes](../cloudflare/cloudflare-codex-sandbox.md)
+for deploy steps, the authentication warning, and the stated limitations.
 
 ---
 

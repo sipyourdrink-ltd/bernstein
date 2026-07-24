@@ -259,6 +259,7 @@ nav:
           - Bridges: cloudflare/cloudflare-bridges.md
           - Browser Rendering: cloudflare/cloudflare-browser-rendering.md
           - Adapters: cloudflare/cloudflare-adapters.md
+          - Codex sandboxes: cloudflare/cloudflare-codex-sandbox.md
           - Workers AI: cloudflare/cloudflare-ai.md
           - MCP Remote: cloudflare/cloudflare-mcp.md
           - Analytics: cloudflare/cloudflare-analytics.md
