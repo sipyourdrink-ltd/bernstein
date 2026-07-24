@@ -62,6 +62,7 @@ from bernstein.cli.commands.citation_cmd import quality_group as citation_qualit
 from bernstein.cli.commands.compaction_cmd import compaction_group
 from bernstein.cli.commands.consensus_cmd import consensus_group
 from bernstein.cli.commands.criterion_profile_cmd import criterion_profile_group
+from bernstein.cli.commands.datasource_cmd import datasource_group
 from bernstein.cli.commands.decisions_cmd import decisions_group
 from bernstein.cli.commands.desktop_register_cmd import desktop_register_cmd
 from bernstein.cli.commands.endpoints_cmd import endpoints_group
@@ -934,6 +935,7 @@ cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
 cli.add_command(policy_group, "policy")
 cli.add_command(pool_group, "pool")
+cli.add_command(datasource_group, "datasource")
 cli.add_command(_role_adapter_security_group, "security")
 cli.add_command(mcp_server, "mcp")
 # Wire the release-1.9 community catalog as a subgroup of `bernstein mcp`.
