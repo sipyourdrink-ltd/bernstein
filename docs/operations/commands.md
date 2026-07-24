@@ -45,6 +45,8 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein identity show` / `decode` / `verify` / `disable` | Operator-side helpers for the install-rev fingerprint embedded in shared yaml/trace/role-prompt artefacts. |
 | `bernstein security role-adapter-policy` | Inspects and edits the per-role adapter allow-list (deny-list enforcement at spawn time). |
 | `bernstein run-lookup NAME` | Resolve a memorable run name back to its run UUID; exits non-zero when the name is malformed or unknown. Example: `bernstein run-lookup brave-otter-1234`. |
+| `bernstein stop [--force]` | Graceful drain (soft stop) by default. `--force`/`--hard` SIGKILLs everything immediately, then reaps whole process groups so a re-parented grandchild (disowned heartbeat/curl loops) dies with its leader; the summary counts only PIDs confirmed terminated. |
+| `bernstein cluster status` / `bernstein cluster nodes` | Render the node registry as a table (id, adapter, heartbeat age, claimed tasks). `status` adds the topology summary line. Both take `--json-output` and `--server-url`. See [cluster-mode.md](cluster-mode.md). |
 
 ## Monitoring
 
@@ -52,7 +54,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 bernstein live       # TUI dashboard
 bernstein dashboard  # web dashboard
 bernstein status     # task summary
-bernstein ps         # running agents
+bernstein ps         # running agents (PID files + a live process-table cross-check, so it still lists survivors after stop --force removed the PID files)
 bernstein cost       # spend by model/task
 bernstein doctor     # pre-flight checks
 bernstein recap      # post-run summary

@@ -1,18 +1,21 @@
-"""``bernstein cluster``: cluster lifecycle helpers (mTLS bootstrap, etc.)."""
+"""``bernstein cluster``: cluster lifecycle helpers (mTLS bootstrap, topology)."""
 
 from __future__ import annotations
 
 import datetime
 import os
+import time
 from pathlib import Path
+from typing import Any
 
 import click
+import httpx
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from bernstein.cli.helpers import console
+from bernstein.cli.helpers import SERVER_URL, auth_headers, console, is_json, print_json
 
 DEFAULT_CLUSTER_DIR = Path.home() / ".bernstein" / "cluster"
 KEY_SIZE = 4096
@@ -259,3 +262,134 @@ def bootstrap_ca(
         "[yellow]Warning:[/yellow] this is a self-signed CA suitable for internal clusters only. "
         "For production, use your own CA / step-ca / cert-manager."
     )
+
+
+# ---------------------------------------------------------------------------
+# cluster status / nodes - topology visibility (issue #2874)
+# ---------------------------------------------------------------------------
+
+
+def _format_heartbeat_age(last_heartbeat: float, now: float) -> str:
+    """Render heartbeat staleness as a compact age string.
+
+    ``never`` when the node has not heartbeated (persisted-but-offline nodes
+    load with ``last_heartbeat == 0``); otherwise seconds/minutes/hours since
+    the last heartbeat was received.
+    """
+    if not last_heartbeat or last_heartbeat <= 0:
+        return "never"
+    age = max(0, int(now - last_heartbeat))
+    if age < 60:
+        return f"{age}s"
+    if age < 3600:
+        return f"{age // 60}m {age % 60}s"
+    hours, remainder = divmod(age, 3600)
+    return f"{hours}h {remainder // 60}m"
+
+
+def _node_display_fields(node: dict[str, Any], now: float) -> dict[str, str]:
+    """Project a cluster-status node dict into rendered table cells.
+
+    ``claimed`` is the node's self-reported ``active_agents`` - the count of
+    tasks it has claimed and is actively running (see the worker heartbeat).
+    ``adapter`` comes from the node's advertised labels, falling back to ``-``.
+    """
+    capacity = node.get("capacity", {}) or {}
+    labels = node.get("labels", {}) or {}
+    try:
+        last_heartbeat = float(node.get("last_heartbeat") or 0.0)
+    except (TypeError, ValueError):
+        last_heartbeat = 0.0
+    return {
+        "id": str(node.get("id", "")),
+        "name": str(node.get("name", "")) or "-",
+        "status": str(node.get("status", "")),
+        "adapter": str(labels.get("adapter") or "-"),
+        "heartbeat": _format_heartbeat_age(last_heartbeat, now),
+        "claimed": str(int(capacity.get("active_agents", 0) or 0)),
+        "slots": f"{int(capacity.get('available_slots', 0) or 0)}/{int(capacity.get('max_agents', 0) or 0)}",
+    }
+
+
+def _fetch_cluster_status(server_url: str) -> dict[str, Any]:
+    """Fetch the cluster status summary from the running task server."""
+    try:
+        resp = httpx.get(f"{server_url}/cluster/status", timeout=5.0, headers=auth_headers())
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to task server.[/red]")
+        console.print(f"[dim]Is it running at {server_url}?[/dim]")
+        raise SystemExit(1) from None
+    except httpx.HTTPStatusError as exc:
+        console.print(f"[red]Server error:[/red] {exc.response.status_code}")
+        raise SystemExit(1) from None
+    data = resp.json()
+    if not isinstance(data, dict):
+        console.print("[red]Unexpected response format from server.[/red]")
+        raise SystemExit(1)
+    return data
+
+
+def _render_nodes_table(nodes: list[dict[str, Any]], now: float) -> None:
+    """Render the registered-node table, or a hint when the registry is empty."""
+    if not nodes:
+        console.print("[dim]No nodes registered.[/dim]")
+        return
+    from rich.table import Table
+
+    table = Table(title="Cluster Nodes", show_lines=False, header_style="bold cyan")
+    table.add_column("Node ID", style="dim", min_width=12)
+    table.add_column("Name", min_width=8)
+    table.add_column("Status", min_width=8)
+    table.add_column("Adapter", min_width=8)
+    table.add_column("Heartbeat", justify="right")
+    table.add_column("Claimed", justify="right")
+    table.add_column("Slots", justify="right")
+    for node in nodes:
+        fields = _node_display_fields(node, now)
+        status = fields["status"]
+        status_style = "green" if status == "online" else "yellow" if status != "offline" else "dim"
+        table.add_row(
+            fields["id"],
+            fields["name"],
+            f"[{status_style}]{status}[/{status_style}]",
+            fields["adapter"],
+            fields["heartbeat"],
+            fields["claimed"],
+            fields["slots"],
+        )
+    console.print(table)
+
+
+@cluster_group.command("nodes")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of a table.")
+@click.option("--server-url", "server_url", default=None, help="Central server URL (default: BERNSTEIN_SERVER_URL).")
+def cluster_nodes(as_json: bool, server_url: str | None) -> None:
+    """List registered cluster nodes with heartbeat age and claimed-task counts."""
+    data = _fetch_cluster_status(server_url or SERVER_URL)
+    nodes = data.get("nodes", []) if isinstance(data.get("nodes"), list) else []
+    if as_json or is_json():
+        print_json(nodes)
+        return
+    _render_nodes_table(nodes, time.time())
+
+
+@cluster_group.command("status")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of a table.")
+@click.option("--server-url", "server_url", default=None, help="Central server URL (default: BERNSTEIN_SERVER_URL).")
+def cluster_status_cmd(as_json: bool, server_url: str | None) -> None:
+    """Show cluster topology: online/offline counts and the node table."""
+    data = _fetch_cluster_status(server_url or SERVER_URL)
+    if as_json or is_json():
+        print_json(data)
+        return
+    console.print(
+        f"[bold]Cluster[/bold]  topology={data.get('topology', '?')}  "
+        f"nodes={data.get('online_nodes', 0)}/{data.get('total_nodes', 0)} online"
+    )
+    console.print(
+        f"[dim]capacity: {data.get('active_agents', 0)} active / "
+        f"{data.get('available_slots', 0)} free / {data.get('total_capacity', 0)} total slots[/dim]"
+    )
+    nodes = data.get("nodes", []) if isinstance(data.get("nodes"), list) else []
+    _render_nodes_table(nodes, time.time())

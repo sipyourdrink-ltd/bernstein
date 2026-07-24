@@ -111,6 +111,10 @@ class WorkerLoop:
         self._pool_hash = pool_hash
         self._enrolment_keyid: str | None = None
         self._adapter_name = adapter or _detect_worker_adapter()
+        # Advertise the adapter as a node label so the cluster topology view
+        # (``bernstein cluster nodes``) can show which agent backend each node
+        # runs (#2874). An operator-supplied ``adapter`` label still wins.
+        self._labels.setdefault("adapter", self._adapter_name)
         # An adapter passed explicitly to the worker is an operator pin and
         # must not be overridden by model-name inference at spawn time
         # (#2751); an auto-detected adapter is not a pin.

@@ -228,6 +228,34 @@ without crashing (`worker_cmd.py:230-258`); the task is left unclaimed.
 
 ## Observability for cluster health
 
+### Topology at a glance: `bernstein cluster status` / `nodes`
+
+Two CLI subcommands render the registry without hand-rolling `curl`:
+
+```console
+$ bernstein cluster status
+Cluster  topology=star  nodes=2/3 online
+capacity: 4 active / 8 free / 18 total slots
+                              Cluster Nodes
+ Node ID       Name    Status   Adapter   Heartbeat   Claimed   Slots
+ node-alpha    alpha   online   codex     4s                2     4/6
+ node-bravo    bravo   online   claude    11s               2     4/6
+ node-charlie  charlie offline  gemini    never             0     6/6
+
+$ bernstein cluster nodes            # node table only
+$ bernstein cluster nodes --json-output
+```
+
+- **Heartbeat** is the age since the node's last heartbeat (`never` for a
+  persisted-but-not-yet-rejoined node).
+- **Claimed** is the node's self-reported `active_agents` - the tasks it has
+  claimed and is actively running.
+- **Adapter** comes from the node's advertised `adapter` label (workers set it
+  from their configured adapter; `-` when unset).
+- Both accept `--server-url` (default `BERNSTEIN_SERVER_URL`) and
+  `--json-output`. They read the endpoints below, so a stopped server prints a
+  clear "cannot connect" hint instead of a stack trace.
+
 Endpoints relevant to cluster operations:
 
 - `GET /cluster/nodes[?status=online|cordoned|draining|offline]` - full
