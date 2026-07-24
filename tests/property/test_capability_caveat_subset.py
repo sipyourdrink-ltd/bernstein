@@ -12,7 +12,7 @@ sub-agent could self-escalate. Two relations are property-tested here:
 
 from __future__ import annotations
 
-from hypothesis import assume, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from bernstein.core.security import capability_tokens as ct

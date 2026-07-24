@@ -30,7 +30,7 @@ def _chain(tmp_path: Path) -> AuditChainStore:
 
 def test_mint_emits_cross_referencing_delegation_minted_event(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
-    p_priv, p_pub = generate_ed25519_keypair()
+    p_priv, _p_pub = generate_ed25519_keypair()
     _o_priv, o_pub = generate_ed25519_keypair()
 
     head_before = chain.prev_chain_digest
@@ -59,7 +59,7 @@ def test_mint_emits_cross_referencing_delegation_minted_event(tmp_path: Path) ->
 
 def test_audit_chain_verifies_after_mints(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
-    p_priv, p_pub = generate_ed25519_keypair()
+    p_priv, _p_pub = generate_ed25519_keypair()
     o_priv, o_pub = generate_ed25519_keypair()
     _s_priv, s_pub = generate_ed25519_keypair()
 
