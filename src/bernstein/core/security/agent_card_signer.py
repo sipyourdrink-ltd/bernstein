@@ -42,6 +42,7 @@ __all__ = [
     "ed25519_public_jwk",
     "generate_ed25519_keypair",
     "sign_agent_card",
+    "sign_detached_jws_over_canonical",
     "verify_agent_card",
     "verify_detached_jws_over_canonical",
 ]
@@ -353,6 +354,50 @@ def ed25519_pem_from_jwk(jwk: dict[str, Any]) -> bytes:
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
+
+
+def sign_detached_jws_over_canonical(
+    canonical_body: bytes,
+    private_key_pem: bytes,
+    *,
+    typ: str,
+    kid: str,
+) -> str:
+    """Sign pre-canonicalised body bytes as a detached JWS (RFC 7515 §A.5).
+
+    The symmetric emit counterpart to :func:`verify_detached_jws_over_canonical`:
+    both compute the signing input as ``base64url(header).base64url(canonical_body)``
+    and leave the compact JWS payload segment empty. Any JWS surface that needs a
+    body-independent signature (agent cards, capability tokens, ...) can reuse this
+    instead of hand-rolling the base64url framing.
+
+    Args:
+        canonical_body: The JCS-canonical body bytes to attest to. The caller is
+            responsible for canonicalization (e.g. via :func:`canonicalize_jcs`);
+            the same bytes must be presented to the verifier.
+        private_key_pem: PEM-encoded PKCS#8 Ed25519 private key, as produced by
+            :func:`generate_ed25519_keypair`.
+        typ: The JWS ``typ`` header value binding the signature to its context
+            (e.g. ``delegation-capability+jws``) so a signature minted for one
+            surface cannot be replayed as another.
+        kid: Key identifier stamped into the protected header.
+
+    Returns:
+        Compact detached JWS string ``base64url(header)..base64url(signature)``.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        msg = "sign_detached_jws_over_canonical requires an Ed25519 (EdDSA) private key"
+        raise ValueError(msg)
+    header = {"alg": "EdDSA", "typ": typ, "kid": kid}
+    header_b64 = _b64url(canonicalize_jcs(header))
+    body_b64 = _b64url(canonical_body)
+    signing_input = f"{header_b64}.{body_b64}".encode("ascii")
+    sig_b64 = _b64url(private_key.sign(signing_input))
+    return f"{header_b64}..{sig_b64}"
 
 
 def verify_detached_jws_over_canonical(

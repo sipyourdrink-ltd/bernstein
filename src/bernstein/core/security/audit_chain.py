@@ -6566,6 +6566,63 @@ EVENT_POOL_CLAIM_RECEIPT = "pool.claim_receipt"
 #: infra drift is chain-attested and the dispatch falls back to cold cleanly.
 EVENT_POOL_WARM_QUARANTINE = "pool.warm_quarantine"
 
+#: Issue #2611 -- emitted once per attenuated delegation capability-token mint
+#: (see :mod:`bernstein.core.security.capability_tokens`). The event mirrors the
+#: token's ``{token_hash, issuer_identity_id, subject_identity_id,
+#: parent_token_hash, remaining_depth}`` into the HMAC chain and embeds the prior
+#: chain digest, so the token's ``audit_head`` (the tip captured at mint) and the
+#: event's ``prev_chain_digest`` cross-reference each other. A verifier can prove,
+#: from the chain alone, that a specific authority token was minted at a specific
+#: point in history without the record exposing the token's caveats or signature.
+EVENT_DELEGATION_MINTED = "delegation_minted"
+
+
+def record_delegation_minted(
+    *,
+    chain: AuditChainStore,
+    token_hash: str,
+    issuer_identity_id: str,
+    subject_identity_id: str,
+    parent_token_hash: str,
+    remaining_depth: int,
+    actor: str = "delegation_minter",
+) -> AuditEvent:
+    """Append a ``delegation_minted`` event into *chain* (#2611).
+
+    Anchors one attenuated capability-token mint in the HMAC chain. The embedded
+    ``prev_chain_digest`` equals the tip the token captured as its ``audit_head``,
+    and ``token_hash`` is the JCS hash of the token body, so the chain and the
+    token cross-reference each other: a verifier holding both can prove the token
+    was minted at this exact chain position. Only identifiers, the parent hash,
+    and the remaining delegation depth are recorded -- never caveats or key
+    material.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        token_hash: JCS hash of the minted token body (its identity).
+        issuer_identity_id: Identity that issued (signed) the token.
+        subject_identity_id: Identity the token was delegated to.
+        parent_token_hash: Hash of the parent token (genesis for a root mint).
+        remaining_depth: The token's ``max_depth`` caveat after this hop.
+        actor: Recorded actor; defaults to ``"delegation_minter"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_DELEGATION_MINTED,
+        actor=actor,
+        resource_type="capability_token",
+        resource_id=token_hash,
+        details={
+            "token_hash": token_hash,
+            "issuer_identity_id": issuer_identity_id,
+            "subject_identity_id": subject_identity_id,
+            "parent_token_hash": parent_token_hash,
+            "remaining_depth": remaining_depth,
+        },
+    )
+
 
 def record_pool_registered(
     *,
@@ -6891,6 +6948,7 @@ __all__ = [
     "EVENT_COST_DISPATCH_RECEIPT",
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_DASHBOARD_TOKEN_GRANT",
+    "EVENT_DELEGATION_MINTED",
     "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
@@ -7010,6 +7068,7 @@ __all__ = [
     "record_cost_dispatch_receipt",
     "record_cost_profile_report",
     "record_dashboard_token_grant",
+    "record_delegation_minted",
     "record_endpoint_certification",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
