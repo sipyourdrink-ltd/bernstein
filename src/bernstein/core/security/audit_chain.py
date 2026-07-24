@@ -802,6 +802,18 @@ EVENT_TRIGGER_RECEIPT_REFUSED = "trigger.receipt.refused"
 EVENT_STATUS_PROOF_EMITTED = "status.proof.emitted"
 
 
+#: Issue #2886 -- emitted for every generic OData v4 system-of-record write-back.
+#: A write-back is not a fire-and-forget HTTP call: the event binds ``{connection,
+#: entity set, key predicate, ETag observed before the PATCH, content hash of the
+#: sent payload, HTTP status, draft-flow flag}`` into the HMAC chain, so an
+#: auditor can prove offline -- with ``bernstein audit verify`` and no new verb --
+#: that a given change to a given record was made against a specific concurrency
+#: token, and can re-hash the sent body and match it against the recorded payload
+#: hash. Only identifiers and hashes are recorded; the entity body and any
+#: credential are never stored.
+EVENT_ODATA_WRITEBACK = "odata.writeback_receipt"
+
+
 # ---------------------------------------------------------------------------
 # AuditChainStore
 # ---------------------------------------------------------------------------
@@ -2983,6 +2995,66 @@ def record_status_proof(
             "producing_event_digest": producing_event_digest,
             "proof_digest": proof_digest,
         },
+    )
+
+
+def record_odata_writeback(
+    *,
+    chain: AuditChainStore,
+    connection_name: str,
+    entity_set: str,
+    entity_key: str,
+    etag_observed: str,
+    payload_content_hash: str,
+    http_status: int,
+    draft_flow: bool = False,
+    activate_action: str = "",
+    actor: str = "odata_writeback",
+) -> AuditEvent:
+    """Append an ``odata.writeback_receipt`` event into *chain* (#2886).
+
+    Anchors one OData system-of-record write-back in the HMAC chain. The event
+    binds the concurrency token the PATCH was gated on (``etag_observed``) and
+    the content hash of the sent payload, so an auditor holding the sent body
+    re-hashes it and matches ``payload_content_hash`` on this row, and confirms
+    from the chain alone -- via ``bernstein audit verify`` with no new verb --
+    that the change targeted the recorded entity against that specific ETag. A
+    mutated row breaks the HMAC chain at its exact position.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        connection_name: Stable connection label.
+        entity_set: The OData entity set written to.
+        entity_key: Canonical key predicate inner text (e.g. ``id=1``).
+        etag_observed: The ``If-Match`` ETag the PATCH was gated on; empty only
+            for a draft-flow create whose activation carries no prior ETag.
+        payload_content_hash: ``sha256:`` digest of the canonical sent payload.
+        http_status: The HTTP status the write returned.
+        draft_flow: Whether the write went through a draft-activate flow.
+        activate_action: The bound activate action name (draft flow only).
+        actor: Recorded actor; defaults to ``"odata_writeback"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    details: dict[str, Any] = {
+        "connection": connection_name,
+        "entity_set": entity_set,
+        "entity_key": entity_key,
+        "etag_observed": etag_observed,
+        "payload_content_hash": payload_content_hash,
+        "http_status": http_status,
+        "draft_flow": draft_flow,
+    }
+    if activate_action:
+        details["activate_action"] = activate_action
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ODATA_WRITEBACK,
+        actor=actor,
+        resource_type="odata_entity",
+        resource_id=f"{entity_set}({entity_key})",
+        details=details,
     )
 
 
@@ -6919,6 +6991,7 @@ __all__ = [
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
     "EVENT_MULTIMODAL_ATTACH",
+    "EVENT_ODATA_WRITEBACK",
     "EVENT_OTEL_PROJECTION",
     "EVENT_PLUGIN_CONFORMANCE_RECEIPT",
     "EVENT_PLUGIN_INSTALL_RECEIPT",
@@ -7037,6 +7110,7 @@ __all__ = [
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
     "record_multimodal_attach",
+    "record_odata_writeback",
     "record_otel_projection",
     "record_plugin_conformance_receipt",
     "record_plugin_install_receipt",
