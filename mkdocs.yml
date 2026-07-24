@@ -219,6 +219,7 @@ nav:
           - GitHub Projects: trackers/github-projects.md
           - Plane: trackers/plane.md
           - ServiceNow: trackers/servicenow.md
+          - OData (system of record): operations/odata.md
           - Webhooks: trackers/webhooks.md
       - Git hosting & CI:
           - GitHub Action: integrations/github-action.md
