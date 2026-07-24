@@ -39,12 +39,18 @@ from bernstein.core.tasks.artifacts import (
     canonicalise_artifact,
     content_hash,
 )
+from bernstein.core.tasks.figures import (
+    ReportBundle,
+    canonicalise_report_bundle,
+    is_report_bundle,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.lineage.identity import AgentCard
     from bernstein.core.lineage.recorder import LineageRecorder
+    from bernstein.core.tasks.figures import FiguresVerdict, TokenizerPolicy
 
 #: Logical, repo-relative POSIX prefix under which artifact entries are anchored
 #: in the lineage log. The physical sink root is supplied separately so tests
@@ -114,13 +120,20 @@ class ArtifactReceipt:
 
 @dataclass(frozen=True)
 class ArtifactVerifyResult:
-    """Outcome of :func:`verify_artifact`. ``ok`` is True iff ``failures`` is empty."""
+    """Outcome of :func:`verify_artifact`. ``ok`` is True iff ``failures`` is empty.
+
+    ``figures`` is populated only when the stored bytes are a report bundle with
+    a ``figures.json`` sidecar (issue #2888): it carries the per-figure
+    provenance statements and any unanchored numbers. A failing figure verdict
+    contributes to ``failures`` and flips ``ok``.
+    """
 
     task_id: str
     ok: bool
     failures: list[str]
     content_hash: str | None
     entry_hash: str | None
+    figures: FiguresVerdict | None = None
 
 
 def record_artifact(
@@ -160,7 +173,15 @@ def record_artifact(
     if k is ArtifactKind.CODE_DIFF:
         raise ValueError("code_diff artifacts use the git-diff path, not the artifact sink")
 
-    canonical = canonicalise_artifact(k, artifact)
+    # A report with a figures sidecar is recorded as a single canonical bundle
+    # (body + figures.json) so the sidecar is inside the artifact content_hash
+    # (issue #2888). Any other artifact routes through its kind's canonicaliser.
+    if isinstance(artifact, ReportBundle):
+        if k is not ArtifactKind.REPORT:
+            raise ValueError(f"a ReportBundle must be recorded as a report kind, not {k.value!r}")
+        canonical = canonicalise_report_bundle(artifact)
+    else:
+        canonical = canonicalise_artifact(k, artifact)
     chash = content_hash(canonical)
     artefact_path = artifact_entry_path(task_id)
 
@@ -209,6 +230,7 @@ def verify_artifact(
     log_path: Path,
     cards_dir: Path,
     operator_secret: bytes | None,
+    policy: TokenizerPolicy | None = None,
 ) -> ArtifactVerifyResult:
     """Verify a recorded artifact end to end.
 
@@ -224,6 +246,10 @@ def verify_artifact(
        line or a removed anchor fails here. When ``operator_secret`` is ``None``
        the HMAC leg is skipped (signature + chain still enforced), matching the
        lineage gate's own optional-secret semantics.
+    4. **Figure grounding** (issue #2888): when the stored bytes are a report
+       bundle with a ``figures.json`` sidecar, every declared figure's anchor
+       must resolve to a verifying lineage record and every material number in
+       the body must be declared. Any failing figure is a verification failure.
 
     Returns an :class:`ArtifactVerifyResult`; ``ok`` is True only when every
     check passes.
@@ -235,6 +261,7 @@ def verify_artifact(
 
     blob_path = sink_root / task_id / _BLOB_NAME
     rederived: str | None = None
+    stored: bytes | None = None
     if not blob_path.exists():
         failures.append("stored artifact bytes are missing")
     else:
@@ -257,7 +284,37 @@ def verify_artifact(
     if not gate_result.ok:
         failures.extend(gate_result.failures)
 
-    return ArtifactVerifyResult(task_id, not failures, failures, rederived, receipt.entry_hash)
+    figures = _figures_verdict(stored, log_path, cards_dir, operator_secret, policy)
+    if figures is not None and not figures.ok:
+        failures.extend(figures.failures)
+
+    return ArtifactVerifyResult(task_id, not failures, failures, rederived, receipt.entry_hash, figures)
+
+
+def _figures_verdict(
+    stored: bytes | None,
+    log_path: Path,
+    cards_dir: Path,
+    operator_secret: bytes | None,
+    policy: TokenizerPolicy | None,
+) -> FiguresVerdict | None:
+    """Run figure grounding when ``stored`` is a report bundle; else ``None``.
+
+    ``artifact verify`` is the audit tool, so grounding here is unconditional
+    (strict): the per-task ``warn`` downgrade is a *completion* concept, not a
+    verification one - a verifier always reports a failing figure.
+    """
+    if stored is None or not is_report_bundle(stored):
+        return None
+    from bernstein.core.lineage.figure_grounding import verify_report_figures
+
+    return verify_report_figures(
+        canonical_bytes=stored,
+        log_path=log_path,
+        cards_dir=cards_dir,
+        operator_secret=operator_secret,
+        policy=policy,
+    )
 
 
 def _read_log(log_path: Path) -> Any:
