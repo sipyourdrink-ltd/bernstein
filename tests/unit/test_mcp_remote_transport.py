@@ -94,6 +94,40 @@ def _matches_cancelled_error(node: ast.expr | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Audit wiring tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuditWiring:
+    """AC3: an audit chain with no journal would silently disable anchoring, so
+    it is refused at construction rather than looking audited but recording
+    nothing."""
+
+    def test_audit_chain_without_journal_refused(self, config: RemoteMCPConfig, tmp_path) -> None:
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+        with pytest.raises(ValueError, match="audit_chain requires a journal"):
+            StreamableHTTPTransport(config=config, audit_chain=chain)
+
+    def test_audit_chain_with_journal_accepted(self, config: RemoteMCPConfig, tmp_path) -> None:
+        from bernstein.core.replay.journal import EventJournal
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+        journal = EventJournal("run-audit", tmp_path / "journal")
+        transport = StreamableHTTPTransport(config=config, journal=journal, audit_chain=chain)
+        assert transport._audit_chain is chain
+
+    def test_journal_without_chain_accepted(self, config: RemoteMCPConfig, tmp_path) -> None:
+        from bernstein.core.replay.journal import EventJournal
+
+        journal = EventJournal("run-audit", tmp_path / "journal")
+        transport = StreamableHTTPTransport(config=config, journal=journal)
+        assert transport._journal is journal
+
+
+# ---------------------------------------------------------------------------
 # RemoteMCPConfig tests
 # ---------------------------------------------------------------------------
 

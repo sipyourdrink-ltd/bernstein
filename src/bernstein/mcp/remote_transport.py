@@ -403,6 +403,13 @@ class StreamableHTTPTransport:
         audit_chain: AuditChainStore | None = None,
         today: Callable[[], date] | None = None,
     ) -> None:
+        # An audit chain with no journal to anchor against would silently
+        # disable the auditing the caller asked for: every served call would
+        # take the ``journal is None`` early return and never reach the chain.
+        # Fail fast so a misconfigured transport cannot look audited (AC3).
+        if audit_chain is not None and journal is None:
+            msg = "audit_chain requires a journal; a chain without a journal silently disables anchoring"
+            raise ValueError(msg)
         self._config = config
         self._server_url = server_url
         self._journal = journal

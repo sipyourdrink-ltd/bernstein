@@ -416,3 +416,33 @@ class TestGatewayMetricsRoute:
         assert "tools/call:read_file" in data["metrics"]
         assert data["metrics"]["tools/call:read_file"]["total_calls"] == 3
         assert data["metrics"]["tools/call:read_file"]["error_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# TestProxiedCallAnchoring
+# ---------------------------------------------------------------------------
+
+
+class TestProxiedCallAnchoring:
+    """AC4: a proxied-call anchoring failure is logged, not silently swallowed,
+    while staying non-fatal to the proxy path."""
+
+    def test_anchor_failure_is_logged_not_suppressed(self, tmp_path: Any, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+        from pathlib import Path
+
+        from bernstein.core.replay.journal import EventJournal
+
+        journal = EventJournal("gw-anchor", Path(tmp_path) / "journal")
+        gateway = MCPGateway(upstream_cmd=[], wal_writer=_make_wal_writer(tmp_path), journal=journal)
+
+        boom = RuntimeError("audit volume full")
+        target = "bernstein.core.protocols.mcp.mcp_gateway.anchor_stateless_call"
+        with (
+            patch(target, side_effect=boom),
+            caplog.at_level(logging.ERROR, logger="bernstein.core.protocols.mcp.mcp_gateway"),
+        ):
+            # Non-fatal: the failing anchor must not propagate out of the proxy.
+            gateway._anchor_proxied_call("tools/call", {"name": "echo", "arguments": {}})
+
+        assert "Failed to anchor proxied mcp.stateless_call" in caplog.text

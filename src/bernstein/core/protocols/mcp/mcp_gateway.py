@@ -24,14 +24,16 @@ WAL output:  {result, error, latency_ms}
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
+import logging
 import sys
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.protocols.mcp.stateless_core import anchor_stateless_call, request_span_id
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -340,13 +342,18 @@ class MCPGateway:
         """
         if self._journal is None:
             return
-        with contextlib.suppress(Exception):
+        try:
             anchor_stateless_call(
                 journal=self._journal,
                 method=method,
                 params=params,
                 chain=self._audit_chain,
             )
+        except Exception:
+            # Anchoring stays non-fatal -- a missing anchor is visible to a
+            # verifier as a call-index gap -- but the failure is surfaced in
+            # the log rather than silently swallowed (AC4).
+            logger.exception("Failed to anchor proxied mcp.stateless_call for %s", method)
 
     # ------------------------------------------------------------------
     # Transport runners
