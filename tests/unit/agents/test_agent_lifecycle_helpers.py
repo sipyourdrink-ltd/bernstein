@@ -416,31 +416,45 @@ def _orphan_orch(tmp_path: Path) -> SimpleNamespace:
         _workdir=tmp_path,
         _client=MagicMock(),
         _spawner=SimpleNamespace(get_worktree_path=lambda sid: None),
+        _config=SimpleNamespace(max_task_retries=3),
+        _retried_task_ids=set(),
     )
 
 
-def test_short_lived_clean_exit_auto_complete_warns(
+def test_suspicious_clean_exit_is_failed_not_auto_completed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A <60s 'no changes needed' auto-complete emits a defect-signal WARNING."""
+    """A <60s clean exit with an empty diff and no signals must NOT be marked done.
+
+    Regression for #2810 / #2806: a fast clean exit was auto-completed to
+    ``done`` even though no deliverable was produced (and the run then
+    self-declared healthy). Such a task must route to fail/unverified.
+    """
     import logging
     import time as _time
 
     import bernstein.core.agents.agent_lifecycle as al
 
     monkeypatch.setattr(al, "collect_completion_data", lambda workdir, session: {"files_modified": []})
-    monkeypatch.setattr(al, "complete_task", lambda client, base, task_id, summary: None)
+    completed: list[str] = []
+    monkeypatch.setattr(al, "complete_task", lambda client, base, task_id, summary: completed.append(task_id))
+    failed: list[tuple[str, str]] = []
+    monkeypatch.setattr(al, "retry_or_fail_task", lambda task_id, reason, **kw: failed.append((task_id, reason)))
+
     session = _session(exit_code=0)
     session.spawn_ts = _time.time() - 3.0
     with caplog.at_level(logging.WARNING):
         success, error_type = al._handle_orphan_no_signals(
             _orphan_orch(tmp_path), MagicMock(), "T-1", session, "http://srv", _time.time()
         )
-    assert success is True
-    assert error_type is None
-    warning = next(r for r in caplog.records if "SUSPICIOUS auto-complete" in r.message)
+    # Task is NOT completed; it is failed/unverified instead.
+    assert success is False
+    assert error_type == "clean_exit_unverified"
+    assert completed == []
+    assert failed and failed[0][0] == "T-1"
+    warning = next(r for r in caplog.records if "SUSPICIOUS clean exit" in r.message)
     assert "A-1" in warning.message
     assert "agent_logs" in warning.message
 

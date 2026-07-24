@@ -1746,40 +1746,59 @@ def _handle_orphan_no_signals(
         )
         return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
     if clean_exit:
-        # A very short-lived "successful" agent that changed nothing is a
-        # defect signal, not health: run-9 attempt-7's manager exited 0
-        # after ~3s with zero tools and zero child tasks, and the
-        # auto-complete below made the run self-declare healthy.
-        # _probe_fast_exit() always runs for a clean exit and returns the
-        # full structured diagnostic (exit code, manifest path, log tail) -
-        # logged at ERROR when suspicious - instead of the bare
-        # WARNING-and-move-on this used to be.
-        # The probe's structured diagnostic is logged internally (ERROR when
-        # suspicious); the auto-complete summary text is left unchanged so
-        # existing consumers of the completion message are unaffected -
-        # operators get the diagnostic from the log, not a mutated summary.
+        # A clean exit (code 0) with an empty diff and no completion signals is
+        # only a genuine "no changes needed" completion when the agent actually
+        # ran long enough to have done the work. _probe_fast_exit() flags a
+        # *suspicious* fast exit (runtime below _FAST_EXIT_THRESHOLD_S): the
+        # agent likely never started real work (no tools, immediate exit) or its
+        # tracked process exited in a way that merely looked clean while the
+        # deliverable was never merged. Marking such a task ``done`` records a
+        # deliverable that exists in no ref and makes the run self-declare
+        # healthy (issues #2810, #2806); it also races an in-flight merge/verify
+        # step that may still land the real diff a moment later. Fail/unverify a
+        # suspicious fast clean exit instead of auto-completing it, so the run
+        # surfaces UNHEALTHY and the lineage can retry or reach the DLQ.
         _probe_result = _probe_fast_exit(orch, session, task_id)
-        summary = (
-            f"Auto-completed (no changes needed): agent {session.id} "
-            f"exited cleanly with empty diff (exit code 0, no signals to verify)"
-        )
-        log_msg = (
-            f"Orphaned task {task_id} auto-completed (no changes needed, clean exit) after agent {session.id} died"
-        )
-        _result = _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
-        if _probe_result.get("suspicious"):
-            logger.warning(
-                "SUSPICIOUS auto-complete: agent %s auto-completed task %s after only %.1fs "
-                "clean exit with no files modified, no commits, and no completion signals - "
-                "this is a defect signal, not health. See preserved logs under "
-                ".sdd/runtime/agent_logs/%s/ for the full transcript (manifest=%s).",
-                session.id,
-                task_id,
-                _probe_result.get("runtime_s"),
-                session.id,
-                _probe_result.get("manifest_path") or "<none preserved>",
+        if not _probe_result.get("suspicious"):
+            # Long-lived clean exit: the agent had time to do real work and
+            # decided nothing needed changing. Record that as a completion.
+            summary = (
+                f"Auto-completed (no changes needed): agent {session.id} "
+                f"exited cleanly with empty diff (exit code 0, no signals to verify)"
             )
-        return _result
+            log_msg = (
+                f"Orphaned task {task_id} auto-completed (no changes needed, clean exit) "
+                f"after agent {session.id} died"
+            )
+            return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
+
+        logger.warning(
+            "SUSPICIOUS clean exit: agent %s exited cleanly (exit code 0) after only %.1fs "
+            "with no files modified, no commits, and no completion signals -- NOT "
+            "auto-completing task %s; failing it as unverified. A fast empty clean exit is a "
+            "defect signal, not health. See preserved logs under .sdd/runtime/agent_logs/%s/ "
+            "for the full transcript (manifest=%s).",
+            session.id,
+            _probe_result.get("runtime_s"),
+            task_id,
+            session.id,
+            _probe_result.get("manifest_path") or "<none preserved>",
+        )
+        try:
+            retry_or_fail_task(
+                task_id,
+                f"Agent {session.id} exited cleanly but produced no verified deliverable "
+                f"(empty diff, no commits, no completion signals)",
+                client=orch._client,
+                server_url=base,
+                max_task_retries=orch._config.max_task_retries,
+                retried_task_ids=orch._retried_task_ids,
+                workdir=getattr(orch, "_workdir", None),
+                **_retry_escalation_context(orch),
+            )
+        except httpx.HTTPError as exc:
+            logger.error("Failed to retry/fail unverified clean-exit task %s: %s", task_id, exc)
+        return False, "clean_exit_unverified"
 
     # Before declaring "died without output", check every liveness signal --
     # a double-forked/re-exec'd runner's tracked PID can exit in seconds while

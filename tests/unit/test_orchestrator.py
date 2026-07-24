@@ -4250,6 +4250,11 @@ class TestShutdownFinalOnQuiescenceSelfStop:
             task_ids=[task_id],
             status="working",
             exit_code=0,  # clean exit -> "auto-completed, no changes needed" path
+            # Long-lived so this is a genuine "no changes needed" clean exit,
+            # not the suspicious fast exit that is now failed/unverified
+            # (#2810/#2806). The auto-complete-after-death -> UNHEALTHY /
+            # self-stop mechanics under test are the same either way.
+            spawn_ts=time.time() - 300.0,
         )
         orch._agents["manager-e7bfd5e6"] = session
 
@@ -4306,6 +4311,9 @@ class TestShutdownFinalOnQuiescenceSelfStop:
             task_ids=[task_id],
             status="working",
             exit_code=0,
+            # Long-lived clean exit -> genuine auto-complete path (see the
+            # sibling test above); the suspicious fast exit is failed/unverified.
+            spawn_ts=time.time() - 300.0,
         )
 
         orch.tick()

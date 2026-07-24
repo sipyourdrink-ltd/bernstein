@@ -227,8 +227,16 @@ def test_orphaned_task_completes_on_git_commits(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_orphaned_task_completes_on_clean_exit(tmp_path: Path) -> None:
-    """Task is auto-completed when agent exited with code 0."""
+def test_orphaned_task_completes_on_long_lived_clean_exit(tmp_path: Path) -> None:
+    """A long-lived agent that exits cleanly with an empty diff is a genuine
+    "no changes needed" completion and is auto-completed.
+
+    The distinction from a suspicious fast exit is runtime: an agent that ran
+    well past the fast-exit threshold before exiting 0 had time to do real
+    work and decide nothing was needed.
+    """
+    import time as _time
+
     task = _make_task()
     task.status = TaskStatus.CLAIMED
     session = AgentSession(
@@ -238,6 +246,7 @@ def test_orphaned_task_completes_on_clean_exit(tmp_path: Path) -> None:
         model_config=ModelConfig("sonnet", "high"),
         task_ids=[task.id],
         exit_code=0,  # Clean exit
+        spawn_ts=_time.time() - 300.0,  # long-lived -> not a suspicious fast exit
     )
     orch = _make_orch_no_ratelimit(tmp_path)
 
@@ -257,6 +266,39 @@ def test_orphaned_task_completes_on_clean_exit(tmp_path: Path) -> None:
         f"exited cleanly with empty diff (exit code 0, no signals to verify)",
     )
     mock_retry.assert_not_called()
+
+
+def test_orphaned_task_fails_on_suspicious_fast_clean_exit(tmp_path: Path) -> None:
+    """A short-lived clean exit with an empty diff must NOT be marked done.
+
+    Regression for #2810 / #2806: a fast clean exit (below the fast-exit
+    threshold) with no files, no commits, and no completion signals is a
+    defect signal, not a real completion. It must route to fail/unverified
+    so the run surfaces UNHEALTHY instead of self-declaring healthy with a
+    deliverable that exists in no ref.
+    """
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-fast",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=0,  # Clean exit, but fresh spawn_ts -> suspicious fast exit
+    )
+    orch = _make_orch_no_ratelimit(tmp_path)
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    mock_complete.assert_not_called()
+    mock_retry.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
