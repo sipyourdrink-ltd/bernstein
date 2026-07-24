@@ -131,8 +131,7 @@ class TestIdleHelpText:
         assert m is not None, "did not find --idle option declaration"
         block = m.group(0)
         assert "BERNSTEIN_ADAPTER=mock" in block, (
-            "--idle help must document that the mock backend is forced "
-            "internally via BERNSTEIN_ADAPTER=mock"
+            "--idle help must document that the mock backend is forced internally via BERNSTEIN_ADAPTER=mock"
         )
         assert "cli: mock" not in block, (
             "--idle help must not resurrect the hand-edit ``cli: mock`` "

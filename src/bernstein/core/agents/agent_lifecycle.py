@@ -1767,8 +1767,7 @@ def _handle_orphan_no_signals(
                 f"exited cleanly with empty diff (exit code 0, no signals to verify)"
             )
             log_msg = (
-                f"Orphaned task {task_id} auto-completed (no changes needed, clean exit) "
-                f"after agent {session.id} died"
+                f"Orphaned task {task_id} auto-completed (no changes needed, clean exit) after agent {session.id} died"
             )
             return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
 
