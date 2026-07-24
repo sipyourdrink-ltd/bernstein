@@ -14,8 +14,27 @@ portable, offline-verifiable receipts of the chain.
 | `bernstein replay publish <agent_id> -o RECEIPT --opt-in` | Redacted receipt; only path that ever writes outside `.sdd/runtime/` |
 | `bernstein replay verify <RECEIPT> [--head HEX]` | Offline verifier |
 | `bernstein replay diff-journal <A> <B>` | Surface the precise field that differs between two chains |
+| `bernstein replay debug <RUN>` | Forensic single-chain walk; refuse a tampered chain and localise the divergent step; emit an offline-verifiable debug receipt |
+| `bernstein replay debug <LEFT> <RIGHT>` | Two-run time-travel path diff; content-addressed, byte-identical artifact |
+| `bernstein replay debug <RUN> --fork-from <n>` | Fork-and-reproduce a worktree anchored at parent step N |
 
 Privacy default is local-only. `publish` is opt-in.
+
+## Two debugging jobs: exploratory vs forensic
+
+Replay debugging answers two different questions; do not confuse them.
+
+| Job | Question | How | Surface |
+|---|---|---|---|
+| **Exploratory what-if** | "What changes if I re-run this?" | Re-execute the task (optionally against recorded fixtures or a different model) and compare the *new* output | `bernstein replay <run_id>` (run-trace replay), `bernstein replay <task_id> --model ...` |
+| **Forensic reconstruction** | "Where exactly did this run diverge, and can I prove it?" | Freeze the recorded chain; recompute hashes; never re-execute anything | `bernstein replay debug ...` (this section) |
+
+`replay debug` is **forensic**. It re-executes nothing. Its deliverable is
+a **debug receipt** that verifies offline via `bernstein replay verify` and
+that is meaningless once the Merkle chain it anchors on is stripped or
+corrupted. A non-deterministic divergence is surfaced as a hash mismatch at
+the exact diverging step - not as a "flaky, re-ran it" signature - so a
+flaky run becomes a reproducible bug report.
 
 ## Journal layout
 
@@ -106,6 +125,79 @@ of forks forms a tree rather than a flat list.
 When `--from-step` is omitted the command falls back to the pre-#1799
 session-level fork semantics. The two paths share a single
 implementation in `bernstein.core.sessions.fork.fork_session`.
+
+## Replay debug (forensic time-travel)
+
+`bernstein replay debug` composes the record, journal, diff, and fork
+primitives into one operator-facing debugger. It is a projection of the
+chain that already exists on disk - no new hashing scheme, no new storage.
+The core lives in `bernstein.core.replay.debug`.
+
+### Single-run walk
+
+```
+bernstein replay debug <RUN> [--json] [--full] [--limit N] [--sign KEY]
+```
+
+1. Verifies the chain head via `JournalReader.verify` **before** any output.
+2. If the chain does not verify, it is **refused** (non-zero exit). The
+   command still localises the first divergent step by streaming
+   `walk_and_verify` from `JournalReader` (it never materialises the whole
+   journal), reporting `HashMismatch(seq, expected_hash, actual_hash,
+   first_divergent_field)`:
+   - a `prev_hash` linkage break names `prev_hash` (attributed via
+     `journal_diff.diff_steps`);
+   - a bare digest tamper (the row's fields no longer hash to its stored
+     `step_hash`) names `step_hash`.
+   Only the first divergent step is reported, so the signal is a single
+   named step, not a cascade of downstream breaks.
+3. On a healthy chain it writes a **debug receipt** via
+   `journal_export.export_receipt` to `.sdd/runtime/receipts/<run>.debug.tar`
+   and prints the head hash and a bounded step projection (`--full` lifts
+   the default cap; `--limit N` sets it). `--sign KEY` signs the receipt
+   with an `Ed25519FileKeySigner`.
+
+The debug receipt IS the deliverable: `bernstein replay verify <receipt>`
+accepts it offline, and stripping or corrupting the bundled chain (or its
+recorded head) makes verification fail - the debugger's output is
+meaningless without the audit chain, not merely unlogged.
+
+### Two-run path diff
+
+```
+bernstein replay debug <LEFT> <RIGHT> [--json] [--jump-to-failure]
+```
+
+Reuses `journal_diff.diff_journals` to find the first divergence, then emits
+an ordered side-by-side of the canonical six fields from seq 0 up to and
+including the divergence, with the diverging fields marked. The artifact is
+**content-addressed**: its `diff_hash` is a SHA-256 over the sorted-key JSON
+of the diff body (chain content only, never a filesystem path), written to
+`.sdd/runtime/debug/<left>__<right>.pathdiff.json`. Two operators on the
+same journals - or the same operator twice - produce the byte-identical
+artifact and the same `diff_hash`.
+
+`--jump-to-failure` positions the output at the diverging seq; it is a
+presentation flag and does not perturb the content-addressed artifact.
+
+### Fork-and-reproduce
+
+```
+bernstein replay debug <RUN> --fork-from <n>
+```
+
+Calls `fork_session(..., from_step=n)` to materialise a sibling worktree
+seeded with the parent journal prefix `[0..n]`, so the fork's first new step
+chains onto the parent `step_hash` at seq `n`. The debug output records that
+`parent_step_hash` as the reproduction anchor. An out-of-range `n` fails
+fast with no side effects on disk (no dangling worktree or branch).
+
+### Privacy
+
+`replay debug` is local-only by default: the receipt and the path-diff
+artifact are written under `.sdd/runtime/`. It has no publish path. Should a
+receipt ever be published, it routes through the same `RedactionPolicy` as
+`replay publish`.
 
 ## Receipt format
 
