@@ -205,6 +205,33 @@ def dashboard(port: int, no_open: bool) -> None:
         )
         sys.exit(1)
 
+    # Probe /dashboard exactly as a browser would (no Authorization header). A
+    # detached run gates every non-public route behind an auto-generated Bearer
+    # token that a plain browser navigation cannot supply, so opening the URL
+    # would dead-end on a raw 401 JSON body. Guide the operator to a surface
+    # that authenticates on its own instead of launching a broken page (#2794).
+    try:
+        probe = httpx.get(url, timeout=2.0)
+        browser_reachable = probe.status_code != 401
+    except httpx.HTTPError:
+        # Probe failure is inconclusive; fall through to the normal open path
+        # rather than blocking on a transient error.
+        browser_reachable = True
+
+    if not browser_reachable:
+        from bernstein.core.defaults import SDD_AUTH_TOKEN
+
+        console.print(
+            "[yellow]The web dashboard requires authentication a browser cannot supply on its own.[/yellow]\n"
+            "This run auto-generated a Bearer token, so a plain browser navigation to the dashboard is "
+            "rejected with 401.\n"
+            "Use the terminal dashboard instead: [cyan]bernstein live[/cyan] (or [cyan]bernstein status[/cyan]), "
+            "which authenticate automatically from this workspace.\n"
+            f"The run token lives in [cyan]{SDD_AUTH_TOKEN}[/cyan] if you front the server with your own "
+            "authenticating proxy."
+        )
+        sys.exit(1)
+
     console.print(f"[green]Dashboard:[/green] [link={url}]{url}[/link]")
     if not no_open:
         webbrowser.open(url)
