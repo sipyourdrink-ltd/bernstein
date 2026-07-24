@@ -41,19 +41,28 @@ def _mapping(value: object, message: str) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def test_ci_concurrency_comment_matches_branch_cancellation() -> None:
-    """The heavy CI comment must not promise per-SHA main push completion."""
+def test_ci_concurrency_keys_main_by_sha_and_cancels_only_prs() -> None:
+    """Heavy CI runs every merged main commit to completion (per-SHA group, no
+    cancel) while still cancelling superseded PR-branch runs, so an already-merged
+    commit never carries a permanent "cancelled" red."""
     ci_doc = _load(CI)
     concurrency = _mapping(ci_doc.get("concurrency"), "CI workflow must define concurrency")
-    assert concurrency.get("cancel-in-progress") is True
+    # cancel-in-progress fires only for pull_request events; pushes to main
+    # (and merge_group / dispatch) are never cancelled by a later merge.
+    assert concurrency.get("cancel-in-progress") == "${{ github.event_name == 'pull_request' }}"
     group = concurrency.get("group")
     assert isinstance(group, str)
+    # PR runs group by PR number; everything else groups by ref + sha so each
+    # commit is its own non-cancelling run.
+    assert "pr-" in group
     assert "branch-" in group
+    assert "github.sha" in group
 
     text = CI.read_text(encoding="utf-8")
-    assert "Pushes to main (incl. squash-merges from auto/bump-* PRs): per-SHA" not in text
-    assert "cancel-in-progress=false" not in text
-    assert "main-sha-marker.yml" in text
+    # The comment documents the per-SHA main policy and its durable follow-up.
+    assert "per-SHA group" in text
+    assert "cancel-in-progress=false" in text
+    assert "merge queue" in text
 
 
 def test_main_sha_marker_workflow_is_exact_sha_and_non_cancellable() -> None:
