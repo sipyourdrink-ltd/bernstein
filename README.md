@@ -39,6 +39,17 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 
 ### at a glance
 
+Four things set it apart; everything after is detail.
+
+- **No LLM in the coordination loop.** Scheduling is plain Python, so a run is reproducible end to end — replay yesterday's plan and get yesterday's task graph.
+- **Checkable after the fact.** An always-on lineage spine and replay journal record every run; an opt-in HMAC audit chain (`--audit`) adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run.
+- **Isolated by construction.** Every task runs in its own git worktree behind lint/type/test merge gates — no shared mutable state between agents.
+- **Broad and local.** 40+ CLI agent adapters plus a generic `--prompt` wrapper, an air-gap install profile, file-based state, Apache-2.0 — no SaaS hop, no third-party data plane.
+
+The [feature matrix](docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
+
+### full capabilities
+
 - **Deterministic scheduler**: zero LLM in the coordination loop. Plain Python decides who runs, where, with what budget. Replay yesterday's plan, get yesterday's task graph.
 - **Per-artefact lineage** records every adapter file write, without per-adapter opt-in, as one Merkle-chained, HMAC-tagged entry in an always-on lineage spine (`.sdd/lineage/<run_id>/spine.jsonl`). The chain head hash is the run's artifact-provenance identity. CLI: `bernstein lineage verify <run_id>` (recompute the chain, distinct `NO ENTRIES` status for empty runs) and `bernstein lineage replay <run_id>`.
 - **Always-on replay journal**: every run records into one Merkle-chained event journal (`.sdd/runs/<run_id>/journal.jsonl`) whose head hash is the run identity; no on/off flag, `BERNSTEIN_REPLAY_RETENTION` caps disk. Non-determinism surfaces as a hash mismatch: `bernstein replay <run_id> --verify` recomputes the head and reports the exact first divergent step, and `bernstein replay <run_id> --from-step N` rebuilds deterministic state. The journal head is sealed into the lineage spine so replay identity and artefact provenance share one root. Provider-side context mutations (server-side compaction and similar opaque state) are recorded as content-addressed journal entries, so a change to what the model actually saw surfaces as divergence at the exact step instead of drifting silently; deterministic runs request suppression and fail loudly if a mutation arrives anyway.
