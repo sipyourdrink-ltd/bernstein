@@ -226,3 +226,54 @@ def mandate_revoke_cmd(mandate_hash: str, reason: str, workdir: str) -> None:
     console.print()
     console.print(f"[bold]Mandate revoke[/bold] hash={mandate_hash[:24]}")
     console.print("[green]OK[/green] -- signed revocation appended; further actions are refused.")
+
+
+@mandate_group.command("verify-settlement")
+@click.argument("receipt_hash", required=True)
+@click.option("--intent", "intent_file", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+def mandate_verify_settlement_cmd(receipt_hash: str, intent_file: str, workdir: str) -> None:
+    """Prove an x402 spend receipt offline (issue #2528).
+
+    Recomputes the receipt against its spine anchor, the settled WAL invocation
+    record it paid for, and the authorising consent receipt, so a provider's
+    charge is checkable against gateway execution history rather than trusted.
+
+    Exit codes: 0 = verified, 1 = no receipt / bad input, 2 = mismatch.
+    """
+    from bernstein.core.protocols.payments.mandates import IntentMandate
+    from bernstein.core.protocols.payments.x402 import verify_spend_receipt
+
+    root = Path(workdir).resolve()
+    intent = IntentMandate.from_dict(_read_json(intent_file))
+
+    result = verify_spend_receipt(
+        workdir=root,
+        lineage_root=_lineage_root(root),
+        hmac_key=_load_hmac_key(),
+        wal_sdd_dir=root / ".sdd",
+        spend_receipt_hash=receipt_hash,
+        intent=intent,
+    )
+    console.print()
+    console.print(f"[bold]Settlement verify[/bold] hash={receipt_hash[:24]}")
+    if result.ok:
+        assert result.receipt is not None
+        console.print(f"  server           {result.receipt.server_name}")
+        console.print(f"  tool             {result.receipt.tool_name}")
+        console.print(f"  amount_usd       {result.receipt.settlement_ref.amount_usd}")
+        console.print(f"  wal_invocation   {result.receipt.wal_invocation_digest[:24]}")
+        console.print("[green]OK[/green] -- settlement chains to the WAL invocation and the mandate.")
+        raise SystemExit(0)
+    if result.receipt is None:
+        console.print(f"[yellow]NO RECEIPT[/yellow] -- {result.reason}")
+        raise SystemExit(1)
+    console.print(f"[red]MISMATCH[/red] -- {result.reason}")
+    raise SystemExit(2)

@@ -166,6 +166,48 @@ def replay_cmd(run_id: str, transport: str, port: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# gateway settlements
+# ---------------------------------------------------------------------------
+
+
+@gateway_group.command("settlements")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+def settlements_cmd(workdir: str) -> None:
+    """List recorded x402 settlements (issue #2528).
+
+    Each row is a chain-anchored spend receipt binding a settled upstream tool
+    call to the WAL invocation it paid for. Verify one offline with
+    ``bernstein mandate verify-settlement <hash> --intent <file>``.
+    """
+    from bernstein.core.protocols.payments.x402 import iter_spend_receipts
+
+    root = Path(workdir).resolve()
+    receipts = sorted(iter_spend_receipts(root), key=lambda r: (r.timestamp, r.server_name, r.tool_name))
+    if not receipts:
+        console.print("[dim]No x402 settlements recorded.[/dim]")
+        return
+
+    console.print()
+    console.print("[bold]x402 settlements[/bold]")
+    # One receipt per block, values on their own short lines so long hashes are
+    # never truncated and the output stays greppable when piped.
+    for r in receipts:
+        console.print(
+            f"[cyan]{r.receipt_hash()[:20]}[/cyan]  {r.server_name} / {r.tool_name}"
+            f"  ${r.settlement_ref.amount_usd:.4f}  wal_seq={r.wal_invocation_seq}"
+        )
+        console.print(f"  mandate {r.mandate_hash}")
+    console.print(f"[dim]{len(receipts)} settlement(s) under {root}/.sdd/x402/settlements[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

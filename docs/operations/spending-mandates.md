@@ -58,3 +58,12 @@ gate).
 | `.sdd/mandates/revocations.jsonl` | Append-only signed revocation ledger. |
 | `.sdd/lineage/mandates/spine.jsonl` | The lineage spine anchoring every receipt. |
 | `.sdd/audit/` | The HMAC audit chain carrying the mirrored events. |
+
+## Metered gateway settlement (x402)
+
+The HTTP 402 pay-and-retry reference above becomes an executed flow at the MCP
+gateway: on a 402 from an upstream tool the gateway gates the call against an
+intent, invokes an operator settlement hook, retries, and emits a spend receipt
+that chains the payment to the exact WAL invocation it paid for. That path is
+disabled by default and documented in
+[`x402-settlement.md`](./x402-settlement.md).
