@@ -45,6 +45,7 @@ from bernstein.core.orchestration.missions import (
     KIND_MISSION_PHASE_PASSED,
     MISSION_ACTIVE,
     MISSION_COMPLETE,
+    MISSION_HALTED,
     MISSION_PENDING,
     MISSION_UNVERIFIED,
     PHASE_ACTIVE,
@@ -324,15 +325,48 @@ def test_status_hash_is_pinned_for_a_canonical_ledger(tmp_path: Path) -> None:
 
     status = project_mission(entries, ev)
     assert status.overall == MISSION_COMPLETE
-    # Pinned canonical status hash. Regenerate deliberately if the mission
-    # status schema changes; a silent drift here means the projection is no
-    # longer byte-stable across hosts.
+    # Pinned canonical status hash under the current (v2) projection. Regenerate
+    # deliberately if the mission status schema changes; a silent drift here
+    # means the projection is no longer byte-stable across hosts.
     assert status.status_hash() == _PINNED_STATUS_HASH
 
 
-#: Pinned mission status hash for the canonical two-phase fixture. Anchors the
+def test_v1_projection_reproduces_the_archived_status_hash(tmp_path: Path) -> None:
+    """#2683: an archived ledger still reproduces its v1 status hash byte for byte.
+
+    The #2683 fold change moved mission_status_hash for every ledger (the
+    schema version is hashed in). A ledger recorded under v1 stays verifiable:
+    projecting it under schema_version=1 reproduces the exact hash it was
+    recorded with, so a verifier tells an honest older projection apart from
+    tampering. The canonical two-phase fixture has no halt, so only the schema
+    version distinguishes its v1 and v2 hashes.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    spec = _build_full_mission(sdd_dir, tmp_path)
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    ev = gather_evidence_hashes(tmp_path, ("task-a", "task-b"))
+
+    assert project_mission(entries, ev, schema_version=1).status_hash() == _PINNED_STATUS_HASH_V1
+    # v2 is the default, and the two hashes differ (the version is hashed in).
+    assert project_mission(entries, ev).status_hash() == _PINNED_STATUS_HASH
+    assert _PINNED_STATUS_HASH != _PINNED_STATUS_HASH_V1
+
+
+def test_project_mission_rejects_an_unsupported_projection_version(tmp_path: Path) -> None:
+    """An unrenderable projection version is a caller error, not a fold verdict."""
+    sdd_dir = tmp_path / ".sdd"
+    spec = _build_full_mission(sdd_dir, tmp_path)
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    with pytest.raises(ValueError, match="unsupported mission status schema_version"):
+        project_mission(entries, {}, schema_version=99)
+
+
+#: Pinned mission status hash for the canonical two-phase fixture. ``_V1`` is
+#: the pre-#2683 projection (retained so archived ledgers stay reproducible);
+#: the unsuffixed constant is the current (v2) projection. Anchors the
 #: cross-host determinism guarantee in CI.
-_PINNED_STATUS_HASH = "bb00506ccf411e5a329514bcc32cd0299d472396cc2dc405d56438bc435ac839"
+_PINNED_STATUS_HASH_V1 = "bb00506ccf411e5a329514bcc32cd0299d472396cc2dc405d56438bc435ac839"
+_PINNED_STATUS_HASH = "ea1d74c86cba9d74bd27f1eba7b19de1e74e4441a94ce3c8081afa6ad929e846"
 
 
 # ---------------------------------------------------------------------------
@@ -953,70 +987,124 @@ def test_secret_bearing_envelope_still_projects_passed(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Determinism locks: the projection rules must not drift inside a patch
+# Determinism locks: the projection rules must not drift without a version bump
 # ---------------------------------------------------------------------------
 #
-# These pin behaviour that is deliberately *not* changed here rather than a bug
-# this PR fixes, so they hold on unfixed code too. Their job is to make an
-# accidental projection change fail loudly: any edit that moves them also moves
-# mission_status_hash for every existing ledger, which may only ship with a
-# MISSION_STATUS_SCHEMA_VERSION bump in a minor release.
+# Every value below is a byte-stable snapshot of the canonical status. Any edit
+# that moves one also moves mission_status_hash for existing ledgers, which may
+# only ship with a MISSION_STATUS_SCHEMA_VERSION bump. The v2 goldens pin the
+# current fold; the v1 goldens prove an archived ledger still reproduces its
+# original hash by projecting under schema_version=1.
 
 
-def test_status_projection_version_is_pinned_at_1() -> None:
-    """A hashed-projection bump is a minor-release change, never a patch."""
+def test_status_projection_version_is_pinned_at_2() -> None:
+    """The current projection is v2 (#2683); a further bump is a minor release."""
     from bernstein.core.orchestration.missions import MISSION_STATUS_SCHEMA_VERSION
 
-    assert MISSION_STATUS_SCHEMA_VERSION == 1
+    assert MISSION_STATUS_SCHEMA_VERSION == 2
 
 
-def test_halted_phase_still_halts_the_mission_under_v1(tmp_path: Path) -> None:
-    """Documents the coarser v1 halt fold, deferred for correction to v3.8.0.
-
-    Dispatch is already isolated per phase envelope; only the projection is
-    coarse. Correcting it changes the canonical status bytes, so it waits for
-    a version bump rather than riding along in a patch.
-    """
-    sdd_dir = tmp_path / ".sdd"
-    spec = _spec()
+def _build_halted_beside_runnable(sdd_dir: Path, spec: MissionSpec) -> None:
+    """Halt phase 1 (exhausted envelope) with phase 2 entered and runnable."""
     ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
     define_mission(ledger=ledger, spec=spec)
     enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p1")
     halt_phase(ledger=ledger, spec=spec, phase_id="p1", spend_usd=40.0, reason="envelope_exhausted")
     enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p2")
     ledger.close()
+
+
+def test_halted_phase_still_halts_the_mission_under_v1(tmp_path: Path) -> None:
+    """Retained v1 golden: the coarse halt fold stays reproducible.
+
+    An archived ledger whose status hash was recorded before #2683 must still
+    reproduce byte for byte. Projecting the same ledger under schema_version=1
+    reproduces the original active_phase, overall, and status hash, so a
+    verifier can tell the honest older projection apart from tampering.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    _build_halted_beside_runnable(sdd_dir, spec)
+
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    status = project_mission(entries, {}, schema_version=1)
+    assert status.phases[0].state == PHASE_HALTED
+    assert status.phases[1].state == PHASE_ACTIVE
+    # The coarse v1 fold: the halted phase is reported active and halts all.
+    assert status.active_phase == "p1"
+    assert status.overall == "halted"
+    assert status.status_hash() == _PINNED_HALTED_STATUS_HASH_V1
+
+
+def test_halted_phase_does_not_halt_a_mission_with_a_runnable_sibling(tmp_path: Path) -> None:
+    """#2683: one halted phase must not halt a mission whose sibling can run.
+
+    Phases run under isolated envelopes (:func:`phase_envelope_key`), so
+    exhausting one must not stop a runnable sibling. The default (current)
+    projection therefore skips a halted phase when selecting ``active_phase``
+    and returns ``MISSION_HALTED`` only when no phase remains runnable. The
+    ledger is identical to the v1 test above; only the projection rules differ.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    _build_halted_beside_runnable(sdd_dir, spec)
 
     status = project_mission(list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries()), {})
     assert status.phases[0].state == PHASE_HALTED
     assert status.phases[1].state == PHASE_ACTIVE
-    # Both assertions below are the deferred v3.8.0 correction, pinned as-is.
-    assert status.active_phase == "p1"
-    assert status.overall == "halted"
+    # The runnable sibling is the active phase, and the mission is not halted.
+    assert status.active_phase == "p2"
+    assert status.overall == MISSION_ACTIVE
+    assert status.overall != MISSION_HALTED
 
 
-def test_halted_ledger_status_hash_is_pinned(tmp_path: Path) -> None:
-    """Golden for the halted shape the v3.8.0 change will move.
+def test_halt_with_no_runnable_sibling_still_halts_the_mission_under_v2(tmp_path: Path) -> None:
+    """#2683: isolation weakens no halt -- a mission with nothing runnable halts.
 
-    The two pre-existing goldens contain no halt, so nothing else in the suite
-    would catch a halt-fold drift.
+    Phase 1 passes and phase 2 halts, so no phase remains runnable. The v2 fold
+    still reports the mission halted and leaves no phase active, proving the
+    correction narrows the halt rule rather than removing it.
     """
     sdd_dir = tmp_path / ".sdd"
     spec = _spec()
     ledger = WorkLedger.open(mission_ledger_dir(sdd_dir, spec.mission_id))
     define_mission(ledger=ledger, spec=spec)
+    _seal_evidence(tmp_path, "task-a")
     enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p1")
-    halt_phase(ledger=ledger, spec=spec, phase_id="p1", spend_usd=40.0, reason="envelope_exhausted")
+    ev = gather_evidence_hashes(tmp_path, ("task-a",))
+    pass_phase(ledger=ledger, spec=spec, phase_id="p1", evidence_hashes=ev, spend_usd=12.0)
     enter_phase(ledger=ledger, mission_id=spec.mission_id, phase_id="p2")
+    halt_phase(ledger=ledger, spec=spec, phase_id="p2", spend_usd=25.0, reason="envelope_exhausted")
     ledger.close()
 
+    entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
+    status = project_mission(entries, ev)
+    assert status.phases[0].state == PHASE_PASSED
+    assert status.phases[1].state == PHASE_HALTED
+    assert status.active_phase == ""
+    assert status.overall == MISSION_HALTED
+
+
+def test_halted_ledger_status_hash_is_pinned(tmp_path: Path) -> None:
+    """v2 golden for the halted-beside-runnable shape the #2683 change moved.
+
+    The other goldens contain no halt, so nothing else in the suite would catch
+    a drift in the v2 halt fold.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    spec = _spec()
+    _build_halted_beside_runnable(sdd_dir, spec)
+
     status = project_mission(list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries()), {})
-    assert status.status_hash() == _PINNED_HALTED_STATUS_HASH
+    assert status.status_hash() == _PINNED_HALTED_STATUS_HASH_V2
 
 
-#: Pinned status hash for a mission with one halted phase beside a runnable
-#: one, folded under MISSION_STATUS_SCHEMA_VERSION 1. Regenerate only together
-#: with a version bump.
-_PINNED_HALTED_STATUS_HASH = "6637c72e25b193f85927b6fb7f5ab2f0902f565db268679b02ad74384bfabdc7"
+#: Pinned status hash for a mission with one halted phase beside a runnable one.
+#: ``_V1`` is the coarse pre-#2683 fold (halted phase active, mission halted),
+#: reproduced by projecting under schema_version=1; ``_V2`` is the current fold
+#: (runnable sibling active, mission active). Regenerate only with a version bump.
+_PINNED_HALTED_STATUS_HASH_V1 = "6637c72e25b193f85927b6fb7f5ab2f0902f565db268679b02ad74384bfabdc7"
+_PINNED_HALTED_STATUS_HASH_V2 = "fd879e56b1572468c9fa2ee778e814971cc66960f61a7173f0edf2836261fc55"
 
 
 # ---------------------------------------------------------------------------
@@ -1173,6 +1261,12 @@ def test_sealed_negative_zero_spend_projects_the_hash_it_always_did(tmp_path: Pa
     A value-preserving parse would surface ``-0.0``, which serialises as a
     different JSON token and changes canonical_bytes for a ledger nobody
     touched. Normalising reproduces the shipped behaviour exactly.
+
+    The pinned hash was recorded under the pre-#2683 projection, so the ledger
+    is projected under schema_version=1 to reproduce it byte for byte. The spend
+    normalisation is version-independent (the phase-state fold does not depend on
+    the projection version), so this also anchors v1 reproduction for a -0.0
+    ledger; the assertion below proves the current fold normalises it identically.
     """
     import json as _json
 
@@ -1203,14 +1297,16 @@ def test_sealed_negative_zero_spend_projects_the_hash_it_always_did(tmp_path: Pa
     ledger.close()
 
     entries = list(LedgerReader(mission_ledger_dir(sdd_dir, spec.mission_id)).entries())
-    status = project_mission(entries, ev)
+    status = project_mission(entries, ev, schema_version=1)
     assert _json.dumps(status.phases[0].spend_usd) == "0.0"
     assert status.status_hash() == _PINNED_NEGATIVE_ZERO_STATUS_HASH
+    # The current fold normalises the sealed -0.0 identically (version-independent).
+    assert _json.dumps(project_mission(entries, ev).phases[0].spend_usd) == "0.0"
 
 
-#: Status hash for a ledger carrying a sealed -0.0 spend, as the shipped
-#: projection has always rendered it. Guards against a value-preserving parse
-#: silently moving the hash for existing ledgers.
+#: Status hash for a ledger carrying a sealed -0.0 spend, as the pre-#2683
+#: projection rendered it. Guards against a value-preserving parse silently
+#: moving the hash for existing ledgers, and anchors v1 reproduction.
 _PINNED_NEGATIVE_ZERO_STATUS_HASH = "f18f443bb6d3f13ae48ba7cac55cbd61337fe9487c77fbf42882e4c1156e49eb"
 
 

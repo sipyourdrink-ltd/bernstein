@@ -94,7 +94,21 @@ MISSION_SPEC_SCHEMA_VERSION = 1
 #: "folded under different projection rules" apart from "tampered with".
 #: A bump breaks reproduction of every existing ledger's status hash, so it
 #: belongs in a minor release, never a patch.
-MISSION_STATUS_SCHEMA_VERSION = 1
+#:
+#: * v1 -- a halted phase is reported as the active phase, and one halted
+#:   phase halts the whole mission.
+#: * v2 (#2683) -- ``active_phase`` skips halted (and passed) phases, and the
+#:   mission is halted only when no phase remains runnable, so exhausting one
+#:   phase envelope no longer stops a runnable sibling. This is the current,
+#:   default projection.
+MISSION_STATUS_SCHEMA_VERSION = 2
+
+#: Projection schema versions this build can render. An archived ledger whose
+#: status hash was recorded under an older projection stays reproducible by
+#: passing that version explicitly to :func:`project_mission`, so a verifier
+#: tells an honest older projection apart from tampering without re-folding
+#: under today's rules.
+SUPPORTED_STATUS_SCHEMA_VERSIONS = (1, 2)
 
 #: Phase states the projection can assign, in lifecycle order.
 PHASE_PENDING = "pending"
@@ -640,6 +654,8 @@ def _spec_skeleton_from_defined(
 def project_mission(
     entries: Sequence[LedgerEntry],
     evidence_hashes: Mapping[str, str],
+    *,
+    schema_version: int = MISSION_STATUS_SCHEMA_VERSION,
 ) -> MissionStatus:
     """Fold ledger *entries* (chain order) into a canonical mission status.
 
@@ -658,11 +674,29 @@ def project_mission(
         entries: Work-ledger entries as yielded by :meth:`LedgerReader.entries`.
         evidence_hashes: Current content addresses of the referenced evidence
             bundles.
+        schema_version: Projection rules to render under. Defaults to the
+            current :data:`MISSION_STATUS_SCHEMA_VERSION`. Pass ``1`` to
+            reproduce an archived ledger's original status hash byte for byte;
+            the phase-state fold is version-independent, only ``active_phase``
+            selection and the mission halt rule differ (see
+            :func:`_select_active_phase` and :func:`_overall_state`).
 
     Returns:
         A canonical :class:`MissionStatus`. When no ``mission.defined`` entry is
         present the status is an empty pending mission.
+
+    Raises:
+        ValueError: when *schema_version* is not one of
+            :data:`SUPPORTED_STATUS_SCHEMA_VERSIONS`. This is a caller error
+            (an unrenderable projection version), not untrusted ledger data, so
+            it raises rather than folding to :data:`MISSION_UNVERIFIED`.
     """
+    if schema_version not in SUPPORTED_STATUS_SCHEMA_VERSIONS:
+        msg = (
+            f"unsupported mission status schema_version {schema_version}: "
+            f"this build renders versions {SUPPORTED_STATUS_SCHEMA_VERSIONS}"
+        )
+        raise ValueError(msg)
     mission_id = ""
     goal_digest = ""
     spec_hash = ""
@@ -698,15 +732,15 @@ def project_mission(
         accum = accums.get(spec.phase_id, _PhaseAccum())
         phases.append(_project_phase(spec, accum, evidence_hashes))
 
-    # A halted phase is still reported as the active one, and one halt still
-    # halts the whole mission. Both are wrong -- phases run under isolated
-    # envelopes, so exhausting one must not stop a runnable sibling -- but both
-    # feed the hashed canonical status, so correcting them moves
-    # mission_status_hash for every ledger carrying a halt. That is a minor
-    # release change, tracked for v3.8.0; a patch must reproduce existing
-    # hashes byte for byte.
-    active_phase = next((p.phase_id for p in phases if p.state != PHASE_PASSED), "")
-    overall = _overall_state(phases)
+    # Phases run under isolated envelopes (:func:`phase_envelope_key`), so a
+    # halted phase must not stand in for the active phase nor halt a runnable
+    # sibling. Under v2 (#2683) the active-phase pointer skips halted phases and
+    # the mission halts only when nothing remains runnable; v1 is preserved for
+    # reproducing archived ledgers whose status hash was recorded under the
+    # coarser fold. Both selections feed the hashed canonical status, which is
+    # why the correction ships with a schema-version bump.
+    active_phase = _select_active_phase(phases, schema_version=schema_version)
+    overall = _overall_state(phases, schema_version=schema_version)
     # Zero definitions is simply an empty ledger (pending). More than one, or a
     # malformed one, means the projection and the evidence lookup could be
     # reading different specs: refuse to render a trusted status.
@@ -714,7 +748,7 @@ def project_mission(
         overall = MISSION_UNVERIFIED
 
     return MissionStatus(
-        schema_version=MISSION_STATUS_SCHEMA_VERSION,
+        schema_version=schema_version,
         mission_id=mission_id,
         goal_digest=goal_digest,
         spec_hash=spec_hash,
@@ -821,14 +855,32 @@ def _evidence_matches(receipt: PhaseReceipt, evidence_hashes: Mapping[str, str])
     return True
 
 
-def _overall_state(phases: Sequence[PhaseStatus]) -> str:
+def _select_active_phase(phases: Sequence[PhaseStatus], *, schema_version: int) -> str:
+    """Return the id of the phase the mission is currently working, or ``""``.
+
+    A passed phase is always skipped -- it is finished. From v2 (#2683) a halted
+    phase is skipped too: it has stopped under its own exhausted envelope and is
+    not what the mission is working next, so the pointer advances to the first
+    runnable sibling. Under v1 only passed phases are skipped, so a halt is
+    (wrongly, but reproducibly) reported as active; v1 exists to reproduce
+    archived ledgers, not to run new missions.
+    """
+    skip = (PHASE_PASSED, PHASE_HALTED) if schema_version >= 2 else (PHASE_PASSED,)
+    return next((p.phase_id for p in phases if p.state not in skip), "")
+
+
+def _overall_state(phases: Sequence[PhaseStatus], *, schema_version: int) -> str:
     """Fold phase states into the mission state.
 
-    Any halted phase currently halts the whole mission, which contradicts the
-    per-phase envelope isolation :func:`phase_envelope_key` provides. Fixing it
-    changes this fold's output for honest ledgers, and the result is hashed
-    into :meth:`MissionStatus.status_hash`, so the correction ships with a
-    :data:`MISSION_STATUS_SCHEMA_VERSION` bump in v3.8.0 rather than here.
+    From v2 (#2683) a halt no longer halts the whole mission on its own: the
+    mission is :data:`MISSION_HALTED` only when no phase remains runnable
+    (pending or active), so a halted phase beside a runnable sibling leaves the
+    mission active -- matching the per-phase envelope isolation
+    :func:`phase_envelope_key` provides. Under v1 any halt halts the mission;
+    that coarser fold is retained to reproduce archived ledgers whose status
+    hash was recorded before the correction. Both feed
+    :meth:`MissionStatus.status_hash`, which is why v2 ships with a
+    :data:`MISSION_STATUS_SCHEMA_VERSION` bump.
     """
     states = [phase.state for phase in phases]
     if not states:
@@ -838,7 +890,9 @@ def _overall_state(phases: Sequence[PhaseStatus]) -> str:
     if all(state == PHASE_PASSED for state in states):
         return MISSION_COMPLETE
     if PHASE_HALTED in states:
-        return MISSION_HALTED
+        runnable = any(state in (PHASE_PENDING, PHASE_ACTIVE) for state in states)
+        if schema_version < 2 or not runnable:
+            return MISSION_HALTED
     if PHASE_ACTIVE in states or PHASE_PASSED in states:
         return MISSION_ACTIVE
     return MISSION_PENDING
@@ -919,7 +973,13 @@ def _referenced_task_ids(entries: Sequence[LedgerEntry]) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def project_mission_from_ledger(*, sdd_dir: Path, workdir: Path, mission_id: str) -> MissionProjection:
+def project_mission_from_ledger(
+    *,
+    sdd_dir: Path,
+    workdir: Path,
+    mission_id: str,
+    schema_version: int = MISSION_STATUS_SCHEMA_VERSION,
+) -> MissionProjection:
     """Rebuild mission state purely by replaying the on-disk ledger chain.
 
     This is the resume path: it needs only the ledger file and the sealed
@@ -928,12 +988,16 @@ def project_mission_from_ledger(*, sdd_dir: Path, workdir: Path, mission_id: str
     re-verified end to end; a tampered entry forces ``overall`` to
     :data:`MISSION_UNVERIFIED` and surfaces at its exact position via
     :attr:`MissionProjection.ledger_verified`.
+
+    *schema_version* defaults to the current projection. Pass ``1`` to
+    reproduce, from an archived ledger on disk, the exact status hash it was
+    recorded with before the v2 (#2683) halt-fold correction.
     """
     reader = LedgerReader(mission_ledger_dir(sdd_dir, mission_id))
     verification = reader.verify()
     entries = list(reader.entries())
     evidence_hashes = gather_evidence_hashes(workdir, _referenced_task_ids(entries))
-    status = project_mission(entries, evidence_hashes)
+    status = project_mission(entries, evidence_hashes, schema_version=schema_version)
 
     evidence_verified = all(phase.state != PHASE_UNVERIFIED for phase in status.phases)
     if not verification.ok:
@@ -1115,10 +1179,13 @@ def halt_phase(
 
     The halt is a first-class ledger transition: the projection derives the
     :data:`PHASE_HALTED` state from it, so a halted phase is provable from the
-    chain alone. Dispatch stays isolated -- a sibling phase's envelope is never
-    gated by this one (see :func:`phase_envelope_key`) -- but note that the
-    *projection* still reports the whole mission as halted; see
-    :func:`_overall_state` for why that correction waits for v3.8.0.
+    chain alone. Isolation holds end to end: dispatch was already isolated -- a
+    sibling phase's envelope is never gated by this one (see
+    :func:`phase_envelope_key`) -- and from v2 (#2683) the *projection* keeps a
+    runnable sibling active rather than reporting the whole mission halted (see
+    :func:`_overall_state`). The halt receipt itself is unchanged: a halted
+    phase still seals its receipt onto the ledger and the audit chain, so
+    isolation weakens no halt.
 
     The recorded spend may sit at or above the budget (an exhausted envelope is
     the usual reason to halt), but it must still be a finite, non-negative
@@ -1263,6 +1330,7 @@ __all__ = [
     "PHASE_PASSED",
     "PHASE_PENDING",
     "PHASE_UNVERIFIED",
+    "SUPPORTED_STATUS_SCHEMA_VERSIONS",
     "MissionProjection",
     "MissionSpec",
     "MissionSpecError",

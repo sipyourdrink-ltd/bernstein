@@ -205,9 +205,11 @@ def test_digest_hash_is_pinned_for_the_canonical_fixture(tmp_path: Path) -> None
     assert digest.receipt_id() == _PINNED_RECEIPT_ID
 
 
-#: Pinned digest hash / receipt id for the canonical fixture at ``_FIRE``.
-_PINNED_DIGEST_HASH = "d218525c116432fae204159dadd8a7c05f0d88c785b495121ead82d461e3cdea"
-_PINNED_RECEIPT_ID = "missiondigest-0961e849772a90747e0e1ed6"
+#: Pinned digest hash / receipt id for the canonical fixture at ``_FIRE``. The
+#: digest embeds ``mission_status_hash``, so the #2683 status-projection bump to
+#: v2 moved these even though the digest schema itself is unchanged.
+_PINNED_DIGEST_HASH = "453baccccb0df0db95b45965499416bc7cb136f463a0dd519df999e8bc3b0d61"
+_PINNED_RECEIPT_ID = "missiondigest-4a6f4f2bfdf666ca93c2875d"
 
 
 def test_fire_time_must_be_int(tmp_path: Path) -> None:
