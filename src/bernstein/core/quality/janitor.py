@@ -94,14 +94,25 @@ _ATTRIBUTION_MAX_COMMITS = 50
 # canonical bytes against a declared contract, so a passing one is strong
 # evidence real work happened - on par with a passing test.
 _NONTRIVIAL_SIGNAL_TYPES = frozenset(
-    {"test_passes", "file_contains", "llm_review", "llm_judge", "schema_valid", "criteria_match", "hash_stable"}
+    {
+        "test_passes",
+        "file_contains",
+        "llm_review",
+        "llm_judge",
+        "schema_valid",
+        "criteria_match",
+        "hash_stable",
+        # A grounded report proves the figures trace to signed sources - strong
+        # evidence of real work, on par with a passing test (issue #2888).
+        "figures_grounded",
+    }
 )
 
 # Completion-signal types that operate on an artifact's canonical bytes rather
-# than the filesystem (issue #2608). The filesystem-oriented
+# than the filesystem (issue #2608, #2888). The filesystem-oriented
 # :func:`evaluate_signal` defers these to :func:`evaluate_artifact_signals`,
 # which has the produced artifact in scope.
-_ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stable"})
+_ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stable", "figures_grounded"})
 
 
 def _has_nontrivial_passing_signal(task: Task, signal_results: list[tuple[str, bool, str]]) -> bool:
@@ -266,24 +277,37 @@ def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]
         case "llm_judge":
             # llm_judge requires async evaluation - use judge_task() instead.
             return False, "llm_judge requires async evaluation via judge_task()"
-        case "schema_valid" | "criteria_match" | "hash_stable":
+        case "schema_valid" | "criteria_match" | "hash_stable" | "figures_grounded":
             # Artifact-mode criteria operate on the produced artifact's canonical
-            # bytes, not the filesystem. They are dispatched by
-            # evaluate_artifact_signals() once the artifact is in scope; the
-            # filesystem path recognises them (so they are never "unknown") but
-            # cannot evaluate them here.
+            # bytes (and, for figures_grounded, on lineage reads), not the
+            # filesystem. They are dispatched by evaluate_artifact_signals() once
+            # the artifact is in scope; the filesystem path recognises them (so
+            # they are never "unknown") but cannot evaluate them here.
             return False, f"{signal.type} requires artifact-mode evaluation via evaluate_artifact_signals()"
     return False, f"unknown signal type: {signal.type}"
 
 
-def evaluate_artifact_signals(task: Task, artifact: object) -> list[tuple[str, bool, str]]:
+def evaluate_artifact_signals(
+    task: Task,
+    artifact: object,
+    *,
+    lineage_root: Path | None = None,
+    operator_secret: bytes | None = None,
+) -> list[tuple[str, bool, str]]:
     """Evaluate a task's artifact-mode completion signals against ``artifact``.
 
-    ``artifact`` is the raw produced artifact (str / bytes / list / mapping);
+    ``artifact`` is the raw produced artifact (str / bytes / list / mapping, or
+    a :class:`~bernstein.core.tasks.figures.ReportBundle` for a figures report);
     it is canonicalised under the task's declared
     :attr:`~bernstein.core.tasks.models.Task.artifact_spec` kind and each
     ``schema_valid`` / ``criteria_match`` / ``hash_stable`` signal is evaluated
     by its closed evaluator in :mod:`bernstein.core.tasks.artifacts`.
+
+    ``figures_grounded`` (issue #2888) additionally resolves each declared
+    figure's anchor against the signed lineage log rooted at ``lineage_root``
+    (the project root containing ``.sdd/``). A ``warn``-severity signal
+    downgrades a grounding failure to a passing result whose detail is prefixed
+    ``WARN:`` so completion is not blocked; the default severity is ``strict``.
 
     Returns a list of ``(description, passed, detail)`` tuples in the same shape
     as :func:`_collect_signal_results`. Filesystem-oriented signals on the task
@@ -297,9 +321,90 @@ def evaluate_artifact_signals(task: Task, artifact: object) -> list[tuple[str, b
         if signal.type not in _ARTIFACT_SIGNAL_TYPES:
             continue
         desc = f"{signal.type}: {signal.value}"
-        passed, detail = evaluate_criterion(signal.type, signal.value, artifact=artifact, kind=kind)
+        if signal.type == "figures_grounded":
+            passed, detail = _evaluate_figures_grounded_signal(
+                artifact, signal.value, lineage_root=lineage_root, operator_secret=operator_secret
+            )
+        else:
+            passed, detail = evaluate_criterion(signal.type, signal.value, artifact=artifact, kind=kind)
         results.append((desc, passed, detail))
     return results
+
+
+def _parse_figures_severity(value: str) -> str:
+    """Return ``"strict"`` or ``"warn"`` for a ``figures_grounded`` signal value.
+
+    An empty value and any unrecognised value fall closed to ``strict`` - the
+    default posture is that an unanchored figure fails completion. Only an
+    explicit ``warn`` (bare or as ``{"severity": "warn"}``) downgrades.
+    """
+    text = (value or "").strip()
+    if not text:
+        return "strict"
+    lowered = text.lower()
+    if lowered in ("strict", "warn"):
+        return lowered
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return "strict"
+        sev = str(payload.get("severity", "strict")).lower()
+        return "warn" if sev == "warn" else "strict"
+    return "strict"
+
+
+def _apply_figures_severity(severity: str, passed: bool, detail: str) -> tuple[bool, str]:
+    """Downgrade a grounding failure to a passing ``WARN:`` when severity is warn."""
+    if not passed and severity == "warn":
+        return True, f"WARN: {detail}"
+    return passed, detail
+
+
+def _evaluate_figures_grounded_signal(
+    artifact: object,
+    value: str,
+    *,
+    lineage_root: Path | None,
+    operator_secret: bytes | None,
+) -> tuple[bool, str]:
+    """Evaluate ``figures_grounded`` on a report bundle against the lineage log."""
+    from bernstein.core.tasks.figures import (
+        CanonicalisationError,
+        ReportBundle,
+        evaluate_figures_grounded,
+        parse_report_bundle,
+    )
+
+    severity = _parse_figures_severity(value)
+
+    if isinstance(artifact, ReportBundle):
+        bundle = artifact
+    elif isinstance(artifact, (bytes, bytearray)):
+        try:
+            bundle = parse_report_bundle(bytes(artifact))
+        except CanonicalisationError as exc:
+            return _apply_figures_severity(severity, False, f"artifact is not a report bundle: {exc}")
+    else:
+        return _apply_figures_severity(
+            severity, False, "figures_grounded requires a report bundle artifact (body + figures.json)"
+        )
+
+    if lineage_root is None:
+        return _apply_figures_severity(severity, False, "no lineage root available to resolve figure anchors")
+
+    from bernstein.core.lineage.figure_grounding import LineageAnchorResolver
+
+    sdd = Path(lineage_root) / ".sdd"
+    resolver = LineageAnchorResolver(
+        log_path=sdd / "lineage" / "log.jsonl",
+        cards_dir=sdd / "agents",
+        operator_secret=operator_secret,
+    )
+    verdict = evaluate_figures_grounded(bundle, resolve_anchor=resolver.resolve)
+    if verdict.ok:
+        return True, f"{len(verdict.provenances)} figure(s) grounded"
+    return _apply_figures_severity(severity, False, "; ".join(verdict.failures))
 
 
 def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:

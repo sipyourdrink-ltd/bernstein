@@ -96,6 +96,24 @@ def test_task_from_dict_skips_malformed_completion_signal() -> None:
     assert task.completion_signals[0].value == "out.txt"
 
 
+def test_task_round_trips_figures_grounded_signal() -> None:
+    """Issue #2888: the figures_grounded signal type survives to_dict/from_dict."""
+    task = Task.from_dict(
+        {
+            "id": "x",
+            "title": "T",
+            "description": "D",
+            "role": "backend",
+            "completion_signals": [{"type": "figures_grounded", "value": "warn"}],
+        }
+    )
+    assert task.completion_signals[0].type == "figures_grounded"
+    assert task.completion_signals[0].value == "warn"
+    restored = Task.from_dict(task.to_dict())
+    assert restored.completion_signals[0].type == "figures_grounded"
+    assert restored.completion_signals[0].value == "warn"
+
+
 def test_task_from_dict_best_of_n_coercion() -> None:
     task = Task.from_dict({"id": "x", "title": "T", "description": "D", "role": "backend", "best_of_n": "3"})
     assert task.best_of_n == 3

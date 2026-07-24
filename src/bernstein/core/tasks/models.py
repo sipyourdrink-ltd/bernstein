@@ -262,13 +262,19 @@ class CompletionSignal:
     """Janitor signal for automatic task verification.
 
     The first six types verify against the filesystem or a test command (the
-    coding path). The last three (issue #2608) operate on an artifact's
+    coding path). The next three (issue #2608) operate on an artifact's
     canonical bytes instead: ``schema_valid`` validates the artifact against a
     declared JSON Schema, ``criteria_match`` evaluates a closed predicate set,
     and ``hash_stable`` re-derives the canonical content hash. Their closed
     evaluators live in :mod:`bernstein.core.tasks.artifacts`; the janitor
     dispatches them via :func:`bernstein.core.quality.janitor.evaluate_artifact_signals`
     when the produced artifact is in scope.
+
+    ``figures_grounded`` (issue #2888) is the tenth type: on a report bundle it
+    requires every declared figure's anchor to resolve to a verifying lineage
+    record and every material number in the body to be declared in the sidecar.
+    Its ``value`` is the severity - ``""``/``"strict"`` (an unanchored figure
+    fails completion) or ``"warn"`` (downgrade for exploratory work).
     """
 
     type: Literal[
@@ -281,8 +287,9 @@ class CompletionSignal:
         "schema_valid",
         "criteria_match",
         "hash_stable",
+        "figures_grounded",
     ]
-    value: str  # path, glob pattern, test command, search string, review instruction, or criterion payload
+    value: str  # path, glob pattern, test command, search string, review instruction, criterion payload, or severity
 
 
 @dataclass(frozen=True)

@@ -1670,3 +1670,97 @@ class TestArtifactSignals:
         task = _make_task(signals=[CompletionSignal(type="path_exists", value="README.md")])
         task.artifact_spec = ArtifactSpec(kind=ArtifactKind.REPORT)
         assert evaluate_artifact_signals(task, "prose\n") == []
+
+
+class TestFiguresGroundedSignal:
+    """Issue #2888: the figures_grounded completion signal and its severity."""
+
+    _HMAC = b"k" * 64
+
+    def _seed(self, tmp_path: Path, body: str, declare_9_9: bool = False):
+        """Record a source dataset into tmp_path/.sdd; return a report ReportBundle."""
+        import json as _json
+
+        from bernstein.core.lineage.artifact_record import record_artifact
+        from bernstein.core.lineage.identity import AgentCard, generate_keypair
+        from bernstein.core.lineage.recorder import LineageRecorder
+        from bernstein.core.lineage.store import LineageStore
+        from bernstein.core.tasks.artifacts import ArtifactKind
+        from bernstein.core.tasks.figures import Figure, FigureAnchor, ReportBundle
+
+        sdd = tmp_path / ".sdd"
+        priv, pub = generate_keypair()
+        card = AgentCard(agent_id="agent:analyst", kid="key-fg", public_key_pem=pub)
+        rec = LineageRecorder(store=LineageStore(sdd / "lineage"), operator_hmac_key=self._HMAC)
+        src = record_artifact(
+            recorder=rec,
+            sink_root=sdd / "artifacts",
+            task_id="SRC",
+            kind=ArtifactKind.DATASET,
+            artifact=[{"users": 1234}],
+            agent_id=card.agent_id,
+            agent_card=card,
+            private_key_pem=priv,
+        )
+        card_dir = sdd / "agents" / card.agent_id
+        card_dir.mkdir(parents=True, exist_ok=True)
+        (card_dir / "card.json").write_text(
+            _json.dumps({"agent_id": card.agent_id, "kid": card.kid, "public_key_pem": card.public_key_pem}),
+            encoding="utf-8",
+        )
+        figs = [Figure("1,234", "users", "migrated users", FigureAnchor("artifact", src.content_hash))]
+        if declare_9_9:
+            figs.append(Figure("9.9", "%", "cost ratio", FigureAnchor("artifact", src.content_hash)))
+        return ReportBundle(body=body, figures=tuple(figs))
+
+    def _task(self, value: str = ""):
+        from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+        task = _make_task(signals=[CompletionSignal(type="figures_grounded", value=value)])
+        task.artifact_spec = ArtifactSpec(kind=ArtifactKind.REPORT)
+        return task
+
+    def test_grounded_report_passes(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+
+        bundle = self._seed(tmp_path, "We migrated 1,234 users.\n")
+        results = evaluate_artifact_signals(self._task(), bundle, lineage_root=tmp_path)
+        assert len(results) == 1
+        _desc, passed, detail = results[0]
+        assert passed is True, detail
+        assert "grounded" in detail
+
+    def test_strict_unanchored_number_fails(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+
+        bundle = self._seed(tmp_path, "We migrated 1,234 users at 9.9% cost.\n")
+        results = evaluate_artifact_signals(self._task(value="strict"), bundle, lineage_root=tmp_path)
+        _desc, passed, detail = results[0]
+        assert passed is False
+        assert "9.9%" in detail
+
+    def test_warn_downgrades_failure_to_pass(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+
+        bundle = self._seed(tmp_path, "We migrated 1,234 users at 9.9% cost.\n")
+        results = evaluate_artifact_signals(self._task(value="warn"), bundle, lineage_root=tmp_path)
+        _desc, passed, detail = results[0]
+        assert passed is True
+        assert detail.startswith("WARN:")
+        assert "9.9%" in detail
+
+    def test_default_severity_is_strict(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+
+        bundle = self._seed(tmp_path, "We migrated 1,234 users at 9.9% cost.\n")
+        results = evaluate_artifact_signals(self._task(value=""), bundle, lineage_root=tmp_path)
+        _desc, passed, _detail = results[0]
+        assert passed is False
+
+    def test_non_bundle_artifact_reports_clearly(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+
+        results = evaluate_artifact_signals(self._task(value="strict"), "just prose", lineage_root=tmp_path)
+        _desc, passed, detail = results[0]
+        assert passed is False
+        assert "report bundle" in detail
