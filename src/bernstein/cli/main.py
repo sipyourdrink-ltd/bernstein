@@ -1310,6 +1310,11 @@ from bernstein.cli.commands.artifacts_cmd import artifacts_group  # noqa: E402
 
 cli.add_command(artifacts_group, "artifacts")
 
+# Verify a non-coding task's signed, content-addressed artifact (#2608).
+from bernstein.cli.commands.artifact_cmd import artifact_group  # noqa: E402
+
+cli.add_command(artifact_group, "artifact")
+
 # In-process verification gate driven by worker hooks: blocks a failing
 # completion or an out-of-scope write in-session, sealing gate receipts (#2360).
 from bernstein.cli.commands.hook_gate_cmd import hook_gate_group  # noqa: E402

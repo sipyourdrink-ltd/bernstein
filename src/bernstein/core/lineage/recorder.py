@@ -94,6 +94,7 @@ class LineageRecorder:
         artefact_kind: str = "file",
         trust_class: str | None = None,
         extra_parents: list[str] | None = None,
+        ts_ns: int | None = None,
     ) -> str:
         """Record a single artefact write. Returns the entry hash.
 
@@ -114,6 +115,12 @@ class LineageRecorder:
                 top of the artefact's own tip. This is the cross-artefact
                 lineage edge that anchors a derived artefact (or a quarantine
                 extraction) back to the tainted source it was produced from.
+            ts_ns: Optional deterministic entry timestamp (nanoseconds). When
+                ``None`` (the default, and every existing caller) the wall
+                clock is stamped, preserving byte-identical behaviour. Artifact
+                -mode callers pass a logical timestamp so two operators with
+                equal inputs produce a byte-identical signed entry - the
+                deterministic projection of ``(task, inputs)`` (issue #2608).
 
         Raises:
             ValueError: When ``artefact_path`` is absolute or contains a
@@ -138,7 +145,7 @@ class LineageRecorder:
                 if ph not in parent_hashes:
                     parent_hashes.append(ph)
 
-        ts_ns = time.time_ns()
+        entry_ts_ns = time.time_ns() if ts_ns is None else int(ts_ns)
 
         # Build the entry with an empty ``operator_hmac`` field, compute the
         # canonical HMAC over its JCS bytes, then materialise the final
@@ -157,7 +164,7 @@ class LineageRecorder:
             agent_card_kid=agent_card.kid,
             tool_call_id=tool_call_id,
             span_id=span_id,
-            ts_ns=ts_ns,
+            ts_ns=entry_ts_ns,
             operator_hmac="",
             trust_class=trust_class,
         )
@@ -173,7 +180,7 @@ class LineageRecorder:
             agent_card_kid=agent_card.kid,
             tool_call_id=tool_call_id,
             span_id=span_id,
-            ts_ns=ts_ns,
+            ts_ns=entry_ts_ns,
             operator_hmac=operator_hmac,
             trust_class=trust_class,
         )
