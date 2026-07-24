@@ -46,14 +46,21 @@ bernstein events verify window.json
 `verify` needs no signing key. It checks the window's internal `prev_hmac`
 linkage against the embedded fence-posts:
 
-- completeness: the first event's `hmac` equals the lower fence-post and the last
-  event's `hmac` equals the upper fence-post, so no event was dropped from either
-  end;
-- order: every event's `prev_hmac` equals its predecessor's `hmac`.
+- completeness: the last event's `hmac` equals the upper fence-post, and either
+  the first event's `hmac` equals the lower fence-post (a bounded slice) or the
+  window is genesis-anchored - its lower fence-post is `null` and the first
+  event's `prev_hmac` must equal the genesis HMAC. A genesis-anchored window
+  therefore cannot silently drop its leading event;
+- order: every event's `prev_hmac` equals its predecessor's `hmac`;
+- identity: no two events share an `hmac`, and no event links to itself
+  (`hmac == prev_hmac`), so a forged cycle cannot pass as a contiguous chain.
 
 Deleting, inserting, or reordering any single event inside the window breaks the
-linkage or moves a fence-post and fails the check. "What happened, in what order"
-settles by chain position, not by timestamps scattered across five files.
+linkage or moves a fence-post and fails the check. The CLI additionally rejects a
+window file that is not a well-formed envelope (missing `from_hmac`/`to_hmac`, or
+whose `events` is not a list of objects), so dropping a fence-post to disable a
+bound is caught at the boundary. "What happened, in what order" settles by chain
+position, not by timestamps scattered across five files.
 
 ## Composable trigger semantics
 
@@ -65,6 +72,9 @@ re-derived from a chain slice alone.
   Example: three gate failures on one adapter version within ten positions.
 - **Absence**: after event A, expect event B within N positions, else a violation
   whose bounds are two named chain positions. This is the negative-proof input.
+  A violation is only asserted once the deadline is *observed* (the slice reaches
+  `A.position + N`); an anchor whose deadline the slice has not yet reached is
+  deferred, so the negative proof is never asserted on an incomplete window.
 - **Sequence**: an ordered pair keyed on lineage descent, not wall-clock order.
   The later event fires only when it provably descends from the earlier one
   through the `related_resource_ids` edges. Two unrelated events in the right
@@ -102,6 +112,11 @@ canonical event fields. The discipline is content-addressing before rendering:
 the raw payload bytes are hashed into the chain first, so a render is always
 reproducible from the recorded bytes, and a render failure emits a diagnostic
 feed event carrying only the payload digest, never the payload.
+
+The `resource_path` must resolve to a non-empty scalar (a string or integer,
+never a bool, object, or array). A non-scalar fails the render with
+`invalid_resource` rather than serialising the payload subtree into
+`resource_id`, so a nested payload can never leak into the feed.
 
 ## Compatibility
 
