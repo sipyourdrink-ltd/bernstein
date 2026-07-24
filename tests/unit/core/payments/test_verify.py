@@ -177,16 +177,30 @@ class TestReplayPrevention:
 
         identity = load_operator_identity(tmp_path / ".bernstein" / "keys")
         mandate = SpendMandate.issue(
-            private_key_pem=identity.private_pem, public_key_pem=identity.public_pem, kid=identity.kid,
-            presence_mode=PresenceMode.DELEGATED, max_amount="100.00", currency="USD",
-            recipient="vendor:acme", not_after=2_000_000_000, issued_at=1_800_000_000, nonce="n0",
+            private_key_pem=identity.private_pem,
+            public_key_pem=identity.public_pem,
+            kid=identity.kid,
+            presence_mode=PresenceMode.DELEGATED,
+            max_amount="100.00",
+            currency="USD",
+            recipient="vendor:acme",
+            not_after=2_000_000_000,
+            issued_at=1_800_000_000,
+            nonce="n0",
         )
         from bernstein.core.payments.receipt import TransactionReceipt
 
         forged = TransactionReceipt(
-            v=1, mandate_hash=mandate.mandate_hash(), amount_nanos="20000000000", currency="USD",
-            recipient="vendor:acme", category="data", presence_mode="delegated", decision="authorized",
-            now=1_900_000_000, nonce="forged",
+            v=1,
+            mandate_hash=mandate.mandate_hash(),
+            amount_nanos="20000000000",
+            currency="USD",
+            recipient="vendor:acme",
+            category="data",
+            presence_mode="delegated",
+            decision="authorized",
+            now=1_900_000_000,
+            nonce="forged",
         )
         result = verify_receipt(workdir=tmp_path, hmac_key=_KEY, receipt=forged, mandate=mandate)
         assert not result.ok
@@ -201,8 +215,12 @@ class TestReplayPrevention:
         identity = load_operator_identity(tmp_path / ".bernstein" / "keys")
         chain = AuditChainStore(tmp_path / ".sdd" / "audit", key=_KEY)
         req = TransactionRequest.build(
-            amount="50.00", currency="USD", recipient="vendor:acme", category="data",
-            presence_mode=PresenceMode.DELEGATED, now=1_900_000_000,
+            amount="50.00",
+            currency="USD",
+            recipient="vendor:acme",
+            category="data",
+            presence_mode=PresenceMode.DELEGATED,
+            now=1_900_000_000,
         )
         refused = authorize(
             request=req, mandate=mandate, workdir=tmp_path, hmac_key=_KEY, identity=identity, chain=chain, nonce="r1"
