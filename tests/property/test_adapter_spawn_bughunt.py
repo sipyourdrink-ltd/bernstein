@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -112,6 +113,8 @@ def _spawn_with_mock(
     """
     popen_mock = _make_popen_mock()
     mod = type(adapter).__module__
+    if not hasattr(sys.modules[mod], "subprocess"):
+        pytest.skip(f"{mod} does not launch a subprocess")
     sdd = workdir / ".sdd" / "runtime"
     sdd.mkdir(parents=True, exist_ok=True)
     (workdir / ".claude").mkdir(parents=True, exist_ok=True)
@@ -262,6 +265,8 @@ def test_spawn_passes_env_and_cwd_no_shell(
     """
     popen_mock = _make_popen_mock()
     mod = type(adapter).__module__
+    if not hasattr(sys.modules[mod], "subprocess"):
+        pytest.skip(f"{mod} does not launch a subprocess")
     (tmp_path / ".sdd" / "runtime").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".claude").mkdir(parents=True, exist_ok=True)
     with (

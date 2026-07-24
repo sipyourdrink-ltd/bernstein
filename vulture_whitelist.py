@@ -137,3 +137,7 @@ capture_output  # noqa
 # TYPE_CHECKING-only import used inside cast("...") string literal,
 # which vulture's AST walker cannot resolve.
 JsonSchemaValidationError  # noqa
+
+# Refusal-stub keyword parameter kept for public API surface stability
+# (codex_cloudflare.execute refuses; callers may still pass the kwarg).
+timeout_minutes  # noqa

@@ -67,13 +67,16 @@ def _discover_registered_names() -> list[str]:
       are set; the contract test mocks Popen but can't satisfy the runtime
       config requirement.  Covered by ``test_adapter_clm.py`` and the
       integration suite under ``tests/integration/adapters/``.
+    - ``cloudflare`` - spawn() refuses with RuntimeError (no worker-trigger
+      path exists; see test_cloudflare_agents_adapter.py which covers the
+      refusal contract), so the Popen-mock contract does not apply.
     - ``q_dev`` - spawn() raises SpawnError unless a ``q login`` cache
       exists on disk; CI runners don't have one and the contract test
       mocks Popen but can't fake an authenticated AWS Builder ID
       session.  Covered by ``test_adapter_q_dev.py`` which monkeypatches
       ``Path.home`` to stand up a fake cache directory.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev"})
+    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "cloudflare"})
 
 
 def _make_factory(name: str) -> Any:
