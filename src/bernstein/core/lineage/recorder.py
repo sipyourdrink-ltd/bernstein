@@ -64,6 +64,132 @@ def _is_unsafe_path(artefact_path: str) -> str | None:
     return None
 
 
+def seal_write(
+    store: LineageStore,
+    operator_hmac_key: bytes,
+    *,
+    artefact_path: str,
+    new_content: bytes,
+    agent_id: str,
+    agent_card: AgentCard,
+    private_key_pem: str,
+    tool_call_id: str,
+    span_id: str,
+    artefact_kind: str = "file",
+    trust_class: str | None = None,
+    extra_parents: list[str] | None = None,
+    ts_ns: int | None = None,
+) -> str:
+    """Seal a single signed lineage write into ``store``. Returns the entry hash.
+
+    This is the sealing primitive shared by :class:`LineageRecorder` and by the
+    signed-receipt subsystems (datasource query receipts, payment transaction
+    receipts) that anchor their receipts on a v1 :class:`LineageStore` entry -
+    an Ed25519 detached-JWS + operator-HMAC envelope that :func:`verify_detached`
+    and :func:`compute_operator_hmac` re-check offline. Callers use this function
+    instead of instantiating the legacy writer object (issue #2292 AC4 keeps v1
+    writer *construction* out of ``src/``; the underlying signed-append operation
+    stays available here).
+
+    Args mirror :meth:`LineageRecorder.record_write` - see that method for the
+    full field semantics.
+
+    Raises:
+        ValueError: When ``artefact_path`` is absolute or contains a
+            path-traversal segment.
+    """
+    unsafe = _is_unsafe_path(artefact_path)
+    if unsafe is not None:
+        raise ValueError(unsafe)
+
+    content_hash = "sha256:" + hashlib.sha256(new_content).hexdigest()
+    tips = store.tip_set(artefact_path)
+    # Only ever chain to the single current tip. Forks are surfaced upstream;
+    # merges are emitted by the Steward via an explicit multi-parent
+    # ``record_merge`` call (out of scope for v1 core).
+    parent_hashes: list[str] = list(tips.get("open", []))[:1]
+    # Cross-artefact edges (provenance/quarantine lineage) are appended after
+    # the tip parent, preserving order and dropping duplicates so the same
+    # source is never named twice.
+    if extra_parents:
+        for ph in extra_parents:
+            if ph not in parent_hashes:
+                parent_hashes.append(ph)
+
+    entry_ts_ns = time.time_ns() if ts_ns is None else int(ts_ns)
+
+    # Build the entry with an empty ``operator_hmac`` field, compute the
+    # canonical HMAC over its JCS bytes, then materialise the final immutable
+    # entry with the digest. The HMAC binds every field of the entry so a
+    # substitution attack post-signing is caught by both the JWS and the HMAC
+    # envelope independently. The shared :func:`compute_operator_hmac` helper is
+    # the single source of truth used by both recorder and CI gate - see
+    # ADR-009 §5.2.
+    unsigned_entry = LineageEntry(
+        v=1,
+        artefact_path=artefact_path,
+        artefact_kind=artefact_kind,
+        content_hash=content_hash,
+        parent_hashes=parent_hashes,
+        agent_id=agent_id,
+        agent_card_kid=agent_card.kid,
+        tool_call_id=tool_call_id,
+        span_id=span_id,
+        ts_ns=entry_ts_ns,
+        operator_hmac="",
+        trust_class=trust_class,
+    )
+    operator_hmac = compute_operator_hmac(unsigned_entry, operator_hmac_key)
+
+    entry = LineageEntry(
+        v=1,
+        artefact_path=artefact_path,
+        artefact_kind=artefact_kind,
+        content_hash=content_hash,
+        parent_hashes=parent_hashes,
+        agent_id=agent_id,
+        agent_card_kid=agent_card.kid,
+        tool_call_id=tool_call_id,
+        span_id=span_id,
+        ts_ns=entry_ts_ns,
+        operator_hmac=operator_hmac,
+        trust_class=trust_class,
+    )
+
+    # Sign the JCS-canonical entry bytes. The auditor verifies the same bytes
+    # via :func:`bernstein.core.lineage.identity.verify_detached` - see
+    # ADR-009 §5.2.
+    canonical = canonicalise(entry)
+    jws = sign_detached(canonical, private_key_pem, kid=agent_card.kid)
+
+    h = store.append(entry, jws=jws)
+
+    # Best-effort OTel emission. ``start_span`` is a no-op when telemetry has
+    # not been initialised, so this is safe in tests.
+    try:
+        from bernstein.core.observability.telemetry import start_span
+
+        with start_span(
+            "lineage.record_write",
+            attributes={
+                "lineage.artefact_path": artefact_path,
+                "lineage.entry_hash": h,
+                "lineage.agent_id": agent_id,
+                "lineage.tool_call_id": tool_call_id,
+                "lineage.parent_hashes_count": len(parent_hashes),
+            },
+        ):
+            pass
+    except Exception as exc:  # pragma: no cover - telemetry must never break recording
+        logger.debug("lineage OTel span emission failed: %s", exc)
+
+    # Sanity check: the entry hash returned by the store must equal what we'd
+    # recompute from the canonical bytes.
+    assert h == entry_hash(entry), "store.append entry_hash mismatch"
+
+    return h
+
+
 class LineageRecorder:
     """Build, sign, and persist lineage entries for artefact writes.
 
@@ -126,97 +252,21 @@ class LineageRecorder:
             ValueError: When ``artefact_path`` is absolute or contains a
                 path-traversal segment.
         """
-        unsafe = _is_unsafe_path(artefact_path)
-        if unsafe is not None:
-            raise ValueError(unsafe)
-
-        content_hash = "sha256:" + hashlib.sha256(new_content).hexdigest()
-        tips = self.store.tip_set(artefact_path)
-        # Recorder only ever chains to the single current tip. Forks are
-        # surfaced upstream; merges are emitted by the Steward via an
-        # explicit multi-parent ``record_merge`` call (out of scope for v1
-        # core).
-        parent_hashes: list[str] = list(tips.get("open", []))[:1]
-        # Cross-artefact edges (provenance/quarantine lineage) are appended
-        # after the tip parent, preserving order and dropping duplicates so
-        # the same source is never named twice.
-        if extra_parents:
-            for ph in extra_parents:
-                if ph not in parent_hashes:
-                    parent_hashes.append(ph)
-
-        entry_ts_ns = time.time_ns() if ts_ns is None else int(ts_ns)
-
-        # Build the entry with an empty ``operator_hmac`` field, compute the
-        # canonical HMAC over its JCS bytes, then materialise the final
-        # immutable entry with the digest. The HMAC binds every field of the
-        # entry so a substitution attack post-signing is caught by both the
-        # JWS and the HMAC envelope independently. The shared
-        # :func:`compute_operator_hmac` helper is the single source of truth
-        # used by both recorder and CI gate - see ADR-009 §5.2.
-        unsigned_entry = LineageEntry(
-            v=1,
+        return seal_write(
+            self.store,
+            self._hmac_key,
             artefact_path=artefact_path,
-            artefact_kind=artefact_kind,
-            content_hash=content_hash,
-            parent_hashes=parent_hashes,
+            new_content=new_content,
             agent_id=agent_id,
-            agent_card_kid=agent_card.kid,
+            agent_card=agent_card,
+            private_key_pem=private_key_pem,
             tool_call_id=tool_call_id,
             span_id=span_id,
-            ts_ns=entry_ts_ns,
-            operator_hmac="",
-            trust_class=trust_class,
-        )
-        operator_hmac = compute_operator_hmac(unsigned_entry, self._hmac_key)
-
-        entry = LineageEntry(
-            v=1,
-            artefact_path=artefact_path,
             artefact_kind=artefact_kind,
-            content_hash=content_hash,
-            parent_hashes=parent_hashes,
-            agent_id=agent_id,
-            agent_card_kid=agent_card.kid,
-            tool_call_id=tool_call_id,
-            span_id=span_id,
-            ts_ns=entry_ts_ns,
-            operator_hmac=operator_hmac,
             trust_class=trust_class,
+            extra_parents=extra_parents,
+            ts_ns=ts_ns,
         )
 
-        # Sign the JCS-canonical entry bytes. The auditor verifies the same
-        # bytes via :func:`bernstein.core.lineage.identity.verify_detached`
-        # - see ADR-009 §5.2.
-        canonical = canonicalise(entry)
-        jws = sign_detached(canonical, private_key_pem, kid=agent_card.kid)
 
-        h = self.store.append(entry, jws=jws)
-
-        # Best-effort OTel emission. ``start_span`` is a no-op when telemetry
-        # has not been initialised, so this is safe in tests.
-        try:
-            from bernstein.core.observability.telemetry import start_span
-
-            with start_span(
-                "lineage.record_write",
-                attributes={
-                    "lineage.artefact_path": artefact_path,
-                    "lineage.entry_hash": h,
-                    "lineage.agent_id": agent_id,
-                    "lineage.tool_call_id": tool_call_id,
-                    "lineage.parent_hashes_count": len(parent_hashes),
-                },
-            ):
-                pass
-        except Exception as exc:  # pragma: no cover - telemetry must never break recording
-            logger.debug("lineage OTel span emission failed: %s", exc)
-
-        # Sanity check: the entry hash returned by the store must equal what
-        # we'd recompute from the canonical bytes.
-        assert h == entry_hash(entry), "store.append entry_hash mismatch"
-
-        return h
-
-
-__all__ = ["LineageRecorder"]
+__all__ = ["LineageRecorder", "seal_write"]

@@ -42,7 +42,7 @@ from bernstein.core.datasources.errors import DataSourceError, ReceiptNotFound
 from bernstein.core.datasources.result import NormalizedResult, canonical_bytes, content_hash
 from bernstein.core.lineage.entry import canonicalise, compute_operator_hmac, entry_hash
 from bernstein.core.lineage.identity import AgentCard, verify_detached
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.recorder import seal_write
 from bernstein.core.lineage.store import LineageStore
 
 if TYPE_CHECKING:
@@ -284,13 +284,14 @@ class QueryReceiptStore:
         binding = compute_binding(core)
 
         artefact_path = _artefact_path(connection.id, qhash, phash)
-        recorder = LineageRecorder(store=self._store, operator_hmac_key=self._operator_hmac_key)
         # ``span_id`` is deliberately repurposed here: instead of an OTel span
         # context, it carries the receipt-core ``binding`` digest so the binding
-        # is signed and HMAC'd along with the rest of the entry. The recorder's
-        # OTel path does not consume ``span_id`` (it neither opens a span with it
-        # nor emits it), so the repurposing has no telemetry side effect.
-        lineage_entry_hash = recorder.record_write(
+        # is signed and HMAC'd along with the rest of the entry. The seal path
+        # does not consume ``span_id`` for telemetry (it neither opens a span
+        # with it nor emits it), so the repurposing has no telemetry side effect.
+        lineage_entry_hash = seal_write(
+            self._store,
+            self._operator_hmac_key,
             artefact_path=artefact_path,
             new_content=canonical,
             agent_id=self._agent_id,

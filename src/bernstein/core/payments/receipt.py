@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.lineage.entry import LineageEntry, canonicalise, compute_operator_hmac, entry_hash
 from bernstein.core.lineage.identity import AgentCard, verify_detached
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.recorder import seal_write
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.audit_chain import (
@@ -244,8 +244,9 @@ def anchor_receipt(
     body_bytes = receipt.body_bytes()
 
     store = LineageStore(workdir / ".sdd" / "lineage")
-    recorder = LineageRecorder(store, operator_hmac_key=hmac_key)
-    lineage_entry_hash = recorder.record_write(
+    lineage_entry_hash = seal_write(
+        store,
+        hmac_key,
         artefact_path=receipt_artefact_path(receipt_hash),
         new_content=body_bytes,
         agent_id=identity.agent_card.agent_id,
