@@ -165,6 +165,7 @@ nav:
       - Remote quickstart (Codespaces): getting-started/remote.md
       - First run: getting-started/first-run.md
       - Tutorial: getting-started/quickstart-tutorial.md
+      - Zero-config demo: getting-started/quickstart-demo.md
   - Guides:
       - guides/index.md
       - Web GUI:
@@ -191,6 +192,9 @@ nav:
           - Stream signals: adapters/stream_signals.md
           - Strict output schemas: adapters/schemas.md
           - Conformance canary: adapters/conformance-canary.md
+          - Capability profiles: adapters/capability_profiles.md
+          - Browser / computer-use adapter: adapters/computer_use.md
+          - Adapter smoke test: adapters/test-adapter.md
       - Sandboxes:
           - Overview: architecture/sandbox.md
           - Backend selector: concepts/sandbox-selector.md
@@ -237,6 +241,9 @@ nav:
           - Server injection: integrations/mcp-server-injection.md
           - Tool-search lazy loading: protocols/tool-search.md
           - cocoindex-code catalog: integrations/cocoindex-code.md
+          - Tool-call input validation: mcp/input-validation.md
+          - Gateway proxy: operations/mcp-gateway.md
+          - x402 settlement: operations/x402-settlement.md
       - Hooks, plugins & skills:
           - Hook system: integrations/hook-system.md
           - Hook prefilter: operations/hooks.md
@@ -282,6 +289,9 @@ nav:
           - Fleet directory registry: fleet/directory-registry.md
           - Air-gap install: installation/air-gap.md
           - Migrations: operations/migrations.md
+          - Self-update: operations/self-update.md
+          - Shell completions: operations/shell-completions.md
+          - Pilot-to-production graduation: operations/graduation.md
           - Enterprise evaluation: ENTERPRISE.md
       - Run & supervise:
           - Commands overview: operations/commands.md
@@ -307,6 +317,18 @@ nav:
           - Webhook node: operations/webhook-node.md
           - Preview server: operations/preview.md
           - Voice control: operations/voice-control.md
+          - Session checkpoint: operations/checkpoint.md
+          - Session wrap-up: operations/wrap-up.md
+          - Session fast resume: operations/session-fast-resume.md
+          - File watch: operations/watch.md
+          - Detached run service: operations/run-service.md
+          - Tournament runs: operations/tournament-runs.md
+          - Fleet steering: operations/fleet-steering.md
+          - Named resource pools: operations/named-resource-pools.md
+          - Trigger sources: operations/trigger-sources.md
+          - Slack webhooks: operations/slack-webhooks.md
+          - TUI keybindings: operations/tui-keybindings.md
+          - Worker process identity: operations/worker-process-identity.md
       - Reliability:
           - Troubleshooting: operations/TROUBLESHOOTING.md
           - Checkpointed retries: operations/checkpointed-retries.md
@@ -322,6 +344,9 @@ nav:
           - Disaster recovery: operations/disaster-recovery.md
           - Chaos engineering: operations/chaos-engineering.md
           - Runbooks: operations/runbooks.md
+          - Agent edit-loop detection: operations/agent-loop-detection.md
+          - In-process verification gates: operations/hook-gate.md
+          - Per-goal SLA contracts: operations/sla.md
       - Cost & performance:
           - Cost optimization: operations/cost-optimization.md
           - Cost-aware scheduling: operations/cost-aware-scheduling.md
@@ -333,6 +358,11 @@ nav:
           - Per-profile cost attribution: operations/profile-cost-attribution.md
           - Profile A/B harness: operations/profile-ab-harness.md
           - Template compression: operations/template-compression.md
+          - Cost envelopes: operations/cost-envelopes.md
+          - Cost anomaly detection: operations/cost-anomaly-detection.md
+          - Token growth monitor: operations/token-growth-monitor.md
+          - Payment mandates: operations/payment-mandates.md
+          - Showback canonicalization: cost/showback-canonical.md
       - Observability:
           - Overview: operations/observability-overview.md
           - Instrumentation: operations/INSTRUMENTATION.md
@@ -352,6 +382,12 @@ nav:
           - Unified doctor: observability/unified-doctor.md
           - Telemetry share: observability/telemetry-share.md
           - Cluster observability: observability/cluster.md
+          - Per-agent token progress: observability/token-progress.md
+          - Cumulative progress: observability/cumulative-progress.md
+          - OTel GenAI span projection: observability/otel-span-projection.md
+          - Journal-anchored OTLP bridge: sdd/otel-journal-bridge.md
+          - Session analytics: operations/session-analytics.md
+          - Debug bundle: operations/debug-bundle.md
       - Merge & review automation:
           - Merge queue: operations/merge-queue.md
           - Merge gate: operations/merge-gate.md
@@ -366,6 +402,12 @@ nav:
           - CI: operations/ci.md
           - CI topology: operations/ci-topology.md
           - Post-CI dispatcher: operations/post-ci-dispatcher.md
+          - Review pipeline DSL: operations/review-pipeline.md
+          - Review and autofix receipts: operations/review-receipts.md
+          - Commit attribution stats: operations/commit-attribution.md
+          - Backlog sync: operations/backlog-sync.md
+          - Plan archival: operations/plan-archival.md
+          - on_fail recovery receipts: workflows/on-fail-recovery-receipts.md
       - Evaluation & calibration:
           - Incident-to-eval synthesis: eval/incident-synthesis.md
           - A/B runner: eval/ab-runner.md
@@ -373,6 +415,7 @@ nav:
           - Pentest scenario: eval/security_pentest_scenario.md
           - Calibration: operations/calibration.md
           - Criterion profiles: operations/criterion-profiles.md
+          - Golden benchmark harness: eval/golden-harness.md
       - Security & identity:
           - Security & identity stack: operations/security-and-identity.md
           - Security operations: operations/security.md
@@ -391,6 +434,8 @@ nav:
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
           - Acknowledgments: security/security-acknowledgments.md
+          - Log redaction: security/log-redaction.md
+          - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:
           - Compliance overview: operations/compliance.md
           - SOC 2 audit: security/AUDIT.md
@@ -411,12 +456,20 @@ nav:
           - A2A message receipts: operations/a2a-message-receipts.md
           - A2A JSON-RPC server surface: operations/a2a-server.md
           - Datasources & query receipts: operations/datasources.md
+          - Verifiable audit receipts: security/audit-receipt.md
+          - Gate adjudication records: operations/gate-adjudication.md
+          - Agent run manifest: operations/run-manifest.md
+          - Verification evidence bundles: operations/evidence-bundles.md
+          - Delegation chain verification: operations/delegation-verify.md
+          - Skill usage provenance: operations/skill-provenance.md
+          - C2PA content credentials: operations/content-credentials.md
   - Reference:
       - reference/index.md
       - CLI:
           - CLI reference: reference/cli-reference.md
           - Task lifecycle CLI: reference/cli/task-lifecycle.md
           - Replay CLI: reference/cli/replay.md
+          - Verify CLI: reference/cli/verify.md
       - Configuration & schemas:
           - Configuration: operations/CONFIG.md
           - Task format: operations/task_format.md
@@ -426,6 +479,8 @@ nav:
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
           - Adapter capability contract: adapters/capability_contract.md
+          - Global config CLI: operations/global-config.md
+          - Workflow manifests: operations/workflow-manifests.md
       - APIs & protocols:
           - REST API: reference/openapi-reference.md
           - API server operations: operations/api.md
@@ -448,6 +503,14 @@ nav:
           - Glossary: reference/GLOSSARY.md
       - Release notes:
           - Changelog: CHANGELOG.md
+          - v3.9.0: release-notes/v3.9.0.md
+          - v3.8.4: release-notes/v3.8.4.md
+          - v3.8.3: release-notes/v3.8.3.md
+          - v3.8.2: release-notes/v3.8.2.md
+          - v3.8.1: release-notes/v3.8.1.md
+          - v3.8.0: release-notes/v3.8.0.md
+          - v3.7.1: release-notes/v3.7.1.md
+          - v3.7.0: release-notes/v3.7.0.md
           - v3.6.0: release-notes/v3.6.0.md
           - v3.5.0: release-notes/v3.5.0.md
           - v3.4.4: release-notes/v3.4.4.md
@@ -501,6 +564,13 @@ nav:
           - Tiered context compaction: architecture/memory_tiers.md
           - Skill packs: architecture/skills.md
           - Orchestration approaches: architecture/orchestration-approaches.md
+          - Fast-path execution: architecture/fast-path-execution.md
+          - Batch routing: architecture/batch-routing.md
+          - Deadlock detection: architecture/deadlock-detection.md
+          - Context degradation detector: architecture/context-degradation-detector.md
+          - Protocol version negotiation: architecture/protocol-negotiation.md
+          - Task-payload schema registry: architecture/schema-registry.md
+          - Native subagent delegation: architecture/subagent-delegation.md
       - Concepts:
           - AST-aware reviewer chunks: concepts/ast-aware-chunking.md
           - Fingerprint memoization: concepts/fingerprint-memoization.md
@@ -520,6 +590,8 @@ nav:
           - Prompt-to-repo scaffold: concepts/scaffold.md
           - Team-hub conventions: concepts/team-hub.md
           - Orchestrator hardening: concepts/orchestrator-hardening.md
+          - Agent lesson persistence: concepts/lesson-persistence.md
+          - Semantic caching: concepts/semantic-caching.md
       - Orchestration internals:
           - Task DAG: orchestration/task-dag.md
           - Research activities: orchestration/research-activity.md
@@ -532,6 +604,8 @@ nav:
           - Consensus scoring: quality/consensus-scoring.md
           - Empirical confidence: quality/empirical-confidence.md
           - Spec quality gate: planning/spec-quality-gate.md
+          - Multi-cell orchestration: orchestration/multi-cell.md
+          - Bulletin board: orchestration/bulletin-board.md
       - Decisions (ADRs):
           - Agent lifecycle: decisions/001-agent-lifecycle.md
           - Self-evolution: decisions/003-self-evolution.md
@@ -541,11 +615,13 @@ nav:
           - Pluggy plugin system: decisions/007-pluggy-plugin-system.md
           - Click for CLI: decisions/008-click-for-cli.md
           - Lineage v1: decisions/009-lineage-v1.md
+          - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
   - Contribute:
       - contributing/index.md
       - Code review process: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md
+      - Git hooks: contributing/git-hooks.md
       - Adapter contracts: contributing/adapter-contracts.md
       - Writing adapters: adapters/ADAPTER_GUIDE.md
       - Flake handling: contributing/flake-handling.md
@@ -553,6 +629,8 @@ nav:
       - Extended static analysis: ci/extended-static-analysis.md
       - Release process: operations/release.md
       - Docs drift playbook: playbooks/docs-drift.md
+      - Docs update sweep: playbooks/docs-update-sweep.md
+      - Docs source-of-truth notes: llm-citation-surface.md
       - Trend scan automation: devops/trend-scan-automation.md
 docs_dir: docs
 strict: false
@@ -562,7 +640,9 @@ strict: false
 # site and out of strict link validation.
 # Setting exclude_docs replaces the MkDocs defaults, so restate them
 # (dotfiles, /templates/) alongside the _internal guard.
+# /assets/*.md holds render fragments (ASCII banner), not pages.
 exclude_docs: |
   .*
   /templates/
   _internal/
+  /assets/*.md

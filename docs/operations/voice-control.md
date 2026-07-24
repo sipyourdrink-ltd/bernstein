@@ -5,7 +5,7 @@ from your microphone, transcribe it locally with `faster-whisper`,
 match the result against a small grammar plus a user-defined alias
 file, and either print or run the resulting Bernstein CLI command.
 
-`reference/FEATURE_MATRIX.md:185` flags this as **experimental**. The
+The [feature matrix](../reference/FEATURE_MATRIX.md) flags this as **experimental**. The
 parser only knows a handful of phrases, the audio capture loop is a
 single thread, and there is no wake-word - once started, every
 utterance above the silence threshold is transcribed and matched. Plan
@@ -214,5 +214,5 @@ larger refactor.
   `_capture_and_transcribe`.
 - `cli/commands/voice_cmd.py:378-429` - main `_listen_loop` with
   `--dry-run` and subprocess dispatch.
-- `docs/reference/FEATURE_MATRIX.md:185` - flags `bernstein listen` as
+- `docs/reference/FEATURE_MATRIX.md` - flags `bernstein listen` as
   Voice commands (experimental).

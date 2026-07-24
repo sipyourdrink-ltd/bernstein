@@ -144,7 +144,7 @@ Adapters that produce planning artefacts emit two signals:
 * `BERNSTEIN:PLAN_READY {"path": ".sdd/plans/<slug>.md"}` once the
   markdown has been written to disk.
 
-Downstream phases (`bernstein plan execute`, subagent dispatch, etc.)
+Downstream phases (`bernstein run <plan.yaml>`, subagent dispatch, etc.)
 watch for `PLAN_READY` and pick up the file from `.sdd/`.
 
 ## Out of scope

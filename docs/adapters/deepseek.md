@@ -104,14 +104,24 @@ For the full Article-12 evidence story, combine it with
 
 ```python
 from bernstein.core.security.data_residency import (
-    DataResidencyController, EU_WEST, EU_CENTRAL,
+    DataResidencyController,
+    Region,
+    ResidencyPolicy,
 )
 
-residency = DataResidencyController(
-    allowed_regions={EU_WEST, EU_CENTRAL},
-    enforce_strict=True,
+residency = DataResidencyController(node_region=Region.EU_WEST)
+residency.set_policy(
+    ResidencyPolicy(
+        tenant_id="acme",
+        allowed_regions=frozenset({Region.EU_WEST, Region.EU_CENTRAL}),
+        primary_region=Region.EU_WEST,
+        enforce_strict=True,
+    )
 )
 ```
+
+Regions are members of the `Region` enum, and the allowed set is
+per-tenant policy state rather than a controller constructor argument.
 
 The two layers are orthogonal: the adapter guard pins the *endpoint*,
 the controller pins the *region the workload may reach*.

@@ -34,7 +34,7 @@ and the receipt stops verifying; it does not merely lose a log line.
 
 All three sign through the same Ed25519 KMS adapter that already signs lineage
 records and the multi-tenant `head_signature` (see
-[`lineage_kms.py`](../../src/bernstein/core/security/lineage_kms.py)) - no new
+[`lineage_kms.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/security/lineage_kms.py)) - no new
 key material or rotation cadence. The verifying key is embedded as an RFC 8037
 JWK (`signing.public_key_jwk`) so the receipt is self-contained; auditors may
 pin it out-of-band for additional trust.
@@ -100,7 +100,7 @@ the standard envelope back to the intact chain.
 ## Schema
 
 The receipt conforms to
-[`schemas/audit-receipt-v1.json`](../../schemas/audit-receipt-v1.json).
+[`schemas/audit-receipt-v1.json`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/schemas/audit-receipt-v1.json).
 
 ## Threat model
 

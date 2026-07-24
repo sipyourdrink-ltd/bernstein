@@ -1,6 +1,6 @@
 # Coordinated Disclosure
 
-Full details of the Bernstein vulnerability disclosure process and researcher sandbox. For the policy summary, severity classification, and recognition, see [`SECURITY.md`](../../SECURITY.md).
+Full details of the Bernstein vulnerability disclosure process and researcher sandbox. For the policy summary, severity classification, and recognition, see [`SECURITY.md`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md).
 
 ## Program overview
 

@@ -302,10 +302,15 @@ The orchestrator is a Python scheduler, not an LLM. Scheduling decisions are det
 `bernstein cloud` runs agents on Cloudflare Workers with R2-backed workspace sync. See [docs/cloudflare/](docs/cloudflare/).
 
 ```bash
-bernstein cloud login      # authenticate with Bernstein Cloud
-bernstein cloud deploy     # push agent workers
-bernstein cloud run plan.yaml  # execute a plan on Cloudflare
+bernstein cloud login                       # authenticate with Bernstein Cloud
+bernstein cloud init                        # scaffold a deployable worker
+bernstein cloud deploy                      # print the wrangler deploy command
+bernstein cloud run "add retry to the API"  # submit a free-text goal
 ```
+
+`cloud run` takes a free-text goal, not a plan file. `cloud deploy`
+prints the `npx wrangler deploy` invocation for the scaffolded worker;
+it does not push anything itself.
 
 ## capabilities
 
