@@ -61,8 +61,7 @@ def cloud_login(api_key: str | None, url: str) -> None:
     _save_token(api_key, url)
     click.echo("Authenticated with Bernstein Cloud.")
     click.echo(
-        "Note: the hosted cloud service (api.bernstein.run) is experimental and "
-        "may be unavailable.",
+        "Note: the hosted cloud service (api.bernstein.run) is experimental and may be unavailable.",
         err=True,
     )
 

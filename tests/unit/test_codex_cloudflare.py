@@ -120,9 +120,7 @@ class TestCodexCloudflareAdapterName:
 
 
 def _adapter() -> CodexCloudflareAdapter:
-    return CodexCloudflareAdapter(
-        CodexSandboxConfig(cloudflare_account_id="a", cloudflare_api_token="t")
-    )
+    return CodexCloudflareAdapter(CodexSandboxConfig(cloudflare_account_id="a", cloudflare_api_token="t"))
 
 
 class TestRefusal:
