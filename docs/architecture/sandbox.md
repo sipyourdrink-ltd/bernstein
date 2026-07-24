@@ -95,7 +95,7 @@ work.
 | `docker`   | core     | `FILE_RW`, `EXEC`, `NETWORK`                     | Launches a container per session via the `docker` Python SDK. Needs `pip install bernstein[docker]`. |
 | `e2b`      | `[e2b]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`     | Runs in E2B Firecracker microVMs. Needs `pip install bernstein[e2b]` plus `E2B_API_KEY`. |
 | `modal`    | `[modal]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`, `GPU` | Serverless containers with optional GPU. Needs `pip install bernstein[modal]` plus `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. |
-| `microvm`  | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | Firecracker microVM per session — isolates kernel / network / PID namespace at a hardware boundary. Snapshots are **content-addressed** (the snapshot id *is* the SHA-256 of the image bytes in CAS). Opt-in: not a free backend, so the heuristic path never auto-selects it; an explicit `sandbox.backend: microvm` on a host without KVM fails loudly rather than degrading isolation. **The VM boot path is experimental (not yet implemented) — see below.** |
+| `microvm`  | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | microVM per session — isolates kernel / network / PID namespace at a hardware boundary. Snapshots are **content-addressed** (the snapshot id *is* the SHA-256 of the image bytes in CAS). Two adapters: **libkrun** boots a real guest on Linux/KVM and macOS/arm64 (opt in with `BERNSTEIN_MICROVM_MONITOR=libkrun`; see [MicroVM on libkrun](../operations/microvm-libkrun.md)), **Firecracker** is the default and still refuses to boot. Opt-in: not a free backend, so the heuristic path never auto-selects it; an explicit `sandbox.backend: microvm` on an unsupported host fails loudly rather than degrading isolation. |
 
 ### Trade-offs
 
@@ -122,24 +122,138 @@ kernel/network/PID boundary, and a snapshot contract strong enough to
 build reproducible, auditable races on.
 
 > **Status: the deterministic core (snapshot / fork-race / signed receipt)
-> is complete and fully tested; the Firecracker VM boot itself is
-> experimental and not yet implemented.** `FirecrackerMonitor` ships the
-> host preflight and the strict no-silent-downgrade contract; the full boot
-> lifecycle (API socket, drives, networking, `InstanceStart`, and an
-> in-guest vsock agent for exec/file-IO) is a tracked follow-up. It cannot
-> be built or validated without a KVM-capable Linux host plus an
-> operator-supplied kernel, rootfs, and guest agent, so `boot()` raises
-> `MicroVMUnavailableError` on every host today rather than pretending. All
-> the guarantees below are exercised host-independently over the
+> is complete and fully tested. Two hypervisor adapters ship behind the same
+> shim: `LibkrunMonitor`, which boots a real guest on ordinary developer
+> hardware, and `FirecrackerMonitor`, whose boot lifecycle is still
+> unimplemented.** `FirecrackerMonitor` ships the host preflight and the
+> strict no-silent-downgrade contract; its full boot lifecycle (API socket,
+> drives, networking, `InstanceStart`, and an in-guest vsock agent for exec
+> and file-IO transport) remains a tracked follow-up requiring a KVM-capable
+> Linux host plus an operator-supplied kernel, rootfs, and guest agent, so its
+> `boot()` raises `MicroVMUnavailableError` on every host today rather than
+> pretending. The guarantees below are exercised host-independently over the
 > `FakeMonitor`.
 
 **Monitor shim.** The backend never talks to a hypervisor directly. It
-drives a `VMMonitor` adapter (`backends/_vmmonitor.py`): a
-`FirecrackerMonitor` (production; strict host preflight for KVM +
-`firecracker` binary + kernel/rootfs) and a `FakeMonitor` (a
-deterministic, host-portable stand-in used by the tests that really
-executes commands and really freezes the workspace — not canned bytes).
+drives a `VMMonitor` adapter:
+
+| Monitor | Module | Role |
+|---|---|---|
+| `LibkrunMonitor` | `backends/_libkrun.py` | Boots a real guest through libkrun (KVM on Linux, Hypervisor.framework on macOS/arm64). Opt-in via `BERNSTEIN_MICROVM_MONITOR=libkrun`. |
+| `FirecrackerMonitor` | `backends/_vmmonitor.py` | Host preflight + no-silent-downgrade contract; boot lifecycle not implemented. Default. |
+| `FakeMonitor` | `backends/_vmmonitor.py` | Deterministic, host-portable stand-in for the tests. Really executes commands and really freezes the workspace — not canned bytes. |
+
 A Cloud Hypervisor variant fits behind the same shim and is deferred.
+
+### The libkrun monitor
+
+libkrun *is* the L1 hypervisor, so it needs no nested virtualisation and runs
+on ordinary developer hardware — including Apple Silicon, where nested virt
+would otherwise rule the boundary out entirely.
+
+The decisive API is `krun_add_virtiofs()`. The session workspace is a host
+directory passed straight through to the guest, so `read_file`, `write_file`,
+`ls`, `freeze_image` and `restore_image` are plain host filesystem operations:
+five of the protocol's nine members need **no guest agent at all**.
+`freeze_image()` reuses `canonical_workspace_image` unchanged, so its digests
+are byte-identical to the ones `FakeMonitor` produces for the same tree — there
+is no second implementation to drift.
+
+The shares are attached with `KRUN_SEMANTICS_LINUX_SIMPLIFIED`, which stores
+permission bits in the host inode rather than an extended attribute. Guest and
+host must agree on a file's mode, because the snapshot is taken by reading the
+tree from the host: under the default semantics a file the guest creates `0644`
+lands on the host `0600`, and freezing it would silently drop the executable bit
+off anything the guest built.
+
+`krun_start_enter()` never returns: the VMM takes over the calling process and
+exits with the workload's exit code. One process therefore runs one VM, and
+`exec()` spawns the `krunlaunch` binary per call (see
+[host requirements](#host-requirements) for why that binary is separate). A
+short-lived VM per `exec` is semantically correct here because all session state
+lives in the shared workspace rather than in VM memory.
+
+**Exit-code disambiguation.** libkrun reserves `125` (init could not set up the
+environment), `126` (could not execute the workload) and `127` (workload not
+found) for its own failures — and a guest command can legitimately return those
+same values. The process exit code alone is therefore ambiguous. The guest
+wrapper writes an explicit status line into a control directory that is *not*
+part of the workspace, only after the command has finished, and that file — not
+the process exit code — decides:
+
+| Status file | Process exit | Reported as |
+|---|---|---|
+| present, well-formed | anything | the guest command's exit code (including 125/126/127) |
+| absent, or truncated/malformed | 125/126/127 | `MicroVMUnavailableError`, naming the libkrun-level reason |
+| absent, or truncated/malformed | anything else | `MicroVMUnavailableError` — the result is unknown, never guessed |
+
+The control directory lives outside the workspace precisely so stdio and the
+status file can never reach a snapshot and shift its content address.
+
+**No memory snapshots.** libkrun has no checkpoint/restore API (only
+macOS-only `krun_vm_pause`/`krun_vm_resume`), which costs this backend nothing:
+the snapshot contract is filesystem-level by design. That is also the safer
+choice — restoring one VM memory snapshot into several VMs would replicate PRNG
+state and cached secrets across the branches of a race.
+
+#### Host requirements
+
+Step-by-step setup, including troubleshooting, is in
+[`docs/operations/microvm-libkrun.md`](../operations/microvm-libkrun.md).
+
+Common to both platforms:
+
+| Requirement | How it is configured |
+|---|---|
+| libkrun + libkrunfw (the guest kernel) installed | discovered in well-known locations; `$BERNSTEIN_MICROVM_LIBKRUN_LIB` overrides |
+| The `krunlaunch` launcher binary, built once per host | `bernstein sandbox microvm-launcher`; `$BERNSTEIN_MICROVM_LIBKRUN_LAUNCHER` overrides the location |
+| A guest root filesystem **directory** providing `/bin/sh` and a `mount` that speaks virtiofs | `$BERNSTEIN_MICROVM_LIBKRUN_ROOTFS` |
+| Guest sizing (optional) | `$BERNSTEIN_MICROVM_LIBKRUN_VCPUS`, `$BERNSTEIN_MICROVM_LIBKRUN_RAM_MIB`, `$BERNSTEIN_MICROVM_LIBKRUN_SHM_BYTES` |
+
+**Linux:** `/dev/kvm` must exist and be readable+writable by the running user.
+Distribution packages provide `libkrun` and `libkrunfw`. A C compiler is needed
+once, to build the launcher.
+
+**macOS / Apple Silicon (arm64):** `brew tap slp/krun && brew install libkrun`
+installs libkrun and libkrunfw. Hypervisor.framework additionally requires the
+**running executable image** to be code-signed with the
+`com.apple.security.hypervisor` entitlement — without it `krun_start_enter()`
+returns `-EINVAL` and libkrun logs `Building the microVM failed:
+Internal(Vm(VmSetup(VmCreate)))`.
+
+This is the second reason the launcher is a separate binary. The entitlement
+attaches to the image the kernel actually executes, and a framework CPython
+(Homebrew, python.org) re-execs itself into
+`Python.framework/.../Resources/Python.app/Contents/MacOS/Python` — so
+`sys.executable` is not that image, and signing it changes nothing. Rather than
+asking operators to sign an interpreter, `bernstein sandbox microvm-launcher`
+builds and ad-hoc-signs a launcher the project owns, with
+`com.apple.security.hypervisor` and
+`com.apple.security.cs.disable-library-validation` (libkrun `dlopen`s libkrunfw,
+which library validation would otherwise refuse). `preflight()` verifies both
+entitlements are present on the binary it is about to spawn.
+
+Intel Macs are not supported: libkrun's macOS backend is Apple-Silicon only.
+
+`preflight()` names every one of these that is missing, side-effect-free — it
+never builds the launcher as a side effect of a support probe — and `boot()`
+refuses when any is missing. It never falls back to a weaker isolation mode.
+
+#### What the boundary does and does not cover
+
+**Does:** a separate guest kernel, a separate process tree, and a separate
+network stack. Guest code cannot see host processes or the host filesystem
+beyond what was shared.
+
+**Does not:** the guest and the VMM share a security context — virtiofs is a
+passthrough, not a sandbox, and it does not constrain access *within* the
+directory that was shared beyond ordinary filesystem permissions. A guest that
+escapes into the VMM process holds whatever privileges that process holds.
+Confining the VMM itself (user namespaces, seccomp, or a dedicated uid on
+Linux) remains the operator's responsibility, exactly as it is for any
+hypervisor. The workspace directory is the shared surface: anything the host
+places there is readable by the guest, and anything the guest writes there is
+immediately visible to the host.
 
 **Content-addressed snapshots.** `snapshot()` freezes the workspace into a
 *canonicalised image* (a tar with sorted paths, zeroed mtimes/uids, real
@@ -212,8 +326,13 @@ Precedence when several apply: `failed` > `unreadable` > `incomplete` (absent) >
 `fork-race` requires a microVM-capable host; on an unsupported host it
 fails loudly. The determinism/tamper guarantees are validated
 host-independently over the `FakeMonitor` (see
-`tests/unit/sandbox/test_fork_race.py`); the real Firecracker boot is
-covered by the KVM-gated `tests/integration/sandbox/test_microvm_firecracker.py`.
+`tests/unit/sandbox/test_fork_race.py`). The real libkrun boot/exec/freeze
+round trip is covered by the host-gated
+`tests/integration/sandbox/test_microvm_libkrun.py` (opt in with
+`BERNSTEIN_MICROVM_LIBKRUN_INTEGRATION=1` on a host that satisfies the
+requirements above); the Firecracker path is covered by the KVM-gated
+`tests/integration/sandbox/test_microvm_firecracker.py`. The refusal-invariant
+assertions in both files run everywhere.
 
 ## `plan.yaml` extension
 

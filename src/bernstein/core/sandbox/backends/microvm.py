@@ -34,19 +34,23 @@ therefore honours an explicit ``sandbox.backend: microvm`` with a loud
 error on an unsupported host instead of a surprise worktree.
 
 .. note::
-   **The Firecracker VM boot path is experimental and not yet implemented.**
-   This release ships the deterministic, fully-tested core - content-addressed
-   snapshots, the fork-and-race primitive, and the signed selection receipt -
-   plus the host preflight and no-silent-downgrade contract. The real guest
-   boot + vsock-agent transport (which needs a KVM host and operator-supplied
-   kernel/rootfs/agent, unbuildable on a host without ``/dev/kvm``) is a
-   tracked follow-up. The snapshot/receipt machinery is validated
-   host-independently over the ``FakeMonitor``.
+   Two hypervisor adapters ship behind the monitor shim.
+   :class:`~bernstein.core.sandbox.backends._libkrun.LibkrunMonitor` boots a
+   real guest (KVM on Linux, Hypervisor.framework on macOS/arm64) and passes
+   the workspace through virtiofs; select it with
+   ``BERNSTEIN_MICROVM_MONITOR=libkrun`` (see :data:`MONITOR_ENV`).
+   :class:`~bernstein.core.sandbox.backends._vmmonitor.FirecrackerMonitor`
+   remains the default and still refuses to boot: its guest boot + vsock-agent
+   exec/file-IO transport (which needs a KVM host and operator-supplied
+   kernel/rootfs/agent) is a tracked follow-up. Either way the host preflight
+   and no-silent-downgrade contract hold, and the snapshot/receipt machinery is
+   validated host-independently over the ``FakeMonitor``.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -106,8 +110,28 @@ class MicroVMProvisioningError(RuntimeError):
     """
 
 
+#: Env var selecting which hypervisor adapter the ``microvm`` backend drives.
+#: Opt-in by design: an unset value keeps the historical Firecracker adapter,
+#: and this never changes *whether* the microvm backend is chosen - only which
+#: monitor it uses once an operator has explicitly asked for it.
+MONITOR_ENV = "BERNSTEIN_MICROVM_MONITOR"
+
+
 def _default_monitor_factory(root: str) -> VMMonitor:
-    """Production factory: a real Firecracker monitor (preflighted on boot)."""
+    """Production factory: the monitor named by :data:`MONITOR_ENV`.
+
+    Defaults to :class:`FirecrackerMonitor`. ``libkrun`` selects
+    :class:`~bernstein.core.sandbox.backends._libkrun.LibkrunMonitor`, which
+    boots on ordinary developer hardware (KVM on Linux, Hypervisor.framework on
+    macOS/arm64) and passes the workspace through virtiofs. Either way the
+    monitor preflights the host on ``boot`` and refuses rather than degrading.
+    """
+    if os.environ.get(MONITOR_ENV, "").strip().lower() == "libkrun":
+        # Imported lazily: the module loads ctypes and is only needed when an
+        # operator has explicitly selected this adapter.
+        from bernstein.core.sandbox.backends._libkrun import LibkrunMonitor
+
+        return LibkrunMonitor(root=root)
     return FirecrackerMonitor(root=root)
 
 
@@ -372,6 +396,7 @@ class MicroVMSandboxBackend:
 
 
 __all__ = [
+    "MONITOR_ENV",
     "MicroVMProvisioningError",
     "MicroVMSandboxBackend",
     "MicroVMSandboxSession",

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hypervisor.framework refuses hv_vm_create() without this. -->
+    <key>com.apple.security.hypervisor</key>
+    <true/>
+    <!-- libkrun dlopen()s libkrunfw, which is signed by a different identity. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

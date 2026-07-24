@@ -301,6 +301,56 @@ def fork_race_cmd(
     console.print(f"[dim]receipt: {out_path}[/dim]")
 
 
+@sandbox_group.command("microvm-launcher")
+@click.option(
+    "--output",
+    "output",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Where to write the binary (default: the per-user build cache).",
+)
+@click.option(
+    "--library",
+    "library",
+    default=None,
+    help="Explicit libkrun shared-library path, used to derive the link rpath.",
+)
+def microvm_launcher_cmd(output: Path | None, library: str | None) -> None:
+    """Build the signed launcher the libkrun microVM monitor spawns per exec.
+
+    The ``microvm`` backend's libkrun adapter runs each guest in its own
+    process, because ``krun_start_enter()`` never returns and, on macOS,
+    Hypervisor.framework refuses a process whose executable image is not
+    entitled. Both are satisfied by a small C launcher that ships as source
+    with the package and is compiled here against the locally installed
+    libkrun, then ad-hoc code-signed on macOS.
+
+    Until it exists the monitor's ``preflight()`` reports it as a missing host
+    precondition, exactly like a missing hypervisor - the backend never
+    degrades to a weaker boundary.
+    """
+    from bernstein.core.sandbox.backends._libkrun import (
+        LibkrunMonitor,
+        build_launcher,
+    )
+    from bernstein.core.sandbox.backends._vmmonitor import MicroVMUnavailableError
+
+    try:
+        built = build_launcher(dest=output, library=library)
+    except MicroVMUnavailableError as exc:
+        console.print(f"[red]FAILED[/red] {exc}")
+        raise click.exceptions.Exit(code=1) from exc
+
+    console.print(f"[green]built[/green] {built}")
+    missing = LibkrunMonitor(launcher=str(built)).preflight()
+    if missing:
+        console.print("[yellow]still missing for a bootable guest:[/yellow]")
+        for entry in missing:
+            console.print(f"  - {entry}")
+    else:
+        console.print("[green]host is ready to boot a libkrun microVM.[/green]")
+
+
 @sandbox_group.group("receipt")
 def receipt_group() -> None:
     """Inspect and verify fork-race selection receipts."""
@@ -482,6 +532,7 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
 
 __all__ = [
     "fork_race_cmd",
+    "microvm_launcher_cmd",
     "receipt_group",
     "receipt_verify_cmd",
     "sandbox_group",

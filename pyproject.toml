@@ -392,6 +392,15 @@ artifacts = [
     # the wheel ships pre-built. Rebuild with: cd web && npm run build.
     "src/bernstein/gui/static/**/*",
     "src/bernstein/dashboard/static/**/*",
+    # microVM launcher source. The libkrun monitor spawns one process per VM
+    # and, on macOS, that process must carry the hypervisor entitlement, so the
+    # binary is compiled and signed on the operator's host from this source
+    # (`bernstein sandbox microvm-launcher`). Shipping the source rather than a
+    # binary keeps the wheel platform-independent and lets the link step resolve
+    # the local libkrun prefix. Loader:
+    # bernstein.core.sandbox.backends._libkrun.launcher_source_dir.
+    "src/bernstein/core/sandbox/backends/_libkrun_launcher/*.c",
+    "src/bernstein/core/sandbox/backends/_libkrun_launcher/*.plist",
     # SDD ticket schemas. Shipped alongside the validator so downstream
     # projects can lint their .sdd/backlog tickets via importlib.resources
     # without a source checkout. Loader: bernstein.sdd.validator.load_schema.
