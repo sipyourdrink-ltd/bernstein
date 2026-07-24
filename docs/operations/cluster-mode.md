@@ -94,6 +94,7 @@ Common flags (`worker_cmd.py:371-430`):
 | `--roles a,b,c`            | backend,qa,security,frontend | Roles this worker accepts.                                |
 | `--label k=v`              | (repeat)           | Free-form labels for affinity routing.                                 |
 | `--adapter NAME`           | auto-detect        | Which CLI agent to invoke (`claude`, `codex`, ...).                    |
+| `--model NAME`             | adapter default    | Default model for tasks with no explicit `model`. Non-Claude adapters fall back to their own discovered default. |
 | `--poll-interval SECONDS`  | 10                 | Task poll cadence.                                                     |
 | `--poll-interval-ms MS`    | none               | Override poll cadence in milliseconds.                                 |
 | `--heartbeat-interval-ms`  | 15000              | Heartbeat cadence.                                                     |

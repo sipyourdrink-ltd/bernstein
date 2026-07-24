@@ -46,6 +46,28 @@ def _detect_worker_adapter() -> str:
     return "claude"
 
 
+def _adapter_model_profile(adapter_name: str) -> tuple[str | None, list[str]]:
+    """Resolve ``(default_model, supported_models)`` for an adapter.
+
+    Consults the local agent-discovery cache -- the same source
+    :func:`_detect_worker_adapter` uses -- so the worker advertises and defaults
+    to the models the adapter it actually runs supports, rather than a fixed
+    Claude tier list (#2804). Returns ``(None, [])`` when the adapter is not
+    locally discoverable, leaving the caller to keep its prior behaviour.
+    """
+    with suppress(Exception):
+        from bernstein.core.agent_discovery import discover_agents_cached
+
+        for agent in discover_agents_cached().agents:
+            if agent.name == adapter_name:
+                default = agent.default_model or None
+                models = list(agent.available_models or [])
+                if default and default not in models:
+                    models = [default, *models]
+                return default, models
+    return None, []
+
+
 class WorkerLoop:
     """Main loop for a worker node: register, heartbeat, claim + execute tasks.
 
@@ -73,6 +95,7 @@ class WorkerLoop:
         workdir: Path | None = None,
         pool: str | None = None,
         pool_hash: str | None = None,
+        model: str | None = None,
     ) -> None:
         self._server_url = server_url.rstrip("/")
         self._name = name or socket.gethostname()
@@ -88,6 +111,13 @@ class WorkerLoop:
         # must not be overridden by model-name inference at spawn time
         # (#2751); an auto-detected adapter is not a pin.
         self._adapter_pinned = adapter is not None
+        self._model = model
+        # Resolve, once, what this node's adapter can run so a task with no
+        # explicit model gets an adapter-appropriate default (rather than a
+        # Claude tier name the adapter would refuse) and the node advertises a
+        # truthful capability list to server-side placement (#2804).
+        self._spawn_default_model = self._resolve_spawn_default_model()
+        self._supported_models = self._resolve_supported_models()
         # Prefer explicit PollConfig; fall back to legacy poll_interval (seconds).
         if poll_config is not None:
             self._poll_config = poll_config
@@ -113,6 +143,46 @@ class WorkerLoop:
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
         return headers
+
+    @staticmethod
+    def _is_claude_adapter(adapter_name: str) -> bool:
+        """Whether an adapter serves the Claude tier-name cascade (sonnet/opus/haiku)."""
+        with suppress(Exception):
+            from bernstein.core.bandit_router import BanditRouter
+
+            return bool(BanditRouter.router_applicable(adapter_name))
+        return adapter_name == "claude"
+
+    def _resolve_spawn_default_model(self) -> str | None:
+        """Default model to hand the spawner for tasks that carry none.
+
+        An explicit ``--model`` always wins. Claude-family adapters run the
+        tier-named cascade the planner emits, so no default is forced (leaving
+        the existing routing untouched). Non-Claude adapters get their own
+        discovered default, so an unpinned Claude tier name coerces to a model
+        the adapter can actually run instead of raising ``ModelNotConfiguredError``
+        (#2804).
+        """
+        if self._model:
+            return self._model
+        if self._is_claude_adapter(self._adapter_name):
+            return None
+        default, _models = _adapter_model_profile(self._adapter_name)
+        return default
+
+    def _resolve_supported_models(self) -> list[str]:
+        """Model set this node advertises to server-side placement.
+
+        Claude-family adapters keep advertising the tier names planner-emitted
+        tasks reference. Other adapters advertise the concrete models the local
+        discovery cache reports for them, so a qwen node stops falsely claiming
+        the Claude tiers it would refuse -- the placement filter in
+        ``best_node_for_task`` trusts this list (#2804).
+        """
+        if self._is_claude_adapter(self._adapter_name):
+            return ["sonnet", "opus", "haiku"]
+        _default, models = _adapter_model_profile(self._adapter_name)
+        return models
 
     def _resolve_pool_hash(self) -> str | None:
         """Resolve the pool hash to enrol against, if a pool was requested.
@@ -246,7 +316,7 @@ class WorkerLoop:
                 "available_slots": self.available_slots,
                 "active_agents": len(self._active_tasks),
                 "gpu_available": False,
-                "supported_models": ["sonnet", "opus", "haiku"],
+                "supported_models": self._supported_models,
             },
             "labels": self._labels,
             "cell_ids": [],
@@ -275,7 +345,7 @@ class WorkerLoop:
                 "available_slots": self.available_slots,
                 "active_agents": len(self._active_tasks),
                 "gpu_available": False,
-                "supported_models": ["sonnet", "opus", "haiku"],
+                "supported_models": self._supported_models,
             },
         }
         try:
@@ -362,8 +432,6 @@ class WorkerLoop:
 
         task_id = task.get("id", "unknown")
         title = task.get("title", "")
-        description = task.get("description", "")
-        role = task.get("role", "backend")
 
         logger.info("Spawning agent for task %s: %s", task_id, title[:60])
 
@@ -374,6 +442,10 @@ class WorkerLoop:
                 templates_dir=get_templates_dir(self._workdir) / "roles",
                 workdir=self._workdir,
                 adapter_pinned=self._adapter_pinned,
+                # Adapter-appropriate default so a task carrying no explicit
+                # model coerces to a model the adapter can run instead of a
+                # Claude tier name it would refuse (#2804).
+                default_model=self._spawn_default_model,
             )
             # Spawned agents reach the central server through the standard
             # env vars. Adapters launch agents with an allowlist-filtered
@@ -383,7 +455,11 @@ class WorkerLoop:
             os.environ["BERNSTEIN_SERVER_URL"] = self._server_url
             if self._auth_token:
                 os.environ["BERNSTEIN_AUTH_TOKEN"] = self._auth_token
-            session = spawner.spawn_for_tasks([Task(id=task_id, title=title, description=description, role=role)])
+            # Reconstruct the full Task from the claimed dict so per-step
+            # model / cli / effort / scope / metadata are honoured rather than
+            # discarded (#2804). from_dict coerces enum fields and tolerates
+            # missing optionals.
+            session = spawner.spawn_for_tasks([Task.from_dict(task)])
             if session and session.pid:
                 return session.pid
         except Exception as exc:
@@ -551,6 +627,11 @@ class WorkerLoop:
     help="CLI agent adapter (default: auto-detect).",
 )
 @click.option(
+    "--model",
+    default=None,
+    help="Default model for tasks that carry no explicit model (default: the adapter's own default).",
+)
+@click.option(
     "--poll-interval",
     default=10,
     show_default=True,
@@ -586,6 +667,7 @@ def worker(
     labels: tuple[str, ...],
     token: str | None,
     adapter: str | None,
+    model: str | None,
     poll_interval: int,
     poll_interval_ms: int | None,
     heartbeat_interval_ms: int,
@@ -642,6 +724,7 @@ def worker(
         labels=label_dict,
         auth_token=token,
         adapter=adapter if adapter != "auto" else None,
+        model=model,
         poll_interval=poll_interval,
         poll_config=cfg,
         pool=pool,
