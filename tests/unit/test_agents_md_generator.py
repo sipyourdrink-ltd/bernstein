@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -202,6 +203,35 @@ class TestBuildTestSection:
         bt = next(s for s in sections if s.kind == "build-test")
         assert "uv sync" in bt.body
         assert "uv run pytest" in bt.body
+
+    def test_uv_lock_alone_triggers_uv_branch(self, tmp_path: Path) -> None:
+        # A hatchling-built repo can be uv-managed with no ``[tool.uv]`` table;
+        # the sole signal is ``uv.lock``. It must still render uv commands so
+        # the install/test lines agree with the uv run lint/type-check lines.
+        _make_repo(tmp_path)
+        (tmp_path / "uv.lock").write_text("# minimal\n")
+        pyp = tmp_path / "pyproject.toml"
+        pyp.write_text(pyp.read_text() + "[tool.ruff]\nline-length = 120\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        bt = next(s for s in sections if s.kind == "build-test")
+        assert "uv sync" in bt.body
+        assert "pip install" not in bt.body
+        # Lint line uses the same runner prefix, not a bare ``ruff``.
+        assert "uv run ruff check ." in bt.body
+
+    def test_isolated_test_runner_preferred_over_bare_pytest(self, tmp_path: Path) -> None:
+        # When the repo ships scripts/run_tests.py, the build-test block must
+        # emit that isolated per-file runner rather than a bare ``pytest`` that
+        # would retain the whole suite in memory.
+        _make_repo(tmp_path)
+        (tmp_path / "uv.lock").write_text("# minimal\n")
+        (tmp_path / "scripts").mkdir()
+        (tmp_path / "scripts" / "run_tests.py").write_text("# isolated runner\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        bt = next(s for s in sections if s.kind == "build-test")
+        assert "uv run python scripts/run_tests.py" in bt.body
+        # No standalone bare ``pytest`` command line.
+        assert not re.search(r"(?m)^(uv run )?pytest\b", bt.body)
 
 
 class TestArchitectureSection:

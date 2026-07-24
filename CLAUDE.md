@@ -138,7 +138,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `kimi.py`                   | Kimi CLI adapter |
 | `kiro.py`                   | Kiro CLI adapter |
 | `letta_code.py`             | Letta Code CLI adapter |
-| `manager.py`                |  |
+| `manager.py`                | Manager adapter - spawns the internal Python ManagerAgent orchestrator |
 | `mistral.py`                | Mistral Vibe CLI adapter |
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
@@ -397,11 +397,11 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 ## Build & test
 
 ```
-pip install -e .[dev]      # install
-pytest                     # tests
-uv run ruff check .        # lint
-uv run ruff format .       # format
-uv run mypy src            # type-check
+uv sync                             # install + lock
+uv run python scripts/run_tests.py  # tests (isolated per-file runner)
+uv run ruff check .                 # lint
+uv run ruff format .                # format
+uv run mypy src                     # type-check
 ```
 
 ## Setup

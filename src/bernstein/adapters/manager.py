@@ -1,3 +1,5 @@
+"""Manager adapter - spawns the internal Python ManagerAgent orchestrator."""
+
 from __future__ import annotations
 
 import subprocess

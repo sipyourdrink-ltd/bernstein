@@ -363,44 +363,68 @@ def _build_build_test(repo_path: Path) -> AgentsMdSection | None:
     likely *one* command for each role (install / test / lint / type-check
     / build), or several when the project clearly distinguishes (e.g. uv
     plus pip fallbacks). Avoids dumping every script entry.
+
+    Two derivations are load-bearing and keyed off files in the tree rather
+    than a static guess, so the rendered command never drifts from how the
+    repo is actually built:
+
+    * **uv detection.** A ``uv.lock`` at the root means the project is
+      uv-managed even when ``pyproject.toml`` carries no ``[tool.uv]``
+      table (hatchling-built repos are the common case). Prior versions
+      only inspected the pyproject text and silently fell back to
+      ``pip install`` / bare ``pytest`` for these repos, contradicting the
+      ``uv run`` lint/type-check lines emitted right below.
+    * **Isolated test runner.** When the repo ships ``scripts/run_tests.py``
+      that command is emitted instead of a bare ``pytest``. A bare
+      ``pytest`` over the whole suite retains every collected test object
+      for the session, which on a large suite grows into tens of GB; the
+      per-file runner (the command CI shards actually invoke) caps memory
+      at one file's worth. Emitting the safe command here keeps the
+      contributor-facing guidance consistent with the role prompts under
+      ``templates/roles/`` and with CI.
     """
-    cmds: list[str] = []
+    pairs: list[tuple[str, str]] = []
 
     pyproj = repo_path / "pyproject.toml"
     if pyproj.is_file():
         text = pyproj.read_text(encoding="utf-8", errors="replace")
-        if "[tool.uv]" in text or "uv" in text.split("\n", 1)[0].lower():
-            cmds.extend(("uv sync                    # install + lock", "uv run pytest              # tests"))
+        uses_uv = (repo_path / "uv.lock").is_file() or "[tool.uv]" in text or "uv" in text.split("\n", 1)[0].lower()
+        run = "uv run " if uses_uv else ""
+        pairs.append(("uv sync", "install + lock") if uses_uv else ("pip install -e .[dev]", "install"))
+        if (repo_path / "scripts" / "run_tests.py").is_file():
+            pairs.append((f"{run}python scripts/run_tests.py", "tests (isolated per-file runner)"))
         else:
-            cmds.extend(("pip install -e .[dev]      # install", "pytest                     # tests"))
+            pairs.append((f"{run}pytest", "tests"))
         if "ruff" in text:
-            cmds.extend(("uv run ruff check .        # lint", "uv run ruff format .       # format"))
+            pairs.extend(((f"{run}ruff check .", "lint"), (f"{run}ruff format .", "format")))
         if "mypy" in text or "pyright" in text:
-            cmds.append("uv run mypy src            # type-check")
+            pairs.append((f"{run}mypy src", "type-check"))
 
     makefile = repo_path / "Makefile"
     if makefile.is_file():
         targets = _parse_make_targets(makefile)
         for t in ("test", "lint", "build", "install"):
             if t in targets:
-                cmds.append(f"make {t}")
+                pairs.append((f"make {t}", ""))
 
     package_json = repo_path / "package.json"
     if package_json.is_file():
         scripts = _parse_package_json_scripts(package_json)
         for s in ("build", "test", "lint", "dev"):
             if s in scripts:
-                cmds.append(f"npm run {s}")
+                pairs.append((f"npm run {s}", ""))
 
-    if not cmds:
+    if not pairs:
         return None
     seen: set[str] = set()
-    deduped: list[str] = []
-    for c in cmds:
-        if c not in seen:
-            seen.add(c)
-            deduped.append(c)
-    body = "```\n" + "\n".join(deduped) + "\n```"
+    deduped: list[tuple[str, str]] = []
+    for cmd, note in pairs:
+        if cmd not in seen:
+            seen.add(cmd)
+            deduped.append((cmd, note))
+    width = max((len(cmd) for cmd, note in deduped if note), default=0)
+    lines = [f"{cmd:<{width}}  # {note}" if note else cmd for cmd, note in deduped]
+    body = "```\n" + "\n".join(lines) + "\n```"
     return AgentsMdSection(
         key="build-test",
         title="Build & test",

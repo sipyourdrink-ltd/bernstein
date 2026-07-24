@@ -7,9 +7,14 @@ Usage:
 
 The script scans src/bernstein/ with ast to extract one-line module
 docstrings, groups them by package, then replaces the section of AGENTS.md
-between the "## Module map" heading and the next "---" separator.
-All other content (naming conventions, test patterns, gotchas, etc.) is
-preserved verbatim.
+between the "## Module map" heading and the next top-level "## " heading
+(or a "---" separator, whichever comes first). All other content (naming
+conventions, test patterns, gotchas, etc.) is preserved verbatim.
+
+Note: this is the *legacy detailed* module-map generator. When
+``bernstein agents-md sync`` is the active source of truth (its verify runs
+in CI), that command owns AGENTS.md end to end - do not run ``--update``
+here, or the module map will diverge from the canonical output.
 """
 
 from __future__ import annotations
@@ -261,21 +266,29 @@ def _split_agents_md(text: str) -> tuple[str, str, str] | None:
     """Split AGENTS.md into (before_module_map, module_map_body, after_module_map).
 
     Returns None if the module map section cannot be found.
+
+    The module-map section ends at whichever boundary appears first after the
+    heading: the next top-level ``## `` heading, or a ``\\n---\\n`` separator.
+    Bounding on the next heading matters because the canonical
+    ``bernstein agents-md`` output carries no ``---`` rules - keying only on
+    the separator made this function treat the module map as running to EOF and
+    an ``--update`` then overwrote every following section (Build & test, Setup,
+    Architecture, Git workflow, Agent roles, Documentation duty). Scoping the
+    rewrite to the module-map section keeps ``--update`` non-destructive against
+    both the canonical format and older ``---``-separated hand-authored files.
     """
     start = text.find(_MODULE_MAP_HEADING)
     if start == -1:
         return None
 
-    # Find the "---" separator that ends the module map section
-    sep_pos = text.find(_SECTION_SEP, start + len(_MODULE_MAP_HEADING))
-    if sep_pos == -1:
-        # Module map goes to end of file
+    search_from = start + len(_MODULE_MAP_HEADING)
+    boundaries = [pos for pos in (text.find("\n## ", search_from), text.find(_SECTION_SEP, search_from)) if pos != -1]
+    if not boundaries:
+        # Module map is the last section - goes to end of file.
         return text[:start], text[start:], ""
 
-    before = text[:start]
-    body = text[start:sep_pos]
-    after = text[sep_pos:]
-    return before, body, after
+    end = min(boundaries)
+    return text[:start], text[start:end], text[end:]
 
 
 def update_agents_md(dry_run: bool = False) -> bool:
