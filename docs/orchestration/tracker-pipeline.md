@@ -7,6 +7,7 @@
 | `PipelineConfig` | Typed view over `bernstein.yaml: orchestration.tracker_pipeline`. |
 | `PipelineStage` | One role in the pipeline (claim status, success status, failure status, optional prior-role gate). |
 | `ClaimLedger` | SQLite-backed distributed claim ledger with lease TTL. |
+| `ClaimJournal` + `project_claims` | Opt-in signed, Merkle-chained claim journal; SQLite becomes a deterministic projection of it. |
 | `make_idempotency_key` | Stable `sha256(tracker || ticket_id || role || stage || stage_attempt)`. |
 | `FailurePayload` + `format_failure_comment` | Structured failure taxonomy embedded in a fenced YAML block. |
 | `TrackerPipeline` | Stateless sweep loop binding the above pieces together. |
@@ -76,6 +77,46 @@ next caller picks it up.
 The ledger also enforces `per_role_max_in_flight`: when a role's live
 claim count reaches the ceiling, the loop stops dispatching new claims
 for that role until somebody releases.
+
+## Signed claim journal (opt-in projection)
+
+The SQLite ledger is race-safe only when every claimer shares one
+filesystem. For leaderless coordination the ledger can instead be driven
+by a **signed, append-only, Merkle-chained claim journal** (`ClaimJournal`),
+with the SQLite rows demoted to a deterministic *projection* of that
+journal rather than the source of truth.
+
+The path is **opt-in and off by default**. Existing callers construct
+`ClaimLedger(db_path)` and touch no journal — behaviour is unchanged.
+Passing a journal (`ClaimLedger(db_path, journal=...)`) turns on the
+journal path.
+
+| Piece | What it is |
+|-------|------------|
+| `ClaimReceipt` | One signed entry: `claim` / `release` / `renew` / `expire` / `supersede`, binding `{tracker, ticket_id, role, claimer_id, node_id, lease_expires_at, prev_entry_hash, entry_hash}`. |
+| `ClaimJournal` | Append-only JSONL store. Each receipt chains over the previous head and is Ed25519-signed with the node install identity; each is anchored into the HMAC audit chain (`cluster.claim_journal_receipt`). |
+| `project_claims(receipts)` | Pure fold: the same ordered receipt set yields a byte-identical `ClaimState` and identical head hash on any node. |
+
+**Determinism.** The `entry_hash` is computed with the signature blanked,
+so two nodes signing the same body with different install keys still agree
+on the hash and therefore on the journal head. When more than one live
+claim contends for a key, the claim with the lowest `entry_hash` wins and
+the losers are superseded — a total order independent of wall-clock, node
+identity, or observation order.
+
+**Convergence.** `ClaimJournal.reconcile(...)` appends a chain-anchored
+`claim_superseded` receipt for every loser, naming the winner. Re-running
+once every loser is superseded is a no-op.
+
+**Verify.** `ClaimJournal.verify()` replays the journal offline, checking
+every `prev_entry_hash` link, every recomputed `entry_hash`, and every
+Ed25519 signature; a single flipped byte or a dropped receipt fails at the
+exact entry index.
+
+Deferred (not in this slice): MESH topology wiring in the orchestrator,
+A2A gossip of receipts between machines, fork detection at merge time, and
+the `bernstein cluster claims log | head | verify` CLI. Those land once the
+verified peer-identity surface is in place.
 
 ## Idempotency keys
 
