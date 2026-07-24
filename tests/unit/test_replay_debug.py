@@ -218,9 +218,7 @@ class TestTwoRunPathDiff:
         left, right = _two_runs_diverging_at(tmp_path, seq=2)
         diff = two_run_path_diff(left, right)
         body = {"diverged": diff.diverged, "divergence": diff.to_dict()["divergence"], "steps": diff.steps}
-        recomputed = hashlib.sha256(
-            json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
+        recomputed = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
         assert diff.diff_hash == recomputed
 
     def test_length_mismatch_surfaces_as_divergence(self, tmp_path: Path) -> None:

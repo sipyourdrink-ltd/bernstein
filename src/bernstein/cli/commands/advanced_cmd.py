@@ -1940,6 +1940,34 @@ def _replay_from_step(*, run_id: str, sdd_dir: str, from_step: int, as_json: boo
     default=None,
     help="Rebuild deterministic run state by walking the journal to step N.",
 )
+@click.option(
+    "--fork-from",
+    "fork_from",
+    type=int,
+    default=None,
+    help="replay debug: fork-and-reproduce a worktree anchored at parent step N.",
+)
+@click.option(
+    "--jump-to-failure",
+    "jump_to_failure",
+    is_flag=True,
+    default=False,
+    help="replay debug: position output at the diverging seq.",
+)
+@click.option(
+    "--sign",
+    "sign_key",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="replay debug: Ed25519 key path to sign the debug receipt.",
+)
+@click.option(
+    "--full",
+    "full",
+    is_flag=True,
+    default=False,
+    help="replay debug: emit the unbounded step projection (default is capped).",
+)
 def replay_cmd(
     run_id: tuple[str, ...],
     sdd_dir: str,
@@ -1949,6 +1977,10 @@ def replay_cmd(
     extra_context: str | None,
     verify: bool,
     from_step: int | None,
+    fork_from: int | None,
+    jump_to_failure: bool,
+    sign_key: str | None,
+    full: bool,
 ) -> None:
     """Replay a past orchestration run step-by-step.
 
@@ -1973,6 +2005,9 @@ def replay_cmd(
       bernstein replay publish <AGENT_ID> -o RECEIPT  # redacted publish (#1799)
       bernstein replay verify <RECEIPT>           # offline verifier (#1799)
       bernstein replay diff-journal A B           # per-step divergence finder
+      bernstein replay debug <RUN>                # forensic single-chain walk (#2605)
+      bernstein replay debug <LEFT> <RIGHT>       # two-run time-travel path diff
+      bernstein replay debug <RUN> --fork-from N  # fork-and-reproduce at step N
     """
     # ``nargs=-1`` lets us implement the pseudo-subcommand ``diff`` without
     # converting ``replay`` to a full :class:`click.Group` (which would
@@ -1980,6 +2015,18 @@ def replay_cmd(
     args = list(run_id)
     if args and args[0] == "diff":
         _replay_diff_dispatch(args[1:], sdd_dir=sdd_dir, as_json=as_json)
+        return
+    if args and args[0] == "debug":
+        _replay_debug_dispatch(
+            args[1:],
+            sdd_dir=sdd_dir,
+            as_json=as_json,
+            fork_from=fork_from,
+            jump_to_failure=jump_to_failure,
+            sign_key=sign_key,
+            full=full,
+            limit=limit,
+        )
         return
     if args and args[0] in {"export", "publish", "verify", "diff-journal"}:
         _replay_journal_dispatch(args, sdd_dir=sdd_dir, as_json=as_json)
@@ -2030,6 +2077,39 @@ def replay_cmd(
         model=model,
         extra_context=extra_context,
     )
+
+
+def _replay_debug_dispatch(
+    args: list[str],
+    *,
+    sdd_dir: str,
+    as_json: bool,
+    fork_from: int | None,
+    jump_to_failure: bool,
+    sign_key: str | None,
+    full: bool,
+    limit: int | None,
+) -> None:
+    """Dispatch ``bernstein replay debug`` (#2605).
+
+    Forensic time-travel debugger over the per-step journal. Local-only by
+    default under ``.sdd/runtime/``; it never re-executes anything.
+    """
+    from bernstein.cli.commands.replay_cmd import replay_debug
+
+    rc = replay_debug(
+        args,
+        Path(sdd_dir),
+        as_json=as_json,
+        fork_from=fork_from,
+        jump_to_failure=jump_to_failure,
+        sign_key_path=Path(sign_key) if sign_key else None,
+        full=full,
+        limit=limit,
+        repo_root=Path.cwd(),
+    )
+    if rc != 0:
+        raise SystemExit(rc)
 
 
 def _replay_journal_dispatch(
