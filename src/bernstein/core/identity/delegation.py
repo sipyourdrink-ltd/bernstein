@@ -36,13 +36,25 @@ identity and the chain no longer verifies.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac as _hmac
 import json
+import os
+import sys
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+if sys.platform == "win32":
+    fcntl = None  # type: ignore[assignment]
+else:
+    import fcntl  # type: ignore[no-redef]
 
 __all__ = [
     "DEFAULT_ROOT",
@@ -65,6 +77,24 @@ _SUBDIR: Final[str] = "delegation"
 #: Default root for delegation receipts - the same tree as the HMAC-chained
 #: audit log so ``.sdd/audit/delegation/`` sits beside ``.sdd/audit/*.jsonl``.
 DEFAULT_ROOT: Final[Path] = Path(".sdd/audit")
+
+#: Per-run in-process locks serialising the tail-read-through-append critical
+#: section. Keyed by ``run_id`` and shared across every :class:`DelegationLedger`
+#: in the process (ledgers are often reconstructed per call via
+#: :func:`default_ledger`), so two threads never fork one run's chain. The
+#: registry itself is guarded by :data:`_RUN_LOCKS_GUARD`.
+_RUN_LOCKS: Final[dict[str, threading.Lock]] = {}
+_RUN_LOCKS_GUARD: Final[threading.Lock] = threading.Lock()
+
+
+def _run_lock(run_id: str) -> threading.Lock:
+    """Return the process-wide append lock for ``run_id`` (created on demand)."""
+    with _RUN_LOCKS_GUARD:
+        lock = _RUN_LOCKS.get(run_id)
+        if lock is None:
+            lock = threading.Lock()
+            _RUN_LOCKS[run_id] = lock
+        return lock
 
 
 @dataclass(frozen=True)
@@ -135,6 +165,38 @@ class DelegationLedger:
         safe = run_id.replace("/", "_").replace("\\", "_")
         return self._dir / f"{safe}.jsonl"
 
+    @contextlib.contextmanager
+    def _append_lock(self, run_id: str) -> Iterator[None]:
+        """Serialise the tail-read-through-append for ``run_id``.
+
+        Holds two locks for the whole read-modify-write:
+
+        * an in-process :class:`threading.Lock` keyed by ``run_id`` so threads
+          in this process never recover the same tail, and
+        * an OS ``flock(LOCK_EX)`` on a per-run lock file so separate processes
+          (task server, spawner, CLI) extending the same chain are serialised
+          too.
+
+        Without both, two writers read the same ``prev_hmac`` and append records
+        that fork the HMAC chain, breaking :func:`verify_run_chain` for the run
+        (issue #2640). Falls back to the in-process lock alone on platforms
+        without ``fcntl`` (Windows), matching how the audit chain degrades.
+        """
+        with _run_lock(run_id):
+            if fcntl is None:  # pragma: no cover - Windows path
+                yield
+                return
+            safe = run_id.replace("/", "_").replace("\\", "_")
+            lock_path = self._dir / f"{safe}.jsonl.lock"
+            fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+
     def _tail(self, run_id: str) -> tuple[str, int]:
         """Return ``(prev_hmac, next_hop_index)`` for the run.
 
@@ -179,24 +241,28 @@ class DelegationLedger:
         Returns:
             The freshly-appended, HMAC-computed receipt.
         """
-        prev_hmac, hop_index = self._tail(run_id)
-        ts = int(created if created is not None else time.time())
-        body = {
-            "run_id": run_id,
-            "hop_index": hop_index,
-            "issuer": issuer,
-            "subject": subject,
-            "audience": audience,
-            "act": act,
-            "created": ts,
-            "prev_hmac": prev_hmac,
-        }
-        computed = _compute_hmac(self._key, prev_hmac, body)
-        entry = body.copy()
-        entry["hmac"] = computed
-        path = self.receipt_path(run_id)
-        with path.open("a", encoding="utf-8", newline="") as fh:
-            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+        # The tail read, HMAC computation, and append must be one atomic
+        # critical section: a concurrent writer that recovers the same tail
+        # would embed a stale ``prev_hmac`` and fork the chain (issue #2640).
+        with self._append_lock(run_id):
+            prev_hmac, hop_index = self._tail(run_id)
+            ts = int(created if created is not None else time.time())
+            body = {
+                "run_id": run_id,
+                "hop_index": hop_index,
+                "issuer": issuer,
+                "subject": subject,
+                "audience": audience,
+                "act": act,
+                "created": ts,
+                "prev_hmac": prev_hmac,
+            }
+            computed = _compute_hmac(self._key, prev_hmac, body)
+            entry = body.copy()
+            entry["hmac"] = computed
+            path = self.receipt_path(run_id)
+            with path.open("a", encoding="utf-8", newline="") as fh:
+                fh.write(json.dumps(entry, sort_keys=True) + "\n")
         return DelegationReceipt(**entry)
 
 
