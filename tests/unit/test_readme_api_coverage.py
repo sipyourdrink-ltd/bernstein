@@ -305,6 +305,9 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "artifacts",
         # Certify/verify self-hosted OpenAI-compatible endpoints (issue #2889)
         "endpoints",
+        # Bot-added: drift autofix (regen_contract_drift.py)
+        "artifact",
+        "datasource",
     }
 )
 
