@@ -92,6 +92,55 @@ class TestSignRequest:
         )
 
 
+class TestContentDigest:
+    def test_content_digest_is_rfc9530_sha256_structured_field(self):
+        import base64
+        import hashlib
+
+        body = b'{"url":"https://example.com"}'
+        cd = http_signing.content_digest(body)
+        expected = base64.b64encode(hashlib.sha256(body).digest()).decode("ascii")
+        assert cd == f"sha-256=:{expected}:"
+
+    def test_signature_over_content_digest_binds_body(self, keystore):
+        # A Content-Digest header folds the body into the covered set, so the
+        # signature attests the exact bytes the caller intends to send.
+        body = b'{"url":"https://example.com"}'
+        headers = http_signing.sign_request(
+            method="POST",
+            url="https://peer.example/render",
+            headers={"Content-Digest": http_signing.content_digest(body)},
+            keystore=keystore,
+        )
+        assert "content-digest" in headers["Signature-Input"]
+        keydir = http_signing.build_key_directory(keystore)
+        assert http_signing.verify_request(
+            method="POST",
+            url="https://peer.example/render",
+            headers=headers,
+            key_directory=keydir,
+        )
+
+    def test_flipping_the_digest_breaks_verification(self, keystore):
+        # Swapping the digest (as a tampered body would) invalidates the sig.
+        body = b'{"url":"https://example.com"}'
+        headers = http_signing.sign_request(
+            method="POST",
+            url="https://peer.example/render",
+            headers={"Content-Digest": http_signing.content_digest(body)},
+            keystore=keystore,
+        )
+        keydir = http_signing.build_key_directory(keystore)
+        tampered = dict(headers)
+        tampered["Content-Digest"] = http_signing.content_digest(b'{"url":"https://evil.example"}')
+        assert not http_signing.verify_request(
+            method="POST",
+            url="https://peer.example/render",
+            headers=tampered,
+            key_directory=keydir,
+        )
+
+
 class TestKeyDirectory:
     def test_key_directory_publishes_jwk_for_current_key(self, keystore):
         keydir = http_signing.build_key_directory(keystore)

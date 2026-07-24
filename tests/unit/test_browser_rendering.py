@@ -283,6 +283,95 @@ class TestRender:
 
 
 # ---------------------------------------------------------------------------
+# Outbound install-identity signature binds the POST body (issue #2640)
+# ---------------------------------------------------------------------------
+
+
+class TestOutboundSignatureBindsBody:
+    @pytest.mark.asyncio
+    async def test_body_sent_as_raw_bytes_with_content_digest(self, tmp_path, monkeypatch) -> None:
+        import base64 as _b64
+        import hashlib
+        import json as _json
+
+        from bernstein.core.identity import http_signing
+
+        monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(tmp_path / "keys"))
+        bridge = BrowserRenderingBridge(_make_config())
+        mock_resp = _mock_response(200, json_data={"title": "x", "content": "y"})
+        bridge._client.post = AsyncMock(return_value=mock_resp)
+
+        await bridge.render("https://example.com")
+
+        call = bridge._client.post.call_args
+        # The body must be sent as the exact serialized bytes (content=), not
+        # re-serialized by httpx from json=, so the signed digest matches the
+        # bytes actually on the wire.
+        assert call.kwargs.get("json") is None
+        body = call.kwargs["content"]
+        assert isinstance(body, bytes | bytearray)
+        payload = _json.loads(body)
+        assert payload["url"] == "https://example.com"
+
+        headers = call.kwargs["headers"]
+        digest = _b64.b64encode(hashlib.sha256(body).digest()).decode("ascii")
+        assert headers["Content-Digest"] == f"sha-256=:{digest}:"
+
+    @pytest.mark.asyncio
+    async def test_signature_covers_the_body_and_verifies(self, tmp_path, monkeypatch) -> None:
+        from bernstein.core.identity import http_signing
+        from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+        key_dir = tmp_path / "keys"
+        monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(key_dir))
+        bridge = BrowserRenderingBridge(_make_config())
+        mock_resp = _mock_response(200, json_data={"title": "x", "content": "y"})
+        bridge._client.post = AsyncMock(return_value=mock_resp)
+
+        api_url = bridge._api_url("render")
+        await bridge.render("https://example.com")
+
+        call = bridge._client.post.call_args
+        headers = call.kwargs["headers"]
+        # The install identity binds the body: content-digest is covered and the
+        # RFC 9421 signature verifies against the published key directory.
+        assert "content-digest" in headers["Signature-Input"]
+        keydir = http_signing.build_key_directory(AgentCardKeystore(key_dir))
+        assert http_signing.verify_request(
+            method="POST",
+            url=api_url,
+            headers=headers,
+            key_directory=keydir,
+        )
+
+    @pytest.mark.asyncio
+    async def test_tampered_body_digest_fails_verification(self, tmp_path, monkeypatch) -> None:
+        from bernstein.core.identity import http_signing
+        from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+        key_dir = tmp_path / "keys"
+        monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(key_dir))
+        bridge = BrowserRenderingBridge(_make_config())
+        mock_resp = _mock_response(200, json_data={"title": "x", "content": "y"})
+        bridge._client.post = AsyncMock(return_value=mock_resp)
+
+        api_url = bridge._api_url("render")
+        await bridge.render("https://example.com")
+
+        call = bridge._client.post.call_args
+        headers = dict(call.kwargs["headers"])
+        # Rewriting the digest (as a tampered payload would) breaks the sig.
+        headers["Content-Digest"] = http_signing.content_digest(b'{"url":"https://evil.example"}')
+        keydir = http_signing.build_key_directory(AgentCardKeystore(key_dir))
+        assert not http_signing.verify_request(
+            method="POST",
+            url=api_url,
+            headers=headers,
+            key_directory=keydir,
+        )
+
+
+# ---------------------------------------------------------------------------
 # scrape()
 # ---------------------------------------------------------------------------
 
@@ -362,9 +451,13 @@ class TestScreenshot:
         result = await bridge.screenshot("https://example.com", full_page=True)
         assert result == png_bytes
 
-        # Verify fullPage was sent in the payload
+        # Verify fullPage was sent in the payload. The body now goes on the
+        # wire as the exact serialized bytes (content=) that the signature's
+        # Content-Digest binds, so decode those bytes back to inspect it.
+        import json as _json
+
         call_args = bridge._client.post.call_args
-        payload = call_args.kwargs.get("json") or call_args.args[1]
+        payload = _json.loads(call_args.kwargs["content"])
         assert payload["fullPage"] is True
 
 

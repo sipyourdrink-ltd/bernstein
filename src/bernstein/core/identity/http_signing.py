@@ -73,6 +73,7 @@ __all__ = [
     "SIGNATURE_LABEL",
     "UnsignedRequestRefused",
     "build_key_directory",
+    "content_digest",
     "default_keystore",
     "install_identity_keyid",
     "record_signature",
@@ -143,6 +144,31 @@ def install_identity_keyid(public_pem: bytes) -> str:
     ).encode("ascii")
     digest = hashlib.sha256(canonical).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# Content-Digest (RFC 9530) - binds a request body to the signature
+# ---------------------------------------------------------------------------
+
+
+def content_digest(body: bytes) -> str:
+    """Return an RFC 9530 ``Content-Digest`` header value over ``body``.
+
+    Emits the ``sha-256=:<base64>:`` structured-field (Byte Sequence) form so
+    the digest can be folded into the RFC 9421 covered-component set (see
+    :func:`_covered_components`). Signing a request whose headers carry this
+    value binds the exact request bytes to the signature: a body swap surfaces
+    either as a digest mismatch at the receiver or as a signature failure over
+    the covered ``content-digest`` component.
+
+    Args:
+        body: The exact request-body bytes that will be sent on the wire.
+
+    Returns:
+        The ``Content-Digest`` header value ``sha-256=:<base64 sha-256>:``.
+    """
+    digest = hashlib.sha256(body).digest()
+    return "sha-256=:" + base64.b64encode(digest).decode("ascii") + ":"
 
 
 # ---------------------------------------------------------------------------

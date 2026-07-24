@@ -7,6 +7,7 @@ and extract structured content using Cloudflare's Browser Rendering API.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -157,19 +158,26 @@ class BrowserRenderingBridge:
             timeout=httpx.Timeout(float(config.timeout_seconds)),
         )
 
-    def _sign_outbound(self, api_url: str) -> dict[str, str]:
+    def _sign_outbound(self, api_url: str, body: bytes) -> dict[str, str]:
         """Return install-identity HTTP Message Signature headers for a POST.
 
         Signs the outbound browser/research request (f06) so the endpoint can
-        attest which Bernstein install issued it. Best-effort: signing never
+        attest which Bernstein install issued it. A ``Content-Digest`` header is
+        computed over the exact ``body`` bytes and folded into the RFC 9421
+        covered-component set, so the signature binds the payload rather than
+        just the method and target URI (issue #2640). Best-effort: signing never
         blocks the request unless signing is required by policy.
+
+        Args:
+            api_url: Absolute Browser Rendering API endpoint being signed.
+            body: The exact serialized request-body bytes sent on the wire.
         """
         from bernstein.core.identity import http_signing
 
         return http_signing.sign_outbound(
             method="POST",
             url=api_url,
-            headers={},
+            headers={"Content-Digest": http_signing.content_digest(body)},
             call_site="browser.render",
             audit_dir=self._audit_dir,
         )
@@ -374,9 +382,14 @@ class BrowserRenderingBridge:
             BrowserRenderingError: On HTTP errors or non-success responses.
         """
         api_url = self._api_url(endpoint)
-        signed_headers = self._sign_outbound(api_url)
+        # Serialize the body exactly once and sign a Content-Digest over those
+        # bytes, then send the same bytes via content= so the install-identity
+        # signature binds the payload (issue #2640). Passing json= here would
+        # let httpx re-serialize, breaking the digest the signature covers.
+        body = json.dumps(payload).encode("utf-8")
+        signed_headers = self._sign_outbound(api_url, body)
         try:
-            resp = await self._client.post(api_url, json=payload, headers=signed_headers)
+            resp = await self._client.post(api_url, content=body, headers=signed_headers)
         except httpx.TimeoutException as exc:
             raise BrowserRenderingError(
                 f"Timeout rendering {url}: {exc}",
