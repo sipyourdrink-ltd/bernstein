@@ -95,6 +95,17 @@ def test_manifest_hash_prefers_skill_md(tmp_path: Path) -> None:
     assert len(digest) == 64
 
 
+def test_tree_content_hash_rejects_symlinked_root(tmp_path: Path) -> None:
+    """A symlinked tree root is refused: following it would hash bytes outside
+    the requested path (security, issue #2642)."""
+    real = tmp_path / "real"
+    _write_tree(real, {"SKILL.md": "content\n"})
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(PackagedInstallError):
+        tree_content_hash(link)
+
+
 # ---------------------------------------------------------------------------
 # Bundled asset resolution
 # ---------------------------------------------------------------------------
@@ -236,6 +247,33 @@ def test_record_only_anchors_existing_tree_without_copying(tmp_path: Path) -> No
     assert read_install_receipt(workdir, outcome.skill_hash) is not None
 
 
+def test_install_rejects_symlinked_dest(tmp_path: Path) -> None:
+    """A symlinked destination is refused before any copy, so the install can
+    never write into the link target outside the requested path (security,
+    issue #2642)."""
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    source = _skill_fixture(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    dest_parent = tmp_path / "host"
+    dest_parent.mkdir()
+    dest = dest_parent / PACKAGED_SKILL_NAME
+    dest.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(PackagedInstallError):
+        install_packaged_skill(
+            workdir=workdir,
+            dest=dest,
+            source=source,
+            hmac_key=_KEY,
+            install_id="i1",
+            timestamp=1,
+        )
+    # The copy never ran: nothing leaked into the symlink target.
+    assert not any(outside.iterdir())
+
+
 def test_record_only_missing_dest_raises(tmp_path: Path) -> None:
     with pytest.raises(PackagedInstallError):
         install_packaged_skill(
@@ -315,6 +353,37 @@ def test_verify_detects_spine_tamper(tmp_path: Path) -> None:
 def test_verify_missing_dest_reports_bad_input(tmp_path: Path) -> None:
     result = verify_packaged_install(workdir=tmp_path, dest=tmp_path / "absent", hmac_key=_KEY)
     assert not result.ok
+
+
+def test_verify_rejects_receipt_without_chain_event(tmp_path: Path) -> None:
+    """A receipt + spine written without the matching audit-chain event is a
+    partial attestation and must not verify (data-integrity, issue #2642)."""
+    from bernstein.core.skills.provenance import InstallReceipt, write_install_receipt
+
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    dest = tmp_path / "host" / PACKAGED_SKILL_NAME
+    _write_tree(dest, {"SKILL.md": "---\nname: bernstein-run\n---\nbody\n"})
+    skill_hash = tree_content_hash(dest)
+    _, manifest_hash = manifest_hash_for(dest)
+
+    # Anchor the receipt and spine directly, bypassing the audit-chain mirror
+    # install_packaged_skill would otherwise write.
+    write_install_receipt(
+        workdir=workdir,
+        lineage_root=workdir / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        receipt=InstallReceipt(
+            skill_hash=skill_hash,
+            manifest_hash=manifest_hash,
+            install_id="i1",
+            timestamp=1,
+        ),
+    )
+
+    result = verify_packaged_install(workdir=workdir, dest=dest, hmac_key=_KEY)
+    assert not result.ok
+    assert "chain" in result.reason.lower()
 
 
 # ---------------------------------------------------------------------------

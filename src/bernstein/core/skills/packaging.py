@@ -137,9 +137,11 @@ def tree_content_hash(root: Path) -> str:
     relpath - byte-sensitive, name-sensitive, and location-independent.
 
     Raises:
-        PackagedInstallError: When *root* is not a directory, is empty, or
-            contains a symlink.
+        PackagedInstallError: When *root* is a symlink, is not a directory, is
+            empty, or contains a symlink.
     """
+    if root.is_symlink():
+        raise PackagedInstallError(f"refusing to hash symlinked skill tree: {root}")
     if not root.is_dir():
         raise PackagedInstallError(f"not a directory: {root}")
     entries: list[list[str]] = []
@@ -294,9 +296,14 @@ def install_packaged_skill(
         hash, and spine anchor.
 
     Raises:
-        PackagedInstallError: Missing tree, divergent destination without
-            ``force``, or path escape.
+        PackagedInstallError: Missing tree, symlinked destination, divergent
+            destination without ``force``, or path escape.
     """
+    # A symlinked destination would let the copy (or the record-only hash)
+    # follow the link and write into / read from the target outside the
+    # requested path. Refuse it before any hashing or copying (issue #2642).
+    if dest.is_symlink():
+        raise PackagedInstallError(f"refusing to install into symlinked destination: {dest}")
     copied = False
     if record_only:
         if not dest.is_dir():
@@ -697,6 +704,12 @@ def verify_packaged_install(
     tampered tree resolves to a content address with neither receipt - the
     tamper verdict is structural, not a comparison an attacker can update.
 
+    A verified receipt and spine are only half the attestation the install
+    emits: every install also mirrors a ``plugin.install_receipt`` (or, for an
+    updated tree, a ``plugin.update_receipt``) event into the HMAC audit chain.
+    Verification requires that event too, so a partial attestation -- a receipt
+    and spine written without the chain mirror -- cannot pass.
+
     Args:
         workdir: Project root holding ``.sdd/``.
         dest: The installed skill / plugin directory.
@@ -718,12 +731,61 @@ def verify_packaged_install(
         installed_manifest_hash=manifest_hash,
     )
     if result.ok or read_install_receipt(workdir, skill_hash) is not None:
-        return result
-    return _verify_updated_install(
+        spine_result = result
+        is_update = False
+    else:
+        spine_result = _verify_updated_install(
+            workdir=workdir,
+            hmac_key=hmac_key,
+            skill_hash=skill_hash,
+            installed_manifest_hash=manifest_hash,
+        )
+        is_update = True
+    if not spine_result.ok:
+        return spine_result
+    return _require_chain_event(
         workdir=workdir,
         hmac_key=hmac_key,
         skill_hash=skill_hash,
-        installed_manifest_hash=manifest_hash,
+        manifest_hash=manifest_hash,
+        is_update=is_update,
+    )
+
+
+def _require_chain_event(
+    *,
+    workdir: Path,
+    hmac_key: bytes,
+    skill_hash: str,
+    manifest_hash: str,
+    is_update: bool,
+) -> InstallVerifyResult:
+    """Require a matching install/update event in the HMAC audit chain.
+
+    The chain is verified end-to-end and a ``plugin.install_receipt`` (or
+    ``plugin.update_receipt`` for an updated tree) event whose ``skill_hash``
+    and ``manifest_hash`` match the installed content must be present. A
+    receipt/spine written without this event -- a partial attestation -- fails
+    here rather than passing on the receipt alone.
+    """
+    from bernstein.core.security.audit_chain import (
+        EVENT_PLUGIN_INSTALL_RECEIPT,
+        EVENT_PLUGIN_UPDATE_RECEIPT,
+        AuditChainStore,
+    )
+
+    event_type = EVENT_PLUGIN_UPDATE_RECEIPT if is_update else EVENT_PLUGIN_INSTALL_RECEIPT
+    chain = AuditChainStore(workdir / ".sdd" / "audit", key=hmac_key)
+    ok, errors, events = chain.verify_and_query(event_type=event_type, resource_id=skill_hash)
+    if not ok:
+        joined = "; ".join(errors)[:160]
+        return InstallVerifyResult(ok=False, reason=f"audit chain failed verification ({joined})")
+    for event in events:
+        if event.details.get("skill_hash") == skill_hash and event.details.get("manifest_hash") == manifest_hash:
+            return InstallVerifyResult(ok=True, reason="")
+    return InstallVerifyResult(
+        ok=False,
+        reason=f"no matching {event_type} event in the audit chain for {skill_hash[:19]}...",
     )
 
 
