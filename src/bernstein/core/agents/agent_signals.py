@@ -81,27 +81,48 @@ class AgentSignalManager:
     # SHUTDOWN
     # ------------------------------------------------------------------
 
-    def write_shutdown(self, session_id: str, reason: str, task_title: str) -> None:
+    def write_shutdown(self, session_id: str, reason: str, task_title: str) -> bool:
         """Write a SHUTDOWN signal file telling the agent to save and exit.
+
+        Idempotent per stall episode: if a SHUTDOWN file already exists for
+        this session with the same *reason*, the file is not rewritten and no
+        log line is emitted. Without this guard the stale-heartbeat monitor
+        re-emitted (and re-logged) the identical ``no_heartbeat`` SHUTDOWN on
+        every tick, filling the logs with hundreds of identical lines while the
+        agent was never actually reaped (issue #2796). A new episode after
+        :meth:`clear_signals` re-emits normally.
 
         Args:
             session_id: The agent's session ID.
             reason: Human-readable reason for the shutdown.
             task_title: Title of the task the agent is working on.
+
+        Returns:
+            True if the signal was newly written, False if an identical
+            SHUTDOWN for this reason was already present (deduplicated).
         """
         signal_dir = self._signals_dir / session_id
-        signal_dir.mkdir(parents=True, exist_ok=True)
+        shutdown_file = signal_dir / "SHUTDOWN"
+        reason_line = f"Reason: {reason}\n"
+        try:
+            existing = shutdown_file.read_text(encoding="utf-8")
+        except OSError:
+            existing = ""
+        if reason_line in existing:
+            return False
 
+        signal_dir.mkdir(parents=True, exist_ok=True)
         content = (
             f"# SHUTDOWN - Save and exit\n"
-            f"Reason: {reason}\n"
+            f"{reason_line}"
             f"You have 30 seconds to:\n"
             f'1. Save all current work (git add + commit "[WIP] {task_title}")\n'
             f"2. Report partial progress to task server\n"
             f"3. Exit cleanly\n"
         )
-        (signal_dir / "SHUTDOWN").write_text(content, encoding="utf-8")
+        shutdown_file.write_text(content, encoding="utf-8")
         logger.info("SHUTDOWN signal written for agent %s (reason: %s)", session_id, reason)
+        return True
 
     # ------------------------------------------------------------------
     # HEARTBEAT

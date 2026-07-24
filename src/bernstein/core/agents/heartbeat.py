@@ -16,6 +16,11 @@ from typing import Any, cast
 
 from bernstein.core.agents.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
 from bernstein.core.agents.agent_signals import AgentSignalManager
+from bernstein.core.agents.heartbeat_escalation import (
+    EscalationThresholds,
+    EscalationTier,
+    HeartbeatEscalationLadder,
+)
 from bernstein.core.defaults import AGENT
 from bernstein.core.models import AgentHeartbeat, ProgressSnapshot, Task
 
@@ -331,17 +336,86 @@ def _session_task_title(session: Any) -> str:
     return ", ".join(session.task_ids) if session.task_ids else "unknown task"
 
 
+def _heartbeat_escalation_ladder(
+    orch: Any,
+    sigterm_threshold: float,
+    kill_threshold: float,
+) -> HeartbeatEscalationLadder:
+    """Return the orchestrator's heartbeat escalation ladder, creating it once.
+
+    Only the SIGTERM and SIGKILL tiers are active; the WARN/SIGUSR1 nudge tiers
+    are disabled so a stuck agent is escalated straight to a graceful then a
+    forced termination (a SIGUSR1 to a Node-based CLI adapter would start its
+    debugger, not nudge it). The ladder is stored on the orchestrator so its
+    per-tier idempotency persists across monitor ticks - without that a SIGKILL
+    (and its log line) would be re-emitted every tick.
+    """
+    ladder = getattr(orch, "_heartbeat_escalation_ladder", None)
+    if not isinstance(ladder, HeartbeatEscalationLadder):
+        ladder = HeartbeatEscalationLadder(
+            EscalationThresholds(
+                warn_s=0.0,
+                sigusr1_s=0.0,
+                sigterm_s=sigterm_threshold,
+                sigkill_s=kill_threshold,
+            )
+        )
+        with contextlib.suppress(Exception):
+            orch._heartbeat_escalation_ladder = ladder
+    return ladder
+
+
+def _terminate_stuck_agent(orch: Any, session: Any, age: float) -> None:
+    """Reap the backgrounded heartbeat loop of an agent being force-killed.
+
+    The escalation ladder has already sent SIGKILL to the agent process; its
+    death is picked up by ``refresh_agent_states`` on the next tick, which
+    requeues the orphaned task and frees the slot. This just tears down the
+    session's own backgrounded heartbeat shell loop so it does not outlive the
+    reaped agent (issue #2796).
+    """
+    logger.warning(
+        "Heartbeat-kill: agent %s heartbeat frozen for %.0fs - force-terminating stuck process",
+        session.id,
+        age,
+    )
+    _reap_session_heartbeat_loop(orch, session, reason="no_heartbeat_kill")
+
+
 def _escalate_heartbeat(
-    signal_mgr: AgentSignalManager,
+    orch: Any,
     session: Any,
     age: float,
     elapsed: float,
     shutdown_threshold: float,
     wakeup_threshold: float,
     shutdown_reason: str,
+    kill_threshold: float,
 ) -> None:
-    """Send SHUTDOWN or WAKEUP signal based on heartbeat staleness."""
+    """Escalate a stale heartbeat: WAKEUP -> SHUTDOWN -> terminal kill.
+
+    A heartbeat that never advances past its spawn-time value must not loop the
+    same SHUTDOWN signal forever. Once the age crosses ``kill_threshold`` the
+    process is force-killed (SIGTERM then SIGKILL via the escalation ladder) so
+    it is reaped and the slot frees (issue #2796). ``write_shutdown`` is itself
+    idempotent per episode, so the soft SHUTDOWN below is emitted at most once.
+    """
+    signal_mgr = orch._signal_mgr
     task_title = _session_task_title(session)
+
+    ladder = _heartbeat_escalation_ladder(orch, shutdown_threshold, kill_threshold)
+    if age < shutdown_threshold:
+        # Healthy again (or never stale): drop any prior escalation state so a
+        # later stall episode re-escalates from the start.
+        ladder.reset_agent(session.id)
+    else:
+        action = ladder.check_and_escalate(session.id, age, pid=session.pid)
+        if action is not None and action.tier >= EscalationTier.SIGKILL:
+            _terminate_stuck_agent(orch, session, age)
+            if session.pid is None or not action.action_taken:
+                with contextlib.suppress(Exception):
+                    orch._spawner.kill(session)
+
     if age >= shutdown_threshold:
         with contextlib.suppress(OSError):
             signal_mgr.write_shutdown(session.id, reason=shutdown_reason, task_title=task_title)
@@ -367,13 +441,14 @@ def _check_stale_agents_simple(orch: Any) -> None:
         age = now - hb.timestamp
         elapsed = now - session.spawn_ts
         _escalate_heartbeat(
-            orch._signal_mgr,
+            orch,
             session,
             age,
             elapsed,
             AGENT.escalation_sigterm_s,
             AGENT.escalation_warn_s,
             "no_heartbeat_120s",
+            AGENT.escalation_sigkill_s,
         )
 
 
@@ -390,6 +465,11 @@ def check_stale_agents(orch: Any) -> None:
 
     timeout_s = float(getattr(config, "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
     wakeup_after_s = max(timeout_s / 2.0, AGENT.escalation_warn_s)
+    # Terminal (SIGKILL) threshold sits a fixed grace past the SHUTDOWN
+    # threshold so the configured heartbeat timeout is honoured while still
+    # forcing a kill on a heartbeat that never advances (issue #2796).
+    kill_grace_s = max(AGENT.escalation_sigkill_s - AGENT.escalation_sigterm_s, 1.0)
+    kill_after_s = timeout_s + kill_grace_s
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     for session in orch._agents.values():
         if session.status == "dead":
@@ -402,13 +482,14 @@ def check_stale_agents(orch: Any) -> None:
 
         elapsed = time.time() - session.spawn_ts
         _escalate_heartbeat(
-            orch._signal_mgr,
+            orch,
             session,
             hb_status.age_seconds,
             elapsed,
             timeout_s,
             wakeup_after_s,
             "no_heartbeat",
+            kill_after_s,
         )
 
 
