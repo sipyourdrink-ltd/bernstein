@@ -178,3 +178,87 @@ def test_children_expose_workflow_call(child_yaml: str) -> None:
     on = _on(data)
     assert "workflow_call" in on, f"`{child_yaml}` must declare on: workflow_call:"
     assert "workflow_run" not in on, f"`{child_yaml}` must NOT keep workflow_run; the dispatcher owns that trigger now"
+
+
+# --- Reusable-workflow permission containment -------------------------------
+#
+# A called workflow inherits the *calling job's* GITHUB_TOKEN permissions.
+# When the caller grants less than any callee job requests, the Actions
+# validator rejects the call before scheduling anything: the whole
+# dispatcher run ends as `conclusion: startup_failure` with zero
+# check_runs. Nothing turns red, no check fails, no notification fires -
+# every child workflow simply stops running.
+#
+# That has bitten this dispatcher twice. The second time, a callee job
+# gained `actions: write` while the caller kept its narrower grant, and
+# auto-release, auto-heal, bernstein-ci-fix and bisect-on-red were all
+# silently dead for five days across 83 consecutive runs. The assertion
+# below turns that class of change into a red build instead.
+
+_PERMISSION_LEVELS = {"none": 0, "read": 1, "write": 2}
+
+# Scopes a job declares implicitly via the `read-all` / `write-all` shorthand.
+_ALL_SCOPES = "*"
+
+
+def _normalise_permissions(perms: Any) -> dict[str, str] | None:
+    """Map a `permissions:` block to `{scope: level}`.
+
+    Returns ``None`` when the block is absent, which means "inherit" and
+    therefore imposes no requirement of its own.
+    """
+    if perms is None:
+        return None
+    if isinstance(perms, str):
+        if perms in {"read-all", "write-all"}:
+            return {_ALL_SCOPES: perms.removesuffix("-all")}
+        # `permissions: {}` can round-trip through YAML as the string "{}".
+        return {}
+    assert isinstance(perms, dict), f"unsupported permissions block: {perms!r}"
+    return {str(scope): str(level) for scope, level in perms.items()}
+
+
+def _required_permissions(child: str) -> dict[str, str]:
+    """Union of the scopes every job in ``child.yml`` requests.
+
+    A job without its own block falls back to the child's workflow-level
+    block; when neither declares anything the job inherits the caller's
+    grant and so constrains nothing.
+    """
+    data = _load(REPO_ROOT / ".github" / "workflows" / f"{child}.yml")
+    workflow_level = _normalise_permissions(data.get("permissions"))
+    required: dict[str, str] = {}
+    for job in (data.get("jobs") or {}).values():
+        if not isinstance(job, dict):
+            continue
+        declared = _normalise_permissions(job.get("permissions"))
+        effective = workflow_level if declared is None else declared
+        for scope, level in (effective or {}).items():
+            if _PERMISSION_LEVELS.get(level, 0) > _PERMISSION_LEVELS.get(required.get(scope, "none"), 0):
+                required[scope] = level
+    return required
+
+
+@pytest.mark.parametrize("child", CHILDREN)
+def test_dispatcher_grants_cover_callee_requests(dispatcher: dict[str, Any], child: str) -> None:
+    """The calling job must grant at least what every callee job requests."""
+    job = (dispatcher.get("jobs") or {}).get(child)
+    assert isinstance(job, dict), f"dispatcher missing job for `{child}`"
+    granted = _normalise_permissions(job.get("permissions"))
+    required = _required_permissions(child)
+    assert granted is not None, (
+        f"job `{child}` must declare an explicit `permissions:` block; the repo default "
+        f"is read-only and would reject the call at boot (requires: {required})"
+    )
+    blanket = _PERMISSION_LEVELS.get(granted.get(_ALL_SCOPES, "none"), 0)
+    missing = {
+        scope: f"needs {level}, granted {granted.get(scope, 'nothing')}"
+        for scope, level in required.items()
+        if max(_PERMISSION_LEVELS.get(granted.get(scope, "none"), 0), blanket) < _PERMISSION_LEVELS[level]
+    }
+    assert not missing, (
+        f"dispatcher job `{child}` grants less than `{child}.yml` requests: {missing}. "
+        "The Actions validator rejects the call at boot, so the whole dispatcher run ends as "
+        "conclusion: startup_failure with zero check_runs and every child silently stops running. "
+        f"Widen the job's `permissions:` block to cover {required}."
+    )
