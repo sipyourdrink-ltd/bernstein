@@ -207,6 +207,65 @@ Backing store: `core/security/agent_identity.py` (`AgentIdentityStore`) under
 (`routes/identities.py:17-27`). Credentials are stored hashed; the API
 strips them before responses (`:82`).
 
+## Delegation capability tokens
+
+When a run fans out, authority fans out with it. A **capability token** makes
+each delegation hop a signed, scope-attenuating grant, so the
+`principal -> orchestrator -> sub-agent` authority chain becomes a single
+offline-verifiable structure. Backing module: `core/security/capability_tokens.py`.
+
+Each token is an Ed25519 **detached JWS** (RFC 7515) over the JCS-canonical
+(RFC 8785) token body, with a token-specific `typ` (`delegation-capability+jws`)
+so a signature minted for an agent card cannot be replayed as a token. The token
+binds both its own `issuer_pubkey` and its delegatee's `subject_pubkey` captured
+at mint time, so **key rotation never invalidates historical tokens**. Signing
+and key resolution reuse `agent_card_signer.py` and `agent_card_keystore.py`.
+
+**Tokens narrow, never grant.** `attenuate(parent, ...)` enforces that a child's
+caveats are a subset of its parent's over every axis:
+
+| Caveat            | Subset rule                                                            |
+| ----------------- | --------------------------------------------------------------------- |
+| `permissions`     | set-subset over the `PERM_*` vocabulary                               |
+| `task_ids`        | allowlist subset (`None` = unconstrained/widest)                     |
+| `path_prefixes`   | POSIX ancestor-or-equal coverage (`/a/b` covers `/a/b/c`, not `/a/bc`) |
+| `not_after`       | expiry no later than the parent                                       |
+| `max_uses`        | no greater than the parent (`None` = unlimited/widest)               |
+| `remaining_depth` | **strictly less** than the parent (the `max_depth` caveat)            |
+
+Widening at any hop is rejected at mint time *and* independently at verify time,
+so a re-signed, structurally-continuous but widened hop still fails from the
+signed bytes alone. Approval-gated actions are deliberately **not** expressible
+as caveats: a token answers "was this sub-agent granted more than its parent
+held?", never "may it perform an action requiring fresh approval?" - that
+escalation stays on the approval-receipt surface.
+
+Every mint anchors a `delegation_minted` event into the HMAC audit chain
+(`audit_chain.py`), whose `token_hash` and embedded `prev_chain_digest`
+cross-reference the token's identity and captured `audit_head` - so
+`bernstein audit verify` also attests the mint happened at a fixed chain
+position. `PermissionDelegator.verify_capability` verifies the offline chain
+first and consults the in-process registry only for liveness (expiry) and
+revocation; existing enum-scope callers keep working via `enum_to_caveats`.
+
+`verify_chain` walks the chain root -> leaf with **no network and no registry**:
+per-hop signature, structural `parent_token_hash` linkage, identity and pubkey
+continuity (the issuer of hop N is the subject of hop N-1), monotonic
+attenuation, and root trust-anchor membership. `to_actor_claims` projects a
+*verified* chain as nested RFC 8693 `act` claims for external IdP tooling and
+refuses an unverified chain.
+
+Verify a chain offline from the CLI:
+
+```
+bernstein delegation verify-token chain.json --trust-anchor principal.pem
+```
+
+It prints per-hop PASS/FAIL plus the resolved authority path and exits non-zero
+on any failing hop. (This is distinct from `bernstein delegation verify <run>`,
+which reconstructs the per-hop HMAC *receipt* chain - the ACT log - in
+`core/identity/delegation.py`.)
+
 ## Install fingerprint (v1.0)
 
 A separate identity surface, off by default, lives at
@@ -361,6 +420,8 @@ Compliance modules in code (`core/security/`):
 | OIDC / SAML / device flow routes   | `src/bernstein/core/routes/auth.py`                                   |
 | Agent identities API               | `src/bernstein/core/routes/identities.py`                             |
 | Agent identity store               | `src/bernstein/core/security/agent_identity.py`                                |
+| Delegation capability tokens       | `src/bernstein/core/security/capability_tokens.py`, `permission_delegation.py` |
+| Delegation verify CLI              | `src/bernstein/cli/commands/delegation_cmd.py`                        |
 | Audit log (HMAC chain)             | `src/bernstein/core/security/audit.py`                                |
 | Audit integrity verifier           | `src/bernstein/core/security/audit_integrity.py`                      |
 | Audit query / search routes        | `src/bernstein/core/routes/audit_log.py`                              |
