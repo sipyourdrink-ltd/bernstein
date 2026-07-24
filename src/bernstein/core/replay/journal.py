@@ -577,6 +577,7 @@ def seal_journal_into_spine(
         journal is empty.
     """
     from bernstein.adapters.base import record_artifact_write
+    from bernstein.core.lineage.spine import JOURNAL_SEAL_STEP_PREFIX
 
     head = journal.head()
     if not head:
@@ -590,7 +591,7 @@ def seal_journal_into_spine(
         artifact_path=artifact_path,
         content=content,
         actor=actor,
-        step_id=f"replay-journal-head:{head}",
+        step_id=f"{JOURNAL_SEAL_STEP_PREFIX}{head}",
         model=model,
         lineage_root=lineage_root,
         run_id=journal.run_id,

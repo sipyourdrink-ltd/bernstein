@@ -63,6 +63,13 @@ logger = logging.getLogger(__name__)
 #: change; ``verify`` rejects unknown versions.
 SPINE_ENTRY_VERSION = 1
 
+#: ``step_id`` prefix of the internal journal-head seal written at run
+#: finalization (see ``bernstein.core.replay.journal.seal_journal_into_spine``).
+#: An entry with this prefix records the run's own journal file, not a produced
+#: artifact, so ``verify`` treats a chain built only of these as having no
+#: artifact provenance (issue #2789).
+JOURNAL_SEAL_STEP_PREFIX = "replay-journal-head:"
+
 _SPINE_LOG_NAME = "spine.jsonl"
 _SPINE_HEAD_NAME = "spine.head"
 
@@ -234,6 +241,11 @@ class SpineStatus(Enum):
 
     OK = "ok"
     NO_ENTRIES = "no_entries"
+    #: The chain is intact but contains only the internal journal-head seal:
+    #: no produced-artifact provenance was captured (issue #2789). Distinct
+    #: from ``OK`` so a run that recorded no deliverable cannot pass as
+    #: "provenance confirmed".
+    SEAL_ONLY = "seal_only"
     TAMPERED = "tampered"
 
 
@@ -247,11 +259,12 @@ class SpineVerifyResult:
 
     @property
     def ok(self) -> bool:
-        """True only when the chain is intact and non-empty.
+        """True only when the chain is intact and carries artifact provenance.
 
-        An empty run is *not* ``ok`` - AC5 requires a distinct status
-        so ``lineage verify`` cannot pass trivially against a run that
-        emitted nothing.
+        Neither an empty run (``NO_ENTRIES``) nor a chain that holds only the
+        internal journal-head seal (``SEAL_ONLY``, issue #2789) is ``ok``: a
+        distinct status keeps ``lineage verify`` from passing trivially against
+        a run that emitted nothing or recorded no produced artifact.
         """
         return self.status is SpineStatus.OK
 
@@ -539,9 +552,11 @@ class LineageSpine:
         """Recompute the full hash chain and every HMAC tag.
 
         Returns a :class:`SpineVerifyResult`. ``NO_ENTRIES`` is a
-        distinct status: an empty run must not trivially pass (AC5). Any
-        single-byte mutation of any entry - payload byte or HMAC tag -
-        yields ``TAMPERED`` (AC2).
+        distinct status: an empty run must not trivially pass (AC5). A chain
+        whose only entries are the internal journal-head seal carries no
+        produced-artifact provenance and returns the distinct ``SEAL_ONLY``
+        status rather than ``OK`` (issue #2789). Any single-byte mutation of
+        any entry - payload byte or HMAC tag - yields ``TAMPERED`` (AC2).
         """
         if not self.spine_path.exists():
             return SpineVerifyResult(status=SpineStatus.NO_ENTRIES, count=0)
@@ -552,6 +567,9 @@ class LineageSpine:
         errors: list[str] = []
         prev_hash = _GENESIS_HASH
         count = 0
+        # True until an entry that is *not* the internal journal-head seal is
+        # seen; a chain built only of seals has no artifact provenance (#2789).
+        seal_only = True
         for line_no, line in enumerate(raw.split(b"\n"), start=1):
             count += 1
             try:
@@ -606,14 +624,19 @@ class LineageSpine:
             expected_hmac = _compute_hmac(self._hmac_key, body)
             if not _hmac.compare_digest(str(row["hmac"]), expected_hmac):
                 errors.append(f"line {line_no}: hmac mismatch")
+            if not str(row["step_id"]).startswith(JOURNAL_SEAL_STEP_PREFIX):
+                seal_only = False
             prev_hash = str(row["entry_hash"])
 
         if errors:
             return SpineVerifyResult(status=SpineStatus.TAMPERED, count=count, errors=errors)
+        if seal_only:
+            return SpineVerifyResult(status=SpineStatus.SEAL_ONLY, count=count)
         return SpineVerifyResult(status=SpineStatus.OK, count=count)
 
 
 __all__ = [
+    "JOURNAL_SEAL_STEP_PREFIX",
     "SPINE_ENTRY_VERSION",
     "LineageSpine",
     "SpineEntry",

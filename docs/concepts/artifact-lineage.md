@@ -51,6 +51,17 @@ The chain walks output → producing prompt → input artefact → upstream
 producer recursively. CLI text output prints the most recent producer
 first; `--limit` caps how many records are shown.
 
+### Coverage and the `SEAL_ONLY` verify status
+
+Per-artifact records are captured at the in-process write boundary
+(`record_artifact_write`). CLI adapters (qwen, claude, ...) spawn a
+subprocess that writes files directly on disk; those writes do not cross
+that boundary, so a CLI-adapter run's spine may contain only the
+journal-head seal and no produced-artifact record. `bernstein lineage
+verify` reports that case as the distinct **`SEAL_ONLY`** status with a
+non-zero exit, rather than a clean `OK`, so a chain with no artifact
+provenance is never mistaken for "provenance confirmed".
+
 ## Programmatic access
 
 ```python

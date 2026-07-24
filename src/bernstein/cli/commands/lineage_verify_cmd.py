@@ -79,7 +79,8 @@ def lineage_verify_cmd(
     a recovery task's embedded failure-receipt hash resolves to a valid,
     Merkle-chained, HMAC-tagged spine entry.
 
-    Exit codes: 0 = OK, 1 = no entries / bad input, 2 = tamper detected.
+    Exit codes: 0 = OK, 1 = no entries / seal-only (no artifact provenance) /
+    bad input, 2 = tamper detected.
     """
     lineage_root = _spine_dir(workdir)
     spine_path = lineage_root / run_id / "spine.jsonl"
@@ -97,6 +98,12 @@ def lineage_verify_cmd(
             raise SystemExit(0)
         if result.status is SpineStatus.NO_ENTRIES:
             console.print("[yellow]NO ENTRIES[/yellow] -- run emitted no lineage.")
+            raise SystemExit(1)
+        if result.status is SpineStatus.SEAL_ONLY:
+            console.print(
+                "[yellow]SEAL ONLY[/yellow] -- chain intact but records only the journal-head "
+                "seal; no produced-artifact provenance was captured for this run."
+            )
             raise SystemExit(1)
         console.print(f"[red]TAMPER DETECTED[/red] -- {len(result.errors)} error(s):")
         for err in result.errors[:50]:

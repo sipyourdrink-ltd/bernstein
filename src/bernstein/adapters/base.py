@@ -1019,10 +1019,15 @@ class CLIAdapter(ABC):
 # Lineage spine write boundary (issue #2292)
 # ---------------------------------------------------------------------------
 #
-# The spine is the single always-on Merkle+HMAC lineage store. Every
-# adapter artifact write routes through ``record_artifact_write`` -- the
-# one write boundary -- so provenance is captured with no per-adapter
-# opt-in. ``LineageSpine`` is bound at module scope so tests can patch it.
+# The spine is the single always-on Merkle+HMAC lineage store.
+# ``record_artifact_write`` is the one write boundary for per-artifact
+# provenance: in-process callers (the journal-head seal, schedule-fire
+# records, the MCP tasks extension, checkpoint-retry) route through it.
+# CLI-adapter runs spawn a subprocess (qwen, claude, ...) that writes files
+# directly on disk without crossing this boundary, so those writes are not
+# captured here; ``LineageSpine.verify`` reports a chain that carries only the
+# journal seal as ``SEAL_ONLY`` rather than a clean pass (issue #2789).
+# ``LineageSpine`` is bound at module scope so tests can patch it.
 
 #: Env var that gates the spine write. ``BERNSTEIN_LINEAGE_ENABLED``
 #: defaults to true and is a *hard* gate: when enabled, a failure to
@@ -1092,8 +1097,10 @@ def record_artifact_write(
 ) -> str | None:
     """Record one artifact write into the run's lineage spine.
 
-    This is the single write boundary every adapter routes through. It
-    appends exactly one Merkle-chained, HMAC-tagged entry per call.
+    The single write boundary for per-artifact provenance, used by the
+    in-process callers listed in the module comment above. It appends exactly
+    one Merkle-chained, HMAC-tagged entry per call. CLI-adapter subprocess
+    file writes do not cross this boundary (issue #2789).
 
     Fail-closed gate: when ``BERNSTEIN_LINEAGE_ENABLED`` is truthy (the
     default), any failure inside the spine propagates -- provenance is a

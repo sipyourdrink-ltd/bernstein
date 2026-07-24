@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.lineage.spine import LineageSpine, SpineStatus
 from bernstein.core.replay.journal import EventJournal, seal_journal_into_spine
 
 
@@ -40,7 +40,12 @@ def test_journal_head_appears_in_spine_root(tmp_path: Path) -> None:
     # pin the run's replay identity against its provenance chain.
     assert head in seal.step_id
     assert seal.artifact_path.endswith("journal.jsonl")
-    assert spine.verify().ok
+    # The chain is cryptographically intact, but it records only the journal
+    # seal and no produced-artifact provenance, so verify reports SEAL_ONLY
+    # rather than a clean OK (issue #2789).
+    result = spine.verify()
+    assert result.status is SpineStatus.SEAL_ONLY
+    assert not result.ok
 
 
 def test_seal_is_noop_when_lineage_disabled(monkeypatch, tmp_path: Path) -> None:

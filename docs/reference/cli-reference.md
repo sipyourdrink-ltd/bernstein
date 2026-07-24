@@ -790,7 +790,7 @@ deterministic-subset extractor described in
 
 | Subcommand | Purpose |
 |---|---|
-| `verify RUN_ID` | Verify the run's lineage spine: recompute the full Merkle hash chain and every HMAC tag, print the head hash. `--workdir DIR`. Exit 0 = OK, 1 = no entries, 2 = tamper. |
+| `verify RUN_ID` | Verify the run's lineage spine: recompute the full Merkle hash chain and every HMAC tag, print the head hash. `--workdir DIR`. Exit 0 = OK, 1 = no entries / seal-only (chain intact but no produced-artifact provenance), 2 = tamper. |
 | `replay RUN_ID` | Walk the run's spine entries in append order (artifact, actor, step, model, content hash, entry hash). `--workdir DIR`, `--limit N`. Exit 1 on an empty run. |
 
 Every adapter artifact write is recorded, without per-adapter opt-in, as
