@@ -24,13 +24,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_link_target(path: Path) -> Path:
+def _resolve_link_target(path: Path) -> Path | None:
     """Resolve a link (symlink or junction) to its target path.
 
     Isolated in a helper so tests can exercise the junction branches on
     platforms where junctions cannot be created.
+
+    ``Path.resolve()`` can raise ``OSError`` (``ELOOP`` on a symlink cycle, or
+    a permission error) or ``RuntimeError`` (an infinite loop the resolver
+    detects itself).  A link the isolation checker cannot resolve is treated
+    fail-closed: this returns ``None`` and the callers record a violation so
+    the spawn aborts through ``create()``'s cleanup path instead of letting a
+    raw filesystem error escape and leak the worktree + lock (issue #2643).
     """
-    return path.resolve()
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return None
 
 
 class WorktreeIsolationError(Exception):
@@ -82,6 +92,11 @@ def check_sdd_not_shared(worktree_path: Path, repo_root: Path) -> list[str]:
 
     if is_filesystem_link(sdd_path):
         link_target = _resolve_link_target(sdd_path)
+        if link_target is None:
+            # Fail-closed: an unresolvable .sdd/ link cannot be proven local,
+            # so treat it as a violation and let create() clean up (#2643).
+            violations.append(f".sdd/ is a link that could not be resolved (cannot verify isolation): {sdd_path}")
+            return violations
         parent_sdd = repo_root / ".sdd"
         if link_target == parent_sdd.resolve() or str(link_target).startswith(str(parent_sdd.resolve())):
             violations.append(f".sdd/ is a symlink to parent repo state: {sdd_path} -> {link_target}")
@@ -128,6 +143,11 @@ def check_symlinks_read_only(
             continue
 
         link_target = _resolve_link_target(entry)
+        if link_target is None:
+            # Fail-closed: a symlink whose target cannot be resolved cannot be
+            # cleared of pointing into parent state, so record it (#2643).
+            violations.append(f"Symlink '{rel_name}' could not be resolved (cannot verify isolation): {entry}")
+            continue
         # Symlinks pointing into the parent repo's mutable state dirs are dangerous
         mutable_dirs = (".sdd", ".git")
         for mutable in mutable_dirs:

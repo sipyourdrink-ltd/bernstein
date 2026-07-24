@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from bernstein.core.worktree_isolation import (
@@ -192,3 +193,72 @@ class TestJunctionDetection:
         (worktree_path / "src").mkdir()
         result = validate_worktree_isolation(worktree_path, repo_root)
         assert result.passed
+
+
+# ---------------------------------------------------------------------------
+# Unresolvable links (fail-closed)
+# ---------------------------------------------------------------------------
+
+
+class TestUnresolvableLink:
+    """``Path.resolve()`` can raise (``ELOOP`` symlink cycle, permission error,
+    or a resolver-detected ``RuntimeError``).  ``_resolve_link_target`` must
+    swallow those and return ``None`` so callers record a violation and the
+    spawn aborts through ``create()``'s cleanup path, instead of letting a raw
+    filesystem error escape and leak the worktree + lock (issue #2643).
+    """
+
+    def test_resolve_link_target_returns_none_on_oserror(self) -> None:
+        import bernstein.core.git.worktree_isolation as wi
+
+        fake = MagicMock()
+        fake.resolve.side_effect = OSError("[Errno 62] Too many levels of symbolic links")
+        assert wi._resolve_link_target(fake) is None
+
+    def test_resolve_link_target_returns_none_on_runtime_error(self) -> None:
+        import bernstein.core.git.worktree_isolation as wi
+
+        fake = MagicMock()
+        fake.resolve.side_effect = RuntimeError("Symlink loop")
+        assert wi._resolve_link_target(fake) is None
+
+    def test_resolve_link_target_passes_through_resolved_path(self, tmp_path: Path) -> None:
+        import bernstein.core.git.worktree_isolation as wi
+
+        real = tmp_path / "real"
+        real.mkdir()
+        assert wi._resolve_link_target(real) == real.resolve()
+
+    def test_unresolvable_sdd_link_recorded_as_violation(
+        self,
+        worktree_path: Path,
+        repo_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import bernstein.core.git.worktree_isolation as wi
+
+        sdd = worktree_path / ".sdd"
+        sdd.mkdir()
+        monkeypatch.setattr(wi, "is_filesystem_link", lambda p: Path(p) == sdd)
+        monkeypatch.setattr(wi, "_resolve_link_target", lambda _p: None)
+
+        violations = check_sdd_not_shared(worktree_path, repo_root)
+        assert len(violations) == 1
+        assert "could not be resolved" in violations[0].lower()
+
+    def test_unresolvable_symlink_entry_recorded_as_violation(
+        self,
+        worktree_path: Path,
+        repo_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import bernstein.core.git.worktree_isolation as wi
+
+        entry = worktree_path / "state"
+        entry.mkdir()
+        monkeypatch.setattr(wi, "is_filesystem_link", lambda p: Path(p) == entry)
+        monkeypatch.setattr(wi, "_resolve_link_target", lambda _p: None)
+
+        violations = check_symlinks_read_only(worktree_path, repo_root)
+        assert len(violations) == 1
+        assert "could not be resolved" in violations[0].lower()
