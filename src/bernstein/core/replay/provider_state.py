@@ -56,6 +56,12 @@ PROVIDER_STATE_MUTATION_EVENT = "provider_state_mutation"
 #: capability for the run ("observed" or "declared-blind").
 MUTATION_CAPABILITY_EVENT = "provider_state_capability"
 
+#: Journal event type recording that provider-mutation capture failed for a
+#: session (issue #2646). In deterministic/replay mode a dropped capture must
+#: not read as an absence of mutations, so an explicit marker is chained and
+#: :func:`verify_provider_state` fails closed on it.
+PROVIDER_STATE_CAPTURE_FAILED_EVENT = "provider_state_capture_failed"
+
 #: The adapter surfaces provider-side mutation signals from its stream.
 CAPABILITY_OBSERVED = "observed"
 
@@ -219,6 +225,25 @@ def record_mutation_capability(journal: EventJournal, *, adapter: str, capabilit
     journal.record(MUTATION_CAPABILITY_EVENT, adapter=adapter, capability=capability)
 
 
+def record_capture_failure(journal: EventJournal, *, agent_id: str, reason: str) -> None:
+    """Chain a fail-closed marker when provider-mutation capture failed.
+
+    Issue #2646: the observed-mutation pipeline previously swallowed I/O and
+    parse errors, so a dropped capture was indistinguishable from a genuine
+    absence of mutations and replay verification passed open. This marker is a
+    load-bearing journal entry: :func:`verify_provider_state` treats its
+    presence as a fail-closed condition, and because it participates in the
+    Merkle chain a later removal or edit breaks verification at its index.
+
+    Args:
+        journal: The run's event journal.
+        agent_id: The agent session whose capture failed.
+        reason: Short, non-sensitive failure token (for example the caught
+            exception's type name).
+    """
+    journal.record(PROVIDER_STATE_CAPTURE_FAILED_EVENT, agent_id=agent_id, reason=reason)
+
+
 def capability_for_provider(provider: str | None, model: str = "") -> tuple[str, str]:
     """Resolve the mutation-observability capability for a provider.
 
@@ -380,15 +405,34 @@ def verify_provider_state(path: Path) -> ProviderStateVerifyResult:
     mutation_count = 0
 
     for index, row in enumerate(load_events(path)):
-        if str(row.get("event", "")) != PROVIDER_STATE_MUTATION_EVENT:
+        event = str(row.get("event", ""))
+        if event == PROVIDER_STATE_CAPTURE_FAILED_EVENT:
+            # A capture-failed marker means a mutation may have been dropped;
+            # fail closed rather than treat the silence as an absence (#2646).
+            reason = str(row.get("reason", ""))
+            errors.append(
+                f"step {index}: provider-state capture failed ({reason}); replay unverifiable (fail-closed)",
+            )
+            continue
+        if event != PROVIDER_STATE_MUTATION_EVENT:
             continue
         mutation_count += 1
         kind = str(row.get("mutation_kind", ""))
+        raw_step_index = row.get("step_index", 0)
+        try:
+            step_index = int(raw_step_index)
+        except (TypeError, ValueError):
+            # A malformed/tampered step_index is a corrupted row, not a reason
+            # to crash the verifier: record it and fail closed (#2646).
+            errors.append(
+                f"step {index}: provider_state_mutation has malformed step_index {raw_step_index!r}",
+            )
+            continue
         expected_address = ProviderStateMutation(
             kind=kind,
             before_digest=str(row.get("before_digest", "")),
             after_digest=str(row.get("after_digest", "")),
-            step_index=int(row.get("step_index", 0)),
+            step_index=step_index,
         ).content_address()
         if str(row.get("content_address", "")) != expected_address:
             errors.append(f"step {index}: provider_state_mutation content address mismatch")
@@ -412,6 +456,7 @@ __all__ = [
     "CAPABILITY_OBSERVED",
     "DETERMINISTIC_SEED_ENV",
     "MUTATION_CAPABILITY_EVENT",
+    "PROVIDER_STATE_CAPTURE_FAILED_EVENT",
     "PROVIDER_STATE_MUTATION_EVENT",
     "REPLAY_RUN_ID_ENV",
     "ProviderStateMutation",
@@ -420,6 +465,7 @@ __all__ = [
     "deterministic_mode_active",
     "mutation_from_signal",
     "record_agent_mutations",
+    "record_capture_failure",
     "record_mutation_capability",
     "record_provider_state_mutation",
     "verify_provider_state",

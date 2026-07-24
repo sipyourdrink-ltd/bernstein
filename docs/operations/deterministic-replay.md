@@ -165,8 +165,9 @@ therefore chained into `journal.jsonl` as a first-class entry
 | Load-bearing | The entry participates in the Merkle chain: removing or editing it breaks `--verify` at exactly its index |
 | Deterministic modes | Suppression is requested at spawn (`DISABLE_AUTO_COMPACT`); a mutation that still arrives is recorded **flagged** and `bernstein replay <run-id> --verify` exits non-zero (fail-closed) |
 | Live runs | Mutations are permitted but pinned: each is recorded before execution continues, so the journal head commits to it |
+| Capture failure | If capture itself fails (sidecar I/O or parse error) in a deterministic/replay run, a `provider_state_capture_failed` marker is chained so `--verify` fails closed instead of reading the dropped mutation as an absence |
 | Divergence attribution | `bernstein replay diff A B` reports reason code `provider_state_mutation` with the mutation kind and the exact step index when the first mismatching event is a mutation entry |
-| Capability record | One `provider_state_capability` entry per provider per run: `observed` or `declared-blind` |
+| Capability record | One `provider_state_capability` entry per resolved adapter per run: `observed` or `declared-blind` |
 | Audit mirror | Each chained mutation is mirrored into the HMAC audit chain as a `provider.state_mutation` event anchored to the journal head |
 
 The capability record is what keeps an empty run interpretable: an adapter
@@ -176,7 +177,9 @@ distinguishable from an inability to see them. The claude adapter observes
 mutation signals (`compact_boundary` and related stream-json `system`
 subtypes) through its wrapper, which appends each one to
 `.sdd/runtime/provider_state/<session_id>.jsonl` in observation order; the
-orchestrator chains them into the run journal when the agent is reaped.
+sidecar is reset at spawn so a reused session id (deterministic replay pins
+them) cannot re-journal a prior run's mutations. The orchestrator chains them
+into the run journal when the agent is reaped.
 
 The digests are content addresses of the provider-reported metadata, which is
 the only observable surface for a server-side rewrite: `before_digest` covers

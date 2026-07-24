@@ -33,11 +33,13 @@ from bernstein.core.replay.provider_state import (
     CAPABILITY_DECLARED_BLIND,
     CAPABILITY_OBSERVED,
     MUTATION_CAPABILITY_EVENT,
+    PROVIDER_STATE_CAPTURE_FAILED_EVENT,
     PROVIDER_STATE_MUTATION_EVENT,
     ProviderStateMutation,
     deterministic_mode_active,
     mutation_from_signal,
     record_agent_mutations,
+    record_capture_failure,
     record_mutation_capability,
     record_provider_state_mutation,
     verify_provider_state,
@@ -208,6 +210,77 @@ class TestDeterministicPolicy:
         assert verify_provider_state(journal.path).ok
 
 
+class TestVerifyRobustness:
+    """#2646: the verifier fails closed on tampered rows, never crashes."""
+
+    def test_malformed_step_index_fails_closed_without_crashing(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="run-bad-step", sdd_dir=tmp_path)
+        journal.record("run_started")
+        with patch.dict("os.environ", {}, clear=True):
+            record_agent_mutations(
+                journal,
+                [{"kind": "compact_boundary", "detail": {}}],
+                agent_id="agent-1",
+            )
+        rows = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
+        for row in rows:
+            if row.get("event") == PROVIDER_STATE_MUTATION_EVENT:
+                row["step_index"] = "not-an-int"
+        journal.path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+        # Must not raise: a malformed step_index is a tampered row, not a crash.
+        state = verify_provider_state(journal.path)
+        assert not state.ok
+        assert any("step_index" in err for err in state.errors)
+
+    def test_non_numeric_step_index_object_fails_closed(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="run-obj-step", sdd_dir=tmp_path)
+        journal.record("run_started")
+        with patch.dict("os.environ", {}, clear=True):
+            record_agent_mutations(
+                journal,
+                [{"kind": "compact_boundary", "detail": {}}],
+                agent_id="agent-2",
+            )
+        rows = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
+        for row in rows:
+            if row.get("event") == PROVIDER_STATE_MUTATION_EVENT:
+                row["step_index"] = {"nested": 1}  # not int-coercible
+        journal.path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+        state = verify_provider_state(journal.path)  # must not raise
+        assert not state.ok
+
+
+class TestCaptureFailureMarker:
+    """#2646: a capture-failed marker fails replay verification closed."""
+
+    def test_capture_failure_marker_fails_verification_closed(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="run-capfail", sdd_dir=tmp_path)
+        journal.record("run_started")
+        record_capture_failure(journal, agent_id="agent-1", reason="OSError")
+
+        assert verify_journal(journal.path).ok  # the chain itself is intact
+        state = verify_provider_state(journal.path)
+        assert not state.ok
+        assert state.chain_ok  # policy fails closed, not the chain
+        assert any("capture failed" in err.lower() for err in state.errors)
+        assert any("OSError" in err for err in state.errors)
+
+    def test_capture_failure_marker_is_chain_load_bearing(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="run-capfail-chain", sdd_dir=tmp_path)
+        journal.record("run_started")
+        record_capture_failure(journal, agent_id="agent-1", reason="parse")
+        rows = journal.path.read_text(encoding="utf-8").splitlines()
+        marker = json.loads(rows[-1])
+        assert marker["event"] == PROVIDER_STATE_CAPTURE_FAILED_EVENT
+        # Editing the marker breaks chain verification at its index.
+        marker["reason"] = "tampered"
+        rows[-1] = json.dumps(marker)
+        journal.path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        assert not verify_journal(journal.path).ok
+
+
 class TestDivergenceAttribution:
     """AC2: replay diff names the mutation, its kind, and the step index."""
 
@@ -359,12 +432,17 @@ class TestOrchestratorWiring:
         from types import MethodType, SimpleNamespace
 
         from bernstein.core.orchestration.orchestrator import Orchestrator
+        from bernstein.core.security.audit_chain import AuditChainStore
 
+        # A hermetic, in-tmp audit chain so the mirror path never touches the
+        # global audit key (the cache-hit branch of _get_provider_audit_chain
+        # returns this pre-built store).
         stub = SimpleNamespace(
             _recorder=EventJournal(run_id="run-wire", sdd_dir=tmp_path / ".sdd"),
             _mutation_capability_recorded=set(),
             _agents={},
             _workdir=tmp_path,
+            _provider_audit_chain=AuditChainStore(tmp_path / "audit", key=b"k" * 32),
         )
         stub._record_mutation_capability_once = MethodType(
             Orchestrator._record_mutation_capability_once,  # type: ignore[arg-type]
@@ -372,6 +450,14 @@ class TestOrchestratorWiring:
         )
         stub._record_provider_mutations_for = MethodType(
             Orchestrator._record_provider_mutations_for,  # type: ignore[arg-type]
+            stub,
+        )
+        stub._record_capture_failure = MethodType(
+            Orchestrator._record_capture_failure,  # type: ignore[arg-type]
+            stub,
+        )
+        stub._get_provider_audit_chain = MethodType(
+            Orchestrator._get_provider_audit_chain,  # type: ignore[arg-type]
             stub,
         )
         return stub
@@ -437,6 +523,103 @@ class TestOrchestratorWiring:
         stub._record_provider_mutations_for("agent-4")
 
         assert [r for r in self._rows(stub) if r["event"] == PROVIDER_STATE_MUTATION_EVENT] == []
+
+    def test_reaped_mutations_mirrored_into_audit_chain(self, tmp_path: Path) -> None:
+        """#2646 item 2: the reap path threads the run's audit chain."""
+        from bernstein.core.security.audit_chain import EVENT_PROVIDER_STATE_MUTATION
+
+        stub = self._stub(tmp_path)
+        stub._agents["agent-7"] = self._session("agent-7", "claude")  # type: ignore[attr-defined]
+        sidecar_dir = tmp_path / ".sdd" / "runtime" / "provider_state"
+        sidecar_dir.mkdir(parents=True)
+        (sidecar_dir / "agent-7.jsonl").write_text(
+            json.dumps({"kind": "compact_boundary", "detail": {"trigger": "auto"}}) + "\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict("os.environ", {}, clear=True):
+            stub._record_provider_mutations_for("agent-7")
+
+        chain_text = "".join(p.read_text(encoding="utf-8") for p in (tmp_path / "audit").glob("*.jsonl"))
+        assert EVENT_PROVIDER_STATE_MUTATION in chain_text
+        assert stub._recorder.head() in chain_text  # type: ignore[attr-defined]
+
+    def test_capture_io_error_in_deterministic_mode_records_marker(self, tmp_path: Path) -> None:
+        """#2646 item 1: a dropped capture fails closed in deterministic mode."""
+        stub = self._stub(tmp_path)
+        stub._agents["agent-5"] = self._session("agent-5", "claude")  # type: ignore[attr-defined]
+        sidecar_dir = tmp_path / ".sdd" / "runtime" / "provider_state"
+        sidecar_dir.mkdir(parents=True)
+        # A directory at the sidecar path makes the adapter read raise OSError,
+        # which now surfaces to the reap handler instead of being swallowed.
+        (sidecar_dir / "agent-5.jsonl").mkdir()
+
+        with patch.dict("os.environ", {"BERNSTEIN_DETERMINISTIC_SEED": "seed-1"}, clear=True):
+            stub._record_provider_mutations_for("agent-5")
+
+        markers = [r for r in self._rows(stub) if r["event"] == PROVIDER_STATE_CAPTURE_FAILED_EVENT]
+        assert len(markers) == 1
+        assert markers[0]["agent_id"] == "agent-5"
+        assert not verify_provider_state(stub._recorder.path).ok  # type: ignore[attr-defined]
+
+    def test_capture_io_error_outside_deterministic_mode_no_marker(self, tmp_path: Path) -> None:
+        """Outside deterministic mode a dropped capture is logged, not marked."""
+        stub = self._stub(tmp_path)
+        stub._agents["agent-6"] = self._session("agent-6", "claude")  # type: ignore[attr-defined]
+        sidecar_dir = tmp_path / ".sdd" / "runtime" / "provider_state"
+        sidecar_dir.mkdir(parents=True)
+        (sidecar_dir / "agent-6.jsonl").mkdir()
+
+        with patch.dict("os.environ", {}, clear=True):
+            stub._record_provider_mutations_for("agent-6")
+
+        assert [r for r in self._rows(stub) if r["event"] == PROVIDER_STATE_CAPTURE_FAILED_EVENT] == []
+
+    def test_capability_keyed_on_resolved_adapter_not_provider_label(self, tmp_path: Path) -> None:
+        """#2646 item 3: dedup key is the resolved adapter, not the label."""
+        stub = self._stub(tmp_path)
+        stub._record_mutation_capability_once(self._session("agent-8", "anthropic"))
+
+        assert "claude" in stub._mutation_capability_recorded  # type: ignore[attr-defined]
+        rows = [r for r in self._rows(stub) if r["event"] == MUTATION_CAPABILITY_EVENT]
+        assert len(rows) == 1
+        assert rows[0]["adapter"] == "claude"
+
+    def test_capability_not_marked_until_record_succeeds(self, tmp_path: Path) -> None:
+        """#2646 item 3: a failed record is retried, not marked done."""
+        import bernstein.core.replay.provider_state as ps
+
+        stub = self._stub(tmp_path)
+        session = self._session("agent-9", "claude")
+        real = ps.record_mutation_capability
+        calls = {"n": 0}
+
+        def flaky(journal: object, *, adapter: str, capability: str) -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient io")
+            real(journal, adapter=adapter, capability=capability)  # type: ignore[arg-type]
+
+        with patch.object(ps, "record_mutation_capability", flaky):
+            stub._record_mutation_capability_once(session)  # fails, must not mark
+            assert stub._mutation_capability_recorded == set()  # type: ignore[attr-defined]
+            stub._record_mutation_capability_once(session)  # retries, succeeds
+
+        assert "claude" in stub._mutation_capability_recorded  # type: ignore[attr-defined]
+        assert len([r for r in self._rows(stub) if r["event"] == MUTATION_CAPABILITY_EVENT]) == 1
+
+    def test_provider_less_sessions_do_not_collapse_by_adapter(self, tmp_path: Path) -> None:
+        """#2646 item 3: provider-less sessions no longer collapse to one key."""
+        from bernstein.core.tasks.models import AgentSession, ModelConfig
+
+        stub = self._stub(tmp_path)
+        a = AgentSession(id="a", role="worker", provider=None, model_config=ModelConfig("claude-opus-4", "high"))
+        b = AgentSession(id="b", role="worker", provider=None, model_config=ModelConfig("gpt-4.1", "high"))
+        stub._record_mutation_capability_once(a)
+        stub._record_mutation_capability_once(b)
+
+        adapters = {r["adapter"] for r in self._rows(stub) if r["event"] == MUTATION_CAPABILITY_EVENT}
+        assert adapters == {"claude", "codex"}
 
 
 class TestAuditMirror:

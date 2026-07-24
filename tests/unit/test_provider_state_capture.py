@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from bernstein.adapters.base import (
     MUTATION_OBSERVABILITY_DECLARED_BLIND,
     MUTATION_OBSERVABILITY_OBSERVED,
@@ -150,6 +152,43 @@ class TestAdapterContract:
 
     def test_claude_missing_sidecar_returns_empty(self, tmp_path: Path) -> None:
         assert ClaudeCodeAdapter().observed_provider_mutations(tmp_path, "missing") == []
+
+    def test_claude_read_error_surfaces(self, tmp_path: Path) -> None:
+        """#2646 item 1: an I/O error surfaces instead of dropping silently.
+
+        A dropped read must be able to fail replay verification closed in
+        deterministic mode; the orchestrator can only do that if the adapter
+        surfaces the failure rather than returning an empty (absence) list.
+        """
+        sidecar = ClaudeCodeAdapter._mutation_sidecar_path(tmp_path, "s-io")
+        sidecar.parent.mkdir(parents=True)
+        sidecar.mkdir()  # a directory at the sidecar path makes read_text raise
+        with pytest.raises(OSError):
+            ClaudeCodeAdapter().observed_provider_mutations(tmp_path, "s-io")
+
+
+class TestMutationSidecarReset:
+    """#2646 item 4: the sidecar is reset at spawn so collection is idempotent."""
+
+    def test_reset_truncates_stale_rows(self, tmp_path: Path) -> None:
+        sidecar = ClaudeCodeAdapter._mutation_sidecar_path(tmp_path, "s-reset")
+        sidecar.parent.mkdir(parents=True)
+        sidecar.write_text(
+            json.dumps({"kind": "compact_boundary", "detail": {}}) + "\n",
+            encoding="utf-8",
+        )
+        assert ClaudeCodeAdapter().observed_provider_mutations(tmp_path, "s-reset")  # stale present
+
+        ClaudeCodeAdapter._reset_mutation_sidecar(tmp_path, "s-reset")
+
+        assert sidecar.read_text(encoding="utf-8") == ""
+        assert ClaudeCodeAdapter().observed_provider_mutations(tmp_path, "s-reset") == []
+
+    def test_reset_creates_parent_when_absent(self, tmp_path: Path) -> None:
+        ClaudeCodeAdapter._reset_mutation_sidecar(tmp_path, "s-new")
+        sidecar = ClaudeCodeAdapter._mutation_sidecar_path(tmp_path, "s-new")
+        assert sidecar.exists()
+        assert sidecar.read_text(encoding="utf-8") == ""
 
     def test_registry_conformance_observed_adapters_override_capture(self) -> None:
         """Adapters declaring observed capability must implement the capture hook.

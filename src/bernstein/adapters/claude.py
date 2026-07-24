@@ -569,6 +569,25 @@ class ClaudeCodeAdapter(CLIAdapter):
         """Return the per-session provider-state mutation sidecar path."""
         return workdir / ".sdd" / "runtime" / "provider_state" / f"{session_id}.jsonl"
 
+    @staticmethod
+    def _reset_mutation_sidecar(workdir: Path, session_id: str) -> None:
+        """Truncate the provider-state mutation sidecar before a (re)spawn.
+
+        Issue #2646: the wrapper opens the sidecar append-only and the
+        orchestrator chains whatever it finds after reap. Deterministic
+        replay pins session ids, so a reused id would otherwise re-journal a
+        prior run's mutations. Truncating at spawn makes collection
+        idempotent. Best-effort: a failure here must never block spawn.
+
+        Args:
+            workdir: Agent working directory (root of ``.sdd``).
+            session_id: The Bernstein session id the agent will run under.
+        """
+        path = ClaudeCodeAdapter._mutation_sidecar_path(workdir, session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(OSError):
+            path.write_text("", encoding="utf-8")
+
     def observed_provider_mutations(self, workdir: Path, session_id: str) -> list[dict[str, Any]]:
         """Return the provider-side mutation signals persisted for a session.
 
@@ -577,21 +596,26 @@ class ClaudeCodeAdapter(CLIAdapter):
         stream observation order; malformed rows are skipped so a partial
         trailing write cannot wedge the reader.
 
+        Read failures surface as :class:`OSError` rather than an empty list
+        (issue #2646): a dropped read must be distinguishable from a genuine
+        absence of mutations so the caller can fail replay verification closed
+        in deterministic mode instead of silently accepting the gap.
+
         Args:
             workdir: Agent working directory (root of ``.sdd``).
             session_id: The Bernstein session id the agent ran under.
 
         Returns:
             Observed mutation signals in stream order.
+
+        Raises:
+            OSError: If the sidecar exists but cannot be read.
         """
         path = self._mutation_sidecar_path(workdir, session_id)
         signals: list[dict[str, Any]] = []
         if not path.exists():
             return signals
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            return signals
+        text = path.read_text(encoding="utf-8")
         for raw in text.splitlines():
             line = raw.strip()
             if not line:
@@ -927,7 +951,9 @@ class ClaudeCodeAdapter(CLIAdapter):
         # order so the orchestrator can chain each one into the replay
         # journal as a content-addressed entry.
         mutation_path = self._mutation_sidecar_path(workdir, session_id)
-        mutation_path.parent.mkdir(parents=True, exist_ok=True)
+        # Reset the sidecar so a reused session id (deterministic replay pins
+        # them) cannot re-journal a prior run's mutations (issue #2646).
+        self._reset_mutation_sidecar(workdir, session_id)
         wrapper = self._wrapper_script(
             session_id=session_id,
             tokens_path=str(tokens_path),

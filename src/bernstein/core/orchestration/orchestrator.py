@@ -616,6 +616,10 @@ class Orchestrator:
         # observe them.
         self._mutation_capability_recorded: set[str] = set()
 
+        # Lazily-built audit chain for mirroring provider-state mutations into
+        # the HMAC chain (issue #2646). Cached so the run's key is loaded once.
+        self._provider_audit_chain: Any | None = None
+
         # Replay gateway: captures LLM + tool dispatch responses into
         # .sdd/runs/{run_id}/events.jsonl so a run can be re-executed
         # against recorded fixtures. This is the fixture-replay engine, a
@@ -4883,13 +4887,16 @@ class Orchestrator:
         Issue #2507: the adapter contract declares whether provider-side
         context mutations are observable at all. Recording the declaration
         into the journal keeps an absence of mutation entries
-        distinguishable from an inability to see them. Failures are logged
-        and swallowed: capability recording must never break a spawn tick.
+        distinguishable from an inability to see them.
+
+        Issue #2646: the capability is resolved and recorded *before* the
+        dedup key is set, and the key is the resolved adapter name (not the
+        raw provider label). A failed record is retried on the next spawn
+        instead of being marked done, and provider-less sessions that resolve
+        to different adapters no longer collapse to a single key. Failures are
+        logged and swallowed: capability recording must never break a spawn
+        tick.
         """
-        key = (session.provider or "").strip() or "default"
-        if key in self._mutation_capability_recorded:
-            return
-        self._mutation_capability_recorded.add(key)
         try:
             from bernstein.core.replay.provider_state import (
                 capability_for_provider,
@@ -4898,7 +4905,10 @@ class Orchestrator:
 
             model = session.model_config.model if session.model_config else ""
             adapter_name, capability = capability_for_provider(session.provider, model)
+            if adapter_name in self._mutation_capability_recorded:
+                return
             record_mutation_capability(self._recorder, adapter=adapter_name, capability=capability)
+            self._mutation_capability_recorded.add(adapter_name)
         except Exception as exc:
             logger.warning("provider-state: capability recording failed: %s", type(exc).__name__)
 
@@ -4927,13 +4937,72 @@ class Orchestrator:
             signals = adapter.observed_provider_mutations(self._workdir, session.id)
             if not signals:
                 return
-            record_agent_mutations(self._recorder, signals, agent_id=agent_id)
+            record_agent_mutations(
+                self._recorder,
+                signals,
+                agent_id=agent_id,
+                audit_chain=self._get_provider_audit_chain(),
+            )
         except Exception as exc:
             logger.warning(
                 "provider-state: mutation recording failed for agent %s: %s",
                 agent_id,
                 type(exc).__name__,
             )
+            # Fail closed under deterministic/replay mode: a dropped capture
+            # (I/O or parse error) must not read as an absence of mutations
+            # (#2646). The remediation is fully guarded in the helper.
+            self._record_capture_failure(agent_id, reason=type(exc).__name__)
+
+    def _record_capture_failure(self, agent_id: str, *, reason: str) -> None:
+        """Chain a fail-closed marker when provider-mutation capture failed.
+
+        Issue #2646: in deterministic/replay mode a dropped capture must make
+        replay verification fail closed rather than pass as an absence of
+        mutations. Outside deterministic mode there is no replay to verify, so
+        the marker is skipped. The marker is a load-bearing journal entry; if
+        even the marker cannot be recorded the failure is logged (never
+        raised) so a reap tick is never broken.
+        """
+        try:
+            from bernstein.core.replay.provider_state import (
+                deterministic_mode_active,
+                record_capture_failure,
+            )
+
+            if not deterministic_mode_active():
+                return
+            record_capture_failure(self._recorder, agent_id=agent_id, reason=reason)
+        except Exception as exc:
+            logger.warning(
+                "provider-state: capture-failure marker not recorded for agent %s: %s",
+                agent_id,
+                type(exc).__name__,
+            )
+
+    def _get_provider_audit_chain(self) -> Any | None:
+        """Return the run's audit chain for mirroring provider-state mutations.
+
+        Issue #2646: provider mutations chained into the replay journal are
+        additionally mirrored into the HMAC audit chain so a verifier can
+        confirm each entry is chain-attested. Built once and cached; returns
+        ``None`` when the chain cannot be constructed (missing key, IO error).
+        Mirroring is best-effort -- the journal entry is the load-bearing
+        record and a chain failure must never block it. Only the exception
+        type is logged: this path touches the audit HMAC key.
+        """
+        if self._provider_audit_chain is not None:
+            return self._provider_audit_chain
+        try:
+            from bernstein.core.security.audit import load_or_create_audit_key
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            hmac_key = load_or_create_audit_key()
+            self._provider_audit_chain = AuditChainStore(self._workdir / ".sdd" / "audit", key=hmac_key)
+            return self._provider_audit_chain
+        except Exception as exc:
+            logger.warning("provider-state: audit chain unavailable: %s", type(exc).__name__)
+            return None
 
     def _log_summary(self, result: TickResult) -> None:
         """Write a one-line summary and agent state snapshot each tick."""

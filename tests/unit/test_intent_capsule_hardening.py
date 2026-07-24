@@ -403,6 +403,7 @@ def test_allow_unclassified_false_ignores_structural_journal_events(tmp_path: Pa
         "mcp.stateless_call",
         "provider_state_capability",
         "provider_state_mutation",
+        "provider_state_capture_failed",
         "webhook_node.inbound",
         "dispatch_knob_selection",
         "worktree.gc",
