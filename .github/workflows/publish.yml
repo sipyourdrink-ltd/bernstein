@@ -339,7 +339,10 @@ jobs:
     name: Publish MCP registry listing
     runs-on: ubuntu-latest
     needs: publish
-    timeout-minutes: 10
+    # Wider than the other publish jobs: the GHCR-image wait step below polls
+    # for the OCI image the listing pins (built in parallel by
+    # publish-docker.yml, up to ~14 min) before submitting.
+    timeout-minutes: 25
     continue-on-error: true
     permissions:
       contents: read
@@ -390,7 +393,56 @@ jobs:
           tar xz -f "$asset" mcp-publisher
           rm -f "$asset"
           ./mcp-publisher --version
+      - name: Wait for the release image in GHCR
+        id: waitimg
+        run: |
+          set -uo pipefail
+          # The MCP registry validates that every OCI package in the listing
+          # resolves in its registry before it accepts the submission. The GHCR
+          # image is built by publish-docker.yml, which the github-release job
+          # dispatches in parallel with this job, so the image is usually still
+          # building when this job reaches the publish step. Submitting then
+          # returns HTTP 400 "OCI image ... does not exist in the registry" and
+          # the listing is dropped for that release. Poll GHCR for the exact
+          # reference the listing pins and only publish once it resolves.
+          OCI_REF=$(python3 -c "import json; pkgs=json.load(open('server.json')).get('packages',[]); print(next((p['identifier'] for p in pkgs if p.get('registryType')=='oci'), ''))")
+          if [ -z "$OCI_REF" ]; then
+            echo "::notice::server.json has no OCI package; nothing to wait for"
+            echo "image_present=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "listing pins OCI image: $OCI_REF"
+          # ghcr.io/OWNER/NAME:VERSION -> host / repo : tag
+          host="${OCI_REF%%/*}"
+          rest="${OCI_REF#*/}"
+          repo="${rest%:*}"
+          tag="${rest##*:}"
+          manifest_url="https://${host}/v2/${repo}/manifests/${tag}"
+          token_url="https://${host}/token?scope=repository:${repo}:pull"
+          accept="application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
+          # Up to ~18 min covers the observed cold-cache GHCR build window
+          # (~1.5-14 min) with headroom; poll every 20s.
+          deadline=$(( $(date +%s) + 1080 ))
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            token=$(curl -fsSL "$token_url" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
+            status=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" "$manifest_url" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "image present after ${attempt} attempt(s): ${OCI_REF}"
+              echo "image_present=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::warning::${OCI_REF} did not resolve in GHCR within the wait window (last status ${status}); skipping the MCP registry publish. Re-run this job once publish-docker.yml has pushed the image; the publish is idempotent."
+              echo "image_present=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "attempt ${attempt}: image not ready yet (status ${status}); retrying in 20s"
+            sleep 20
+          done
       - name: Publish server.json
+        if: steps.waitimg.outputs.image_present == 'true'
         run: |
           set -uo pipefail
           ./mcp-publisher login github-oidc
