@@ -364,17 +364,31 @@ jobs:
             exit 1
           fi
       - name: Install mcp-publisher
+        env:
+          # Pinned mcp-publisher release. Bumping requires updating the tag and
+          # the sha256 from that release's published checksums.txt together.
+          MCP_PUBLISHER_VERSION: v1.8.0
+          MCP_PUBLISHER_SHA256: 1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf
         run: |
           set -euo pipefail
+          # This job holds id-token: write, so the publisher binary must be
+          # pinned and integrity-checked before it runs. A moving "latest"
+          # download would let an upstream tag change what executes here;
+          # instead fetch a pinned immutable release-tag asset and verify it
+          # against a sha256 recorded at authoring time before extract/execute.
           OS=$(uname -s | tr '[:upper:]' '[:lower:]')
           ARCH=$(uname -m)
-          case "$ARCH" in
-            x86_64) ARCH=amd64 ;;
-            aarch64) ARCH=arm64 ;;
-          esac
+          if [ "$OS" != "linux" ] || [ "$ARCH" != "x86_64" ]; then
+            echo "::error::pinned mcp-publisher checksum covers linux/amd64 only; runner is ${OS}/${ARCH}"
+            exit 1
+          fi
+          asset="mcp-publisher_linux_amd64.tar.gz"
           curl -fsSL \
-            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${OS}_${ARCH}.tar.gz" \
-            | tar xz mcp-publisher
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${asset}" \
+            -o "$asset"
+          echo "${MCP_PUBLISHER_SHA256}  ${asset}" | sha256sum -c -
+          tar xz -f "$asset" mcp-publisher
+          rm -f "$asset"
           ./mcp-publisher --version
       - name: Publish server.json
         run: |
