@@ -621,7 +621,7 @@ def emit_consent_receipt(
     if set(cart.tool_calls) - set(authorized):
         raise MandateRefused("cart proposes tool calls the intent does not authorize")
 
-    _enforce_spend_cap(intent=intent, cart=cart, ledger=ledger)
+    _enforce_spend_cap(intent=intent, cart=cart, settlement_ref=settlement_ref, ledger=ledger)
 
     receipt = ConsentReceipt(
         mandate_hash=cart.mandate_hash(),
@@ -666,21 +666,42 @@ def _enforce_spend_cap(
     *,
     intent: IntentMandate,
     cart: CartMandate,
+    settlement_ref: SettlementRef,
     ledger: SpendLedger | None,
 ) -> None:
-    """Refuse the settlement when it would breach the intent's spend cap.
+    """Refuse the settlement when its amount is unsound or breaches the cap.
 
     The cost ledger is the single enforcement point: cumulative task spend
     (from the ledger's ``task`` rollup) plus this cart's amount must not
     exceed ``spend_cap_usd``. A cap of ``0`` permits no spend.
+
+    Two amount invariants gate the cap check so the value enforced is the
+    value the receipt binds:
+
+    * The cart amount and the settlement reference amount must agree. The cap
+      is enforced on the cart amount, but the receipt binds ``settlement_ref``;
+      if the two could diverge, a cart could pass a small amount through the
+      cap while the receipt settled a larger one.
+    * A negative amount is refused outright rather than clamped to ``0``. A
+      clamped negative would slip past the cap and could mask real spend from
+      the ledger rollup.
     """
+    if cart.amount_usd < 0 or settlement_ref.amount_usd < 0:
+        raise MandateRefused(
+            f"negative settlement amount refused: cart ${cart.amount_usd:.4f}, "
+            f"settlement ${settlement_ref.amount_usd:.4f}"
+        )
+    if cart.amount_usd != settlement_ref.amount_usd:
+        raise MandateRefused(
+            f"cart amount ${cart.amount_usd:.4f} does not match settlement amount ${settlement_ref.amount_usd:.4f}"
+        )
     cap = intent.spend_cap_usd
     if cap < 0:
         cap = 0.0
     prior = 0.0
     if ledger is not None:
         prior = ledger.totals_by("task").get(intent.task_id or "unknown", 0.0)
-    projected = prior + max(0.0, cart.amount_usd)
+    projected = prior + cart.amount_usd
     if projected > cap:
         raise MandateRefused(
             f"spend cap breach: task spend ${prior:.4f} + settlement ${cart.amount_usd:.4f} exceeds cap ${cap:.4f}"

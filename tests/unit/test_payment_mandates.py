@@ -262,6 +262,72 @@ def test_spend_cap_within_bound_allowed(tmp_path: Path) -> None:
     assert receipt.journal_entry_hash
 
 
+# ------------------------------------------------- AC4 hardening (issue #2641)
+
+
+def test_emit_refuses_settlement_amount_mismatch(tmp_path: Path) -> None:
+    # The cap is enforced on the cart amount, but the receipt binds the
+    # settlement reference's own amount. If the two can diverge, a cart passes
+    # a small amount through the cap while the receipt settles a larger one.
+    # Require them to agree so the checked value is the value bound.
+    intent, cart = _signed_pair(_KEY, cap=10.0, amount=5.0)
+    with pytest.raises(MandateRefused, match="does not match settlement"):
+        emit_consent_receipt(
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=_KEY,
+            intent=intent,
+            cart=cart,
+            settlement_ref=_settlement(amount=50.0),
+            now=1000,
+        )
+
+
+def test_emit_refuses_negative_amount(tmp_path: Path) -> None:
+    # A negative amount was previously clamped to 0, so it slipped past the cap
+    # and could mask real spend from the ledger rollup. Refuse it outright.
+    intent, cart = _signed_pair(_KEY, cap=10.0, amount=-1.0)
+    with pytest.raises(MandateRefused, match="negative settlement amount"):
+        emit_consent_receipt(
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=_KEY,
+            intent=intent,
+            cart=cart,
+            settlement_ref=_settlement(amount=-1.0),
+            now=1000,
+        )
+
+
+def test_verify_tolerates_legacy_amount_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Backward compatibility: a receipt anchored before the emit-time amount
+    # guard existed (cart amount != settlement amount) must still verify. The
+    # guard lives on emit only; verify never checks the amount, so an
+    # already-signed receipt stays valid.
+    import bernstein.core.protocols.payments.mandates as mandates_mod
+
+    intent, cart = _signed_pair(_KEY, cap=100.0, amount=5.0)
+    monkeypatch.setattr(mandates_mod, "_enforce_spend_cap", lambda **_: None)
+    receipt = emit_consent_receipt(
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        intent=intent,
+        cart=cart,
+        settlement_ref=_settlement(amount=50.0),
+        now=1000,
+    )
+    result = verify_consent_receipt(
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        mandate_hash=receipt.mandate_hash,
+        intent=intent,
+        cart=cart,
+    )
+    assert result.ok, result.reason
+
+
 # --------------------------------------------------------------------------- AC5
 
 
