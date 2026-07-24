@@ -1160,6 +1160,11 @@ from bernstein.cli.commands.mandate_cmd import mandate_group  # noqa: E402
 
 cli.add_command(mandate_group, "mandate")
 
+# Signed payment mandates + chain-anchored transaction receipts (#2612).
+from bernstein.cli.commands.payment_mandate_cmd import payment_mandate_group  # noqa: E402
+
+cli.add_command(payment_mandate_group, "payment-mandate")
+
 # Attested pull-request review receipts linking issue -> plan -> tool calls -> diff (#2296).
 from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
 

@@ -49,6 +49,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `notifications/`            | Outbound notification subsystem (release 1.9) |
 | `observability/`            | observability sub-package |
 | `orchestration/`            | orchestration sub-package |
+| `payments/`                 | Sub-package: enforce, mandate, receipt |
 | `persistence/`              | persistence sub-package |
 | `planning/`                 | planning sub-package |
 | `plugins_core/`             | plugins_core sub-package |
