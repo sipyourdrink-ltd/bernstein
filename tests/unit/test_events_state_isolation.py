@@ -10,7 +10,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from bernstein.core.events.state import TriggerStateStore
+import pytest
+
+from bernstein.core.events import state as state_mod
+from bernstein.core.events.state import TriggerStateCorruptError, TriggerStateStore
 
 
 def test_state_lives_under_runtime_triggers(tmp_path: Path) -> None:
@@ -49,3 +52,62 @@ def test_expectations_roundtrip(tmp_path: Path) -> None:
     closed = store.close_expectation("run_1")
     assert closed == {"expect": "run.completed", "after_hmac": "abc"}
     assert store.open_expectations() == {}
+
+
+def test_corrupt_state_file_is_preserved_not_overwritten(tmp_path: Path) -> None:
+    root = tmp_path / ".sdd" / "runtime" / "triggers"
+    root.mkdir(parents=True)
+    counters = root / "counters.json"
+    counters.write_text("{not valid json", encoding="utf-8")
+    store = TriggerStateStore(root)
+
+    with pytest.raises(TriggerStateCorruptError):
+        store.increment("gate.result")
+
+    # Original bytes preserved for inspection; not silently emptied and rewritten.
+    corrupt = root / "counters.json.corrupt"
+    assert corrupt.exists()
+    assert corrupt.read_text(encoding="utf-8") == "{not valid json"
+    assert not counters.exists()
+
+
+def test_non_object_state_file_raises(tmp_path: Path) -> None:
+    root = tmp_path / ".sdd" / "runtime" / "triggers"
+    root.mkdir(parents=True)
+    (root / "expectations.json").write_text("[1, 2, 3]", encoding="utf-8")
+    store = TriggerStateStore(root)
+
+    with pytest.raises(TriggerStateCorruptError):
+        store.open_expectations()
+    assert (root / "expectations.json.corrupt").exists()
+
+
+def test_missing_lock_primitive_refuses_silent_no_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # With neither flock nor msvcrt available the store must raise rather than
+    # yield an unsynchronised no-op (the old Windows behaviour).
+    monkeypatch.setattr(state_mod, "fcntl", None, raising=False)
+    monkeypatch.setattr(state_mod, "msvcrt", None, raising=False)
+    store = TriggerStateStore(tmp_path / "triggers")
+
+    with pytest.raises(RuntimeError):
+        store.increment("gate.result")
+
+
+def test_windows_lock_path_uses_msvcrt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Simulate the Windows branch: fcntl absent, msvcrt present. The lock must be
+    # taken (LK_LOCK) and released (LK_UNLCK), not skipped.
+    modes: list[int] = []
+
+    class _FakeMsvcrt:
+        LK_LOCK = 1
+        LK_UNLCK = 2
+
+        def locking(self, _fileno: int, mode: int, _nbytes: int) -> None:
+            modes.append(mode)
+
+    monkeypatch.setattr(state_mod, "fcntl", None, raising=False)
+    monkeypatch.setattr(state_mod, "msvcrt", _FakeMsvcrt(), raising=False)
+    store = TriggerStateStore(tmp_path / "triggers")
+
+    assert store.increment("gate.result") == 1
+    assert modes == [_FakeMsvcrt.LK_LOCK, _FakeMsvcrt.LK_UNLCK]

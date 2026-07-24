@@ -15,16 +15,22 @@ re-derivable from the slice alone.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-if sys.platform == "win32":  # pragma: no cover - Windows fallback
+if sys.platform == "win32":  # pragma: no cover - exercised only on Windows
+    import msvcrt
+
     fcntl = None  # type: ignore[assignment]
 else:
     import fcntl  # type: ignore[no-redef]
+
+    msvcrt = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -34,37 +40,87 @@ _EXPECTATIONS_NAME = "expectations.json"
 _LOCK_NAME = ".triggers.lock"
 
 
+class TriggerStateCorruptError(RuntimeError):
+    """Raised when a trigger state file is unreadable or not a JSON object.
+
+    The offending file is preserved (renamed to ``<name>.corrupt``) rather than
+    silently treated as empty and overwritten, so the loss is never hidden and an
+    operator can inspect the damaged bookkeeping.
+    """
+
+
+def _lock_file(fd: Any) -> None:
+    """Take an exclusive, blocking inter-process lock on ``fd``.
+
+    ``flock`` on POSIX, ``msvcrt.locking`` on Windows. When neither primitive is
+    available the store refuses to run rather than yielding an unsynchronised
+    no-op that would silently lose concurrent increments or clobber expectations.
+    """
+    if fcntl is not None:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+    elif msvcrt is not None:  # pragma: no cover - Windows only
+        fd.seek(0)
+        msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+    else:  # pragma: no cover - defensive: no lock primitive on this platform
+        raise RuntimeError("no inter-process lock primitive available on this platform")
+
+
+def _unlock_file(fd: Any) -> None:
+    """Release the lock taken by :func:`_lock_file`."""
+    if fcntl is not None:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+    elif msvcrt is not None:  # pragma: no cover - Windows only
+        fd.seek(0)
+        msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 @contextmanager
 def _exclusive_lock(root: Path) -> Iterator[None]:
-    """Serialise state mutations across processes via ``flock(LOCK_EX)``.
+    """Serialise state mutations across processes with an OS file lock.
 
-    Falls back to a no-op only where ``fcntl`` is unavailable (Windows); on those
-    platforms the caller is responsible for in-process ordering.
+    The lock is exclusive and blocking on every supported platform, so two
+    concurrent workers cannot lose an increment or clobber an expectation. It
+    never degrades to an unsynchronised no-op: a platform without a lock
+    primitive raises instead (see :func:`_lock_file`).
     """
     root.mkdir(parents=True, exist_ok=True)
     lock_path = root / _LOCK_NAME
-    if fcntl is None:  # pragma: no cover - Windows path
-        yield
-        return
-    fd = lock_path.open("a")
+    fd = lock_path.open("a+")
     try:
-        fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
-        yield
-    finally:
+        _lock_file(fd)
         try:
-            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            yield
         finally:
-            fd.close()
+            _unlock_file(fd)
+    finally:
+        fd.close()
+
+
+def _quarantine(path: Path) -> None:
+    """Best-effort: preserve a corrupt state file as ``<name>.corrupt``."""
+    corrupt = path.with_name(path.name + ".corrupt")
+    with contextlib.suppress(OSError):  # preservation is best-effort
+        os.replace(path, corrupt)
 
 
 def _load(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # Unreadable: propagate rather than overwrite. The file is untouched, so
+        # nothing is lost and the fault surfaces instead of being masked as {}.
+        raise TriggerStateCorruptError(f"cannot read trigger state file {path}") from exc
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        _quarantine(path)
+        raise TriggerStateCorruptError(f"corrupt trigger state file {path} (quarantined)") from exc
+    if not isinstance(raw, dict):
+        _quarantine(path)
+        raise TriggerStateCorruptError(f"trigger state file {path} is not a JSON object (quarantined)")
+    return cast("dict[str, Any]", raw)
 
 
 def _atomic_write(path: Path, data: dict[str, Any]) -> None:
@@ -151,4 +207,4 @@ class TriggerStateStore:
             return {k: cast("dict[str, Any]", v) for k, v in raw.items() if isinstance(v, dict)}
 
 
-__all__ = ["TriggerStateStore"]
+__all__ = ["TriggerStateCorruptError", "TriggerStateStore"]
