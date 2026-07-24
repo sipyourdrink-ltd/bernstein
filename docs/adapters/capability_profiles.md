@@ -143,10 +143,9 @@ reconstructing the same refusal derive the same identifier.
 ## Anchoring the routing decision
 
 `route_and_record(requirements, audit_chain=chain, run_id=...)` is the
-seam the deterministic scheduler calls to route a task by declared
-capability. It wraps `select_profile_for` so the decision leaves a
-replay-verifiable trace in the HMAC audit chain instead of being an
-unobservable side effect of dispatch:
+seam that turns an adapter selection into a replay-verifiable record. It
+wraps `select_profile_for` so the decision leaves a trace in the HMAC
+audit chain instead of being an unobservable side effect of dispatch:
 
 - **On a match** it appends an `adapter.capability_selection` event
   carrying the chosen adapter and the content-addressed profile hash it
@@ -172,6 +171,47 @@ profile = route_and_record(
 exactly as `select_profile_for` does, so a dry-run capability probe stays
 chain-free. The chain module is imported lazily, only when a chain is
 supplied, so the adapter module's load-time import surface stays lean.
+
+## At dispatch
+
+The spawn path invokes the seam once the adapter for a spawn is resolved,
+in `AgentSpawner._record_adapter_capability_selection`. It runs alongside
+the security-floor preflight, before the adapter receives any task
+context:
+
+- For an adapter that ships a profile, the profile hash it presents is
+  anchored as an `adapter.capability_selection` event, so replay detects
+  a changed declaration as a hash divergence named by the adapter.
+- When the task declares capability requirements the routed adapter
+  cannot meet, the refusal receipt is anchored and the spawn is refused -
+  a hard stop like a floor refusal, never an alternate-adapter failover.
+
+An adapter with **no** profile (the common `claude` / `codex` / `gemini`
+path, served by the generic fallback) is a no-op: nothing is anchored and
+the spawn proceeds unchanged.
+
+### Declaring task requirements
+
+A task declares what it needs from whichever adapter runs it through the
+`capability:` namespace of its `requires` list (the capability-addressing
+field on the task spec). Tokens outside that namespace are skill
+addressing and are ignored, so a task that declares no capability
+requirement routes exactly as before:
+
+```yaml
+requires:
+  - python                       # skill addressing - ignored here
+  - capability:mcp_client        # needs an MCP-client adapter
+  - capability:sandbox=container # needs container isolation or stronger
+  - capability:max_parallel_workers=4
+```
+
+`capability_requirements_from_tokens` parses those tokens into a
+`TaskCapabilityRequirements`. A boolean axis takes no value; `sandbox`
+takes a tier name; `max_parallel_workers` takes an integer. A mistyped
+axis raises `ProfileValidationError` rather than passing silently, so an
+unenforceable requirement fails loud instead of routing a task to an
+adapter that does not support it.
 
 ## Adding an agent as a profile
 

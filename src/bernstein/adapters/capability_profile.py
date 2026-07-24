@@ -639,6 +639,77 @@ def select_profile_for(
     )
 
 
+#: Namespace on a task's capability-addressing list that declares an
+#: adapter-capability requirement, as opposed to a skill address. A token
+#: outside this namespace (``"python"``, ``"testing"``) is skill addressing and
+#: is left to whatever consumes those; only ``capability:`` tokens shape the
+#: :class:`TaskCapabilityRequirements` the dispatch path checks a routed
+#: adapter's profile against.
+CAPABILITY_TOKEN_PREFIX = "capability:"
+
+
+def capability_requirements_from_tokens(
+    tokens: Iterable[str],
+) -> TaskCapabilityRequirements:
+    """Parse capability-addressing tokens into a requirement set.
+
+    Reads the ``capability:`` namespace of a task's capability-addressing list
+    (``Task.requires``) so a declared task need becomes the
+    :class:`TaskCapabilityRequirements` the dispatch path checks the routed
+    adapter's profile against. Tokens without the prefix are skill addressing
+    and are skipped, so a task that declares no capability requirement yields
+    the empty set every profile satisfies -- existing tasks route unchanged.
+
+    Grammar of the parsed suffix:
+
+    * ``capability:<axis>`` sets a boolean axis (``mcp_client``, ``vision``,
+      ``computer_use``, ...).
+    * ``capability:sandbox=<tier>`` requires at least that sandbox tier.
+    * ``capability:max_parallel_workers=<n>`` requires at least *n* workers.
+
+    Args:
+        tokens: The task's capability-addressing entries.
+
+    Returns:
+        The requirement set the tokens declare.
+
+    Raises:
+        ProfileValidationError: An axis is not a requestable requirement axis,
+            a boolean axis carries a value, or a value is malformed. Failing
+            loud keeps a mistyped requirement from silently passing an adapter
+            that does not support it -- the drift
+            :func:`_assert_capability_axes_are_requestable` guards at import,
+            applied here to the declaration side.
+    """
+    fields: dict[str, Any] = {}
+    for raw in tokens:
+        token = raw.strip()
+        if not token.startswith(CAPABILITY_TOKEN_PREFIX):
+            continue
+        axis, sep, value = token[len(CAPABILITY_TOKEN_PREFIX) :].partition("=")
+        axis = axis.strip()
+        value = value.strip()
+        if axis in BOOLEAN_CAPABILITIES:
+            if sep:
+                raise ProfileValidationError(f"boolean capability {axis!r} takes no value (got {value!r})")
+            fields[axis] = True
+        elif axis == "sandbox":
+            try:
+                fields["sandbox"] = SandboxTier(value)
+            except ValueError:
+                tiers = ", ".join(tier.value for tier in SandboxTier)
+                raise ProfileValidationError(f"unknown sandbox tier {value!r}; expected one of {tiers}") from None
+        elif axis == "max_parallel_workers":
+            try:
+                fields["max_parallel_workers"] = int(value)
+            except ValueError:
+                raise ProfileValidationError(f"max_parallel_workers requires an integer (got {value!r})") from None
+        else:
+            requestable = ", ".join(sorted(TaskCapabilityRequirements.__dataclass_fields__))
+            raise ProfileValidationError(f"unknown capability axis {axis!r}; requestable axes: {requestable}")
+    return TaskCapabilityRequirements(**fields)
+
+
 def route_and_record(
     requirements: TaskCapabilityRequirements,
     *,
@@ -650,8 +721,10 @@ def route_and_record(
 
     Wraps :func:`select_profile_for` so a routing decision leaves a
     replay-verifiable trace instead of being an unobservable side effect of
-    dispatch. This is the seam the deterministic scheduler calls to route a
-    task by declared capability:
+    dispatch. This is the seam the spawn dispatch path
+    (:meth:`bernstein.core.agents.spawner_core.AgentSpawner.
+    _record_adapter_capability_selection`) calls once an adapter is resolved,
+    to anchor the profile it presented and refuse a task it cannot serve:
 
     * On a match, the selected profile's content address is recorded, so replay
       recomputes it and detects a changed declaration as a hash divergence
@@ -1206,6 +1279,7 @@ def profile_hash_for(name: str) -> str | None:
 
 __all__ = [
     "BOOLEAN_CAPABILITIES",
+    "CAPABILITY_TOKEN_PREFIX",
     "PROFILES",
     "AdapterCapabilityProfile",
     "CapabilityMismatchError",
@@ -1221,6 +1295,7 @@ __all__ = [
     "assert_profile_backed_by_contract",
     "build_adapter_class_from_profile",
     "build_adapter_from_profile",
+    "capability_requirements_from_tokens",
     "get_profile",
     "iter_profiles",
     "profile_binary_for",

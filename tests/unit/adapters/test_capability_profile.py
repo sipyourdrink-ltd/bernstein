@@ -47,6 +47,7 @@ from bernstein.adapters.capability_profile import (
     UnknownProfileError,
     build_adapter_class_from_profile,
     build_adapter_from_profile,
+    capability_requirements_from_tokens,
     get_profile,
     profile_built_adapter_classes,
     profile_contract_discrepancies,
@@ -686,3 +687,61 @@ class TestRouteAndRecord:
         )
         assert chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL) == []  # type: ignore[attr-defined]
         assert len(chain.query(event_type=EVENT_ADAPTER_CAPABILITY_SELECTION)) == 1  # type: ignore[attr-defined]
+
+
+class TestCapabilityRequirementsFromTokens:
+    """Parse a task's capability-addressing tokens into requirements.
+
+    ``Task.requires`` is a capability-addressing list. The ``capability:``
+    namespace of that list is what the dispatch path checks a routed adapter's
+    profile against, so the parser is the bridge from a declared task need to a
+    :class:`TaskCapabilityRequirements`. Non-``capability:`` tokens are skill
+    addressing and are ignored, so an existing task declares no requirement and
+    is satisfied by every profile.
+    """
+
+    def test_no_tokens_yields_empty_requirements(self) -> None:
+        assert capability_requirements_from_tokens([]) == TaskCapabilityRequirements()
+
+    def test_skill_tokens_are_ignored(self) -> None:
+        # The pre-existing capability-addressing vocabulary (skills) must not
+        # accidentally become adapter-capability requirements.
+        assert capability_requirements_from_tokens(["python", "testing"]) == TaskCapabilityRequirements()
+
+    def test_boolean_axis_token_sets_the_axis(self) -> None:
+        reqs = capability_requirements_from_tokens(["capability:mcp_client"])
+        assert reqs == TaskCapabilityRequirements(mcp_client=True)
+
+    def test_multiple_axes_union(self) -> None:
+        reqs = capability_requirements_from_tokens(["capability:vision", "python", "capability:mcp_server"])
+        assert reqs == TaskCapabilityRequirements(vision=True, mcp_server=True)
+
+    def test_sandbox_tier_token(self) -> None:
+        reqs = capability_requirements_from_tokens(["capability:sandbox=container"])
+        assert reqs == TaskCapabilityRequirements(sandbox=SandboxTier.CONTAINER)
+
+    def test_max_parallel_workers_token(self) -> None:
+        reqs = capability_requirements_from_tokens(["capability:max_parallel_workers=4"])
+        assert reqs == TaskCapabilityRequirements(max_parallel_workers=4)
+
+    def test_whitespace_is_tolerated(self) -> None:
+        reqs = capability_requirements_from_tokens(["  capability:vision  "])
+        assert reqs == TaskCapabilityRequirements(vision=True)
+
+    def test_unknown_axis_fails_loud(self) -> None:
+        # A mistyped requirement must surface, not silently pass an adapter that
+        # does not support it -- the same drift the import-time axis check guards.
+        with pytest.raises(ProfileValidationError):
+            capability_requirements_from_tokens(["capability:teleportation"])
+
+    def test_boolean_axis_with_value_is_refused(self) -> None:
+        with pytest.raises(ProfileValidationError):
+            capability_requirements_from_tokens(["capability:vision=true"])
+
+    def test_bad_sandbox_tier_is_refused(self) -> None:
+        with pytest.raises(ProfileValidationError):
+            capability_requirements_from_tokens(["capability:sandbox=moon"])
+
+    def test_non_integer_worker_count_is_refused(self) -> None:
+        with pytest.raises(ProfileValidationError):
+            capability_requirements_from_tokens(["capability:max_parallel_workers=lots"])

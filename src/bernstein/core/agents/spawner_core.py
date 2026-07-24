@@ -2835,6 +2835,72 @@ class AgentSpawner:
                 verdict.advisory_id,
             )
 
+    def _record_adapter_capability_selection(self, adapter_name: str, tasks: list[Task]) -> None:
+        """Anchor the capability profile the routed adapter presents (#2663).
+
+        Capability-aware routing has to leave a replay-verifiable trace at the
+        dispatch boundary, or a changed adapter declaration is an unexplained
+        behaviour change rather than a named hash divergence. For an adapter
+        that ships a capability profile this records the content-addressed
+        ``profile_hash`` it presents at dispatch, so replay recomputes it and
+        detects profile drift as a divergence named by the adapter (AC3).
+
+        When the task declares capability requirements -- ``capability:`` tokens
+        on ``Task.requires`` -- the routed adapter's profile is checked against
+        them. If the profile cannot satisfy the task, a signed refusal receipt
+        is anchored and :exc:`CapabilityMismatchError` propagates, so routing
+        refuses rather than silently spawning a weaker adapter (AC2). Like the
+        security-floor preflight this runs outside the inner spawn ``try``, so
+        the refusal is a hard stop and never an alternate-adapter failover.
+
+        Untracked adapters (no profile) are a no-op, so the common
+        claude / codex / gemini path -- served by the generic fallback -- pays
+        nothing. Recording failures other than the deliberate refusal are logged
+        and swallowed: anchoring the selection must never break a spawn tick.
+
+        Args:
+            adapter_name: The adapter the spawn resolved to.
+            tasks: The task batch this spawn serves; their ``requires`` lists
+                supply the declared capability requirements.
+
+        Raises:
+            CapabilityMismatchError: The routed adapter's profile cannot satisfy
+                a declared task requirement. The refusal receipt is anchored
+                first. Not a ``SpawnError``, so the per-provider failover loop
+                never swallows it into an alternate-adapter retry.
+            ProfileValidationError: A ``capability:`` token is malformed; a
+                mistyped requirement fails loud rather than passing silently.
+        """
+        from bernstein.adapters.capability_profile import (
+            PROFILES,
+            CapabilityMismatchError,
+            capability_requirements_from_tokens,
+            route_and_record,
+        )
+
+        profile = PROFILES.get(adapter_name)
+        if profile is None:
+            return  # untracked adapter: the generic fallback owns it, nothing to anchor
+
+        tokens = [tok for task in tasks for tok in getattr(task, "requires", ())]
+        requirements = capability_requirements_from_tokens(tokens)
+        run_id = tasks[0].id if tasks else ""
+        try:
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            chain = AuditChainStore(self._workdir / ".sdd" / "audit")
+            route_and_record(requirements, profiles=[profile], audit_chain=chain, run_id=run_id)
+        except CapabilityMismatchError:
+            # AC2: the refusal receipt is already anchored inside route_and_record;
+            # re-raise so routing refuses rather than falling back.
+            raise
+        except Exception as exc:
+            logger.warning(
+                "capability routing: recording failed for %s: %s",
+                adapter_name,
+                type(exc).__name__,
+            )
+
     def _preflight_posture_drift(self) -> None:
         """Refuse a spawn when the sovereign posture drifted or is non-compliant (#2518).
 
@@ -3845,6 +3911,14 @@ class AgentSpawner:
                     # refusal raises out of the spawn (hard stop) instead of
                     # falling through to alternate-provider failover.
                     self._preflight_adapter_security_floor(adapter_name)
+
+                    # Capability-aware routing (#2663): anchor the profile hash
+                    # the resolved adapter presents at dispatch so replay detects
+                    # profile drift, and refuse with a signed receipt when the
+                    # task's declared capability requirements outrun that profile.
+                    # Same placement rationale as the floor preflight above: a
+                    # refusal is a hard stop, not an alternate-adapter failover.
+                    self._record_adapter_capability_selection(adapter_name, tasks)
 
                     # Per-attempt config so a failover to a different
                     # adapter never inherits another adapter's extras.
