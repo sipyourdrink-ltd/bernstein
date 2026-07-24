@@ -513,6 +513,59 @@ class TaskStore:
             logger.info("recover_stale_claimed_tasks: reset %d task(s) to open after restart", reset_count)
         return reset_count
 
+    def reopen_tasks_for_node(self, node_id: str) -> int:
+        """Reset a departed cluster node's in-flight tasks back to OPEN.
+
+        A cluster worker claims through ``/tasks/next`` with its node id
+        recorded as the claim owner (``claimed_by_session``). When that node
+        leaves -- by heartbeat timeout (crash) or graceful unregister -- its
+        CLAIMED/IN_PROGRESS tasks would otherwise stay claimed forever with no
+        live agent, and no reaper would ever release them (#2801). This
+        re-queues exactly that node's tasks so a surviving worker can pick them
+        up.
+
+        Mirrors :meth:`recover_stale_claimed_tasks` but scoped to one node.
+        The method performs no ``await``, so it runs atomically with respect to
+        concurrent claims in the single-threaded async server loop and is safe
+        to call from both the async node reaper and the sync unregister route.
+
+        Args:
+            node_id: Owning node id whose claims should be released.
+
+        Returns:
+            Number of tasks reset to open.
+        """
+        if not node_id:
+            return 0
+        reset_count = 0
+        reset_tasks: list[Task] = []
+        for stale_status in (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+            for task in list(self._by_status.get(stale_status, {}).values()):
+                if task.claimed_by_session != node_id:
+                    continue
+                self._index_remove(task)
+                transition_task(
+                    task,
+                    TaskStatus.OPEN,
+                    actor="task_store",
+                    reason="recover_node_departed",
+                )
+                task.claimed_at = None
+                task.claimed_by_session = None
+                task.version += 1
+                self._index_add(task)
+                reset_tasks.append(task)
+                reset_count += 1
+        if reset_count:
+            for task in reset_tasks:
+                self._append_jsonl_sync(self._task_to_record(task))
+            logger.info(
+                "reopen_tasks_for_node: reset %d task(s) for departed node %s",
+                reset_count,
+                sanitize_log(node_id),
+            )
+        return reset_count
+
     def _append_jsonl_sync(self, record: TaskRecord) -> None:
         """Synchronously append a record to the JSONL log.
 

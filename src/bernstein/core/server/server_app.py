@@ -636,11 +636,18 @@ async def _reaper_loop(store: TaskStore, interval_s: float = 30.0) -> None:
         store.mark_stale_dead()
 
 
-async def _node_reaper_loop(node_reg: NodeRegistry, interval_s: float = 15.0) -> None:
-    """Periodically mark stale cluster nodes as offline."""
+async def _node_reaper_loop(node_reg: NodeRegistry, store: TaskStore, interval_s: float = 15.0) -> None:
+    """Periodically mark stale cluster nodes offline and release their claims.
+
+    A node that stops heartbeating is transitioned ONLINE -> OFFLINE, and any
+    tasks it had claimed are re-queued to OPEN so a surviving worker can pick
+    them up. Without the task release a crashed worker's claims would stay
+    CLAIMED forever with no live agent (#2801).
+    """
     while True:
         await asyncio.sleep(interval_s)
-        node_reg.mark_stale()
+        for node in node_reg.mark_stale():
+            store.reopen_tasks_for_node(node.id)
 
 
 async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
@@ -989,12 +996,19 @@ def create_app(
         reaper = asyncio.create_task(_reaper_loop(store))
         # Launch SSE heartbeat loop
         sse_heartbeat = asyncio.create_task(_sse_heartbeat_loop(sse_bus))
-        # Launch node-stale reaper if cluster mode is on
-        node_reaper: asyncio.Task[None] | None = None
-        if effective_cluster.enabled:
-            node_reaper = asyncio.create_task(
-                _node_reaper_loop(node_registry, interval_s=effective_cluster.node_heartbeat_interval_s)
+        # Launch the node-stale reaper whenever the /cluster/nodes routes are
+        # mounted (always) rather than only when cluster auth is enabled. Node
+        # liveness reaping is not part of the auth layer, and a worker can only
+        # register in the auth-off configuration, so gating the reaper behind
+        # the auth flag meant it never ran in any cluster a worker had joined
+        # (#2801).
+        node_reaper: asyncio.Task[None] = asyncio.create_task(
+            _node_reaper_loop(
+                node_registry,
+                store,
+                interval_s=effective_cluster.node_heartbeat_interval_s,
             )
+        )
         yield
         # Shutdown
         reaper.cancel()

@@ -294,11 +294,17 @@ class WorkerLoop:
             logger.warning("Heartbeat error: %s", exc)
         return True  # Don't re-register on transient errors
 
-    def _claim_task(self, client: httpx.Client, role: str) -> dict | None:
-        """Try to claim the next task for a given role. Returns task dict or None."""
+    def _claim_task(self, client: httpx.Client, role: str, node_id: str | None = None) -> dict | None:
+        """Try to claim the next task for a given role. Returns task dict or None.
+
+        The worker's node id is recorded as the claim owner so the server can
+        release this node's in-flight tasks when it leaves the cluster (#2801).
+        """
+        params = {"claimed_by_session": node_id} if node_id else None
         with suppress(httpx.HTTPError):
             resp = client.get(
                 f"{self._server_url}/tasks/next/{role}",
+                params=params,
                 headers=self._headers(),
                 timeout=10.0,
             )
@@ -420,12 +426,12 @@ class WorkerLoop:
             return None, last_heartbeat
         return new_id, time.monotonic()
 
-    def _claim_available_tasks(self, client: httpx.Client) -> None:
+    def _claim_available_tasks(self, client: httpx.Client, node_id: str | None = None) -> None:
         """Claim tasks for each role while slots remain."""
         for role in self._roles:
             if self.available_slots <= 0:
                 return
-            task = self._claim_task(client, role)
+            task = self._claim_task(client, role, node_id)
             if task is None:
                 continue
             task_id = task.get("id", "unknown")
@@ -484,7 +490,7 @@ class WorkerLoop:
                     continue
 
                 if self.available_slots > 0:
-                    self._claim_available_tasks(client)
+                    self._claim_available_tasks(client, node_id)
 
                 # Drive reaped agents to a terminal state on the server. Reading
                 # available_slots above already reaped finished agents into the

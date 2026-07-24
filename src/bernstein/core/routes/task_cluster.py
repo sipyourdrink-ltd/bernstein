@@ -119,6 +119,10 @@ def unregister_node(node_id: str, request: Request) -> Response:
     node_registry = _get_node_registry(request)
     if not node_registry.unregister(node_id):
         raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
+    # Release the departed node's in-flight claims so a surviving worker can
+    # pick them up. Covers the graceful-leave path (docker stop / drain);
+    # the timeout path is handled by the node reaper (#2801).
+    _get_store(request).reopen_tasks_for_node(node_id)
     return Response(status_code=204)
 
 
