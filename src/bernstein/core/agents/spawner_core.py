@@ -446,6 +446,21 @@ def _render_signal_check(session_id: str) -> str:
     )
 
 
+def _resolve_task_server_url() -> str:
+    """Resolve the base URL agents use to reach the task server.
+
+    Remote workers export ``BERNSTEIN_SERVER_URL`` into the agent env before
+    spawning (``cli/commands/worker_cmd.py``), and it is allow-listed for
+    agents (``adapters/env_isolation.py``). Reading it here means a completion
+    POST from an agent on a worker node reaches the central server instead of
+    the worker's own loopback, and it also fixes local runs started on a
+    non-default port. Falls back to the historical local default when unset.
+    """
+    import os
+
+    return os.environ.get("BERNSTEIN_SERVER_URL", "http://127.0.0.1:8052").rstrip("/")
+
+
 def _render_auth_section(token_path: Path) -> str:
     """Return authentication instructions to inject into every agent's prompt.
 
@@ -465,6 +480,7 @@ def _render_auth_section(token_path: Path) -> str:
         Markdown block instructing the agent to authenticate all requests.
     """
     absolute = token_path if token_path.is_absolute() else token_path.resolve(strict=False)
+    base = _resolve_task_server_url()
     return (
         "\n## Task Server Authentication\n"
         "Your agent token is stored at this absolute path (do NOT print or "
@@ -506,14 +522,14 @@ def _render_auth_section(token_path: Path) -> str:
         "the command form was correct.\n"
         "Example - creating a subtask (pass the whole line to `run_command` as ONE string):\n"
         "```bash\n"
-        f"curl -sS -w '\\n%{{http_code}}' -X POST http://127.0.0.1:8052/tasks \\\n"
+        f"curl -sS -w '\\n%{{http_code}}' -X POST {base}/tasks \\\n"
         f'  -H "Authorization: Bearer $(cat {absolute})" \\\n'
         '  -H "Content-Type: application/json" \\\n'
         '  -d \'{"title": "...", "role": "backend", "description": "..."}\'\n'
         "```\n"
         "Example - marking a task complete (pass the whole line to `run_command` as ONE string):\n"
         "```bash\n"
-        f"curl -sS -w '\\n%{{http_code}}' -X POST http://127.0.0.1:8052/tasks/<TASK_ID>/complete \\\n"
+        f"curl -sS -w '\\n%{{http_code}}' -X POST {base}/tasks/<TASK_ID>/complete \\\n"
         f'  -H "Authorization: Bearer $(cat {absolute})" \\\n'
         '  -H "Content-Type: application/json" \\\n'
         '  -d \'{"result_summary": "Done"}\'\n'
@@ -735,6 +751,7 @@ def _render_batch_prompt(task: Task) -> str:
     Returns:
         Prompt string starting with ``/batch`` that triggers the batch skill.
     """
+    base = _resolve_task_server_url()
     lines: list[str] = [f"/batch {task.description}"]
     if task.owned_files:
         lines.append(f"\nAffected paths: {', '.join(task.owned_files)}")
@@ -742,7 +759,7 @@ def _render_batch_prompt(task: Task) -> str:
         (
             f"\nTask ID for completion reporting: {task.id}",
             "\nAfter all batch units are complete, run:\n"
-            f"curl -sS -X POST http://127.0.0.1:8052/tasks/{task.id}/complete "
+            f"curl -sS -X POST {base}/tasks/{task.id}/complete "
             f'-H "Content-Type: application/json" '
             f'-d \'{{"result_summary": "Batch complete: {task.title}"}}\'',
         )
@@ -922,9 +939,10 @@ def _render_prompt(
     # agents must retry on transient connection errors (--retry-connrefused).
     # Do NOT use --retry-all-errors: it retries 4xx (e.g. 409 Conflict),
     # causing infinite loops when task state has changed.
+    completion_base = _resolve_task_server_url()
     completion_cmds = "\n".join(
         f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
-        f"-X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
+        f"-X POST {completion_base}/tasks/{t.id}/complete "
         f'-H "Content-Type: application/json" '
         f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
         for t in tasks

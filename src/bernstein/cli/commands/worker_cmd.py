@@ -101,6 +101,11 @@ class WorkerLoop:
         self._workdir = workdir or Path.cwd()
         self._running = False
         self._active_tasks: dict[str, int] = {}  # task_id -> pid
+        # Terminal outcomes reaped from finished agents, drained to the server
+        # by _report_finished. (task_id, ok, detail). Worker-side reporting is
+        # authoritative and does not depend on the in-agent completion curl
+        # (#2808): without it a finished agent leaves its task CLAIMED forever.
+        self._pending_reports: list[tuple[str, bool, str]] = []
         self._wake = CapacityWake()
 
     def _headers(self) -> dict[str, str]:
@@ -192,23 +197,41 @@ class WorkerLoop:
     def _reap_finished(self) -> bool:
         """Remove tasks whose agent process has exited.
 
+        Each reaped task is queued as a terminal outcome (success/failure from
+        the agent exit code) for _report_finished to post to the server, so a
+        finished agent transitions its task instead of leaving it CLAIMED
+        (#2808). Success/failure is derived from the exit code: a clean exit
+        (0) completes the task; a non-zero exit or signal kill fails it.
+
         Returns:
             ``True`` if at least one task was reaped (a slot became available).
         """
         from bernstein.core.platform_compat import process_alive
 
-        finished: list[str] = []
-        for task_id, pid in self._active_tasks.items():
+        finished: list[tuple[str, bool, str]] = []
+        for task_id, pid in list(self._active_tasks.items()):
+            exited = False
+            ok = True
+            detail = "worker reaped agent process (exit status unavailable)"
             try:
-                os.waitpid(pid, os.WNOHANG)
+                reaped_pid, status = os.waitpid(pid, os.WNOHANG)
             except ChildProcessError:
-                finished.append(task_id)
-                continue
-            # Check if process is still alive
-            if not process_alive(pid):
-                finished.append(task_id)
-        for task_id in finished:
+                # Already reaped elsewhere; the exit status is gone. Treat as a
+                # completion and let server-side verification have the final say.
+                exited = True
+            else:
+                if reaped_pid == pid:
+                    exited = True
+                    exit_code = os.waitstatus_to_exitcode(status)
+                    ok = exit_code == 0
+                    detail = f"agent exited with code {exit_code}"
+                elif not process_alive(pid):
+                    exited = True
+            if exited:
+                finished.append((task_id, ok, detail))
+        for task_id, ok, detail in finished:
             del self._active_tasks[task_id]
+            self._pending_reports.append((task_id, ok, detail))
         if finished:
             self._wake.signal_capacity()
         return bool(finished)
@@ -306,6 +329,23 @@ class WorkerLoop:
             )
         except httpx.HTTPError as exc:
             logger.warning("Failed to report failure for %s: %s", task_id, exc)
+
+    def _report_finished(self, client: httpx.Client) -> None:
+        """Post queued terminal outcomes for reaped agents to the server.
+
+        This is what drives a remotely executed task to a terminal state: the
+        in-agent completion curl may never fire (crash, kill, wrong URL), so
+        the worker reports completion/failure itself (#2808). A task already
+        terminal server-side simply no-ops the redundant report.
+        """
+        if not self._pending_reports:
+            return
+        pending, self._pending_reports = self._pending_reports, []
+        for task_id, ok, detail in pending:
+            if ok:
+                self._complete_task(client, task_id, detail)
+            else:
+                self._fail_task(client, task_id, detail)
 
     def _spawn_agent(self, task: dict) -> int | None:
         """Spawn a CLI agent process to work on a task. Returns PID or None."""
@@ -446,9 +486,17 @@ class WorkerLoop:
                 if self.available_slots > 0:
                     self._claim_available_tasks(client)
 
+                # Drive reaped agents to a terminal state on the server. Reading
+                # available_slots above already reaped finished agents into the
+                # pending queue.
+                self._report_finished(client)
+
                 if self._wake.wait(timeout_s=poll_s) == WakeReason.ABORT:
                     break
 
+            # Flush any outcomes reaped in the final cycle before leaving.
+            self._reap_finished()
+            self._report_finished(client)
             self._unregister(client, node_id)
 
         console.print("[bold]Worker stopped.[/bold]")
