@@ -198,11 +198,16 @@ def save_session_on_stop(workdir: Path) -> None:
             task_list: list[dict[str, Any]] = []
         done_ids = [t["id"] for t in task_list if t.get("status") == "done"]
         pending_ids = [t["id"] for t in task_list if t.get("status") in ("claimed", "in_progress")]
+        # Persist still-open tasks too (issue #2798): they were dropped
+        # entirely before, so a resumed run had no record of the work queued
+        # when the operator stopped it and could self-declare complete.
+        open_ids = [t["id"] for t in task_list if t.get("status") == "open"]
         state = SessionState(
             saved_at=time.time(),
             goal="",
             completed_task_ids=done_ids,
             pending_task_ids=pending_ids,
+            open_task_ids=open_ids,
             cost_spent=0.0,
         )
         save_session(workdir, state)

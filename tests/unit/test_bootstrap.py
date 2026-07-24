@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 import types
 from contextlib import ExitStack
 from pathlib import Path
@@ -152,6 +153,112 @@ def test_bootstrap_from_seed_skips_manager_when_backlog_tasks_exist(
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=True))
         stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))
+        stack.enter_context(patch("bernstein.core.sync.sync_backlog_to_server", return_value=sync_result))
+        mock_inject = stack.enter_context(patch("bernstein.core.orchestration.bootstrap._inject_manager_task"))
+        stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
+        result = bootstrap_from_seed(tmp_path / "bernstein.yaml", tmp_path)
+
+    assert result.manager_task_id == ""
+    mock_inject.assert_not_called()
+
+
+def test_bootstrap_from_seed_replans_when_prior_session_has_unfinished_work(
+    tmp_path: Path,
+    invariants_module: types.ModuleType,
+) -> None:
+    """A resumed session stopped mid-flight re-plans instead of short-circuiting.
+
+    Regression for #2798: a prior session with open/pending tasks (the run was
+    paused, not finished) used to short-circuit planning and let the run
+    self-declare complete with no deliverable. It must inject a manager task to
+    re-plan the goal instead.
+    """
+    from bernstein.core.session import SessionState
+
+    prior = SessionState(
+        saved_at=time.time(),
+        goal="Ship the parser",
+        completed_task_ids=["T-done"],
+        open_task_ids=["T-open"],  # unfinished work queued when stopped
+    )
+    sync_result = SimpleNamespace(created=[], skipped=[])  # empty backlog
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value=None))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server")
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=True))
+        stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=prior))
+        stack.enter_context(patch("bernstein.core.sync.sync_backlog_to_server", return_value=sync_result))
+        mock_inject = stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._inject_manager_task", return_value="mgr-1")
+        )
+        stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
+        result = bootstrap_from_seed(tmp_path / "bernstein.yaml", tmp_path)
+
+    # The interrupted run re-plans: a manager task is injected rather than the
+    # empty manager_task_id a bare "done previously" resume would leave.
+    assert result.manager_task_id == "mgr-1"
+    mock_inject.assert_called_once()
+
+
+def test_bootstrap_from_seed_resumes_when_prior_session_finished(
+    tmp_path: Path,
+    invariants_module: types.ModuleType,
+) -> None:
+    """A prior session that finished its queued work still short-circuits planning."""
+    from bernstein.core.session import SessionState
+
+    prior = SessionState(
+        saved_at=time.time(),
+        goal="Ship the parser",
+        completed_task_ids=["T-done-1", "T-done-2"],
+        # no open / pending -> the run finished its queued work
+    )
+    sync_result = SimpleNamespace(created=[], skipped=[])
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value=None))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server")
+        )
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
+        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=True))
+        stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=prior))
         stack.enter_context(patch("bernstein.core.sync.sync_backlog_to_server", return_value=sync_result))
         mock_inject = stack.enter_context(patch("bernstein.core.orchestration.bootstrap._inject_manager_task"))
         stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))

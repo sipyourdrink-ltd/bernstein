@@ -70,6 +70,46 @@ def test_session_state_roundtrip_without_pending() -> None:
     assert restored.pending_task_ids == []
 
 
+def test_session_state_roundtrip_includes_open_task_ids() -> None:
+    """Open tasks queued when the run was stopped must survive a round-trip.
+
+    Regression for #2798: open tasks were dropped entirely on stop, so a
+    resumed run had no record of the work still queued when it was paused.
+    """
+    original = SessionState(
+        saved_at=12345.0,
+        goal="Build auth",
+        completed_task_ids=["T-001"],
+        pending_task_ids=["T-002"],
+        open_task_ids=["T-003", "T-004"],
+        cost_spent=1.25,
+    )
+    restored = SessionState.from_dict(original.to_dict())
+    assert restored.open_task_ids == ["T-003", "T-004"]
+
+
+def test_session_state_roundtrip_without_open_task_ids() -> None:
+    """Backward compat: sessions saved before open_task_ids existed still load."""
+    data = {
+        "saved_at": 12345.0,
+        "goal": "old format",
+        "completed_task_ids": ["T-001"],
+        "pending_task_ids": ["T-002"],
+        "cost_spent": 0.5,
+    }
+    restored = SessionState.from_dict(data)
+    assert restored.open_task_ids == []
+
+
+def test_session_state_has_unfinished_work() -> None:
+    """A stopped session with open or pending tasks reports unfinished work."""
+    assert SessionState(saved_at=1.0, open_task_ids=["T-open"]).has_unfinished_work()
+    assert SessionState(saved_at=1.0, pending_task_ids=["T-wip"]).has_unfinished_work()
+    # Only completed tasks -> the run finished its queued work.
+    assert not SessionState(saved_at=1.0, completed_task_ids=["T-done"]).has_unfinished_work()
+    assert not SessionState(saved_at=1.0).has_unfinished_work()
+
+
 # ---------------------------------------------------------------------------
 # save_session / load_session / discard_session
 # ---------------------------------------------------------------------------
@@ -244,6 +284,9 @@ def test_orchestrator_save_session_state(tmp_path: Path) -> None:
     data = json.loads(session_file.read_text())
     assert sorted(data["completed_task_ids"]) == ["T-done-1", "T-done-2"]
     assert sorted(data["pending_task_ids"]) == ["T-claimed", "T-wip"]
+    # #2798: open tasks queued at stop must be persisted, not dropped, so the
+    # next start can tell the run was paused mid-flight.
+    assert data["open_task_ids"] == ["T-open"]
 
 
 def test_orchestrator_save_session_state_server_down(tmp_path: Path) -> None:

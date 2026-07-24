@@ -480,11 +480,20 @@ def _sync_and_plan_tasks(
     )
 
     manager_task_id = ""
-    if prior_session is not None:
+    # Resume reconcile (#2798): only short-circuit planning when the prior
+    # session actually finished its queued work. A session stopped mid-flight
+    # (open/pending tasks that the wiped runtime queue no longer holds) must
+    # NOT resume as "done previously" -- that let the run self-declare complete
+    # with the deliverable unproduced and the queued work silently dropped.
+    # Fall through to work the backlog or re-plan the goal instead.
+    if prior_session is not None and not prior_session.has_unfinished_work():
         console.print(f"  [dim]resume[/dim]  {len(prior_session.completed_task_ids)} done previously")
     elif backlog_count > 0:
-        console.print(f"  [dim]tasks[/dim]   {backlog_count} from backlog")
+        _suffix = " (resuming interrupted run)" if prior_session is not None else ""
+        console.print(f"  [dim]tasks[/dim]   {backlog_count} from backlog{_suffix}")
     else:
+        if prior_session is not None:
+            console.print("  [dim]replan[/dim]  interrupted run had unfinished work; re-planning the goal")
         if worker_role:
             manager_task_id = _inject_worker_task(
                 seed,
@@ -1126,7 +1135,11 @@ def _goal_sync_and_plan(
         )
 
     manager_task_id = ""
-    if prior_session is not None:
+    # Resume reconcile (#2798): only short-circuit when the prior session
+    # finished its queued work. A run stopped mid-flight (open/pending tasks the
+    # wiped runtime queue no longer holds) must re-plan rather than resume as
+    # complete with the deliverable unproduced.
+    if prior_session is not None and not prior_session.has_unfinished_work():
         completed_count = len(prior_session.completed_task_ids)
         console.print(
             f"[bold cyan]Resuming from previous session[/bold cyan] "
@@ -1142,6 +1155,11 @@ def _goal_sync_and_plan(
             + ")"
         )
     else:
+        if prior_session is not None:
+            console.print(
+                f"[green]{icons.arrow_right}[/green] Previous run was interrupted with unfinished "
+                "work - re-planning the goal"
+            )
         with Status("[bold]Creating planning task...[/bold]", console=console):
             manager_task_id = _inject_manager_task(
                 seed,

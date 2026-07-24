@@ -41,6 +41,11 @@ class SessionState:
         goal: The goal or description for this run.
         completed_task_ids: Task IDs that finished successfully this run.
         pending_task_ids: Task IDs that were claimed or in-progress when stopped.
+        open_task_ids: Task IDs that were still ``open`` (queued but not yet
+            claimed) when stopped. Persisted so a resumed run can tell it was
+            paused mid-flight rather than finished (issue #2798); dropping them
+            let a resume declare the run complete with the deliverable
+            unproduced.
         cost_spent: Cumulative USD cost accumulated this run.
     """
 
@@ -48,7 +53,18 @@ class SessionState:
     goal: str = ""
     completed_task_ids: list[str] = field(default_factory=list[str])
     pending_task_ids: list[str] = field(default_factory=list[str])
+    open_task_ids: list[str] = field(default_factory=list[str])
     cost_spent: float = 0.0
+
+    def has_unfinished_work(self) -> bool:
+        """Return True if the run was stopped with work still queued.
+
+        Open or pending (claimed/in-progress) tasks at stop time mean the run
+        was paused mid-flight. A resume must not treat such a session as a
+        completed run (issue #2798) -- there is still work to do even though
+        the runtime task queue was cleared on the next start.
+        """
+        return bool(self.open_task_ids or self.pending_task_ids)
 
     def is_stale(self, stale_minutes: int = DEFAULT_STALE_MINUTES) -> bool:
         """Return True if this session is too old to resume.
@@ -85,6 +101,7 @@ class SessionState:
             goal=str(data.get("goal", "")),
             completed_task_ids=list(data.get("completed_task_ids", [])),  # type: ignore[arg-type]
             pending_task_ids=list(data.get("pending_task_ids", [])),  # type: ignore[arg-type]
+            open_task_ids=list(data.get("open_task_ids", [])),  # type: ignore[arg-type]
             cost_spent=float(data.get("cost_spent", 0.0)),  # type: ignore[arg-type]
         )
 

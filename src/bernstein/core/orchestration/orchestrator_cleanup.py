@@ -137,16 +137,25 @@ def save_session_state(orch: Any) -> None:
 
         done_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") == "done"]
         pending_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") in ("claimed", "in_progress")]
+        # Capture still-open tasks too (issue #2798): dropping them made a
+        # resumed run look finished when it had been paused mid-flight.
+        open_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") == "open"]
 
         state = SessionState(
             saved_at=time.time(),
             goal="",
             completed_task_ids=done_ids,
             pending_task_ids=pending_ids,
+            open_task_ids=open_ids,
             cost_spent=orch._cost_tracker.spent_usd,
         )
         save_session(orch._workdir, state)
-        logger.info("Session state saved (%d done, %d pending)", len(done_ids), len(pending_ids))
+        logger.info(
+            "Session state saved (%d done, %d pending, %d open)",
+            len(done_ids),
+            len(pending_ids),
+            len(open_ids),
+        )
     except Exception:
         logger.debug("Failed to save session state (best-effort)", exc_info=True)
 

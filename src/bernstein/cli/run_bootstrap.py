@@ -1551,6 +1551,17 @@ def exec_restart() -> None:
     ),
 )
 @click.option(
+    "--fresh",
+    "force_fresh",
+    is_flag=True,
+    default=False,
+    help=(
+        "Ignore any saved session (.sdd/runtime/session.json) and start from "
+        "scratch instead of resuming. Use after a stopped run to force a full "
+        "re-plan rather than resuming the prior session (issue #2798)."
+    ),
+)
+@click.option(
     "--refresh-cache",
     "refresh_cache",
     is_flag=True,
@@ -2003,6 +2014,7 @@ def _run_impl(
                     model=model,
                     tasks=tasks,
                     ab_test=ab_test,
+                    force_fresh=force_fresh,
                 )
                 persist_server_port(port, workdir)
 
