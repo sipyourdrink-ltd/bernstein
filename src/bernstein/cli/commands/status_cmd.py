@@ -24,6 +24,7 @@ from bernstein.cli.helpers import (
 from bernstein.cli.status import collect_rate_limit_snapshots, render_status
 from bernstein.cli.ui import make_console
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult, discover_agents_cached
+from bernstein.core.process_utils import list_command_lines, process_cwd
 from bernstein.tui.worker_badges import format_worker_badge, get_badge_for_worker
 
 logger = logging.getLogger(__name__)
@@ -312,6 +313,85 @@ def _collect_pid_agents(pid_path: Path) -> tuple[list[dict[str, Any]], list[Path
     return agents, stale_files
 
 
+def _ps_scan_workdir(pid_path: Path) -> Path:
+    """Resolve the project root for the live scan from the PID directory.
+
+    ``ps`` matches processes by their absolute ``.sdd`` path prefixes, so the
+    scan needs the absolute project root. The default PID directory is
+    ``<project>/.sdd/runtime/pids``; when the layout matches we walk up to the
+    project root, otherwise we fall back to the current working directory.
+    """
+    resolved = pid_path.resolve()
+    if resolved.name == "pids" and resolved.parent.name == "runtime" and resolved.parent.parent.name == ".sdd":
+        return resolved.parent.parent.parent
+    return Path.cwd()
+
+
+def _classify_live_process(
+    pid: int, command: str, workdir: Path, worktree_prefix: str, heartbeat_prefix: str
+) -> str | None:
+    """Return the role of a repo-owned process, or ``None`` when unrelated.
+
+    Agents are matched by worktree/heartbeat path markers alone; the
+    orchestrator, server, and watchdog must additionally run with a cwd inside
+    this project so a sibling checkout's server is never attributed here.
+    """
+    if worktree_prefix in command or heartbeat_prefix in command:
+        return "agent"
+    is_watchdog = "bernstein.core.orchestration.bootstrap" in command and "--watchdog" in command
+    is_spawner = "bernstein.core.orchestrator" in command
+    is_server = "uvicorn bernstein.core.server:app" in command
+    if not (is_watchdog or is_spawner or is_server):
+        return None
+    if process_cwd(pid) != workdir:
+        return None
+    if is_watchdog:
+        return "watchdog"
+    if is_spawner:
+        return "spawner"
+    return "server"
+
+
+def _scan_live_agent_rows(workdir: Path, known_pids: set[int]) -> list[dict[str, Any]]:
+    """Cross-check the OS process table for live repo-owned processes.
+
+    PID files are the primary source, but ``hard_stop`` deletes them; this scan
+    keeps ``ps`` honest by surfacing the orchestrator, server, watchdog, and
+    agent processes that are still alive after the files are gone (#2874). PIDs
+    already covered by a PID-file row are skipped. Each candidate's liveness is
+    re-probed so a process that exited between the ``ps`` snapshot and now is
+    dropped rather than reported as a phantom.
+    """
+    worktree_prefix = str(workdir / ".sdd" / "worktrees")
+    heartbeat_prefix = str(workdir / ".sdd" / "runtime" / "heartbeats")
+    self_pid = os.getpid()
+    seen = set(known_pids)
+    rows: list[dict[str, Any]] = []
+    for pid, command in list_command_lines():
+        if pid in seen or pid == self_pid:
+            continue
+        role = _classify_live_process(pid, command, workdir, worktree_prefix, heartbeat_prefix)
+        if role is None:
+            continue
+        # Race guard: the pid was in the ps snapshot but may have exited since.
+        if not is_process_alive(pid):
+            continue
+        seen.add(pid)
+        rows.append(
+            {
+                "session": f"{role}:{pid}",
+                "role": role,
+                "command": "-",
+                "model": "-",
+                "worker_pid": pid,
+                "child_pid": None,
+                "runtime": "-",
+                "source": "scan",
+            }
+        )
+    return rows
+
+
 @click.command("ps")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of table.")
 @click.option("--pid-dir", default=".sdd/runtime/pids", help="PID metadata directory.")
@@ -333,6 +413,17 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
             agents.append(remote)
 
     _decorate_agent_rows(agents)
+
+    # Live process-table cross-check: surface repo-owned processes that outlived
+    # their PID files (e.g. after ``bernstein stop --force``) so ``ps`` never
+    # goes blind while the orchestrator or an agent is still running (#2874).
+    known_pids: set[int] = set()
+    for agent in agents:
+        for key in ("worker_pid", "child_pid"):
+            value = agent.get(key)
+            if isinstance(value, int) and value > 0:
+                known_pids.add(value)
+    agents.extend(_scan_live_agent_rows(_ps_scan_workdir(pid_path), known_pids))
 
     from bernstein.core.agents.spawn_supervisor import get_supervisor
 

@@ -50,6 +50,42 @@ def is_process_alive(pid: int) -> bool:
     return not (state is not None and state.startswith("Z"))
 
 
+def list_command_lines() -> list[tuple[int, str]]:
+    """Best-effort ``(pid, command)`` snapshot of local processes.
+
+    Returns an empty list on Windows (no ``ps``) or when the probe fails, so
+    callers degrade to whatever other signal they have. Used as a live
+    cross-check so process-visibility surfaces can still report running
+    processes after their PID files were deleted (issue #2874).
+    """
+    if IS_WINDOWS:
+        return []
+    try:
+        result = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,command="],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    out: list[tuple[int, str]] = []
+    for raw in result.stdout.splitlines():
+        parts = raw.strip().split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        try:
+            out.append((int(parts[0]), parts[1]))
+        except ValueError:
+            continue
+    return out
+
+
 def process_cwd(pid: int) -> Path | None:
     """Return the current working directory for *pid* when available."""
     if pid <= 0:
