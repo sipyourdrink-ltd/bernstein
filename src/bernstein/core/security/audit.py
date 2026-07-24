@@ -871,8 +871,14 @@ class AuditLog:
             The newly created AuditEvent with computed HMAC.
         """
         with _chain_append_lock(self._audit_dir):
-            ts = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            day = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+            # One clock reading feeds both the timestamp and the daily-file
+            # name: two readings can straddle a UTC midnight and file an event
+            # under a day that disagrees with its own timestamp, and the append
+            # runs once per scheduling decision, so the second ``now`` is pure
+            # hot-path cost (issue #2690).
+            now = datetime.now(tz=UTC)
+            ts = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            day = now.strftime("%Y-%m-%d")
             log_path = self._audit_dir / f"{day}.jsonl"
 
             # Re-sync the chain tail from disk under the cross-process lock so a
