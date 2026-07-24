@@ -61,6 +61,7 @@ from bernstein.core.planning.sla_store import (
     compute_contract_id,
     contract_from_dict,
 )
+from bernstein.core.security.sanitize import sanitize_log
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -519,7 +520,7 @@ def read_receipt_file(path: Path) -> SLAViolationReceipt | None:
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Could not load SLA receipt %s: %s", path, exc)
+        logger.warning("Could not load SLA receipt %s: %s", sanitize_log(str(path)), exc)
         return None
     if not isinstance(raw, dict):
         return None
