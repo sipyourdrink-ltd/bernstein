@@ -76,28 +76,57 @@ def artifact_verify_cmd(task_id: str, workdir: Path, operator_secret_env: str, o
     )
 
     if output_json:
-        click.echo(
-            json.dumps(
-                {
-                    "task_id": result.task_id,
-                    "ok": result.ok,
-                    "content_hash": result.content_hash,
-                    "entry_hash": result.entry_hash,
-                    "failures": result.failures,
-                }
-            )
-        )
+        click.echo(json.dumps(_json_verdict(result)))
     elif result.ok:
         console.print(f"[green]VERIFIED[/green] task={task_id}")
         console.print(f"  content_hash  {result.content_hash}")
         console.print(f"  entry_hash    {result.entry_hash}")
+        _render_figures(result)
     else:
         console.print(f"[red]TAMPERED[/red] task={task_id}")
         for failure in result.failures:
             console.print(f"  - {failure}")
+        _render_figures(result)
 
     if not result.ok:
         sys.exit(2)
+
+
+def _json_verdict(result: object) -> dict:
+    """Assemble the JSON verdict, including the per-figure provenance section."""
+    payload = {
+        "task_id": result.task_id,  # type: ignore[attr-defined]
+        "ok": result.ok,  # type: ignore[attr-defined]
+        "content_hash": result.content_hash,  # type: ignore[attr-defined]
+        "entry_hash": result.entry_hash,  # type: ignore[attr-defined]
+        "failures": result.failures,  # type: ignore[attr-defined]
+    }
+    figures = getattr(result, "figures", None)
+    if figures is not None:
+        payload["figures"] = {
+            "ok": figures.ok,
+            "provenances": [
+                {"label": p.label, "value": p.value, "ok": p.ok, "statement": p.statement} for p in figures.provenances
+            ],
+            "unanchored": [
+                {"surface": u.surface, "category": u.category, "line": u.line, "col": u.col} for u in figures.unanchored
+            ],
+        }
+    return payload
+
+
+def _render_figures(result: object) -> None:
+    """Render the per-figure provenance statement below the verdict (issue #2888)."""
+    figures = getattr(result, "figures", None)
+    if figures is None or not figures.has_figures:
+        return
+    console.print("  figures:")
+    for p in figures.provenances:
+        marker = "[green]OK[/green]" if p.ok else "[red]FAIL[/red]"
+        label = p.label or p.value
+        console.print(f"    {marker} {label} ({p.value}) - {p.statement}")
+    for u in figures.unanchored:
+        console.print(f"    [red]UNANCHORED[/red] {u.surface} ({u.category}) at line {u.line}, col {u.col}")
 
 
 def _resolve_operator_secret(env_var: str) -> bytes | None:
