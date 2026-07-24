@@ -126,17 +126,61 @@ def test_sequence_ignores_pure_wall_clock_order() -> None:
     assert evaluate_sequence(rule, events) == []
 
 
+def test_sequence_ignores_future_lineage_edges() -> None:
+    # The B->A edge only appears at position 2, after the "b" event at position 1.
+    # A causal fold must not fire the (A@0, b@1) pair on an edge from the future.
+    events = [
+        _event(0, "task.created", "task_a"),
+        _event(1, "gate.result", "gate_b", related=()),
+        _event(2, "cost.update", "gate_b", related=("task_a",)),
+    ]
+    rule = SequenceRule(earlier="task.created", later="gate.result")
+    # Fixed (causal index): no fire. Bug (merged future edges): one spurious fire.
+    assert evaluate_sequence(rule, events) == []
+
+
 def test_absence_emits_violation_when_expected_never_arrives() -> None:
     events = [
         _event(0, "run.started", "run_1"),
         _event(1, "cost.update", "run_1"),
         _event(2, "cost.update", "run_1"),
     ]
-    expectation = AbsenceExpectation(after="run.started", expect="run.completed", within=5)
+    # within=2 so the deadline (position 2) is actually observed by the slice.
+    expectation = AbsenceExpectation(after="run.started", expect="run.completed", within=2)
     violations = evaluate_absence(expectation, events)
     assert len(violations) == 1
     assert violations[0].after_hmac == "hmac0000"
     assert violations[0].to_hmac == "hmac0002"
+
+
+def test_absence_defers_when_deadline_not_observed() -> None:
+    # The slice ends (position 2) before the absence deadline (position 5) is
+    # reached, so no negative proof can be asserted yet -> defer (#2653).
+    events = [
+        _event(0, "run.started", "run_1"),
+        _event(1, "cost.update", "run_1"),
+        _event(2, "cost.update", "run_1"),
+    ]
+    expectation = AbsenceExpectation(after="run.started", expect="run.completed", within=5)
+    assert evaluate_absence(expectation, events) == []
+
+
+def test_absence_uses_only_causal_lineage_edges() -> None:
+    # B (position 1) has no lineage to anchor A at its own position; a later
+    # event (position 2) introduces the B->A edge. A causal descent check must
+    # NOT let that future edge satisfy the expectation, so the violation stands.
+    events = [
+        _event(0, "a", "A"),
+        _event(1, "b", "B"),
+        _event(2, "b", "B", related=("A",)),
+    ]
+    expectation = AbsenceExpectation(after="a", expect="b", within=1, require_descent=True)
+    violations = evaluate_absence(expectation, events)
+    # Fixed (causal index): B@1 does not descend from A yet -> 1 violation.
+    # Bug (future edges merged): B@1 would descend from A -> 0 violations.
+    assert len(violations) == 1
+    assert violations[0].after_hmac == "hmac0000"
+    assert violations[0].to_hmac == "hmac0001"
 
 
 def test_absence_satisfied_when_expected_arrives() -> None:

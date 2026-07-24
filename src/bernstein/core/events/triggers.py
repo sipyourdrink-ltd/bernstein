@@ -26,7 +26,7 @@ from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Sequence
 
     from bernstein.core.events.grammar import CanonicalEvent
 
@@ -56,17 +56,16 @@ def _bucket_key(event: CanonicalEvent, dims: Sequence[str]) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def _build_ancestor_index(events: Iterable[CanonicalEvent]) -> dict[str, set[str]]:
-    """Return ``resource_id -> {immediate ancestor resource ids}`` over a window.
+def _extend_ancestor_index(index: dict[str, set[str]], event: CanonicalEvent) -> None:
+    """Fold one event's lineage edges into an incremental ancestor index.
 
-    Edges are aggregated across every event: an event's
-    ``related_resource_ids`` are the immediate ancestors of its resource.
+    An event's ``related_resource_ids`` are the immediate ancestors of its
+    resource. Accumulating in chain-position order keeps descent checks causal: a
+    descent is decided only against edges introduced by the current or earlier
+    events, never by a relationship a later event will add (which would let a
+    trigger fold consult the future).
     """
-    index: dict[str, set[str]] = {}
-    for event in events:
-        bucket = index.setdefault(event.resource_id, set())
-        bucket.update(event.related_resource_ids)
-    return index
+    index.setdefault(event.resource_id, set()).update(event.related_resource_ids)
 
 
 def resource_descends(
@@ -215,41 +214,74 @@ class AbsenceViolation:
     expect: str
 
 
+@dataclass(slots=True)
+class _OpenAbsence:
+    """An anchor A awaiting its expected B, tracked during a forward scan."""
+
+    anchor: CanonicalEvent
+    upper_position: int
+    last_in_window: CanonicalEvent
+
+
 def evaluate_absence(expectation: AbsenceExpectation, events: Sequence[CanonicalEvent]) -> list[AbsenceViolation]:
     """Emit a violation for every A whose expected B never arrived in-window.
 
-    A violation is asserted only when the observed slice actually covers the
-    window (the slice extends ``within`` positions past A, or ends), so the
-    negative proof is bounded by two chain positions the verifier can check.
+    A violation is asserted only once the deadline is *observed* - the slice
+    contains an event at or beyond ``anchor.position + within`` - so the negative
+    proof is bounded by two chain positions a verifier can check. An anchor whose
+    deadline the slice never reaches is deferred (no violation), because emitting
+    would assert absence the slice cannot yet support.
+
+    The scan is a single forward pass so descent checks (``require_descent``)
+    consult the lineage index only up to the candidate's chain position, never
+    edges a later event introduces.
     """
     if expectation.within <= 0:
         raise ValueError("absence window must be positive")
 
-    ancestor_index = _build_ancestor_index(events)
+    ancestor_index: dict[str, set[str]] = {}
+    open_absences: list[_OpenAbsence] = []
     violations: list[AbsenceViolation] = []
 
-    for idx, anchor in enumerate(events):
-        if not _matches(anchor.label, expectation.after):
-            continue
-        upper_position = anchor.position + expectation.within
-        satisfied = False
-        last_in_window = anchor
-        for candidate in events[idx + 1 :]:
-            if candidate.position > upper_position:
-                break
-            last_in_window = candidate
-            if not _matches(candidate.label, expectation.expect):
+    for event in events:
+        # Accumulate lineage edges in chain-position order before any descent
+        # check, so an anchor's expectation is judged only against edges already
+        # recorded at this point in the chain.
+        _extend_ancestor_index(ancestor_index, event)
+
+        still_open: list[_OpenAbsence] = []
+        for oa in open_absences:
+            if event.position > oa.upper_position:
+                # An event past the deadline proves the window elapsed with no B.
+                violations.append(
+                    AbsenceViolation(
+                        after_hmac=oa.anchor.hmac, to_hmac=oa.last_in_window.hmac, expect=expectation.expect
+                    )
+                )
                 continue
-            if expectation.require_descent and not resource_descends(
-                candidate.resource_id, anchor.resource_id, ancestor_index
-            ):
-                continue
-            satisfied = True
-            break
-        if not satisfied:
-            violations.append(
-                AbsenceViolation(after_hmac=anchor.hmac, to_hmac=last_in_window.hmac, expect=expectation.expect)
+            # ``event`` falls inside the window (anchor.position, upper_position].
+            oa.last_in_window = event
+            satisfied = _matches(event.label, expectation.expect) and (
+                not expectation.require_descent
+                or resource_descends(event.resource_id, oa.anchor.resource_id, ancestor_index)
             )
+            if satisfied:
+                continue  # expectation met -> no violation
+            if event.position >= oa.upper_position:
+                # Deadline observed exactly at the window edge, still unmet.
+                violations.append(
+                    AbsenceViolation(after_hmac=oa.anchor.hmac, to_hmac=event.hmac, expect=expectation.expect)
+                )
+                continue
+            still_open.append(oa)  # deadline not yet observed -> keep waiting
+        open_absences = still_open
+
+        if _matches(event.label, expectation.after):
+            open_absences.append(
+                _OpenAbsence(anchor=event, upper_position=event.position + expectation.within, last_in_window=event)
+            )
+
+    # Anchors whose deadline the slice never observed are deferred (no violation).
     return violations
 
 
@@ -290,12 +322,20 @@ def evaluate_sequence(rule: SequenceRule, events: Sequence[CanonicalEvent]) -> l
     For each B matching ``later``, the earliest A (by chain position) matching
     ``earlier`` from which B descends fires the rule. Two unrelated events in the
     right wall-clock order never fire, because no lineage path connects them.
+
+    The index is accumulated in chain-position order, so B's descent is decided
+    only against edges present at or before B's position - a later event can
+    never retroactively make an earlier pair fire.
     """
-    ancestor_index = _build_ancestor_index(events)
-    earlier_events = [e for e in events if _matches(e.label, rule.earlier)]
+    ancestor_index: dict[str, set[str]] = {}
+    earlier_events: list[CanonicalEvent] = []
     fires: list[SequenceFire] = []
 
     for later in events:
+        # Fold this event's edges in before deciding descent for it.
+        _extend_ancestor_index(ancestor_index, later)
+        if _matches(later.label, rule.earlier):
+            earlier_events.append(later)
         if not _matches(later.label, rule.later):
             continue
         for earlier in earlier_events:
