@@ -119,21 +119,26 @@ on:
 #     on the same PR cancel older CI runs so reviewers only ever wait on
 #     the latest push and we don't burn minutes on stale SHAs.
 #
-#   - Pushes to main: branch-scoped group, cancel-in-progress=true.
-#     A rapid wave of merges can cancel older heavy CI runs on main so
-#     the latest push supersedes stale ones. Per-SHA main observability is
-#     provided separately by main-sha-marker.yml, which is keyed by
-#     github.sha and is not cancellable by newer main pushes.
+#   - Pushes to main (and merge_group / dispatch): per-SHA group
+#     (branch + github.sha), cancel-in-progress=false. Every commit that
+#     lands on main runs its own full-matrix CI to completion, so the
+#     commit history carries a real per-commit pass/fail signal instead of
+#     a run of "cancelled" markers left behind when a burst of merges
+#     supersedes each other. A cancelled run on an already-merged commit
+#     reads as red forever and hides genuine failures behind noise; keying
+#     main by SHA removes that class of false red.
 #
-# The conditional in `group:` selects the right key per event type, and
-# `cancel-in-progress` fires for both pull_request and push: a rapid
-# wave of merges on `main` (13 commits in 90 min during the May 2026
-# META wave) used to saturate the runner queue because each sha-unique
-# group kept its own full-matrix run alive. Branch-scoped grouping +
-# always-cancel-in-progress lets the latest push supersede stale ones.
+# Tradeoff: a rapid merge wave now keeps N full main runs alive instead of
+# one (the branch-scoped policy this replaces was chosen after a May 2026
+# wave of 13 merges in 90 min saturated the runner queue). Main pushes are
+# merged PRs, far fewer than PR-branch pushes, so the load is bounded; the
+# durable fix for burst load is the merge queue (ci.yml already triggers on
+# merge_group), which tests each batch once on the prospective merged SHA.
+# PR-branch pushes keep cancel-in-progress=true, so the saturation source
+# (many pushes across many open PRs) stays capped.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('branch-{0}', github.ref) }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('branch-{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Default-deny for the workflow token; individual jobs escalate only
 # the scopes they actually need (Scorecard token-permissions, Sonar S8264).
