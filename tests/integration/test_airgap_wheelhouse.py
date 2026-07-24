@@ -342,6 +342,24 @@ def test_sign_script_present() -> None:
     assert "MANIFEST" in contents
 
 
+def test_sign_script_keeps_cosign_v3_offline_flags() -> None:
+    """Offline keyed signing must stay compatible with cosign v3.
+
+    cosign v3 defaults ``--use-signing-config`` and
+    ``--new-bundle-format`` to true, which rejects the
+    ``--tlog-upload=false`` + ``--output-signature`` invocation the
+    air-gap path relies on. Dropping either opt-out silently breaks
+    signing on any host with cosign v3 while still passing on v2.4.x,
+    so pin the requirement here rather than only in the real-cosign
+    integration test (which skips when cosign is absent).
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    contents = (repo_root / "scripts" / "sign_airgap_wheelhouse.sh").read_text()
+    assert "--use-signing-config=false" in contents
+    assert "--new-bundle-format=false" in contents
+    assert "--tlog-upload=false" in contents
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: pluggable verifier + wheelhouse CLI subcommands
 # ---------------------------------------------------------------------------

@@ -51,6 +51,15 @@ COSIGN_KEY=/secure/path/cosign.key \
   bash scripts/sign_airgap_wheelhouse.sh dist/airgap-wheelhouse/1.10.0
 ```
 
+**cosign versions.** The signing script is tested against cosign
+v2.4.x, v2.6.x, and v3.x, and adapts its flags to whichever is on
+`PATH`. cosign v3 changed two `sign-blob` defaults
+(`--use-signing-config` and `--new-bundle-format`) that are
+incompatible with offline keyed signing; the script opts back out of
+both when it detects a release that supports them. The detached
+`<wheel>.sig` layout is identical across all three, so a bundle signed
+under one version verifies under the others.
+
 Result: `dist/airgap-wheelhouse/1.10.0/` containing
 
 ```
