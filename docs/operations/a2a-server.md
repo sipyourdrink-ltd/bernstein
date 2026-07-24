@@ -154,10 +154,38 @@ against the operator's published key rather than trust-on-first-use.
 ## Publish for discovery
 
 `bernstein a2a publish --endpoint https://node.example/a2a` projects the node's
-signed capability card into agent-registry manifests (A2A card + MCP registry),
-each carrying a verifiable publisher fingerprint, so peers discover the node by
-verifiable capability rather than by an opaque URL. The AGNTCY ADS / OASF
-descriptor surface is a separate follow-up.
+signed capability card into agent-registry manifests, each carrying a
+verifiable publisher fingerprint, so peers discover the node by verifiable
+capability rather than by an opaque URL.
+
+Three surfaces are supported; pass `--surface` (repeatable) to select:
+
+| Surface | Record shape | Trust root |
+| --- | --- | --- |
+| `a2a-card` | The signed capability card (JWS per RFC 7515 over RFC 8785 bytes). | The card's own Ed25519 key. |
+| `mcp-registry` | A `server.json` carrying the `ed25519/<fp>` publisher block the MCP verifier already parses. | The card's own Ed25519 key. |
+| `agntcy-ads` | An OASF capability descriptor with Sigstore provenance. | A distinct provenance key (Sigstore, or a local Ed25519 fallback). |
+
+The default publish emits `a2a-card` and `mcp-registry`. The AGNTCY ADS surface
+is opt-in — it signs its OASF descriptor with a provenance key distinct from the
+card key — so request it explicitly:
+
+```bash
+bernstein a2a publish --endpoint https://node.example/a2a --surface agntcy-ads
+```
+
+The OASF descriptor is a deterministic projection of the signed card, pinned to
+a stated OASF schema version: `advertised_tools` map onto OASF skills and the
+card's policy block (cost cap, redaction tier, sandbox profile) maps onto a
+`bernstein.policy` extension. The record carries a Sigstore provenance
+attestation over the descriptor; when the `sigstore` package or network is
+unavailable it falls back to a local Ed25519 signature, recorded as the
+provenance `trust_root`. `verify_publication_record()` verifies an ADS record
+offline — it rebuilds the descriptor from the embedded card, rejects any byte
+that does not match the deterministic projection, and checks the provenance
+signature — so a tampered descriptor is rejected without contacting the node.
+The provenance key is minted once and reused (persisted beside the card), so
+republishing an unchanged node rewrites byte-identical descriptor bytes.
 
 ## Related
 

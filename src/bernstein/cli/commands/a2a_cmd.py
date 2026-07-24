@@ -36,6 +36,7 @@ from bernstein.core.interop.a2a_card import (
     resolve_advertised_card_policies,
 )
 from bernstein.core.protocols.a2a.publish import (
+    DEFAULT_PUBLISH_SURFACES,
     PUBLISH_SURFACES,
     build_publication,
 )
@@ -210,7 +211,11 @@ def verify(
     "surfaces",
     multiple=True,
     type=click.Choice(PUBLISH_SURFACES),
-    help="Registry surface to emit (repeatable). Defaults to every supported surface.",
+    help=(
+        "Registry surface to emit (repeatable). Defaults to the A2A card and "
+        "MCP registry surfaces; pass 'agntcy-ads' to also emit an OASF "
+        "descriptor with Sigstore provenance."
+    ),
 )
 @click.option("--version", "version", default=None, help="Version to publish. Defaults to the installed version.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
@@ -242,12 +247,26 @@ def publish(
         _fail(f"could not resolve the capability card: {exc}")
         return
 
+    requested = surfaces or DEFAULT_PUBLISH_SURFACES
+
+    # The ADS surface signs its OASF descriptor with a provenance key distinct
+    # from the card key. Mint and reuse it like the card so republishing stays
+    # byte-identical; only resolve it when ADS is actually requested.
+    provenance_key: bytes | None = None
+    if "agntcy-ads" in requested:
+        try:
+            provenance_key = _load_or_issue_provenance_key(card_path)
+        except OSError as exc:
+            _fail(f"could not resolve the provenance key: {exc}")
+            return
+
     try:
         publication = build_publication(
             card,
             endpoint=endpoint,
             version=version,
-            surfaces=surfaces or PUBLISH_SURFACES,
+            surfaces=requested,
+            provenance_private_key_pem=provenance_key,
         )
     except ValueError as exc:
         _fail(str(exc))
@@ -300,6 +319,28 @@ def _load_or_issue_card(card_path: Path, *, endpoint: str) -> SignedCapabilityCa
         key_path.write_bytes(private_key_pem)
         key_path.chmod(0o600)
     return signed
+
+
+def _load_or_issue_provenance_key(card_path: Path) -> bytes:
+    """Return the node's ADS provenance signing key, minting it once.
+
+    The provenance key is a separate Ed25519 key from the card key - ADS
+    anchors trust on Sigstore-style provenance, not on the card's own key, so
+    the two must not be the same material. It is persisted beside the card at
+    ``0600`` and reused, so republishing an unchanged node rewrites identical
+    descriptor provenance rather than churning a fresh signer each time.
+    """
+    from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
+
+    key_path = card_path.with_suffix(card_path.suffix + ".provenance.key.pem")
+    if key_path.exists():
+        return key_path.read_bytes()
+
+    private_key_pem, _public_key_pem = generate_ed25519_keypair()
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_bytes(private_key_pem)
+    key_path.chmod(0o600)
+    return private_key_pem
 
 
 __all__ = ["a2a_group", "publish", "verify"]

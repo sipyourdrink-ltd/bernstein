@@ -265,7 +265,7 @@ def test_publish_rejects_an_unknown_surface(runner: CliRunner, tmp_path: Path) -
             "--output-dir",
             str(tmp_path / "p"),
             "--surface",
-            "agntcy-ads",
+            "does-not-exist",
         ],
     )
 
@@ -285,6 +285,55 @@ def test_publish_output_is_deterministic(runner: CliRunner, tmp_path: Path) -> N
         assert (first_dir / f"{surface}.json").read_text(encoding="utf-8") == (
             second_dir / f"{surface}.json"
         ).read_text(encoding="utf-8")
+
+
+def test_publish_agntcy_ads_writes_a_verifiable_record(runner: CliRunner, tmp_path: Path) -> None:
+    out_dir = tmp_path / "publish"
+
+    result = runner.invoke(
+        a2a_group,
+        [
+            "publish",
+            "--endpoint",
+            "https://node.example/a2a",
+            "--output-dir",
+            str(out_dir),
+            "--card",
+            str(tmp_path / "card.json"),
+            "--surface",
+            "agntcy-ads",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    ads_path = out_dir / "agntcy-ads.json"
+    assert ads_path.exists()
+    # ADS is opt-in: the default surfaces are not emitted alongside it.
+    assert not (out_dir / "a2a-card.json").exists()
+    record = json.loads(ads_path.read_text(encoding="utf-8"))
+    assert record["surface"] == "agntcy-ads"
+    assert verify_publication_record(record).ok, record
+
+
+def test_publish_agntcy_ads_is_deterministic(runner: CliRunner, tmp_path: Path) -> None:
+    """Republishing an unchanged node rewrites byte-identical ADS bytes."""
+    args = [
+        "publish",
+        "--endpoint",
+        "https://node.example/a2a",
+        "--card",
+        str(tmp_path / "card.json"),
+        "--surface",
+        "agntcy-ads",
+    ]
+    first_dir = tmp_path / "one"
+    second_dir = tmp_path / "two"
+    assert runner.invoke(a2a_group, [*args, "--output-dir", str(first_dir)]).exit_code == 0
+    assert runner.invoke(a2a_group, [*args, "--output-dir", str(second_dir)]).exit_code == 0
+
+    assert (first_dir / "agntcy-ads.json").read_text(encoding="utf-8") == (second_dir / "agntcy-ads.json").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_publish_reuses_a_persisted_card(runner: CliRunner, tmp_path: Path) -> None:
