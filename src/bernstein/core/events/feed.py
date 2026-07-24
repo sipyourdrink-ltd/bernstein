@@ -24,7 +24,7 @@ by timestamps scattered across five files.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.events.grammar import GENESIS_HMAC, CanonicalEvent, project_entry
@@ -45,7 +45,7 @@ class FeedWindow:
             for an empty window.
     """
 
-    events: list[CanonicalEvent] = field(default_factory=list[CanonicalEvent])
+    events: tuple[CanonicalEvent, ...] = ()
     from_hmac: str | None = None
     to_hmac: str | None = None
 
@@ -91,11 +91,11 @@ class FeedWindow:
         bounds the producer claimed.
         """
         raw_events = cast("list[Any]", envelope.get("events", []))
-        events = [
+        events = tuple(
             CanonicalEvent.from_canonical_dict(cast("dict[str, Any]", item), position=idx)
             for idx, item in enumerate(raw_events)
             if isinstance(item, dict)
-        ]
+        )
         from_hmac = envelope.get("from_hmac")
         to_hmac = envelope.get("to_hmac")
         return cls(
@@ -103,6 +103,20 @@ class FeedWindow:
             from_hmac=str(from_hmac) if isinstance(from_hmac, str) else None,
             to_hmac=str(to_hmac) if isinstance(to_hmac, str) else None,
         )
+
+
+def _lower_fence_post(events: tuple[CanonicalEvent, ...]) -> str | None:
+    """Return the lower fence-post for a projected window.
+
+    A genesis-anchored slice - one whose first event chains from genesis -
+    carries a ``None`` lower fence-post, so :func:`verify_window` enforces
+    ``first.prev_hmac == GENESIS_HMAC`` and front-truncation of the genesis event
+    is detectable. A bounded slice retains its first event's HMAC as the fence-
+    post, so dropping the leading event still trips the lower-bound mismatch.
+    """
+    if not events:
+        return None
+    return None if events[0].prev_hmac == GENESIS_HMAC else events[0].hmac
 
 
 def project_window(slice_result: AuditSliceResult) -> FeedWindow:
@@ -113,12 +127,14 @@ def project_window(slice_result: AuditSliceResult) -> FeedWindow:
             :func:`bernstein.core.security.audit_slice.slice_audit_log`.
 
     Returns:
-        The projected window. Fence-posts are taken from the slice's first and
-        last entry HMACs, so the window carries its own completeness bounds.
+        The projected window. The upper fence-post is the slice's last entry
+        HMAC; the lower fence-post is the first entry HMAC for a bounded slice,
+        or ``None`` when the slice is genesis-anchored, so the window carries its
+        own completeness bounds.
     """
     raw_entries = cast("list[dict[str, Any]]", slice_result.events)
-    events = [project_entry(entry, position=idx) for idx, entry in enumerate(raw_entries)]
-    from_hmac = events[0].hmac if events else None
+    events = tuple(project_entry(entry, position=idx) for idx, entry in enumerate(raw_entries))
+    from_hmac = _lower_fence_post(events)
     to_hmac = events[-1].hmac if events else None
     return FeedWindow(events=events, from_hmac=from_hmac, to_hmac=to_hmac)
 
@@ -129,8 +145,8 @@ def project_entries(entries: list[dict[str, Any]]) -> FeedWindow:
     Convenience for callers that already hold decoded entries (for example the
     live tail on the SSE bus) rather than a slice result.
     """
-    events = [project_entry(entry, position=idx) for idx, entry in enumerate(entries)]
-    from_hmac = events[0].hmac if events else None
+    events = tuple(project_entry(entry, position=idx) for idx, entry in enumerate(entries))
+    from_hmac = _lower_fence_post(events)
     to_hmac = events[-1].hmac if events else None
     return FeedWindow(events=events, from_hmac=from_hmac, to_hmac=to_hmac)
 
@@ -182,6 +198,17 @@ def verify_window(
     # Completeness at the upper bound.
     if to_bound is not None and last.hmac != to_bound:
         errors.append(f"upper fence-post mismatch: window ends at {last.hmac[:16]}, expected {to_bound[:16]}")
+
+    # Identity integrity: no event may reuse another event's HMAC (a duplicated
+    # identity) or link to itself (``hmac == prev_hmac``). Either lets a forged
+    # cycle masquerade as a contiguous, fence-post-consistent chain.
+    seen: set[str] = set()
+    for idx, event in enumerate(window.events):
+        if event.hmac == event.prev_hmac:
+            errors.append(f"self-linked event at position {idx}: hmac equals prev_hmac {event.hmac[:16]}")
+        if event.hmac in seen:
+            errors.append(f"duplicate event hmac at position {idx}: {event.hmac[:16]}")
+        seen.add(event.hmac)
 
     # Order: contiguous prev_hmac linkage across the whole window.
     for idx in range(1, len(window.events)):

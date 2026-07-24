@@ -116,8 +116,17 @@ def verify_cmd(window_file: str) -> None:
     except json.JSONDecodeError as exc:
         console.print(f"[red]Malformed window file:[/red] {exc}")
         raise SystemExit(1) from None
-    if not isinstance(envelope, dict) or "events" not in envelope:
-        console.print("[red]Window file is not a feed envelope (missing 'events').[/red]")
+    # Boundary validation before offline verification: a well-formed feed
+    # envelope carries both fence-posts and a homogeneous list of event objects.
+    # Rejecting anything else stops a truncation attacker from dropping a
+    # fence-post (which would silently disable that bound's completeness check)
+    # or smuggling non-object entries that from_envelope would otherwise skip.
+    if not isinstance(envelope, dict) or not {"events", "from_hmac", "to_hmac"} <= envelope.keys():
+        console.print("[red]Window file is not a feed envelope (needs 'events', 'from_hmac', 'to_hmac').[/red]")
+        raise SystemExit(1)
+    raw_events = envelope["events"]
+    if not isinstance(raw_events, list) or not all(isinstance(item, dict) for item in raw_events):
+        console.print("[red]Window 'events' must be a list of event objects.[/red]")
         raise SystemExit(1)
 
     window = FeedWindow.from_envelope(cast("dict[str, Any]", envelope))

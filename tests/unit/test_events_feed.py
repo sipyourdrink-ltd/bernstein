@@ -68,8 +68,63 @@ def test_window_embeds_fence_posts(tmp_path: Path) -> None:
     _seed_chain(audit_dir)
     window = project_window(slice_audit_log(audit_dir))
 
-    assert window.from_hmac == window.events[0].hmac
+    # A genesis-anchored full window carries a null lower fence-post, so
+    # verify_window enforces first.prev_hmac == GENESIS and front-truncation of
+    # the genesis event is detectable (#2653).
+    assert window.from_hmac is None
     assert window.to_hmac == window.events[-1].hmac
+
+
+def test_events_stored_as_immutable_tuple(tmp_path: Path) -> None:
+    audit_dir = tmp_path / "audit"
+    _seed_chain(audit_dir)
+    window = project_window(slice_audit_log(audit_dir))
+
+    # A verified window cannot be mutated in place: events is a tuple (#2653).
+    assert isinstance(window.events, tuple)
+
+
+def test_genesis_front_truncation_is_detected(tmp_path: Path) -> None:
+    audit_dir = tmp_path / "audit"
+    _seed_chain(audit_dir)
+    window = project_window(slice_audit_log(audit_dir))
+    assert window.from_hmac is None  # genesis-anchored
+
+    # Drop the genesis event but keep claiming a genesis anchor: the new first
+    # event's prev_hmac is not GENESIS, so verification must reject it (#2653).
+    truncated = dataclasses.replace(window, events=window.events[1:])
+    ok, errors = verify_window(truncated)
+    assert not ok
+    assert any("genesis anchor" in e for e in errors)
+
+
+def test_duplicate_event_hmac_is_rejected(tmp_path: Path) -> None:
+    audit_dir = tmp_path / "audit"
+    _seed_chain(audit_dir)
+    window = project_window(slice_audit_log(audit_dir))
+
+    # Re-inserting an event with an already-seen HMAC must fail verification,
+    # even though its prev_hmac still chains from its predecessor (#2653).
+    dup = dataclasses.replace(window.events[1], position=window.events[1].position)
+    tampered = dataclasses.replace(window, events=(*window.events, dup))
+    ok, errors = verify_window(tampered, expect_from=window.from_hmac, expect_to=window.to_hmac)
+    assert not ok
+    assert any("duplicate event hmac" in e for e in errors)
+
+
+def test_self_linked_event_is_rejected(tmp_path: Path) -> None:
+    audit_dir = tmp_path / "audit"
+    _seed_chain(audit_dir)
+    window = project_window(slice_audit_log(audit_dir))
+
+    # An event whose hmac equals its prev_hmac is a self-link (a forged cycle);
+    # verification must reject it (#2653).
+    first = window.events[0]
+    self_linked = dataclasses.replace(first, prev_hmac=first.hmac)
+    tampered = dataclasses.replace(window, events=(self_linked, *window.events[1:]))
+    ok, errors = verify_window(tampered)
+    assert not ok
+    assert any("self-linked" in e for e in errors)
 
 
 def test_window_verifies_offline_for_completeness_and_order(tmp_path: Path) -> None:
@@ -89,7 +144,7 @@ def test_deleting_an_event_fails_verification(tmp_path: Path) -> None:
     # Drop the middle event but keep the fence-posts: linkage must break.
     tampered = dataclasses.replace(
         window,
-        events=[window.events[0], window.events[1], window.events[3]],
+        events=(window.events[0], window.events[1], window.events[3]),
     )
     ok, errors = verify_window(tampered, expect_from=window.from_hmac, expect_to=window.to_hmac)
     assert not ok
@@ -103,7 +158,7 @@ def test_reordering_an_event_fails_verification(tmp_path: Path) -> None:
 
     reordered = dataclasses.replace(
         window,
-        events=[window.events[0], window.events[2], window.events[1], window.events[3]],
+        events=(window.events[0], window.events[2], window.events[1], window.events[3]),
     )
     ok, _errors = verify_window(reordered, expect_from=window.from_hmac, expect_to=window.to_hmac)
     assert not ok
