@@ -72,6 +72,27 @@ flags.
 That's it. No tunnel, no overlay. The network is trusted; mTLS makes it
 auditable.
 
+### Running workers in containers
+
+A `bernstein worker` container does not serve the task-server HTTP port, so the
+image's default `HEALTHCHECK` (which probes `http://127.0.0.1:8052/health`)
+never succeeds and the container reports `(unhealthy)` forever. Disable it for
+worker-only containers:
+
+```bash
+docker run --health-cmd=NONE \
+    ghcr.io/sipyourdrink-ltd/bernstein \
+    worker --server https://central.internal:8052 --roles backend
+```
+
+In compose, set `healthcheck: { disable: true }` on the worker service.
+
+The image runs as `USER bernstein` (uid 1000). On macOS a bind-mounted host
+workspace is owned by your host uid, which the in-container user cannot write,
+so mounts fail with permission errors. Add `user: "0:0"` (compose) or
+`--user 0:0` (`docker run`) to the worker service on macOS, or use a named
+volume instead of a bind mount.
+
 ---
 
 ## Pattern 2 - Cloudflare Tunnel

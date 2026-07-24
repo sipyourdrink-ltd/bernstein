@@ -23,7 +23,7 @@ from pathlib import Path
 import click
 import httpx
 
-from bernstein.cli.helpers import console
+from bernstein.cli.helpers import adapter_cli_choice, console
 from bernstein.core.capacity_wake import CapacityWake, WakeReason
 from bernstein.core.poll_config import PollConfig, validate_poll_config
 
@@ -493,7 +493,10 @@ class WorkerLoop:
 @click.option(
     "--adapter",
     default=None,
-    type=click.Choice(["claude", "codex", "gemini", "qwen", "aider", "auto"], case_sensitive=False),
+    # Derived from the live adapter registry (same source as the seed ``cli:``
+    # allowlist and ``run --cli``) so a worker resolves any selectable adapter
+    # instead of a stale hardcoded subset (issue #2807).
+    type=adapter_cli_choice(),
     help="CLI agent adapter (default: auto-detect).",
 )
 @click.option(
