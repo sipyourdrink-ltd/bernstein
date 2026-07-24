@@ -180,6 +180,32 @@ def _safe_call(label: str, fn: Any, default: Any) -> Any:
         return default
 
 
+def _seed_config_overrides(
+    request: Request, config_state: dict[str, Any] | None
+) -> tuple[dict[str, object], str | None]:
+    """Extract the run seed's effective config values for provenance threading.
+
+    Returns ``(overrides, seed_path)`` where *overrides* maps config keys to
+    the values the server's loaded seed (``app.state.seed_config``) enforces.
+    Empty when no seed is loaded, so the resolver falls back to the file-based
+    chain byte-for-byte as before (#2874). ``budget`` is only threaded when the
+    seed actually sets it (``budget_usd is not None``); an unset seed budget
+    must not shadow a project/global budget layer.
+    """
+    seed_config = getattr(request.app.state, "seed_config", None)
+    if seed_config is None:
+        return {}, None
+    overrides: dict[str, object] = {}
+    max_agents = getattr(seed_config, "max_agents", None)
+    if isinstance(max_agents, int):
+        overrides["max_agents"] = max_agents
+    budget_usd = getattr(seed_config, "budget_usd", None)
+    if budget_usd is not None:
+        overrides["budget"] = budget_usd
+    seed_path = config_state.get("seed_path") if config_state else None
+    return overrides, seed_path if isinstance(seed_path, str) else None
+
+
 def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     """Build runtime operational metadata for status and TUI consumers.
 
@@ -213,6 +239,13 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         disk_usage_bytes = _safe_call("disk_usage_bytes", lambda: directory_size_bytes(sdd_dir), 0)
         config_state = _safe_call("config_state", lambda: read_config_state(sdd_dir), None)
 
+    # The run seed (``bernstein.yaml``) is the value the orchestrator caps
+    # concurrency and spend with, but the file resolver only reads
+    # ``.sdd/config.yaml``. Thread the seed the server loaded at bootstrap so
+    # the dashboard capacity denominator is honest for seed-configured runs
+    # (#2874) rather than falling back to the built-in default of 6.
+    seed_overrides, seed_overrides_path = _seed_config_overrides(request, config_state)
+
     _runtime_cache = {
         "git_branch": _safe_call("git_branch", lambda: current_git_branch(workdir), ""),
         "restart_count": restart_count,
@@ -231,6 +264,8 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
                 home=BernsteinHome.default(),
                 project_dir=workdir,
                 keys=_STATUS_CONFIG_KEYS,
+                seed_overrides=seed_overrides or None,
+                seed_overrides_path=seed_overrides_path,
             ),
             {},
         ),

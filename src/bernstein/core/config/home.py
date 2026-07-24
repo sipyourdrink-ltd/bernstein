@@ -57,7 +57,7 @@ effort: max
 model: null
 """
 
-ConfigSource = Literal["session", "project", "context", "global", "default"]
+ConfigSource = Literal["seed", "session", "project", "context", "global", "default"]
 
 
 class ConfigProvenanceLayer(TypedDict):
@@ -92,8 +92,11 @@ _ALLOWED_SOURCE_POLICIES: dict[str, tuple[ConfigSource, ...]] = {
     # Security-sensitive keys must not be set via session/env overrides alone.
     # A named operating context (#2550) is an audit-chained, attested source
     # that sits between project and global, so it joins the allowlist.
-    "budget": ("project", "context", "global", "default"),
-    "max_agents": ("project", "context", "global", "default"),
+    # The run seed (``bernstein.yaml``, the committed run manifest) is the
+    # value the orchestrator actually enforces at runtime, so it is a
+    # legitimate source on par with the project layer (#2874).
+    "budget": ("seed", "project", "context", "global", "default"),
+    "max_agents": ("seed", "project", "context", "global", "default"),
 }
 
 
@@ -401,20 +404,33 @@ def resolve_config(
     home: BernsteinHome,
     project_dir: Path,
     session_overrides: Mapping[str, object] | None = None,
+    seed_overrides: Mapping[str, object] | None = None,
+    seed_overrides_path: str | None = None,
 ) -> ConfigResolution:
     """Resolve the effective value for *key* across all config layers.
 
     Precedence (highest first):
-    1. Session-only overrides (environment or caller-provided)
-    2. ``<project>/.sdd/config.yaml``
-    3. ``~/.bernstein/config.yaml``
-    4. Built-in defaults
+    1. Run seed overrides (``bernstein.yaml``, the value the orchestrator
+       actually enforces at runtime - see ``seed_overrides``)
+    2. Session-only overrides (environment or caller-provided)
+    3. ``<project>/.sdd/config.yaml``
+    4. ``~/.bernstein/config.yaml``
+    5. Built-in defaults
 
     Args:
         key: Config key to look up.
         home: BernsteinHome instance (global config).
         project_dir: Project root for loading ``.sdd/config.yaml``.
         session_overrides: Optional session-only overrides.
+        seed_overrides: Optional run-seed effective values. The seed
+            (``bernstein.yaml``) is not read by the low-level file resolver,
+            yet it is the value the orchestrator caps concurrency and spend
+            with. Threading it here as the top-precedence ``seed`` layer keeps
+            surfaces such as the dashboard capacity denominator honest for
+            seed-configured runs (#2874). A key absent from this mapping is
+            resolved exactly as before.
+        seed_overrides_path: Filesystem path recorded on the injected ``seed``
+            layer (the resolved seed file), or ``None`` when unknown.
 
     Returns:
         Typed mapping with the effective ``value``, winning ``source``, and the
@@ -426,6 +442,16 @@ def resolve_config(
     combined_session_overrides = _session_overrides_from_env() | dict(session_overrides or {})
 
     layers: list[ConfigProvenanceLayer] = []
+    if seed_overrides is not None and key in seed_overrides:
+        value = _coerce_config_value(key, seed_overrides[key])
+        layers.append(
+            {
+                "source": "seed",
+                "value": value,
+                "redacted_value": _redact_config_value(key, value),
+                "path": seed_overrides_path,
+            }
+        )
     if key in combined_session_overrides:
         value = _coerce_config_value(key, combined_session_overrides[key])
         layers.append(
@@ -491,8 +517,15 @@ def resolve_config_bundle(
     project_dir: Path,
     keys: tuple[str, ...] | None = None,
     session_overrides: Mapping[str, object] | None = None,
+    seed_overrides: Mapping[str, object] | None = None,
+    seed_overrides_path: str | None = None,
 ) -> dict[str, ConfigResolution]:
-    """Resolve a stable bundle of config keys with provenance."""
+    """Resolve a stable bundle of config keys with provenance.
+
+    ``seed_overrides`` threads the run seed's effective values (see
+    :func:`resolve_config`) so the bundle reflects what the orchestrator
+    actually enforces for seed-configured runs (#2874).
+    """
     target_keys = keys or tuple(sorted(_DEFAULTS))
     return {
         key: resolve_config(
@@ -500,6 +533,8 @@ def resolve_config_bundle(
             home=home,
             project_dir=project_dir,
             session_overrides=session_overrides,
+            seed_overrides=seed_overrides,
+            seed_overrides_path=seed_overrides_path,
         )
         for key in target_keys
     }
