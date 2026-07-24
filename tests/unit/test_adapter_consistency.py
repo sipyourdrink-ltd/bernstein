@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -137,6 +138,14 @@ class TestAdapterSpawnResult:
     ) -> None:
         popen_mock = _make_popen_mock()
         mod = type(adapter).__module__
+
+        # Adapters that refuse before spawning (e.g. experimental stubs) do not
+        # import subprocess and never return a SpawnResult; skip the process
+        # check for them, mirroring the external-binary skip below.
+        mod_obj = sys.modules[mod]
+        if not hasattr(mod_obj, "subprocess"):
+            pytest.skip(f"{adapter_name} does not launch a subprocess")
+            return
 
         # Create required directories
         sdd = tmp_path / ".sdd" / "runtime"

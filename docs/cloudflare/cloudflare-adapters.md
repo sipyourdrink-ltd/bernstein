@@ -1,6 +1,6 @@
 # Cloudflare Adapters
 
-Two adapters let you run agents on Cloudflare infrastructure instead of locally: the Cloudflare Agents SDK adapter and the Codex-on-Cloudflare adapter.
+Two adapters were intended to run agents on Cloudflare infrastructure instead of locally: the Cloudflare Agents SDK adapter and the Codex-on-Cloudflare adapter. **Both are experimental and currently non-functional** — see the status notes below before relying on them.
 
 ---
 
@@ -9,32 +9,24 @@ Two adapters let you run agents on Cloudflare infrastructure instead of locally:
 **Module:** `bernstein.adapters.cloudflare_agents`
 **Class:** `CloudflareAgentsAdapter`
 
-Spawns agents via a Cloudflare Workers backend using `npx wrangler dev` locally. The adapter launches a local wrangler dev server that hosts a Cloudflare Agents SDK worker, passing the task prompt and model as Worker variables.
+!!! warning "Experimental — non-functional (issue #2782)"
+    This adapter has no worker-trigger path. It could only start a local
+    `npx wrangler dev` server, which is a long-running dev server that is never
+    sent a request and never signals completion, so every task would run until
+    the timeout watchdog killed it — producing no artifact. Rather than pretend,
+    `spawn()` now refuses immediately with an actionable error.
 
-### Prerequisites
+    To run agents on Cloudflare today, deploy a worker that implements the
+    `/agents/*` HTTP contract and drive it with
+    `bernstein.bridges.cloudflare.CloudflareBridge`, or run agents locally with
+    an adapter such as `claude`, `codex`, `aider`, or `mock`.
 
-- Node.js 18+ and npm
-- `wrangler` installed globally: `npm install -g wrangler`
-- `wrangler login` completed
-- A Cloudflare account with Workers enabled
+### Behaviour
 
-### Environment variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CLOUDFLARE_ACCOUNT_ID` or `CF_ACCOUNT_ID` | Yes | Cloudflare account identifier |
-| `CLOUDFLARE_API_TOKEN` or `CF_API_TOKEN` | Yes | API token with Workers permissions |
-| `CLOUDFLARE_API_KEY` | No | Global API key (legacy, prefer token) |
-| `CLOUDFLARE_EMAIL` | No | Account email (only with global key) |
-| `WRANGLER_SEND_METRICS` | No | Control wrangler telemetry |
-
-### How it works
-
-1. The adapter builds a `npx wrangler dev` command with `--var` flags injecting the prompt, model, and session ID.
-2. The command is wrapped with `build_worker_cmd()` for process visibility in `bernstein ps`.
-3. Environment variables are filtered to only forward the Cloudflare-specific keys listed above (via `build_filtered_env()`).
-4. The wrangler dev server runs as a subprocess with stdout/stderr captured to `.sdd/runtime/<session>.log`.
-5. A timeout watchdog monitors the process.
+`CloudflareAgentsAdapter.spawn()` raises `RuntimeError` with a message that
+names issue #2782 and points to the working alternatives above. The
+`cloudflare` registry key still resolves (so `cli: cloudflare` parses), but a
+run routed to it fails fast instead of timing out.
 
 ### Configuration in bernstein.yaml
 
@@ -43,22 +35,6 @@ cli: cloudflare
 ```
 
 The registry key is `cloudflare` (see `bernstein.adapters.registry`); the module name `cloudflare_agents` is not a registered key.
-
-### Spawn parameters
-
-The adapter's `spawn()` method accepts the standard `CLIAdapter` parameters:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `prompt` | `str` | (required) | Task prompt for the agent |
-| `workdir` | `Path` | (required) | Working directory |
-| `model_config` | `ModelConfig` | (required) | Model and effort config |
-| `session_id` | `str` | (required) | Unique session identifier |
-| `mcp_config` | `dict` | `None` | MCP config (unused by this adapter) |
-| `timeout_seconds` | `int` | `DEFAULT_TIMEOUT_SECONDS` | Process timeout |
-| `task_scope` | `str` | `"medium"` | Task scope for budget caps |
-| `budget_multiplier` | `float` | `1.0` | Retry budget multiplier |
-| `system_addendum` | `str` | `""` | Additional system prompt text |
 
 ---
 

@@ -64,8 +64,8 @@ graph TD
 | Browser Rendering | `bernstein.bridges.browser_rendering` | Headless browsing, screenshots, scraping, PDF generation |
 | R2 Workspace Sync | `bernstein.bridges.r2_sync` | Content-addressed file sync between local and R2 |
 | Workers AI Provider | `bernstein.core.routing.cloudflare_ai` | Free-tier LLM completions for planning and decomposition |
-| Cloudflare Agents Adapter | `bernstein.adapters.cloudflare_agents` | Spawn agents via `npx wrangler dev` locally |
-| Codex-on-Cloudflare Adapter | `bernstein.adapters.codex_cloudflare` | Run OpenAI Codex inside Cloudflare sandboxes |
+| Cloudflare Agents Adapter | `bernstein.adapters.cloudflare_agents` | Experimental / non-functional — refuses to spawn (issue #2782) |
+| Codex-on-Cloudflare Adapter | `bernstein.adapters.codex_cloudflare` | Experimental / non-functional — targets a nonexistent sandbox API (issue #2783) |
 | D1 Analytics | `bernstein.core.cost.d1_analytics` | Usage metering, billing tiers, quota enforcement |
 | Vectorize Cache | `bernstein.core.memory.vectorize_cache` | Semantic cache for LLM responses using vector similarity |
 | MCP Remote Transport | `bernstein.mcp.remote_transport` | Streamable HTTP transport for remote MCP server access |
