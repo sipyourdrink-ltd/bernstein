@@ -413,11 +413,29 @@ def _verify_log_bytes(
         # message (test_partial_last_line_flagged_as_invalid_json).
         errors.append(f"{display_name}: missing trailing newline")
 
+    # ``_split_jsonl_bytes`` splits on ``b"\n"`` only, so the start offset of
+    # each line inside the segment is the running sum of prior line lengths
+    # plus one byte per consumed separator. Tracking it lets an undecodable
+    # line name the exact byte in the segment an operator would seek to.
+    segment_offset = 0
     for line_no, raw_line in enumerate(_split_jsonl_bytes(raw_bytes), start=1):
+        line_offset = segment_offset
+        segment_offset += len(raw_line) + 1  # +1 for the split ``b"\n"``
         if raw_line == b"":
             continue
         try:
             parsed_entry = json.loads(raw_line)
+        except UnicodeDecodeError as exc:
+            # ``json.loads`` on raw bytes raises ``UnicodeDecodeError`` (not
+            # ``JSONDecodeError``) when a byte sequence is not valid UTF-8.
+            # Keep ``verify`` total: report the undecodable line and the byte
+            # it fails at, then keep walking so the rest of this segment and
+            # every later segment are still verified rather than one bad byte
+            # taking the whole audit surface down. Undecodable bytes are
+            # exactly what an operator runs ``verify`` to learn about, so this
+            # is a loud failure, never a warning or a skipped segment.
+            errors.append(f"{display_name}:{line_no}: undecodable bytes at offset {line_offset + exc.start} - {exc}")
+            continue
         except json.JSONDecodeError as exc:
             errors.append(f"{display_name}:{line_no}: invalid JSON - {exc}")
             continue
@@ -603,7 +621,11 @@ def _load_segment_index(audit_dir: Path, key: bytes, event_type: str) -> dict[st
     path = audit_dir / _SEGMENT_INDEX_NAME
     try:
         doc = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        # ``read_text`` raises ``UnicodeDecodeError`` (not ``JSONDecodeError``)
+        # on an index file that is not valid UTF-8. Fold it into the same
+        # degrade-to-empty path as every other unusable index: the index can
+        # only ever cost a full walk, never weaken verification.
         return {}
     if not isinstance(doc, dict):
         return {}

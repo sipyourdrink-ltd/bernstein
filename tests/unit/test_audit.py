@@ -6,9 +6,11 @@ from pathlib import Path
 import pytest
 from bernstein.core.audit import (
     _GENESIS_HMAC,  # pyright: ignore[reportPrivateUsage]
+    _SEGMENT_INDEX_NAME,  # pyright: ignore[reportPrivateUsage]
     ArchiveResult,
     AuditLog,
     RetentionPolicy,
+    _load_segment_index,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -474,6 +476,86 @@ def test_verify_no_archive_unchanged(tmp_path: Path) -> None:
     valid, errors = AuditLog(audit_dir, key=b"test-key").verify()
     assert valid is True
     assert errors == []
+
+
+def test_verify_reports_undecodable_live_segment_and_walks_the_rest(tmp_path: Path) -> None:
+    """An invalid-UTF-8 live segment is a reported failure, not a traceback.
+
+    ``verify`` documents itself as total over a possibly-damaged archive
+    directory: it must return ``(False, errors)`` rather than raise, so a
+    caller auditing a damaged log gets a verdict instead of a stack trace.
+    A segment whose bytes are not valid UTF-8 is exactly the condition an
+    operator runs ``verify`` to learn about, so it must be named, not thrown.
+
+    The invalid bytes are placed on the *last* line of the older of two live
+    segments, so the later segment's ``prev_hmac`` linkage is broken. Seeing
+    that later segment reported as a mismatch proves it was still walked
+    rather than being skipped because an earlier segment was undecodable.
+
+    A regression guard: drop the ``UnicodeDecodeError`` handler and
+    ``json.loads`` on the raw line raises out of ``verify``, so ``verify()``
+    below raises and this test errors instead of asserting.
+    """
+    audit_dir = tmp_path / "audit"
+    old_name, today_name = _build_two_day_chain(audit_dir)
+
+    # Flip the actor byte on the older segment's last line (``"a2"``) to an
+    # invalid UTF-8 start byte. ``_build_two_day_chain`` writes ``a2`` only on
+    # that line, so the mutation is confined to the segment's tail.
+    old_path = audit_dir / old_name
+    raw = old_path.read_bytes()
+    assert raw.count(b'"a2"') == 1
+    old_path.write_bytes(raw.replace(b'"a2"', b'"\xff2"'))
+
+    valid, errors = AuditLog(audit_dir, key=b"test-key").verify()
+
+    assert valid is False
+    # The undecodable segment is named and reported loudly, not collapsed
+    # into "no such segment".
+    assert any(old_name in err and "undecodable" in err for err in errors), errors
+    # The later, still-decodable segment was verified (and its linkage into
+    # the damaged tail flagged) rather than skipped.
+    assert any(today_name in err and "prev_hmac mismatch" in err for err in errors), errors
+
+
+def test_verify_reports_undecodable_archived_segment(tmp_path: Path) -> None:
+    """Invalid UTF-8 inside an archived ``.gz`` is reported, not raised.
+
+    The archived read path decompresses to bytes and runs them through the
+    same verifier, so it must be total over undecodable content just like the
+    live path. The corruption is on the archived segment's last line, so the
+    live tail's linkage break proves live files are still walked after an
+    undecodable archived segment.
+    """
+    audit_dir = tmp_path / "audit"
+    old_name, today_name = _build_two_day_chain(audit_dir)
+    AuditLog(audit_dir, key=b"test-key").archive(RetentionPolicy(retention_days=0))
+
+    gz_path = audit_dir / "archive" / f"{old_name}.gz"
+    payload = gzip.decompress(gz_path.read_bytes())
+    assert payload.count(b'"a2"') == 1
+    gz_path.write_bytes(gzip.compress(payload.replace(b'"a2"', b'"\xff2"')))
+
+    valid, errors = AuditLog(audit_dir, key=b"test-key").verify()
+
+    assert valid is False
+    assert any(f"{old_name}.gz" in err and "undecodable" in err for err in errors), errors
+    assert any(today_name in err and "prev_hmac mismatch" in err for err in errors), errors
+
+
+def test_segment_index_undecodable_bytes_degrade_to_empty(tmp_path: Path) -> None:
+    """A ``.segment-index.json`` with invalid UTF-8 degrades to ``{}``.
+
+    ``_load_segment_index`` promises that *any* failure to read the index
+    degrades to an empty index (which only costs a full walk); an undecodable
+    file must not be an exception that shape does not cover. Drop the
+    ``UnicodeDecodeError`` handler and ``read_text`` raises here instead.
+    """
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / _SEGMENT_INDEX_NAME).write_bytes(b'{"payload": "a\xff"}')
+
+    assert _load_segment_index(audit_dir, b"test-key", "evt") == {}
 
 
 def test_recover_chain_tail_stable_across_archive(tmp_path: Path) -> None:
