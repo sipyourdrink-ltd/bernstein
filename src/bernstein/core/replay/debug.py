@@ -259,13 +259,14 @@ def two_run_path_diff(left_dir: Path, right_dir: Path) -> PathDiff:
     steps: list[dict[str, Any]] = []
     for seq in range(max_seq + 1):
         diverged_here = divergence is not None and seq == divergence.seq
+        fields_changed = sorted(divergence.fields_changed) if divergence is not None and diverged_here else []
         steps.append(
             {
                 "seq": seq,
                 "left": left_window.get(seq),
                 "right": right_window.get(seq),
                 "diverged": diverged_here,
-                "fields_changed": sorted(divergence.fields_changed) if diverged_here else [],
+                "fields_changed": fields_changed,
             }
         )
 
@@ -274,9 +275,7 @@ def two_run_path_diff(left_dir: Path, right_dir: Path) -> PathDiff:
         "divergence": _divergence_to_dict(divergence),
         "steps": steps,
     }
-    diff_hash = hashlib.sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    diff_hash = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
     return PathDiff(
         diverged=divergence is not None,
