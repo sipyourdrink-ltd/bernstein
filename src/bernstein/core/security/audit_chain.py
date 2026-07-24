@@ -733,6 +733,21 @@ EVENT_MISSION_PHASE_RECEIPT = "mission.phase_receipt"
 #: payloads.
 EVENT_MISSION_DIGEST_RECEIPT = "mission.digest_receipt"
 
+#: Issue #2558 -- emitted once per receipt appended to a leaderless MESH claim
+#: journal (see :class:`bernstein.core.orchestration.tracker_pipeline.ClaimJournal`).
+#: A MESH claim journal is a signed, append-only, Merkle-chained log of every
+#: self-claim, release, renewal, expiry, and supersession; the SQLite
+#: ``ClaimLedger`` is a deterministic projection (fold) of it rather than the
+#: source of truth. This event mirrors ``{kind, tracker, ticket_id, role,
+#: claimer_id, node_id, lease_expires_at, prev_entry_hash, journal_entry_hash,
+#: supersedes, winner_claimer_id, winner_entry_hash}`` into the HMAC chain so a
+#: claim decision -- including a deterministic ``supersede`` naming the winner of
+#: a concurrent double-claim -- is provable offline from the chain alone. The
+#: receipt binding lives in the journal; the projection derives claim state from
+#: receipts only, so a claim without a receipt is by definition not held. Only
+#: identifiers and hashes are recorded -- never ticket or workspace contents.
+EVENT_CLAIM_JOURNAL_RECEIPT = "cluster.claim_journal_receipt"
+
 #: Issue #2549 -- emitted whenever a per-goal SLA contract is evaluated against
 #: chain evidence inside a supervisor tick and found breached. A breach is a
 #: signed, offline-verifiable violation receipt (see
@@ -3608,6 +3623,86 @@ def record_task_claim_receipt(
             "task_version": task_version,
             "claim_path": claim_path,
         },
+    )
+
+
+def record_claim_journal_receipt(
+    *,
+    chain: AuditChainStore,
+    kind: str,
+    tracker: str,
+    ticket_id: str,
+    role: str,
+    claimer_id: str,
+    node_id: str,
+    lease_expires_at: float,
+    prev_entry_hash: str,
+    journal_entry_hash: str,
+    supersedes: str | None = None,
+    winner_claimer_id: str | None = None,
+    winner_entry_hash: str | None = None,
+    actor: str = "claim_journal",
+) -> AuditEvent:
+    """Append a ``cluster.claim_journal_receipt`` event into *chain* (#2558).
+
+    Mirrors one leaderless-MESH claim-journal receipt into the HMAC-chained
+    audit log so an operator can prove, from the chain alone, that a self-claim
+    (or its release / renewal / expiry / supersession) was recorded with the
+    exact identity, lease, and chain position claimed -- without trusting any
+    single node. ``journal_entry_hash`` is the receipt's Merkle ``entry_hash``;
+    a verifier holding the journal recomputes it byte-identically and confirms
+    the anchor. For a ``supersede`` receipt the ``winner_*`` fields name the
+    concurrent claim that won by the deterministic lowest-``entry_hash`` rule.
+    Only identifiers and hashes are recorded -- never ticket or workspace
+    contents.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        kind: The receipt kind (``claim`` / ``release`` / ``renew`` /
+            ``expire`` / ``supersede``).
+        tracker: Tracker adapter name the claim is scoped to.
+        ticket_id: Tracker-side ticket id.
+        role: Bernstein role lane the claim covers.
+        claimer_id: The claiming worker's identifier (the loser, for a
+            ``supersede`` receipt).
+        node_id: The node install identity the receipt pertains to.
+        lease_expires_at: Unix timestamp the lease expires (``0`` when none).
+        prev_entry_hash: The journal head the receipt chained onto.
+        journal_entry_hash: The receipt's own Merkle ``entry_hash`` (the anchor).
+        supersedes: For a ``supersede`` receipt, the losing claim's
+            ``entry_hash``; ``None`` otherwise.
+        winner_claimer_id: For a ``supersede`` receipt, the winning claimer.
+        winner_entry_hash: For a ``supersede`` receipt, the winning claim's
+            ``entry_hash``.
+        actor: Recorded actor; defaults to ``"claim_journal"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    details: dict[str, Any] = {
+        "kind": kind,
+        "tracker": tracker,
+        "ticket_id": ticket_id,
+        "role": role,
+        "claimer_id": claimer_id,
+        "node_id": node_id,
+        "lease_expires_at": lease_expires_at,
+        "prev_entry_hash": prev_entry_hash,
+        "journal_entry_hash": journal_entry_hash,
+    }
+    if supersedes is not None:
+        details["supersedes"] = supersedes
+    if winner_claimer_id is not None:
+        details["winner_claimer_id"] = winner_claimer_id
+    if winner_entry_hash is not None:
+        details["winner_entry_hash"] = winner_entry_hash
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CLAIM_JOURNAL_RECEIPT,
+        actor=actor,
+        resource_type="claim_journal_receipt",
+        resource_id=f"{tracker}:{ticket_id}:{role}",
+        details=details,
     )
 
 
@@ -6883,6 +6978,7 @@ __all__ = [
     "EVENT_CACHE_HIT",
     "EVENT_CACHE_MISS",
     "EVENT_CHECKPOINT_RETRY",
+    "EVENT_CLAIM_JOURNAL_RECEIPT",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COMPUTER_USE_ACTION",
@@ -7004,6 +7100,7 @@ __all__ = [
     "record_cache_hit",
     "record_cache_miss",
     "record_checkpoint_retry",
+    "record_claim_journal_receipt",
     "record_computer_use_action",
     "record_context_capsule",
     "record_cost_batch_route",
