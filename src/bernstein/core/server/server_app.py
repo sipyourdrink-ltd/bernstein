@@ -1250,6 +1250,13 @@ def create_app(
     # ``None`` when key material or the lineage root is unavailable, in which
     # case responses are served unattested rather than not at all.
     application.state.a2a_receipt_issuer = build_receipt_issuer(sdd_dir)  # type: ignore[attr-defined]
+    # Inbound A2A JSON-RPC auth (#2609): API key + OAuth2 client-credentials,
+    # both declared in the agent card. Built from ``BERNSTEIN_A2A_*`` env at
+    # app creation; the JSON-RPC surface is inert unless
+    # ``BERNSTEIN_A2A_SERVER_ENABLED`` is set, so this stays dormant by default.
+    from bernstein.core.protocols.a2a.server_auth import A2AServerAuth
+
+    application.state.a2a_server_auth = A2AServerAuth.from_env()  # type: ignore[attr-defined]
     application.state.acp_handler = acp_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
     application.state.cluster_authenticator = cluster_authenticator  # type: ignore[attr-defined]
@@ -1325,6 +1332,7 @@ def create_app(
 
     # WEB-011: Paginated task search - must precede tasks_router so /tasks/search
     # is matched before /tasks/{task_id}.
+    from bernstein.core.routes.a2a_jsonrpc import router as a2a_jsonrpc_router
     from bernstein.core.routes.acp import router as acp_router
     from bernstein.core.routes.agent_comparison import router as agent_comparison_router
     from bernstein.core.routes.api_v1 import build_router as build_api_v1_router
@@ -1424,6 +1432,7 @@ def create_app(
         orchestrator_holds_router,
         review_board_router,
         missions_router,
+        a2a_jsonrpc_router,
     ]
 
     # Fresh per-app router: including route groups mutates the target router,

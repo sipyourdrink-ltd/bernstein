@@ -36,11 +36,16 @@ _PUBLIC_PATHS = frozenset(
         "/ready",
         "/alive",
         "/.well-known/agent.json",
+        "/.well-known/agent-card.json",
         "/.well-known/agent.json/keys",
         "/.well-known/http-message-signatures-directory",
         "/.well-known/acp.json",
         "/.well-known/mcp-tools",
         "/acp/v0/agents",
+        # A2A JSON-RPC surface - handlers enforce their own card-declared auth
+        # (#2609). Disabled by default (handler returns 404 when off).
+        "/a2a/v1",
+        "/a2a/v1/oauth/token",
         "/docs",
         "/redoc",
         "/openapi.json",

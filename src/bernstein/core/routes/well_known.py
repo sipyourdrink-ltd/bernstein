@@ -374,7 +374,45 @@ def _agent_card_body(base_url: str = _DEFAULT_BASE_URL, *, tenant_id: str = DEFA
     }
     if tenant_id != DEFAULT_TENANT_ID:
         body["tenantId"] = tenant_id
+    _apply_a2a_server_surface(body, base_url)
     return body
+
+
+def _apply_a2a_server_surface(body: dict[str, Any], base_url: str) -> None:
+    """Declare the inbound A2A JSON-RPC binding + auth in the card, if enabled.
+
+    Off by default: when ``BERNSTEIN_A2A_SERVER_ENABLED`` is unset the card is
+    byte-identical to the historical one, so existing verifiers and cached
+    cards are undisturbed. When enabled, the card advertises
+
+    * the JSON-RPC 2.0 interface (transport + endpoint URL) as an additional
+      interface, and ``JSONRPC`` in ``supportedInterfaces``; and
+    * the two callable-node auth schemes - a static API key and an OAuth2
+      client-credentials grant with its token URL -
+
+    so a peer negotiates the binding and credentials before sending a task.
+    """
+    # Local import keeps the route module (which imports FastAPI + task server
+    # helpers) out of this module's import graph unless the surface is on.
+    from bernstein.core.protocols.a2a.server_auth import A2AServerAuth
+    from bernstein.core.routes.a2a_jsonrpc import (
+        A2A_JSONRPC_PATH,
+        A2A_TOKEN_PATH,
+        a2a_server_enabled,
+    )
+
+    if not a2a_server_enabled():
+        return
+
+    rpc_url = f"{base_url.rstrip('/')}{A2A_JSONRPC_PATH}"
+    token_url = f"{base_url.rstrip('/')}{A2A_TOKEN_PATH}"
+
+    interfaces = body["supportedInterfaces"]
+    if "JSONRPC" not in interfaces:
+        interfaces.append("JSONRPC")
+    body["additionalInterfaces"] = [{"url": rpc_url, "transport": "JSONRPC"}]
+
+    body["securitySchemes"] = body["securitySchemes"] + A2AServerAuth.from_env().security_schemes(token_url=token_url)
 
 
 def _sign_canonical_body(canonical_body: bytes, private_pem: bytes, *, kid: str) -> str:
@@ -563,16 +601,11 @@ def _render_llms_txt() -> str:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/.well-known/agent.json", include_in_schema=False)
-def agent_json(request: Request) -> Response:
-    """Return the A2A v1.0 signed agent card for this task server.
+def _serve_agent_card(request: Request) -> Response:
+    """Render the signed A2A v1.0 card as a JCS-canonical JSON response.
 
-    Body bytes are JCS-canonical (RFC 8785) so verifiers can recompute the
-    JWS signing input bit-perfect after stripping the ``signatures`` array.
-    Cache for an hour - the card body changes only when the server config
-    or the orchestrator's signing key rotates. A ``?tenant=`` query parameter
-    (or ``x-tenant-id`` header) selects a tenant-scoped identity; a
-    multi-tenant host serves a distinct signed card per tenant.
+    Shared by ``/.well-known/agent.json`` and ``/.well-known/agent-card.json``
+    so both paths return byte-identical, identically-signed bytes.
     """
     tenant_id = _resolve_tenant(request)
     payload = _agent_card_payload(_resolve_base_url(), tenant_id=tenant_id)
@@ -586,6 +619,32 @@ def agent_json(request: Request) -> Response:
         media_type="application/json",
         headers=headers,
     )
+
+
+@router.get("/.well-known/agent.json", include_in_schema=False)
+def agent_json(request: Request) -> Response:
+    """Return the A2A v1.0 signed agent card for this task server.
+
+    Body bytes are JCS-canonical (RFC 8785) so verifiers can recompute the
+    JWS signing input bit-perfect after stripping the ``signatures`` array.
+    Cache for an hour - the card body changes only when the server config
+    or the orchestrator's signing key rotates. A ``?tenant=`` query parameter
+    (or ``x-tenant-id`` header) selects a tenant-scoped identity; a
+    multi-tenant host serves a distinct signed card per tenant.
+    """
+    return _serve_agent_card(request)
+
+
+@router.get("/.well-known/agent-card.json", include_in_schema=False)
+def agent_card_json(request: Request) -> Response:
+    """Serve the signed card at the A2A v1.0 canonical well-known path (#2609).
+
+    A2A v1.0 canonicalised ``/.well-known/agent-card.json``, but at least one
+    major shipped client still fetches the legacy ``/.well-known/agent.json``.
+    Both paths return identical bytes with the same signature, so a peer
+    discovers and verifies the node whichever name it was built to fetch.
+    """
+    return _serve_agent_card(request)
 
 
 @router.get("/.well-known/agent.json/keys", include_in_schema=False)

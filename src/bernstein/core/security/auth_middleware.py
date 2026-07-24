@@ -94,12 +94,23 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/alive",
         # Agent / protocol discovery
         "/.well-known/agent.json",
+        # A2A v1.0 canonical discovery path (#2609): served identical to
+        # ``/.well-known/agent.json`` so shipped clients that fetch either the
+        # v1.0 name or the legacy name both resolve the signed card.
+        "/.well-known/agent-card.json",
         "/.well-known/agent.json/keys",
         "/.well-known/http-message-signatures-directory",
         "/.well-known/acp.json",
         "/.well-known/mcp-tools",
         "/llms.txt",
         "/acp/v0/agents",
+        # A2A JSON-RPC server surface (#2609). These endpoints run their OWN
+        # auth (card-declared API key + OAuth2 client-credentials) and reject
+        # unauthenticated calls per spec, so the server-wide bearer check must
+        # let them reach the handler. When the surface is disabled (the
+        # default) the handler answers 404, exposing nothing.
+        "/a2a/v1",
+        "/a2a/v1/oauth/token",
         # Auth flow endpoints (must be public for login to work)
         "/auth/login",
         "/auth/oidc/callback",
