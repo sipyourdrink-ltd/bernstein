@@ -46,15 +46,15 @@ import hmac as _hmac
 import ipaddress
 import json
 import logging
-import os
 import secrets
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.security.governance import RoleBindings, decide_access
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.security.governance import GovernanceDecision
 
@@ -102,20 +102,27 @@ def _canonical_bytes(payload: dict[str, Any]) -> bytes:
 def resolve_dashboard_hmac_key(sdd_dir: Path) -> bytes:
     """Resolve the HMAC key the dashboard auth surface signs with.
 
-    Mirrors the task server's key resolution exactly (env override first,
-    then the workspace key file), so the CLI, the serve entry points, and
-    the server middleware all sign and verify against the same key.
+    Defers to the single canonical resolver :func:`load_or_create_audit_key`
+    so every audit-chain writer on one workspace signs with one key: the task
+    server / dashboard, the spawner, and ``bernstein audit verify`` all resolve
+    the same file (``$BERNSTEIN_AUDIT_KEY_PATH`` when set, else the XDG state
+    key). Previously this returned the workspace ``.sdd/keys/audit.key`` while
+    the verifier and spawner used the XDG key, so entries written by the task
+    server into ``.sdd/audit/<day>.jsonl`` failed verification by construction
+    (issue #2791).
+
+    ``sdd_dir`` is retained for signature compatibility; the resolved key no
+    longer lives under it.
 
     Args:
-        sdd_dir: The workspace ``.sdd`` directory.
+        sdd_dir: The workspace ``.sdd`` directory (unused; kept for callers).
 
     Returns:
         The raw key bytes.
     """
     from bernstein.core.security.audit import load_or_create_audit_key
 
-    override = os.environ.get("BERNSTEIN_AUDIT_KEY_PATH", "")
-    return load_or_create_audit_key(Path(override) if override else sdd_dir / "keys" / "audit.key")
+    return load_or_create_audit_key()
 
 
 def dashboard_role_bindings(hmac_key: bytes) -> RoleBindings:
