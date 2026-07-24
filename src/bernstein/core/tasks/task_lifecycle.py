@@ -514,7 +514,15 @@ def maybe_retry_task(
     # in the title until they complete, but the counter they report is the
     # typed field - never the regex match.
     retry_count = task.retry_count
-    effective_max = min(task.max_retries, max_task_retries) if max_task_retries > 0 else task.max_retries
+    # Apply the same _MAX_REGULAR_TASK_RETRIES hard ceiling that
+    # retry_or_fail_task uses (issue #2806). The two retry paths -- this
+    # tick-loop path and the reap path -- must agree on the cap; otherwise a
+    # structurally-dead lineage that the reap path would dead-letter keeps
+    # getting retried here, exceeding the intended ceiling.
+    if max_task_retries > 0:
+        effective_max = min(task.max_retries, max_task_retries, _MAX_REGULAR_TASK_RETRIES)
+    else:
+        effective_max = min(task.max_retries, _MAX_REGULAR_TASK_RETRIES)
 
     if retry_count >= effective_max:
         quarantine.record_failure(task.title, "Max retries exhausted")
@@ -1778,6 +1786,32 @@ def _clear_claim_conflict_state(orch: Any, task_id: str) -> None:
         state.pop(task_id, None)
 
 
+def _lineage_id(task: Task) -> str:
+    """Return the task's lineage id: ``metadata["original_task_id"]`` or its id.
+
+    Every retry created by ``maybe_retry_task`` / ``retry_or_fail_task`` stamps
+    ``metadata["original_task_id"]`` with the lineage root, so grouping by this
+    value keeps a task and all its retries under one stable key even though each
+    retry has a fresh task id.
+    """
+    metadata = task.metadata
+    if isinstance(metadata, dict):
+        original = metadata.get("original_task_id")
+        if isinstance(original, str) and original:
+            return original
+    return task.id
+
+
+def _batch_lineage_key(batch: list[Task]) -> frozenset[str]:
+    """Lineage-stable spawn-backoff key for a batch (issue #2806).
+
+    Keyed on each task's lineage id rather than its ephemeral task id so the
+    spawn-failure counter and exponential backoff accumulate across retries
+    instead of resetting every time a retry mints a new id.
+    """
+    return frozenset(_lineage_id(t) for t in batch)
+
+
 def claim_and_spawn_batches(
     orch: Any,  # Orchestrator instance (avoids circular import)
     batches: list[list[Task]],
@@ -1961,8 +1995,15 @@ def claim_and_spawn_batches(
                 )
                 continue
 
-        # Check spawn backoff: skip batches that recently failed
-        batch_key = frozenset(t.id for t in batch)
+        # Check spawn backoff: skip batches that recently failed.
+        # Key on the task *lineage* (metadata["original_task_id"], falling back
+        # to the task id) rather than the current attempt's ids: a retry mints a
+        # brand-new task id, so an id-keyed backoff resets fail_count to 0 on
+        # every attempt and the _MAX_SPAWN_FAILURES ceiling never accumulates
+        # against a repeating spawn failure (issue #2806). Keying on the lineage
+        # makes the consecutive-failure counter and exponential backoff
+        # accumulate across retries so a structurally-dead spawn fails fast.
+        batch_key = _batch_lineage_key(batch)
         fail_count, last_fail_ts = orch._spawn_failures.get(batch_key, (0, 0.0))
         failure_history = spawn_failure_history.get(batch_key, [])
         # Exponential backoff: base * 2^(failures-1), capped at max

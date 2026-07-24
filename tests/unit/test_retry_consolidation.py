@@ -151,6 +151,41 @@ def test_maybe_retry_dlq_fires_from_typed_field():
     assert recorded_title == task.title
 
 
+def test_maybe_retry_enforces_hard_ceiling_matching_retry_or_fail():
+    """`maybe_retry_task` must apply the same `_MAX_REGULAR_TASK_RETRIES=2`
+    hard ceiling that `retry_or_fail_task` already enforces.
+
+    Regression for #2806: the tick-loop retry path (`maybe_retry_task`) and
+    the reap path (`retry_or_fail_task`) disagreed on the cap. A task at
+    retry_count=2 with a higher `max_retries`/`max_task_retries` was refused
+    by the reap path but still retried by the tick path, so a
+    structurally-dead lineage could exceed the intended ceiling.
+    """
+    from bernstein.core.task_lifecycle import _MAX_REGULAR_TASK_RETRIES
+
+    assert _MAX_REGULAR_TASK_RETRIES == 2
+    # retry_count already at the hard ceiling, but task.max_retries (3) and
+    # max_task_retries (3) would both otherwise permit another attempt.
+    task = _build_task(retry_count=2, max_retries=3)
+    client, posted = _capture_client()
+    quarantine = MagicMock()
+
+    created = maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=client,
+        server_url="http://server",
+        quarantine=quarantine,
+        workdir=None,
+        session_id=None,
+    )
+
+    assert created is False
+    assert posted == []
+    quarantine.record_failure.assert_called_once()
+
+
 def test_maybe_retry_ignores_legacy_title_prefix_when_typed_field_disagrees():
     """Legacy ``[RETRY N]`` prefix must not raise the counter."""
     task = _build_task(

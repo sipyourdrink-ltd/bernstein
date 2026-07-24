@@ -211,6 +211,41 @@ def test_claim_and_spawn_batches_aborts_on_claim_transport_error(tmp_path: Path,
     assert result.errors == ["claim:T-net: server down"]
 
 
+def test_spawn_backoff_keyed_on_lineage_not_ephemeral_retry_id(tmp_path: Path, make_task: Any) -> None:
+    """A retry inherits its lineage's spawn backoff instead of resetting it.
+
+    Regression for #2806: the spawn-failure backoff was keyed on the current
+    attempt's task ids, so every retry (a fresh id) started fail_count back at
+    0 and the ``_MAX_SPAWN_FAILURES`` ceiling never accumulated against a
+    repeating spawn failure. Keying on the lineage
+    (``metadata["original_task_id"]``) makes a retry respect the backoff the
+    original lineage already accrued.
+    """
+    import time as _time
+
+    orch = _claim_orch(tmp_path)
+
+    # The lineage root "T-orig" already failed to spawn twice and its most
+    # recent failure is fresh, so the lineage is in active backoff.
+    lineage_key = frozenset(["T-orig"])
+    orch._spawn_failures[lineage_key] = (2, _time.time())
+
+    # A retry of that lineage arrives with a brand-new task id but carries the
+    # same original_task_id in its metadata.
+    retry = make_task(id="T-retry-1", role="backend")
+    retry.metadata = {"original_task_id": "T-orig"}
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[retry]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    # The retry is skipped by the inherited backoff: no claim, no spawn. Before
+    # the fix the id-keyed backoff missed the lineage entry and the retry was
+    # claimed/spawned immediately.
+    orch._client.post.assert_not_called()
+    orch._spawner.spawn_for_tasks.assert_not_called()
+    assert result.spawned == []
+
+
 def test_claim_and_spawn_batches_auto_decomposes_large_task_before_claim(tmp_path: Path, make_task: Any) -> None:
     """claim_and_spawn_batches creates a planner task instead of claiming a decomposable large task."""
     orch = _claim_orch(tmp_path)
