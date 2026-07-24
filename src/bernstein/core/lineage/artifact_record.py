@@ -190,9 +190,7 @@ def record_artifact(
     task_dir = sink_root / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / _BLOB_NAME).write_bytes(canonical)
-    (task_dir / _RECEIPT_NAME).write_text(
-        json.dumps(receipt.to_dict(), sort_keys=True, indent=2), encoding="utf-8"
-    )
+    (task_dir / _RECEIPT_NAME).write_text(json.dumps(receipt.to_dict(), sort_keys=True, indent=2), encoding="utf-8")
     return receipt
 
 
@@ -243,9 +241,7 @@ def verify_artifact(
         stored = blob_path.read_bytes()
         rederived = content_hash(stored)
         if rederived != receipt.content_hash:
-            failures.append(
-                f"stored bytes altered: re-derived {rederived} != receipt {receipt.content_hash}"
-            )
+            failures.append(f"stored bytes altered: re-derived {rederived} != receipt {receipt.content_hash}")
 
     matched = None
     for entry, _jws in _read_log(log_path):
@@ -255,9 +251,7 @@ def verify_artifact(
     if matched is None:
         failures.append(f"lineage entry {receipt.entry_hash} for the artifact is missing from the log")
     elif rederived is not None and matched.content_hash != rederived:
-        failures.append(
-            f"recorded content_hash {matched.content_hash} != stored bytes {rederived}"
-        )
+        failures.append(f"recorded content_hash {matched.content_hash} != stored bytes {rederived}")
 
     gate_result = check(log_path, cards_dir, operator_secret=operator_secret)
     if not gate_result.ok:
