@@ -50,18 +50,32 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import logging
+import os
 import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, cast, runtime_checkable
 
+from bernstein.core.lineage.tracker_audit import (
+    GENESIS_PREV_HASH,
+    _canonical_bytes,
+    _exclusive_lock,
+)
+from bernstein.core.security.audit_head_signature import (
+    build_head_signature,
+    verify_head_signature,
+)
+
 if TYPE_CHECKING:
     from bernstein.core.lifecycle.hooks import HookRegistry
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.lineage_kms import KMSAdapter
     from bernstein.core.trackers.contract import (
         AbstractTrackerAdapter,
         Ticket,
@@ -74,13 +88,21 @@ log = logging.getLogger(__name__)
 __all__ = [
     "ALLOWED_FAILURE_CATEGORIES",
     "ALLOWED_FAILURE_NEXT_ACTIONS",
+    "CLAIM_JOURNAL_SCHEMA_VERSION",
+    "CLAIM_RECEIPT_KINDS",
+    "DEFAULT_CLAIM_JOURNAL_RELPATH",
     "DEFAULT_CLAIM_LOCK_TTL_SECONDS",
     "DEFAULT_LEDGER_RELPATH",
     "DEFAULT_PER_ROLE_MAX_IN_FLIGHT",
     "FAILURE_BLOCK_BEGIN",
     "FAILURE_BLOCK_END",
+    "ClaimHold",
+    "ClaimJournal",
+    "ClaimJournalVerifyResult",
     "ClaimLedger",
     "ClaimOutcome",
+    "ClaimReceipt",
+    "ClaimState",
     "DispatchOutcome",
     "FailurePayload",
     "PipelineConfig",
@@ -89,11 +111,14 @@ __all__ = [
     "StageHandoff",
     "TrackerPipeline",
     "TrackerPipelineError",
+    "compute_claim_entry_hash",
+    "default_claim_journal_path",
     "format_failure_comment",
     "format_success_comment",
     "make_idempotency_key",
     "parse_failure_block",
     "parse_success_blocks",
+    "project_claims",
 ]
 
 
@@ -120,6 +145,30 @@ ceiling for that role.
 
 DEFAULT_LEDGER_RELPATH: Final[Path] = Path("state") / "tracker_claims.db"
 """Path under ``.sdd/`` where the SQLite ledger lives by default."""
+
+DEFAULT_CLAIM_JOURNAL_RELPATH: Final[Path] = Path("cluster") / "claim_journal.jsonl"
+"""Path under ``.sdd/`` where the signed MESH claim journal lives by default.
+
+The journal is opt-in: STAR deployments never materialise it. Only the
+leaderless MESH path (issue #2558) constructs a :class:`ClaimJournal` and
+threads it into :class:`ClaimLedger`.
+"""
+
+CLAIM_JOURNAL_SCHEMA_VERSION: Final[int] = 1
+"""On-disk schema version stamped into every :class:`ClaimReceipt`.
+
+Bumping requires a parallel reader for the old version, mirroring the
+tracker-audit stream's versioning contract.
+"""
+
+CLAIM_RECEIPT_KINDS: Final[frozenset[str]] = frozenset(
+    {"claim", "release", "renew", "expire", "supersede"},
+)
+"""The closed set of :class:`ClaimReceipt` kinds.
+
+Exposed as a module constant so downstream tools can introspect the taxonomy
+without reaching into the dataclass internals.
+"""
 
 FAILURE_BLOCK_BEGIN: Final[str] = "```yaml bernstein:failure"
 """Opening fence of the structured failure block embedded in comments."""
@@ -550,15 +599,33 @@ class ClaimLedger:
     _locks: ClassVar[dict[str, threading.RLock]] = {}
     _locks_guard: ClassVar[threading.Lock] = threading.Lock()
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, journal: ClaimJournal | None = None) -> None:
+        """Build a ledger.
+
+        Args:
+            db_path: SQLite file the projection is materialised into.
+            journal: Optional signed :class:`ClaimJournal`. When supplied the
+                ledger runs the leaderless MESH path: every granted claim is
+                first appended as a signed receipt and the SQLite row is
+                materialised from it, so the ledger becomes a projection of the
+                journal rather than the source of truth. When ``None`` (the
+                default) the ledger behaves exactly as the STAR path always
+                has, touching no journal -- existing callers are unaffected.
+        """
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
         self._lock = self._lock_for_path(db_path)
+        self._journal = journal
 
     @property
     def db_path(self) -> Path:
         """Filesystem path the ledger persists at."""
         return self._db_path
+
+    @property
+    def journal(self) -> ClaimJournal | None:
+        """The signed claim journal on the MESH path, or ``None`` for STAR."""
+        return self._journal
 
     @classmethod
     def _lock_for_path(cls, db_path: Path) -> threading.RLock:
@@ -711,6 +778,21 @@ class ClaimLedger:
                     claimer_id="",
                     lease_expires_at=0.0,
                 )
+            # MESH path: the granted claim is anchored as a signed receipt on
+            # the journal, and the SQLite row above is its materialised
+            # projection (both derive from the same injected ``now`` clock and
+            # claim inputs, so a replay reproduces byte-identical state). STAR
+            # deployments pass no journal and skip this entirely.
+            if self._journal is not None:
+                self._journal.append(
+                    kind="claim",
+                    tracker=tracker,
+                    ticket_id=ticket_id,
+                    role=role,
+                    claimer_id=claimer_id,
+                    lease_expires_at=expires_at,
+                    ts_ns=int(current * 1_000_000_000),
+                )
         return ClaimOutcome(
             granted=True,
             reason="granted",
@@ -802,6 +884,519 @@ class ClaimLedger:
                 conn.execute("ROLLBACK")
                 raise
             return attempt
+
+
+# ---------------------------------------------------------------------------
+# Claim journal (signed, Merkle-chained) -- leaderless MESH substrate (#2558)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimReceipt:
+    """One signed, hash-chained entry in a leaderless MESH claim journal.
+
+    A receipt records a single self-claim, release, renewal, expiry, or
+    supersession against ``(tracker, ticket_id, role)``. Receipts chain via
+    ``prev_entry_hash`` / ``entry_hash`` (reusing the tracker-audit
+    canonicalisation) and are Ed25519-signed with the node's install identity
+    through the same head-signature path the A2A message receipts use.
+
+    The ``entry_hash`` is computed with the ``signature`` and ``entry_hash``
+    fields blanked, so it is *signature-independent*: two nodes signing the
+    same body with different install keys agree on the entry hash and therefore
+    on the journal head. That is what lets the pure fold produce byte-identical
+    state across nodes.
+
+    The core binding is ``{tracker, ticket_id, role, claimer_id, node_id,
+    lease_expires_at, prev_entry_hash, entry_hash}``. A ``supersede`` receipt
+    additionally names the losing claim (``supersedes``) and the winner
+    (``winner_claimer_id`` / ``winner_entry_hash``).
+    """
+
+    schema_version: int
+    kind: str
+    ts_ns: int
+    tracker: str
+    ticket_id: str
+    role: str
+    claimer_id: str
+    node_id: str
+    lease_expires_at: float
+    prev_entry_hash: str
+    entry_hash: str
+    signature: dict[str, Any] = field(default_factory=dict)
+    supersedes: str | None = None
+    winner_claimer_id: str | None = None
+    winner_entry_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in CLAIM_RECEIPT_KINDS:
+            msg = f"unknown claim-receipt kind: {self.kind!r}"
+            raise ValueError(msg)
+        for hash_field, label in (
+            (self.prev_entry_hash, "prev_entry_hash"),
+            (self.entry_hash, "entry_hash"),
+        ):
+            if not hash_field.startswith("sha256:"):
+                msg = f"{label} must start with 'sha256:', got {hash_field!r}"
+                raise ValueError(msg)
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        """The ``(tracker, ticket_id, role)`` the receipt claims against."""
+        return (self.tracker, self.ticket_id, self.role)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the plain-dict wire form (the on-disk JSONL body)."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ClaimReceipt:
+        """Rebuild a receipt from a parsed JSON object.
+
+        Validates the receipt shape through the dataclass ``__post_init__``
+        invariants on construction.
+        """
+        supersedes = data.get("supersedes")
+        winner_claimer_id = data.get("winner_claimer_id")
+        winner_entry_hash = data.get("winner_entry_hash")
+        return cls(
+            schema_version=int(data["schema_version"]),
+            kind=str(data["kind"]),
+            ts_ns=int(data["ts_ns"]),
+            tracker=str(data["tracker"]),
+            ticket_id=str(data["ticket_id"]),
+            role=str(data["role"]),
+            claimer_id=str(data["claimer_id"]),
+            node_id=str(data["node_id"]),
+            lease_expires_at=float(data["lease_expires_at"]),
+            prev_entry_hash=str(data["prev_entry_hash"]),
+            entry_hash=str(data["entry_hash"]),
+            signature=dict(data.get("signature") or {}),
+            supersedes=None if supersedes is None else str(supersedes),
+            winner_claimer_id=None if winner_claimer_id is None else str(winner_claimer_id),
+            winner_entry_hash=None if winner_entry_hash is None else str(winner_entry_hash),
+        )
+
+
+def _claim_signing_bytes(receipt: ClaimReceipt) -> bytes:
+    """Return the JCS bytes the entry hash and signature run over.
+
+    Mirrors :func:`bernstein.core.lineage.tracker_audit._signing_payload`: the
+    ``signature`` and ``entry_hash`` fields are blanked so the digest is
+    reproducible from the same body during replay or verification, and so the
+    chain hash never depends on which node signed the receipt.
+    """
+    body = asdict(receipt)
+    body["signature"] = {}
+    body["entry_hash"] = ""
+    return _canonical_bytes(body)
+
+
+def compute_claim_entry_hash(receipt: ClaimReceipt) -> str:
+    """Return the content-addressed ``entry_hash`` for ``receipt``."""
+    return "sha256:" + hashlib.sha256(_claim_signing_bytes(receipt)).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimHold:
+    """The current holder of one ``(tracker, ticket_id, role)`` claim."""
+
+    tracker: str
+    ticket_id: str
+    role: str
+    claimer_id: str
+    node_id: str
+    lease_expires_at: float
+    entry_hash: str
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the canonical dict form used by :meth:`ClaimState.canonical_bytes`."""
+        return {
+            "tracker": self.tracker,
+            "ticket_id": self.ticket_id,
+            "role": self.role,
+            "claimer_id": self.claimer_id,
+            "node_id": self.node_id,
+            "lease_expires_at": self.lease_expires_at,
+            "entry_hash": self.entry_hash,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimState:
+    """The projected claim state -- the pure fold of an ordered receipt set.
+
+    ``holds`` maps each claimed key to its single deterministic holder;
+    ``superseded`` is the set of every claim ``entry_hash`` that lost (whether
+    by an explicit ``supersede`` receipt or by the lowest-``entry_hash`` rule);
+    ``head`` is the journal head hash (the ``entry_hash`` of the last receipt).
+
+    Two nodes folding the same ordered receipt set must produce a
+    byte-identical :meth:`canonical_bytes` and an identical ``head``.
+    """
+
+    holds: Mapping[tuple[str, str, str], ClaimHold]
+    superseded: frozenset[str]
+    head: str
+
+    def holder(self, tracker: str, ticket_id: str, role: str) -> ClaimHold | None:
+        """Return the current holder of the key, or ``None`` if unheld."""
+        return self.holds.get((tracker, ticket_id, role))
+
+    def canonical_bytes(self) -> bytes:
+        """Return the deterministic JCS serialisation for byte-comparison."""
+        payload = {
+            "head": self.head,
+            "holds": [self.holds[k].as_dict() for k in sorted(self.holds)],
+            "superseded": sorted(self.superseded),
+        }
+        return _canonical_bytes(payload)
+
+
+def _active_buckets(
+    receipts: Sequence[ClaimReceipt],
+) -> tuple[dict[tuple[str, str, str], dict[str, ClaimHold]], set[str]]:
+    """Fold ``receipts`` into per-key live-claim buckets.
+
+    Returns ``(active, explicitly_superseded)`` where ``active[key]`` maps each
+    still-live claim's ``entry_hash`` to its :class:`ClaimHold`, and
+    ``explicitly_superseded`` is the set of entry hashes removed by an explicit
+    ``supersede`` receipt. Ordering follows the receipt sequence; the
+    lowest-``entry_hash`` winner selection is applied by the callers.
+    """
+    active: dict[tuple[str, str, str], dict[str, ClaimHold]] = {}
+    explicit_superseded: set[str] = set()
+    for receipt in receipts:
+        bucket = active.setdefault(receipt.key, {})
+        if receipt.kind == "claim":
+            bucket[receipt.entry_hash] = ClaimHold(
+                tracker=receipt.tracker,
+                ticket_id=receipt.ticket_id,
+                role=receipt.role,
+                claimer_id=receipt.claimer_id,
+                node_id=receipt.node_id,
+                lease_expires_at=receipt.lease_expires_at,
+                entry_hash=receipt.entry_hash,
+            )
+        elif receipt.kind == "renew":
+            for entry_hash, hold in list(bucket.items()):
+                if hold.claimer_id == receipt.claimer_id and hold.node_id == receipt.node_id:
+                    bucket[entry_hash] = replace(hold, lease_expires_at=receipt.lease_expires_at)
+        elif receipt.kind in ("release", "expire"):
+            for entry_hash, hold in list(bucket.items()):
+                if hold.claimer_id == receipt.claimer_id and hold.node_id == receipt.node_id:
+                    del bucket[entry_hash]
+        elif receipt.kind == "supersede" and receipt.supersedes is not None:
+            bucket.pop(receipt.supersedes, None)
+            explicit_superseded.add(receipt.supersedes)
+    return active, explicit_superseded
+
+
+def project_claims(receipts: Sequence[ClaimReceipt]) -> ClaimState:
+    """Fold an ordered receipt set into a deterministic :class:`ClaimState`.
+
+    Pure and total: given the same ordered receipts, two independently
+    instantiated nodes produce a byte-identical state and an identical head
+    hash. When more than one live claim contends for a key, the claim with the
+    lexicographically-lowest ``entry_hash`` wins and the rest are superseded --
+    a total order that does not depend on wall-clock, node identity, or which
+    node observed which claim first.
+    """
+    active, superseded = _active_buckets(receipts)
+    superseded = set(superseded)
+    holds: dict[tuple[str, str, str], ClaimHold] = {}
+    for key, bucket in active.items():
+        if not bucket:
+            continue
+        winner_entry_hash = min(bucket)
+        holds[key] = bucket[winner_entry_hash]
+        for entry_hash in bucket:
+            if entry_hash != winner_entry_hash:
+                superseded.add(entry_hash)
+    head = receipts[-1].entry_hash if receipts else GENESIS_PREV_HASH
+    return ClaimState(holds=holds, superseded=frozenset(superseded), head=head)
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimJournalVerifyResult:
+    """Outcome of :meth:`ClaimJournal.verify`."""
+
+    ok: bool
+    entry_count: int
+    bad_index: int | None = None
+    failures: list[str] = field(default_factory=list)
+
+
+class ClaimJournal:
+    """Signed, append-only, Merkle-chained journal of claim receipts.
+
+    The journal is the source of truth for leaderless MESH coordination: the
+    SQLite :class:`ClaimLedger` is a projection of it. Each append computes the
+    chain link, signs the entry hash with the node's Ed25519 install identity,
+    writes the JSONL body under an exclusive ``flock`` (so multiple nodes on a
+    shared filesystem never interleave bytes), and -- when an audit chain is
+    supplied -- anchors the receipt's ``entry_hash`` into the HMAC audit chain
+    as a ``cluster.claim_journal_receipt`` event.
+
+    Args:
+        path: JSONL file the receipts are appended to.
+        kms_adapter: The node's Ed25519 signer (its install identity).
+        node_id: The node install identity id recorded on every receipt.
+        chain: Optional :class:`AuditChainStore`; when supplied every receipt
+            is anchored into the HMAC chain.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        kms_adapter: KMSAdapter,
+        node_id: str,
+        chain: AuditChainStore | None = None,
+    ) -> None:
+        self.path: Path = Path(path)
+        self._kms = kms_adapter
+        self._node_id = node_id
+        self._chain = chain
+        self._lock = threading.RLock()
+
+    @property
+    def node_id(self) -> str:
+        """The node install identity id recorded on receipts this journal mints."""
+        return self._node_id
+
+    # -- append -------------------------------------------------------
+
+    def append(
+        self,
+        *,
+        kind: str,
+        tracker: str,
+        ticket_id: str,
+        role: str,
+        claimer_id: str,
+        lease_expires_at: float,
+        ts_ns: int,
+        node_id: str | None = None,
+        supersedes: str | None = None,
+        winner_claimer_id: str | None = None,
+        winner_entry_hash: str | None = None,
+    ) -> ClaimReceipt:
+        """Append one signed receipt and return the materialised entry.
+
+        ``ts_ns`` is an explicit argument rather than an ambient clock read, so
+        a replay with the same inputs reproduces a byte-identical receipt
+        (including its signature -- Ed25519 is deterministic per RFC 8032).
+        """
+        if kind not in CLAIM_RECEIPT_KINDS:
+            msg = f"unknown claim-receipt kind: {kind!r}"
+            raise ValueError(msg)
+        with self._lock:
+            prev_hash = self._tail_hash()
+            unsigned = ClaimReceipt(
+                schema_version=CLAIM_JOURNAL_SCHEMA_VERSION,
+                kind=kind,
+                ts_ns=int(ts_ns),
+                tracker=tracker,
+                ticket_id=ticket_id,
+                role=role,
+                claimer_id=claimer_id,
+                node_id=self._node_id if node_id is None else node_id,
+                lease_expires_at=float(lease_expires_at),
+                prev_entry_hash=prev_hash,
+                entry_hash=GENESIS_PREV_HASH,  # placeholder; recomputed below
+                signature={},
+                supersedes=supersedes,
+                winner_claimer_id=winner_claimer_id,
+                winner_entry_hash=winner_entry_hash,
+            )
+            digest = compute_claim_entry_hash(unsigned)
+            signed = replace(unsigned, entry_hash=digest)
+            signature = build_head_signature(digest.split(":", 1)[1], kms_adapter=self._kms)
+            final = replace(signed, signature=signature)
+
+            line = _canonical_bytes(asdict(final)) + b"\n"
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("ab") as fp, _exclusive_lock(fp):
+                fp.write(line)
+                fp.flush()
+                os.fsync(fp.fileno())
+            self._anchor(final)
+            return final
+
+    def _anchor(self, receipt: ClaimReceipt) -> None:
+        """Mirror ``receipt`` into the HMAC audit chain when one is configured."""
+        if self._chain is None:
+            return
+        # Imported lazily so the (large) audit_chain module is not pulled in at
+        # tracker_pipeline import time on the STAR path that never anchors.
+        from bernstein.core.security.audit_chain import record_claim_journal_receipt
+
+        record_claim_journal_receipt(
+            chain=self._chain,
+            kind=receipt.kind,
+            tracker=receipt.tracker,
+            ticket_id=receipt.ticket_id,
+            role=receipt.role,
+            claimer_id=receipt.claimer_id,
+            node_id=receipt.node_id,
+            lease_expires_at=receipt.lease_expires_at,
+            prev_entry_hash=receipt.prev_entry_hash,
+            journal_entry_hash=receipt.entry_hash,
+            supersedes=receipt.supersedes,
+            winner_claimer_id=receipt.winner_claimer_id,
+            winner_entry_hash=receipt.winner_entry_hash,
+        )
+
+    # -- read ---------------------------------------------------------
+
+    def read(self) -> list[ClaimReceipt]:
+        """Return every receipt on disk, in insertion order."""
+        return list(self.iter_receipts())
+
+    def iter_receipts(self) -> Iterator[ClaimReceipt]:
+        """Yield each receipt without holding the whole file in memory."""
+        if not self.path.exists():
+            return
+        with self.path.open("rb") as fp:
+            for raw in fp:
+                stripped = raw.strip()
+                if not stripped:
+                    continue
+                yield ClaimReceipt.from_dict(json.loads(stripped.decode("utf-8")))
+
+    def project(self) -> ClaimState:
+        """Return the pure fold of the on-disk receipts."""
+        return project_claims(self.read())
+
+    def head(self) -> str:
+        """Return the journal head hash (last ``entry_hash`` or genesis)."""
+        return self._tail_hash()
+
+    # -- conflict reconciliation --------------------------------------
+
+    def reconcile(self, *, ts_ns: int) -> list[ClaimReceipt]:
+        """Append a ``supersede`` receipt for every deterministic loser.
+
+        Reads the journal, folds it, and for each key with more than one live
+        claim appends a chain-anchored ``claim_superseded`` receipt naming the
+        winner (lowest ``entry_hash``) for every loser that does not already
+        hold one. Returns the receipts appended, in a deterministic order.
+        Idempotent: re-running once every loser is superseded is a no-op.
+        """
+        active, explicit_superseded = _active_buckets(self.read())
+        emitted: list[ClaimReceipt] = []
+        cursor_ts = int(ts_ns)
+        for key in sorted(active):
+            bucket = active[key]
+            if len(bucket) <= 1:
+                continue
+            winner_entry_hash = min(bucket)
+            winner = bucket[winner_entry_hash]
+            for loser_entry_hash in sorted(bucket):
+                if loser_entry_hash == winner_entry_hash or loser_entry_hash in explicit_superseded:
+                    continue
+                loser = bucket[loser_entry_hash]
+                receipt = self.append(
+                    kind="supersede",
+                    tracker=key[0],
+                    ticket_id=key[1],
+                    role=key[2],
+                    claimer_id=loser.claimer_id,
+                    node_id=loser.node_id,
+                    lease_expires_at=0.0,
+                    ts_ns=cursor_ts,
+                    supersedes=loser_entry_hash,
+                    winner_claimer_id=winner.claimer_id,
+                    winner_entry_hash=winner_entry_hash,
+                )
+                emitted.append(receipt)
+                explicit_superseded.add(loser_entry_hash)
+                cursor_ts += 1
+        return emitted
+
+    # -- verify -------------------------------------------------------
+
+    def verify(self, *, trusted_keys: Mapping[str, dict[str, Any]] | None = None) -> ClaimJournalVerifyResult:
+        """Replay the journal offline, checking chain links and signatures.
+
+        Walks every receipt confirming the ``prev_entry_hash`` linkage, the
+        recomputed ``entry_hash`` (tamper detection), and the Ed25519 node
+        signature. A single flipped byte or an inserted / dropped receipt fails
+        at the exact entry index. ``trusted_keys`` optionally pins each node's
+        public-key JWK by ``node_id``; when omitted the embedded key is trusted
+        on first use (the signature still authenticates the bytes against *a*
+        key, catching an unsigned tamper).
+        """
+        if not self.path.exists():
+            return ClaimJournalVerifyResult(ok=True, entry_count=0)
+
+        prev_hash = GENESIS_PREV_HASH
+        ordinal = 0
+        with self.path.open("rb") as fp:
+            for raw in fp:
+                stripped = raw.strip()
+                if not stripped:
+                    continue
+                try:
+                    payload = json.loads(stripped.decode("utf-8"))
+                    receipt = ClaimReceipt.from_dict(payload)
+                except (ValueError, KeyError, json.JSONDecodeError) as exc:
+                    return ClaimJournalVerifyResult(
+                        ok=False,
+                        entry_count=ordinal,
+                        bad_index=ordinal,
+                        failures=[f"entry {ordinal}: schema invalid ({exc})"],
+                    )
+                if receipt.prev_entry_hash != prev_hash:
+                    return ClaimJournalVerifyResult(
+                        ok=False,
+                        entry_count=ordinal,
+                        bad_index=ordinal,
+                        failures=[
+                            f"entry {ordinal}: prev_entry_hash mismatch "
+                            f"(expected {prev_hash}, got {receipt.prev_entry_hash})",
+                        ],
+                    )
+                if compute_claim_entry_hash(receipt) != receipt.entry_hash:
+                    return ClaimJournalVerifyResult(
+                        ok=False,
+                        entry_count=ordinal,
+                        bad_index=ordinal,
+                        failures=[f"entry {ordinal}: entry_hash mismatch (tampered payload)"],
+                    )
+                trusted = None if trusted_keys is None else trusted_keys.get(receipt.node_id)
+                sig_check = verify_head_signature(
+                    receipt.entry_hash.split(":", 1)[1],
+                    receipt.signature,
+                    trusted_public_key_jwk=trusted,
+                )
+                if not sig_check.ok:
+                    return ClaimJournalVerifyResult(
+                        ok=False,
+                        entry_count=ordinal,
+                        bad_index=ordinal,
+                        failures=[f"entry {ordinal}: signature failure ({'; '.join(sig_check.errors)})"],
+                    )
+                prev_hash = receipt.entry_hash
+                ordinal += 1
+        return ClaimJournalVerifyResult(ok=True, entry_count=ordinal)
+
+    # -- internals ----------------------------------------------------
+
+    def _tail_hash(self) -> str:
+        """Return the ``entry_hash`` of the last receipt, or genesis."""
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            return GENESIS_PREV_HASH
+        last_hash = GENESIS_PREV_HASH
+        with self.path.open("rb") as fp:
+            for raw in fp:
+                stripped = raw.strip()
+                if not stripped:
+                    continue
+                last_hash = json.loads(stripped.decode("utf-8"))["entry_hash"]
+        return last_hash
 
 
 # ---------------------------------------------------------------------------
@@ -1250,6 +1845,15 @@ def default_ledger_path(state_root: Path) -> Path:
     Typically ``state_root`` is the project's ``.sdd/`` directory.
     """
     return state_root / DEFAULT_LEDGER_RELPATH
+
+
+def default_claim_journal_path(state_root: Path) -> Path:
+    """Return the conventional MESH claim-journal path under ``state_root``.
+
+    Typically ``state_root`` is the project's ``.sdd/`` directory. Only the
+    leaderless MESH path materialises this file; STAR deployments never do.
+    """
+    return state_root / DEFAULT_CLAIM_JOURNAL_RELPATH
 
 
 def build_pipeline_from_yaml(

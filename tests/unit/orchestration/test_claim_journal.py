@@ -1,0 +1,548 @@
+"""Unit tests for the signed, Merkle-chained claim journal (issue #2558).
+
+Phases 1-2 of leaderless MESH cluster mode land a signed, append-only
+claim journal beside the SQLite :class:`ClaimLedger`, plus a pure fold
+``project_claims`` that turns an ordered set of receipts into a
+:class:`ClaimState`. The tests below assert the two binding criteria from
+the issue:
+
+* **Determinism** -- two independently instantiated nodes given the same
+  ordered receipt set produce a byte-identical projected ``ClaimState``
+  and an identical journal head hash (serialise both and byte-compare).
+* **Leaderless convergence** -- two nodes concurrently self-claiming the
+  same ``(tracker, ticket_id, role)`` converge on exactly one holder by
+  the deterministic lowest-``entry_hash`` rule, and the loser holds a
+  chain-anchored ``claim_superseded`` receipt naming the winner.
+
+The verifiability / tamper-evidence path (offline replay checking every
+chain link and Ed25519 signature) is exercised too: a single flipped byte
+fails verification at the exact entry index.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+
+from bernstein.core.orchestration.tracker_pipeline import (
+    CLAIM_RECEIPT_KINDS,
+    ClaimJournal,
+    ClaimLedger,
+    ClaimReceipt,
+    ClaimState,
+    compute_claim_entry_hash,
+    project_claims,
+)
+from bernstein.core.security.audit_chain import (
+    EVENT_CLAIM_JOURNAL_RECEIPT,
+    AuditChainStore,
+)
+from bernstein.core.security.lineage_kms import FileBasedKMSAdapter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_HMAC_KEY = b"0" * 32
+
+
+# ---------------------------------------------------------------------------
+# Fixtures / helpers
+# ---------------------------------------------------------------------------
+
+
+def _kms(tmp_path: Path, *, seed: int, name: str) -> FileBasedKMSAdapter:
+    """Return a deterministic file-backed Ed25519 signer for one node.
+
+    A distinct ``seed`` models a distinct node install identity, so two
+    nodes sign the same receipt bytes with different keys -- exactly the
+    leaderless shape.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key_path = tmp_path / f"{name}.pem"
+    if not key_path.exists():
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes([seed]) * 32)
+        key_path.write_bytes(
+            private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+    return FileBasedKMSAdapter(key_path, kid=name)
+
+
+def _chain(tmp_path: Path) -> AuditChainStore:
+    return AuditChainStore(tmp_path / "audit", key=_HMAC_KEY)
+
+
+def _journal(
+    tmp_path: Path,
+    *,
+    path_name: str = "claim_journal.jsonl",
+    node_id: str = "node-a",
+    seed: int = 1,
+    chain: AuditChainStore | None = None,
+) -> ClaimJournal:
+    return ClaimJournal(
+        tmp_path / path_name,
+        kms_adapter=_kms(tmp_path, seed=seed, name=f"{node_id}-key"),
+        node_id=node_id,
+        chain=chain,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Receipt hashing
+# ---------------------------------------------------------------------------
+
+
+def test_entry_hash_excludes_signature(tmp_path: Path) -> None:
+    """The chain hash must be signature-independent.
+
+    Two nodes signing the same receipt body with different keys must
+    compute the same ``entry_hash`` -- otherwise the journal head would
+    depend on who signed, breaking the byte-identical-fold guarantee.
+    """
+    journal_a = _journal(tmp_path, node_id="node-a", seed=1)
+    receipt = journal_a.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    # Recompute over the same body with the signature blanked.
+    assert compute_claim_entry_hash(receipt) == receipt.entry_hash
+    # A receipt with an identical body but a foreign signature block still
+    # hashes to the same entry_hash.
+    from dataclasses import replace
+
+    forged_sig = replace(receipt, signature={"alg": "EdDSA", "signature_b64": "AAAA"})
+    assert compute_claim_entry_hash(forged_sig) == receipt.entry_hash
+
+
+def test_append_chains_prev_entry_hash(tmp_path: Path) -> None:
+    """Each receipt links its predecessor; the head advances."""
+    journal = _journal(tmp_path)
+    r1 = journal.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    r2 = journal.append(
+        kind="release",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=0.0,
+        ts_ns=1_001_000_000,
+    )
+    assert r1.prev_entry_hash.startswith("sha256:")
+    assert r2.prev_entry_hash == r1.entry_hash
+    assert journal.head() == r2.entry_hash
+    assert set(CLAIM_RECEIPT_KINDS) == {"claim", "release", "renew", "expire", "supersede"}
+
+
+def test_signature_verifies_and_tamper_fails(tmp_path: Path) -> None:
+    """The Ed25519 node signature authenticates the receipt binding."""
+    journal = _journal(tmp_path, node_id="node-a", seed=7)
+    receipt = journal.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    assert journal.verify().ok
+
+    from dataclasses import replace
+
+    # Flip the claimer without re-signing: entry_hash no longer matches.
+    tampered = replace(receipt, claimer_id="worker-evil")
+    assert compute_claim_entry_hash(tampered) != receipt.entry_hash
+
+
+# ---------------------------------------------------------------------------
+# Determinism (byte-identical fold) -- the heart
+# ---------------------------------------------------------------------------
+
+
+def test_project_claims_is_byte_identical_across_nodes(tmp_path: Path) -> None:
+    """Two nodes folding the same ordered receipts agree byte-for-byte."""
+    journal = _journal(tmp_path)
+    journal.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    journal.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-2",
+        role="qa",
+        claimer_id="worker-b",
+        lease_expires_at=1700.0,
+        ts_ns=1_001_000_000,
+    )
+    journal.append(
+        kind="release",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=0.0,
+        ts_ns=1_002_000_000,
+    )
+    journal.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-c",
+        lease_expires_at=1800.0,
+        ts_ns=1_003_000_000,
+    )
+
+    # Node 1 reads the receipts; node 2 receives them over the wire (JSON
+    # round-trip) and reparses -- modelling a gossiped receipt set.
+    receipts_node1 = journal.read()
+    receipts_node2 = [ClaimReceipt.from_dict(r.to_dict()) for r in receipts_node1]
+
+    state1 = project_claims(receipts_node1)
+    state2 = project_claims(receipts_node2)
+
+    # Literal byte-comparison of the canonical serialisation.
+    assert state1.canonical_bytes() == state2.canonical_bytes()
+    assert state1.head == state2.head
+
+    # T-1 ended up with worker-c (T-1's first claim was released), T-2 with
+    # worker-b.
+    hold_t1 = state1.holder("jira", "T-1", "backend")
+    hold_t2 = state1.holder("jira", "T-2", "qa")
+    assert hold_t1 is not None and hold_t1.claimer_id == "worker-c"
+    assert hold_t2 is not None and hold_t2.claimer_id == "worker-b"
+
+
+def test_empty_fold_is_genesis(tmp_path: Path) -> None:
+    state = project_claims([])
+    assert isinstance(state, ClaimState)
+    assert state.head.endswith("0" * 64)
+    assert state.holder("jira", "T-1", "backend") is None
+
+
+# ---------------------------------------------------------------------------
+# Deterministic conflict rule -- lowest entry_hash wins
+# ---------------------------------------------------------------------------
+
+
+def test_lowest_entry_hash_wins_regardless_of_merge_order(tmp_path: Path) -> None:
+    """Two concurrent claims resolve to the same holder in either order.
+
+    Node A and node B each mint an independent claim for the same key. A
+    merge that saw A-then-B and a merge that saw B-then-A must converge on
+    the same winner (lowest ``entry_hash``), even though the journal head
+    hash differs between the two orderings (that divergence is the fork
+    surface deferred to a later phase).
+    """
+    journal_a = _journal(tmp_path, path_name="a.jsonl", node_id="node-a", seed=1)
+    journal_b = _journal(tmp_path, path_name="b.jsonl", node_id="node-b", seed=2)
+    claim_a = journal_a.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    claim_b = journal_b.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-b",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    assert claim_a.entry_hash != claim_b.entry_hash
+
+    winner = min(claim_a, claim_b, key=lambda r: r.entry_hash)
+    loser = max(claim_a, claim_b, key=lambda r: r.entry_hash)
+
+    state_ab = project_claims([claim_a, claim_b])
+    state_ba = project_claims([claim_b, claim_a])
+
+    hold_ab = state_ab.holder("jira", "T-1", "backend")
+    hold_ba = state_ba.holder("jira", "T-1", "backend")
+    assert hold_ab is not None and hold_ba is not None
+    assert hold_ab.entry_hash == hold_ba.entry_hash == winner.entry_hash
+    assert hold_ab.claimer_id == winner.claimer_id
+    assert loser.entry_hash in state_ab.superseded
+    assert loser.entry_hash in state_ba.superseded
+
+
+# ---------------------------------------------------------------------------
+# Leaderless convergence -- chain-anchored supersede naming the winner
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_emits_chain_anchored_supersede_naming_winner(tmp_path: Path) -> None:
+    """A double-claim converges via a signed, anchored supersede receipt."""
+    chain = _chain(tmp_path)
+    # One shared journal file; two node identities append to it (shared
+    # workspace / shared filesystem -- the phase 1-2 substrate).
+    journal_a = ClaimJournal(
+        tmp_path / "claim_journal.jsonl",
+        kms_adapter=_kms(tmp_path, seed=1, name="node-a-key"),
+        node_id="node-a",
+        chain=chain,
+    )
+    journal_b = ClaimJournal(
+        tmp_path / "claim_journal.jsonl",
+        kms_adapter=_kms(tmp_path, seed=2, name="node-b-key"),
+        node_id="node-b",
+        chain=chain,
+    )
+    claim_a = journal_a.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    claim_b = journal_b.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-b",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_100_000,
+    )
+    winner = min(claim_a, claim_b, key=lambda r: r.entry_hash)
+    loser = max(claim_a, claim_b, key=lambda r: r.entry_hash)
+
+    # Before reconciliation both claims are live in the fold.
+    pre = journal_a.project()
+    assert loser.entry_hash in pre.superseded  # fold already resolves the winner
+
+    supersedes = journal_a.reconcile(ts_ns=1_000_200_000)
+    assert len(supersedes) == 1
+    receipt = supersedes[0]
+    assert receipt.kind == "supersede"
+    assert receipt.claimer_id == loser.claimer_id
+    assert receipt.supersedes == loser.entry_hash
+    assert receipt.winner_claimer_id == winner.claimer_id
+    assert receipt.winner_entry_hash == winner.entry_hash
+
+    # The supersede receipt is anchored in the HMAC audit chain.
+    rows = chain.query(event_type=EVENT_CLAIM_JOURNAL_RECEIPT)
+    supersede_rows = [r for r in rows if r.details.get("kind") == "supersede"]
+    assert len(supersede_rows) == 1
+    assert supersede_rows[0].details["journal_entry_hash"] == receipt.entry_hash
+    assert supersede_rows[0].details["winner_claimer_id"] == winner.claimer_id
+    assert "prev_chain_digest" in supersede_rows[0].details
+
+    # Re-folding the journal (now carrying the supersede) leaves one holder,
+    # and re-reconciling is a no-op (idempotent convergence).
+    post = journal_a.project()
+    hold = post.holder("jira", "T-1", "backend")
+    assert hold is not None and hold.claimer_id == winner.claimer_id
+    assert loser.entry_hash in post.superseded
+    assert journal_a.reconcile(ts_ns=1_000_300_000) == []
+
+
+def test_reconcile_is_noop_without_conflict(tmp_path: Path) -> None:
+    journal = _journal(tmp_path, chain=_chain(tmp_path))
+    journal.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    assert journal.reconcile(ts_ns=1_000_100_000) == []
+
+
+# ---------------------------------------------------------------------------
+# Verifiability / tamper-evidence (offline replay)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_flags_flipped_byte_at_exact_index(tmp_path: Path) -> None:
+    """A single flipped byte fails verification at the offending entry."""
+    journal = _journal(tmp_path)
+    for i in range(3):
+        journal.append(
+            kind="claim",
+            tracker="jira",
+            ticket_id=f"T-{i}",
+            role="backend",
+            claimer_id=f"worker-{i}",
+            lease_expires_at=1600.0 + i,
+            ts_ns=1_000_000_000 + i,
+        )
+    assert journal.verify().ok
+
+    # Corrupt the second on-disk record's claimer_id.
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    assert "worker-1" in lines[1]
+    lines[1] = lines[1].replace("worker-1", "worker-X")
+    journal.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = journal.verify()
+    assert not result.ok
+    assert result.bad_index == 1
+    assert result.failures
+
+
+def test_verify_detects_broken_chain_link(tmp_path: Path) -> None:
+    """Dropping a middle receipt breaks the prev_entry_hash linkage."""
+    journal = _journal(tmp_path)
+    for i in range(3):
+        journal.append(
+            kind="claim",
+            tracker="jira",
+            ticket_id=f"T-{i}",
+            role="backend",
+            claimer_id=f"worker-{i}",
+            lease_expires_at=1600.0,
+            ts_ns=1_000_000_000 + i,
+        )
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    # Delete the middle entry: entry 2's prev no longer matches entry 0.
+    del lines[1]
+    journal.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = journal.verify()
+    assert not result.ok
+    assert result.bad_index == 1
+
+
+# ---------------------------------------------------------------------------
+# ClaimLedger opt-in journal path (STAR untouched)
+# ---------------------------------------------------------------------------
+
+
+def test_ledger_without_journal_writes_no_receipts(tmp_path: Path) -> None:
+    """The default STAR ledger path must not touch a journal."""
+    ledger = ClaimLedger(tmp_path / "claims.db")
+    assert ledger.journal is None
+    outcome = ledger.try_claim(
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        ttl_seconds=600,
+        per_role_max_in_flight=1,
+        now=1000.0,
+    )
+    assert outcome.granted
+    assert not (tmp_path / "claim_journal.jsonl").exists()
+
+
+def test_ledger_journal_path_appends_receipt_and_materialises_row(tmp_path: Path) -> None:
+    """On the opt-in journal path a grant appends a signed claim receipt."""
+    chain = _chain(tmp_path)
+    journal = _journal(tmp_path, chain=chain)
+    ledger = ClaimLedger(tmp_path / "claims.db", journal=journal)
+    assert ledger.journal is journal
+
+    outcome = ledger.try_claim(
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        ttl_seconds=600,
+        per_role_max_in_flight=1,
+        now=1000.0,
+    )
+    assert outcome.granted
+    assert outcome.lease_expires_at == 1600.0
+
+    receipts = journal.read()
+    assert len(receipts) == 1
+    assert receipts[0].kind == "claim"
+    assert receipts[0].claimer_id == "worker-a"
+    assert receipts[0].lease_expires_at == 1600.0
+
+    # The SQLite projection reflects the same holder.
+    live = ledger.live_claims(now=1000.0)
+    assert len(live) == 1
+    assert live[0]["claimer_id"] == "worker-a"
+
+    # The receipt is anchored in the audit chain.
+    rows = chain.query(event_type=EVENT_CLAIM_JOURNAL_RECEIPT)
+    assert len(rows) == 1
+    assert rows[0].details["kind"] == "claim"
+
+    # The fold over the journal agrees with the SQLite row.
+    hold = journal.project().holder("jira", "T-1", "backend")
+    assert hold is not None and hold.claimer_id == "worker-a"
+
+
+def test_ledger_journal_replay_is_deterministic(tmp_path: Path) -> None:
+    """The injected ``now`` clock makes the claim receipt replay-stable."""
+    journal1 = _journal(tmp_path, path_name="j1.jsonl", node_id="node-a", seed=1)
+    journal2 = _journal(tmp_path, path_name="j2.jsonl", node_id="node-a", seed=1)
+    ledger1 = ClaimLedger(tmp_path / "c1.db", journal=journal1)
+    ledger2 = ClaimLedger(tmp_path / "c2.db", journal=journal2)
+
+    ledger1.try_claim(
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        ttl_seconds=600,
+        per_role_max_in_flight=1,
+        now=1000.0,
+    )
+    ledger2.try_claim(
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        ttl_seconds=600,
+        per_role_max_in_flight=1,
+        now=1000.0,
+    )
+    r1 = journal1.read()[0]
+    r2 = journal2.read()[0]
+    # Same node identity + same injected clock + same inputs -> byte-identical
+    # receipt, entry_hash, and signature.
+    assert r1.to_dict() == r2.to_dict()
+    assert r1.entry_hash == r2.entry_hash
+
+
+def test_reject_unknown_receipt_kind(tmp_path: Path) -> None:
+    journal = _journal(tmp_path)
+    with pytest.raises(ValueError, match="unknown claim-receipt kind"):
+        journal.append(
+            kind="bogus",
+            tracker="jira",
+            ticket_id="T-1",
+            role="backend",
+            claimer_id="worker-a",
+            lease_expires_at=1600.0,
+            ts_ns=1,
+        )
