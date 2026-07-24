@@ -175,7 +175,7 @@ def test_unknown_surface_is_rejected(signed_card: SignedCapabilityCard) -> None:
             signed_card,
             endpoint="https://node.example/a2a",
             version="3.8.0",
-            surfaces=("agntcy-ads",),
+            surfaces=("does-not-exist",),
         )
 
 

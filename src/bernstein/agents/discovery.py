@@ -438,3 +438,125 @@ class AgentDiscovery:
 def _now_iso() -> str:
     """Return current UTC time as an ISO-8601 string."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+# --------------------------------------------------------------------------- #
+# Publication-record round-trip                                               #
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class ResolvedCapability:
+    """The outcome of resolving a peer from a published registry record.
+
+    A peer that discovered this node from a registry surface (an A2A card, an
+    MCP-registry entry, or an AGNTCY ADS / OASF descriptor) needs one thing
+    before it delegates work: proof that what it resolved is authentic and
+    actually advertises the capability it wants. This is the normalized result
+    of that check - the same shape across every surface, so a consumer routes
+    on ``ok`` / ``advertised_tools`` without special-casing the trust root.
+
+    Attributes:
+        ok: True when the record verified and (if requested) the capability is
+            advertised.
+        surface: The record's surface (``a2a-card``, ``mcp-registry``,
+            ``agntcy-ads``).
+        trust_root: How the record was authenticated -
+            ``ed25519-card`` for the card-anchored surfaces, or the ADS
+            provenance trust root (``sigstore`` / ``ed25519-fallback``).
+        endpoint: The endpoint peers send A2A traffic to (when present).
+        publisher_fingerprint: The card key fingerprint the record verified
+            against, or ``None`` when the card could not be parsed.
+        advertised_tools: The capabilities the record advertises.
+        errors: Human-readable failures; empty when ``ok``.
+    """
+
+    ok: bool
+    surface: str
+    trust_root: str
+    endpoint: str | None
+    publisher_fingerprint: str | None
+    advertised_tools: tuple[str, ...]
+    errors: tuple[str, ...] = ()
+
+
+def resolve_publication_record(
+    record: dict[str, Any],
+    *,
+    require_capability: str | None = None,
+) -> ResolvedCapability:
+    """Resolve a published registry record: verify, then confirm capability.
+
+    This is the first half of the discovery round-trip a peer walks after it
+    resolves this node from a directory: ``resolve -> verify descriptor ->
+    confirm capability`` (the remaining ``send task -> verify receipt`` half is
+    the A2A message + receipt path). It verifies the record offline via
+    :func:`~bernstein.core.protocols.a2a.publish.verify_publication_record`
+    (which, for an ADS record, checks the OASF descriptor against the pinned
+    schema version and validates its Sigstore provenance), then confirms the
+    requested capability is advertised.
+
+    Args:
+        record: A record produced by one of the ``build_*`` publication
+            functions.
+        require_capability: If set, the resolution fails unless this tool is in
+            the record's advertised capabilities.
+
+    Returns:
+        A :class:`ResolvedCapability`. Never raises on malformed input.
+    """
+    from bernstein.core.interop.a2a_card import SignedCapabilityCard, card_public_key_fingerprint
+    from bernstein.core.protocols.a2a.publish import verify_publication_record
+
+    if not isinstance(record, dict):
+        return ResolvedCapability(
+            ok=False,
+            surface="",
+            trust_root="",
+            endpoint=None,
+            publisher_fingerprint=None,
+            advertised_tools=(),
+            errors=("record is not an object",),
+        )
+
+    surface = str(record.get("surface", ""))
+    endpoint = record.get("endpoint") if isinstance(record.get("endpoint"), str) else None
+
+    verification = verify_publication_record(record)
+    errors: list[str] = list(verification.errors)
+
+    fingerprint: str | None = None
+    advertised: tuple[str, ...] = ()
+    try:
+        card = SignedCapabilityCard.from_dict(record.get("capabilityCard", {}))
+        fingerprint = "ed25519/" + card_public_key_fingerprint(card.card.public_key_pem)
+        advertised = tuple(card.card.advertised_tools)
+    except (ValueError, TypeError) as exc:
+        errors.append(f"capabilityCard is not parseable: {exc}")
+
+    # An ADS consumer reads the capability from the OASF descriptor it
+    # resolved; verification has already proven that descriptor equals the
+    # deterministic projection of the card, so the two agree.
+    trust_root = "ed25519-card"
+    if surface == "agntcy-ads":
+        provenance = record.get("provenance")
+        if isinstance(provenance, dict):
+            trust_root = str(provenance.get("trust_root", ""))
+        descriptor = record.get("descriptor")
+        if isinstance(descriptor, dict) and isinstance(descriptor.get("skills"), list):
+            advertised = tuple(
+                str(skill["name"]) for skill in descriptor["skills"] if isinstance(skill, dict) and "name" in skill
+            )
+
+    if require_capability is not None and require_capability not in advertised:
+        errors.append(f"record does not advertise the required capability {require_capability!r}")
+
+    return ResolvedCapability(
+        ok=not errors,
+        surface=surface,
+        trust_root=trust_root,
+        endpoint=endpoint,
+        publisher_fingerprint=fingerprint,
+        advertised_tools=advertised,
+        errors=tuple(errors),
+    )

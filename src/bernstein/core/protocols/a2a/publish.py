@@ -20,9 +20,14 @@ its own projection rather than one lowest-common-denominator record:
     block that :mod:`bernstein.core.protocols.mcp.mcp_verifier` already
     parses, so an MCP-side consumer needs no new primitive.
 
-AGNTCY ADS (OASF descriptor + Sigstore provenance) is a third surface with a
-different trust root again; it is tracked separately rather than shipped
-half-built here.
+``agntcy-ads``
+    An OASF capability descriptor with Sigstore provenance, a third surface
+    with a different schema and a different trust root again. The descriptor
+    and its verifier live in
+    :mod:`bernstein.core.protocols.a2a.agntcy_ads`; this module only routes to
+    them. Publishing to ADS needs a provenance signing key (distinct from the
+    card key), so it is opt-in rather than part of
+    :data:`DEFAULT_PUBLISH_SURFACES`.
 
 Every emitted record is verifiable offline with
 :func:`verify_publication_record`, which is what makes the registry a
@@ -43,6 +48,7 @@ from bernstein.core.interop.a2a_card import (
 )
 
 __all__ = [
+    "DEFAULT_PUBLISH_SURFACES",
     "PUBLISH_SURFACES",
     "PublicationVerification",
     "build_a2a_card_record",
@@ -51,8 +57,13 @@ __all__ = [
     "verify_publication_record",
 ]
 
-#: Registry surfaces this node can publish to.
-PUBLISH_SURFACES: tuple[str, ...] = ("a2a-card", "mcp-registry")
+#: Every registry surface this node can publish to.
+PUBLISH_SURFACES: tuple[str, ...] = ("a2a-card", "mcp-registry", "agntcy-ads")
+
+#: Surfaces emitted by a default publish. ``agntcy-ads`` is opt-in because it
+#: needs a distinct provenance signing key, so it is not in the default set;
+#: request it explicitly with ``--surface agntcy-ads``.
+DEFAULT_PUBLISH_SURFACES: tuple[str, ...] = ("a2a-card", "mcp-registry")
 
 #: Publication record schema version. Bumping requires a parallel reader.
 _PUBLICATION_SCHEMA_VERSION: int = 1
@@ -163,7 +174,8 @@ def build_publication(
     *,
     endpoint: str,
     version: str,
-    surfaces: tuple[str, ...] = PUBLISH_SURFACES,
+    surfaces: tuple[str, ...] = DEFAULT_PUBLISH_SURFACES,
+    provenance_private_key_pem: bytes | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return one record per requested surface, keyed by surface name.
 
@@ -171,10 +183,15 @@ def build_publication(
         card: The node's signed capability card.
         endpoint: Public base URL peers send A2A traffic to.
         version: Version string to publish.
-        surfaces: Surfaces to emit; defaults to all supported ones.
+        surfaces: Surfaces to emit; defaults to
+            :data:`DEFAULT_PUBLISH_SURFACES` (the two offline surfaces).
+        provenance_private_key_pem: PKCS#8 PEM Ed25519 provenance signing key.
+            Required only when ``agntcy-ads`` is requested; it must be distinct
+            from the card key.
 
     Raises:
-        ValueError: On an unknown surface, or a card that would not verify.
+        ValueError: On an unknown surface, a card that would not verify, or an
+            ``agntcy-ads`` request with no provenance key.
     """
     unknown = [s for s in surfaces if s not in PUBLISH_SURFACES]
     if unknown:
@@ -186,6 +203,16 @@ def build_publication(
             records[surface] = build_a2a_card_record(card, endpoint=endpoint)
         elif surface == "mcp-registry":
             records[surface] = build_mcp_registry_record(card, endpoint=endpoint, version=version)
+        elif surface == "agntcy-ads":
+            if provenance_private_key_pem is None:
+                raise ValueError("publishing to agntcy-ads requires a provenance signing key")
+            from bernstein.core.protocols.a2a.agntcy_ads import build_agntcy_ads_record
+
+            records[surface] = build_agntcy_ads_record(
+                card,
+                endpoint=endpoint,
+                provenance_private_key_pem=provenance_private_key_pem,
+            )
     return records
 
 
@@ -228,6 +255,23 @@ def verify_publication_record(record: dict[str, Any]) -> PublicationVerification
     surface = record.get("surface")
     if surface not in PUBLISH_SURFACES:
         return PublicationVerification(ok=False, errors=[f"unknown surface: {surface!r}"])
+
+    # ADS records carry an OASF descriptor and Sigstore provenance rather than
+    # the publisher/server blocks the other two surfaces use, so they get their
+    # own verifier and shape.
+    if surface == "agntcy-ads":
+        from bernstein.core.protocols.a2a.agntcy_ads import verify_agntcy_ads_record
+
+        ads_errors = verify_agntcy_ads_record(record)
+        fingerprint = None
+        try:
+            ads_card = SignedCapabilityCard.from_dict(record.get("capabilityCard", {}))
+            fingerprint = _publisher_fingerprint(ads_card)
+        except (ValueError, TypeError):
+            fingerprint = None
+        if ads_errors:
+            return PublicationVerification(ok=False, errors=ads_errors, fingerprint=fingerprint)
+        return PublicationVerification(ok=True, fingerprint=fingerprint)
 
     try:
         card = SignedCapabilityCard.from_dict(record.get("capabilityCard", {}))
