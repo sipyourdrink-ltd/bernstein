@@ -34,16 +34,10 @@ _MSG_PREFIX = "Could not load SLA receipt"
 
 
 def _load_failure_records(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [
-        r.getMessage()
-        for r in caplog.records
-        if r.getMessage().startswith(_MSG_PREFIX)
-    ]
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith(_MSG_PREFIX)]
 
 
-def test_crlf_path_is_escaped_in_load_failure_log(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_crlf_path_is_escaped_in_load_failure_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     # A file whose name embeds CR/LF plus a forged-looking log line; invalid
     # JSON so the load hits the ``except`` branch that logs the path.
     forged = tmp_path / "receipt\r\nCould not load SLA receipt FORGED.json"
@@ -62,9 +56,7 @@ def test_crlf_path_is_escaped_in_load_failure_log(
     assert "\\r\\n" in line
 
 
-def test_plain_path_is_logged_verbatim(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_plain_path_is_logged_verbatim(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     plain = tmp_path / "receipt.json"
     plain.write_text("not valid json")
 
