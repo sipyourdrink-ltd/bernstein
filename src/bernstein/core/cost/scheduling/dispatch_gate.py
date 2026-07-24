@@ -88,11 +88,13 @@ def _pricing_models(pricing: Any) -> dict[str, dict[str, Any]]:
         elif isinstance(price, dict):
             row = dict(price)
         else:
+            # A missing cache rate is left as None ("inherit the base rate"),
+            # never forced to 0.0, so a partial override cannot zero cache pricing.
             row = {
                 "input": getattr(price, "input", 0.0),
                 "output": getattr(price, "output", 0.0),
-                "cache_read": getattr(price, "cache_read", 0.0),
-                "cache_write": getattr(price, "cache_write", 0.0),
+                "cache_read": getattr(price, "cache_read", None),
+                "cache_write": getattr(price, "cache_write", None),
             }
         rows[str(key)] = row
     return rows

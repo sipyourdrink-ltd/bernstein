@@ -134,8 +134,15 @@ class PriceTable:
         return PricedCall(model=model, cost_usd=0.0, priced=False)
 
 
-def _coerce_rates(raw: Mapping[str, Any], *, key: str) -> ModelPrice:
+def _coerce_rates(raw: Mapping[str, Any], *, key: str, base: ModelPrice | None = None) -> ModelPrice:
     """Validate one config rate row into a :class:`ModelPrice`.
+
+    An omitted (absent or ``None``) optional cache rate inherits *base* rather
+    than collapsing to ``0.0``: a partial override that names only
+    ``input``/``output`` must not silently zero a model's cache pricing and
+    understate cache-heavy spend. An explicit ``0`` is still honoured. When
+    *base* is ``None`` (a brand-new model with no shipped row) an omitted cache
+    rate defaults to ``0.0`` as before.
 
     Raises:
         ValueError: A rate is missing, non-numeric, or negative. A negative
@@ -143,24 +150,27 @@ def _coerce_rates(raw: Mapping[str, Any], *, key: str) -> ModelPrice:
             corrupt every downstream budget decision.
     """
 
-    def _rate(field: str, *, required: bool) -> float:
-        if field not in raw:
+    def _rate(field: str, *, required: bool, inherited: float) -> float:
+        value = raw.get(field)
+        if value is None:  # absent, or an explicit null meaning "inherit"
             if required:
                 raise ValueError(f"price for model {key!r} is missing required rate {field!r}")
-            return 0.0
+            return inherited
         try:
-            value = float(raw[field])
+            num = float(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"price for model {key!r} has non-numeric rate {field!r}: {raw[field]!r}") from exc
-        if value < 0:
-            raise ValueError(f"price for model {key!r} has negative rate {field!r}={value}")
-        return value
+            raise ValueError(f"price for model {key!r} has non-numeric rate {field!r}: {value!r}") from exc
+        if num < 0:
+            raise ValueError(f"price for model {key!r} has negative rate {field!r}={num}")
+        return num
 
+    base_read = base.cache_read_usd_per_1m if base is not None else 0.0
+    base_write = base.cache_write_usd_per_1m if base is not None else 0.0
     return ModelPrice(
-        input_usd_per_1m=_rate("input", required=True),
-        output_usd_per_1m=_rate("output", required=True),
-        cache_read_usd_per_1m=_rate("cache_read", required=False),
-        cache_write_usd_per_1m=_rate("cache_write", required=False),
+        input_usd_per_1m=_rate("input", required=True, inherited=0.0),
+        output_usd_per_1m=_rate("output", required=True, inherited=0.0),
+        cache_read_usd_per_1m=_rate("cache_read", required=False, inherited=base_read),
+        cache_write_usd_per_1m=_rate("cache_write", required=False, inherited=base_write),
     )
 
 
@@ -212,7 +222,9 @@ def load_price_table(
         return base_table
     merged: dict[str, ModelPrice] = base_table.models.copy()
     for key, raw in models.items():
-        merged[key] = _coerce_rates(raw, key=key)
+        # Thread the base row so an omitted cache rate inherits the shipped
+        # value instead of collapsing to 0.0 (partial-override understatement).
+        merged[key] = _coerce_rates(raw, key=key, base=base_table.models.get(key))
     return PriceTable(
         models=merged,
         as_of=as_of or base_table.as_of,

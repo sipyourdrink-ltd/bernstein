@@ -35,10 +35,13 @@ cost_policy:
 ```
 
 Rates are schema-validated non-negative; a negative rate fails at load time
-rather than corrupting every downstream budget decision. `bernstein doctor`
-prints a staleness advisory when the shipped table's `as_of` date is older than
-the staleness window (default 90 days), a reminder that provider rates drift
-between releases.
+rather than corrupting every downstream budget decision. A partial override that
+names only `input`/`output` inherits the base row's `cache_read`/`cache_write`
+rather than zeroing them, so re-rating a model's list price never silently
+understates its cache spend; name a cache rate explicitly (including `0.0`) to
+change it. `bernstein doctor` prints a staleness advisory when the shipped
+table's `as_of` date is older than the staleness window (default 90 days), a
+reminder that provider rates drift between releases.
 
 ## USD ceilings and the halt receipt
 

@@ -58,11 +58,14 @@ from bernstein.core.cost.scheduling.price_table import (
     price_table_staleness,
 )
 from bernstein.core.cost.scheduling.receipt import (
+    DISPATCH_RUN_ID,
     build_dispatch_receipt,
+    dispatch_receipt_path,
     read_dispatch_receipt,
     verify_dispatch_receipt,
 )
 from bernstein.core.cost.spend_ledger import LedgerEntry
+from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.security.audit_chain import (
     EVENT_COST_DISPATCH_RECEIPT,
     AuditChainStore,
@@ -159,6 +162,64 @@ def test_load_price_table_from_config_overrides_defaults_and_validates() -> None
 def test_load_price_table_rejects_negative_rate() -> None:
     with pytest.raises(ValueError, match="negative"):
         load_price_table({"bad": {"input": -1.0, "output": 2.0}})
+
+
+def test_load_price_table_partial_override_inherits_base_cache_rate() -> None:
+    # An override that names only input/output must NOT zero the base model's
+    # cache rates: that would silently understate cache-heavy spend.
+    base = PriceTable(
+        models={
+            "m": ModelPrice(
+                input_usd_per_1m=3.0,
+                output_usd_per_1m=15.0,
+                cache_read_usd_per_1m=0.30,
+                cache_write_usd_per_1m=3.75,
+            )
+        },
+        as_of="2026-05-05",
+        revision=1,
+    )
+    table = load_price_table({"m": {"input": 2.0, "output": 10.0}}, base=base, revision=2)
+    price = table.models["m"]
+    assert price.input_usd_per_1m == pytest.approx(2.0)
+    assert price.output_usd_per_1m == pytest.approx(10.0)
+    # Cache rates inherited from the base row, not collapsed to 0.
+    assert price.cache_read_usd_per_1m == pytest.approx(0.30)
+    assert price.cache_write_usd_per_1m == pytest.approx(3.75)
+
+
+def test_load_price_table_explicit_zero_cache_is_honored() -> None:
+    # An operator can still deliberately zero a cache rate by naming it.
+    base = PriceTable(
+        models={"m": ModelPrice(3.0, 15.0, cache_read_usd_per_1m=0.30, cache_write_usd_per_1m=3.75)},
+        as_of="2026-05-05",
+        revision=1,
+    )
+    table = load_price_table({"m": {"input": 2.0, "output": 10.0, "cache_read": 0.0}}, base=base)
+    assert table.models["m"].cache_read_usd_per_1m == 0.0
+    # Unnamed cache_write still inherits.
+    assert table.models["m"].cache_write_usd_per_1m == pytest.approx(3.75)
+
+
+def test_config_partial_pricing_override_inherits_default_cache_rate() -> None:
+    # End-to-end through the config schema: omitting cache rates in a config
+    # override inherits the shipped default rather than collapsing to 0.
+    from bernstein.core.config.config_schema import (
+        CostPolicySchema,
+        ModelPriceSchema,
+        PricingSchema,
+    )
+    from bernstein.core.cost.scheduling.dispatch_gate import resolve_price_table
+
+    # sonnet ships with a non-zero cache_read in the default table.
+    default_cache_read = DEFAULT_PRICE_TABLE.models["sonnet"].cache_read_usd_per_1m
+    assert default_cache_read > 0
+    # The schema now leaves an omitted cache rate as None (meaning "inherit").
+    assert ModelPriceSchema(input=1.0, output=2.0).cache_read is None
+    policy = CostPolicySchema(pricing=PricingSchema(models={"sonnet": ModelPriceSchema(input=1.0, output=2.0)}))
+    table = resolve_price_table(policy)
+    assert table.models["sonnet"].input_usd_per_1m == pytest.approx(1.0)
+    assert table.models["sonnet"].cache_read_usd_per_1m == pytest.approx(default_cache_read)
 
 
 def test_price_table_staleness_advisory_fires_past_window() -> None:
@@ -339,7 +400,7 @@ def test_dispatch_receipt_tamper_is_detected(tmp_path: Path) -> None:
     stored = read_dispatch_receipt(workdir, decision.decision_hash)
     assert stored is not None
     # Tamper with the on-disk receipt: forge an admit.
-    path = workdir / ".sdd" / "cost" / "dispatch" / f"{decision.decision_hash}.json"
+    path = dispatch_receipt_path(workdir, decision.decision_hash)
     forged = json.loads(path.read_text(encoding="utf-8"))
     forged["admit"] = True
     forged["projected_overrun_usd"] = 0.0
@@ -348,6 +409,84 @@ def test_dispatch_receipt_tamper_is_detected(tmp_path: Path) -> None:
         workdir=workdir, lineage_root=lineage_root, hmac_key=_KEY, decision_hash=decision.decision_hash
     )
     assert result.ok is False
+
+
+def test_dispatch_receipt_filename_strips_sha256_prefix(tmp_path: Path) -> None:
+    # A ':' is an invalid path character on Windows: a colon-bearing filename
+    # would silently lose every receipt. The on-disk name must be the bare hex
+    # digest, while the canonical hash still lives inside the receipt body.
+    day = _day_key(1_762_000_000.0)
+    entries = [_entry(task_id="t1", run_id="r1", cost_usd=9.9, ts=1_762_000_000.0)]
+    caps = CostCaps(per_run_usd=10.0)
+    candidate = DispatchCandidate(
+        task_id="t1", run_id="r1", model="sonnet", projected_cost_usd=1.0, day_key=day, pool="api"
+    )
+    decision = decide_dispatch(candidate=candidate, entries=entries, caps=caps, price_table_hash="sha256:pt")
+    workdir = tmp_path / "proj"
+    build_dispatch_receipt(
+        decision=decision,
+        workdir=workdir,
+        lineage_root=workdir / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        timestamp=1_762_000_001,
+    )
+    path = dispatch_receipt_path(workdir, decision.decision_hash)
+    hex_digest = decision.decision_hash.split(":", 1)[1]
+    assert ":" not in path.name
+    assert path.name == f"{hex_digest}.json"
+    assert path.is_file()
+    # The canonical hash is preserved inside the receipt body.
+    body = json.loads(path.read_text(encoding="utf-8"))
+    assert body["decision_hash"] == decision.decision_hash
+    # And the reader round-trips it.
+    stored = read_dispatch_receipt(workdir, decision.decision_hash)
+    assert stored is not None
+    assert stored.decision.decision_hash == decision.decision_hash
+
+
+def test_build_dispatch_receipt_is_idempotent(tmp_path: Path) -> None:
+    # Re-sealing the same decision (e.g. on every tick) must not append
+    # duplicate spine / audit-chain entries and orphan the prior anchor: the
+    # second call returns the already-sealed receipt unchanged.
+    day = _day_key(1_762_000_000.0)
+    entries = [_entry(task_id="t1", run_id="r1", cost_usd=9.9, ts=1_762_000_000.0)]
+    caps = CostCaps(per_run_usd=10.0)
+    candidate = DispatchCandidate(
+        task_id="t1", run_id="r1", model="sonnet", projected_cost_usd=1.0, day_key=day, pool="api"
+    )
+    decision = decide_dispatch(candidate=candidate, entries=entries, caps=caps, price_table_hash="sha256:pt")
+    workdir = tmp_path / "proj"
+    lineage_root = workdir / ".sdd" / "lineage"
+    chain = AuditChainStore(workdir / ".sdd" / "audit", key=_KEY)
+    first = build_dispatch_receipt(
+        decision=decision,
+        workdir=workdir,
+        lineage_root=lineage_root,
+        hmac_key=_KEY,
+        timestamp=1_762_000_001,
+        chain=chain,
+    )
+    second = build_dispatch_receipt(
+        decision=decision,
+        workdir=workdir,
+        lineage_root=lineage_root,
+        hmac_key=_KEY,
+        timestamp=1_762_000_999,  # a later tick must not re-anchor
+        chain=chain,
+    )
+    # Same anchor, original timestamp preserved -- no re-seal.
+    assert second.journal_entry_hash == first.journal_entry_hash
+    assert second.timestamp == first.timestamp == 1_762_000_001
+    # Exactly one audit-chain event and one spine entry.
+    events = chain.query(event_type=EVENT_COST_DISPATCH_RECEIPT)
+    assert len(events) == 1
+    spine = LineageSpine(lineage_root, run_id=DISPATCH_RUN_ID, hmac_key=_KEY)
+    assert len(list(spine.iter_entries())) == 1
+    # Still offline-verifiable.
+    result = verify_dispatch_receipt(
+        workdir=workdir, lineage_root=lineage_root, hmac_key=_KEY, decision_hash=decision.decision_hash
+    )
+    assert result.ok is True
 
 
 # ---------------------------------------------------------------------------

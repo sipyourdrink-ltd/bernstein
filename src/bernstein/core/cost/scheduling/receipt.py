@@ -58,14 +58,22 @@ def dispatch_receipt_path(workdir: Path, decision_hash: str) -> Path:
     caller-influenced hash can never escape the receipt store (CodeQL
     path-injection defense in depth).
 
+    The filename is the bare hex digest (the ``sha256:`` prefix is stripped):
+    a colon is an invalid path character on Windows, so a ``sha256:...``
+    filename would make the write fail and silently lose the receipt. The full
+    canonical hash is preserved inside the receipt body (``decision_hash``).
+
     Raises:
         ValueError: The decision hash is not a canonical ``sha256:`` digest,
             or the resolved path escapes the dispatch directory.
     """
     if not _DECISION_HASH_RE.match(decision_hash):
         raise ValueError(f"decision_hash is not a canonical sha256 digest: {decision_hash!r}")
+    # The regex guarantees exactly one ``sha256:`` prefix over 64 hex chars, so
+    # the suffix is a portable, filesystem-safe filename on every platform.
+    hex_digest = decision_hash.split(":", 1)[1]
     base = workdir.joinpath(*_DISPATCH_SUBPATH)
-    candidate = base / f"{decision_hash}.json"
+    candidate = base / f"{hex_digest}.json"
     base_real = os.path.realpath(base)
     cand_real = os.path.realpath(candidate)
     if os.path.commonpath([base_real, cand_real]) != base_real:
@@ -136,6 +144,13 @@ def build_dispatch_receipt(
     Returns:
         The sealed :class:`DispatchReceipt` with its ``journal_entry_hash``.
     """
+    # Idempotent: a decision already sealed for this hash is returned unchanged.
+    # Re-sealing on every tick would append a duplicate spine entry and a
+    # duplicate audit-chain event, orphaning the prior anchor.
+    existing = read_dispatch_receipt(workdir, decision.decision_hash)
+    if existing is not None:
+        return existing
+
     content = decision.canonical_bytes()
     spine = LineageSpine(lineage_root, run_id=DISPATCH_RUN_ID, hmac_key=hmac_key)
     artifact_path = "/".join((*_DISPATCH_SUBPATH, f"{decision.decision_hash}.json"))

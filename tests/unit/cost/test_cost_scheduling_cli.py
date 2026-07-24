@@ -17,7 +17,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.cost import cost_cmd
 from bernstein.core.cost.scheduling.policy import CostCaps, DispatchCandidate, decide_dispatch
-from bernstein.core.cost.scheduling.receipt import build_dispatch_receipt
+from bernstein.core.cost.scheduling.receipt import build_dispatch_receipt, dispatch_receipt_path
 from bernstein.core.cost.spend_ledger import LedgerEntry
 
 _KEY = b"0" * 32
@@ -133,7 +133,7 @@ def test_verify_roundtrip_and_tamper(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert json.loads(ok.output)["ok"] is True
 
     # Tamper the on-disk receipt: forge an admit.
-    path = workdir / ".sdd" / "cost" / "dispatch" / f"{decision.decision_hash}.json"
+    path = dispatch_receipt_path(workdir, decision.decision_hash)
     forged = json.loads(path.read_text(encoding="utf-8"))
     forged["admit"] = True
     path.write_text(json.dumps(forged), encoding="utf-8")

@@ -468,8 +468,12 @@ class ModelPriceSchema(BaseModel):
 
     input: float = Field(..., ge=0, description="USD per 1M input tokens.")
     output: float = Field(..., ge=0, description="USD per 1M output tokens.")
-    cache_read: float = Field(default=0.0, ge=0, description="USD per 1M cache-read tokens.")
-    cache_write: float = Field(default=0.0, ge=0, description="USD per 1M cache-write tokens.")
+    cache_read: float | None = Field(
+        default=None, ge=0, description="USD per 1M cache-read tokens; omitted inherits the base rate."
+    )
+    cache_write: float | None = Field(
+        default=None, ge=0, description="USD per 1M cache-write tokens; omitted inherits the base rate."
+    )
 
 
 class PricingSchema(BaseModel):

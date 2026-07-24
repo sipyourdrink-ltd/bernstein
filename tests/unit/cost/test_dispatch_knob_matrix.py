@@ -63,6 +63,7 @@ from bernstein.core.cost.scheduling.policy import (
 )
 from bernstein.core.cost.scheduling.receipt import (
     build_dispatch_receipt,
+    dispatch_receipt_path,
     verify_dispatch_receipt,
 )
 from bernstein.core.cost.spend_ledger import LedgerEntry
@@ -314,7 +315,7 @@ def test_sealed_knob_receipt_verifies_offline(tmp_path: Path) -> None:
     )
     assert result.ok is True
     # The sealed selection is on the receipt.
-    payload = json.loads((workdir / ".sdd" / "cost" / "dispatch" / f"{decision_hash}.json").read_text(encoding="utf-8"))
+    payload = json.loads(dispatch_receipt_path(workdir, decision_hash).read_text(encoding="utf-8"))
     assert payload["knob_selection"]["lane"] in {LANE_INTERACTIVE, LANE_BATCH}
     assert payload["knob_selection"]["selection_hash"] == selection.selection_hash
 
@@ -335,7 +336,7 @@ def test_tampering_any_knob_field_fails_verification_naming_it(
         candidate=_candidate(batch_eligible=True, adapter="claude"), matrix=DEFAULT_KNOB_MATRIX
     )
     workdir, lineage_root, decision_hash = _seal_receipt(tmp_path, selection=selection)
-    path = workdir / ".sdd" / "cost" / "dispatch" / f"{decision_hash}.json"
+    path = dispatch_receipt_path(workdir, decision_hash)
     forged = json.loads(path.read_text(encoding="utf-8"))
     assert forged["knob_selection"][field_name] != tampered_value
     forged["knob_selection"][field_name] = tampered_value
