@@ -50,6 +50,14 @@ completion Bernstein records an `otel.projection` audit event binding the
 exported trace - its trace id, span count, and the SHA-256 of the signed
 canonical span set - to the audit chain.
 
+The gRPC exporter is an optional extra. A configured endpoint with the
+package missing would silently drop every span, so `bernstein doctor`
+carries an **OTel export** advisory: it PASSes when the endpoint is unset
+(export off, local tracing active) or when the endpoint is set and the
+extra is importable, and WARNs when `BERNSTEIN_OTEL_ENDPOINT` is set but
+`opentelemetry-exporter-otlp-proto-grpc` is not installed (fix:
+`pip install 'bernstein[otel]'`). The advisory never fails the doctor run.
+
 ### Example collector config
 
 ```yaml

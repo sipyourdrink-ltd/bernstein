@@ -637,6 +637,63 @@ def check_spiffe_workload_api() -> dict[str, Any]:
     }
 
 
+def _otlp_exporter_extra_available() -> bool:
+    """Return True when the optional OTLP/gRPC span-exporter extra is importable.
+
+    Mirrors the import the live bridge performs
+    (:meth:`observability.otel_bridge.JournalOTLPBridge._build_otlp_exporter`):
+    a configured endpoint is useless without
+    ``opentelemetry-exporter-otlp-proto-grpc``. Wrapped as a module-level
+    indirection so tests can stub extra presence without uninstalling the SDK.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("opentelemetry.exporter.otlp.proto.grpc.trace_exporter") is not None
+
+
+def check_otel_export_advisory() -> dict[str, Any]:
+    """Advise on the live OTLP export path when an endpoint is configured (#2526).
+
+    Live export is off by default: with ``BERNSTEIN_OTEL_ENDPOINT`` unset the
+    journal-anchored span projection stays local (``.sdd/traces/``) and nothing
+    is broken, so this reports an informational PASS. With an endpoint
+    configured the optional ``opentelemetry-exporter-otlp-proto-grpc`` package
+    must be importable or every span is silently dropped on the wire path; a
+    configured endpoint with the extra missing is surfaced as a WARN. Advisory
+    only -- it never blocks.
+    """
+    from bernstein.core.observability.otlp_exporter import OTEL_ENDPOINT_ENV
+
+    name = "OTel export"
+    endpoint = os.environ.get(OTEL_ENDPOINT_ENV, "").strip()
+    if not endpoint:
+        return {
+            "name": name,
+            "status": _CHECK_PASS,
+            "detail": f"off ({OTEL_ENDPOINT_ENV} unset); local JSONL tracing active",
+            "fix": "",
+        }
+    if not _otlp_exporter_extra_available():
+        return {
+            "name": name,
+            "status": _CHECK_WARN,
+            "detail": (
+                f"{OTEL_ENDPOINT_ENV} set but opentelemetry-exporter-otlp-proto-grpc "
+                "is missing; journal-anchored spans will not export"
+            ),
+            "fix": "pip install 'bernstein[otel]'",
+        }
+    return {
+        "name": name,
+        "status": _CHECK_PASS,
+        "detail": (
+            f"{OTEL_ENDPOINT_ENV} set and opentelemetry-exporter-otlp-proto-grpc present; "
+            "journal-anchored spans will export"
+        ),
+        "fix": "",
+    }
+
+
 def check_sdd_workspace() -> dict[str, Any]:
     """Check for .sdd/ workspace structure."""
     workdir = Path.cwd()
@@ -870,6 +927,7 @@ def run_all_checks() -> list[dict[str, Any]]:
             check_sdd_workspace(),
             check_schedule_supervisor(),
             check_spiffe_workload_api(),
+            check_otel_export_advisory(),
         )
     )
     return checks

@@ -619,6 +619,28 @@ def _doctor_check_eval_gate_power(checks: list[dict[str, Any]], workdir: Path) -
     _add_check(checks, advisory["name"], True, detail, fix)
 
 
+def _doctor_check_otel_export(checks: list[dict[str, Any]]) -> None:
+    """Surface the live OTLP export advisory (#2526, Phase 4).
+
+    Advisory only: with ``BERNSTEIN_OTEL_ENDPOINT`` set but the optional
+    ``opentelemetry-exporter-otlp-proto-grpc`` extra missing, every
+    journal-anchored span is silently dropped on the wire path. This warns the
+    operator without failing the doctor run (the ci-tools/last-green pattern:
+    WARN rows stay ``ok`` and prefix the detail).
+    """
+    from bernstein.cli.commands.doctor_cmd import check_otel_export_advisory
+
+    row = check_otel_export_advisory()
+    warn = row["status"] == "WARN"
+    _add_check(
+        checks,
+        row["name"],
+        True,
+        f"WARNING: {row['detail']}" if warn else row["detail"],
+        row["fix"],
+    )
+
+
 def _doctor_check_python(checks: list[dict[str, Any]]) -> bool:
     """Check Python version. Returns True if version is adequate."""
     major, minor = sys.version_info.major, sys.version_info.minor
@@ -1099,6 +1121,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     _doctor_check_compliance(checks, workdir)
     _doctor_check_schedule_supervisor(checks, workdir)
     _doctor_check_eval_gate_power(checks, workdir)
+    _doctor_check_otel_export(checks)
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
