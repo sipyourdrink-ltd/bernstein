@@ -10,13 +10,36 @@ path (selected with `BERNSTEIN_REPLAY_RUN_ID`).
 
 | Item | Behaviour |
 |---|---|
+| Coverage | The internal `call_llm` path only (manager reviews, planning, voting, janitor). CLI-adapter subprocess LLM traffic is **not** recorded. |
 | Replay default | Strict / hermetic. A cache miss aborts the run. |
 | On a miss (strict) | Raises `ReplayMissError`; the live model is never called. |
+| No recording (strict) | Activating replay against a run with no `llm_calls.jsonl` raises `ReplayRecordingMissingError` and aborts **before any agent is spawned**. |
 | Escape hatch | `BERNSTEIN_REPLAY_ALLOW_LIVE_MISS=1` -> miss logs a WARNING and falls through to the live model. |
 | Replay key | `(model, prompt, provider, temperature, max_tokens)`. Any drift is a miss, not a hit. |
 | Repeated calls | A key called N times records N responses and replays them **in recorded order**; the Nth call returns the Nth response. |
 | Over-consumption | Requesting a key more times than recorded is a miss (strict: raises; non-strict: returns `None`). |
 | Coverage line | `hits` / `misses` / `strict_violations`; a fully covered replay reports `misses=0`. |
+
+## What replay covers (and what it does not)
+
+Recording and replay wrap the internal native LLM client `call_llm`, which
+serves Bernstein's own features (manager reviews, planning, voting, janitor).
+That client is gated by `internal_llm_provider`, whose default is `none`.
+
+The coding work itself is done by CLI agent subprocesses (qwen, claude, ...)
+that talk to their provider directly and never pass through `call_llm`, so
+their LLM traffic is **not** recorded on any path. On the default
+`internal_llm_provider: none` + CLI-agent setup, a recording run therefore
+writes no `llm_calls.jsonl`.
+
+Because "cannot reach the network" must not be advertised for a path that
+cannot honour it, a **strict** replay whose target run has no recording
+(`cached_count == 0`) now raises `ReplayRecordingMissingError` and exits
+non-zero at activation, before any agent is spawned or any provider is
+contacted - rather than silently running live. To run such a path anyway with
+live fall-through (non-hermetic), set `BERNSTEIN_REPLAY_ALLOW_LIVE_MISS=1`. To
+get a real recording, configure an internal LLM provider and record with
+`BERNSTEIN_DETERMINISTIC_SEED` set.
 
 ## How to record and replay
 

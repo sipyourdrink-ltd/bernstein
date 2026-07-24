@@ -5382,8 +5382,9 @@ if __name__ == "__main__":
     _sdd_dir = workdir / ".sdd"
     if _replay_run_id:
         from bernstein.core.orchestration.deterministic import (
-            DeterministicStore,
+            ReplayRecordingMissingError,
             allow_live_miss,
+            open_replay_store,
             set_active_store,
         )
 
@@ -5392,11 +5393,19 @@ if __name__ == "__main__":
         # opt-in BERNSTEIN_REPLAY_ALLOW_LIVE_MISS flag restores live
         # fall-through (logged per miss) for record-extend workflows.
         _strict_replay = not allow_live_miss()
-        _det_store = DeterministicStore(
-            _sdd_dir / "runs" / _replay_run_id,
-            replay=True,
-            strict=_strict_replay,
-        )
+        # Refuse a strict replay against a run with no recording before any
+        # agent is spawned or any network call is made (issue #2790). The
+        # CLI-adapter path never records, so cached_count == 0 there; without
+        # this guard replay silently degrades to a full live run.
+        try:
+            _det_store = open_replay_store(
+                _sdd_dir / "runs" / _replay_run_id,
+                strict=_strict_replay,
+            )
+        except ReplayRecordingMissingError as exc:
+            logger.error("FATAL: %s", exc)
+            print(f"[FATAL] {exc}", file=sys.stderr, flush=True)
+            sys.exit(1)
         set_active_store(_det_store)
         logger.info(
             "Deterministic replay mode (%s): loaded %d cached LLM responses from run %s",

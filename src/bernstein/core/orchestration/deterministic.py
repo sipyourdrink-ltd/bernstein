@@ -109,6 +109,36 @@ class ReplayMissError(RuntimeError):
         )
 
 
+class ReplayRecordingMissingError(RuntimeError):
+    """Raised when strict replay is activated against a run with no recording.
+
+    Extends the :class:`ReplayMissError` contract from the per-call site to the
+    whole-run activation boundary (issue #2790). On the CLI-adapter path
+    (``internal_llm_provider: none`` + a CLI agent) ``call_llm`` never runs, so
+    no ``llm_calls.jsonl`` is written and a replay store loads zero cached
+    responses. Activating replay against such a run would fall through to a live
+    run - real agent subprocesses, real network calls - while the operator
+    believes replay is hermetic. Callers raise this before any agent is spawned
+    so a strict replay refuses loudly instead of degrading to live.
+
+    Attributes:
+        run_dir: The run directory whose recording is absent or empty.
+    """
+
+    def __init__(self, run_dir: Path) -> None:
+        self.run_dir = run_dir
+        super().__init__(
+            f"Deterministic replay requested but no recording exists at "
+            f"{run_dir / 'llm_calls.jsonl'}. Strict/hermetic replay refuses to run "
+            "live. This run recorded no LLM calls - the CLI-adapter path "
+            "(internal_llm_provider 'none' + a CLI agent) does not record, so it "
+            "cannot be replayed hermetically. To run anyway with live fall-through "
+            f"(non-hermetic), set {ALLOW_LIVE_MISS_ENV}=1; to produce a recording, "
+            "re-run with BERNSTEIN_DETERMINISTIC_SEED set and an internal LLM "
+            "provider configured.",
+        )
+
+
 def _prompt_key(
     prompt: str,
     model: str,
@@ -393,11 +423,41 @@ def set_active_store(store: DeterministicStore | None) -> None:
     _active_store = store
 
 
+def open_replay_store(run_dir: Path, *, strict: bool) -> DeterministicStore:
+    """Open a replay store for ``run_dir``, refusing a strict miss.
+
+    A strict/hermetic replay must never fall through to a live model or a live
+    agent spawn (issue #2790). When ``strict`` is set and the run recorded no
+    LLM calls (absent or empty ``llm_calls.jsonl`` -> ``cached_count == 0``),
+    raise :class:`ReplayRecordingMissingError` so the caller aborts before
+    spawning any agent, mirroring the :class:`ReplayMissError` contract enforced
+    per-call inside ``call_llm``. Non-strict replay (live-miss allowed) opens
+    the store even when empty, preserving the record-extend workflow.
+
+    Args:
+        run_dir: The run directory (``{sdd_dir}/runs/{run_id}``) to replay.
+        strict: Whether replay is hermetic (refuse on miss).
+
+    Returns:
+        The replay store when a recording is present, or when non-strict.
+
+    Raises:
+        ReplayRecordingMissingError: Strict replay with no recording.
+    """
+    store = DeterministicStore(run_dir, replay=True, strict=strict)
+    if strict and store.cached_count == 0:
+        raise ReplayRecordingMissingError(run_dir)
+    return store
+
+
 def load_replay_store(run_id: str, sdd_dir: Path) -> DeterministicStore:
     """Create a DeterministicStore in replay mode for the given run.
 
     Replay is hermetic (strict) unless :data:`ALLOW_LIVE_MISS_ENV` is set, in
-    which case misses fall through to the live provider with a warning.
+    which case misses fall through to the live provider with a warning. A strict
+    replay against a run with no recording refuses via
+    :class:`ReplayRecordingMissingError` rather than degrading to a live run
+    (issue #2790).
 
     Args:
         run_id: Run ID whose ``llm_calls.jsonl`` should be replayed.
@@ -405,6 +465,9 @@ def load_replay_store(run_id: str, sdd_dir: Path) -> DeterministicStore:
 
     Returns:
         Store loaded with cached responses from the specified run.
+
+    Raises:
+        ReplayRecordingMissingError: Strict replay with no recording.
     """
     run_dir = sdd_dir / "runs" / run_id
-    return DeterministicStore(run_dir, replay=True, strict=not allow_live_miss())
+    return open_replay_store(run_dir, strict=not allow_live_miss())
