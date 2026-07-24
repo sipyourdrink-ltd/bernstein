@@ -259,10 +259,30 @@ class UpgradeProposalDetails:
 
 @dataclass(frozen=True)
 class CompletionSignal:
-    """Janitor signal for automatic task verification."""
+    """Janitor signal for automatic task verification.
 
-    type: Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
-    value: str  # path, glob pattern, test command, search string, or review instruction
+    The first six types verify against the filesystem or a test command (the
+    coding path). The last three (issue #2608) operate on an artifact's
+    canonical bytes instead: ``schema_valid`` validates the artifact against a
+    declared JSON Schema, ``criteria_match`` evaluates a closed predicate set,
+    and ``hash_stable`` re-derives the canonical content hash. Their closed
+    evaluators live in :mod:`bernstein.core.tasks.artifacts`; the janitor
+    dispatches them via :func:`bernstein.core.quality.janitor.evaluate_artifact_signals`
+    when the produced artifact is in scope.
+    """
+
+    type: Literal[
+        "path_exists",
+        "glob_exists",
+        "test_passes",
+        "file_contains",
+        "llm_review",
+        "llm_judge",
+        "schema_valid",
+        "criteria_match",
+        "hash_stable",
+    ]
+    value: str  # path, glob pattern, test command, search string, review instruction, or criterion payload
 
 
 @dataclass(frozen=True)

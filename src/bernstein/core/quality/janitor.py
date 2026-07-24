@@ -90,7 +90,18 @@ _ATTRIBUTION_MAX_COMMITS = 50
 # trivially satisfy). A passing signal of one of these types lets the janitor
 # accept a task whose diff is not attributable (empty-diff warn path) instead
 # of hard-rejecting it.
-_NONTRIVIAL_SIGNAL_TYPES = frozenset({"test_passes", "file_contains", "llm_review", "llm_judge"})
+# The artifact-mode criteria (issue #2608) verify the produced artifact's
+# canonical bytes against a declared contract, so a passing one is strong
+# evidence real work happened - on par with a passing test.
+_NONTRIVIAL_SIGNAL_TYPES = frozenset(
+    {"test_passes", "file_contains", "llm_review", "llm_judge", "schema_valid", "criteria_match", "hash_stable"}
+)
+
+# Completion-signal types that operate on an artifact's canonical bytes rather
+# than the filesystem (issue #2608). The filesystem-oriented
+# :func:`evaluate_signal` defers these to :func:`evaluate_artifact_signals`,
+# which has the produced artifact in scope.
+_ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stable"})
 
 
 def _has_nontrivial_passing_signal(task: Task, signal_results: list[tuple[str, bool, str]]) -> bool:
@@ -255,7 +266,40 @@ def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]
         case "llm_judge":
             # llm_judge requires async evaluation - use judge_task() instead.
             return False, "llm_judge requires async evaluation via judge_task()"
+        case "schema_valid" | "criteria_match" | "hash_stable":
+            # Artifact-mode criteria operate on the produced artifact's canonical
+            # bytes, not the filesystem. They are dispatched by
+            # evaluate_artifact_signals() once the artifact is in scope; the
+            # filesystem path recognises them (so they are never "unknown") but
+            # cannot evaluate them here.
+            return False, f"{signal.type} requires artifact-mode evaluation via evaluate_artifact_signals()"
     return False, f"unknown signal type: {signal.type}"
+
+
+def evaluate_artifact_signals(task: Task, artifact: object) -> list[tuple[str, bool, str]]:
+    """Evaluate a task's artifact-mode completion signals against ``artifact``.
+
+    ``artifact`` is the raw produced artifact (str / bytes / list / mapping);
+    it is canonicalised under the task's declared
+    :attr:`~bernstein.core.tasks.models.Task.artifact_spec` kind and each
+    ``schema_valid`` / ``criteria_match`` / ``hash_stable`` signal is evaluated
+    by its closed evaluator in :mod:`bernstein.core.tasks.artifacts`.
+
+    Returns a list of ``(description, passed, detail)`` tuples in the same shape
+    as :func:`_collect_signal_results`. Filesystem-oriented signals on the task
+    are ignored here (they are evaluated by :func:`verify_task`).
+    """
+    from bernstein.core.tasks.artifacts import evaluate_criterion
+
+    kind = task.artifact_spec.kind
+    results: list[tuple[str, bool, str]] = []
+    for signal in task.completion_signals:
+        if signal.type not in _ARTIFACT_SIGNAL_TYPES:
+            continue
+        desc = f"{signal.type}: {signal.value}"
+        passed, detail = evaluate_criterion(signal.type, signal.value, artifact=artifact, kind=kind)
+        results.append((desc, passed, detail))
+    return results
 
 
 def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
@@ -273,6 +317,11 @@ def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
     """
     failed: list[str] = []
     for signal in task.completion_signals:
+        # Artifact-mode criteria are verified against the produced artifact by
+        # evaluate_artifact_signals(), not against the filesystem, so the
+        # filesystem verify path skips them rather than spuriously failing.
+        if signal.type in _ARTIFACT_SIGNAL_TYPES:
+            continue
         passed, detail = evaluate_signal(signal, workdir)
         if not passed:
             desc = f"{signal.type}: {signal.value}"
@@ -300,6 +349,8 @@ def _collect_signal_results(
     for signal in task.completion_signals:
         if signal.type == "llm_judge":
             continue  # Evaluated async in run_janitor via judge_task()
+        if signal.type in _ARTIFACT_SIGNAL_TYPES:
+            continue  # Evaluated against the artifact via evaluate_artifact_signals()
         desc = f"{signal.type}: {signal.value}"
         passed, detail = evaluate_signal(signal, workdir)
         results.append((desc, passed, detail))

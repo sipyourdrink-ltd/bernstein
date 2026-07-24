@@ -1599,3 +1599,74 @@ class TestEmptyDiffGuardAndAttribution:
 
         assert len(results) == 1
         assert results[0].passed is True
+
+
+class TestArtifactSignals:
+    """Issue #2608: the three artifact-mode criteria and their janitor wiring.
+
+    The filesystem ``evaluate_signal`` recognises the new types (never "unknown
+    signal type") but defers them; ``evaluate_artifact_signals`` evaluates them
+    against the produced artifact using the task's declared kind.
+    """
+
+    def test_evaluate_signal_defers_artifact_types_not_unknown(self, tmp_path: Path) -> None:
+        for sig_type in ("schema_valid", "criteria_match", "hash_stable"):
+            signal = CompletionSignal(type=sig_type, value="x")
+            passed, detail = evaluate_signal(signal, tmp_path)
+            assert passed is False
+            assert "unknown signal type" not in detail
+            assert "artifact-mode" in detail
+
+    def test_hash_stable_signal_passes_on_matching_artifact(self) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+        from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec, artifact_content_hash
+
+        rows = [{"id": 1}, {"id": 2}]
+        digest = artifact_content_hash(ArtifactKind.DATASET, rows)
+        task = _make_task(signals=[CompletionSignal(type="hash_stable", value=digest)])
+        task.artifact_spec = ArtifactSpec(kind=ArtifactKind.DATASET)
+
+        results = evaluate_artifact_signals(task, rows)
+        assert len(results) == 1
+        _desc, passed, _detail = results[0]
+        assert passed is True
+
+    def test_hash_stable_signal_fails_on_mutated_artifact(self) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+        from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec, artifact_content_hash
+
+        digest = artifact_content_hash(ArtifactKind.REPORT, "the report\n")
+        task = _make_task(signals=[CompletionSignal(type="hash_stable", value=digest)])
+        task.artifact_spec = ArtifactSpec(kind=ArtifactKind.REPORT)
+
+        results = evaluate_artifact_signals(task, "a different report\n")
+        _desc, passed, detail = results[0]
+        assert passed is False
+        assert "drift" in detail
+
+    def test_schema_valid_and_criteria_match_signals(self) -> None:
+        import json
+
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+        from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+        schema = json.dumps({"type": "object", "required": ["status"]})
+        preds = json.dumps([{"path": "status", "op": "eq", "value": "ok"}])
+        task = _make_task(
+            signals=[
+                CompletionSignal(type="schema_valid", value=schema),
+                CompletionSignal(type="criteria_match", value=preds),
+            ]
+        )
+        task.artifact_spec = ArtifactSpec(kind=ArtifactKind.OPS_RESULT)
+
+        results = evaluate_artifact_signals(task, {"status": "ok"})
+        assert [passed for _d, passed, _det in results] == [True, True]
+
+    def test_evaluate_artifact_signals_ignores_filesystem_signals(self) -> None:
+        from bernstein.core.quality.janitor import evaluate_artifact_signals
+        from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+        task = _make_task(signals=[CompletionSignal(type="path_exists", value="README.md")])
+        task.artifact_spec = ArtifactSpec(kind=ArtifactKind.REPORT)
+        assert evaluate_artifact_signals(task, "prose\n") == []
