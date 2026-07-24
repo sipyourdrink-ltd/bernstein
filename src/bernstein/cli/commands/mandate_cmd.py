@@ -123,16 +123,27 @@ def mandate_emit_cmd(intent_file: str, cart_file: str, settlement_file: str, wor
         console.print(f"[red]REFUSED[/red] -- {exc}")
         raise SystemExit(1) from exc
 
+    # The receipt is already anchored in the lineage spine above. The audit-
+    # chain mirror is a best-effort second write; a failure here must not raise
+    # post-anchor and orphan the operator with a traceback over a committed
+    # receipt. Warn distinctly (naming the mandate hash) and continue.
     chain = AuditChainStore(_audit_dir(root), key=key)
-    record_mandate_consent_receipt(
-        chain=chain,
-        mandate_hash=receipt.mandate_hash,
-        intent_hash=receipt.intent_hash,
-        authorized_tool_calls_hash=receipt.authorized_tool_calls_hash,
-        settlement_ref_hash=_settlement_ref_hash(settlement),
-        journal_entry_hash=receipt.journal_entry_hash,
-        task_id=receipt.task_id,
-    )
+    try:
+        record_mandate_consent_receipt(
+            chain=chain,
+            mandate_hash=receipt.mandate_hash,
+            intent_hash=receipt.intent_hash,
+            authorized_tool_calls_hash=receipt.authorized_tool_calls_hash,
+            settlement_ref_hash=_settlement_ref_hash(settlement),
+            journal_entry_hash=receipt.journal_entry_hash,
+            task_id=receipt.task_id,
+        )
+    except Exception as exc:  # best-effort mirror: never mask the anchored receipt
+        console.print(
+            f"[yellow]WARNING[/yellow] -- consent receipt anchored but audit-chain mirror "
+            f"failed for {receipt.mandate_hash}: {exc}",
+            soft_wrap=True,
+        )
 
     console.print()
     console.print("[bold]Mandate emit[/bold]")
@@ -220,8 +231,19 @@ def mandate_revoke_cmd(mandate_hash: str, reason: str, workdir: str) -> None:
         reason=reason,
         timestamp=int(time.time()),
     )
+    # The revocation is already committed to the append-only ledger above. The
+    # audit-chain mirror is a best-effort second write; a failure here must not
+    # raise after the revocation is persisted. Warn distinctly (naming the
+    # mandate hash) and continue.
     chain = AuditChainStore(_audit_dir(root), key=key)
-    record_mandate_revocation(chain=chain, mandate_hash=entry.mandate_hash, reason=entry.reason)
+    try:
+        record_mandate_revocation(chain=chain, mandate_hash=entry.mandate_hash, reason=entry.reason)
+    except Exception as exc:  # best-effort mirror: never mask the committed revocation
+        console.print(
+            f"[yellow]WARNING[/yellow] -- revocation committed but audit-chain mirror "
+            f"failed for {entry.mandate_hash}: {exc}",
+            soft_wrap=True,
+        )
 
     console.print()
     console.print(f"[bold]Mandate revoke[/bold] hash={mandate_hash[:24]}")
