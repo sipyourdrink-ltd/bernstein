@@ -1030,6 +1030,39 @@ class CLIAdapter(ABC):
 #: Set to ``0`` / ``false`` / ``no`` / ``off`` to disable recording.
 LINEAGE_ENABLED_ENV = "BERNSTEIN_LINEAGE_ENABLED"
 
+#: W3C ``baggage`` member-key prefixes that mark a member as
+#: orchestrator-controlled. Only members whose key carries one of these
+#: prefixes survive into a sealed lineage entry; ambient members set by an
+#: unrelated launching process (e.g. ``sentry-*`` from an OTEL/Sentry-
+#: instrumented shell) are stripped before the value enters the entry hash or
+#: HMAC body (issue #2787).
+_LINEAGE_BAGGAGE_ALLOW_PREFIXES = ("bernstein-", "bernstein.")
+
+
+def _filter_lineage_baggage(baggage: str | None) -> str | None:
+    """Keep only orchestrator-controlled members of a W3C ``baggage`` value.
+
+    ``baggage`` is a comma-separated list of ``key=value`` members (each value
+    may carry ``;``-delimited properties). Ambient members inherited from an
+    unrelated launching process must never be sealed into the lineage chain
+    (issue #2787), so every member whose key is not orchestrator-controlled is
+    dropped before the value reaches the entry hash and HMAC body.
+
+    Returns:
+        The filtered baggage string, or ``None`` when no member survives.
+    """
+    if not baggage:
+        return None
+    kept: list[str] = []
+    for raw_member in baggage.split(","):
+        member = raw_member.strip()
+        if not member or "=" not in member:
+            continue
+        key = member.split("=", 1)[0].strip().lower()
+        if key.startswith(_LINEAGE_BAGGAGE_ALLOW_PREFIXES):
+            kept.append(member)
+    return ",".join(kept) if kept else None
+
 
 def _lineage_enabled() -> bool:
     """Return whether the lineage spine write boundary is active.
@@ -1087,9 +1120,23 @@ def record_artifact_write(
         return None
     ts = timestamp if timestamp is not None else time.time_ns()
 
+    # ``.lower()`` on the literal keeps the lowercase W3C spelling (OTEL SDKs
+    # export lowercase ``traceparent``) without tripping the capitalised-env
+    # lint rule.
     traceparent = os.environ.get("TRACEPARENT") or os.environ.get("traceparent".lower())
     tracestate = os.environ.get("TRACESTATE") or os.environ.get("tracestate".lower())
-    baggage = os.environ.get("BAGGAGE") or os.environ.get("baggage".lower())
+    raw_baggage = os.environ.get("BAGGAGE") or os.environ.get("baggage".lower())
+
+    # Only orchestrator-controlled trace context is sealed into the chain
+    # (issue #2787). Keep just the allowlisted baggage members; a surviving
+    # bernstein-owned member is the signal that the ambient W3C context was set
+    # by bernstein rather than inherited from an unrelated launching process,
+    # so traceparent/tracestate are recorded only when such a member is present.
+    # Otherwise all three are dropped before they enter the entry hash/HMAC body.
+    baggage = _filter_lineage_baggage(raw_baggage)
+    if baggage is None:
+        traceparent = None
+        tracestate = None
 
     return LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key).record(
         artifact_path=artifact_path,

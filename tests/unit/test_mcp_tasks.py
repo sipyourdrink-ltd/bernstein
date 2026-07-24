@@ -237,10 +237,13 @@ async def test_bernstein_run_with_client_supports_tasks(mock_client: AsyncMock) 
 
 @pytest.mark.asyncio
 async def test_trace_context_propagation_to_lineage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only orchestrator-controlled trace context is sealed (issue #2787): a
+    # bernstein-prefixed baggage member survives and marks the context as ours,
+    # so traceparent/tracestate are recorded alongside it.
     monkeypatch.setenv("BERNSTEIN_LINEAGE_ENABLED", "1")
     monkeypatch.setenv("TRACEPARENT", "00-abc-123-01")
     monkeypatch.setenv("TRACESTATE", "state-abc")
-    monkeypatch.setenv("BAGGAGE", "bag-abc")
+    monkeypatch.setenv("BAGGAGE", "bernstein-task=t1")
 
     root = tmp_path / "lineage"
     h = record_artifact_write(
@@ -261,7 +264,7 @@ async def test_trace_context_propagation_to_lineage(tmp_path: Path, monkeypatch:
     assert len(entries) == 1
     assert entries[0].traceparent == "00-abc-123-01"
     assert entries[0].tracestate == "state-abc"
-    assert entries[0].baggage == "bag-abc"
+    assert entries[0].baggage == "bernstein-task=t1"
 
     result = spine.verify()
     assert result.status is SpineStatus.OK
