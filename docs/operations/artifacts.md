@@ -63,6 +63,7 @@ artifact bytes (in addition to the six filesystem/test completion signals):
 | `hash_stable` | Re-derives the canonical hash and compares it to an expected `sha256:...` |
 | `schema_valid` | Validates the artifact's JSON document against a declared JSON Schema (JSONL kinds validate each row) |
 | `criteria_match` | Evaluates a closed predicate set (`exists` / `eq` / `ne` / `contains` / `gt` / `ge` / `lt` / `le`) over the JSON document |
+| `figures_grounded` | On a report bundle, requires every declared figure's anchor to resolve to a verifying lineage record and every material number in the body to be declared (see [Figure grounding](#figure-grounding-report-artifacts)) |
 
 Each has a closed evaluator; none executes artifact-supplied code.
 
@@ -98,17 +99,111 @@ the Ed25519 signature and parent-chain checks still run.
   artifacts/<task_id>/receipt.json # pointer to the signed entry (re-checked on verify)
 ```
 
+## Figure grounding (report artifacts)
+
+A schema-valid report can still be **fabricated**: every number in the prose
+can come from the model, and `schema_valid` / `criteria_match` / `hash_stable`
+only prove the artifact's *shape*, never its *claims*. Figure grounding closes
+that gap for `report`-kind artifacts: every material number must trace to an
+anchored source, or the task does not complete.
+
+### The `figures.json` sidecar
+
+A grounded report is recorded as a **bundle** - the prose body plus a
+`figures.json` sidecar - serialised as one canonical JSON object
+(`{"body": ..., "figures": [...]}`). The sidecar is therefore *inside* the
+artifact's own `content_hash`: editing a figure value after completion changes
+the hash (the same hash-stability machinery above), so a figure cannot be
+altered without breaking the signed record.
+
+Each figure declares:
+
+| Field | Meaning |
+|-------|---------|
+| `value` | The number as written (e.g. `"1,234"`, `"$4.5M"`, `"12.5"`) |
+| `unit` | Its unit (`"users"`, `"%"`, `"GB"`, ...) |
+| `label` | A human-readable name for the figure |
+| `anchor` | `{kind, ref}` - the lineage record that grounds it |
+
+Anchor kinds available today: `attachment` and `artifact` (both a `sha256:`
+content hash of a signed lineage record). `receipt` (a query-receipt id) is a
+reserved plug point - the resolver registry accepts it so the receipt kind lands
+without reworking this contract.
+
+### The `figures_grounded` completion signal
+
+A closed evaluator (no network) that runs two checks:
+
+1. **Anchors resolve.** Every declared figure's anchor must resolve to a
+   lineage record that verifies - Ed25519 signature (kid-bound), operator HMAC
+   (when a secret is available), and chain anchoring (its parents are present).
+   A tampered or missing target record fails the figure.
+2. **Every material number is declared.** A unit- and locale-aware tokenizer
+   scans the body; every *material* number (quantity, currency amount,
+   percentage, count) must appear in the sidecar. The failure names each
+   unanchored number with its line and column.
+
+The false-positive policy is pinned by an extensible vector suite
+(`tests/unit/tasks/data/figure_tokenizer_vectors.json`):
+
+| Exempt (no anchor demanded) | Material (anchor demanded) |
+|-----------------------------|----------------------------|
+| Section numbers (`§3.2`, `Section 4`, `Figure 2`) | Currency (`$1,234.56`, `€49`, `$4.5M`, `USD 2,000`) |
+| ISO dates (`2026-07-24`, `2026-07-24T09:30`) and bare years | Percentages (`12.5%`, `30 percent`) |
+| Versions (`v3.9.0`, `1.2.3`) | Quantities (`3.2 GB`, `250 ms`) |
+| Allowlisted patterns (policy regexes, e.g. `24/7`) | Counts (`1,234`, `5000`, decimals) and ranges (`10-20%`) |
+| Identifier-glued numbers (`P99`, `IPv4`) | |
+| Bare integers below the materiality floor (default 1000) | |
+
+Tune the policy with `TokenizerPolicy` (`materiality_min`, `units`, `allowlist`).
+
+### Failure semantics: strict by default, `warn` per task
+
+An unanchored figure is a **completion failure**, not a warning - the same
+posture as an unverifiable artifact hash. The signal's `value` sets the
+severity:
+
+| `value` | Behaviour |
+|---------|-----------|
+| `""` / `"strict"` (default) | An ungrounded figure fails completion |
+| `"warn"` | Downgrade: the failure is reported with a `WARN:` prefix but does not block completion (exploratory work) |
+
+`bernstein artifact verify` is the audit tool and is always strict: it renders
+a per-figure provenance line and exits non-zero on any failing figure,
+regardless of the task's severity.
+
+### `artifact verify` output
+
+For a grounded report, `artifact verify <task_id>` adds a figures section:
+
+```
+VERIFIED task=RPT-1
+  content_hash  sha256:…
+  entry_hash    sha256:…
+  figures:
+    OK migrated users (1,234) - traces to artifact sha256:9f2c1a…, recorded at chain position 3
+```
+
+A failing figure renders `UNANCHORED <number> (<category>) at line L, col C`
+and the command exits `2`.
+
 ## Source
 
 - `src/bernstein/core/tasks/artifacts.py` - kinds, canonicalisers, criteria.
-- `src/bernstein/core/lineage/artifact_record.py` - record + verify.
+- `src/bernstein/core/tasks/figures.py` - figure tokenizer, `figures.json`
+  sidecar, report bundle, and the pure `figures_grounded` evaluator.
+- `src/bernstein/core/lineage/figure_grounding.py` - the lineage-wired anchor
+  resolver (attachment / artifact today, receipt plug point) and
+  `verify_report_figures`.
+- `src/bernstein/core/lineage/artifact_record.py` - record + verify (records a
+  report bundle; the figures verdict is part of `verify_artifact`).
 - `src/bernstein/core/lineage/entry.py` - the widened, still-closed
   `ARTEFACT_KINDS`.
 - the `artifact` group in `src/bernstein/cli/commands/artifact_cmd.py`.
 
 ## Scope
 
-This is the typed contract layer. Wiring the artifact path into the adapter
-`output_mode` axis, skipping worktree allocation for artifact-mode tasks, and
-the `commit_completion` branch are a separate follow-up; a coding task stays on
-the git-diff path and is unchanged.
+This is the typed contract layer plus figure grounding for report artifacts.
+Wiring the artifact path into the adapter `output_mode` axis, skipping worktree
+allocation for artifact-mode tasks, and the `commit_completion` branch are a
+separate follow-up; a coding task stays on the git-diff path and is unchanged.
