@@ -312,12 +312,10 @@ docstrings only (`Brief`).
 |---|---|---|
 | Workers RuntimeBridge | Full | `bridges/cloudflare.py` agents on Workers + Durable Objects |
 | Workflow Bridge (durable execution) | Full | `bridges/cloudflare_workflow.py` auto-retry, approval gates |
-| Sandbox Bridge (V8/container isolation) | Full | `bridges/cloudflare_sandbox.py` isolated code execution |
 | Browser Rendering Bridge | Full | `bridges/browser_rendering.py` screenshots, scraping, PDFs |
 | R2 Workspace Sync | Full | `bridges/r2_sync.py` content-addressed delta sync |
 | Workers AI Provider (free LLMs) | Full | `core/routing/cloudflare_ai.py` Llama, Mistral, Gemma, Qwen |
 | D1 Analytics & Billing | Full | `core/cost/d1_analytics.py` usage metering, billing tiers |
 | MCP Remote Transport | Full | `mcp/remote_transport.py` streamable HTTP for remote MCP |
 | Cloud CLI (`bernstein cloud`) | Full | `cli/commands/cloud_cmd.py` login, run, status, cost, deploy |
-| Cloudflare Agents Adapter | Brief | `adapters/cloudflare_agents.py` experimental; refuses fast with an actionable error rather than running |
 | Codex-on-Cloudflare Adapter | Brief | `adapters/codex_cloudflare.py` experimental; targets a REST API that does not yet exist and refuses fast |

@@ -333,12 +333,6 @@ def check_policy_blocks_known_endpoints() -> Check:
 
         for host, port in CodexAdapter.external_endpoints:
             declared.append((host, port, "codex"))
-    with suppress(Exception):
-        from bernstein.adapters.cloudflare_agents import CloudflareAgentsAdapter
-
-        for host, port in CloudflareAgentsAdapter.external_endpoints:
-            declared.append((host, port, "cloudflare"))
-
     if not declared:
         return Check(
             name="policy blocks declared endpoints",

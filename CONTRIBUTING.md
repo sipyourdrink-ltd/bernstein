@@ -165,7 +165,6 @@ Bernstein ships with 40+ CLI agent adapters, plus a generic catch-all. `src/bern
 | `aider` | `adapters/aider.py` | [Aider](https://aider.chat) |
 | `amp` | `adapters/amp.py` | [Amp](https://ampcode.com) |
 | `claude` | `adapters/claude.py` | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) |
-| `cloudflare` | `adapters/cloudflare_agents.py` | [Cloudflare Agents](https://developers.cloudflare.com/agents/) |
 | `codex` | `adapters/codex.py` | [Codex CLI](https://github.com/openai/codex) |
 | `cody` | `adapters/cody.py` | [Cody](https://sourcegraph.com/cody) |
 | `continue` | `adapters/continue_dev.py` | [Continue](https://continue.dev) |

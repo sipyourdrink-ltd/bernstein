@@ -209,7 +209,6 @@ class TestBundledTemplates:
             "aider",
             "amp",
             "claude",
-            "cloudflare_agents",
             "codex",
             "cody",
             "continue_dev",

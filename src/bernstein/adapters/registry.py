@@ -22,7 +22,6 @@ from bernstein.adapters.charm import CharmAdapter
 from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.adapters.cline import ClineAdapter
 from bernstein.adapters.clm import ClmAdapter
-from bernstein.adapters.cloudflare_agents import CloudflareAgentsAdapter
 from bernstein.adapters.codebuff import CodebuffAdapter
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.cody import CodyAdapter
@@ -76,7 +75,6 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "claude": ClaudeCodeAdapter,
     "cline": ClineAdapter,
     "clm": ClmAdapter,
-    "cloudflare": CloudflareAgentsAdapter,
     "codebuff": CodebuffAdapter,
     "codex": CodexAdapter,
     "cody": CodyAdapter,
@@ -131,6 +129,29 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
 # adapter. Declaration-only profiles are not merged here - their
 # hand-written module keeps owning the spawn path.
 _ADAPTERS.update(profile_built_adapter_classes())
+
+#: Registry names that no longer resolve to an adapter, mapped to the guidance
+#: an operator needs to move off them. A removed name stays listed here so a
+#: config that still pins it fails with a pointer to the supported path rather
+#: than a bare "Unknown adapter" listing or an ``ImportError`` from a module
+#: that is gone. Selection surfaces (``--cli`` choices, the seed ``cli:``
+#: allowlist) derive from :data:`_ADAPTERS`, so a removed name is not offered
+#: anywhere; this table only shapes the error when someone supplies it anyway.
+#: An entry is dropped once a stale config pinning it is no longer plausible.
+_REMOVED_ADAPTERS: dict[str, str] = {
+    "cloudflare": (
+        "Adapter 'cloudflare' (Cloudflare Agents SDK) has been removed. It "
+        "refused every spawn and had no path to a working one: the Agents SDK "
+        "dispatches to a Worker the operator writes rather than exposing an "
+        "invocation contract to implement against, and it does not execute "
+        "shell, so running a CLI agent under it means calling the Sandbox SDK "
+        "anyway. To run an agent on Cloudflare, use the Codex-on-Cloudflare "
+        "sandbox adapter (bernstein.adapters.codex_cloudflare, issue #2969). "
+        "To drive a Worker you deployed yourself, use "
+        "bernstein.bridges.cloudflare.CloudflareBridge. To run locally, pick a "
+        "local adapter such as 'claude', 'codex', or 'aider'."
+    ),
+}
 
 _entrypoints_loaded = False
 
@@ -193,7 +214,9 @@ def get_adapter(cli_name: str) -> CLIAdapter:
         An instantiated CLIAdapter.
 
     Raises:
-        ValueError: If the adapter name is not recognized.
+        ValueError: If the adapter name is not recognized, or if it names an
+            adapter that has been removed (the message then carries the
+            replacement guidance from :data:`_REMOVED_ADAPTERS`).
     """
     if cli_name == "generic":
         return GenericAdapter(cli_command="generic-cli", display_name="Generic CLI")
@@ -202,12 +225,36 @@ def get_adapter(cli_name: str) -> CLIAdapter:
 
     adapter_cls = _ADAPTERS.get(cli_name)
     if adapter_cls is None:
+        # A removed name resolves to its replacement guidance. Checked after
+        # entry-point discovery so a third-party plugin that registers the
+        # name for itself keeps working.
+        removed = removed_adapter_message(cli_name)
+        if removed is not None:
+            raise ValueError(removed)
         available = ", ".join(sorted([*_ADAPTERS.keys(), "generic"]))
         raise ValueError(f"Unknown adapter '{cli_name}'. Available: {available}")
 
     if isinstance(adapter_cls, CLIAdapter):
         return adapter_cls
     return adapter_cls()
+
+
+def removed_adapter_message(cli_name: str) -> str | None:
+    """Return replacement guidance for a removed adapter name.
+
+    Selection surfaces call this before reporting a name as unknown so an
+    operator whose config still pins a removed adapter is told what to use
+    instead. Names that were never registered return ``None``; those are
+    plain typos and get the generic "unknown adapter" treatment.
+
+    Args:
+        cli_name: The adapter name supplied by config or the CLI.
+
+    Returns:
+        The guidance string for a removed adapter, or ``None`` when the name
+        is not a removed adapter.
+    """
+    return _REMOVED_ADAPTERS.get(cli_name)
 
 
 def registry_name_for(adapter: CLIAdapter) -> str | None:

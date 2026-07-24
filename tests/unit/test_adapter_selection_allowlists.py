@@ -72,7 +72,7 @@ def test_every_cli_choice_matches_the_seed_allowlist() -> None:
     assert _cli_choice_values(replay_command) == expected, "session replay --cli drifted from the registry"
 
 
-@pytest.mark.parametrize("cli_name", ["cloudflare", "agy", "kimi", "droid"])
+@pytest.mark.parametrize("cli_name", ["clm", "agy", "kimi", "droid"])
 def test_seed_accepts_registered_adapter(tmp_path: Path, cli_name: str) -> None:
     """A registry-backed adapter parses via ``cli:`` (the issue #2781 repro)."""
     seed = tmp_path / "bernstein.yaml"
@@ -87,3 +87,20 @@ def test_seed_still_rejects_unregistered_adapter(tmp_path: Path) -> None:
     seed.write_text('goal: "x"\ncli: chatgpt\n')
     with pytest.raises(SeedError, match="cli must be one of"):
         parse_seed(seed)
+
+
+def test_seed_rejects_removed_adapter_with_replacement_guidance(tmp_path: Path) -> None:
+    """A config still pinning a removed adapter is told what to use instead.
+
+    Removed names are absent from the allowlist, so the default error would
+    be an alphabetical dump of every valid name. That is a worse answer than
+    naming the supported path directly (issue #2970).
+    """
+    seed = tmp_path / "bernstein.yaml"
+    seed.write_text('goal: "x"\ncli: cloudflare\n')
+    with pytest.raises(SeedError) as excinfo:
+        parse_seed(seed)
+    msg = str(excinfo.value)
+    assert "has been removed" in msg
+    assert "codex_cloudflare" in msg
+    assert "cli must be one of" not in msg

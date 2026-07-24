@@ -49,7 +49,6 @@ modules =
     bernstein.adapters.claude
     bernstein.adapters.cline
     bernstein.adapters.clm
-    bernstein.adapters.cloudflare_agents
     bernstein.adapters.codebuff
     bernstein.adapters.codex
     bernstein.adapters.cody

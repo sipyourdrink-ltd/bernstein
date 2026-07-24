@@ -1,6 +1,6 @@
 # Cloudflare Bridges
 
-Bernstein uses **bridges** to abstract where agents execute. The Cloudflare integration provides five bridges: the Workers runtime bridge, the Workflow bridge, the sandbox bridge, the browser rendering bridge, and the R2 workspace sync.
+Bernstein uses **bridges** to abstract where agents execute. The Cloudflare integration provides four bridges: the Workers runtime bridge, the Workflow bridge, the browser rendering bridge, and the R2 workspace sync.
 
 All bridges except browser rendering and R2 sync implement the `RuntimeBridge` interface from `bernstein.bridges.base`, making them drop-in replacements for local execution.
 
@@ -154,80 +154,6 @@ await bridge.approve("task-42")
 
 !!! warning "Approval gates"
     When `require_approval` is `True`, workflows pause at the `APPROVAL` step until `approve()` is called. The agent state maps to `PENDING` during this wait.
-
----
-
-## Sandbox Bridge
-
-**Module:** `bernstein.bridges.cloudflare_sandbox`
-**Class:** `CloudflareSandboxBridge`
-
-Executes agent code in isolated V8 isolates or full Linux containers on Cloudflare's edge. No host filesystem access -- workspace files are synced via R2.
-
-### Sandbox types
-
-| Type | Enum | Characteristics |
-|------|------|-----------------|
-| V8 Isolate | `SandboxType.ISOLATE` | Fast startup, lightweight, limited to JavaScript/WASM runtime |
-| Container | `SandboxType.CONTAINER` | Full Linux environment, heavier, supports any language |
-
-### Configuration
-
-| Parameter | Source | Required | Default | Description |
-|-----------|--------|----------|---------|-------------|
-| `bridge_type` | `config.bridge_type` | Yes | Must be `"cloudflare-sandbox"` | Bridge type discriminator |
-| `api_key` | `config.api_key` | Yes | -- | Cloudflare API token |
-| `account_id` | `config.extra["account_id"]` | Yes | -- | Cloudflare account ID |
-| `sandbox_type` | `config.extra["sandbox_type"]` | No | `"isolate"` | `"isolate"` or `"container"` |
-| `max_memory_mb` | `config.extra["max_memory_mb"]` | No | `128` | Memory limit in MiB |
-| `max_execution_seconds` | `config.extra["max_execution_seconds"]` | No | `300` | Wall-clock timeout |
-| `r2_bucket` | `config.extra["r2_bucket"]` | No | `"bernstein-workspaces"` | R2 bucket for workspace sync |
-
-### Network access control
-
-The `NetworkAccess` enum controls outbound network:
-
-| Level | Enum | Behavior |
-|-------|------|----------|
-| None | `NetworkAccess.NONE` | No outbound network |
-| Restricted | `NetworkAccess.RESTRICTED` | Only `allowed_domains` reachable |
-| Full | `NetworkAccess.FULL` | Unrestricted outbound |
-
-Default allowed domains (when restricted): `api.github.com`, `registry.npmjs.org`, `pypi.org`.
-
-### Usage
-
-```python
-from bernstein.bridges.base import BridgeConfig, SpawnRequest
-from bernstein.bridges.cloudflare_sandbox import CloudflareSandboxBridge
-
-config = BridgeConfig(
-    bridge_type="cloudflare-sandbox",
-    endpoint="https://api.cloudflare.com",
-    api_key="cf_token_...",
-    extra={
-        "account_id": "abc123",
-        "sandbox_type": "container",
-        "max_memory_mb": 256,
-        "max_execution_seconds": 600,
-        "r2_bucket": "bernstein-workspaces",
-    },
-)
-
-bridge = CloudflareSandboxBridge(config)
-
-status = await bridge.spawn(SpawnRequest(
-    agent_id="agent-sandbox-01",
-    prompt="Run the test suite and fix failures",
-    model="sonnet",
-    role="qa",
-))
-
-# List files modified in the sandbox (for selective R2 download)
-artifacts = await bridge.download_artifacts("sandbox-id-from-metadata")
-```
-
----
 
 ## Browser Rendering Bridge
 

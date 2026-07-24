@@ -13,28 +13,6 @@ report.
 
 ---
 
-## Browser Rendering vs the Sandbox bridge
-
-Bernstein has two superficially similar capabilities. They are not
-interchangeable:
-
-| Concern                    | Browser Rendering (this page)        | Sandbox bridge                             |
-|----------------------------|--------------------------------------|--------------------------------------------|
-| What it executes           | A web page in headless Chrome        | Arbitrary code in a V8 isolate / container |
-| Use case                   | Browsing, scraping, screenshots, PDF | Running untrusted agent-generated code     |
-| Network surface            | Outbound to whatever URL you give it | Locked-down by sandbox profile             |
-| Result type                | HTML / extracted content / PNG / PDF | stdout, stderr, exit code, file diffs      |
-| Rough cost model           | Per render minute                    | Per CPU-second                             |
-| Backing module             | `bernstein.bridges.browser_rendering`| `bernstein.bridges.cloudflare_sandbox`     |
-
-Use Browser Rendering when the input is a URL and the output is what
-a human would see in a browser. Use the Sandbox when the input is a
-script or program and the output is its execution result. Mixing them
-up is a common source of confusion: Browser Rendering will not run
-your Python; the Sandbox will not screenshot a website.
-
----
-
 ## Setup
 
 ### Required Cloudflare account configuration
@@ -57,9 +35,8 @@ The bridge reads two values, by convention from environment variables:
 | `CLOUDFLARE_ACCOUNT_ID` (alias `CF_ACCOUNT_ID`)         | Cloudflare account UUID                |
 | `CLOUDFLARE_API_TOKEN` (alias `CF_API_TOKEN`)           | API token with Browser Rendering Edit  |
 
-These are the same vars consumed by `cloudflare.py`,
-`cloudflare_sandbox.py`, and `r2_sync.py`. Set them once and every
-Cloudflare bridge picks them up.
+These are the same vars consumed by `cloudflare.py` and
+`r2_sync.py`. Set them once and every Cloudflare bridge picks them up.
 
 ### Bernstein-side configuration
 
@@ -382,6 +359,6 @@ Rendering arbitrary URLs is, by design, a sandbox. Treat it as one:
 - [Cloudflare setup](cloudflare-setup.md) - wrangler, account, and
   token setup that this bridge relies on.
 - [Cloudflare bridges](cloudflare-bridges.md) - Workers / Workflow /
-  Sandbox / R2 bridges that share the same auth env vars.
+  R2 bridges that share the same auth env vars.
 - [Secrets and credentials](../operations/secrets.md) - where the
   `CLOUDFLARE_API_TOKEN` lives and how to rotate it.

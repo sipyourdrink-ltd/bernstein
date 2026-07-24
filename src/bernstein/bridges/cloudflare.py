@@ -46,6 +46,13 @@ def _parse_state(raw: str) -> AgentState:
 class CloudflareBridge(RuntimeBridge):
     """Runtime bridge for executing agents on Cloudflare Workers with Durable Objects.
 
+    The ``/agents/*`` routes this bridge calls (``POST /agents/spawn``,
+    ``GET /agents/{id}/status``, ``POST /agents/{id}/cancel``,
+    ``GET /agents/{id}/logs``) are defined by Bernstein, not by Cloudflare.
+    Cloudflare does not publish a route contract for agent execution: a Worker
+    dispatches whatever paths its own handler implements. Using this bridge
+    therefore means deploying a Worker that implements the four routes above.
+
     Configuration:
         config.endpoint: Base URL of the deployed Cloudflare Worker
             (e.g. ``https://my-agent-worker.account.workers.dev``).

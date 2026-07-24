@@ -121,10 +121,6 @@ USE_CASES: dict[str, AdapterUseCase] = {
         ),
         docs_path="docs/adapters/clm.md",
     ),
-    "cloudflare": AdapterUseCase(
-        headline="Cloudflare Agents SDK driver via wrangler dev or worker trigger",
-        binary="wrangler",
-    ),
     "codebuff": AdapterUseCase(
         headline="Codebuff CLI integration",
         binary="codebuff",

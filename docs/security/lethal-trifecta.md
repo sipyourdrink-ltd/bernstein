@@ -93,7 +93,6 @@ case allows.
 | `adapter.amp` | Y | Y | Y |
 | `adapter.claude` | Y | Y | Y |
 | `adapter.clm` | Y | - | Y |
-| `adapter.cloudflare_agents` | Y | Y | Y |
 | `adapter.antigravity` | Y | Y | Y |
 | `adapter.codex` | Y | Y | Y |
 | `adapter.cody` | Y | Y | Y |

@@ -275,7 +275,6 @@ Bernstein can execute agents on Cloudflare's edge infrastructure in addition to 
 
 - **RuntimeBridge** (`bridges/cloudflare.py`) - spawn agents on Workers + Durable Objects
 - **WorkflowBridge** (`bridges/cloudflare_workflow.py`) - durable multi-step workflows with auto-retry and approval gates
-- **SandboxBridge** (`bridges/cloudflare_sandbox.py`) - isolated V8 or container execution for untrusted code
 - **BrowserRenderingBridge** (`bridges/browser_rendering.py`) - headless web browsing for agents
 - **R2WorkspaceSync** (`bridges/r2_sync.py`) - content-addressed workspace file sync via R2
 - **WorkersAIProvider** (`core/routing/cloudflare_ai.py`) - free-tier LLM models for planning

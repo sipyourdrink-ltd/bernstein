@@ -836,28 +836,18 @@ def test_doctor_airgap_cli_json_output(airgap_env: None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_airgap_refuses_cloudflare_adapter_spawn(airgap_env: None) -> None:
+def test_airgap_refuses_claude_adapter_spawn(airgap_env: None) -> None:
     """`bernstein run --profile airgap` REFUSES adapters that declare external
     endpoints. Error message must name the adapter + destination."""
-    from bernstein.adapters.cloudflare_agents import CloudflareAgentsAdapter
-
-    adapter = CloudflareAgentsAdapter()
-    with pytest.raises(NetworkPolicyDenied) as excinfo:
-        adapter.enforce_network_policy()
-    msg = str(excinfo.value)
-    assert "api.cloudflare.com" in msg
-    assert "443" in msg
-    assert excinfo.value.source == "adapter:Cloudflare Agents" or "cloudflare" in excinfo.value.source.lower()
-
-
-def test_airgap_refuses_claude_adapter_spawn(airgap_env: None) -> None:
-    """Same refusal for the Claude Code adapter (Anthropic endpoint)."""
     from bernstein.adapters.claude import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()
     with pytest.raises(NetworkPolicyDenied) as excinfo:
         adapter.enforce_network_policy()
-    assert "api.anthropic.com" in str(excinfo.value)
+    msg = str(excinfo.value)
+    assert "api.anthropic.com" in msg
+    assert "443" in msg
+    assert "claude" in excinfo.value.source.lower()
 
 
 def test_airgap_refuses_codex_adapter_spawn(airgap_env: None) -> None:

@@ -15,8 +15,6 @@ tools:
     capabilities: [private_data, untrusted_input, external_comm]
   - name: adapter.clm
     capabilities: [private_data, external_comm]
-  - name: adapter.cloudflare_agents
-    capabilities: [private_data, untrusted_input, external_comm]
   - name: adapter.antigravity
     capabilities: [private_data, untrusted_input, external_comm]
   - name: adapter.codex

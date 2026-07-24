@@ -1893,6 +1893,12 @@ def _parse_cli(data: dict[str, object]) -> str:
     cli_raw: object = data.get("cli", _AUTO_CLI)
     valid = valid_cli_selections()
     if not isinstance(cli_raw, str) or cli_raw not in valid:
+        if isinstance(cli_raw, str):
+            from bernstein.adapters.registry import removed_adapter_message
+
+            removed = removed_adapter_message(cli_raw)
+            if removed is not None:
+                raise SeedError(f"cli: {removed}")
         raise SeedError(f"cli must be one of {sorted(valid)}, got: {cli_raw!r}")
     return cli_raw
 

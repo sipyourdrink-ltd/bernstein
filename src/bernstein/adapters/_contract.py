@@ -624,7 +624,6 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "auggie": AdapterStrategy(),
     "autohand": AdapterStrategy(),
     "clm": AdapterStrategy(),
-    "cloudflare": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "codebuff": AdapterStrategy(),
     # Fronts a third-party autonomous browser / computer-use agent (issue
     # #2606). The external agent owns its own loop, so Bernstein neither
@@ -685,7 +684,6 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
 #: to their registry key need no entry here.
 _NAMESPACE_ALIASES: dict[str, str] = {
     "claude code": "claude",
-    "cloudflare agents": "cloudflare",
     "composio agent orchestrator": "composio",
     "continue.dev": "continue",
     "github copilot": "copilot",

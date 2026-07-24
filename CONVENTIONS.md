@@ -111,7 +111,6 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `cline.py`                  | Cline CLI adapter |
 | `clm.py`                    | CLM sovereign LLM adapter - drives a customer-side CLM gateway |
 | `clm_tls_launcher.py`       | mTLS launcher for the CLM adapter |
-| `cloudflare_agents.py`      | Cloudflare Agents SDK adapter (experimental, currently non-functional) |
 | `codebuff.py`               | Codebuff CLI adapter |
 | `codex.py`                  | OpenAI Codex CLI adapter |
 | `codex_cloudflare.py`       | Codex adapter for Cloudflare Sandbox execution (experimental, non-functional) |

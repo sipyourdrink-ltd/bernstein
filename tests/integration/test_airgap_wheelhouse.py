@@ -222,14 +222,14 @@ def test_mcp_sse_transport_allowed_under_loopback_policy(monkeypatch: pytest.Mon
     transport.disconnect()
 
 
-def test_cloudflare_adapter_refused_under_airgap(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_claude_adapter_refused_under_airgap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(ENV_NETWORK_POLICY, "none")
-    from bernstein.adapters.cloudflare_agents import CloudflareAgentsAdapter
+    from bernstein.adapters.claude import ClaudeCodeAdapter
 
-    adapter = CloudflareAgentsAdapter()
+    adapter = ClaudeCodeAdapter()
     with pytest.raises(NetworkPolicyDenied) as excinfo:
         adapter.enforce_network_policy()
-    assert "api.cloudflare.com" in str(excinfo.value)
+    assert "api.anthropic.com" in str(excinfo.value)
 
 
 def test_claude_adapter_declares_anthropic_endpoint() -> None:

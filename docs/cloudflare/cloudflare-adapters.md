@@ -1,40 +1,8 @@
 # Cloudflare Adapters
 
-Two adapters were intended to run agents on Cloudflare infrastructure instead of locally: the Cloudflare Agents SDK adapter and the Codex-on-Cloudflare adapter. **Both are experimental and currently non-functional** — see the status notes below before relying on them.
+The Codex-on-Cloudflare adapter runs agents on Cloudflare infrastructure instead of locally. **It is experimental and currently non-functional** — see the status note below before relying on it.
 
----
-
-## Cloudflare Agents SDK Adapter
-
-**Module:** `bernstein.adapters.cloudflare_agents`
-**Class:** `CloudflareAgentsAdapter`
-
-!!! warning "Experimental — non-functional (issue #2782)"
-    This adapter has no worker-trigger path. It could only start a local
-    `npx wrangler dev` server, which is a long-running dev server that is never
-    sent a request and never signals completion, so every task would run until
-    the timeout watchdog killed it — producing no artifact. Rather than pretend,
-    `spawn()` now refuses immediately with an actionable error.
-
-    To run agents on Cloudflare today, deploy a worker that implements the
-    `/agents/*` HTTP contract and drive it with
-    `bernstein.bridges.cloudflare.CloudflareBridge`, or run agents locally with
-    an adapter such as `claude`, `codex`, `aider`, or `mock`.
-
-### Behaviour
-
-`CloudflareAgentsAdapter.spawn()` raises `RuntimeError` with a message that
-names issue #2782 and points to the working alternatives above. The
-`cloudflare` registry key still resolves (so `cli: cloudflare` parses), but a
-run routed to it fails fast instead of timing out.
-
-### Configuration in bernstein.yaml
-
-```yaml
-cli: cloudflare
-```
-
-The registry key is `cloudflare` (see `bernstein.adapters.registry`); the module name `cloudflare_agents` is not a registered key.
+The Cloudflare Agents SDK adapter (registry key `cloudflare`) was removed in issue #2970. It refused every spawn and had no path to a working one: the Agents SDK dispatches to a Worker the operator writes rather than exposing an invocation contract to implement against, and it does not execute shell. Configuring `cli: cloudflare` now fails with an error naming this page's supported path instead of resolving to an adapter that always refuses.
 
 ---
 
@@ -96,8 +64,10 @@ implemented):
 
 ---
 
-## Choosing between adapters
+## Running agents today
 
-Both Cloudflare adapters are experimental and non-functional at present (see the
-status notes above). Run agents locally (`claude`, `codex`, `aider`, `mock`) or
-drive a deployed worker via `bernstein.bridges.cloudflare.CloudflareBridge`.
+The Codex-on-Cloudflare adapter is non-functional at present (see the status note
+above). Run agents locally (`claude`, `codex`, `aider`, `mock`) or drive a worker
+you deployed yourself via `bernstein.bridges.cloudflare.CloudflareBridge`. That
+bridge calls a `/agents/*` route contract defined by Bernstein, not by Cloudflare:
+the Worker you deploy has to implement those routes.
