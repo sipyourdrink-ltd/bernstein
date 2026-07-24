@@ -60,7 +60,7 @@ import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, cast, runtime_checkable
+from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, cast, runtime_checkable
 
 from bernstein.core.lineage.tracker_audit import (
     GENESIS_PREV_HASH,
@@ -705,6 +705,9 @@ class ClaimLedger:
         """
         current = float(time.time() if now is None else now)
         expires_at = current + max(1, ttl_seconds)
+        # Populated on the MESH path; the SQLite row below is materialised from
+        # this receipt so the ledger stays a projection of the journal.
+        receipt: ClaimReceipt | None = None
         with self._lock:
             conn = self._connect()
             try:
@@ -740,12 +743,47 @@ class ClaimLedger:
                         claimer_id="",
                         lease_expires_at=0.0,
                     )
+                # MESH path: the journal is the source of truth. Mint the signed
+                # claim receipt FIRST, still inside the open transaction, then
+                # materialise the SQLite row from that receipt and commit both
+                # together. If the append fails (disk / signing), roll the
+                # transaction back so no receipt-less row is ever committed --
+                # the projection derives claim state from receipts only, so a
+                # held row with no receipt would be a phantom holder. STAR
+                # deployments pass no journal and insert from the raw inputs.
+                if self._journal is not None:
+                    try:
+                        receipt = self._journal.append(
+                            kind="claim",
+                            tracker=tracker,
+                            ticket_id=ticket_id,
+                            role=role,
+                            claimer_id=claimer_id,
+                            lease_expires_at=expires_at,
+                            ts_ns=int(current * 1_000_000_000),
+                        )
+                    except BaseException:
+                        with contextlib.suppress(sqlite3.Error):
+                            conn.execute("ROLLBACK")
+                        raise
+                insert_values = (
+                    (tracker, ticket_id, role, claimer_id, expires_at, current)
+                    if receipt is None
+                    else (
+                        receipt.tracker,
+                        receipt.ticket_id,
+                        receipt.role,
+                        receipt.claimer_id,
+                        receipt.lease_expires_at,
+                        current,
+                    )
+                )
                 try:
                     conn.execute(
                         "INSERT OR FAIL INTO claims "
                         "(tracker, ticket_id, role, claimer_id, lease_expires_at, stage_attempt, created_at) "
                         "VALUES (?, ?, ?, ?, ?, 0, ?)",
-                        (tracker, ticket_id, role, claimer_id, expires_at, current),
+                        insert_values,
                     )
                 except sqlite3.IntegrityError:
                     conn.execute("ROLLBACK")
@@ -778,26 +816,12 @@ class ClaimLedger:
                     claimer_id="",
                     lease_expires_at=0.0,
                 )
-            # MESH path: the granted claim is anchored as a signed receipt on
-            # the journal, and the SQLite row above is its materialised
-            # projection (both derive from the same injected ``now`` clock and
-            # claim inputs, so a replay reproduces byte-identical state). STAR
-            # deployments pass no journal and skip this entirely.
-            if self._journal is not None:
-                self._journal.append(
-                    kind="claim",
-                    tracker=tracker,
-                    ticket_id=ticket_id,
-                    role=role,
-                    claimer_id=claimer_id,
-                    lease_expires_at=expires_at,
-                    ts_ns=int(current * 1_000_000_000),
-                )
+        granted_lease = expires_at if receipt is None else receipt.lease_expires_at
         return ClaimOutcome(
             granted=True,
             reason="granted",
             claimer_id=claimer_id,
-            lease_expires_at=expires_at,
+            lease_expires_at=granted_lease,
         )
 
     def live_claims(self, *, now: float | None = None) -> list[dict[str, Any]]:
@@ -998,6 +1022,24 @@ def compute_claim_entry_hash(receipt: ClaimReceipt) -> str:
     return "sha256:" + hashlib.sha256(_claim_signing_bytes(receipt)).hexdigest()
 
 
+def _tail_hash_from_handle(fp: IO[bytes]) -> str:
+    """Return the last receipt's ``entry_hash`` from an open journal handle.
+
+    Reads from the start of ``fp`` so a caller already holding the exclusive
+    append lock can resolve the current chain tail without opening a second
+    descriptor. Keeping the tail read on the *locked* handle is what makes the
+    read-modify-write of ``prev_entry_hash`` a single atomic critical section.
+    """
+    fp.seek(0)
+    last_hash = GENESIS_PREV_HASH
+    for raw in fp:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        last_hash = json.loads(stripped.decode("utf-8"))["entry_hash"]
+    return last_hash
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimHold:
     """The current holder of one ``(tracker, ticket_id, role)`` claim."""
@@ -1193,32 +1235,43 @@ class ClaimJournal:
             msg = f"unknown claim-receipt kind: {kind!r}"
             raise ValueError(msg)
         with self._lock:
-            prev_hash = self._tail_hash()
-            unsigned = ClaimReceipt(
-                schema_version=CLAIM_JOURNAL_SCHEMA_VERSION,
-                kind=kind,
-                ts_ns=int(ts_ns),
-                tracker=tracker,
-                ticket_id=ticket_id,
-                role=role,
-                claimer_id=claimer_id,
-                node_id=self._node_id if node_id is None else node_id,
-                lease_expires_at=float(lease_expires_at),
-                prev_entry_hash=prev_hash,
-                entry_hash=GENESIS_PREV_HASH,  # placeholder; recomputed below
-                signature={},
-                supersedes=supersedes,
-                winner_claimer_id=winner_claimer_id,
-                winner_entry_hash=winner_entry_hash,
-            )
-            digest = compute_claim_entry_hash(unsigned)
-            signed = replace(unsigned, entry_hash=digest)
-            signature = build_head_signature(digest.split(":", 1)[1], kms_adapter=self._kms)
-            final = replace(signed, signature=signature)
-
-            line = _canonical_bytes(asdict(final)) + b"\n"
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("ab") as fp, _exclusive_lock(fp):
+            # The tail read and the byte-append are one critical section under
+            # a single exclusive advisory lock. Reading ``prev_entry_hash``
+            # before taking the lock would let two nodes on a shared filesystem
+            # both observe the same tail and mint receipts that both link to it,
+            # forking the linear chain -- a fork offline ``verify()`` cannot
+            # tell apart from tampering. Holding the lock across the read, the
+            # (deterministic, in-memory) Ed25519 signing, and the write keeps
+            # every cross-process append strictly linear. ``a+b`` opens for read
+            # and append; on POSIX an append write always lands at EOF
+            # regardless of the read cursor.
+            with self.path.open("a+b") as fp, _exclusive_lock(fp):
+                prev_hash = _tail_hash_from_handle(fp)
+                unsigned = ClaimReceipt(
+                    schema_version=CLAIM_JOURNAL_SCHEMA_VERSION,
+                    kind=kind,
+                    ts_ns=int(ts_ns),
+                    tracker=tracker,
+                    ticket_id=ticket_id,
+                    role=role,
+                    claimer_id=claimer_id,
+                    node_id=self._node_id if node_id is None else node_id,
+                    lease_expires_at=float(lease_expires_at),
+                    prev_entry_hash=prev_hash,
+                    entry_hash=GENESIS_PREV_HASH,  # placeholder; recomputed below
+                    signature={},
+                    supersedes=supersedes,
+                    winner_claimer_id=winner_claimer_id,
+                    winner_entry_hash=winner_entry_hash,
+                )
+                digest = compute_claim_entry_hash(unsigned)
+                signed = replace(unsigned, entry_hash=digest)
+                signature = build_head_signature(digest.split(":", 1)[1], kms_adapter=self._kms)
+                final = replace(signed, signature=signature)
+
+                line = _canonical_bytes(asdict(final)) + b"\n"
+                fp.seek(0, os.SEEK_END)
                 fp.write(line)
                 fp.flush()
                 os.fsync(fp.fileno())
@@ -1386,17 +1439,15 @@ class ClaimJournal:
     # -- internals ----------------------------------------------------
 
     def _tail_hash(self) -> str:
-        """Return the ``entry_hash`` of the last receipt, or genesis."""
+        """Return the ``entry_hash`` of the last receipt, or genesis.
+
+        A lock-free snapshot read used by :meth:`head`; the append path resolves
+        the tail on its own locked handle via :func:`_tail_hash_from_handle`.
+        """
         if not self.path.exists() or self.path.stat().st_size == 0:
             return GENESIS_PREV_HASH
-        last_hash = GENESIS_PREV_HASH
         with self.path.open("rb") as fp:
-            for raw in fp:
-                stripped = raw.strip()
-                if not stripped:
-                    continue
-                last_hash = json.loads(stripped.decode("utf-8"))["entry_hash"]
-        return last_hash
+            return _tail_hash_from_handle(fp)
 
 
 # ---------------------------------------------------------------------------

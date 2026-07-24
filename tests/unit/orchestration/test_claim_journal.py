@@ -21,11 +21,19 @@ fails verification at the exact entry index.
 
 from __future__ import annotations
 
+import threading
+import time
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING
 
 import pytest
 
+from bernstein.core.lineage.tracker_audit import (
+    GENESIS_PREV_HASH,
+    _canonical_bytes,
+)
 from bernstein.core.orchestration.tracker_pipeline import (
+    CLAIM_JOURNAL_SCHEMA_VERSION,
     CLAIM_RECEIPT_KINDS,
     ClaimJournal,
     ClaimLedger,
@@ -38,6 +46,7 @@ from bernstein.core.security.audit_chain import (
     EVENT_CLAIM_JOURNAL_RECEIPT,
     AuditChainStore,
 )
+from bernstein.core.security.audit_head_signature import build_head_signature
 from bernstein.core.security.lineage_kms import FileBasedKMSAdapter
 
 if TYPE_CHECKING:
@@ -385,6 +394,213 @@ def test_reconcile_is_noop_without_conflict(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Concurrent multi-writer safety on a shared journal (the phase 1-2 target)
+# ---------------------------------------------------------------------------
+
+
+def _shared_journal(tmp_path: Path, *, node_id: str, seed: int, chain: AuditChainStore | None = None) -> ClaimJournal:
+    """A journal for ``node_id`` bound to the single shared ``shared.jsonl``."""
+    return ClaimJournal(
+        tmp_path / "shared.jsonl",
+        kms_adapter=_kms(tmp_path, seed=seed, name=f"{node_id}-key"),
+        node_id=node_id,
+        chain=chain,
+    )
+
+
+def test_concurrent_shared_journal_appends_stay_linear(tmp_path: Path) -> None:
+    """Two nodes appending to one shared journal never fork the chain.
+
+    Two :class:`ClaimJournal` instances (distinct install identities, own
+    process-local locks) hammer the same on-disk file from two threads,
+    released together by a barrier so their appends genuinely overlap -- the
+    literal shared-filesystem multi-writer shape phase 1-2 targets. The
+    read-modify-write of ``prev_entry_hash`` must be serialised by the
+    exclusive file lock; if the tail were read outside that lock both writers
+    could link to the same predecessor and fork the linear chain, which
+    offline :meth:`ClaimJournal.verify` cannot tell apart from tampering.
+    """
+    journal_a = _shared_journal(tmp_path, node_id="node-a", seed=1)
+    journal_b = _shared_journal(tmp_path, node_id="node-b", seed=2)
+
+    rounds = 24
+    barrier = threading.Barrier(2)
+
+    def hammer(journal: ClaimJournal, worker: str, base_ticket: int) -> None:
+        for i in range(rounds):
+            barrier.wait()
+            journal.append(
+                kind="claim",
+                tracker="jira",
+                ticket_id=f"T-{base_ticket + i}",
+                role="backend",
+                claimer_id=worker,
+                lease_expires_at=1600.0,
+                ts_ns=1_000_000_000 + i,
+            )
+
+    ta = threading.Thread(target=hammer, args=(journal_a, "worker-a", 0))
+    tb = threading.Thread(target=hammer, args=(journal_b, "worker-b", 1000))
+    ta.start()
+    tb.start()
+    ta.join()
+    tb.join()
+
+    # No fork: every receipt sits on one linear, offline-verifiable chain.
+    result = journal_a.verify()
+    assert result.ok, result.failures
+    assert result.entry_count == 2 * rounds
+
+
+def test_two_nodes_concurrently_claim_same_key_converge(tmp_path: Path) -> None:
+    """Issue criterion 3: two nodes *concurrently* self-claim one key.
+
+    Both nodes race an honest claim for the same ``(tracker, ticket_id,
+    role)`` against the shared journal at the same instant. The chain must
+    stay linear (both claims land, neither forks), the deterministic fold
+    must already resolve a single winner, and ``reconcile`` must emit exactly
+    one chain-anchored ``supersede`` naming that winner.
+    """
+    chain = _chain(tmp_path)
+    journal_a = _shared_journal(tmp_path, node_id="node-a", seed=1, chain=chain)
+    journal_b = _shared_journal(tmp_path, node_id="node-b", seed=2, chain=chain)
+
+    barrier = threading.Barrier(2)
+    minted: dict[str, ClaimReceipt] = {}
+
+    def claim(journal: ClaimJournal, worker: str) -> None:
+        barrier.wait()
+        minted[worker] = journal.append(
+            kind="claim",
+            tracker="jira",
+            ticket_id="T-1",
+            role="backend",
+            claimer_id=worker,
+            lease_expires_at=1600.0,
+            ts_ns=1_000_000_000,
+        )
+
+    ta = threading.Thread(target=claim, args=(journal_a, "worker-a"))
+    tb = threading.Thread(target=claim, args=(journal_b, "worker-b"))
+    ta.start()
+    tb.start()
+    ta.join()
+    tb.join()
+
+    result = journal_a.verify()
+    assert result.ok, result.failures
+    assert result.entry_count == 2
+
+    winner = min(minted.values(), key=lambda r: r.entry_hash)
+    loser = max(minted.values(), key=lambda r: r.entry_hash)
+
+    pre = journal_a.project()
+    hold = pre.holder("jira", "T-1", "backend")
+    assert hold is not None and hold.entry_hash == winner.entry_hash
+    assert loser.entry_hash in pre.superseded
+
+    supersedes = journal_a.reconcile(ts_ns=2_000_000_000)
+    assert len(supersedes) == 1
+    assert supersedes[0].supersedes == loser.entry_hash
+    assert supersedes[0].winner_entry_hash == winner.entry_hash
+    # Convergence survives the extra supersede receipt and stays linear.
+    assert journal_a.verify().ok
+    post = journal_a.project().holder("jira", "T-1", "backend")
+    assert post is not None and post.claimer_id == winner.claimer_id
+
+
+def test_append_resolves_tail_under_the_write_lock(tmp_path: Path) -> None:
+    """The tail read and the byte-append are one lock-guarded critical section.
+
+    Deterministic proof (no scheduling luck): while another writer holds the
+    exclusive lock and commits a fresh entry before releasing, a concurrent
+    append must observe that new entry as its predecessor. If ``append`` read
+    the tail *before* taking the lock it would link to the stale tail and fork
+    the chain. We gate the interleaving with the file lock itself.
+    """
+    fcntl = pytest.importorskip("fcntl")
+
+    journal_a = _shared_journal(tmp_path, node_id="node-a", seed=1)
+    journal_b = _shared_journal(tmp_path, node_id="node-b", seed=2)
+
+    # One committed entry so the tail is a real hash, not genesis.
+    r1 = journal_a.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+
+    started = threading.Event()
+    done = threading.Event()
+    captured: dict[str, ClaimReceipt] = {}
+
+    def append_b() -> None:
+        started.set()
+        captured["b"] = journal_b.append(
+            kind="claim",
+            tracker="jira",
+            ticket_id="T-2",
+            role="backend",
+            claimer_id="worker-b",
+            lease_expires_at=1700.0,
+            ts_ns=1_002_000_000,
+        )
+        done.set()
+
+    holder = (tmp_path / "shared.jsonl").open("a+b")
+    try:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        thread = threading.Thread(target=append_b)
+        thread.start()
+        started.wait(timeout=2.0)
+        # Give B time to reach the lock; a correct append is now blocked
+        # *before* reading the tail, a buggy one has already read tail == r1.
+        time.sleep(0.25)
+
+        # A third node commits an entry (r_mid) while we hold the lock, moving
+        # the true tail forward. Build it with the production helpers so it is a
+        # fully valid, signed, chain-linked receipt.
+        kms_c = _kms(tmp_path, seed=3, name="node-c-key")
+        unsigned = ClaimReceipt(
+            schema_version=CLAIM_JOURNAL_SCHEMA_VERSION,
+            kind="claim",
+            ts_ns=1_001_000_000,
+            tracker="jira",
+            ticket_id="T-9",
+            role="backend",
+            claimer_id="worker-c",
+            node_id="node-c",
+            lease_expires_at=1650.0,
+            prev_entry_hash=r1.entry_hash,
+            entry_hash=GENESIS_PREV_HASH,
+            signature={},
+        )
+        digest = compute_claim_entry_hash(unsigned)
+        signed = replace(unsigned, entry_hash=digest)
+        signature = build_head_signature(digest.split(":", 1)[1], kms_adapter=kms_c)
+        r_mid = replace(signed, signature=signature)
+        holder.write(_canonical_bytes(asdict(r_mid)) + b"\n")
+        holder.flush()
+
+        assert not done.wait(timeout=0.2)  # B is still blocked on the lock
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+    finally:
+        holder.close()
+
+    assert done.wait(timeout=3.0)
+    thread.join(timeout=3.0)
+
+    # B linked to r_mid (the tail it saw *under* the lock), not the stale r1.
+    assert captured["b"].prev_entry_hash == r_mid.entry_hash
+    # The whole chain -- r1 -> r_mid -> r_b -- stays linear and verifiable.
+    assert journal_a.verify().ok
+
+
+# ---------------------------------------------------------------------------
 # Verifiability / tamper-evidence (offline replay)
 # ---------------------------------------------------------------------------
 
@@ -532,6 +748,60 @@ def test_ledger_journal_replay_is_deterministic(tmp_path: Path) -> None:
     # receipt, entry_hash, and signature.
     assert r1.to_dict() == r2.to_dict()
     assert r1.entry_hash == r2.entry_hash
+
+
+def test_journal_is_source_of_truth_no_receiptless_claim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A grant that cannot mint a receipt must not leave a held SQLite row.
+
+    The journal is the source of truth and the ledger is its projection: a
+    committed claim row with no backing receipt is a phantom holder the fold
+    can never explain. When the receipt append fails (disk / signing error),
+    ``try_claim`` must roll the SQLite transaction back so the claim is *not*
+    held -- caller-sees-failure and ledger-does-not-hold must agree.
+    """
+    chain = _chain(tmp_path)
+    journal = _journal(tmp_path, chain=chain)
+    ledger = ClaimLedger(tmp_path / "claims.db", journal=journal)
+
+    def boom(*_args: object, **_kwargs: object) -> ClaimReceipt:
+        raise RuntimeError("disk full while signing the claim receipt")
+
+    monkeypatch.setattr(journal, "append", boom)
+    with pytest.raises(RuntimeError, match="disk full"):
+        ledger.try_claim(
+            tracker="jira",
+            ticket_id="T-1",
+            role="backend",
+            claimer_id="worker-a",
+            ttl_seconds=600,
+            per_role_max_in_flight=1,
+            now=1000.0,
+        )
+
+    # No phantom: the ledger holds nothing and no receipt was recorded.
+    assert ledger.live_claims(now=1000.0) == []
+    assert journal.read() == []
+    assert chain.query(event_type=EVENT_CLAIM_JOURNAL_RECEIPT) == []
+
+    # The rollback left the connection usable: an honest claim still lands, and
+    # now the row is backed by exactly one receipt (materialised from it).
+    monkeypatch.undo()
+    outcome = ledger.try_claim(
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        ttl_seconds=600,
+        per_role_max_in_flight=1,
+        now=1000.0,
+    )
+    assert outcome.granted
+    receipts = journal.read()
+    assert len(receipts) == 1
+    live = ledger.live_claims(now=1000.0)
+    assert len(live) == 1
+    assert live[0]["claimer_id"] == receipts[0].claimer_id == "worker-a"
+    assert receipts[0].lease_expires_at == outcome.lease_expires_at
 
 
 def test_reject_unknown_receipt_kind(tmp_path: Path) -> None:

@@ -113,6 +113,22 @@ every `prev_entry_hash` link, every recomputed `entry_hash`, and every
 Ed25519 signature; a single flipped byte or a dropped receipt fails at the
 exact entry index.
 
+**Multi-writer safety.** Each append resolves the chain tail and writes the
+new receipt as one critical section under a single exclusive advisory lock
+on the journal file. Two nodes appending to the same journal on a shared
+filesystem are therefore serialised across the read-modify-write of
+`prev_entry_hash`, so concurrent honest claims stay on one linear chain
+instead of forking — a fork that offline `verify()` could not distinguish
+from tampering. Convergence between the concurrent claimants is then the
+ordinary lowest-`entry_hash` rule plus `reconcile(...)`.
+
+**Journal is the source of truth.** On the journal path a granted claim
+mints the signed receipt first and materialises the SQLite row *from that
+receipt* inside the same transaction. If the receipt cannot be written
+(disk or signing error) the transaction is rolled back, so the ledger never
+holds a row without a backing receipt — the projection can always be
+rebuilt from the journal alone.
+
 Deferred (not in this slice): MESH topology wiring in the orchestrator,
 A2A gossip of receipts between machines, fork detection at merge time, and
 the `bernstein cluster claims log | head | verify` CLI. Those land once the
