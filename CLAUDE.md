@@ -113,7 +113,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `clm_tls_launcher.py`       | mTLS launcher for the CLM adapter |
 | `codebuff.py`               | Codebuff CLI adapter |
 | `codex.py`                  | OpenAI Codex CLI adapter |
-| `codex_cloudflare.py`       | Codex adapter for Cloudflare Sandbox execution (experimental, non-functional) |
+| `codex_cloudflare.py`       | Codex adapter driving Cloudflare's first-party sandbox bridge (issue #2969) |
 | `cody.py`                   | Sourcegraph Cody CLI adapter |
 | `composio.py`               | Composio Agent Orchestrator (``ao``) CLI adapter |
 | `computer_use.py`           | Browser / computer-use adapter family (#2606) |
