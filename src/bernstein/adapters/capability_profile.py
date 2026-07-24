@@ -40,10 +40,13 @@ Profiles come in two shapes, distinguished by
     Migration to the factory is therefore incremental and opt-in - an
     existing adapter gains a profile without changing how it spawns.
 
-Import note: this module deliberately depends only on
+Import note: at module load this depends only on
 :mod:`bernstein.adapters.base`, :mod:`bernstein.adapters._contract` and
 :mod:`bernstein.adapters.env_isolation`. It imports no sibling adapter,
 so the ``adapters-independent`` import-linter contract holds.
+:func:`route_and_record` imports the audit-chain recorder lazily, inside
+the function and only when a chain is supplied, so the module's load-time
+surface stays lean the way the conformance canary keeps its own.
 """
 
 from __future__ import annotations
@@ -636,6 +639,81 @@ def select_profile_for(
     )
 
 
+def route_and_record(
+    requirements: TaskCapabilityRequirements,
+    *,
+    profiles: Iterable[AdapterCapabilityProfile] | None = None,
+    audit_chain: Any | None = None,
+    run_id: str = "",
+) -> AdapterCapabilityProfile:
+    """Select an adapter for a task and anchor the decision in the audit chain.
+
+    Wraps :func:`select_profile_for` so a routing decision leaves a
+    replay-verifiable trace instead of being an unobservable side effect of
+    dispatch. This is the seam the deterministic scheduler calls to route a
+    task by declared capability:
+
+    * On a match, the selected profile's content address is recorded, so replay
+      recomputes it and detects a changed declaration as a hash divergence
+      named by the adapter (profile drift becomes tamper-evident).
+    * On a mismatch, the content-addressed refusal receipt is anchored into the
+      HMAC chain *before* the :class:`CapabilityMismatchError` propagates, so
+      the refusal is a signed record rather than a silent fallback to a weaker
+      adapter.
+
+    Recording is opt-in: when ``audit_chain`` is ``None`` the function selects
+    (or refuses) exactly as :func:`select_profile_for` does, without touching a
+    chain. This keeps the function usable in contexts that have no chain -- for
+    example a dry-run capability probe -- and keeps this module's import surface
+    lean, since the chain module is imported lazily only when a chain is
+    supplied, the same way the conformance canary records its receipts.
+
+    Args:
+        requirements: What the task needs from whichever adapter runs it.
+        profiles: Candidate profiles. Defaults to the shipped catalogue,
+            enumerated in sorted name order for deterministic selection.
+        audit_chain: An ``AuditChainStore`` accepting the selection or refusal
+            record, or ``None`` to skip recording. Typed loosely to avoid a
+            module-level dependency on :mod:`bernstein.core.security`.
+        run_id: The run the routing decision is made for, recorded on the
+            anchored event.
+
+    Returns:
+        The first profile satisfying ``requirements``.
+
+    Raises:
+        CapabilityMismatchError: No candidate satisfies the task. The refusal
+            receipt it carries is anchored into ``audit_chain`` first when a
+            chain was supplied.
+    """
+    try:
+        selected = select_profile_for(requirements, profiles=profiles)
+    except CapabilityMismatchError as exc:
+        if audit_chain is not None:
+            from bernstein.core.security.audit_chain import record_capability_refusal
+
+            record_capability_refusal(
+                chain=audit_chain,
+                run_id=run_id,
+                receipt_hash=exc.receipt.receipt_hash,
+                requirements=exc.receipt.requirements,
+                candidates=[list(pair) for pair in exc.receipt.candidates],
+                unmet=list(exc.receipt.unmet),
+            )
+        raise
+    if audit_chain is not None:
+        from bernstein.core.security.audit_chain import record_capability_selection
+
+        record_capability_selection(
+            chain=audit_chain,
+            run_id=run_id,
+            adapter=selected.name,
+            profile_hash=selected.profile_hash,
+            requirements=requirements.to_canonical_dict(),
+        )
+    return selected
+
+
 # ---------------------------------------------------------------------------
 # Profile-to-contract cross-check
 # ---------------------------------------------------------------------------
@@ -1149,6 +1227,7 @@ __all__ = [
     "profile_built_adapter_classes",
     "profile_contract_discrepancies",
     "profile_hash_for",
+    "route_and_record",
     "sandbox_rank",
     "select_profile_for",
     "unmet_requirements",

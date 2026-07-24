@@ -140,6 +140,39 @@ The receipt hash is deterministic for a given
 `(requirements, candidates, unmet)` triple, so two operators
 reconstructing the same refusal derive the same identifier.
 
+## Anchoring the routing decision
+
+`route_and_record(requirements, audit_chain=chain, run_id=...)` is the
+seam the deterministic scheduler calls to route a task by declared
+capability. It wraps `select_profile_for` so the decision leaves a
+replay-verifiable trace in the HMAC audit chain instead of being an
+unobservable side effect of dispatch:
+
+- **On a match** it appends an `adapter.capability_selection` event
+  carrying the chosen adapter and the content-addressed profile hash it
+  presented. Replay recomputes that hash, so a declaration that changed
+  between two runs surfaces as a hash divergence named by the adapter.
+- **On a mismatch** it appends an `adapter.capability_refusal` event -
+  the refusal receipt's hash, the unmet axes, and every candidate with
+  the profile hash it presented - *before* the `CapabilityMismatchError`
+  propagates. The refusal is a signed, chain-anchored record an operator
+  can hand to a postmortem, never a silent fallback to a weaker adapter.
+
+```python
+from bernstein.adapters.capability_profile import route_and_record
+
+profile = route_and_record(
+    TaskCapabilityRequirements(mcp_client=True),
+    audit_chain=chain,
+    run_id=run_id,
+)
+```
+
+`audit_chain` is optional: with no chain the call selects (or refuses)
+exactly as `select_profile_for` does, so a dry-run capability probe stays
+chain-free. The chain module is imported lazily, only when a chain is
+supplied, so the adapter module's load-time import surface stays lean.
+
 ## Adding an agent as a profile
 
 1. Add an `AdapterCapabilityProfile` to `_PROFILE_LIST` in

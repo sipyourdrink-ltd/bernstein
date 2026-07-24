@@ -50,6 +50,7 @@ from bernstein.adapters.capability_profile import (
     get_profile,
     profile_built_adapter_classes,
     profile_contract_discrepancies,
+    route_and_record,
     select_profile_for,
     unmet_requirements,
 )
@@ -567,3 +568,121 @@ class TestProfileContractVerification:
         )
         discrepancies = profile_contract_discrepancies(overreaching, spec)
         assert any("TOTALLY_INVENTED_SECRET" in reason for reason in discrepancies), discrepancies
+
+
+# ---------------------------------------------------------------------------
+# Capability-aware routing is anchored in the audit chain
+# ---------------------------------------------------------------------------
+
+
+def _audit_chain(tmp_path: Path) -> object:
+    """A hermetic HMAC audit-chain store for the routing tests."""
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    return AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+
+
+class TestRouteAndRecord:
+    """Routing decisions leave a signed, replay-verifiable trace.
+
+    ``route_and_record`` wraps ``select_profile_for`` so that a match anchors
+    the presented profile hash and a mismatch anchors the refusal receipt --
+    the substrate coupling that makes adapter selection replay-verifiable
+    rather than an unobservable side effect of dispatch.
+    """
+
+    def test_match_returns_the_selected_profile(self, tmp_path: Path) -> None:
+        profile = _minimal_profile(mcp_client=True)
+        chain = _audit_chain(tmp_path)
+        selected = route_and_record(
+            TaskCapabilityRequirements(mcp_client=True),
+            profiles=(profile,),
+            audit_chain=chain,
+            run_id="run-1",
+        )
+        assert selected is profile
+
+    def test_match_records_the_presented_profile_hash(self, tmp_path: Path) -> None:
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_SELECTION
+
+        profile = _minimal_profile(mcp_client=True)
+        chain = _audit_chain(tmp_path)
+        route_and_record(
+            TaskCapabilityRequirements(mcp_client=True),
+            profiles=(profile,),
+            audit_chain=chain,
+            run_id="run-1",
+        )
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_SELECTION)  # type: ignore[attr-defined]
+        assert len(events) == 1
+        # The hash the chain records is the profile's own content address, so
+        # replay detects a changed declaration as a divergence named here.
+        assert events[0].details["profile_hash"] == profile.profile_hash
+        assert events[0].details["adapter"] == profile.name
+        assert events[0].details["run_id"] == "run-1"
+        assert chain.verify()[0]  # type: ignore[attr-defined]
+
+    def test_mismatch_reraises_rather_than_falling_back(self, tmp_path: Path) -> None:
+        profile = _minimal_profile(vision=False)
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(vision=True),
+                profiles=(profile,),
+                audit_chain=chain,
+                run_id="run-1",
+            )
+
+    def test_mismatch_records_the_refusal_receipt(self, tmp_path: Path) -> None:
+        from bernstein.core.security.audit_chain import EVENT_ADAPTER_CAPABILITY_REFUSAL
+
+        profile = _minimal_profile(vision=False)
+        chain = _audit_chain(tmp_path)
+        with pytest.raises(CapabilityMismatchError) as excinfo:
+            route_and_record(
+                TaskCapabilityRequirements(vision=True),
+                profiles=(profile,),
+                audit_chain=chain,
+                run_id="run-1",
+            )
+        events = chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL)  # type: ignore[attr-defined]
+        assert len(events) == 1
+        assert events[0].details["receipt_hash"] == excinfo.value.receipt.receipt_hash
+        assert events[0].details["unmet"] == ["vision"]
+        assert events[0].details["candidates"] == [[profile.name, profile.profile_hash]]
+        assert chain.verify()[0]  # type: ignore[attr-defined]
+
+    def test_no_chain_still_selects_without_recording(self, tmp_path: Path) -> None:
+        """A chainless call keeps working: recording is opt-in, not required."""
+        profile = _minimal_profile(mcp_client=True)
+        selected = route_and_record(
+            TaskCapabilityRequirements(mcp_client=True),
+            profiles=(profile,),
+        )
+        assert selected is profile
+
+    def test_no_chain_still_refuses(self) -> None:
+        profile = _minimal_profile(vision=False)
+        with pytest.raises(CapabilityMismatchError):
+            route_and_record(
+                TaskCapabilityRequirements(vision=True),
+                profiles=(profile,),
+            )
+
+    def test_match_records_nothing_on_refusal_channel(self, tmp_path: Path) -> None:
+        """A satisfied route must not emit a refusal event, and vice versa."""
+        from bernstein.core.security.audit_chain import (
+            EVENT_ADAPTER_CAPABILITY_REFUSAL,
+            EVENT_ADAPTER_CAPABILITY_SELECTION,
+        )
+
+        profile = _minimal_profile(mcp_client=True)
+        chain = _audit_chain(tmp_path)
+        route_and_record(
+            TaskCapabilityRequirements(mcp_client=True),
+            profiles=(profile,),
+            audit_chain=chain,
+            run_id="run-1",
+        )
+        assert chain.query(event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL) == []  # type: ignore[attr-defined]
+        assert len(chain.query(event_type=EVENT_ADAPTER_CAPABILITY_SELECTION)) == 1  # type: ignore[attr-defined]

@@ -414,6 +414,22 @@ EVENT_PLUGIN_CONFORMANCE_RECEIPT = "plugin.conformance_receipt"
 #: rather than living only in a CI log.
 EVENT_ADAPTER_CANARY_RECEIPT = "adapter.canary_receipt"
 
+#: Issue #2663 -- emitted when capability-aware routing selects an adapter for a
+#: task. The event binds the chosen adapter, the content-addressed capability
+#: profile it presented at dispatch, and the task requirements it satisfied.
+#: Recording the presented ``profile_hash`` makes profile drift replay-visible:
+#: a declaration that changes between two runs shows up as a hash divergence
+#: named by the adapter rather than as unexplained behaviour change.
+EVENT_ADAPTER_CAPABILITY_SELECTION = "adapter.capability_selection"
+
+#: Issue #2663 -- emitted when capability-aware routing refuses a task because
+#: no candidate adapter's declared profile satisfied its requirements. The event
+#: anchors the content-addressed refusal receipt (its hash, the unmet axes, and
+#: every candidate considered with the profile hash it presented) into the HMAC
+#: chain, so a routing refusal is a signed, reconstructable record rather than a
+#: silent fallback to a weaker adapter.
+EVENT_ADAPTER_CAPABILITY_REFUSAL = "adapter.capability_refusal"
+
 #: Issue #2367 -- emitted when the orchestrator forcibly reaps an agent
 #: process tree.  The event records which platform mechanism delivered the
 #: stop (POSIX process-group signalling or Windows process-tree
@@ -3835,6 +3851,105 @@ def record_adapter_canary_receipt(
     )
 
 
+def record_capability_selection(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    adapter: str,
+    profile_hash: str,
+    requirements: dict[str, Any],
+    actor: str = "capability_router",
+) -> AuditEvent:
+    """Append an ``adapter.capability_selection`` event into *chain* (#2663).
+
+    Mirrors one capability-aware routing decision into the HMAC chain: the
+    adapter chosen for a task and the content-addressed capability profile it
+    presented at dispatch. The recorded ``profile_hash`` is a pure function of
+    the adapter's declaration, so a verifier replaying the run recomputes it and
+    detects a changed declaration as a hash divergence named by the adapter --
+    profile drift becomes tamper-evident rather than an unexplained behaviour
+    change. Only names, hashes, and the task's declared requirements are
+    recorded; never a prompt or a spawn command.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the routing decision was made for.
+        adapter: Registry key of the selected adapter.
+        profile_hash: Content address of the capability profile the adapter
+            presented (its :attr:`profile_hash`).
+        requirements: Canonical form of the task requirements the profile
+            satisfied.
+        actor: Recorded actor; defaults to ``"capability_router"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADAPTER_CAPABILITY_SELECTION,
+        actor=actor,
+        resource_type="adapter_capability_selection",
+        resource_id=adapter,
+        details={
+            "run_id": run_id,
+            "adapter": adapter,
+            "profile_hash": profile_hash,
+            "requirements": dict(sorted(requirements.items())),
+        },
+    )
+
+
+def record_capability_refusal(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    receipt_hash: str,
+    requirements: dict[str, Any],
+    candidates: list[list[str]],
+    unmet: list[str],
+    actor: str = "capability_router",
+) -> AuditEvent:
+    """Append an ``adapter.capability_refusal`` event into *chain* (#2663).
+
+    Anchors one capability-aware routing refusal: no candidate adapter's
+    declared profile satisfied the task, so routing refuses rather than falling
+    back to a weaker adapter. The event mirrors the content-addressed refusal
+    receipt -- its hash, the union of unmet axes, and every candidate considered
+    paired with the profile hash it presented -- into the HMAC chain. A verifier
+    holding the receipt can recompute its hash and check it against the chain,
+    so the refusal is a signed, reconstructable record an operator can hand to a
+    postmortem rather than a decision that left no trace.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the refusal was raised for.
+        receipt_hash: Content address of the
+            :class:`~bernstein.adapters.capability_profile.CapabilityRefusalReceipt`.
+        requirements: Canonical form of the task requirements that went unmet.
+        candidates: ``[adapter name, profile hash]`` pairs considered, in the
+            order they were offered.
+        unmet: Sorted union of every unmet capability axis across candidates.
+        actor: Recorded actor; defaults to ``"capability_router"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADAPTER_CAPABILITY_REFUSAL,
+        actor=actor,
+        resource_type="adapter_capability_refusal",
+        resource_id=receipt_hash,
+        details={
+            "run_id": run_id,
+            "receipt_hash": receipt_hash,
+            "requirements": dict(sorted(requirements.items())),
+            "candidates": [list(pair) for pair in candidates],
+            "unmet": list(unmet),
+        },
+    )
+
+
 def record_adapter_spawn_preflight_receipt(
     *,
     chain: AuditChainStore,
@@ -6870,6 +6985,8 @@ __all__ = [
     "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
     "EVENT_ADAPTER_CANARY_RECEIPT",
+    "EVENT_ADAPTER_CAPABILITY_REFUSAL",
+    "EVENT_ADAPTER_CAPABILITY_SELECTION",
     "EVENT_ADAPTER_FLOOR_UPDATE",
     "EVENT_ADAPTER_SPAWN_PREFLIGHT",
     "EVENT_ADAPTER_VERSION_POSTURE",
@@ -7003,6 +7120,8 @@ __all__ = [
     "record_cache_eviction",
     "record_cache_hit",
     "record_cache_miss",
+    "record_capability_refusal",
+    "record_capability_selection",
     "record_checkpoint_retry",
     "record_computer_use_action",
     "record_context_capsule",
