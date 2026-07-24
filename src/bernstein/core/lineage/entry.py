@@ -18,8 +18,10 @@ LINEAGE_ENTRY_VERSION = 1
 # as ``file``; the non-coding artifact contract (issue #2608) adds the four
 # activity-worker output kinds (``report`` / ``dataset`` / ``action_log`` /
 # ``ops_result``) so a non-coding artifact can be a first-class signed lineage
-# record. The set stays closed - membership only widens and an unknown kind
-# still raises in :meth:`LineageEntry.__post_init__`.
+# record, and the query-receipt surface (issue #2887) adds ``query-result`` for
+# a content-addressed data-source result set. The set stays closed - membership
+# only widens and an unknown kind still raises in
+# :meth:`LineageEntry.__post_init__`.
 ARTEFACT_KINDS: frozenset[str] = frozenset(
     {
         "file",
@@ -31,6 +33,7 @@ ARTEFACT_KINDS: frozenset[str] = frozenset(
         "dataset",
         "action_log",
         "ops_result",
+        "query-result",
     }
 )
 
