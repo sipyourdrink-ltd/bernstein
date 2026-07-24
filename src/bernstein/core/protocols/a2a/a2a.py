@@ -63,11 +63,19 @@ _A2A_STATE_SCHEMA_VERSION: int = 1
 
 
 class A2ATaskStatus(Enum):
-    """A2A protocol task states, mapped to Bernstein TaskStatus."""
+    """A2A protocol task states, mapped to Bernstein TaskStatus.
+
+    ``INPUT_REQUIRED`` and ``AUTH_REQUIRED`` are the two wait states a
+    callable node must be able to express to a peer (#2609): the first when
+    the node needs more input from the caller, the second when the node needs
+    the caller to authenticate to a downstream resource before it can
+    proceed. Both project onto a locally ``blocked`` task.
+    """
 
     SUBMITTED = "submitted"
     WORKING = "working"
     INPUT_REQUIRED = "input-required"
+    AUTH_REQUIRED = "auth-required"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
@@ -108,6 +116,7 @@ _A2A_TO_BERNSTEIN: dict[A2ATaskStatus, str] = {
     A2ATaskStatus.SUBMITTED: "open",
     A2ATaskStatus.WORKING: "in_progress",
     A2ATaskStatus.INPUT_REQUIRED: "blocked",
+    A2ATaskStatus.AUTH_REQUIRED: "blocked",
     A2ATaskStatus.COMPLETED: "done",
     A2ATaskStatus.FAILED: "failed",
     A2ATaskStatus.CANCELED: "cancelled",

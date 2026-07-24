@@ -14,14 +14,18 @@ receipt, and a public key.
 Scope of the claim
 ------------------
 A receipt attests the exact response bytes the node recorded *at the moment
-it was issued*. On the inbound send path that moment is acceptance: the
-response is the acceptance record (the task this node took in and chained),
-not the eventual completed result. So a receipt proves "this is the answer
-this node recorded for this task", not "this task has finished". Re-attesting
-the completed result when the task terminates, and serving that receipt from
-the read path, is tracked as a follow-up on #2609. The mechanism below is
-independent of which response dict it is handed, so it carries over unchanged
-when the completion-time response is the one recorded.
+it was issued*. The mechanism is independent of which response dict it is
+handed, so the same issuer serves both moments a task is attestable:
+
+* **Acceptance** - the REST ``POST /a2a/tasks/send`` path and the JSON-RPC
+  ``message/send`` path attest the acceptance record (the task this node took
+  in and chained). That receipt proves "this is the request this node
+  recorded", not "this task has finished".
+* **Completion** - the JSON-RPC ``tasks/get`` path, once the underlying task is
+  done, re-attests the completed result and serves that receipt inside the
+  completed task's artifact (see :mod:`bernstein.core.routes.a2a_jsonrpc`). The
+  completion receipt is minted once and reused on later polls, so reads do not
+  grow the chain.
 
 Two independent claims, deliberately kept apart
 -----------------------------------------------
@@ -352,6 +356,7 @@ class A2AReceiptIssuer:
         response: dict[str, Any],
         step_id: str = "",
         timestamp: int | None = None,
+        caller: str = "",
     ) -> A2ATaskReceipt:
         """Record ``response`` on the spine and return its receipt.
 
@@ -363,6 +368,12 @@ class A2AReceiptIssuer:
                 the current time in nanoseconds. Passing an explicit value
                 makes the whole projection deterministic, which is what the
                 determinism tests rely on.
+            caller: Authenticated A2A caller id (#2609). When supplied it is
+                folded into the chain entry's ``actor`` so the accepted task is
+                attributable to the identity that called; the caller is part of
+                the signed binding, so it cannot be altered after the fact.
+                Two identical calls from the same caller still project
+                byte-identical receipts.
 
         Returns:
             The :class:`A2ATaskReceipt` to attach to the response.
@@ -377,11 +388,14 @@ class A2AReceiptIssuer:
         content = canonical_response_bytes(response)
         artefact_path = receipt_artefact_path(task_id)
         ts = time.time_ns() if timestamp is None else timestamp
+        # Attribute the chain entry to the authenticated caller when known, so
+        # the audit chain answers "who delegated this?" without a side channel.
+        actor = f"{self._actor}:{caller}" if caller else self._actor
 
         entry = self._spine.record_entry(
             artifact_path=artefact_path,
             content=content,
-            actor=self._actor,
+            actor=actor,
             step_id=step_id or f"a2a:{task_id}",
             model=self._model,
             timestamp=ts,
