@@ -1,0 +1,208 @@
+{
+  "_comment": [
+    "Figure-tokenizer classification vectors (issue #2888).",
+    "This file pins the false-positive policy of the report figure tokenizer:",
+    "which numeric tokens are MATERIAL (demand a grounding anchor) and which are",
+    "EXEMPT (section numbers, ISO dates, versions, allowlisted patterns, and",
+    "below-threshold incidental counts).",
+    "",
+    "Extend the suite by appending a case to `cases`. Each case is a report",
+    "snippet plus the ordered list of numeric tokens the tokenizer must emit,",
+    "each with its surface string, whether it is material, and its category.",
+    "`category` is one of: currency, percentage, quantity, count, range (all",
+    "material) or date, version, section, allowlisted, below_threshold (all",
+    "exempt). The test asserts the emitted (surface, material, category) triples",
+    "equal `expect` in order, so a policy regression fails loudly here.",
+    "",
+    "`policy` overrides the tokenizer defaults for the whole suite; today only",
+    "`materiality_min` (bare integers strictly below this are incidental/exempt)",
+    "and `allowlist` (extra exempt regexes) are honoured."
+  ],
+  "policy": {
+    "materiality_min": 1000,
+    "allowlist": [
+      "\\b\\d{1,2}/\\d{1,2}\\b"
+    ]
+  },
+  "cases": [
+    {
+      "id": "currency-dollar-grouped-decimal",
+      "text": "Quarterly revenue was $1,234.56 across the segment.",
+      "expect": [
+        {"surface": "$1,234.56", "material": true, "category": "currency"}
+      ]
+    },
+    {
+      "id": "currency-euro-plain",
+      "text": "The licence costs €49 per seat.",
+      "expect": [
+        {"surface": "€49", "material": true, "category": "currency"}
+      ]
+    },
+    {
+      "id": "currency-magnitude-suffix",
+      "text": "Total addressable spend is $4.5M this year.",
+      "expect": [
+        {"surface": "$4.5M", "material": true, "category": "currency"}
+      ]
+    },
+    {
+      "id": "currency-iso-code",
+      "text": "Settlement of USD 2,000 cleared overnight.",
+      "expect": [
+        {"surface": "USD 2,000", "material": true, "category": "currency"}
+      ]
+    },
+    {
+      "id": "percentage-decimal",
+      "text": "Error rate rose to 12.5% after the change.",
+      "expect": [
+        {"surface": "12.5%", "material": true, "category": "percentage"}
+      ]
+    },
+    {
+      "id": "percentage-word",
+      "text": "Coverage improved by 30 percent overall.",
+      "expect": [
+        {"surface": "30 percent", "material": true, "category": "percentage"}
+      ]
+    },
+    {
+      "id": "quantity-unit-decimal",
+      "text": "The dump was 3.2 GB when compressed.",
+      "expect": [
+        {"surface": "3.2 GB", "material": true, "category": "quantity"}
+      ]
+    },
+    {
+      "id": "quantity-latency-unit",
+      "text": "P99 latency held at 250 ms under load.",
+      "expect": [
+        {"surface": "250 ms", "material": true, "category": "quantity"}
+      ]
+    },
+    {
+      "id": "count-grouped-noun",
+      "text": "We migrated 1,234 users without incident.",
+      "expect": [
+        {"surface": "1,234", "material": true, "category": "count"}
+      ]
+    },
+    {
+      "id": "count-large-bare",
+      "text": "The batch processed 5000 records overnight.",
+      "expect": [
+        {"surface": "5000", "material": true, "category": "count"}
+      ]
+    },
+    {
+      "id": "count-decimal-bare",
+      "text": "The mean depth was 4.7 across the sample.",
+      "expect": [
+        {"surface": "4.7", "material": true, "category": "count"}
+      ]
+    },
+    {
+      "id": "range-percentage",
+      "text": "Throughput improved 10-20% depending on shard.",
+      "expect": [
+        {"surface": "10-20%", "material": true, "category": "range"}
+      ]
+    },
+    {
+      "id": "iso-date-exempt",
+      "text": "The incident opened on 2026-07-24 and closed same day.",
+      "expect": [
+        {"surface": "2026-07-24", "material": false, "category": "date"}
+      ]
+    },
+    {
+      "id": "iso-datetime-exempt",
+      "text": "Snapshot taken at 2026-07-24T09:30 by the collector.",
+      "expect": [
+        {"surface": "2026-07-24T09:30", "material": false, "category": "date"}
+      ]
+    },
+    {
+      "id": "version-v-prefixed-exempt",
+      "text": "Shipped in v3.9.0 of the orchestrator.",
+      "expect": [
+        {"surface": "v3.9.0", "material": false, "category": "version"}
+      ]
+    },
+    {
+      "id": "version-semver-exempt",
+      "text": "The pin moved to 1.2.3 last week.",
+      "expect": [
+        {"surface": "1.2.3", "material": false, "category": "version"}
+      ]
+    },
+    {
+      "id": "section-symbol-exempt",
+      "text": "See §3.2 for the canonicalisation rule.",
+      "expect": [
+        {"surface": "§3.2", "material": false, "category": "section"}
+      ]
+    },
+    {
+      "id": "section-word-exempt",
+      "text": "Section 4 covers the failure semantics.",
+      "expect": [
+        {"surface": "Section 4", "material": false, "category": "section"}
+      ]
+    },
+    {
+      "id": "section-figure-ref-exempt",
+      "text": "Figure 2 shows the chain projection.",
+      "expect": [
+        {"surface": "Figure 2", "material": false, "category": "section"}
+      ]
+    },
+    {
+      "id": "below-threshold-incidental",
+      "text": "There are 3 steps and 2 options in the flow.",
+      "expect": [
+        {"surface": "3", "material": false, "category": "below_threshold"},
+        {"surface": "2", "material": false, "category": "below_threshold"}
+      ]
+    },
+    {
+      "id": "allowlisted-fraction-pattern",
+      "text": "The rota runs 24/7 during the freeze.",
+      "expect": [
+        {"surface": "24/7", "material": false, "category": "allowlisted"}
+      ]
+    },
+    {
+      "id": "mixed-material-and-exempt",
+      "text": "Per §2, the 2026-07-24 run moved $1,000 across 1,500 accounts at 9.9%.",
+      "expect": [
+        {"surface": "§2", "material": false, "category": "section"},
+        {"surface": "2026-07-24", "material": false, "category": "date"},
+        {"surface": "$1,000", "material": true, "category": "currency"},
+        {"surface": "1,500", "material": true, "category": "count"},
+        {"surface": "9.9%", "material": true, "category": "percentage"}
+      ]
+    },
+    {
+      "id": "identifier-glued-number-skipped",
+      "text": "P99 latency held at 250 ms under load.",
+      "expect": [
+        {"surface": "250 ms", "material": true, "category": "quantity"}
+      ]
+    },
+    {
+      "id": "bare-year-exempt",
+      "text": "In 2026 the orchestrator moved 5000 records.",
+      "expect": [
+        {"surface": "2026", "material": false, "category": "date"},
+        {"surface": "5000", "material": true, "category": "count"}
+      ]
+    },
+    {
+      "id": "no-numbers",
+      "text": "The report contains only prose and no figures at all.",
+      "expect": []
+    }
+  ]
+}
