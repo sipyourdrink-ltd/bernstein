@@ -407,6 +407,7 @@ nav:
           - Lineage conflict resolution: lineage/conflict-resolution.md
           - Tracker audit: lineage/tracker-audit.md
           - A2A message receipts: operations/a2a-message-receipts.md
+          - A2A JSON-RPC server surface: operations/a2a-server.md
   - Reference:
       - reference/index.md
       - CLI:

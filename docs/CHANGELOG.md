@@ -4,6 +4,19 @@ All notable project changes are tracked here (code + docs).
 
 ## [Unreleased]
 
+### Added
+
+- A2A JSON-RPC server surface: one instance can be called into as a
+  discoverable node. The signed agent card is served at both
+  `/.well-known/agent-card.json` and `/.well-known/agent.json`; a JSON-RPC 2.0
+  endpoint (`/a2a/v1`) dispatches `message/send`, `tasks/get`, and
+  `message/stream` (SSE); auth is a card-declared API key plus OAuth2
+  client-credentials, rejected per spec, with the caller anchored in the audit
+  chain; and a completed task returns an artifact whose parts carry a lineage
+  receipt the caller verifies offline with `bernstein a2a verify`. Off by
+  default behind `BERNSTEIN_A2A_SERVER_ENABLED`. See
+  [`docs/operations/a2a-server.md`](operations/a2a-server.md). Refs #2609.
+
 ## [3.5.0] - 2026-07-16
 
 Hardens audit identity across MCP protocol change and replay detection of provider-side context rewrites, plus a security dependency bump and CI reliability work. Full notes: [`docs/release-notes/v3.5.0.md`](release-notes/v3.5.0.md).
