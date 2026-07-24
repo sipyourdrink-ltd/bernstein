@@ -14,7 +14,25 @@ from dataclasses import asdict, dataclass
 
 LINEAGE_ENTRY_VERSION = 1
 
-ARTEFACT_KINDS: frozenset[str] = frozenset({"file", "sdd-runtime", "mcp-result", "config", "tool-result"})
+# Closed set of recordable artefact kinds. The coding path records file writes
+# as ``file``; the non-coding artifact contract (issue #2608) adds the four
+# activity-worker output kinds (``report`` / ``dataset`` / ``action_log`` /
+# ``ops_result``) so a non-coding artifact can be a first-class signed lineage
+# record. The set stays closed - membership only widens and an unknown kind
+# still raises in :meth:`LineageEntry.__post_init__`.
+ARTEFACT_KINDS: frozenset[str] = frozenset(
+    {
+        "file",
+        "sdd-runtime",
+        "mcp-result",
+        "config",
+        "tool-result",
+        "report",
+        "dataset",
+        "action_log",
+        "ops_result",
+    }
+)
 
 #: Provenance trust classes recordable on an entry (issue #2513). ``None`` on
 #: an entry means "no trust class recorded" and is dropped from the canonical

@@ -91,5 +91,21 @@ def test_accepts_all_artefact_kinds():
         LineageEntry(**_kwargs(artefact_kind=kind))
 
 
+def test_accepts_widened_non_coding_kinds():
+    # Issue #2608: the non-coding artifact kinds must be recordable.
+    for kind in ("report", "dataset", "action_log", "ops_result"):
+        assert kind in ARTEFACT_KINDS
+        entry = LineageEntry(**_kwargs(artefact_kind=kind))
+        assert entry.artefact_kind == kind
+
+
+def test_widening_keeps_the_set_closed():
+    # A kind outside the closed set (including the coding-path ``code_diff``,
+    # which is recorded as a ``file`` write, not its own lineage kind) raises.
+    for bogus in ("code_diff", "screenshot", "unknown"):
+        with pytest.raises(ValueError, match="unknown artefact_kind"):
+            LineageEntry(**_kwargs(artefact_kind=bogus))
+
+
 def test_version_constant():
     assert LINEAGE_ENTRY_VERSION == 1
