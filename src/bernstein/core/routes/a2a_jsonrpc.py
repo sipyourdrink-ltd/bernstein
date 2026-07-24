@@ -161,7 +161,7 @@ async def a2a_oauth_token(request: Request) -> JSONResponse:
     try:
         raw_form = await request.form()
         form = {k: str(v) for k, v in raw_form.items()}
-    except Exception:  # pragma: no cover - defensive: malformed multipart
+    except Exception:  # pragma: no cover  # intentional-broad-except: malformed multipart is best-effort
         form = {}
 
     grant_type = form.get("grant_type", "")
@@ -232,7 +232,7 @@ async def a2a_jsonrpc(request: Request) -> Any:
     # 2. Parse the JSON body into a JSON-RPC request.
     try:
         body = await request.json()
-    except Exception:
+    except Exception:  # intentional-broad-except: malformed JSON body returns a JSON-RPC parse error
         return JSONResponse(
             status_code=200,
             content=jsonrpc_error_response(None, JSONRPC_PARSE_ERROR, "request body is not valid JSON"),
@@ -258,7 +258,7 @@ async def a2a_jsonrpc(request: Request) -> Any:
             )
     except JSONRPCError as exc:
         return JSONResponse(status_code=200, content=jsonrpc_error_response(rpc.id, exc.code, exc.message))
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # pragma: no cover  # intentional-broad-except: dispatch failure -> JSON-RPC error
         logger.warning("A2A JSON-RPC %s failed: %s", rpc.method, exc)
         return JSONResponse(
             status_code=200,
@@ -433,7 +433,7 @@ def _stream_message(request: Request, request_id: Any, params: dict[str, Any], *
         except JSONRPCError as exc:
             yield _sse(jsonrpc_error_response(request_id, exc.code, exc.message))
             return
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover  # intentional-broad-except: stream failure -> JSON-RPC error
             logger.warning("A2A message/stream failed: %s", exc)
             yield _sse(jsonrpc_error_response(request_id, JSONRPC_INTERNAL_ERROR, "internal error"))
             return
