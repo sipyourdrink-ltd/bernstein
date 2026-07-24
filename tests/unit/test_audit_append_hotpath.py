@@ -36,7 +36,7 @@ class _FakeDatetime:
     def __init__(self, instants: list[_FakeInstant]) -> None:
         self.queue = list(instants)
 
-    def now(self, tz: object = None) -> _FakeInstant:  # noqa: ARG002 - signature parity
+    def now(self, tz: object = None) -> _FakeInstant:  # tz kept for signature parity
         return self.queue.pop(0)
 
 
