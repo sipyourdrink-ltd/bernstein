@@ -160,7 +160,9 @@ class TestAgyZeroConfigSpawn:
 
         monkeypatch.setattr(adapter, "spawn", _fake_spawn)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        # Worktree isolation is on (the default) so the manager spawn has a real
+        # write boundary; tmp_path is git-initialised by the spawner-repo fixture.
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
 
         task = make_task(role="manager")
         session = spawner.spawn_for_tasks([task])

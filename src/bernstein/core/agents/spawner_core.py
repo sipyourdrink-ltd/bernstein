@@ -361,6 +361,51 @@ def extract_error_aware_reason(log_text: str, max_chars: int = _FAILURE_REASON_M
     return f"(no error pattern found, showing last {_FAILURE_REASON_FALLBACK_LINES} lines)\n{tail}"[:max_chars]
 
 
+# Roles whose spawn must never run unconfined in the operator checkout.
+# The manager/planning role is told (by prompt) not to write files, but prompt
+# text is not a boundary: an ungated CLI adapter that ignores the rule writes
+# straight into its cwd (issue #2793).
+_WRITE_BOUNDARY_ROLES = frozenset({"manager"})
+
+
+def manager_write_boundary_error(
+    role: str,
+    spawn_cwd: Path,
+    workdir: Path,
+    has_os_sandbox: bool,
+) -> str | None:
+    """Return a refusal message when a planning role would run unconfined.
+
+    A stray write from a manager/planning agent must not land in the operator
+    checkout. A per-session git worktree (``spawn_cwd`` distinct from the
+    operator root) or an OS sandbox both confine writes; either satisfies the
+    boundary. When neither is present the spawn must fail loudly instead of
+    proceeding on prompt-only protection (issue #2793).
+
+    Args:
+        role: The role being spawned.
+        spawn_cwd: The resolved working directory the agent will spawn into.
+        workdir: The operator checkout root.
+        has_os_sandbox: Whether an OS-level sandbox confines the agent.
+
+    Returns:
+        An actionable error string when the spawn must be refused, else None.
+    """
+    if role not in _WRITE_BOUNDARY_ROLES:
+        return None
+    if has_os_sandbox:
+        return None
+    if spawn_cwd.resolve() != workdir.resolve():
+        # Confined to a per-session worktree (or a separate repo checkout).
+        return None
+    return (
+        f"Refusing to spawn a {role!r} agent in the operator checkout with no write "
+        f"boundary: prompt-only protection lets a stray write land untracked in your "
+        f"working tree. Run with worktree isolation (the default) or an OS sandbox "
+        f"(e.g. --sandbox docker). See issue #2793."
+    )
+
+
 def _diagnose_spawn_failure(
     session_id: str,
     spawn_cwd: Path,
@@ -3616,6 +3661,23 @@ class AgentSpawner:
                         f"Cannot create workspace for agent {session_id}: {exc}. "
                         "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
                     ) from exc
+
+        # Manager/planning write-boundary preflight (#2793). Once the working
+        # directory is resolved, refuse a planning agent that would run directly
+        # in the operator checkout with no OS sandbox: prompt text is not a
+        # boundary, and an ungated CLI adapter that ignores it writes straight
+        # into the operator tree. A per-session worktree or an OS sandbox both
+        # satisfy the boundary, so the default (worktree) flow is unaffected.
+        _boundary_error = manager_write_boundary_error(
+            role,
+            spawn_cwd,
+            self._workdir,
+            has_os_sandbox=(
+                self._sandbox is not None or self._container_mgr is not None or self._sandbox_backend is not None
+            ),
+        )
+        if _boundary_error is not None:
+            raise SpawnError(_boundary_error)
 
         # Install the in-process verification-gate policy for this session so a
         # gate-capable adapter (Claude Code) can refuse a failing completion or
