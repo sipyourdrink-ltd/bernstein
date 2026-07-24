@@ -1,13 +1,17 @@
 """Worker command: join a Bernstein cluster as a remote worker node.
 
 Usage:
-  bernstein worker --server http://central:8052
-  bernstein worker --server http://central:8052 --name gpu-node-1 --slots 8
   bernstein worker --server http://central:8052 --token SECRET
+  bernstein worker --server http://central:8052 --token SECRET --name gpu-node-1 --slots 8
 
 The worker registers itself with the central task server, starts a
 heartbeat loop, and polls for tasks to execute locally via the CLI
 agent adapter.
+
+Cluster mode enables bearer auth on the central server, so ``--token`` (or the
+``BERNSTEIN_AUTH_TOKEN`` env var) is required: pass the value the central node
+was started with (``BERNSTEIN_AUTH_TOKEN`` or ``BERNSTEIN_CLUSTER_AUTH_SECRET``).
+When the central auto-generates one it is written to ``.sdd/runtime/auth.token``.
 """
 
 from __future__ import annotations
@@ -239,10 +243,37 @@ class WorkerLoop:
                 node_id = resp.json().get("id")
                 logger.info("Registered as node %s with %s", node_id, self._server_url)
                 return node_id
+            if resp.status_code in (401, 403):
+                # An auth rejection is a credential/config error, not a
+                # transient fault: re-sending the same header every 5s never
+                # succeeds and hides the real cause (#2805 / #2802). Abort.
+                self._fail_fast_auth(resp.status_code)
+                return None
             logger.warning("Registration failed: %d %s", resp.status_code, resp.text[:200])
         except httpx.HTTPError as exc:
             logger.warning("Registration error: %s", exc)
         return None
+
+    def _fail_fast_auth(self, status_code: int) -> None:
+        """Stop the worker on an unrecoverable registration auth rejection.
+
+        Prints an actionable message naming the credential the central server
+        requires and where to obtain it, then aborts the run loop instead of
+        retrying a request that cannot succeed.
+        """
+        console.print(
+            f"[red]Registration rejected ({status_code}):[/red] the central server "
+            "requires a bearer token this worker did not present (or presented an "
+            "unaccepted one)."
+        )
+        console.print(
+            "  Pass it with [bold]--token[/bold] or the [bold]BERNSTEIN_AUTH_TOKEN[/bold] env var. "
+            "When the central node auto-generates a token it writes it to "
+            "[bold].sdd/runtime/auth.token[/bold]; copy that value to this worker.\n"
+            "  In cluster mode the same token must equal BERNSTEIN_CLUSTER_AUTH_SECRET if one is set."
+        )
+        self._running = False
+        self._wake.signal_abort()
 
     def _heartbeat(self, client: httpx.Client, node_id: str) -> bool:
         """Send heartbeat with updated capacity. Returns True on success."""
@@ -351,6 +382,10 @@ class WorkerLoop:
             node_id = self._register(client)
             if node_id is not None:
                 break
+            if not self._running:
+                # Fail-fast path (e.g. auth rejection) already aborted the
+                # loop; do not print a misleading retry notice.
+                return None
             console.print("[yellow]Registration failed, retrying in 5s...[/yellow]")
             if self._wake.wait(timeout_s=5.0) == WakeReason.ABORT:
                 return None
@@ -546,12 +581,16 @@ def worker(
     work across multiple machines.
 
     \b
+    Cluster mode requires a bearer token: pass --token (or set
+    BERNSTEIN_AUTH_TOKEN) to the value the central node was started with.
+
+    \b
     Examples:
-      bernstein worker --server http://central:8052
-      bernstein worker --server http://central:8052 --name gpu-box --slots 8
-      bernstein worker --server http://central:8052 --label gpu=true
-      bernstein worker --server http://central:8052 --poll-interval-ms 2000
-      BERNSTEIN_SERVER_URL=http://central:8052 bernstein worker
+      bernstein worker --server http://central:8052 --token SECRET
+      bernstein worker --server http://central:8052 --token SECRET --name gpu-box --slots 8
+      bernstein worker --server http://central:8052 --token SECRET --label gpu=true
+      bernstein worker --server http://central:8052 --token SECRET --poll-interval-ms 2000
+      BERNSTEIN_SERVER_URL=http://central:8052 BERNSTEIN_AUTH_TOKEN=SECRET bernstein worker
     """
     from bernstein.core.poll_config import PollConfigValidationError, validate_poll_config
 

@@ -20,6 +20,40 @@ Pick one based on where the workers live relative to the central node.
 
 ---
 
+## Authentication
+
+Cluster mode enables bearer auth on the central server's API, so a worker
+must present a token to register, heartbeat, and pull tasks. **One token
+covers all three** - the same value the central node accepts for its API also
+authenticates node join.
+
+Set the token on the central node with either of:
+
+- `BERNSTEIN_AUTH_TOKEN` - the API bearer token, or
+- `BERNSTEIN_CLUSTER_AUTH_SECRET` - a dedicated cluster secret.
+
+Pass the **same value** to each worker with `--token` (or export
+`BERNSTEIN_AUTH_TOKEN` in the worker's environment). Copy it to the worker
+host out of band (scp, your secrets manager, etc.).
+
+If you start the central node with `bernstein run --remote` and set neither,
+a token is auto-generated and written, mode `0600`, to
+`.sdd/runtime/auth.token`; read it from there and distribute it. The startup
+log names that path but never prints the value.
+
+Read-only status checks need the token too:
+
+```bash
+curl -H "Authorization: Bearer $BERNSTEIN_AUTH_TOKEN" \
+    http://central:8052/cluster/status
+```
+
+A worker that omits the token, or presents one the central node does not
+accept, now fails fast with an actionable error instead of retrying the same
+rejected request every 5 s.
+
+---
+
 ## Pattern 1 - Same-VPC mTLS
 
 Both the central server and the workers run inside one trusted network
@@ -36,8 +70,10 @@ bernstein cluster bootstrap-ca \
     --out-dir ~/.bernstein/cluster \
     --server-san central.internal
 
-# Bind to all interfaces so workers can reach it.
-BERNSTEIN_BIND_HOST=0.0.0.0 bernstein start
+# Set the shared worker token (any strong random value) and enable cluster
+# mode, then bind to all interfaces so workers can reach it.
+export BERNSTEIN_AUTH_TOKEN="$(openssl rand -hex 32)"
+BERNSTEIN_BIND_HOST=0.0.0.0 BERNSTEIN_CLUSTER_ENABLED=1 bernstein start
 ```
 
 > **Containers:** `bernstein start` detaches the task server and returns, so
@@ -60,9 +96,11 @@ server key into `ClusterConfig.tls` as shown in
 ```bash
 # On each worker
 # (ca.crt + node.crt + node.key copied out-of-band into ~/.bernstein/cluster/)
+# --token is the same value set as BERNSTEIN_AUTH_TOKEN on the central node.
 bernstein worker \
     --server https://central.internal:8052 \
-    --roles backend
+    --roles backend \
+    --token "$BERNSTEIN_AUTH_TOKEN"
 ```
 
 The worker's CA, node cert, and node key are wired through
@@ -140,10 +178,12 @@ public hostname like any HTTPS server.
 
 ```bash
 # On the worker (laptop, separate cloud, build runner)
+# --token is the value the central node sets as BERNSTEIN_CLUSTER_AUTH_SECRET,
+# copied to this host out of band.
 bernstein worker \
     --server https://central.bernstein.example.com \
     --roles backend \
-    --token "$BERNSTEIN_AUTH_TOKEN"
+    --token "$BERNSTEIN_CLUSTER_AUTH_SECRET"
 ```
 
 If you put Cloudflare Access in front of the hostname, set:
@@ -175,10 +215,16 @@ End-to-end:
    for their service token, run `bernstein worker --server
    https://central.bernstein.example.com --roles backend`. They never
    touch your VPN.
-4. **Verify.** On the central node, the `GET /cluster/status` snapshot lists the
-   contractor's worker as `ONLINE`. Revoking the service token in
-   Cloudflare immediately blocks them at the edge - Bernstein doesn't
-   need to know.
+4. **Verify.** The cluster status snapshot lists the contractor's worker as
+   `ONLINE`. The endpoint requires the bearer token:
+
+   ```bash
+   curl -H "Authorization: Bearer $BERNSTEIN_CLUSTER_AUTH_SECRET" \
+       https://central.bernstein.example.com/cluster/status
+   ```
+
+   Revoking the service token in Cloudflare immediately blocks them at the
+   edge - Bernstein doesn't need to know.
 
 For a regulated workload, layer mTLS underneath the tunnel so the
 encryption is end-to-end and the application can verify the worker's
@@ -252,10 +298,12 @@ tailscale status | grep bernstein-central
 # On the worker
 sudo tailscale up --authkey="$TS_AUTHKEY_WORKER" --advertise-tags=tag:bernstein-worker
 
+# --token is the value the central node sets as BERNSTEIN_CLUSTER_AUTH_SECRET,
+# copied to this host out of band.
 bernstein worker \
     --server http://bernstein-central.tailXXXXX.ts.net:8052 \
     --roles backend \
-    --token "$BERNSTEIN_AUTH_TOKEN"
+    --token "$BERNSTEIN_CLUSTER_AUTH_SECRET"
 ```
 
 The traffic stays inside the tailnet; the URL is `http://` because the

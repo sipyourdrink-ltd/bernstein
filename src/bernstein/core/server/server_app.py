@@ -945,15 +945,13 @@ def create_app(
         _nodes_persist = _runtime_dir / "nodes.json"
     node_registry = NodeRegistry(effective_cluster, persist_path=_nodes_persist)
 
-    # Cluster JWT authentication
+    # Cluster JWT authentication. Constructed below, once the API legacy
+    # token is resolved, so the outer middleware and the inner cluster layer
+    # can share one worker-join credential (#2805).
     from bernstein.core.cluster_auth import ClusterAuthConfig, ClusterAuthenticator
 
     _cluster_auth_secret = effective_cluster.auth_token or ""
     cluster_authenticator: ClusterAuthenticator | None = None
-    if effective_cluster.enabled and _cluster_auth_secret:
-        cluster_authenticator = ClusterAuthenticator(
-            ClusterAuthConfig(secret=_cluster_auth_secret, require_auth=True),
-        )
 
     store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
     sse_bus = SSEBus()
@@ -967,6 +965,23 @@ def create_app(
     auth_enabled = auth_config.enabled or auth_config.oidc.enabled or auth_config.saml.enabled
     auth_service = AuthService(auth_config, AuthStore(sdd_dir)) if auth_enabled else None
     legacy_auth_token = effective_token or auth_config.legacy_token or None
+
+    # Wire the cluster authenticator with a single worker-join credential
+    # story (#2805): a worker presenting either the cluster secret or the
+    # operator API bearer token authenticates node registration/heartbeat.
+    # The outer SSOAuthMiddleware already accepts the legacy API token on
+    # every path, so teaching the inner cluster layer to accept it too means
+    # one token clears both layers even when a distinct
+    # BERNSTEIN_CLUSTER_AUTH_SECRET is configured.
+    if effective_cluster.enabled and _cluster_auth_secret:
+        _extra_cluster_secrets = tuple(s for s in (legacy_auth_token,) if s and s != _cluster_auth_secret)
+        cluster_authenticator = ClusterAuthenticator(
+            ClusterAuthConfig(
+                secret=_cluster_auth_secret,
+                require_auth=True,
+                shared_secrets=_extra_cluster_secrets,
+            ),
+        )
 
     def _reload_seed_config() -> dict[str, Any]:
         """Reload and persist bernstein.yaml metadata without restarting."""
@@ -1107,6 +1122,10 @@ def create_app(
     # Empty string disables the check (legacy behaviour).
     expected_resource = auth_config.expected_resource or None
 
+    # In cluster mode the worker credential (the cluster secret) must clear
+    # the outer middleware too, not only the inner cluster route layer (#2805).
+    _mw_cluster_secret = _cluster_auth_secret if (effective_cluster.enabled and _cluster_auth_secret) else None
+
     application.add_middleware(
         SSOAuthMiddleware,
         auth_service=auth_service,
@@ -1114,6 +1133,7 @@ def create_app(
         agent_identity_store=_agent_identity_store,
         auth_disabled=auth_disabled_flag,
         expected_resource=expected_resource,
+        cluster_secret=_mw_cluster_secret,
     )
 
     # Dashboard auth (#2366) - scoped sessions / tokens for the /dashboard
