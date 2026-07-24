@@ -29,6 +29,7 @@ import pytest
 
 from bernstein.core.protocols.mcp.mcp_client import (
     MCPClientSession,
+    MCPSchemaViolation,
     RemoteServerConfig,
     RemoteTool,
 )
@@ -198,6 +199,42 @@ class TestClientStatelessMeta:
         spans = [p["json"]["params"]["_meta"]["traceparent"].split("-")[2] for p in client.posted]
         assert spans[0] != spans[1]
 
+    @pytest.mark.anyio
+    async def test_baggage_call_index_only_advances_for_anchored_calls(self) -> None:
+        """AC5: the baggage ``mcp.call_index`` advances only for anchor-eligible
+        calls, so its claim matches a server's per-tools/call journal
+        allocation rather than counting every message."""
+
+        def _baggage_index(posted: dict[str, Any]) -> int:
+            baggage = posted["json"]["params"]["_meta"]["baggage"]
+            for item in baggage.split(","):
+                key, _, value = item.partition("=")
+                if key == "mcp.call_index":
+                    return int(value)
+            raise AssertionError(f"no mcp.call_index in baggage: {baggage!r}")
+
+        client = _RecordingClient(
+            [
+                _jsonrpc_response({"tools": [{"name": "echo", "inputSchema": {}}]}),
+                _jsonrpc_response({"content": [{"type": "text", "text": "a"}]}, request_id=2),
+                _jsonrpc_response({"content": [{"type": "text", "text": "b"}]}, request_id=3),
+            ]
+        )
+        session = MCPClientSession(_config())
+        session._initialized = True
+        with patch("bernstein.core.protocols.mcp.mcp_client.httpx.AsyncClient", return_value=client):
+            await session.list_tools()  # tools/list -- not anchor-eligible
+            await session.call_tool("echo", {"input": "1"})  # first anchored call
+            await session.call_tool("echo", {"input": "2"})  # second anchored call
+
+        methods = [p["json"]["params"].get("name") or p["json"]["method"] for p in client.posted]
+        assert methods[0] == "tools/list"
+        # The non-anchored tools/list does not consume an audit ordinal, and the
+        # two tools/call requests claim a contiguous 0, 1.
+        assert _baggage_index(client.posted[0]) == 0
+        assert _baggage_index(client.posted[1]) == 0
+        assert _baggage_index(client.posted[2]) == 1
+
 
 class TestClientInputRequiredRetry:
     @pytest.mark.anyio
@@ -249,6 +286,37 @@ class TestClientInputRequiredRetry:
         session._tools = [RemoteTool(name="fetch", description="", server_name="test-server")]
         with pytest.raises(ValueError, match="requestState"):
             await session.call_tool("fetch", {}, request_state="@@@not-base64@@@")
+
+    @pytest.mark.anyio
+    async def test_input_required_without_request_state_is_rejected(self) -> None:
+        """AC7: an ``input_required`` result with no ``requestState`` cannot be
+        resumed, so it is a schema violation and marks the server degraded."""
+        client = _RecordingClient([_jsonrpc_response({"type": "input_required", "prompt": "need host"})])
+        session = MCPClientSession(_config())
+        session._initialized = True
+        session._tools = [RemoteTool(name="fetch", description="", server_name="test-server")]
+        with (
+            patch("bernstein.core.protocols.mcp.mcp_client.httpx.AsyncClient", return_value=client),
+            pytest.raises(MCPSchemaViolation, match="requestState"),
+        ):
+            await session.call_tool("fetch", {})
+        assert session.is_degraded
+
+    @pytest.mark.anyio
+    async def test_input_required_with_undecodable_request_state_is_rejected(self) -> None:
+        """AC7: an ``input_required`` result whose ``requestState`` will not
+        decode is rejected rather than surfaced as a resumable prompt."""
+        wire = {"type": "input_required", "prompt": "need host", "requestState": "@@@not-base64@@@"}
+        client = _RecordingClient([_jsonrpc_response(wire)])
+        session = MCPClientSession(_config())
+        session._initialized = True
+        session._tools = [RemoteTool(name="fetch", description="", server_name="test-server")]
+        with (
+            patch("bernstein.core.protocols.mcp.mcp_client.httpx.AsyncClient", return_value=client),
+            pytest.raises(MCPSchemaViolation, match="requestState"),
+        ):
+            await session.call_tool("fetch", {})
+        assert session.is_degraded
 
 
 # ---------------------------------------------------------------------------
@@ -374,9 +442,12 @@ class TestServedCallAnchoring:
     async def test_meta_carried_ids_are_anchored_verbatim(self, tmp_path: Path) -> None:
         chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
         transport = _transport(tmp_path, chain=chain)
+        # The claimed call index matches the journal-allocated index (0 for the
+        # first served call), so the client-derived trace / span ids are
+        # anchored verbatim.
         meta = {
             "traceparent": f"00-{'a' * 32}-{'b' * 16}-01",
-            "baggage": "mcp.method=tools/call,mcp.call_index=7",
+            "baggage": "mcp.method=tools/call,mcp.call_index=0",
         }
         await transport.handle_request(
             "POST",
@@ -387,7 +458,56 @@ class TestServedCallAnchoring:
         event = chain.query(event_type=EVENT_MCP_STATELESS_CALL)[0]
         assert event.details["trace_id"] == "a" * 32
         assert event.details["span_id"] == "b" * 16
-        assert event.details["call_index"] == 7
+        assert event.details["call_index"] == 0
+
+
+class TestCallIndexAllocation:
+    """AC1: the audit call index is allocated from the journal, and the client
+    baggage is only a claim that must match the allocation."""
+
+    @staticmethod
+    def _claim_params(index: int) -> dict[str, Any]:
+        return {
+            "name": "echo",
+            "arguments": {},
+            "_meta": {"baggage": f"mcp.method=tools/call,mcp.call_index={index}"},
+        }
+
+    def test_absent_and_matching_claims_allocate_contiguously(self, tmp_path: Path) -> None:
+        chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+        journal = EventJournal("run-alloc", tmp_path / "journal")
+        # No baggage -> allocated 0.
+        anchor_stateless_call(
+            journal=journal, method="tools/call", params={"name": "echo", "arguments": {}}, chain=chain
+        )
+        # Baggage claims the correct next index (1) -> accepted.
+        anchor_stateless_call(journal=journal, method="tools/call", params=self._claim_params(1), chain=chain)
+        calls = reconstruct_mcp_call_order(chain=chain, run_id="run-alloc")
+        assert [c["call_index"] for c in calls] == [0, 1]
+
+    def test_mismatching_claim_is_rejected(self, tmp_path: Path) -> None:
+        journal = EventJournal("run-alloc", tmp_path / "journal")
+        # The first call's allocated index is 0; a claim of 7 is a lie.
+        with pytest.raises(ValueError, match="call_index claim 7"):
+            anchor_stateless_call(journal=journal, method="tools/call", params=self._claim_params(7), chain=None)
+        # The rejected call left no journal entry behind.
+        assert [r for r in load_events(journal.path) if r["event"] == "mcp.stateless_call"] == []
+
+    @pytest.mark.anyio
+    async def test_transport_survives_mismatched_claim_without_anchoring(self, tmp_path: Path) -> None:
+        chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+        transport = _transport(tmp_path, chain=chain)
+        meta = {"baggage": "mcp.method=tools/call,mcp.call_index=7"}
+        status, _, _ = await transport.handle_request(
+            "POST",
+            "/mcp",
+            {},
+            _request("tools/call", {"name": "bernstein_health", "arguments": {}, "_meta": meta}),
+        )
+        # Serving stays up (anchoring is non-fatal) but the lying claim is not
+        # anchored -- the gap is visible to a verifier.
+        assert status == 200
+        assert chain.query(event_type=EVENT_MCP_STATELESS_CALL) == []
 
 
 class TestChainReconstruction:
@@ -441,6 +561,36 @@ class TestChainReconstruction:
             )
         with pytest.raises(ValueError, match="call_index"):
             reconstruct_mcp_call_order(chain=chain, run_id="run-2506")
+
+    def test_verify_and_query_reads_one_locked_snapshot(self, tmp_path: Path) -> None:
+        """AC6: verify() and query() run under one lock, so the projected
+        events are exactly the events that were verified (no TOCTOU gap)."""
+        chain = self._seed(tmp_path)
+        ok, errors, events = chain.verify_and_query(event_type=EVENT_MCP_STATELESS_CALL)
+        assert ok, errors
+        # Same projection a plain query would return, but read atomically with
+        # the verification verdict.
+        assert [e.details["call_index"] for e in events] == [0, 1, 2]
+        assert events == chain.query(event_type=EVENT_MCP_STATELESS_CALL)
+
+    def test_verify_and_query_holds_the_append_lock(self, tmp_path: Path) -> None:
+        """AC6: an append cannot interleave between the verify and the query --
+        the operation holds the store's append lock across both reads, so a
+        concurrent ``log_with_prev_digest`` would block."""
+        chain = self._seed(tmp_path)
+        observed: dict[str, bool] = {}
+        real_verify = chain._log.verify
+
+        def _spy_verify() -> tuple[bool, list[str]]:
+            observed["locked_during_verify"] = chain._append_lock.locked()
+            return real_verify()
+
+        chain._log.verify = _spy_verify  # type: ignore[method-assign]
+        ok, _, _ = chain.verify_and_query(event_type=EVENT_MCP_STATELESS_CALL)
+        assert ok
+        assert observed["locked_during_verify"] is True
+        # The lock is released once the operation returns.
+        assert not chain._append_lock.locked()
 
 
 # ---------------------------------------------------------------------------

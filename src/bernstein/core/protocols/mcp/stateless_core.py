@@ -182,6 +182,7 @@ def build_request_meta(
     run_root_hash: str,
     call_index: int,
     client_capabilities: Mapping[str, Any],
+    anchor_index: int | None = None,
 ) -> dict[str, Any]:
     """Build the per-request ``_meta`` for a stateless MCP call.
 
@@ -198,9 +199,15 @@ def build_request_meta(
             span-id seed.
         run_root_hash: The run's root hash (the journal genesis / first
             entry hash); the trace-id seed shared across the run.
-        call_index: 0-based ordered index of this call within the run.
+        call_index: 0-based ordered index of this message within the run;
+            seeds the span id so every message gets a distinct span.
         client_capabilities: The client capability map to advertise per
             request in place of the removed handshake.
+        anchor_index: 0-based position of this call within the audit-anchored
+            sequence, carried in baggage as ``mcp.call_index`` so a server can
+            verify its own journal allocation against the claim. Defaults to
+            ``call_index`` for callers that do not distinguish anchored calls
+            from other messages.
 
     Returns:
         A ``_meta`` dict with ``client.capabilities``, ``traceparent``,
@@ -208,7 +215,8 @@ def build_request_meta(
     """
     trace_id = derive_trace_id(run_root_hash=run_root_hash)
     span_id = derive_span_id(params_content_hash=params_content_hash, call_index=call_index)
-    baggage = f"mcp.method={method},mcp.call_index={call_index}"
+    baggage_index = call_index if anchor_index is None else anchor_index
+    baggage = f"mcp.method={method},mcp.call_index={baggage_index}"
     return {
         "client": {"capabilities": dict(client_capabilities)},
         "traceparent": format_traceparent(trace_id=trace_id, span_id=span_id),
@@ -538,16 +546,38 @@ def _meta_of(params: Mapping[str, Any]) -> Mapping[str, Any]:
     return meta if isinstance(meta, Mapping) else {}
 
 
-def _ids_from_traceparent(meta: Mapping[str, Any]) -> tuple[str, str]:
-    """Return ``(trace_id, span_id)`` parsed from ``_meta.traceparent``.
+_TRACE_HEX = frozenset("0123456789abcdef")
 
-    Returns empty strings when the header is absent or malformed, so the
-    caller can fall back to server-side content derivation.
+
+def _is_trace_hex(value: str, length: int) -> bool:
+    """Return whether ``value`` is exactly ``length`` lowercase hex chars."""
+    return len(value) == length and all(char in _TRACE_HEX for char in value)
+
+
+def _ids_from_traceparent(meta: Mapping[str, Any]) -> tuple[str, str]:
+    """Return ``(trace_id, span_id)`` parsed from a *validated* ``traceparent``.
+
+    ``_meta.traceparent`` is untrusted client input that is later persisted as
+    audit identity, so it is validated against the W3C Trace Context shape
+    before it is returned: four dash-separated fields, a 2-hex-char version
+    that is not the reserved ``ff``, a 32-hex-char trace id, a 16-hex-char span
+    id (both lowercase hex, neither all-zero), and 2-hex-char flags. Any
+    deviation returns empty strings so the caller falls back to server-side
+    content derivation instead of anchoring an attacker-chosen identity.
     """
     parts = str(meta.get("traceparent", "")).split("-")
-    if len(parts) == 4 and parts[1] and parts[2]:
-        return parts[1], parts[2]
-    return "", ""
+    if len(parts) != 4:
+        return "", ""
+    version, trace_id, span_id, flags = parts
+    if not _is_trace_hex(version, 2) or version == "ff":
+        return "", ""
+    if not _is_trace_hex(trace_id, 32) or trace_id == "0" * 32:
+        return "", ""
+    if not _is_trace_hex(span_id, 16) or span_id == "0" * 16:
+        return "", ""
+    if not _is_trace_hex(flags, 2):
+        return "", ""
+    return trace_id, span_id
 
 
 def _call_index_from_baggage(meta: Mapping[str, Any]) -> int | None:
@@ -601,10 +631,13 @@ def anchor_stateless_call(
     content-derived ids to the journal head. A verifier reconstructs the full
     call ordering of a run from chain entries alone (issue #2506).
 
-    Identity resolution prefers the ids the client derived into ``_meta``;
-    a request without ``_meta`` gets server-side derivation from the call
-    content and the count of previously anchored calls, which is a projection
-    of chain state rather than session state.
+    The trace / span identity prefers the ids the client derived into
+    ``_meta``; a request without them gets server-side derivation from the
+    call content. Ordering, however, is never taken on the client's word: the
+    call index is allocated from the journal (the count of previously anchored
+    calls) and the ``_meta.baggage`` value is treated as a *claim* only -- a
+    claim that disagrees with the allocation is rejected, so a client cannot
+    dictate its position in the audit ordering.
 
     Args:
         journal: The run journal receiving the ordered entry.
@@ -615,15 +648,27 @@ def anchor_stateless_call(
 
     Returns:
         The projected :class:`StatelessCallRecord`.
+
+    Raises:
+        ValueError: When the client's ``mcp.call_index`` baggage claims an
+            index that does not match the journal-allocated index.
     """
     from bernstein.core.replay.journal import load_events
     from bernstein.core.security.audit_chain import record_mcp_stateless_call
 
     meta = _meta_of(params)
     trace_id, span_id = _ids_from_traceparent(meta)
-    call_index = _call_index_from_baggage(meta)
-    if call_index is None:
-        call_index = sum(1 for row in load_events(journal.path) if row.get("event") == JOURNAL_EVENT_MCP_CALL)
+    # Allocate the next ordinal from the journal, never from the client. The
+    # baggage index is only a claim: a mismatch is rejected so the anchored
+    # call_index sequence stays contiguous and attacker-independent (AC1).
+    claimed_index = _call_index_from_baggage(meta)
+    call_index = sum(1 for row in load_events(journal.path) if row.get("event") == JOURNAL_EVENT_MCP_CALL)
+    if claimed_index is not None and claimed_index != call_index:
+        msg = (
+            f"mcp.call_index claim {claimed_index} does not match the allocated "
+            f"journal index {call_index} for run {journal.run_id!r}"
+        )
+        raise ValueError(msg)
     if not span_id:
         content_hash = hashlib.sha256(
             json.dumps(

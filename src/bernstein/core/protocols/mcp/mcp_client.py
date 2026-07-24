@@ -251,6 +251,14 @@ class StreamedToolCall:
         return self._cancel_event.is_set()
 
 
+#: Methods a stateless server anchors into the audit chain. The client
+#: advances its anchor-specific call index only for these so the baggage
+#: ``mcp.call_index`` claim matches the server's journal allocation: a
+#: non-anchored request (``initialize``, ``tools/list``, notifications) must
+#: not consume an audit ordinal, or the chained call_index sequence would gap.
+_ANCHOR_ELIGIBLE_METHODS = frozenset({"tools/call"})
+
+
 class MCPClientSession:
     """Active client connection to a remote MCP server.
 
@@ -293,7 +301,13 @@ class MCPClientSession:
         # index, so no wire value depends on process-local randomness.
         self._run_root_hash = run_root_hash or self._derive_default_run_root(config)
         self._client_capabilities: dict[str, Any] = dict(client_capabilities or {})
+        # Per-message counter seeding the span id (every message gets a
+        # distinct span). Separate from the anchor-specific index below.
         self._call_index: int = 0
+        # Ordered position among audit-anchored calls, carried in baggage as
+        # ``mcp.call_index``. Advances only for anchor-eligible methods so the
+        # claim stays contiguous with the server's journal allocation (AC5).
+        self._anchor_call_index: int = 0
         # Hardening state (issue #1673).
         self._manifest_digest: str = ""
         self._degraded: bool = False
@@ -562,14 +576,32 @@ class MCPClientSession:
 
         An ``input_required`` result is not an error: the server's
         ``requestState`` echo and prompt surface on the metadata so the
-        caller can resume the call (issue #2506).
+        caller can resume the call (issue #2506). The echo must itself be a
+        present, decodable ``requestState`` -- a resume built on a missing or
+        corrupt state can never complete, so it is treated as a schema
+        violation rather than surfaced as a resumable prompt.
 
         Raises:
             MCPSchemaViolation: When the ``content`` block is structurally
-                malformed. The server is marked degraded before the error
-                propagates.
+                malformed, or an ``input_required`` result omits a decodable
+                ``requestState``. The server is marked degraded before the
+                error propagates.
         """
         if result.get("type") == "input_required":
+            raw_state = result.get("requestState")
+            if not isinstance(raw_state, str) or not raw_state:
+                self.mark_degraded(f"tools/call for '{tool_name}' returned input_required without a requestState")
+                raise MCPSchemaViolation(
+                    f"Server '{self._config.name}' returned an input_required result without a requestState "
+                    f"for tool '{tool_name}'"
+                )
+            try:
+                decode_request_state(raw_state)
+            except ValueError as exc:
+                self.mark_degraded(f"tools/call for '{tool_name}' returned an undecodable requestState")
+                raise MCPSchemaViolation(
+                    f"Server '{self._config.name}' returned an undecodable requestState for tool '{tool_name}'"
+                ) from exc
             prompt = str(result.get("prompt", ""))
             return ToolCallResult(
                 content=prompt,
@@ -579,7 +611,7 @@ class MCPClientSession:
                     "tool": tool_name,
                     "input_required": True,
                     "prompt": prompt,
-                    "request_state": str(result.get("requestState", "")),
+                    "request_state": raw_state,
                 },
             )
         content_parts = result.get("content", [])
@@ -772,11 +804,15 @@ class MCPClientSession:
         logger.info("Closed MCP session with server '%s'", self._config.name)
 
     def _next_request_meta(self, method: str, params: dict[str, Any] | None) -> dict[str, Any]:
-        """Build the per-request ``_meta`` and advance the ordered call index.
+        """Build the per-request ``_meta`` and advance the ordered indices.
 
-        The span id is derived from the call's content hash and its ordered
-        index, the trace id from the run root, so two replays of the same
-        call sequence emit byte-identical ``_meta`` (issue #2506).
+        The span id is derived from the call's content hash and its per-message
+        index, the trace id from the run root, so two replays of the same call
+        sequence emit byte-identical ``_meta`` (issue #2506). The baggage
+        ``mcp.call_index`` carries a separate anchor-specific index that
+        advances only for anchor-eligible methods, so the claim it presents to
+        a server matches that server's journal allocation and the anchored
+        call_index sequence stays contiguous (AC5).
         """
         canonical = json.dumps(
             {"method": method, "params": params or {}},
@@ -791,8 +827,11 @@ class MCPClientSession:
             run_root_hash=self._run_root_hash,
             call_index=self._call_index,
             client_capabilities=self._client_capabilities,
+            anchor_index=self._anchor_call_index,
         )
         self._call_index += 1
+        if method in _ANCHOR_ELIGIBLE_METHODS:
+            self._anchor_call_index += 1
         return meta
 
     async def _send_jsonrpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:

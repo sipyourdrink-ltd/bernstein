@@ -941,6 +941,42 @@ class AuditChainStore:
         """Delegate to the underlying :class:`AuditLog`."""
         return self._log.verify()
 
+    def verify_and_query(
+        self,
+        *,
+        event_type: str | None = None,
+        actor: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        resource_id: str | None = None,
+        include_archived: bool = False,
+    ) -> tuple[bool, list[str], list[AuditEvent]]:
+        """Verify the chain and project matching events from one snapshot.
+
+        :meth:`verify` and :meth:`query` are otherwise two independent reads: a
+        concurrent append landing between them lets a caller act on a
+        projection the verification never covered (a verify/query TOCTOU).
+        Holding the append lock across both reads pins a single snapshot -- the
+        events returned are exactly the events that were verified -- because
+        chained appends acquire the same lock before touching the log.
+
+        Returns:
+            ``(ok, errors, events)``: the verification verdict and its per-entry
+            errors alongside the events matching the filters, all read under
+            one lock.
+        """
+        with self._append_lock:
+            ok, errors = self._log.verify()
+            events = self._log.query(
+                event_type=event_type,
+                actor=actor,
+                since=since,
+                until=until,
+                resource_id=resource_id,
+                include_archived=include_archived,
+            )
+        return ok, errors, events
+
 
 # ---------------------------------------------------------------------------
 # Event recording helpers (additive)
@@ -1991,11 +2027,13 @@ def reconstruct_mcp_call_order(*, chain: AuditChainStore, run_id: str) -> list[d
     """Rebuild a run's ordered MCP call sequence purely from chain entries.
 
     With the protocol session stores deleted (issue #2506) the audit chain is
-    the only authority on MCP call ordering. The chain is verified first, so
-    a tampered ``mcp.stateless_call`` entry fails at exactly that entry (the
-    underlying verifier names the file and line); the surviving entries are
-    then projected into their recorded ``call_index`` order and the sequence
-    is checked for gaps and duplicates.
+    the only authority on MCP call ordering. Verification and projection read
+    one locked snapshot, so a tampered ``mcp.stateless_call`` entry fails at
+    exactly that entry (the underlying verifier names the file and line) and
+    the projected events are exactly the events that were verified -- a
+    concurrent append cannot slip between the two reads; the surviving entries
+    are then projected into their recorded ``call_index`` order and the
+    sequence is checked for gaps and duplicates.
 
     Args:
         chain: The audit chain store holding the run's entries.
@@ -2010,16 +2048,12 @@ def reconstruct_mcp_call_order(*, chain: AuditChainStore, run_id: str) -> list[d
             verifier's per-entry errors) or when the recorded ``call_index``
             sequence has a gap or duplicate.
     """
-    ok, errors = chain.verify()
+    ok, errors, events = chain.verify_and_query(event_type=EVENT_MCP_STATELESS_CALL)
     if not ok:
         msg = "audit chain verification failed: " + "; ".join(errors)
         raise ValueError(msg)
 
-    details = [
-        event.details
-        for event in chain.query(event_type=EVENT_MCP_STATELESS_CALL)
-        if str(event.details.get("run_id", "")) == run_id
-    ]
+    details = [event.details for event in events if str(event.details.get("run_id", "")) == run_id]
     ordered = sorted(details, key=lambda d: int(d.get("call_index", -1)))
     indexes = [int(d.get("call_index", -1)) for d in ordered]
     if indexes != list(range(len(indexes))):

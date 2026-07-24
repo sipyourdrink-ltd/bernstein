@@ -23,6 +23,7 @@ from bernstein.core.protocols.mcp.stateless_core import (
     CacheReference,
     InputRequiredResult,
     StatelessCallRecord,
+    _ids_from_traceparent,
     build_request_meta,
     compat_shim_active,
     decode_request_state,
@@ -127,6 +128,41 @@ class TestRequestMeta:
     def test_format_traceparent_shape(self) -> None:
         tp = format_traceparent(trace_id="a" * 32, span_id="b" * 16)
         assert tp == f"00-{'a' * 32}-{'b' * 16}-01"
+
+
+class TestTraceparentValidation:
+    """AC2: an untrusted ``traceparent`` is validated before its ids become
+    audit identity; anything off-shape falls back to content derivation."""
+
+    def _valid(self) -> str:
+        return f"00-{'a' * 32}-{'b' * 16}-01"
+
+    def test_valid_traceparent_returns_ids(self) -> None:
+        assert _ids_from_traceparent({"traceparent": self._valid()}) == ("a" * 32, "b" * 16)
+
+    def test_absent_traceparent_returns_empty(self) -> None:
+        assert _ids_from_traceparent({}) == ("", "")
+
+    @pytest.mark.parametrize(
+        "traceparent",
+        [
+            "00-" + "a" * 32 + "-" + "b" * 16,  # only three fields
+            "00-" + "a" * 32 + "-" + "b" * 16 + "-01-extra",  # five fields
+            "ff-" + "a" * 32 + "-" + "b" * 16 + "-01",  # reserved version ff
+            "0-" + "a" * 32 + "-" + "b" * 16 + "-01",  # 1-char version
+            "00-" + "a" * 31 + "-" + "b" * 16 + "-01",  # short trace id
+            "00-" + "a" * 33 + "-" + "b" * 16 + "-01",  # long trace id
+            "00-" + "a" * 32 + "-" + "b" * 15 + "-01",  # short span id
+            "00-" + "0" * 32 + "-" + "b" * 16 + "-01",  # all-zero trace id
+            "00-" + "a" * 32 + "-" + "0" * 16 + "-01",  # all-zero span id
+            "00-" + "g" * 32 + "-" + "b" * 16 + "-01",  # non-hex trace id
+            "00-" + "A" * 32 + "-" + "b" * 16 + "-01",  # uppercase (non-canonical)
+            "00-" + "a" * 32 + "-" + "b" * 16 + "-0",  # 1-char flags
+            "00-" + "a" * 32 + "-" + "b" * 16 + "-zz",  # non-hex flags
+        ],
+    )
+    def test_malformed_traceparent_returns_empty(self, traceparent: str) -> None:
+        assert _ids_from_traceparent({"traceparent": traceparent}) == ("", "")
 
 
 class TestRequestState:
