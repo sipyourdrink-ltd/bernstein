@@ -154,11 +154,16 @@ leaderless MESH path (issue #2558) constructs a :class:`ClaimJournal` and
 threads it into :class:`ClaimLedger`.
 """
 
-CLAIM_JOURNAL_SCHEMA_VERSION: Final[int] = 1
+CLAIM_JOURNAL_SCHEMA_VERSION: Final[int] = 2
 """On-disk schema version stamped into every :class:`ClaimReceipt`.
 
 Bumping requires a parallel reader for the old version, mirroring the
 tracker-audit stream's versioning contract.
+
+v2 adds the ``superseded_node_id`` / ``superseded_claimer_id`` reference
+fields so a ``supersede`` receipt records the loser's identity as data it
+speaks *about* while its own ``node_id`` / ``claimer_id`` name the
+reconciling node that signs it (issue #2558).
 """
 
 CLAIM_RECEIPT_KINDS: Final[frozenset[str]] = frozenset(
@@ -932,9 +937,18 @@ class ClaimReceipt:
     state across nodes.
 
     The core binding is ``{tracker, ticket_id, role, claimer_id, node_id,
-    lease_expires_at, prev_entry_hash, entry_hash}``. A ``supersede`` receipt
-    additionally names the losing claim (``supersedes``) and the winner
-    (``winner_claimer_id`` / ``winner_entry_hash``).
+    lease_expires_at, prev_entry_hash, entry_hash}``. The ``claimer_id`` /
+    ``node_id`` fields are the receipt's own identity -- *who the receipt is
+    from* -- and they always name the node whose Ed25519 install key signs it.
+    A ``supersede`` receipt is a statement *by* the reconciling node *about* a
+    losing claim, so it is attributed to the reconciler: its ``claimer_id`` /
+    ``node_id`` name the reconciler, and the loser is carried as *referenced
+    data* -- the losing claim's ``entry_hash`` (``supersedes``) plus the
+    loser's identity (``superseded_node_id`` / ``superseded_claimer_id``) --
+    alongside the winner (``winner_claimer_id`` / ``winner_entry_hash``). This
+    keeps the signature and the declared identity in agreement: a verifier that
+    pins each node's public key by ``node_id`` finds every receipt signed by the
+    node it claims to be from.
     """
 
     schema_version: int
@@ -952,6 +966,8 @@ class ClaimReceipt:
     supersedes: str | None = None
     winner_claimer_id: str | None = None
     winner_entry_hash: str | None = None
+    superseded_node_id: str | None = None
+    superseded_claimer_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in CLAIM_RECEIPT_KINDS:
@@ -984,6 +1000,8 @@ class ClaimReceipt:
         supersedes = data.get("supersedes")
         winner_claimer_id = data.get("winner_claimer_id")
         winner_entry_hash = data.get("winner_entry_hash")
+        superseded_node_id = data.get("superseded_node_id")
+        superseded_claimer_id = data.get("superseded_claimer_id")
         return cls(
             schema_version=int(data["schema_version"]),
             kind=str(data["kind"]),
@@ -1000,6 +1018,8 @@ class ClaimReceipt:
             supersedes=None if supersedes is None else str(supersedes),
             winner_claimer_id=None if winner_claimer_id is None else str(winner_claimer_id),
             winner_entry_hash=None if winner_entry_hash is None else str(winner_entry_hash),
+            superseded_node_id=None if superseded_node_id is None else str(superseded_node_id),
+            superseded_claimer_id=(None if superseded_claimer_id is None else str(superseded_claimer_id)),
         )
 
 
@@ -1224,6 +1244,8 @@ class ClaimJournal:
         supersedes: str | None = None,
         winner_claimer_id: str | None = None,
         winner_entry_hash: str | None = None,
+        superseded_node_id: str | None = None,
+        superseded_claimer_id: str | None = None,
     ) -> ClaimReceipt:
         """Append one signed receipt and return the materialised entry.
 
@@ -1264,6 +1286,8 @@ class ClaimJournal:
                     supersedes=supersedes,
                     winner_claimer_id=winner_claimer_id,
                     winner_entry_hash=winner_entry_hash,
+                    superseded_node_id=superseded_node_id,
+                    superseded_claimer_id=superseded_claimer_id,
                 )
                 digest = compute_claim_entry_hash(unsigned)
                 signed = replace(unsigned, entry_hash=digest)
@@ -1300,6 +1324,8 @@ class ClaimJournal:
             supersedes=receipt.supersedes,
             winner_claimer_id=receipt.winner_claimer_id,
             winner_entry_hash=receipt.winner_entry_hash,
+            superseded_node_id=receipt.superseded_node_id,
+            superseded_claimer_id=receipt.superseded_claimer_id,
         )
 
     # -- read ---------------------------------------------------------
@@ -1337,6 +1363,13 @@ class ClaimJournal:
         winner (lowest ``entry_hash``) for every loser that does not already
         hold one. Returns the receipts appended, in a deterministic order.
         Idempotent: re-running once every loser is superseded is a no-op.
+
+        The receipt is attributed to *this* reconciling node -- its
+        ``claimer_id`` / ``node_id`` name this node, the one whose install key
+        signs the entry -- so the signature and the declared identity agree. The
+        losing claim it speaks about is carried as referenced data: the loser's
+        ``entry_hash`` (``supersedes``) and identity (``superseded_node_id`` /
+        ``superseded_claimer_id``), never the receipt's own identity fields.
         """
         active, explicit_superseded = _active_buckets(self.read())
         emitted: list[ClaimReceipt] = []
@@ -1356,13 +1389,15 @@ class ClaimJournal:
                     tracker=key[0],
                     ticket_id=key[1],
                     role=key[2],
-                    claimer_id=loser.claimer_id,
-                    node_id=loser.node_id,
+                    claimer_id=self._node_id,
+                    node_id=self._node_id,
                     lease_expires_at=0.0,
                     ts_ns=cursor_ts,
                     supersedes=loser_entry_hash,
                     winner_claimer_id=winner.claimer_id,
                     winner_entry_hash=winner_entry_hash,
+                    superseded_node_id=loser.node_id,
+                    superseded_claimer_id=loser.claimer_id,
                 )
                 emitted.append(receipt)
                 explicit_superseded.add(loser_entry_hash)

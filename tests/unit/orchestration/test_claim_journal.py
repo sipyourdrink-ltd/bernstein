@@ -357,8 +357,14 @@ def test_reconcile_emits_chain_anchored_supersede_naming_winner(tmp_path: Path) 
     assert len(supersedes) == 1
     receipt = supersedes[0]
     assert receipt.kind == "supersede"
-    assert receipt.claimer_id == loser.claimer_id
+    # The supersede is a statement BY the reconciling node (node-a) ABOUT the
+    # loser's claim: its own identity names the reconciler that signs it, the
+    # loser is carried as referenced data.
+    assert receipt.node_id == "node-a"
+    assert receipt.claimer_id == "node-a"
     assert receipt.supersedes == loser.entry_hash
+    assert receipt.superseded_node_id == loser.node_id
+    assert receipt.superseded_claimer_id == loser.claimer_id
     assert receipt.winner_claimer_id == winner.claimer_id
     assert receipt.winner_entry_hash == winner.entry_hash
 
@@ -367,7 +373,9 @@ def test_reconcile_emits_chain_anchored_supersede_naming_winner(tmp_path: Path) 
     supersede_rows = [r for r in rows if r.details.get("kind") == "supersede"]
     assert len(supersede_rows) == 1
     assert supersede_rows[0].details["journal_entry_hash"] == receipt.entry_hash
+    assert supersede_rows[0].details["node_id"] == "node-a"
     assert supersede_rows[0].details["winner_claimer_id"] == winner.claimer_id
+    assert supersede_rows[0].details["superseded_claimer_id"] == loser.claimer_id
     assert "prev_chain_digest" in supersede_rows[0].details
 
     # Re-folding the journal (now carrying the supersede) leaves one holder,
@@ -377,6 +385,82 @@ def test_reconcile_emits_chain_anchored_supersede_naming_winner(tmp_path: Path) 
     assert hold is not None and hold.claimer_id == winner.claimer_id
     assert loser.entry_hash in post.superseded
     assert journal_a.reconcile(ts_ns=1_000_300_000) == []
+
+
+def test_reconcile_supersede_is_attributed_to_its_signing_node(tmp_path: Path) -> None:
+    """A reconcile-emitted supersede must be attributed to the node that signs it.
+
+    A ``claim_superseded`` receipt is a statement *by* the reconciling node
+    *about* the loser's claim -- so the ``node_id`` / ``claimer_id`` identity
+    fields it carries and the Ed25519 signature that seals them must name the
+    same node. If the receipt carried the loser's identity while being signed
+    with the reconciler's install key, a verifier that pins each node's public
+    key by ``node_id`` would reject the entry: the embedded JWK would not match
+    the pinned key for the declared node. Here a *third* node (``node-c``)
+    reconciles a ``node-a`` / ``node-b`` conflict, so the loser is always a
+    different node than the signer -- exposing any mis-attribution unambiguously.
+    """
+    chain = _chain(tmp_path)
+    kms_a = _kms(tmp_path, seed=1, name="node-a-key")
+    kms_b = _kms(tmp_path, seed=2, name="node-b-key")
+    kms_c = _kms(tmp_path, seed=3, name="node-c-key")
+    journal_a = ClaimJournal(tmp_path / "claim_journal.jsonl", kms_adapter=kms_a, node_id="node-a", chain=chain)
+    journal_b = ClaimJournal(tmp_path / "claim_journal.jsonl", kms_adapter=kms_b, node_id="node-b", chain=chain)
+    journal_c = ClaimJournal(tmp_path / "claim_journal.jsonl", kms_adapter=kms_c, node_id="node-c", chain=chain)
+
+    claim_a = journal_a.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-a",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_000_000,
+    )
+    claim_b = journal_b.append(
+        kind="claim",
+        tracker="jira",
+        ticket_id="T-1",
+        role="backend",
+        claimer_id="worker-b",
+        lease_expires_at=1600.0,
+        ts_ns=1_000_100_000,
+    )
+    winner = min(claim_a, claim_b, key=lambda r: r.entry_hash)
+    loser = max(claim_a, claim_b, key=lambda r: r.entry_hash)
+
+    emitted = journal_c.reconcile(ts_ns=1_000_200_000)
+    assert len(emitted) == 1
+    supersede = emitted[0]
+
+    # The receipt is a statement BY node-c: its own identity fields name node-c,
+    # the actual signer -- never the loser it speaks about.
+    assert supersede.node_id == "node-c"
+    assert supersede.node_id != loser.node_id
+
+    # The embedded signing JWK belongs to node-c, matching the declared node_id:
+    # signature and attribution agree.
+    assert supersede.signature["public_key_jwk"] == kms_c.public_key_jwk()
+
+    # A verifier pinning each node's key by node_id accepts the whole journal:
+    # every receipt's signature matches the identity the receipt claims to be
+    # from. This is the attribution invariant the mis-signed supersede broke.
+    trusted_keys = {
+        "node-a": kms_a.public_key_jwk(),
+        "node-b": kms_b.public_key_jwk(),
+        "node-c": kms_c.public_key_jwk(),
+    }
+    result = journal_c.verify(trusted_keys=trusted_keys)
+    assert result.ok, result.failures
+
+    # The loser's identity survives as *referenced data* (what the receipt is
+    # about), not as the receipt's own identity (who it is from).
+    assert supersede.supersedes == loser.entry_hash
+    assert supersede.superseded_node_id == loser.node_id
+    assert supersede.superseded_claimer_id == loser.claimer_id
+    # The winner naming is unchanged: lowest-entry-hash winner rule intact.
+    assert supersede.winner_entry_hash == winner.entry_hash
+    assert supersede.winner_claimer_id == winner.claimer_id
 
 
 def test_reconcile_is_noop_without_conflict(tmp_path: Path) -> None:

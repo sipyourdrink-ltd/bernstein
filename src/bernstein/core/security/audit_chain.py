@@ -3641,6 +3641,8 @@ def record_claim_journal_receipt(
     supersedes: str | None = None,
     winner_claimer_id: str | None = None,
     winner_entry_hash: str | None = None,
+    superseded_node_id: str | None = None,
+    superseded_claimer_id: str | None = None,
     actor: str = "claim_journal",
 ) -> AuditEvent:
     """Append a ``cluster.claim_journal_receipt`` event into *chain* (#2558).
@@ -3663,9 +3665,13 @@ def record_claim_journal_receipt(
         tracker: Tracker adapter name the claim is scoped to.
         ticket_id: Tracker-side ticket id.
         role: Bernstein role lane the claim covers.
-        claimer_id: The claiming worker's identifier (the loser, for a
-            ``supersede`` receipt).
-        node_id: The node install identity the receipt pertains to.
+        claimer_id: The receipt's own claimer identity -- who the receipt is
+            *from*. For a ``supersede`` receipt this is the reconciling node
+            that emitted and signed it, not the loser (the loser is carried in
+            ``superseded_claimer_id`` as referenced data).
+        node_id: The node install identity the receipt is *from* -- the node
+            whose Ed25519 key signs it. For a ``supersede`` receipt this is the
+            reconciling node, not the superseded claim's node.
         lease_expires_at: Unix timestamp the lease expires (``0`` when none).
         prev_entry_hash: The journal head the receipt chained onto.
         journal_entry_hash: The receipt's own Merkle ``entry_hash`` (the anchor).
@@ -3674,6 +3680,11 @@ def record_claim_journal_receipt(
         winner_claimer_id: For a ``supersede`` receipt, the winning claimer.
         winner_entry_hash: For a ``supersede`` receipt, the winning claim's
             ``entry_hash``.
+        superseded_node_id: For a ``supersede`` receipt, the losing claim's
+            node identity, carried as referenced data (what the receipt is
+            *about*); ``None`` otherwise.
+        superseded_claimer_id: For a ``supersede`` receipt, the losing claim's
+            claimer identity, carried as referenced data; ``None`` otherwise.
         actor: Recorded actor; defaults to ``"claim_journal"``.
 
     Returns:
@@ -3697,6 +3708,10 @@ def record_claim_journal_receipt(
         details["winner_claimer_id"] = winner_claimer_id
     if winner_entry_hash is not None:
         details["winner_entry_hash"] = winner_entry_hash
+    if superseded_node_id is not None:
+        details["superseded_node_id"] = superseded_node_id
+    if superseded_claimer_id is not None:
+        details["superseded_claimer_id"] = superseded_claimer_id
     return chain.log_with_prev_digest(
         event_type=EVENT_CLAIM_JOURNAL_RECEIPT,
         actor=actor,
