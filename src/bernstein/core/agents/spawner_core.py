@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from contextlib import suppress
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
@@ -374,13 +374,21 @@ def manager_write_boundary_error(
     workdir: Path,
     has_os_sandbox: bool,
 ) -> str | None:
-    """Return a refusal message when a planning role would run unconfined.
+    """Return a refusal message when a planning role has no isolation at all.
 
-    A stray write from a manager/planning agent must not land in the operator
-    checkout. A per-session git worktree (``spawn_cwd`` distinct from the
-    operator root) or an OS sandbox both confine writes; either satisfies the
-    boundary. When neither is present the spawn must fail loudly instead of
-    proceeding on prompt-only protection (issue #2793).
+    First of two layers for issue #2793. This one is the hard stop for the
+    worst case: a planning agent spawned directly in the operator checkout
+    with neither a per-session worktree nor an OS sandbox. There is then no
+    isolation whatsoever, so the spawn fails loudly instead of proceeding on
+    prompt-only protection.
+
+    A per-session worktree lifts this refusal because it confines the agent's
+    *relative* writes. It is not, however, a full boundary: an ungated CLI
+    adapter can still write an absolute or ``..`` path into the operator
+    checkout, which a worktree cwd does not confine. That residual escape is
+    handled by the second layer -- the reap-time stray-write sweep
+    (:func:`manager_stray_writes` / :func:`quarantine_manager_stray_writes`) --
+    which keeps the operator ``git status`` clean regardless of adapter.
 
     Args:
         role: The role being spawned.
@@ -396,7 +404,8 @@ def manager_write_boundary_error(
     if has_os_sandbox:
         return None
     if spawn_cwd.resolve() != workdir.resolve():
-        # Confined to a per-session worktree (or a separate repo checkout).
+        # A per-session worktree (or a separate repo checkout) confines
+        # relative writes; the reap-time sweep catches absolute/`..` escapes.
         return None
     return (
         f"Refusing to spawn a {role!r} agent in the operator checkout with no write "
@@ -404,6 +413,96 @@ def manager_write_boundary_error(
         f"working tree. Run with worktree isolation (the default) or an OS sandbox "
         f"(e.g. --sandbox docker). See issue #2793."
     )
+
+
+# Operator-checkout subtrees that are never a planning-agent stray write:
+# ``.sdd`` is Bernstein's own runtime state and ``.git`` is VCS metadata.
+_MANAGER_STRAY_IGNORED_TOP = frozenset({".sdd", ".git"})
+
+
+def operator_tree_untracked(workdir: Path) -> frozenset[str]:
+    """Return the untracked paths in the operator checkout (git porcelain).
+
+    Uses ``git status --porcelain --untracked-files=all`` at the operator
+    root so untracked *files* are listed individually (not collapsed to their
+    parent directory). Returns an empty set when the root is not a git repo or
+    git is unavailable, so callers degrade to a no-op rather than failing a
+    spawn or a reap.
+    """
+    from bernstein.core.git.git_basic import run_git
+
+    try:
+        result = run_git(["status", "--porcelain", "--untracked-files=all"], workdir)
+    except Exception:
+        return frozenset()
+    if not result.ok:
+        return frozenset()
+    untracked: set[str] = set()
+    for line in result.stdout.splitlines():
+        # Porcelain v1 marks untracked entries with a leading "?? ".
+        if line.startswith("?? "):
+            untracked.add(line[3:].strip().strip('"'))
+    return frozenset(untracked)
+
+
+def manager_stray_writes(workdir: Path, baseline: frozenset[str]) -> list[str]:
+    """Return operator-tree untracked paths that appeared since ``baseline``.
+
+    A planning agent is contracted to write no files in the operator checkout
+    (it creates tasks via the task server). Any untracked path present now but
+    absent at spawn time is therefore a stray write -- typically an absolute
+    or ``..`` path an ungated adapter wrote past its worktree cwd (issue
+    #2793). Entries under ``.sdd`` or ``.git`` are never counted. Result is
+    sorted for deterministic quarantine ordering.
+    """
+    stray: list[str] = []
+    for rel in sorted(operator_tree_untracked(workdir) - baseline):
+        if not rel:
+            continue
+        if PurePosixPath(rel).parts[0] in _MANAGER_STRAY_IGNORED_TOP:
+            continue
+        stray.append(rel)
+    return stray
+
+
+def quarantine_manager_stray_writes(
+    workdir: Path,
+    session_id: str,
+    stray: list[str],
+) -> Path | None:
+    """Move stray operator-tree writes into a per-session quarantine directory.
+
+    Keeps the operator ``git status`` clean -- unblocking later merge-backs --
+    while preserving the bytes for forensics under
+    ``.sdd/runtime/manager-stray/<session_id>/``. Adapter-agnostic: it acts on
+    whatever landed in the operator tree, regardless of which CLI wrote it.
+    Returns the quarantine directory when anything was moved, else None.
+    """
+    if not stray:
+        return None
+    quarantine = workdir / ".sdd" / "runtime" / "manager-stray" / session_id
+    moved: list[str] = []
+    for rel in stray:
+        src = workdir / rel
+        if not src.exists():
+            continue
+        dest = quarantine / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(src), str(dest))
+        except OSError:
+            continue
+        moved.append(rel)
+    if not moved:
+        return None
+    logger.warning(
+        "Quarantined %d stray operator-tree write(s) from planning agent %s to %s (issue #2793): %s",
+        len(moved),
+        session_id,
+        quarantine,
+        ", ".join(moved),
+    )
+    return quarantine
 
 
 def _diagnose_spawn_failure(
@@ -1350,6 +1449,10 @@ class AgentSpawner:
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
+        # Per-session baseline of operator-checkout untracked paths, captured
+        # at manager/planning spawn so the reap-time sweep can quarantine any
+        # stray write that escaped the worktree cwd (issue #2793).
+        self._manager_write_baselines: dict[str, frozenset[str]] = {}
         self._shutdown_event: threading.Event | None = None
         self._agent_failure_timestamps: dict[str, float] = {}  # adapter_name -> last failure ts
         self._adapter_health = AdapterHealthMonitor()
@@ -1710,6 +1813,26 @@ class AgentSpawner:
         """Write the finalized trace for a reaped session."""
         finalize_agent_trace(session, self._traces, self._trace_store)
 
+    def _sweep_manager_write_boundary(self, session: AgentSession) -> Path | None:
+        """Quarantine stray operator-tree writes a reaped planning agent made.
+
+        Second write-boundary layer for issue #2793. A per-session worktree
+        confines only the planning agent's relative writes; an ungated CLI
+        adapter can still write an absolute or ``..`` path into the operator
+        checkout despite running in a worktree. Once the agent is reaped,
+        diff the operator checkout's untracked set against the spawn-time
+        baseline and move anything new into a quarantine directory, so a stray
+        write cannot block a later merge-back. Adapter-agnostic and best-effort:
+        it acts on whatever landed in the tree and never raises into reap.
+
+        Returns the quarantine directory when anything was moved, else None.
+        """
+        baseline = self._manager_write_baselines.pop(session.id, None)
+        if baseline is None or session.role not in _WRITE_BOUNDARY_ROLES:
+            return None
+        stray = manager_stray_writes(self._workdir, baseline)
+        return quarantine_manager_stray_writes(self._workdir, session.id, stray)
+
     def reap_completed_agent(
         self,
         session: AgentSession,
@@ -1717,7 +1840,7 @@ class AgentSpawner:
         defer_cleanup: bool = False,
     ) -> MergeResult | None:
         """Terminate and wait on the subprocess for a completed agent."""
-        return _reap_completed_agent(
+        result = _reap_completed_agent(
             session,
             skip_merge=skip_merge,
             defer_cleanup=defer_cleanup,
@@ -1740,6 +1863,11 @@ class AgentSpawner:
             trace_store=self._trace_store,
             merge_queue=self._merge_queue,
         )
+        # Reap-time write-boundary sweep (#2793): keep the operator checkout
+        # clean after a planning agent exits. Best-effort; never fails a reap.
+        with suppress(Exception):
+            self._sweep_manager_write_boundary(session)
+        return result
 
     def update_trace_outcome(self, session_id: str, outcome: str) -> None:
         """Update the stored trace outcome for a session."""
@@ -3678,6 +3806,16 @@ class AgentSpawner:
         )
         if _boundary_error is not None:
             raise SpawnError(_boundary_error)
+
+        # Second write-boundary layer (#2793): a worktree cwd confines only
+        # relative writes, so snapshot the operator checkout's untracked set
+        # before the planning agent runs. Any untracked path that appears by
+        # reap time (an absolute/`..` write an ungated adapter made past its
+        # worktree) is swept in _sweep_manager_write_boundary. Snapshot only
+        # for the write-boundary roles and never let it block a spawn.
+        if role in _WRITE_BOUNDARY_ROLES:
+            with suppress(Exception):
+                self._manager_write_baselines[session_id] = operator_tree_untracked(self._workdir)
 
         # Install the in-process verification-gate policy for this session so a
         # gate-capable adapter (Claude Code) can refuse a failing completion or
