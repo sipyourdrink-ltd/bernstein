@@ -420,17 +420,20 @@ def reap_process_group(
     if not kill_process_group(pgid, signal.SIGTERM):
         return _receipt(delivered=False, escalated=False)
 
-    # Poll for graceful exit.  Using the lead PID as a liveness proxy is
-    # safe because it is guaranteed to be the session leader (start_new_session=True).
+    # Poll for graceful exit.  Probe the whole process *group* rather than the
+    # lead PID: the session leader can reap while a child it spawned keeps the
+    # group alive, and a lead-PID-only check (``process_alive``) would then
+    # declare the group dead the moment the leader exits and skip the SIGKILL
+    # escalation the surviving tree still needs (issue #2643).
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
-        if not process_alive(pgid):
+        if not process_group_alive(pgid):
             return _receipt(delivered=True, escalated=False)
         time.sleep(poll_interval)
 
-    # Still alive after grace period - escalate.
+    # Group still alive after grace period - escalate.
     escalated = False
-    if process_alive(pgid):
+    if process_group_alive(pgid):
         logger.warning(
             "Process group %d did not exit within %.1fs of SIGTERM; sending SIGKILL",
             pgid,
@@ -467,6 +470,45 @@ def process_alive(pid: int) -> bool:
 
     # Windows: use ctypes kernel32 calls
     return _win_process_alive(pid)
+
+
+def process_group_alive(pgid: int) -> bool:
+    """Check whether *any* member of a process group is still running.
+
+    On POSIX, probes the whole group with ``os.killpg(pgid, 0)`` (signal 0 =
+    existence check): a surviving child keeps the group alive even after the
+    group leader (the lead PID) has already been reaped.  :func:`process_alive`
+    only tracks the lead PID, so a reap path that used it as the liveness proxy
+    would report the group dead the moment the leader exits and skip the
+    SIGKILL escalation the surviving children still need (issue #2643).
+
+    On Windows there are no POSIX process groups, so this falls back to the
+    lead-PID liveness check; the Windows reap path terminates the whole tree
+    via a Job Object / ``taskkill /T`` keyed on that PID.
+
+    Args:
+        pgid: Process group ID (on Unix) or lead PID (on Windows).
+
+    Returns:
+        True if the group (POSIX) or the lead process (Windows) is running.
+    """
+    if pgid <= 0:
+        return False
+
+    if IS_WINDOWS:
+        return process_alive(pgid)
+
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        # ESRCH: the group has no members left.
+        return False
+    except PermissionError:
+        # EPERM: a process exists but we may not signal it - the group is alive.
+        return True
+    except OSError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------

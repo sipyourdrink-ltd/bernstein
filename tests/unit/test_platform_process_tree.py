@@ -25,6 +25,7 @@ from bernstein.core.platform_compat import (
     ProcessReapReceipt,
     WindowsJobObject,
     kill_process_group_graceful,
+    process_group_alive,
     process_group_popen_kwargs,
     reap_process_group,
 )
@@ -91,7 +92,7 @@ class TestReapProcessGroup:
         alive = iter([True, False])
         with (
             patch(f"{_PC}.kill_process_group", return_value=True) as mock_kpg,
-            patch(f"{_PC}.process_alive", side_effect=lambda _pid: next(alive, False)),
+            patch(f"{_PC}.process_group_alive", side_effect=lambda _pid: next(alive, False)),
         ):
             receipt = reap_process_group(12345, grace_seconds=1.0, poll_interval=0.01)
         assert receipt.delivered is True
@@ -101,7 +102,7 @@ class TestReapProcessGroup:
     def test_escalation_receipt(self) -> None:
         with (
             patch(f"{_PC}.kill_process_group", return_value=True) as mock_kpg,
-            patch(f"{_PC}.process_alive", return_value=True),
+            patch(f"{_PC}.process_group_alive", return_value=True),
         ):
             receipt = reap_process_group(12345, grace_seconds=0.05, poll_interval=0.01)
         assert receipt.delivered is True
@@ -109,6 +110,33 @@ class TestReapProcessGroup:
         assert mock_kpg.call_count == 2
         # First TERM, then the platform force-kill signal.
         assert mock_kpg.call_args_list[0].args == (12345, signal.SIGTERM)
+
+    def test_escalates_when_group_alive_after_leader_reaped(self) -> None:
+        """Leader reaped but a surviving child keeps the group alive.
+
+        A session leader can exit while a child it spawned survives; the
+        process group is still alive (``os.killpg(pgid, 0)`` succeeds) even
+        though the lead PID is gone.  The reap must probe the whole group and
+        escalate to SIGKILL rather than declaring the group dead off the lead
+        PID and leaking the surviving tree (issue #2643).
+        """
+
+        def _killpg(_pgid: int, _sig: int) -> None:
+            # Signal 0 is the group-liveness probe: the group is still alive.
+            # SIGTERM/SIGKILL deliveries "succeed" (no raise) too.
+            return None
+
+        with (
+            patch(f"{_PC}.os.killpg", side_effect=_killpg) as mock_killpg,
+            # Lead PID is already reaped; a lead-PID-only check stops here.
+            patch(f"{_PC}.process_alive", return_value=False),
+        ):
+            receipt = reap_process_group(4321, grace_seconds=0.05, poll_interval=0.01)
+
+        assert receipt.delivered is True
+        assert receipt.escalated is True
+        forced = [c for c in mock_killpg.call_args_list if c.args[1] in (signal.SIGKILL, 9)]
+        assert forced, "expected a SIGKILL escalation delivered to the surviving group"
 
     def test_receipt_details_projection(self) -> None:
         """to_details() is a deterministic dict projection of the receipt."""
@@ -157,9 +185,47 @@ class TestReapProcessGroup:
         alive = iter([False])
         with (
             patch(f"{_PC}.kill_process_group", return_value=True),
-            patch(f"{_PC}.process_alive", side_effect=lambda _pid: next(alive, False)),
+            patch(f"{_PC}.process_group_alive", side_effect=lambda _pid: next(alive, False)),
         ):
             assert kill_process_group_graceful(12345, grace_seconds=0.1, poll_interval=0.01) is True
+
+
+# ---------------------------------------------------------------------------
+# process_group_alive
+# ---------------------------------------------------------------------------
+
+
+class TestProcessGroupAlive:
+    def test_nonpositive_pgid_is_dead(self) -> None:
+        assert process_group_alive(0) is False
+        assert process_group_alive(-1) is False
+
+    def test_group_alive_when_killpg_succeeds(self) -> None:
+        with patch(f"{_PC}.os.killpg", return_value=None) as mock_killpg:
+            assert process_group_alive(4321) is True
+        mock_killpg.assert_called_once_with(4321, 0)
+
+    def test_group_dead_on_esrch(self) -> None:
+        # ProcessLookupError is the ESRCH mapping: no members left in the group.
+        with patch(f"{_PC}.os.killpg", side_effect=ProcessLookupError):
+            assert process_group_alive(4321) is False
+
+    def test_group_alive_on_eperm(self) -> None:
+        # PermissionError (EPERM) means a process exists we may not signal.
+        with patch(f"{_PC}.os.killpg", side_effect=PermissionError):
+            assert process_group_alive(4321) is True
+
+    def test_generic_oserror_is_dead(self) -> None:
+        with patch(f"{_PC}.os.killpg", side_effect=OSError):
+            assert process_group_alive(4321) is False
+
+    def test_windows_falls_back_to_pid_check(self) -> None:
+        with (
+            patch(f"{_PC}.IS_WINDOWS", True),
+            patch(f"{_PC}.process_alive", return_value=True) as mock_alive,
+        ):
+            assert process_group_alive(4321) is True
+        mock_alive.assert_called_once_with(4321)
 
 
 # ---------------------------------------------------------------------------

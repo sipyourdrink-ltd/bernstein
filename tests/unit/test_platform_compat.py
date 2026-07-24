@@ -154,7 +154,7 @@ class TestKillProcessGroupGraceful:
                 return_value=True,
             ) as mock_kpg,
             patch(
-                "bernstein.core.config.platform_compat.process_alive",
+                "bernstein.core.config.platform_compat.process_group_alive",
                 side_effect=_alive,
             ),
         ):
@@ -168,8 +168,8 @@ class TestKillProcessGroupGraceful:
         """If the group never exits, a force-kill must follow the grace period.
 
         No platform skip: the escalation path is fully mocked at the
-        ``kill_process_group`` / ``process_alive`` boundary, so it runs on
-        the Windows lane too. The force tier is the POSIX ``SIGKILL`` where
+        ``kill_process_group`` / ``process_group_alive`` boundary, so it runs
+        on the Windows lane too. The force tier is the POSIX ``SIGKILL`` where
         importable and the numeric ``9`` fallback on Windows (where
         ``signal.SIGKILL`` does not exist) - keyed off the platform so the
         assertion holds on both.
@@ -181,7 +181,7 @@ class TestKillProcessGroupGraceful:
                 return_value=True,
             ) as mock_kpg,
             patch(
-                "bernstein.core.config.platform_compat.process_alive",
+                "bernstein.core.config.platform_compat.process_group_alive",
                 return_value=True,
             ),
         ):
