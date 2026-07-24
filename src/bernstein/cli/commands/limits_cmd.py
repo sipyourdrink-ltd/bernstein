@@ -24,7 +24,7 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.admission.engine import AdmissionEngine
-from bernstein.core.admission.models import Posture
+from bernstein.core.admission.models import Posture, canonical_name
 from bernstein.core.persistence.work_ledger import LedgerError
 
 EXIT_OK = 0
@@ -197,10 +197,20 @@ def queue_pause_cmd(name: str, resume: bool, workdir: Path | None, output_json: 
     """Pause (or resume) a named queue."""
     engine = _engine(workdir)
     state = engine.state()
-    spec = state.queues.get(name)
-    priority = spec.priority if spec is not None else 0
+    # Canonicalize the name so a mis-cased argument resolves to the same queue,
+    # and refuse an unknown queue instead of conjuring a phantom one (with its
+    # priority silently reset to 0).
     try:
-        entry_hash = engine.set_queue(name, priority=priority, paused=not resume)
+        canonical = canonical_name(name)
+    except ValueError as exc:
+        console.print(f"[red]Queue update failed:[/red] {exc}")
+        raise SystemExit(EXIT_ERROR) from None
+    spec = state.queues.get(canonical)
+    if spec is None:
+        console.print(f"[red]Queue update failed:[/red] no such queue {name!r}")
+        raise SystemExit(EXIT_ERROR) from None
+    try:
+        entry_hash = engine.set_queue(canonical, priority=spec.priority, paused=not resume)
     except (ValueError, LedgerError) as exc:
         console.print(f"[red]Queue update failed:[/red] {exc}")
         raise SystemExit(EXIT_ERROR) from None

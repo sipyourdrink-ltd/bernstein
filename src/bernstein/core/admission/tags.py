@@ -19,6 +19,7 @@ nothing about the diff.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -51,9 +52,19 @@ class TagContract:
     forbidden_prefixes: tuple[str, ...] = ()
 
     def violations_for(self, changed_paths: Iterable[str]) -> tuple[str, ...]:
-        """Return the changed paths that break this contract."""
+        """Return the changed paths that break this contract.
+
+        A path that is absolute or contains any ``..`` component is always a
+        violation: prefix checks alone would let ``docs/../src/x`` sail past a
+        ``docs/`` allow-prefix and produce a false-conformant signed receipt.
+        Such a path is flagged before any prefix comparison.
+        """
         offenders: list[str] = []
         for path in changed_paths:
+            pure = PurePosixPath(path)
+            if pure.is_absolute() or ".." in pure.parts:
+                offenders.append(path)
+                continue
             norm = path.lstrip("./")
             if any(norm.startswith(bad) for bad in self.forbidden_prefixes):
                 offenders.append(path)

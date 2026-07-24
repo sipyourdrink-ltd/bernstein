@@ -35,25 +35,29 @@ from bernstein.core.admission.ledger import (
 from bernstein.core.admission.models import (
     Grant,
     PoolSpec,
+    Posture,
     QueueSpec,
     RateLimitSpec,
     TagLimitSpec,
 )
 from bernstein.core.admission.rate_limit import effective_rate_limit
+from bernstein.core.admission.tags import tags_admissible
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from bernstein.core.persistence.work_ledger import LedgerEntry
 
-__all__ = ["AdmissionState", "GrantInterval"]
+__all__ = ["AdmissionState", "GrantInterval", "advise_over_gates", "enforce_gate_refusal"]
 
 
 @dataclass(frozen=True, slots=True)
 class GrantInterval:
     """A grant's holding interval, retained for offline slot forensics.
 
-    ``end_ts == 0`` means the grant is still held at the chain head.
+    An empty ``end_kind`` means the grant is still held at the chain head.
+    ``end_ts`` alone cannot signal openness: a release or expiry at logical
+    time ``0`` is a real close whose ``end_ts`` is legitimately ``0``.
     """
 
     grant_id: str
@@ -69,7 +73,9 @@ class GrantInterval:
         """Return ``True`` when the grant was held at logical time *at_ts*."""
         if at_ts < self.start_ts:
             return False
-        return self.end_ts == 0 or at_ts < self.end_ts
+        # Openness is keyed on ``end_kind`` (empty == open), not ``end_ts``:
+        # a close at logical time 0 has ``end_ts == 0`` yet is not open.
+        return self.end_kind == "" or at_ts < self.end_ts
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -190,14 +196,23 @@ class AdmissionState:
         """
         state = cls()
         for entry in entries:
-            state.head_hash = entry.entry_hash
-            state.entries += 1
-            handler = _HANDLERS.get(entry.kind)
-            if handler is None:
-                state.unknown_kinds += 1
-                continue
-            handler(state, entry)
+            state.apply(entry)
         return state
+
+    def apply(self, entry: LedgerEntry) -> None:
+        """Fold one ledger row into the state, in chain order.
+
+        The single fold step behind :meth:`from_rows`; exposed so a verifier
+        can interleave a soundness check between rows while projecting the
+        exact same state the engine would read.
+        """
+        self.head_hash = entry.entry_hash
+        self.entries += 1
+        handler = _HANDLERS.get(entry.kind)
+        if handler is None:
+            self.unknown_kinds += 1
+            return
+        handler(self, entry)
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +281,9 @@ def _close_interval(state: AdmissionState, grant_id: str, end_ts: int, end_kind:
     """Close the open holding interval for *grant_id*, if any."""
     for idx in range(len(state.grant_history) - 1, -1, -1):
         interval = state.grant_history[idx]
-        if interval.grant_id == grant_id and interval.end_ts == 0:
+        # Openness is keyed on ``end_kind`` (empty == open): a prior close at
+        # logical time 0 leaves ``end_ts == 0`` yet must not be reopened.
+        if interval.grant_id == grant_id and interval.end_kind == "":
             state.grant_history[idx] = dataclasses.replace(interval, end_ts=end_ts, end_kind=end_kind)
             return
 
@@ -282,8 +299,14 @@ def _handle_renew(state: AdmissionState, entry: LedgerEntry) -> None:
     grant_id = str(entry.payload.get("grant", ""))
     ts = int(entry.payload.get("ts", 0))
     grant = state.active_grants.get(grant_id)
-    if grant is not None:
-        state.active_grants[grant_id] = dataclasses.replace(grant, renewed_ts=ts)
+    if grant is None:
+        return
+    # A renew at or after the lease expiry cannot revive a dead lease. Enforced
+    # in the projection (not only the engine) so a forged or replayed late-renew
+    # row is ignored deterministically on every replay.
+    if grant.effective_expiry and ts >= grant.effective_expiry:
+        return
+    state.active_grants[grant_id] = dataclasses.replace(grant, renewed_ts=ts)
 
 
 def _handle_expire(state: AdmissionState, entry: LedgerEntry) -> None:
@@ -318,3 +341,52 @@ _HANDLERS = {
     KIND_WAIVE: _handle_waive,
     KIND_QUARANTINE: _handle_quarantine,
 }
+
+
+# ---------------------------------------------------------------------------
+# Admission predicate (shared by the engine's decision and the verifier's
+# soundness replay, so both read one gate definition, never two)
+# ---------------------------------------------------------------------------
+
+
+def enforce_gate_refusal(state: AdmissionState, pool_name: str, declared: tuple[str, ...]) -> str | None:
+    """Return the ENFORCE-gate refusal for a candidate grant, or ``None``.
+
+    Only ENFORCE gates refuse; ADVISE and OFF never do. The engine calls this
+    to decide admission; the verifier calls it against the state projected from
+    the rows *before* a chain grant to prove the projection would have issued
+    that grant. One predicate, two callers -- a forged grant that skips a full
+    ENFORCE pool or a maxed ENFORCE tag is caught because the verifier replays
+    the identical gate the engine applied.
+    """
+    if pool_name:
+        spec = state.pools.get(pool_name)
+        if spec is not None and spec.posture is Posture.ENFORCE and state.pool_occupancy(pool_name) >= spec.slots:
+            return f"pool {pool_name!r} at capacity ({spec.slots})"
+    if declared:
+        occupancy = state.tag_occupancy()
+        enforce_limits = {tag: spec.limit for tag, spec in state.tag_limits.items() if spec.posture is Posture.ENFORCE}
+        if not tags_admissible(declared, occupancy, enforce_limits):
+            return "declared tag(s) at capacity"
+    return None
+
+
+def advise_over_gates(state: AdmissionState, pool_name: str, declared: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the ADVISE gates a candidate grant would pass over-limit.
+
+    Sorted, de-duplicated resource names (pool and/or tags) whose ADVISE limit
+    the grant exceeds. Empty when the grant is within every gate. This is the
+    exact set that justifies an ``over_limit`` grant and its waiver receipt, so
+    the engine names the right gate and the verifier can confirm an
+    ``over_limit`` flag is backed by a genuinely exceeded ADVISE gate.
+    """
+    over: list[str] = []
+    if pool_name:
+        spec = state.pools.get(pool_name)
+        if spec is not None and spec.posture is Posture.ADVISE and state.pool_occupancy(pool_name) >= spec.slots:
+            over.append(pool_name)
+    if declared:
+        occupancy = state.tag_occupancy()
+        advise_limits = {tag: spec.limit for tag, spec in state.tag_limits.items() if spec.posture is Posture.ADVISE}
+        over.extend(tag for tag in declared if tag in advise_limits and occupancy.get(tag, 0) >= advise_limits[tag])
+    return tuple(sorted(set(over)))

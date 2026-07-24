@@ -8,10 +8,12 @@ Two independent checks compose:
    (:meth:`~bernstein.core.persistence.work_ledger.LedgerReader.verify`), which
    recomputes every entry hash and names the exact position of a mutated
    payload or a swapped pair (a reorder breaks the ``prev_hash`` linkage).
-2. **Admission soundness** -- replay the chain and, at each grant row under an
-   ENFORCE pool, assert a slot was actually free. A forged grant injected past
-   capacity is a grant the projection would not have issued, and is reported at
-   its exact position.
+2. **Admission soundness** -- project the chain and, at each grant row, replay
+   the same ENFORCE predicate the engine admitted it with (pool capacity *and*
+   tag limits), reading the state before the grant. A forged grant injected
+   past any ENFORCE gate -- or one that references an undeclared pool, or
+   carries an unbacked ``over_limit`` flag -- is a grant the projection would
+   not have issued, and is reported at its exact position.
 
 The verifier is offline: it needs only the ledger bytes. "Who held pool P at
 time T" is then answerable from the verified projection alone.
@@ -22,16 +24,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bernstein.core.admission.ledger import (
-    KIND_EXPIRE,
-    KIND_GRANT,
-    KIND_POOL_CHANGED,
-    KIND_RELEASE,
+from bernstein.core.admission.ledger import KIND_GRANT
+from bernstein.core.admission.projection import (
+    AdmissionState,
+    advise_over_gates,
+    enforce_gate_refusal,
 )
-from bernstein.core.admission.models import PoolSpec, Posture
 
 if TYPE_CHECKING:
-    from bernstein.core.persistence.work_ledger import LedgerReader
+    from bernstein.core.persistence.work_ledger import LedgerEntry, LedgerReader
 
 __all__ = ["AdmissionVerification", "verify_admission_ledger"]
 
@@ -54,40 +55,19 @@ def verify_admission_ledger(reader: LedgerReader) -> AdmissionVerification:
     chain = reader.verify()
     errors: list[str] = list(chain.errors)
 
-    # Admission soundness: replay grant/release/expire under ENFORCE pools and
-    # flag any grant issued past capacity. One pass; the grant->pool map is
-    # built as grants are seen (a grant always precedes its release/expire).
-    pools: dict[str, PoolSpec] = {}
-    occupancy: dict[str, int] = {}
-    grant_pool: dict[str, str] = {}
+    # Admission soundness: project the chain row by row and, at each grant,
+    # replay the *same* ENFORCE predicate the engine used to admit it, reading
+    # the state projected from the rows before the grant. The projection tracks
+    # held grants by id, so a repeated terminal row is idempotent (it cannot
+    # under-count occupancy) and occupancy/limits reflect exactly what admission
+    # saw. Every ENFORCE gate is replayed -- pool capacity and tag limits --
+    # never only pool capacity, and the attacker-controlled over_limit flag can
+    # neither buy an exemption nor stand unbacked by an exceeded ADVISE gate.
+    state = AdmissionState()
     for index, entry in enumerate(reader.entries()):
-        kind = entry.kind
-        if kind == KIND_POOL_CHANGED:
-            spec = PoolSpec.from_dict(entry.payload)
-            pools[spec.name] = spec
-        elif kind == KIND_GRANT:
-            pool = str(entry.payload.get("pool", ""))
-            over_limit = bool(entry.payload.get("over_limit", False))
-            spec = pools.get(pool)
-            if (
-                pool
-                and spec is not None
-                and spec.posture is Posture.ENFORCE
-                and not over_limit
-                and occupancy.get(pool, 0) >= spec.slots
-            ):
-                errors.append(
-                    f"entry {index} (grant {entry.entry_hash[:16]}...): "
-                    f"pool {pool!r} was at capacity ({spec.slots}); "
-                    f"the projection would not have issued this grant"
-                )
-            if pool:
-                grant_pool[entry.entry_hash] = pool
-                occupancy[pool] = occupancy.get(pool, 0) + 1
-        elif kind in (KIND_RELEASE, KIND_EXPIRE):
-            pool = grant_pool.get(str(entry.payload.get("grant", "")), "")
-            if pool:
-                occupancy[pool] = max(0, occupancy.get(pool, 0) - 1)
+        if entry.kind == KIND_GRANT:
+            _check_grant_admissible(state, entry, index, errors)
+        state.apply(entry)
 
     return AdmissionVerification(
         ok=not errors,
@@ -95,3 +75,32 @@ def verify_admission_ledger(reader: LedgerReader) -> AdmissionVerification:
         entries=chain.entries,
         errors=tuple(errors),
     )
+
+
+def _check_grant_admissible(state: AdmissionState, entry: LedgerEntry, index: int, errors: list[str]) -> None:
+    """Append an error for a grant the projection would not have issued."""
+    payload = entry.payload
+    pool = str(payload.get("pool", ""))
+    declared = tuple(sorted({str(t) for t in payload.get("tags", []) if isinstance(t, str)}))
+    over_limit = bool(payload.get("over_limit", False))
+    prefix = f"entry {index} (grant {entry.entry_hash[:16]}...):"
+
+    # A grant can only hold a slot in a declared pool. An undeclared pool means
+    # the projection never sized the class, so it would not have issued this.
+    if pool and pool not in state.pools:
+        errors.append(f"{prefix} references undeclared pool {pool!r}; the projection would not have issued this grant")
+        return
+
+    refusal = enforce_gate_refusal(state, pool, declared)
+    if refusal is not None:
+        errors.append(f"{prefix} {refusal}; the projection would not have issued this grant")
+        return
+
+    # over_limit is only legitimate when an ADVISE gate is genuinely exceeded.
+    # A grant that carries the flag without any over-limit ADVISE gate is a
+    # forged waiver flag (the classic attempt to slip past an ENFORCE gate).
+    if over_limit and not advise_over_gates(state, pool, declared):
+        errors.append(
+            f"{prefix} carries over_limit=True but no ADVISE gate was over limit; "
+            f"the projection would not have set this flag"
+        )

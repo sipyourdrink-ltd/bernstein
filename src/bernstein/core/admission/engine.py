@@ -35,13 +35,16 @@ from bernstein.core.admission.ledger import (
     open_admission_reader,
 )
 from bernstein.core.admission.models import Posture, canonical_name
-from bernstein.core.admission.projection import AdmissionState
+from bernstein.core.admission.projection import (
+    AdmissionState,
+    advise_over_gates,
+    enforce_gate_refusal,
+)
 from bernstein.core.admission.receipts import (
     WaiverReceipt,
     assemble_waiver_receipt,
     sign_receipt,
 )
-from bernstein.core.admission.tags import tags_admissible
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -100,12 +103,20 @@ class AdmissionEngine:
     audit_dir: Path | None = None
 
     def __post_init__(self) -> None:
-        if not self.private_key_pem or not self.public_key_pem:
+        # Reject a partial keypair: filling in the missing half from a freshly
+        # generated pair would mint a signing key whose public half does not
+        # match the supplied one (or vice versa), producing receipts no verifier
+        # can validate. Supply both PEMs, or neither.
+        if bool(self.private_key_pem) != bool(self.public_key_pem):
+            msg = (
+                "AdmissionEngine requires both private_key_pem and public_key_pem or neither; "
+                "a partial keypair would mismatch signing and verification"
+            )
+            raise ValueError(msg)
+        if not self.private_key_pem and not self.public_key_pem:
             from bernstein.core.skills.catalog.signature import generate_signer_keypair
 
-            priv, pub = generate_signer_keypair()
-            self.private_key_pem = self.private_key_pem or priv
-            self.public_key_pem = self.public_key_pem or pub
+            self.private_key_pem, self.public_key_pem = generate_signer_keypair()
 
     @classmethod
     def for_workdir(cls, workdir: Path, *, ledger_id: str = DEFAULT_ADMISSION_ID) -> AdmissionEngine:
@@ -206,9 +217,11 @@ class AdmissionEngine:
         """
         state = self.state()
         pool_name = canonical_name(pool) if pool else ""
-        declared = tuple(canonical_name(t) for t in tags)
+        # De-duplicate declared tags so a grant that names the same tag twice
+        # consumes at most one unit of that tag's concurrency limit.
+        declared = tuple(sorted({canonical_name(t) for t in tags}))
 
-        over_limit, refusal = self._evaluate(state, pool_name, declared)
+        over_limit, refusal, over_gates = self._evaluate(state, pool_name, declared)
         if refusal is not None:
             return AdmissionDecision(admitted=False, reason=refusal)
 
@@ -234,9 +247,13 @@ class AdmissionEngine:
 
         waiver: WaiverReceipt | None = None
         if over_limit:
+            # Name the gate(s) actually exceeded under ADVISE, not whichever
+            # gate happened to be present. A pool-under-capacity grant that is
+            # over-limit only because of a tag records the tag, not the pool.
+            resource = ",".join(over_gates)
             waiver = self._record_waiver(
-                gate=pool_name or (declared[0] if declared else "tag"),
-                resource=pool_name or ",".join(declared),
+                gate=resource,
+                resource=resource,
                 task_id=task_id,
                 worker_id=worker_id,
                 granted_ts=now,
@@ -248,37 +265,39 @@ class AdmissionEngine:
         """Return the current admission-ledger head hash."""
         return self.state().head_hash
 
-    def _evaluate(self, state: AdmissionState, pool_name: str, declared: tuple[str, ...]) -> tuple[bool, str | None]:
-        """Return ``(over_limit, refusal_reason)`` for a candidate grant.
+    def _evaluate(
+        self, state: AdmissionState, pool_name: str, declared: tuple[str, ...]
+    ) -> tuple[bool, str | None, tuple[str, ...]]:
+        """Return ``(over_limit, refusal_reason, over_gates)`` for a candidate.
 
         ``refusal_reason`` is ``None`` when the grant is admissible (possibly
-        over-limit under ADVISE).
+        over-limit under ADVISE); ``over_gates`` names the ADVISE gate(s) the
+        grant passes over-limit and is empty unless ``over_limit`` is ``True``.
+        The gate definitions are shared with the verifier so a decision and its
+        later re-verification read one predicate.
         """
-        over_limit = False
-        # Pool capacity gate.
-        if pool_name:
-            spec = state.pools.get(pool_name)
-            if spec is not None and spec.posture is not Posture.OFF and state.pool_occupancy(pool_name) >= spec.slots:
-                if spec.posture is Posture.ENFORCE:
-                    return False, f"pool {pool_name!r} at capacity ({spec.slots})"
-                over_limit = True
-        # Tag concurrency gate (AND-of-all declared tags).
-        if declared:
-            occupancy = state.tag_occupancy()
-            enforce_limits = {
-                tag: spec.limit for tag, spec in state.tag_limits.items() if spec.posture is Posture.ENFORCE
-            }
-            if not tags_admissible(declared, occupancy, enforce_limits):
-                return False, "declared tag(s) at capacity"
-            advise_limits = {
-                tag: spec.limit for tag, spec in state.tag_limits.items() if spec.posture is Posture.ADVISE
-            }
-            if not tags_admissible(declared, occupancy, advise_limits):
-                over_limit = True
-        return over_limit, None
+        refusal = enforce_gate_refusal(state, pool_name, declared)
+        if refusal is not None:
+            return False, refusal, ()
+        over_gates = advise_over_gates(state, pool_name, declared)
+        return bool(over_gates), None, over_gates
 
     def renew(self, grant_id: str, now: int) -> str:
-        """Renew a grant's lease (piggybacked on the heartbeat signal)."""
+        """Renew a grant's lease (piggybacked on the heartbeat signal).
+
+        Rejects a renewal for an unknown/released grant or one whose lease has
+        already expired at *now*: a late heartbeat must not revive a dead lease
+        (the projection ignores such a row too, so this is a fail-fast guard).
+        """
+        grant = self.state().active_grants.get(grant_id)
+        if grant is None:
+            msg = f"cannot renew unknown or released grant {grant_id[:16]}..."
+            raise ValueError(msg)
+        if grant.effective_expiry and now >= grant.effective_expiry:
+            msg = (
+                f"cannot renew grant {grant_id[:16]}...: lease already expired at {grant.effective_expiry} (now {now})"
+            )
+            raise ValueError(msg)
         return self._append(kind=KIND_RENEW, payload={"grant": grant_id, "ts": now})
 
     def release(self, grant_id: str, now: int) -> str:
@@ -330,24 +349,28 @@ class AdmissionEngine:
         references the expiry row via ``slot_freed_by``.
         """
         state = self.state()
-        outcomes: list[ExpiryOutcome] = []
-        for grant in state.expired_grants(now):
-            expire_hash = self._append(
-                kind=KIND_EXPIRE,
-                task_id=grant.task_id,
-                payload={"grant": grant.grant_id, "ts": now},
-            )
-            receipt = self._assemble_expiry_receipt(grant, state, prev_chain_digest=expire_hash)
-            retry_decision = self._resume_decision(grant)
-            outcomes.append(
-                ExpiryOutcome(
-                    grant=grant,
-                    expire_hash=expire_hash,
-                    receipt=receipt,
-                    retry_decision=retry_decision,
-                )
-            )
-        return outcomes
+        return [self._expire_grant(grant, state, now) for grant in state.expired_grants(now)]
+
+    def _expire_grant(self, grant: Grant, state: AdmissionState, now: int) -> ExpiryOutcome:
+        """Run one lease-expiry lifecycle: expire row, signed receipt, resume.
+
+        The single per-grant expiry path shared by the deterministic sweep and
+        by quarantine, so a quarantined worker goes through the identical
+        receipt/checkpoint-retry lifecycle instead of a silent slot recycle.
+        """
+        expire_hash = self._append(
+            kind=KIND_EXPIRE,
+            task_id=grant.task_id,
+            payload={"grant": grant.grant_id, "ts": now},
+        )
+        receipt = self._assemble_expiry_receipt(grant, state, prev_chain_digest=expire_hash)
+        retry_decision = self._resume_decision(grant)
+        return ExpiryOutcome(
+            grant=grant,
+            expire_hash=expire_hash,
+            receipt=receipt,
+            retry_decision=retry_decision,
+        )
 
     def _assemble_expiry_receipt(self, grant: Grant, state: AdmissionState, *, prev_chain_digest: str) -> Any:
         """Build a signed escalation receipt in the supervisor-receipt shape."""
@@ -445,8 +468,21 @@ class AdmissionEngine:
         affected.sort(key=lambda g: (g.granted_ts, g.grant_id))
         checkpointed: list[dict[str, str]] = []
         for grant in affected:
-            self._append(kind=KIND_EXPIRE, task_id=grant.task_id, payload={"grant": grant.grant_id, "ts": now})
-            checkpointed.append({"grant_id": grant.grant_id, "task_id": grant.task_id, "worker_id": grant.worker_id})
+            # Run the same expiry lifecycle as ``sweep_expired`` -- an expire
+            # row plus a signed escalation receipt -- and only record the worker
+            # as checkpointed once that lifecycle has been persisted, so the
+            # manifest's ``checkpointed`` label is backed by an actual receipt
+            # anchored in the chain rather than a bare relabel.
+            outcome = self._expire_grant(grant, state, now)
+            checkpointed.append(
+                {
+                    "expire_hash": outcome.expire_hash,
+                    "grant_id": grant.grant_id,
+                    "receipt_digest": outcome.receipt.payload_digest,
+                    "task_id": grant.task_id,
+                    "worker_id": grant.worker_id,
+                }
+            )
 
         manifest = {
             "checkpointed": checkpointed,
@@ -519,7 +555,15 @@ class AdmissionEngine:
 
 
 def _install_keypair() -> tuple[str, str]:
-    """Return the install agent-card keypair PEM, generating on first use."""
+    """Return the install agent-card keypair PEM, generating on first use.
+
+    Falls back to an ephemeral identity only when the keystore itself is
+    *unavailable* (its module or crypto dependency will not import). Every other
+    failure -- unsafe key permissions, a corrupt keystore, an I/O error -- is a
+    security signal: it propagates instead of silently substituting a fresh,
+    unpinnable keypair that would break every verifier pinned to the stable
+    install identity.
+    """
     try:
         from bernstein.core.security.agent_card_keystore import (
             DEFAULT_KEY_DIR,
@@ -527,11 +571,11 @@ def _install_keypair() -> tuple[str, str]:
         )
 
         private_pem, public_pem = AgentCardKeystore(DEFAULT_KEY_DIR).load_or_generate()
-        return private_pem.decode("ascii"), public_pem.decode("ascii")
-    except Exception:  # pragma: no cover - keystore unavailable
+    except ImportError:  # pragma: no cover - keystore dependency unavailable
         from bernstein.core.skills.catalog.signature import generate_signer_keypair
 
         return generate_signer_keypair()
+    return private_pem.decode("ascii"), public_pem.decode("ascii")
 
 
 def _keyid(public_key_pem: str) -> str:

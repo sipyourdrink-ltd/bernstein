@@ -120,7 +120,11 @@ def test_randomized_interleavings_project_identically(tmp_path_factory: pytest.T
         elif op == "release" and state.active_grants:
             eng.release(sorted(state.active_grants)[arg % len(state.active_grants)], now=clock)
         elif op == "renew" and state.active_grants:
-            eng.renew(sorted(state.active_grants)[arg % len(state.active_grants)], now=clock)
+            gid = sorted(state.active_grants)[arg % len(state.active_grants)]
+            # A late heartbeat can no longer revive an expired lease; only renew
+            # a still-live grant (the engine rejects the rest).
+            if not state.active_grants[gid].is_expired(clock):
+                eng.renew(gid, now=clock)
         elif op == "sweep":
             eng.sweep_expired(now=clock + 10)
 
@@ -239,10 +243,10 @@ def test_lease_expiry_emits_signed_receipt_resume_and_references_expiry(tmp_path
 def test_a_renewed_lease_does_not_expire(tmp_path: Path) -> None:
     eng = _engine(tmp_path)
     eng.set_pool("p", 1)
-    grant = eng.request_grant(pool="p", task_id="T1", worker_id="w1", now=100, ttl_s=50)
-    eng.renew(grant.grant_id, now=180)  # heartbeat renewal
-    assert eng.sweep_expired(now=200) == []  # 180 + 50 = 230 > 200
-    assert eng.sweep_expired(now=240) != []  # now past the renewed expiry
+    grant = eng.request_grant(pool="p", task_id="T1", worker_id="w1", now=100, ttl_s=50)  # expiry 150
+    eng.renew(grant.grant_id, now=140)  # heartbeat renewal before expiry -> new expiry 190
+    assert eng.sweep_expired(now=180) == []  # 140 + 50 = 190 > 180
+    assert eng.sweep_expired(now=200) != []  # now past the renewed expiry
 
 
 # ---------------------------------------------------------------------------
