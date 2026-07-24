@@ -117,12 +117,12 @@ frozen adapter locally, not only in this table.
 | Adapter | Binary | Last-green version | Verified | Receipt |
 |---|---|---|---|---|
 | agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z (stale) | `006fb946868d` |
-| claude | `claude` | 2.1.217 | 2026-07-22T07:30:14Z | `488c43fbfbc0` |
-| codex | `codex` | 0.145.0 | 2026-07-22T07:30:14Z | `43296bc25996` |
-| copilot | `copilot` | 1.0.73 | 2026-07-22T07:30:14Z | `44eab25c7282` |
-| gemini | `gemini` | 0.51.0 | 2026-07-22T07:30:14Z | `2297afc04c97` |
-| opencode | `opencode` | 1.18.4 | 2026-07-22T07:30:14Z | `0afcf47d5f8a` |
-| qwen | `qwen` | 0.20.1 | 2026-07-22T07:30:14Z | `91dd44fccd33` |
+| claude | `claude` | 2.1.218 | 2026-07-24T07:27:04Z | `347712853645` |
+| codex | `codex` | 0.145.0 | 2026-07-24T07:27:04Z | `7063ddc664a0` |
+| copilot | `copilot` | 1.0.74 | 2026-07-24T07:27:04Z | `0224cac3d028` |
+| gemini | `gemini` | 0.52.0 | 2026-07-24T07:27:04Z | `029629965834` |
+| opencode | `opencode` | 1.18.4 | 2026-07-24T07:27:04Z | `4d2420ceffb0` |
+| qwen | `qwen` | 0.20.1 | 2026-07-24T07:27:04Z | `d9b41bad1bba` |
 <!-- last-green:end -->
 
 ## Operator knobs
