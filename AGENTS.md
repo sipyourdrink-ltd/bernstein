@@ -29,6 +29,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
 | `cost/`                     | cost sub-package |
 | `daemon/`                   | Daemon installation helpers for Bernstein |
+| `datasources/`              | Content-addressed query receipts (issue #2887) |
 | `devops/`                   | devops sub-package |
 | `distribution/`             | Distribution utilities - air-gap wheelhouse build, verify, signing |
 | `endpoints/`                | Local-model worker tier: endpoint conformance and signed certification |
