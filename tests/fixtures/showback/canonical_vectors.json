@@ -1,0 +1,241 @@
+{
+  "schema": "showback-canonical-vectors-v1",
+  "notes": "Cross-language vectors for the tenant showback canonical core. money_parse/money_render cover the operator-facing decimal-string format (nano-USD fixed scale, 9 fractional digits); float_bridge covers the one-time conversion from the float spend ledger (shortest round-trip decimal of the IEEE 754 double, then ROUND_HALF_EVEN to 1e-9); nfc covers the reject-don't-repair text policy; statements bind validated payload trees to RFC 8785 canonical bytes via sha256.",
+  "money_parse": [
+    {
+      "desc": "integer dollars",
+      "input": "3",
+      "nano_usd": 3000000000
+    },
+    {
+      "desc": "typical price fraction",
+      "input": "0.25",
+      "nano_usd": 250000000
+    },
+    {
+      "desc": "full nine fractional digits",
+      "input": "0.000000001",
+      "nano_usd": 1
+    },
+    {
+      "desc": "negative credit line",
+      "input": "-1.5",
+      "nano_usd": -1500000000
+    },
+    {
+      "desc": "zero",
+      "input": "0",
+      "nano_usd": 0
+    },
+    {
+      "desc": "trailing zeros accepted on input",
+      "input": "0.250000000",
+      "nano_usd": 250000000
+    },
+    {
+      "desc": "large amount",
+      "input": "12345678.900000000",
+      "nano_usd": 12345678900000000
+    },
+    {
+      "desc": "reject exponent notation",
+      "input": "1e3",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject tenth fractional digit",
+      "input": "0.0000000001",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject leading zero",
+      "input": "01.5",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject plus sign",
+      "input": "+1",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject negative zero",
+      "input": "-0",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject negative zero with fraction",
+      "input": "-0.000000000",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject bare fraction",
+      "input": ".5",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject trailing dot",
+      "input": "1.",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject whitespace",
+      "input": " 1",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject thousands separator",
+      "input": "1,000",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject empty string",
+      "input": "",
+      "error": "money-format"
+    },
+    {
+      "desc": "reject non-ascii digits",
+      "input": "١",
+      "error": "money-format"
+    }
+  ],
+  "money_render": [
+    {
+      "desc": "zero renders nine digits",
+      "nano_usd": 0,
+      "text": "0.000000000"
+    },
+    {
+      "desc": "one nano-USD",
+      "nano_usd": 1,
+      "text": "0.000000001"
+    },
+    {
+      "desc": "quarter dollar",
+      "nano_usd": 250000000,
+      "text": "0.250000000"
+    },
+    {
+      "desc": "negative credit",
+      "nano_usd": -1500000000,
+      "text": "-1.500000000"
+    },
+    {
+      "desc": "large amount",
+      "nano_usd": 12345678900000000,
+      "text": "12345678.900000000"
+    }
+  ],
+  "float_bridge": [
+    {
+      "desc": "one tenth is exact after shortest round-trip",
+      "cost_usd": 0.1,
+      "nano_usd": 100000000
+    },
+    {
+      "desc": "integer dollars",
+      "cost_usd": 5.0,
+      "nano_usd": 5000000000
+    },
+    {
+      "desc": "sub-nano rounds half-even down to zero",
+      "cost_usd": 5e-10,
+      "nano_usd": 0
+    },
+    {
+      "desc": "tie at 1.5 nano lands on even 2",
+      "cost_usd": 1.5e-09,
+      "nano_usd": 2
+    },
+    {
+      "desc": "tie at 2.5 nano lands on even 2",
+      "cost_usd": 2.5e-09,
+      "nano_usd": 2
+    },
+    {
+      "desc": "typical haiku-call cost",
+      "cost_usd": 2.5e-05,
+      "nano_usd": 25000
+    },
+    {
+      "desc": "negative adjustment",
+      "cost_usd": -0.1,
+      "nano_usd": -100000000
+    }
+  ],
+  "nfc": [
+    {
+      "desc": "ascii passes",
+      "codepoints": "U+0062 U+0075 U+0064 U+0067 U+0065 U+0074",
+      "ok": true
+    },
+    {
+      "desc": "precomposed e-acute passes",
+      "codepoints": "U+00E9",
+      "ok": true
+    },
+    {
+      "desc": "decomposed e plus combining acute is rejected",
+      "codepoints": "U+0065 U+0301"
+    },
+    {
+      "desc": "cyrillic passes",
+      "codepoints": "U+043A U+043E U+043C U+0430 U+043D U+0434 U+0430",
+      "ok": true
+    },
+    {
+      "desc": "singleton angstrom sign is rejected",
+      "codepoints": "U+212B"
+    },
+    {
+      "desc": "hangul jamo sequence is rejected",
+      "codepoints": "U+1100 U+1161"
+    }
+  ],
+  "statements": [
+    {
+      "desc": "minimal statement",
+      "payload": {
+        "schema": "showback-statement-v1",
+        "tenant": "core",
+        "total_nano_usd": "250000000"
+      },
+      "sha256": "008a13385898d3cfc8764582d42b7072e08f4c81fcbcd8066ae97ee9c33d5c0d"
+    },
+    {
+      "desc": "line items in chain order with anchors",
+      "payload": {
+        "schema": "showback-statement-v1",
+        "tenant": "platform",
+        "window": {
+          "from_chain_seq": 100,
+          "to_chain_seq": 220
+        },
+        "line_items": [
+          {
+            "seq": 101,
+            "task_id": "t-001",
+            "nano_usd": "25000",
+            "label": "plan"
+          },
+          {
+            "seq": 140,
+            "task_id": "t-002",
+            "nano_usd": "100000000",
+            "label": "implement"
+          }
+        ],
+        "total_nano_usd": "100025000"
+      },
+      "sha256": "585eebacd614720327a4b3d10554da2114550cca525452a11c26671468eac4aa"
+    },
+    {
+      "desc": "unicode label precomposed",
+      "payload": {
+        "schema": "showback-statement-v1",
+        "tenant": "café",
+        "total_nano_usd": "0"
+      },
+      "sha256": "487d16e5a75ca4433ef06afa0be031496b1b0090613c3f48e3e96b31f59aa440"
+    }
+  ]
+}
