@@ -12,13 +12,17 @@ Covers acceptance criteria:
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
-from bernstein.core.events.actions import ActionSpec, render_action
+import pytest
+
+from bernstein.core.events.actions import ActionSpec, render_action, rule_hash
 from bernstein.core.events.feed import project_window
 from bernstein.core.events.grammar import CanonicalEvent
 from bernstein.core.events.receipts import (
     ActionRejected,
+    FireReceipt,
     build_absence_receipt,
     build_fire_receipt,
     dispatch_action,
@@ -154,8 +158,9 @@ def test_absence_receipt_verifies_and_fails_on_injection(tmp_path: Path) -> None
     )
     window = project_window(slice_audit_log(tmp_path / "audit"))
 
+    # within=2 so the deadline (chain position 2) is observed by the slice.
     violations = evaluate_absence(
-        AbsenceExpectation(after="run.started", expect="run.completed", within=10), window.events
+        AbsenceExpectation(after="run.started", expect="run.completed", within=2), window.events
     )
     assert len(violations) == 1
     receipt = build_absence_receipt(violations[0])
@@ -179,3 +184,129 @@ def test_absence_receipt_verifies_and_fails_on_injection(tmp_path: Path) -> None
     bad_ok, bad_errors = verify_absence_receipt(receipt, tampered_window)
     assert not bad_ok
     assert any("matching event present" in e for e in bad_errors)
+
+
+# ---------------------------------------------------------------------------
+# Fire-receipt binding checks (#2653, item 9)
+# ---------------------------------------------------------------------------
+
+
+def test_build_fire_receipt_requires_triggering_in_matched() -> None:
+    trigger = _event(0, "gate.result", "g")
+    other = _event(1, "gate.result", "h")
+    action = ActionSpec(kind="schedule.pause", params={"schedule_id": "nightly"})
+    # The action is rendered against ``trigger`` but ``trigger`` is not among the
+    # matched events -> the receipt would authorise an unmatched triggering event.
+    with pytest.raises(ValueError):
+        build_fire_receipt(rule_spec=_RULE_SPEC, matched_events=[other], action=action, triggering_event=trigger)
+
+
+def test_verify_fire_receipt_rejects_triggering_not_in_matched() -> None:
+    trigger = _event(0, "gate.result", "g")
+    other = _event(1, "gate.result", "h")
+    action = ActionSpec(kind="schedule.pause", params={"schedule_id": "nightly"})
+    rendered = render_action(action, trigger)
+    # Hand-craft a receipt whose matched set excludes the triggering event.
+    receipt = FireReceipt(
+        rule_hash=rule_hash(_RULE_SPEC),
+        matched_event_hmacs=(other.hmac,),
+        action_kind=rendered.kind,
+        action_digest=rendered.digest,
+        rendered_action=rendered.to_dict(),
+    )
+    events_by_hmac = {trigger.hmac: trigger, other.hmac: other}
+
+    ok, errors = verify_fire_receipt(receipt, rule_spec=_RULE_SPEC, action=action, events_by_hmac=events_by_hmac)
+    assert not ok
+    assert any("triggering event not among matched" in e for e in errors)
+
+
+def test_verify_fire_receipt_rejects_action_kind_mismatch() -> None:
+    trigger = _event(0, "gate.result", "g")
+    action = ActionSpec(kind="schedule.pause", params={"schedule_id": "nightly"})
+    receipt = build_fire_receipt(
+        rule_spec=_RULE_SPEC, matched_events=[trigger], action=action, triggering_event=trigger
+    )
+    # A receipt whose action_kind no longer matches what the action re-renders to.
+    tampered = dataclasses.replace(receipt, action_kind="notify")
+    events_by_hmac = {trigger.hmac: trigger}
+
+    ok, errors = verify_fire_receipt(tampered, rule_spec=_RULE_SPEC, action=action, events_by_hmac=events_by_hmac)
+    assert not ok
+    assert any("action kind diverges" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# Dispatch audit continuity (#2653, item 10)
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_fixture() -> tuple[ActionSpec, CanonicalEvent, FireReceipt, object]:
+    trigger = _event(0, "gate.result", "g")
+    action = ActionSpec(kind="schedule.pause", params={"schedule_id": "nightly"})
+    receipt = build_fire_receipt(
+        rule_spec=_RULE_SPEC, matched_events=[trigger], action=action, triggering_event=trigger
+    )
+    rendered = render_action(action, trigger)
+    return action, trigger, receipt, rendered
+
+
+def test_dispatch_writes_pending_intent_before_effect(tmp_path: Path) -> None:
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    _action, _trigger, receipt, rendered = _dispatch_fixture()
+
+    saw_pending: list[bool] = []
+
+    def effect(_rendered: object) -> str:
+        pending = [
+            e for e in chain.query(event_type=EVENT_AUTOMATION_ACTION) if e.details.get("result_status") == "pending"
+        ]
+        saw_pending.append(bool(pending))
+        return "paused"
+
+    dispatch_action(chain=chain, receipt=receipt, rendered_action=rendered, effect=effect)  # type: ignore[arg-type]
+    # The intent/pending record is on the chain before the effect runs.
+    assert saw_pending == [True]
+
+
+def test_dispatch_records_failure_outcome_on_effect_exception(tmp_path: Path) -> None:
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    _action, _trigger, receipt, rendered = _dispatch_fixture()
+
+    def effect(_rendered: object) -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        dispatch_action(chain=chain, receipt=receipt, rendered_action=rendered, effect=effect)  # type: ignore[arg-type]
+
+    statuses = [e.details.get("result_status") for e in chain.query(event_type=EVENT_AUTOMATION_ACTION)]
+    # No audit gap: an intent and a failure outcome both landed despite the raise.
+    assert "pending" in statuses
+    assert "failed" in statuses
+    ok, errors = chain.verify()
+    assert ok, errors
+
+
+def test_dispatch_is_idempotent_on_replay(tmp_path: Path) -> None:
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    _action, _trigger, receipt, rendered = _dispatch_fixture()
+
+    calls: list[int] = []
+
+    def effect(_rendered: object) -> str:
+        calls.append(1)
+        return "paused"
+
+    first = dispatch_action(chain=chain, receipt=receipt, rendered_action=rendered, effect=effect)  # type: ignore[arg-type]
+    second = dispatch_action(chain=chain, receipt=receipt, rendered_action=rendered, effect=effect)  # type: ignore[arg-type]
+
+    # The effect ran exactly once; the replay is keyed on the fire receipt.
+    assert calls == [1]
+    assert first.effect_result == "paused"
+    assert second.effect_result is None
+    completed = [
+        e for e in chain.query(event_type=EVENT_AUTOMATION_ACTION) if e.details.get("result_status") == "dispatched"
+    ]
+    assert len(completed) == 1
+    ok, errors = chain.verify()
+    assert ok, errors

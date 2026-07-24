@@ -97,6 +97,11 @@ def build_fire_receipt(
     """
     rendered = render_action(action, triggering_event)
     matched_hmacs = tuple(event.hmac for event in matched_events)
+    if triggering_event.hmac not in matched_hmacs:
+        # The receipt must not authorise an action rendered against an event
+        # outside the matched set: that would let a rule fire on an event it
+        # never actually matched.
+        raise ValueError("triggering event must be among the matched events")
     return FireReceipt(
         rule_hash=rule_hash(rule_spec),
         matched_event_hmacs=matched_hmacs,
@@ -128,9 +133,11 @@ def verify_fire_receipt(
 ) -> tuple[bool, list[str]]:
     """Verify a fire receipt against the rule, action, and the event window.
 
-    Confirms the rule hash, that every matched HMAC is present in the window, and
-    that re-rendering the action from the recorded triggering event reproduces
-    the committed digest byte-for-byte.
+    Confirms the rule hash, that every matched HMAC is present in the window,
+    that the triggering event is itself among the matched events, that the
+    receipt's ``action_kind`` matches what the action re-renders to, and that
+    re-rendering from the recorded triggering event reproduces the committed
+    digest byte-for-byte.
     """
     errors: list[str] = []
     if rule_hash(rule_spec) != receipt.rule_hash:
@@ -141,11 +148,17 @@ def verify_fire_receipt(
             errors.append(f"matched event not present in window: {hmac[:16]}")
 
     triggering_hmac = str(receipt.rendered_action.get("triggering_event_hmac", ""))
+    if triggering_hmac not in receipt.matched_event_hmacs:
+        # A receipt whose action was rendered against an event outside its own
+        # matched set is not a valid fire commitment.
+        errors.append("triggering event not among matched events")
     triggering_event = events_by_hmac.get(triggering_hmac)
     if triggering_event is None:
         errors.append("triggering event not present in window")
     else:
         re_rendered = render_action(action, triggering_event)
+        if re_rendered.kind != receipt.action_kind:
+            errors.append("action kind diverges from receipt")
         if re_rendered.digest != receipt.action_digest:
             errors.append("re-rendered action digest diverges from receipt")
         if re_rendered.to_dict() != receipt.rendered_action:
@@ -238,6 +251,30 @@ class DispatchResult:
     effect_result: Any
 
 
+def _find_completed_action_event(chain: AuditChainStore, *, action_digest: str) -> AuditEvent | None:
+    """Return a prior *completed* automation-action event for ``action_digest``.
+
+    A completed record (``result_status == "dispatched"``) proves the effect
+    already ran to success, so a replay must not run it again.
+    """
+    from bernstein.core.security.audit_chain import EVENT_AUTOMATION_ACTION
+
+    for event in chain.query(event_type=EVENT_AUTOMATION_ACTION, resource_id=action_digest):
+        details = event.details
+        status = str(details.get("result_status", ""))
+        if status == "dispatched" and str(details.get("action_digest", "")) == action_digest:
+            return event
+    return None
+
+
+def _find_fire_receipt_event(chain: AuditChainStore, *, action_digest: str) -> AuditEvent | None:
+    """Return the fire-receipt event that committed to ``action_digest``, if any."""
+    from bernstein.core.security.audit_chain import EVENT_RULE_FIRE_RECEIPT
+
+    events = chain.query(event_type=EVENT_RULE_FIRE_RECEIPT, resource_id=action_digest)
+    return events[0] if events else None
+
+
 def dispatch_action(
     *,
     chain: AuditChainStore,
@@ -246,11 +283,22 @@ def dispatch_action(
     effect: Callable[[RenderedAction], Any],
     actor: str = "events_automation",
 ) -> DispatchResult:
-    """Write the fire receipt, authorise, run the effect, then record the action.
+    """Authorise, commit a fire receipt, run the effect, and record the outcome.
 
-    The ordering is the contract: the receipt lands on the chain *before* the
-    effect runs, and the executed action is itself a chain event referencing the
-    receipt, so the automation is observable in the same feed it reacts to.
+    The chain records leave no audit gap across a failure:
+
+    1. The action is authorised against the receipt (a pure check, no write).
+    2. The fire receipt lands on the chain as the pre-effect commitment.
+    3. An *intent* record (``result_status="pending"``) is written **before** the
+       effect runs, so a crash mid-effect still shows the attempt.
+    4. The effect runs. A success writes a ``dispatched`` outcome; an exception
+       writes a ``failed`` outcome and then re-raises - either way the outcome is
+       on the chain.
+
+    Dispatch is idempotent, keyed on the fire receipt's action digest: if a
+    ``dispatched`` outcome for this exact action already exists, the effect is not
+    run again and the recorded events are returned. This makes a retry after a
+    post-effect record failure safe (the completed effect is not repeated).
 
     Raises:
         ActionRejected: When ``receipt`` does not authorise ``rendered_action``.
@@ -259,6 +307,18 @@ def dispatch_action(
         record_automation_action,
         record_rule_fire_receipt,
     )
+
+    if not authorize_action(receipt, rendered_action):
+        raise ActionRejected(
+            f"action {rendered_action.digest[:16]} is not covered by fire receipt {receipt.action_digest[:16]}"
+        )
+
+    # Idempotent replay: a completed outcome for this action digest means the
+    # effect already succeeded; return the recorded events without re-running it.
+    prior = _find_completed_action_event(chain, action_digest=rendered_action.digest)
+    if prior is not None:
+        fire_event = _find_fire_receipt_event(chain, action_digest=receipt.action_digest) or prior
+        return DispatchResult(fire_receipt_event=fire_event, action_event=prior, effect_result=None)
 
     fire_event = record_rule_fire_receipt(
         chain=chain,
@@ -269,12 +329,32 @@ def dispatch_action(
         actor=actor,
     )
 
-    if not authorize_action(receipt, rendered_action):
-        raise ActionRejected(
-            f"action {rendered_action.digest[:16]} is not covered by fire receipt {receipt.action_digest[:16]}"
-        )
+    # Intent before the effect: closes the pre-effect audit gap.
+    record_automation_action(
+        chain=chain,
+        action_kind=rendered_action.kind,
+        action_digest=rendered_action.digest,
+        fire_receipt_hmac=fire_event.hmac,
+        triggering_event_hmac=rendered_action.triggering_event_hmac,
+        result_status="pending",
+        actor=actor,
+    )
 
-    effect_result = effect(rendered_action)
+    try:
+        effect_result = effect(rendered_action)
+    except Exception:
+        # Record the failure outcome before propagating, so the effect exception
+        # never leaves the chain without an outcome.
+        record_automation_action(
+            chain=chain,
+            action_kind=rendered_action.kind,
+            action_digest=rendered_action.digest,
+            fire_receipt_hmac=fire_event.hmac,
+            triggering_event_hmac=rendered_action.triggering_event_hmac,
+            result_status="failed",
+            actor=actor,
+        )
+        raise
 
     action_event = record_automation_action(
         chain=chain,
@@ -282,6 +362,7 @@ def dispatch_action(
         action_digest=rendered_action.digest,
         fire_receipt_hmac=fire_event.hmac,
         triggering_event_hmac=rendered_action.triggering_event_hmac,
+        result_status="dispatched",
         actor=actor,
     )
     return DispatchResult(fire_receipt_event=fire_event, action_event=action_event, effect_result=effect_result)
