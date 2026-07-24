@@ -26,6 +26,7 @@ The real boot/exec round trip lives in the opt-in host-gated integration test
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
 import subprocess
@@ -879,6 +880,29 @@ async def test_exec_removes_its_control_directory(tmp_path: Path, monkeypatch: p
     await _boot_stubbed(monitor, monkeypatch)
     try:
         await monitor.exec(["true"])
+        control_root = monitor._control_root
+        assert control_root is not None
+        assert list(control_root.iterdir()) == []
+    finally:
+        await monitor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_exec_kills_the_vm_and_cleans_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cancelled fork-race branch must not strand a VM on the workspace.
+
+    The guest holds the session's virtio-fs shares open, so a VM that outlives
+    its cancelled call keeps writing into a workspace the caller is about to
+    delete.
+    """
+    monitor = _monitor(tmp_path, launcher_body="import time\ntime.sleep(30)\n")
+    await _boot_stubbed(monitor, monkeypatch)
+    try:
+        task = asyncio.create_task(monitor.exec(["sleep", "30"]))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
         control_root = monitor._control_root
         assert control_root is not None
         assert list(control_root.iterdir()) == []

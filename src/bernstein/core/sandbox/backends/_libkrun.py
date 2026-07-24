@@ -941,14 +941,14 @@ class LibkrunMonitor:
         try:
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError as exc:
-            # Kill the VM before propagating: a wedged guest that outlives the
-            # call would keep its virtio-fs shares (and this session's
-            # workspace) alive after shutdown().
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            await proc.wait()
+            await _kill(proc)
             msg = f"Command timed out after {timeout}s: {cmd!r}"
             raise TimeoutError(msg) from exc
+        except asyncio.CancelledError:
+            # A cancelled fork-race branch must not leave a VM running against
+            # a workspace the caller is about to delete.
+            await _kill(proc)
+            raise
         return (
             proc.returncode if proc.returncode is not None else -1,
             stderr.decode("utf-8", "replace"),
@@ -969,6 +969,18 @@ def _env_int(name: str, default: int) -> int:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+async def _kill(proc: asyncio.subprocess.Process) -> None:
+    """Kill and reap a VM process, so an abandoned guest outlives nothing.
+
+    A wedged or abandoned guest keeps its virtio-fs shares - and therefore this
+    session's workspace - alive past ``shutdown()``.
+    """
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(asyncio.CancelledError):
+        await proc.wait()
 
 
 def _read_bytes(path: Path) -> bytes:
