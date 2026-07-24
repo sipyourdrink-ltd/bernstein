@@ -406,6 +406,7 @@ def print_rich_help() -> None:
                 ("bernstein", "run from bernstein.yaml or backlog"),
                 ("run [dim]plan.yaml[/dim]", "execute a plan file (stages + steps)"),
                 ("init", "initialize project (.sdd/ + bernstein.yaml)"),
+                ("start", "start server + spawn manager, detached (cluster central node)"),
                 ("serve", "run the task server in the foreground (container / node)"),
                 ("stop", "graceful stop (agents save work first)"),
                 ("stop --force", "hard stop (kill immediately)"),
@@ -875,6 +876,7 @@ def cli(
         attach=(),
         # Bot-added: drift autofix (regen_contract_drift.py)
         refresh_cache=False,
+        force_fresh=force_fresh,
     )
 
 

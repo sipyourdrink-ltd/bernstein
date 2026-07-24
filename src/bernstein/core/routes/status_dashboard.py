@@ -299,6 +299,25 @@ def _status_task_items(tasks: list[Task], now: float) -> list[dict[str, Any]]:
     return items
 
 
+def _agent_model_label(agent: Any) -> str:
+    """Return the agent's real spawn model for dashboard display.
+
+    Reads the model from the agent's ``model_config`` (attribute- or
+    dict-shaped), then the agent's own ``model`` field. When none is known it
+    falls back to the provider or a neutral ``"unknown"`` - never a hardcoded
+    ``"sonnet"``, which mislabels non-Claude agents (issue #2800).
+    """
+    mc = getattr(agent, "model_config", None)
+    model = getattr(mc, "model", None)
+    if model is None and isinstance(mc, dict):
+        model = mc.get("model")
+    if model is None:
+        model = getattr(agent, "model", None)
+    if model:
+        return str(model)
+    return str(getattr(agent, "provider", None) or "unknown")
+
+
 def _status_agent_items(
     store: TaskStore,
     agent_snapshots: dict[str, dict[str, Any]],
@@ -310,7 +329,7 @@ def _status_agent_items(
     live_agents = list(store.agents.values())
     for agent in live_agents:
         snapshot = agent_snapshots.get(agent.id, {})
-        model_name = agent.model_config.model if hasattr(agent.model_config, "model") else "sonnet"
+        model_name = _agent_model_label(agent)
         role_alive_count = max(1, len([candidate for candidate in live_agents if candidate.role == agent.role]))
         estimated_cost = total_cost_by_role.get(agent.role, 0.0) / role_alive_count
         items.append(
@@ -1044,7 +1063,7 @@ def _build_single_agent_detail(
 ) -> dict[str, Any]:
     """Build a single agent detail dict for the dashboard data endpoint."""
     runtime_s = int(now - a.spawn_ts)
-    model_name = a.model_config.model if hasattr(a.model_config, "model") else "sonnet"
+    model_name = _agent_model_label(a)
     context_window_tokens = int(getattr(a, "context_window_tokens", 0) or snapshot.get("context_window_tokens", 0) or 0)
     context_utilization_pct = float(
         getattr(a, "context_utilization_pct", 0.0) or snapshot.get("context_utilization_pct", 0.0) or 0.0

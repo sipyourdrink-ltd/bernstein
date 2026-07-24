@@ -175,9 +175,23 @@ def _register_mcp_discovery(workdir: Path) -> None:
             existing = {}
 
     servers = dict(existing.get("mcpServers", {}))  # type: ignore[arg-type]
+    desired_args = ["-m", "bernstein.mcp.server"]
+
+    # Self-heal only when the entry is missing or stale. The bernstein entry is
+    # identified by its ``args``; ``command`` is ``sys.executable``, which is
+    # machine-specific and differs between the host that committed a tracked
+    # mcp.json and the host running the wheel. Rewriting on that difference
+    # dirties the operator working tree on every run (issue #2800), so when an
+    # entry with the same args already exists we leave the file untouched and
+    # only its (machine-specific) command may differ.
+    current = servers.get("bernstein")
+    if isinstance(current, dict) and current.get("args") == desired_args:
+        logger.debug("Bernstein MCP server already registered in %s; skipping rewrite", mcp_path)
+        return
+
     servers["bernstein"] = {
         "command": sys.executable,
-        "args": ["-m", "bernstein.mcp.server"],
+        "args": desired_args,
     }
     existing["mcpServers"] = servers
     mcp_path.write_text(_json.dumps(existing, indent=2) + "\n")

@@ -281,7 +281,11 @@ def _collect_pid_agents(pid_path: Path) -> tuple[list[dict[str, Any]], list[Path
             continue
 
         worker_pid = info.get("worker_pid", 0)
-        alive = is_process_alive(worker_pid) if worker_pid else False
+        child_pid = info.get("child_pid")
+        # Probe the leaf child PID independently: an adapter leaf process can
+        # outlive its worker briefly, and reporting on ``worker_pid`` alone made
+        # ``ps`` go blind to a still-running agent (issue #2800).
+        alive = (bool(worker_pid) and is_process_alive(worker_pid)) or (bool(child_pid) and is_process_alive(child_pid))
         if not alive:
             stale_files.append(pid_file)
             continue
@@ -299,7 +303,7 @@ def _collect_pid_agents(pid_path: Path) -> tuple[list[dict[str, Any]], list[Path
                 "command": info.get("command", "?"),
                 "model": info.get("model", "?"),
                 "worker_pid": worker_pid,
-                "child_pid": info.get("child_pid"),
+                "child_pid": child_pid,
                 "runtime": runtime_str,
                 "started_at": started_at,
             }

@@ -669,6 +669,17 @@ def _cleanup_runtime_artifacts() -> None:
             f.unlink(missing_ok=True)
 
 
+def _count_reaped(killed_pids: set[int]) -> int:
+    """Count collected PIDs confirmed terminated after the kill sweep.
+
+    Every collector adds a PID it attempted to ``killed_pids``, including PIDs
+    that were already dead or that resisted SIGKILL. Reporting the raw set size
+    over-states what was actually reaped (issue #2800); count only PIDs that are
+    no longer alive.
+    """
+    return sum(1 for pid in killed_pids if not is_alive(pid))
+
+
 def hard_stop() -> None:
     """Hard stop: SIGKILL everything, best-effort save, return tickets."""
     # 1. Best-effort session save while server is still alive
@@ -722,9 +733,17 @@ def hard_stop() -> None:
     # Remove Bernstein from .claude/mcp.json so stale references are cleaned up
     _unregister_mcp_discovery(Path.cwd())
 
-    total = len(killed_pids)
-    if total:
-        console.print(f"\n[red]Bernstein stopped (hard) - killed {total} process(es).[/red]")
+    reaped = _count_reaped(killed_pids)
+    resisted = len(killed_pids) - reaped
+    if reaped:
+        console.print(f"\n[red]Bernstein stopped (hard) - killed {reaped} process(es).[/red]")
+        if resisted:
+            console.print(f"[yellow]{resisted} process(es) resisted SIGKILL and may still be running.[/yellow]")
+    elif resisted:
+        console.print(
+            f"\n[yellow]Bernstein stop (hard) - {resisted} process(es) resisted SIGKILL "
+            "and may still be running.[/yellow]"
+        )
     else:
         console.print("\n[red]Bernstein stopped (hard) - no processes were running.[/red]")
 

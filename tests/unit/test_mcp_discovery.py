@@ -61,6 +61,38 @@ def test_register_tolerates_corrupt_existing_file(tmp_path: Path) -> None:
     assert "bernstein" in data["mcpServers"]
 
 
+def test_register_skips_rewrite_when_command_only_differs(tmp_path: Path) -> None:
+    """A tracked mcp.json committed on another machine is not rewritten (issue #2800).
+
+    The bernstein entry is identified by its ``args``. When an entry with the
+    same args already exists, only its machine-specific ``command`` could
+    differ, so register must leave the file byte-for-byte unchanged instead of
+    dirtying a tracked working tree on every run.
+    """
+    mcp_path = tmp_path / ".claude" / "mcp.json"
+    mcp_path.parent.mkdir(parents=True)
+    committed = {
+        "mcpServers": {"bernstein": {"command": "/other/machine/python", "args": ["-m", "bernstein.mcp.server"]}}
+    }
+    original_text = json.dumps(committed, indent=2) + "\n"
+    mcp_path.write_text(original_text)
+
+    _register_mcp_discovery(tmp_path)
+
+    assert mcp_path.read_text() == original_text
+
+
+def test_register_is_idempotent_on_second_run(tmp_path: Path) -> None:
+    """Two consecutive registers on the same machine leave the file unchanged."""
+    _register_mcp_discovery(tmp_path)
+    mcp_path = tmp_path / ".claude" / "mcp.json"
+    first = mcp_path.read_text()
+
+    _register_mcp_discovery(tmp_path)
+
+    assert mcp_path.read_text() == first
+
+
 def test_unregister_removes_bernstein_entry(tmp_path: Path) -> None:
     """unregister removes only the bernstein entry, leaving others intact."""
     mcp_path = tmp_path / ".claude" / "mcp.json"
