@@ -208,15 +208,13 @@ def _lib_names(stem: str) -> tuple[str, ...]:
     return (f"{stem}.so.1", f"{stem}.so.5", f"{stem}.so")
 
 
-def _find_shared_object(stem: str, explicit: str | None = None) -> str | None:
+def _find_shared_object(stem: str, search: tuple[str, ...] = ()) -> str | None:
     """Locate a shared object without loading it.
 
     Deliberately does *not* ``dlopen`` anything: :meth:`LibkrunMonitor.preflight`
     must stay side-effect-free, and loading a hypervisor library is not that.
     """
-    if explicit:
-        return explicit if Path(explicit).exists() else None
-    for directory in _lib_dirs():
+    for directory in (*search, *_lib_dirs()):
         for name in _lib_names(stem):
             candidate = Path(directory) / name
             if candidate.exists():
@@ -228,18 +226,26 @@ def _find_shared_object(stem: str, explicit: str | None = None) -> str | None:
 
 def find_libkrun(explicit: str | None = None) -> str | None:
     """Locate the libkrun shared library, or ``None`` when it is absent."""
-    return _find_shared_object("libkrun", explicit)
+    if explicit:
+        return explicit if Path(explicit).exists() else None
+    return _find_shared_object("libkrun")
 
 
-def find_libkrunfw() -> str | None:
+def find_libkrunfw(library: str | None = None) -> str | None:
     """Locate libkrunfw (the packaged guest kernel), or ``None`` when absent.
 
     libkrun ``dlopen``s it at VM-start time rather than linking it, so a host
     with libkrun but no libkrunfw preflights as ready and then fails at boot
     with an opaque loader error. Checking for it here turns that into a named
     precondition.
+
+    libkrun's own directory is searched first: an operator who pointed
+    ``$BERNSTEIN_MICROVM_LIBKRUN_LIB`` at a non-standard prefix has almost
+    certainly put the guest kernel beside it, and reporting that host as
+    missing libkrunfw would be wrong.
     """
-    return _find_shared_object("libkrunfw")
+    beside = libkrun_library_dir(library)
+    return _find_shared_object("libkrunfw", (beside,) if beside else ())
 
 
 def libkrun_library_dir(library: str | None = None) -> str | None:
@@ -648,7 +654,7 @@ class LibkrunMonitor:
         if find_libkrun(self._library_override) is None:
             hint = "" if self._library_override else f" (install libkrun, or set ${LIBRARY_ENV})"
             missing.append(f"libkrun shared library not found{hint}")
-        if find_libkrunfw() is None:
+        if find_libkrunfw(self._library_override) is None:
             missing.append(
                 "libkrunfw shared library not found (it carries the guest kernel; libkrun loads it when the VM starts)"
             )

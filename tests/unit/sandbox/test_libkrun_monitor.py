@@ -132,7 +132,7 @@ def _stub_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub only the checks that genuinely need a hypervisor or a signature."""
     monkeypatch.setattr(LibkrunMonitor, "_preflight_platform", lambda self: [])
     monkeypatch.setattr(LibkrunMonitor, "_preflight_signature", lambda self, launcher: [])
-    monkeypatch.setattr(_libkrun, "find_libkrunfw", lambda: "/stub/libkrunfw")
+    monkeypatch.setattr(_libkrun, "find_libkrunfw", lambda library=None: "/stub/libkrunfw")
 
 
 async def _boot_stubbed(
