@@ -38,9 +38,10 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.protocols.payments.x402 import X402SettlementCoordinator
     from bernstein.core.replay.journal import EventJournal
     from bernstein.core.security.audit_chain import AuditChainStore
-    from bernstein.core.wal import WALWriter
+    from bernstein.core.wal import WALEntry, WALWriter
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +175,7 @@ class MCPGateway:
         server_name: str = "unknown",
         journal: EventJournal | None = None,
         audit_chain: AuditChainStore | None = None,
+        settlement: X402SettlementCoordinator | None = None,
     ) -> None:
         self._upstream_cmd = upstream_cmd
         self._wal_writer = wal_writer
@@ -181,6 +183,12 @@ class MCPGateway:
         self._server_name = server_name.strip() or "unknown"
         self._journal = journal
         self._audit_chain = audit_chain
+        # x402 settlement coordinator (issue #2528). ``None`` keeps the gateway
+        # byte-identical to the pre-settlement proxy; a 402 then surfaces as an
+        # ordinary tool error. The coordinator gates against a spending mandate
+        # before any payment. The settlement seam lives on the live-proxy
+        # branch only, so replay can never invoke the hook or double-settle.
+        self._settlement = settlement
         self._metrics: dict[str, ToolMetrics] = {}
         self._proc: asyncio.subprocess.Process | None = None
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
@@ -269,11 +277,16 @@ class MCPGateway:
 
     def _record_wal_and_metrics(
         self, method: str, params: dict[str, Any], req_id: Any, response: dict[str, Any], latency_ms: float
-    ) -> None:
-        """Write WAL record and update per-tool metrics."""
+    ) -> WALEntry:
+        """Write WAL record and update per-tool metrics; return the WAL entry.
+
+        The returned entry's ``entry_hash`` is the WAL invocation digest an
+        x402 spend receipt binds (issue #2528), so a settlement is provably
+        tied to the exact recorded call it paid for.
+        """
         tool_name = str(params.get("name", "")) if method == "tools/call" else ""
         has_error = response.get("error") is not None
-        self._wal_writer.append(
+        entry = self._wal_writer.append(
             decision_type="mcp_tool_call",
             inputs={
                 "method": method,
@@ -293,6 +306,7 @@ class MCPGateway:
         if metric_key not in self._metrics:
             self._metrics[metric_key] = ToolMetrics(tool_name=metric_key)
         self._metrics[metric_key].record(latency_ms, error=has_error)
+        return entry
 
     async def handle_jsonrpc(self, message: dict[str, Any]) -> dict[str, Any] | None:
         """Handle one JSON-RPC message, recording to WAL.
@@ -316,6 +330,22 @@ class MCPGateway:
                 await self._send_upstream(message)
             return None
 
+        response, latency_ms = await self._send_request(message, req_id)
+        self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
+        self._anchor_proxied_call(method, params)
+
+        if self._settlement is not None and method == "tools/call":
+            response = await self._maybe_settle(message, params, response)
+
+        return response
+
+    async def _send_request(self, message: dict[str, Any], req_id: Any) -> tuple[dict[str, Any], float]:
+        """Send one JSON-RPC request upstream and await its response.
+
+        Returns the response and the round-trip latency in milliseconds. The
+        pending-future dance is factored out here so the x402 retry (issue
+        #2528) reuses the identical send/await path as the original call.
+        """
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
         t0 = time.monotonic()
@@ -324,12 +354,65 @@ class MCPGateway:
             response: dict[str, Any] = await asyncio.wait_for(asyncio.shield(fut), timeout=30.0)
         finally:
             self._pending.pop(req_id, None)
+        return response, (time.monotonic() - t0) * 1000.0
 
-        latency_ms = (time.monotonic() - t0) * 1000.0
-        self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
-        self._anchor_proxied_call(method, params)
+    async def _maybe_settle(
+        self, message: dict[str, Any], params: dict[str, Any], response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Run the x402 settlement flow when a proxied call answers with a 402.
 
-        return response
+        Detects an x402 challenge, gates it against the active spending mandate,
+        invokes the operator settlement hook, retries the call with the payment
+        reference, records the retried invocation to the WAL, and emits a
+        chain-anchored spend receipt binding the WAL invocation digest, the
+        challenge, the payment reference, the retried request, and the mandate.
+
+        A non-402 response, a disabled config, or a refused/declined settlement
+        returns the original response unchanged -- so the 402 surfaces as an
+        ordinary tool error and Bernstein never pays outside a mandate.
+        """
+        from bernstein.core.protocols.payments.x402 import (
+            SettlementStatus,
+            build_retry_request,
+            parse_challenge,
+        )
+
+        assert self._settlement is not None
+        challenge = parse_challenge(response)
+        if challenge is None:
+            return response
+
+        tool_name = str(params.get("name", ""))
+        pre = self._settlement.pre_authorize(challenge, server_name=self._server_name, tool_name=tool_name)
+        if pre.status is not SettlementStatus.AUTHORIZED or not pre.payment_ref:
+            # SKIPPED (disabled) or REFUSED (fail closed): the original 402
+            # surfaces as an ordinary tool error; a refusal is already anchored.
+            return response
+
+        retried = build_retry_request(message, pre.payment_ref)
+        retried_id = retried.get("id")
+        retried_params: dict[str, Any] = retried.get("params") or {}
+        settled, latency_ms = await self._send_request(retried, retried_id)
+        wal_entry = self._record_wal_and_metrics("tools/call", retried_params, retried_id, settled, latency_ms)
+        self._anchor_proxied_call("tools/call", retried_params)
+
+        try:
+            self._settlement.record_settlement(
+                challenge,
+                server_name=self._server_name,
+                tool_name=tool_name,
+                payment_ref=pre.payment_ref,
+                amount_usd=pre.amount_usd,
+                retried_request=retried,
+                wal_entry=wal_entry,
+            )
+        except Exception:
+            # A recording failure must not swallow the settled response the
+            # operator already paid for; it surfaces in the log and as a
+            # missing receipt a verifier can detect.
+            logger.exception("x402: failed to record settlement receipt for %s", tool_name)
+
+        return settled
 
     def _anchor_proxied_call(self, method: str, params: dict[str, Any]) -> None:
         """Anchor a proxied call into the run journal and audit chain.
