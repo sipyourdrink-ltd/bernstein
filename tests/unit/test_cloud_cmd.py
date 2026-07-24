@@ -9,6 +9,7 @@ import stat
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 from click.testing import CliRunner
 
 from bernstein.cli.commands import cloud_cmd
@@ -173,6 +174,95 @@ def test_cloud_deploy_shows_instructions() -> None:
     assert result.exit_code == 0
     assert "wrangler deploy" in result.output
     assert "bernstein-agent" in result.output
+
+
+def test_cloud_deploy_does_not_point_at_repo_only_template() -> None:
+    """``cloud deploy`` must not reference the repo-only template path.
+
+    Wheel users have no ``templates/bernstein-cloud/``; the honest pointer is
+    ``bernstein cloud init`` (issue #2784).
+    """
+    runner = CliRunner()
+    result = runner.invoke(cloud_group, ["deploy"])
+    assert result.exit_code == 0
+    assert "templates/bernstein-cloud" not in result.output
+    assert "cloud init" in result.output
+
+
+# ---------------------------------------------------------------------------
+# init - scaffold a runnable, free-tier worker
+# ---------------------------------------------------------------------------
+
+
+def test_cloud_init_scaffolds_runnable_worker(tmp_path: Path) -> None:
+    """``cloud init`` writes a wrangler.toml AND the worker its ``main`` names."""
+    out = tmp_path / "wrangler.toml"
+    runner = CliRunner()
+    result = runner.invoke(cloud_group, ["init", "--output", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+
+    toml_text = out.read_text(encoding="utf-8")
+    # main names src/index.js, which must now exist (issue #2784 entry-point bug).
+    assert 'main = "src/index.js"' in toml_text
+    worker = tmp_path / "src" / "index.js"
+    assert worker.exists()
+    assert "fetch" in worker.read_text(encoding="utf-8")
+
+
+def test_cloud_init_default_template_is_free_tier(tmp_path: Path) -> None:
+    """The scaffolded wrangler.toml has no paid bindings by default."""
+    out = tmp_path / "wrangler.toml"
+    runner = CliRunner()
+    result = runner.invoke(cloud_group, ["init", "--output", str(out)])
+    assert result.exit_code == 0
+    toml_text = out.read_text(encoding="utf-8")
+    # Queues are a Workers Paid feature; they must not be active by default.
+    assert "[[queues.producers]]" not in toml_text
+    assert "[[queues.consumers]]" not in toml_text
+
+
+def test_cloud_init_does_not_clobber_existing_worker(tmp_path: Path) -> None:
+    """An existing worker file is left untouched by ``cloud init``."""
+    out = tmp_path / "wrangler.toml"
+    worker = tmp_path / "src" / "index.js"
+    worker.parent.mkdir(parents=True, exist_ok=True)
+    worker.write_text("// custom worker\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(cloud_group, ["init", "--output", str(out)])
+    assert result.exit_code == 0
+    assert worker.read_text(encoding="utf-8") == "// custom worker\n"
+
+
+# ---------------------------------------------------------------------------
+# login / hosted-service honesty
+# ---------------------------------------------------------------------------
+
+
+def test_cloud_login_notes_experimental(tmp_path: Path) -> None:
+    """``cloud login`` warns that the hosted service is experimental."""
+    _redirect_token_paths(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cloud_group, ["login", "--api-key", "sk-test-123"])
+    assert result.exit_code == 0
+    assert "Authenticated" in result.output
+    assert "experimental" in result.output.lower()
+
+
+def test_cloud_runs_reports_hosted_service_unavailable(tmp_path: Path) -> None:
+    """A connection failure to the hosted API yields a clean message, not a traceback."""
+    _redirect_token_paths(tmp_path)
+    cloud_cmd._save_token("sk-test", "https://api.bernstein.run")
+
+    failing_client = MagicMock(request=MagicMock(side_effect=httpx.ConnectError("name resolution failed")))
+    runner = CliRunner()
+    with patch.object(cloud_cmd.httpx.Client, "__enter__", return_value=failing_client):
+        result = runner.invoke(cloud_group, ["runs"])
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "not reachable" in result.output.lower() or "not currently available" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

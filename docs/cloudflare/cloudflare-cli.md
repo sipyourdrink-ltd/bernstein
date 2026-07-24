@@ -2,7 +2,15 @@
 
 **Module:** `bernstein.cli.commands.cloud_cmd`
 
-The `bernstein cloud` command group manages hosted orchestration on Cloudflare. It provides authentication, remote run management, cost reporting, and worker deployment.
+The `bernstein cloud` command group manages hosted orchestration on Cloudflare. It provides authentication, remote run management, cost reporting, and worker scaffolding/deployment.
+
+!!! warning "Hosted service is experimental"
+    The hosted API at `api.bernstein.run` is experimental and **not currently
+    available** — the host does not resolve in DNS. The `login`, `run`,
+    `status`, `runs`, and `cost` commands target it; when it is unreachable they
+    report a clear "not reachable / not currently available" message and exit
+    non-zero (rather than a traceback). `init` and `deploy` are local and work
+    against your own Cloudflare account.
 
 ---
 
@@ -123,9 +131,35 @@ Output includes total cost, run count, and period.
 
 ---
 
+### `bernstein cloud init`
+
+Scaffold a deployable worker project in the current directory. Writes a
+free-tier `wrangler.toml` and the runnable `src/index.js` entry point its `main`
+names, so `wrangler deploy` resolves without an "entry-point not found" error.
+This works from the published wheel (which does not ship the repo `templates/`
+directory).
+
+```bash
+bernstein cloud init
+
+# Custom worker name / output path
+bernstein cloud init --worker-name my-worker --output deploy/wrangler.toml
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--worker-name` | `"bernstein-agent"` | Cloudflare Worker script name written into `wrangler.toml` |
+| `--output` / `-o` | `"wrangler.toml"` | Output path for `wrangler.toml` (the worker is written to `<dir>/src/index.js`) |
+
+An existing `src/index.js` is left unchanged. The scaffolded `wrangler.toml`
+declares no paid bindings (Queues, KV, Durable Objects, and R2 are commented
+out).
+
+---
+
 ### `bernstein cloud deploy`
 
-Deploy the Bernstein agent Worker to your Cloudflare account.
+Print the command to deploy the Bernstein agent Worker to your Cloudflare account.
 
 ```bash
 bernstein cloud deploy
@@ -139,7 +173,8 @@ bernstein cloud deploy --worker-name my-bernstein-worker
 | `--worker-name` | `"bernstein-agent"` | Cloudflare Worker script name |
 
 !!! note "Manual step"
-    This command prints the wrangler deploy command and points you to the deployment template. Run the printed command to complete deployment.
+    This command prints the `wrangler deploy` command; run it to complete
+    deployment. Scaffold a deployable worker first with `bernstein cloud init`.
 
 ---
 

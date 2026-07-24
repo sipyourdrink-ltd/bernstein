@@ -3,10 +3,16 @@
 # Usage:
 #   1. Copy this file to your project root
 #   2. Set your account_id below
-#   3. Configure KV namespaces and secrets
-#   4. Deploy: npx wrangler deploy
+#   3. Deploy: npx wrangler deploy
 #
-# See also: bernstein cloud deploy
+# See also: bernstein cloud init (scaffolds this file plus a runnable worker)
+#
+# This template is free-tier compatible by default: it declares only a fetch
+# worker, [vars], and the Workers AI binding, and its `main` points at the
+# src/worker.ts shipped alongside this file. The paid or ID-requiring bindings
+# (KV, Durable Objects, Queues, R2) are commented out below - uncomment and fill
+# in the required values only if your plan and use case need them. Queues in
+# particular require a Workers Paid plan.
 
 name = "bernstein-agent"
 main = "src/worker.ts"
@@ -20,43 +26,40 @@ BERNSTEIN_ENV = "production"
 MAX_AGENTS = "3"
 DEFAULT_MODEL = "auto"
 
-# KV namespace for task state persistence
-[[kv_namespaces]]
-binding = "TASK_STORE"
-id = ""  # Create with: npx wrangler kv namespace create TASK_STORE
-
-# Durable Objects for orchestrator state
-[durable_objects]
-bindings = [
-  { name = "ORCHESTRATOR", class_name = "OrchestratorDO" }
-]
-
-[[migrations]]
-tag = "v1"
-new_classes = ["OrchestratorDO"]
-
-# Queue for async task processing
-[[queues.producers]]
-queue = "bernstein-tasks"
-binding = "TASK_QUEUE"
-
-[[queues.consumers]]
-queue = "bernstein-tasks"
-max_batch_size = 10
-max_batch_timeout = 30
-
-# R2 bucket for artifact storage
-[[r2_buckets]]
-binding = "ARTIFACTS"
-bucket_name = "bernstein-artifacts"
-
-# AI binding for Workers AI model inference
+# AI binding for Workers AI model inference (free tier eligible)
 [ai]
 binding = "AI"
 
-# Rate limiting
-# [unsafe.bindings]
-# - name = "RATE_LIMITER"
-#   type = "ratelimit"
-#   namespace_id = "0"
-#   simple = { limit = 100, period = 60 }
+# ---------------------------------------------------------------------------
+# Optional bindings (disabled by default). Uncomment and set the required IDs.
+# ---------------------------------------------------------------------------
+
+# KV namespace for task state persistence
+# [[kv_namespaces]]
+# binding = "TASK_STORE"
+# id = ""  # Create with: npx wrangler kv namespace create TASK_STORE
+
+# Durable Objects for orchestrator state
+# [durable_objects]
+# bindings = [
+#   { name = "ORCHESTRATOR", class_name = "OrchestratorDO" }
+# ]
+#
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["OrchestratorDO"]
+
+# Queue for async task processing (requires a Workers Paid plan)
+# [[queues.producers]]
+# queue = "bernstein-tasks"
+# binding = "TASK_QUEUE"
+#
+# [[queues.consumers]]
+# queue = "bernstein-tasks"
+# max_batch_size = 10
+# max_batch_timeout = 30
+
+# R2 bucket for artifact storage
+# [[r2_buckets]]
+# binding = "ARTIFACTS"
+# bucket_name = "bernstein-artifacts"

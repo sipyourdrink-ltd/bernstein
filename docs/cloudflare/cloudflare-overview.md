@@ -69,7 +69,7 @@ graph TD
 | D1 Analytics | `bernstein.core.cost.d1_analytics` | Usage metering, billing tiers, quota enforcement |
 | Vectorize Cache | `bernstein.core.memory.vectorize_cache` | Semantic cache for LLM responses using vector similarity |
 | MCP Remote Transport | `bernstein.mcp.remote_transport` | Streamable HTTP transport for remote MCP server access |
-| Cloud CLI | `bernstein.cli.commands.cloud_cmd` | `bernstein cloud` subcommands (login, run, status, cost, deploy) |
+| Cloud CLI | `bernstein.cli.commands.cloud_cmd` | `bernstein cloud` subcommands (init, deploy are local; login/run/status/cost target the experimental, currently-unavailable `api.bernstein.run`) |
 
 ---
 

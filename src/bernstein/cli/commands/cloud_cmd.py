@@ -60,6 +60,11 @@ def cloud_login(api_key: str | None, url: str) -> None:
         api_key = click.prompt("Enter your Bernstein Cloud API key", hide_input=True)
     _save_token(api_key, url)
     click.echo("Authenticated with Bernstein Cloud.")
+    click.echo(
+        "Note: the hosted cloud service (api.bernstein.run) is experimental and "
+        "may be unavailable.",
+        err=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +200,35 @@ compatibility_date = "2024-01-01"
 [vars]
 BERNSTEIN_SERVER_URL = "http://127.0.0.1:8052"
 
-# Add your Cloudflare bindings here:
+# Free-tier compatible by default: no paid bindings are declared. Add your own
+# below as needed. Note that Queues require a Workers Paid plan.
 # [[kv_namespaces]]
 # binding = "TASKS"
 # id = "your-kv-namespace-id"
+"""
+
+# Minimal runnable worker so ``main`` resolves and ``wrangler deploy`` succeeds.
+_WORKER_JS_TEMPLATE = """\
+/**
+ * Minimal Bernstein agent worker.
+ *
+ * Free-tier compatible: a single fetch handler with no paid bindings. Replace
+ * the body with your agent logic. This file is the `main` entry point named in
+ * wrangler.toml, so `wrangler deploy` resolves without an "entry-point not
+ * found" error.
+ */
+export default {
+  async fetch(request, env) {
+    const body = {
+      service: "bernstein-agent",
+      server: env.BERNSTEIN_SERVER_URL ?? "",
+      message: "Bernstein agent worker is running.",
+    };
+    return new Response(JSON.stringify(body), {
+      headers: { "content-type": "application/json" },
+    });
+  },
+};
 """
 
 
@@ -206,10 +236,10 @@ BERNSTEIN_SERVER_URL = "http://127.0.0.1:8052"
 @click.option("--worker-name", default="bernstein-agent", show_default=True, help="Cloudflare Worker name.")
 @click.option("--output", "-o", default="wrangler.toml", show_default=True, help="Output path for wrangler.toml.")
 def cloud_init(worker_name: str, output: str) -> None:
-    """Scaffold wrangler.toml and Cloudflare bindings for cloud deployment.
+    """Scaffold a deployable wrangler.toml and its worker entry point.
 
     \b
-      bernstein cloud init                        # write wrangler.toml
+      bernstein cloud init                        # write wrangler.toml + src/index.js
       bernstein cloud init --output deploy/wrangler.toml
     """
     out_path = Path(output)
@@ -219,7 +249,17 @@ def cloud_init(worker_name: str, output: str) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(_WRANGLER_TOML_TEMPLATE.format(worker_name=worker_name), encoding="utf-8")
     click.echo(f"Created {output}")
-    click.echo("Next: edit bindings in wrangler.toml, then run 'bernstein cloud deploy'.")
+
+    # Scaffold the worker named by ``main`` so the toml points at a real file.
+    worker_path = out_path.parent / "src" / "index.js"
+    if worker_path.exists():
+        click.echo(f"{worker_path} already exists; left unchanged.")
+    else:
+        worker_path.parent.mkdir(parents=True, exist_ok=True)
+        worker_path.write_text(_WORKER_JS_TEMPLATE, encoding="utf-8")
+        click.echo(f"Created {worker_path}")
+
+    click.echo("Next: set account_id in wrangler.toml, then deploy with 'npx wrangler deploy'.")
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +273,7 @@ def cloud_deploy(worker_name: str) -> None:
     """Deploy Bernstein agent Worker to your Cloudflare account."""
     click.echo(f"Deploying {worker_name}...")
     click.echo(f"Run: npx wrangler deploy --name {worker_name}")
-    click.echo("See templates/bernstein-cloud/wrangler.toml for the deployment template.")
+    click.echo("Scaffold a deployable worker first with 'bernstein cloud init'.")
 
 
 # ---------------------------------------------------------------------------
@@ -268,11 +308,23 @@ def _cloud_request(
     token: dict[str, str],
     **kwargs: Any,
 ) -> httpx.Response:
-    """Make authenticated request to Bernstein Cloud API."""
+    """Make an authenticated request to the Bernstein Cloud API.
+
+    Raises:
+        click.ClickException: When the hosted service cannot be reached. The
+            default ``api.bernstein.run`` host does not currently resolve, so a
+            connection failure is reported cleanly instead of as a traceback.
+    """
     url = f"{token['url']}{path}"
     headers = {
         "Authorization": f"Bearer {token['api_key']}",
         "Content-Type": "application/json",
     }
-    with httpx.Client(timeout=30) as client:
-        return client.request(method, url, headers=headers, **kwargs)
+    try:
+        with httpx.Client(timeout=30) as client:
+            return client.request(method, url, headers=headers, **kwargs)
+    except httpx.RequestError as exc:
+        raise click.ClickException(
+            f"Bernstein Cloud hosted service ({token['url']}) is not reachable: {exc}. "
+            "The hosted cloud API is experimental and not currently available."
+        ) from exc

@@ -126,25 +126,30 @@ config = D1Config(
 
 
 
-If you want to run agents on Cloudflare Workers (not just use Workers AI locally), deploy the agent worker:
+If you want to run agents on Cloudflare Workers (not just use Workers AI locally), scaffold and deploy the agent worker. `bernstein cloud init` writes a free-tier `wrangler.toml` and a runnable `src/index.js` entry point (this works from the published wheel, which does not ship the repo `templates/` directory):
 
 ```bash
-# From the Bernstein repo root
-cd templates/bernstein-cloud
+bernstein cloud init                 # writes wrangler.toml + src/index.js
+# set account_id in wrangler.toml, then:
 npx wrangler deploy --name bernstein-agent
 ```
 
-Or use the CLI shortcut:
-
-```bash
-bernstein cloud deploy --worker-name bernstein-agent
-```
+`bernstein cloud deploy --worker-name bernstein-agent` prints the same
+`wrangler deploy` command for reference.
 
 ---
 
 ## 6. Authenticate the Cloud CLI
 
-For the hosted Bernstein Cloud service (api.bernstein.run):
+!!! warning "Hosted service is experimental"
+    The hosted Bernstein Cloud service at `api.bernstein.run` is experimental
+    and **not currently available** (the host does not resolve in DNS). The
+    `bernstein cloud login/run/status/runs/cost` commands target it and will
+    report that the service is not reachable. Everything else in this guide
+    (Workers AI, R2, D1, worker deployment) works against your own Cloudflare
+    account and does not depend on the hosted service.
+
+For the hosted Bernstein Cloud service (when available):
 
 ```bash
 bernstein cloud login --api-key YOUR_KEY
