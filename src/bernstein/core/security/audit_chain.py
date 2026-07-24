@@ -801,6 +801,22 @@ EVENT_TRIGGER_RECEIPT_REFUSED = "trigger.receipt.refused"
 #: platform acted on equals the status the chain recorded for that run.
 EVENT_STATUS_PROOF_EMITTED = "status.proof.emitted"
 
+#: Issue #2612 -- emitted for every outbound-payment authorization attempt under
+#: a signed spend mandate. ``payment.authorized`` records an admitted transaction
+#: and ``payment.refused`` records one turned away (over the cap, wrong
+#: recipient, expired, cumulative exceeded, bad signature, or wrong presence
+#: mode). Both mirror the chain-anchored transaction receipt's identity --
+#: ``{mandate_hash, receipt_hash, lineage_entry_hash, decision, amount_nanos,
+#: currency, recipient, presence_mode}`` plus, for a refusal, ``refusal_reason``
+#: -- together with the previous chain digest captured at decision time. The
+#: negative path is therefore as discoverable as the positive one: a refused
+#: transaction leaves a signed, chain-anchored record rather than a silent drop.
+#: Only hashes, the encoded amount, the opaque recipient id, and the decision are
+#: recorded -- never a payment credential or settlement secret. Bernstein
+#: authorizes and proves; it never moves money.
+EVENT_PAYMENT_AUTHORIZED = "payment.authorized"
+EVENT_PAYMENT_REFUSED = "payment.refused"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1657,6 +1673,147 @@ def record_mandate_revocation(
             "mandate_hash": mandate_hash,
             "reason": reason,
         },
+    )
+
+
+@dataclass(frozen=True)
+class PaymentReceiptDetails:
+    """Structured payload mirrored for a ``payment.authorized`` / ``payment.refused`` event.
+
+    Carries only the transaction receipt's identity and encoded scope -- hashes,
+    the string-encoded amount, the opaque recipient id, the presence mode, the
+    decision, and (for a refusal) the closed-enum reason. Never a credential.
+    """
+
+    mandate_hash: str
+    receipt_hash: str
+    lineage_entry_hash: str
+    amount_nanos: str
+    currency: str
+    recipient: str
+    presence_mode: str
+    decision: str
+    refusal_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "mandate_hash": self.mandate_hash,
+            "receipt_hash": self.receipt_hash,
+            "lineage_entry_hash": self.lineage_entry_hash,
+            "amount_nanos": self.amount_nanos,
+            "currency": self.currency,
+            "recipient": self.recipient,
+            "presence_mode": self.presence_mode,
+            "decision": self.decision,
+        }
+        if self.refusal_reason is not None:
+            out["refusal_reason"] = self.refusal_reason
+        return out
+
+
+def record_payment_authorized(
+    *,
+    chain: AuditChainStore,
+    mandate_hash: str,
+    receipt_hash: str,
+    lineage_entry_hash: str,
+    amount_nanos: str,
+    currency: str,
+    recipient: str,
+    presence_mode: str,
+    actor: str = "payment_mandate",
+) -> AuditEvent:
+    """Append a ``payment.authorized`` event mirroring a transaction receipt.
+
+    The event binds the receipt's identity into the HMAC chain so a verifier
+    holding only the chain can prove an outbound payment was authorized under a
+    specific mandate, at a named chain position, for the recorded scope. Only
+    hashes and encoded scope are recorded -- never a payment credential.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        mandate_hash: Content hash of the signed spend mandate.
+        receipt_hash: Content hash of the transaction receipt body.
+        lineage_entry_hash: Lineage entry hash anchoring the receipt artefact.
+        amount_nanos: String-encoded integer nano-unit amount.
+        currency: ISO-4217-style uppercase currency code.
+        recipient: Opaque payee id.
+        presence_mode: Mode that authorized the transaction.
+        actor: Recorded actor; defaults to ``"payment_mandate"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    payload = PaymentReceiptDetails(
+        mandate_hash=mandate_hash,
+        receipt_hash=receipt_hash,
+        lineage_entry_hash=lineage_entry_hash,
+        amount_nanos=amount_nanos,
+        currency=currency,
+        recipient=recipient,
+        presence_mode=presence_mode,
+        decision="authorized",
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PAYMENT_AUTHORIZED,
+        actor=actor,
+        resource_type="payment_receipt",
+        resource_id=receipt_hash,
+        details=payload,
+    )
+
+
+def record_payment_refused(
+    *,
+    chain: AuditChainStore,
+    mandate_hash: str,
+    receipt_hash: str,
+    lineage_entry_hash: str,
+    amount_nanos: str,
+    currency: str,
+    recipient: str,
+    presence_mode: str,
+    refusal_reason: str,
+    actor: str = "payment_mandate",
+) -> AuditEvent:
+    """Append a ``payment.refused`` event mirroring a refused transaction receipt.
+
+    A refusal is a first-class receipt: the same binding as an authorization
+    plus a closed-enum ``refusal_reason``, so a denied attempt is as
+    reconstructable from the chain as an approved one.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        mandate_hash: Content hash of the signed spend mandate refused against.
+        receipt_hash: Content hash of the refusal receipt body.
+        lineage_entry_hash: Lineage entry hash anchoring the receipt artefact.
+        amount_nanos: String-encoded integer nano-unit amount that was refused.
+        currency: ISO-4217-style uppercase currency code.
+        recipient: Opaque payee id.
+        presence_mode: Presence mode of the mandate refused against.
+        refusal_reason: Closed-enum reason string.
+        actor: Recorded actor; defaults to ``"payment_mandate"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    payload = PaymentReceiptDetails(
+        mandate_hash=mandate_hash,
+        receipt_hash=receipt_hash,
+        lineage_entry_hash=lineage_entry_hash,
+        amount_nanos=amount_nanos,
+        currency=currency,
+        recipient=recipient,
+        presence_mode=presence_mode,
+        decision="refused",
+        refusal_reason=refusal_reason,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PAYMENT_REFUSED,
+        actor=actor,
+        resource_type="payment_receipt",
+        resource_id=receipt_hash,
+        details=payload,
     )
 
 
@@ -6920,6 +7077,8 @@ __all__ = [
     "EVENT_MISSION_PHASE_RECEIPT",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
+    "EVENT_PAYMENT_AUTHORIZED",
+    "EVENT_PAYMENT_REFUSED",
     "EVENT_PLUGIN_CONFORMANCE_RECEIPT",
     "EVENT_PLUGIN_INSTALL_RECEIPT",
     "EVENT_PLUGIN_UPDATE_RECEIPT",
@@ -6987,6 +7146,7 @@ __all__ = [
     "MandateConsentReceiptDetails",
     "MemoryWriteDetails",
     "MultimodalAttachDetails",
+    "PaymentReceiptDetails",
     "SkillInstallReceiptDetails",
     "SkillVerificationRefusalDetails",
     "ThreadApprovalDetails",
@@ -7038,6 +7198,8 @@ __all__ = [
     "record_mission_phase_receipt",
     "record_multimodal_attach",
     "record_otel_projection",
+    "record_payment_authorized",
+    "record_payment_refused",
     "record_plugin_conformance_receipt",
     "record_plugin_install_receipt",
     "record_plugin_update_receipt",
