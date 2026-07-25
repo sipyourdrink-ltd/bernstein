@@ -291,6 +291,7 @@ nav:
           - Fleet directory registry: fleet/directory-registry.md
           - Air-gap install: installation/air-gap.md
           - Migrations: operations/migrations.md
+          - Updates (check, verify, apply): operations/updates.md
           - Self-update: operations/self-update.md
           - Shell completions: operations/shell-completions.md
           - Pilot-to-production graduation: operations/graduation.md
