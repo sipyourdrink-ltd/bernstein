@@ -1041,6 +1041,8 @@ async def test_task_handle_unresolvable_ids_keep_existing_shapes(tmp_path, monke
     unknown = await _call_unwrapped(mcp, "bernstein_task_handle", run_id="nope")
     assert unknown["runId"] == "nope"
     assert unknown["status"] == "working"
+
+
 # Connect-time server instructions and module docstring (issue #3076)
 # ---------------------------------------------------------------------------
 

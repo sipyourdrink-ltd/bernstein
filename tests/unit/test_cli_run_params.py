@@ -95,7 +95,4 @@ def test_run_has_no_duplicate_click_options() -> None:
 
     names = [param.name for param in run.params]
     duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
-    assert not duplicates, (
-        f"run declares duplicate Click params: {duplicates}. "
-        "Each option name must appear only once."
-    )
+    assert not duplicates, f"run declares duplicate Click params: {duplicates}. Each option name must appear only once."
