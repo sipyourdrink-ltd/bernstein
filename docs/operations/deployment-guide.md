@@ -470,8 +470,8 @@ cannot be provided never silently becomes worktree isolation:
 
 | How isolation was requested | Runtime missing |
 |---|---|
-| `--sandbox docker`, where a sandbox backend provisions a session per spawn | **refuses** - the run fails with a `SandboxSelectionError` naming the cause, rather than dropping to a host spawn |
-| Any other configured container request (e.g. `sandbox:` in `bernstein.yaml`, which is the path the published image takes) | **downgrades to worktree isolation, surfaced and audited** |
+| `--sandbox docker` | **refuses** - a `SandboxSelectionError` naming the cause. The check runs at wiring time, so a missing Docker SDK or a dead daemon aborts the run *before any agent spawns*; if the daemon attaches but a per-agent session cannot be provisioned, the spawn refuses rather than dropping to a host spawn |
+| A container request configured without `--sandbox` (e.g. `sandbox:` in `bernstein.yaml`) | **downgrades to worktree isolation, surfaced and audited** |
 
 A downgrade is no longer a log-only event. It is recorded in the end-of-run
 summary (`summary.json` → `isolation_downgrades`, plus an "Isolation downgrade"
