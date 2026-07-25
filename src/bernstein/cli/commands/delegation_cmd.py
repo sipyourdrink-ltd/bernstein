@@ -5,7 +5,10 @@ Two distinct surfaces:
 * ``delegation verify <run>`` reconstructs the per-hop HMAC *receipt* chain for
   a run (the ACT log: which principal authorized which sub-agent action, see
   :mod:`bernstein.core.identity.delegation`), exiting non-zero on any tamper,
-  deleted hop, or missing chain (issue #2305 AC4).
+  deleted hop, or missing chain (issue #2305 AC4). For hops that record their
+  effective scope it also recomputes child-subset-of-parent narrowing,
+  separation of duties, and decision-time charter binding, exiting non-zero
+  when any of those relations is violated (issue #2554).
 * ``delegation verify-token <token-file>`` verifies a signed *authority* token
   chain (see :mod:`bernstein.core.security.capability_tokens`): per-hop
   signature, structural linkage, identity/pubkey continuity, monotonic
@@ -49,17 +52,26 @@ def delegation_group() -> None:
 def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
     """Reconstruct and verify the delegation chain for RUN.
 
-    Exits 0 when the chain is intact (at least one hop, every hop verifies
-    from genesis to tail); 1 otherwise.
+    Checks tamper evidence (linkage plus HMAC) and, for hops that record their
+    effective scope, recomputes three distinct authority relations: that each
+    child scope is a subset of its parent's, that no principal exercised
+    separated duties (spawn / approve / merge), and that gated decisions cite
+    the charter version in force at decision time.
+
+    Exits 0 when the chain is intact and every authority check passes; 1
+    otherwise.
     """
     result = delegation.verify_run(run, root=root)
+    authority = result.authority
 
     if as_json:
         payload = {
             "run": run,
             "valid": result.valid,
+            "chain_ok": result.chain_ok,
             "hops": result.hops,
             "errors": result.errors,
+            "authority": authority.to_dict(),
             "receipts": [
                 {
                     "hop_index": r.hop_index,
@@ -67,6 +79,9 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
                     "subject": r.subject,
                     "audience": r.audience,
                     "act": r.act,
+                    "parent_ref": r.parent_ref,
+                    "scope_ref": r.scope_ref,
+                    "binding": r.binding,
                 }
                 for r in result.receipts
             ],
@@ -80,12 +95,34 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
 
     for r in result.receipts:
         console.print(f"  hop {r.hop_index}: {r.issuer} -> {r.audience}  [dim]({r.act})[/dim]")
+        if r.scope_ref:
+            console.print(f"[dim]      scope {r.scope_ref}[/dim]")
+        if r.binding:
+            bits = ", ".join(f"{k}={v}" for k, v in sorted(r.binding.items()))
+            console.print(f"[dim]      binding {bits}[/dim]")
+
+    console.print(f"[dim]scope coverage:[/dim] {authority.scope_coverage}")
+    for violation in authority.violations:
+        console.print(f"[red]  {violation}[/red]")
+    for err in result.errors:
+        console.print(f"[red]  {err}[/red]")
+
     if result.valid:
         console.print(f"[green]delegation chain intact[/green] ({result.hops} hop(s))")
         raise SystemExit(0)
-    for err in result.errors:
-        console.print(f"[red]  {err}[/red]")
-    console.print("[red]delegation chain verification failed[/red]")
+    if not result.chain_ok:
+        console.print("[red]delegation chain verification failed[/red]")
+    else:
+        failed = [
+            name
+            for name, ok in (
+                ("narrowing", authority.narrowing_ok),
+                ("separation-of-duties", authority.duties_ok),
+                ("decision binding", authority.binding_ok),
+            )
+            if not ok
+        ]
+        console.print(f"[red]delegation authority verification failed:[/red] {', '.join(failed)}")
     raise SystemExit(1)
 
 
