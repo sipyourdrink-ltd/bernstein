@@ -22,7 +22,7 @@ from bernstein.adapters.base import (
     record_artifact_write,
 )
 from bernstein.adapters.registry import iter_adapter_specs
-from bernstein.core.lineage.spine import LineageSpine, SpineStatus
+from bernstein.core.lineage.spine import LineageSpine, SpineEntry, SpineStatus
 
 _KEY = b"k" * 32
 
@@ -120,7 +120,9 @@ def test_enabled_write_failure_fails_closed(tmp_path: Path, monkeypatch: pytest.
     from bernstein.adapters import base as base_module
 
     class _BoomSpine(LineageSpine):
-        def record(self, **_kw: object) -> str:  # type: ignore[override]
+        # The boundary appends through ``record_entry`` (issue #2559) so it can
+        # project the production event off the entry it just wrote.
+        def record_entry(self, **_kw: object) -> SpineEntry:  # type: ignore[override]
             raise RuntimeError("disk on fire")
 
     monkeypatch.setattr(base_module, "LineageSpine", _BoomSpine)

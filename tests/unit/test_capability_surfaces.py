@@ -372,6 +372,12 @@ def test_tips_are_suppressed_for_json_output_and_opt_out(tmp_path: Path, monkeyp
         assert tips_enabled(ctx) is False
 
 
+#: Stand-in for whichever catalog tip the selector would have drawn.  The
+#: catalog picks with ``random.choice``, so asserting on real tip text makes
+#: the test depend on the draw rather than on the wiring under test.
+_PINNED_TIP = "Pinned tip text for the CLI surface test."
+
+
 def test_tip_is_printed_after_a_real_subcommand_invocation(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Running a subcommand through the root group emits one tip afterwards."""
     monkeypatch.chdir(tmp_path)
@@ -379,15 +385,19 @@ def test_tip_is_printed_after_a_real_subcommand_invocation(tmp_path: Path, monke
     monkeypatch.delenv("BERNSTEIN_NO_TIPS", raising=False)
 
     runner = CliRunner()
-    with patch("bernstein.cli.main.tips_enabled", return_value=True):
+    with (
+        patch("bernstein.cli.main.tips_enabled", return_value=True),
+        patch("bernstein.tui.contextual_tips.TipsCatalog.get_tip", return_value=_PINNED_TIP),
+    ):
         first = runner.invoke(cli, ["agents", "trust"])
         second = runner.invoke(cli, ["agents", "trust"])
 
     assert first.exit_code == 0, first.output
-    assert "bernstein" in first.output
+    assert first.output.count(_PINNED_TIP) == 1
     assert (tmp_path / ".sdd" / "tips" / "last_shown").exists()
     # The cooldown marker suppresses the very next invocation.
     assert len(second.output) < len(first.output)
+    assert _PINNED_TIP not in second.output
 
 
 def test_no_tip_when_tips_are_disabled(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -394,13 +394,70 @@ cluster:
   gossip_peers:
     - https://node-b.internal:8052
     - https://node-c.internal:8052
+  gossip_peer_keys:                 # required to fold any peer's receipts
+    "8Qm...node-b-thumbprint": |
+      -----BEGIN PUBLIC KEY-----
+      MCowBQYDK2VwAyEA...
+      -----END PUBLIC KEY-----
+    "Lk4...node-c-thumbprint": "hDq7...base64url-x"
   claim_lease_ttl_s: 300            # lease granted to a successful self-claim
   claim_journal_path: null          # default: .sdd/cluster/claim_journal.jsonl
 ```
 
-`gossip_peers` and `claim_journal_path` are rejected at seed-load time when
-`topology` is not `mesh`, so a half-migrated config fails at boot rather than
-silently running STAR.
+`gossip_peers`, `gossip_peer_keys`, and `claim_journal_path` are rejected at
+seed-load time when `topology` is not `mesh`, so a half-migrated config fails at
+boot rather than silently running STAR.
+
+### Peer identity: pinning is required, not optional
+
+**Default: a MESH node folds only receipts signed by a key it has pinned.** A
+node with no `gossip_peer_keys` accepts gossip from nobody. This is the
+deliberate default — the safe posture is the one you get without configuring
+anything, and opening the boundary is an explicit act.
+
+The reason is that the gossip route authenticates the *sender's cluster
+credential*, and the receipt's Ed25519 signature authenticates the *bytes*.
+Neither binds the `node_id` a receipt declares to the key that signed it.
+Without a pin, any holder of the cluster token can gossip receipts naming any
+node, and the journal — the arbiter the whole topology rests on — records a
+well-formed claim attributed to a node that never issued it.
+
+A pin is checkable rather than merely declared. A MESH `node_id` *is* the
+RFC 7638 thumbprint of that node's claim-signing key, so the seed loader
+recomputes the thumbprint of each pinned key and refuses to boot if it does not
+reproduce the id it is filed under. You cannot pin the wrong key to a node id.
+
+| Config | Result |
+|---|---|
+| No `gossip_peers`, no `gossip_peer_keys` | Single-node MESH. Self-claims work; inbound gossip is rejected. Logged at startup. |
+| `gossip_peers` set, `gossip_peer_keys` empty | **Seed load fails.** Outbound gossip with nothing folded back is a silent one-way partition. |
+| `gossip_peer_keys` whose thumbprint ≠ its `node_id` | **Seed load fails**, naming the identity the key actually has. |
+| Both set and consistent | Receipts from pinned peers fold; everything else is rejected with `no trusted key pinned for node …`. |
+
+Each node also pins **its own** key to its own `node_id`, always. A peer
+therefore cannot gossip receipts forged in this node's name, and a node that
+lost its journal can still fold its own history back from a peer.
+
+Getting the values:
+
+```bash
+# On each peer - the id it will declare, and the key that proves it.
+bernstein cluster claims head          # any receipt's node_id is the peer's id
+cat .sdd/cluster/identity/claim_signing.pub
+```
+
+The key may be given as the SPKI PEM above, as an OKP JWK mapping, or as the
+bare base64url `x` member — all three normalise to the same pin.
+
+Pinning is symmetric: for A and B to converge, A must pin B's key *and* B must
+pin A's. Rotating a node's claim-signing identity changes its `node_id`, so a
+rotation is a config change on every peer, not a silent re-trust.
+
+> **Upgrading an existing MESH fleet.** Before this default, gossip was
+> accepted under whatever key a receipt carried. After it, an unpinned peer's
+> receipts are rejected with a reason in the gossip response. Add
+> `gossip_peer_keys` on every node before rolling out, or the fleet stops
+> converging.
 
 ### How a claim resolves
 
@@ -418,11 +475,11 @@ the journal alone.
 ### Gossip
 
 Nodes push receipts to their peers with `POST /cluster/claims/gossip`. A
-receiving node folds a receipt only after **both** the Ed25519 signature and
-the chain link verify. A receipt that does not extend the local head is not
-merged: it produces a signed `fork` receipt carrying the divergence entry
-index, which `verify` and the gossip response both surface. A partition is
-reported, never silently reconciled.
+receiving node folds a receipt only after **all three** of the pinned peer key,
+the Ed25519 signature, and the chain link verify. A receipt that does not extend
+the local head is not merged: it produces a signed `fork` receipt carrying the
+divergence entry index, which `verify` and the gossip response both surface. A
+partition is reported, never silently reconciled.
 
 Gossip rides the cluster transport and reuses the node-heartbeat auth scope,
 so the same bearer credential a worker uses to join covers it. On a Tailscale
@@ -461,8 +518,8 @@ and `--no-check-anchors` when the audit chain is not available alongside it.
 - **Leases.** A hold whose `claim_lease_ttl_s` has elapsed can be retired by
   *any* node observing it - there is no central sweep. The `expire` receipt is
   signed by the observing node and names the retired claim as referenced data,
-  so a verifier that pins keys by `node_id` still finds every receipt signed by
-  the node it says it is from.
+  so the `node_id` pinning above still finds every receipt signed by the node it
+  says it is from.
 - **STAR is unaffected.** A STAR deployment never materialises a journal, never
   provisions a MESH signing identity, and answers `409` on the gossip route.
 - **Shared filesystem.** When peers share one filesystem, they can append to

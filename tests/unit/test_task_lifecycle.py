@@ -791,10 +791,12 @@ def test_process_completed_tasks_dispatches_llm_judge_to_run_janitor(
 
     dispatched = {args[0].id: fn for fn, args, _ in submitted}
     assert dispatched["T-judge"] is _verify_via_janitor
-    # Non-judge tasks keep the sync verify_task fast path.
-    from bernstein.core.janitor import verify_task as _expected_verify_task
+    # Non-judge tasks keep the sync fast path. Since #2990 that seam is
+    # ``verify_task_completion``, which dispatches on the task's artifact kind
+    # and resolves a code_diff task to ``verify_task`` unchanged.
+    from bernstein.core.tasks.artifact_completion import verify_task_completion as _expected_sync_verify
 
-    assert dispatched["T-sync"] is _expected_verify_task
+    assert dispatched["T-sync"] is _expected_sync_verify
 
 
 def test_verify_via_janitor_runs_run_janitor_for_llm_judge(

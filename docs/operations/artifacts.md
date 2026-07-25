@@ -141,6 +141,13 @@ filesystem it will hold the task open rather than pass silently.
 bernstein artifact verify <task_id> [--workdir .] [--output-json]
 ```
 
+This command is **task-keyed**: it proves one task's receipt. To ask the same
+kind of question about an *output* rather than a task - who produced the current
+tip of a package or a release PR, and is it good and current - use the
+URI-keyed commands documented in
+[Artifact keys](../lineage/artifacts.md#inspecting-an-artifact):
+`bernstein artifact list`, `artifact log <uri>`, `artifact health <uri>`.
+
 The command:
 
 1. Re-derives the canonical hash from the stored artifact bytes and confirms
