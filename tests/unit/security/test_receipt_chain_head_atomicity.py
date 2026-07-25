@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,33 +30,44 @@ from bernstein.core.trigger_sources.receipt import admit_trigger, emit_status_pr
 _BODY = json.dumps({"title": "Rotate the deploy key", "description": "quarterly"}).encode()
 _PAYLOAD: dict[str, Any] = {"event_id": "ev-77", "run_id": "run-77", "severity": "error"}
 
+
+@dataclass(frozen=True)
+class _Bridge:
+    """The bridge locations one test operates on."""
+
+    root: Path
+    audit_dir: Path
+    hmac_key: bytes
+
+
 # The other writer signals that it is about to append, which is waited on
 # deterministically; only the append itself is then given a bounded grace
-# period. Unserialised that append takes about a millisecond, so the grace is
-# orders of magnitude more than it needs; serialised it blocks until the section
-# ends and the grace is what the suite pays instead of hanging.
+# period. Unserialised that append takes about a millisecond, so the grace still
+# leaves two orders of magnitude of slack; serialised it blocks until the section
+# ends, and the grace is then dead wait the suite pays on every run -- which is
+# why it is small rather than generous.
 _INTERLOPER_START_S = 10.0
-_INTERLOPER_GRACE_S = 1.5
+_INTERLOPER_GRACE_S = 0.2
 
 
 @pytest.fixture()
-def bridge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def bridge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Bridge:
     """Return an isolated bridge root, audit dir, and HMAC key."""
     monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
-    return {
-        "root": tmp_path / "automation-bridge",
-        "audit_dir": tmp_path / "audit",
-        "hmac_key": load_or_create_audit_key(tmp_path / "audit.key"),
-    }
+    return _Bridge(
+        root=tmp_path / "automation-bridge",
+        audit_dir=tmp_path / "audit",
+        hmac_key=load_or_create_audit_key(tmp_path / "audit.key"),
+    )
 
 
-def _seed_chain(bridge: dict[str, Any], count: int = 2) -> None:
+def _seed_chain(bridge: _Bridge, count: int = 2) -> None:
     """Put real events on the chain so the head under test is not genesis."""
     for index in range(count):
         admit_trigger(
-            root=bridge["root"],
-            audit_dir=bridge["audit_dir"],
-            hmac_key=bridge["hmac_key"],
+            root=bridge.root,
+            audit_dir=bridge.audit_dir,
+            hmac_key=bridge.hmac_key,
             platform="n8n",
             request_path="/webhook",
             trigger_id=f"seed-{index}",
@@ -143,18 +155,16 @@ class _ConcurrentAppender:
             assert not self._thread.is_alive(), "the other writer never completed its append"
 
 
-def test_trigger_receipt_head_is_its_own_records_predecessor(
-    bridge: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_trigger_receipt_head_is_its_own_records_predecessor(bridge: _Bridge, monkeypatch: pytest.MonkeyPatch) -> None:
     """A concurrent append cannot move the head out from under a trigger receipt."""
     _seed_chain(bridge)
-    appender = _ConcurrentAppender(bridge["audit_dir"], bridge["hmac_key"])
+    appender = _ConcurrentAppender(bridge.audit_dir, bridge.hmac_key)
     appender.install(monkeypatch)
 
     admission = admit_trigger(
-        root=bridge["root"],
-        audit_dir=bridge["audit_dir"],
-        hmac_key=bridge["hmac_key"],
+        root=bridge.root,
+        audit_dir=bridge.audit_dir,
+        hmac_key=bridge.hmac_key,
         platform="n8n",
         request_path="/webhook",
         trigger_id="trigger-under-test",
@@ -166,33 +176,56 @@ def test_trigger_receipt_head_is_its_own_records_predecessor(
 
     receipt = admission.receipt
     assert receipt is not None
-    record = _record_by_hmac(bridge["audit_dir"], receipt.chain_entry_hash)
+    record = _record_by_hmac(bridge.audit_dir, receipt.chain_entry_hash)
     assert receipt.admission_chain_head == record["prev_hmac"], (
         "the receipt signed a chain head its own record does not sit on: "
         f"signed {receipt.admission_chain_head!r}, record follows {record['prev_hmac']!r}"
     )
 
 
-def test_status_proof_head_is_its_own_records_predecessor(
-    bridge: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_status_proof_head_is_its_own_records_predecessor(bridge: _Bridge, monkeypatch: pytest.MonkeyPatch) -> None:
     """A concurrent append cannot move the head out from under a status proof."""
     _seed_chain(bridge)
-    appender = _ConcurrentAppender(bridge["audit_dir"], bridge["hmac_key"])
+    appender = _ConcurrentAppender(bridge.audit_dir, bridge.hmac_key)
     appender.install(monkeypatch)
 
     proof = emit_status_proof(
-        root=bridge["root"],
-        audit_dir=bridge["audit_dir"],
-        hmac_key=bridge["hmac_key"],
+        root=bridge.root,
+        audit_dir=bridge.audit_dir,
+        hmac_key=bridge.hmac_key,
         payload=_PAYLOAD,
         status="failed",
         timestamp=1_700_000_500,
     )
     appender.join()
 
-    record = _record_by_hmac(bridge["audit_dir"], proof.chain_entry_hash)
+    record = _record_by_hmac(bridge.audit_dir, proof.chain_entry_hash)
     assert proof.chain_head == record["prev_hmac"], (
         "the proof signed a chain head its own record does not sit on: "
         f"signed {proof.chain_head!r}, record follows {record['prev_hmac']!r}"
     )
+
+
+def test_resync_head_outside_a_transaction_is_refused(bridge: _Bridge) -> None:
+    """Reading the head for signing is only meaningful while the chain is held.
+
+    ``resync_head`` re-points the append fast path, so a call made outside the
+    section lets a writer land between the read and that bookkeeping, leaving the
+    recorded size describing bytes the head does not cover. The next append then
+    skips a re-sync it needed and chains onto a stale head. The precondition is
+    enforced rather than documented so that misuse is a loud error instead of a
+    silently forked chain.
+    """
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    chain = AuditChainStore(bridge.audit_dir, key=bridge.hmac_key)
+
+    with pytest.raises(RuntimeError, match="append_transaction"):
+        chain.resync_head()
+
+    # Observing the head never needs the section.
+    assert isinstance(chain.prev_chain_digest, str)
+
+    # Inside the section it is the supported read.
+    with chain.chain_transaction():
+        assert chain.resync_head() == chain.prev_chain_digest

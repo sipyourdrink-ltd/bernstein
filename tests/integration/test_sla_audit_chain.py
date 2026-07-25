@@ -237,9 +237,16 @@ def test_every_violation_receipt_in_a_tick_carries_its_own_records_head(tmp_path
     for receipt in receipts:
         event = by_receipt.get(receipt.payload_digest)
         assert event is not None, f"no chain event anchors receipt {receipt.receipt_id}"
-        assert receipt.prev_chain_digest == event.details["prev_chain_digest"], (
+        # Against the record's own ``prev_hmac``, not against the head the event
+        # merely claims: both claims are written from the same read, so comparing
+        # them to each other would agree even if both diverged from the record.
+        assert receipt.prev_chain_digest == event.prev_hmac, (
             f"receipt {receipt.receipt_id} signed head {receipt.prev_chain_digest!r} "
-            f"but its own chain event sits on {event.details['prev_chain_digest']!r}"
+            f"but its own chain event follows {event.prev_hmac!r}"
+        )
+        assert event.details["prev_chain_digest"] == event.prev_hmac, (
+            f"chain event for receipt {receipt.receipt_id} claims it follows "
+            f"{event.details['prev_chain_digest']!r} but actually follows {event.prev_hmac!r}"
         )
 
     ok, errors = chain.verify()

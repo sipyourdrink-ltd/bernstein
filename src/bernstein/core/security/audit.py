@@ -370,6 +370,12 @@ def _append_guard(audit_key: str) -> threading.RLock:
         return guard
 
 
+def _inside_append_section(audit_dir: Path) -> bool:
+    """Whether this thread currently holds *audit_dir*'s append section."""
+    depths: dict[str, int] = getattr(_APPEND_DEPTH, "depths", None) or {}
+    return depths.get(str(audit_dir.resolve()), 0) > 0
+
+
 @contextlib.contextmanager
 def _chain_append_lock(audit_dir: Path) -> Iterator[None]:
     """Serialise daily-log appends across processes via ``flock(LOCK_EX)``.
@@ -962,9 +968,26 @@ class AuditLog:
         read and the append -- leaving a signature that names a chain position
         its own record does not occupy.
 
+        Callers that only want to *observe* the head want
+        :attr:`AuditChainStore.prev_chain_digest`; this method is for the caller
+        that is about to write, and it enforces that rather than documenting it.
+        It re-points ``log``'s fast path, so running it outside the section would
+        let an append land between the read and the bookkeeping and leave the
+        recorded size describing bytes the head does not cover -- ``log`` would
+        then skip a re-sync it needed and append onto a stale head, which is the
+        chain fork issue #2791 closed.
+
         Returns:
             The chain head as recovered from disk under the verifier's framing.
+
+        Raises:
+            RuntimeError: When called outside :meth:`append_transaction`.
         """
+        if not _inside_append_section(self._audit_dir):
+            raise RuntimeError(
+                "resync_head() must be called inside append_transaction(); "
+                "use AuditChainStore.prev_chain_digest to observe the head without appending"
+            )
         # Shares ``log``'s (path, size) fast path, in both directions. Reading it:
         # when the day file is byte-length-identical to what our own last append
         # or resync left it at, nothing has been appended since and the cached

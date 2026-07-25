@@ -21,6 +21,13 @@ from bernstein.core.security.audit_chain import EVENT_DELEGATION_MINTED, AuditCh
 
 _NOW = 1_800_000_000.0
 
+# Mirrors tests/unit/security/test_receipt_chain_head_atomicity.py: the other
+# writer's start is waited on deterministically, and only its append gets a
+# bounded grace. Serialised, that grace is dead wait paid on every run, so it is
+# small; an unserialised append takes about a millisecond either way.
+_INTERLOPER_START_S = 10.0
+_INTERLOPER_GRACE_S = 0.2
+
 
 def _caveats(perms: set[str], depth: int) -> ct.Caveats:
     return ct.Caveats(permissions=frozenset(perms), remaining_depth=depth, not_after=_NOW + 3600)
@@ -178,8 +185,8 @@ def test_mint_audit_head_matches_its_own_delegation_record(tmp_path: Path, monke
             thread = threading.Thread(target=append_from_another_writer, daemon=True)
             holder["thread"] = thread
             thread.start()
-            assert started.wait(10.0), "the other writer never started"
-            landed.wait(1.5)
+            assert started.wait(_INTERLOPER_START_S), "the other writer never started"
+            landed.wait(_INTERLOPER_GRACE_S)
         return real_sign_token(**kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(ct, "sign_token", sign_token_with_a_concurrent_append)
@@ -192,7 +199,7 @@ def test_mint_audit_head_matches_its_own_delegation_record(tmp_path: Path, monke
         caveats=_caveats({"files:read"}, depth=2),
         audit_chain=chain,
     )
-    holder["thread"].join(timeout=10.0)
+    holder["thread"].join(timeout=_INTERLOPER_START_S)
     assert not holder["thread"].is_alive(), "the other writer never completed its append"
 
     mints = chain.query(event_type=EVENT_DELEGATION_MINTED)

@@ -427,6 +427,13 @@ class SLAMonitor:
             if receipt is None:
                 return None
             signed = sign_receipt(receipt, signing_key=self._signing_key)
+            # ``write_receipt`` does not need the chain held, but it stays inside
+            # and ahead of the append on purpose: the receipt file is the only
+            # copy of the signed payload, while the chain event carries just its
+            # digest. Persisting first means a crash between the two leaves a
+            # receipt whose anchor is missing -- recoverable -- rather than an
+            # anchor whose receipt never existed. It is one small local write on
+            # a per-breach path, so the widened section is cheap next to that.
             write_receipt(self._store.sdd_dir, signed)
             self._record_chain_event(signed)
 
