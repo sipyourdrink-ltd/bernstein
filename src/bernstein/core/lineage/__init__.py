@@ -9,9 +9,9 @@ Public API:
   - AgentCard - minimal A2A v1.0 Agent Card subset
   - generate_keypair, sign_detached, verify_detached - Ed25519 JWS RFC 7515
 
-Storage (LineageStore), recorder (LineageRecorder), gate, merge, compliance
-pack, and MCP resource live in sibling modules under this package and re-export
-through here once the corresponding feature branches land.
+Storage (LineageStore), the signed-write path (seal_write / SignedLineageLog),
+gate, merge, compliance pack, and MCP resource live in sibling modules under
+this package and re-export through here.
 """
 
 from bernstein.core.lineage.entry import (
@@ -40,6 +40,7 @@ from bernstein.core.lineage.merge import (
     build_merge_entry,
     resolve_policy,
 )
+from bernstein.core.lineage.signed_write import SignedLineageLog, seal_write
 from bernstein.core.lineage.spine import (
     SPINE_ENTRY_VERSION,
     LineageSpine,
@@ -88,6 +89,7 @@ __all__ = [
     "LineageV2Store",
     "MergePolicy",
     "ParentRef",
+    "SignedLineageLog",
     "SpineEntry",
     "SpineStatus",
     "SpineVerifyResult",
@@ -110,6 +112,7 @@ __all__ = [
     "is_v2_enabled",
     "jws_header_kid",
     "resolve_policy",
+    "seal_write",
     "sign_detached",
     "verify_detached",
     "wrap_adapter",

@@ -384,7 +384,7 @@ def test_gate_accepts_recorder_emitted_entries_under_operator_secret(tmp_path: P
     recorder output failed 100% of entries. Pin the agreement end-to-end.
     """
     from bernstein.core.lineage.identity import generate_keypair
-    from bernstein.core.lineage.recorder import LineageRecorder
+    from bernstein.core.lineage.signed_write import SignedLineageLog
     from bernstein.core.lineage.store import LineageStore
 
     priv, pub = generate_keypair()
@@ -405,7 +405,7 @@ def test_gate_accepts_recorder_emitted_entries_under_operator_secret(tmp_path: P
 
     operator_secret = b"recorder-gate-shared-secret"
     store = LineageStore(tmp_path / "lineage")
-    recorder = LineageRecorder(store=store, operator_hmac_key=operator_secret)
+    recorder = SignedLineageLog(store=store, operator_hmac_key=operator_secret)
     recorder.record_write(
         artefact_path="src/foo.py",
         new_content=b"hello",

@@ -307,7 +307,7 @@ def flow_audit_and_lineage(*, state_dir: Path) -> None:
       key creation + chaining) and assert ``verify()`` reports an intact
       chain.
     * **Lineage receipt.** Record a real artefact write through
-      :class:`bernstein.core.lineage.recorder.LineageRecorder` (content hash,
+      :class:`bernstein.core.lineage.signed_write.SignedLineageLog` (content hash,
       operator HMAC envelope, Ed25519 detached JWS) and re-verify the emitted
       receipt through :func:`bernstein.core.lineage.gate.check` -- the same
       gate an offline auditor runs. A well-formed receipt is the success
@@ -325,7 +325,7 @@ def flow_audit_and_lineage(*, state_dir: Path) -> None:
 
     from bernstein.core.lineage.gate import check as lineage_check
     from bernstein.core.lineage.identity import AgentCard, generate_keypair
-    from bernstein.core.lineage.recorder import LineageRecorder
+    from bernstein.core.lineage.signed_write import SignedLineageLog
     from bernstein.core.lineage.store import LineageStore
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -374,7 +374,7 @@ def flow_audit_and_lineage(*, state_dir: Path) -> None:
     )
 
     store = LineageStore(state_dir / "lineage")
-    recorder = LineageRecorder(store, operator_hmac_key=operator_key)
+    recorder = SignedLineageLog(store, operator_hmac_key=operator_key)
     entry_hash = recorder.record_write(
         artefact_path="canary/output.txt",
         new_content=b"canary artefact bytes",

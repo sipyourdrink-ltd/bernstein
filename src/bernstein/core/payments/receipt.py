@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.lineage.entry import LineageEntry, canonicalise, compute_operator_hmac, entry_hash
 from bernstein.core.lineage.identity import AgentCard, verify_detached
-from bernstein.core.lineage.recorder import seal_write
+from bernstein.core.lineage.signed_write import seal_write
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.audit_chain import (

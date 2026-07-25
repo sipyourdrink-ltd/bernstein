@@ -10,7 +10,7 @@ This module is a thin facade. It does not introduce new storage. Every fact is
 persisted as a row in the existing ``memory`` table with ``type='cross_task'``
 and an extra ``cross_task_meta`` row carrying the lineage-style attribution
 triple ``(producer_task_id, ts_ns, content_hash)``. That mirrors the pattern
-used by :mod:`bernstein.core.lineage.recorder` for artefact writes.
+used by :mod:`bernstein.core.lineage.signed_write` for artefact writes.
 
 Two scopes are supported, both single-host:
 

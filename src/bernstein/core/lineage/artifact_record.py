@@ -1,7 +1,7 @@
 """Record and verify a non-coding artifact as a signed lineage entry (#2608).
 
 Slice 1 gives a non-coding task's output the same guarantees a code diff gets:
-the artifact's canonical bytes are recorded through :class:`LineageRecorder`,
+the artifact's canonical bytes are recorded through the signed-write path,
 so the entry carries an HMAC envelope + Ed25519 detached-JWS signature, and its
 identity is ``content_hash = sha256(canonical_bytes)``. The recorded, signed
 entry *is* the artifact - strip lineage/signing/canonicalisation and there is
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.lineage.identity import AgentCard
-    from bernstein.core.lineage.recorder import LineageRecorder
+    from bernstein.core.lineage.signed_write import SignedLineageLog
     from bernstein.core.tasks.figures import FiguresVerdict, TokenizerPolicy
 
 #: Logical, repo-relative POSIX prefix under which artifact entries are anchored
@@ -138,7 +138,7 @@ class ArtifactVerifyResult:
 
 def record_artifact(
     *,
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     sink_root: Path,
     task_id: str,
     kind: ArtifactKind | str,
@@ -154,7 +154,7 @@ def record_artifact(
     receipt for the task (the signed lineage-entry hash, not a git SHA).
 
     Args:
-        recorder: The lineage recorder to append the signed entry through.
+        recorder: The signed lineage log to append the signed entry through.
         sink_root: Physical directory the canonical bytes + receipt are written
             under (``<sink_root>/<task_id>/``).
         task_id: The task the artifact completes.

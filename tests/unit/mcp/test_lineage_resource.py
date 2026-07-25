@@ -22,7 +22,7 @@ import pytest
 from mcp.server.fastmcp import FastMCP
 
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.mcp.resources.lineage import register_lineage_resources
 
@@ -32,7 +32,7 @@ def seeded_store(tmp_path: Path) -> tuple[Path, LineageStore]:
     """Two-entry chain on ``src/foo.py``."""
     root = tmp_path / "lineage"
     store = LineageStore(root)
-    recorder = LineageRecorder(store=store, operator_hmac_key=b"k" * 32)
+    recorder = SignedLineageLog(store=store, operator_hmac_key=b"k" * 32)
     priv, pub = generate_keypair()
     card = AgentCard(agent_id="agent:worker", kid="k1", public_key_pem=pub)
     recorder.record_write(

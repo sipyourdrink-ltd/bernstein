@@ -27,7 +27,7 @@ from bernstein.core.lineage.artifact_record import (
     verify_artifact,
 )
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.tasks.artifacts import ArtifactKind
 
@@ -42,8 +42,8 @@ def identity() -> tuple[AgentCard, str]:
     return card, priv_pem
 
 
-def _recorder(root: Path) -> LineageRecorder:
-    return LineageRecorder(store=LineageStore(root / "lineage"), operator_hmac_key=_HMAC_KEY)
+def _recorder(root: Path) -> SignedLineageLog:
+    return SignedLineageLog(store=LineageStore(root / "lineage"), operator_hmac_key=_HMAC_KEY)
 
 
 def _write_card(cards_dir: Path, card: AgentCard) -> None:
@@ -122,7 +122,7 @@ def _record_and_paths(tmp_path: Path, card: AgentCard, priv: str, artifact: obje
     log_root = tmp_path / "lineage"
     cards_dir = tmp_path / "cards"
     record_artifact(
-        recorder=LineageRecorder(store=LineageStore(log_root), operator_hmac_key=_HMAC_KEY),
+        recorder=SignedLineageLog(store=LineageStore(log_root), operator_hmac_key=_HMAC_KEY),
         sink_root=sink_root,
         task_id="T-9",
         kind=ArtifactKind.OPS_RESULT,

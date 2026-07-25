@@ -37,7 +37,7 @@ Every fact carries the same triple a lineage entry would:
 | `ts_ns` | `int` | Wall-clock nanoseconds at publish time. |
 | `content_hash` | `str` | `sha256:<hex>` over the UTF-8 value bytes. |
 
-This mirrors `bernstein.core.lineage.recorder.LineageRecorder.record_write`, so
+This mirrors `bernstein.core.lineage.signed_write.seal_write`, so
 an auditor can correlate a fact with the lineage entry of the artefact that
 produced it.
 

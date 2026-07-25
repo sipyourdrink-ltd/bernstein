@@ -44,7 +44,7 @@ from bernstein.core.agents.computer_use_attestation import (
 )
 from bernstein.core.agents.multimodal_attestation import CapabilityRefusal
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.persistence.cas_store import CASStore
 from bernstein.core.security.audit_chain import (
@@ -61,7 +61,7 @@ def _session(tmp_path: Path, *, run_id: str = "run-1", worktree_id: str = "wt-a"
     cas = CASStore(tmp_path / "cas")
     chain = AuditChainStore(audit_dir=tmp_path / "audit", key=b"k" * 32)
     store = LineageStore(tmp_path / "lineage")
-    recorder = LineageRecorder(store, operator_hmac_key=b"h" * 32)
+    recorder = SignedLineageLog(store, operator_hmac_key=b"h" * 32)
     priv, pub = generate_keypair()
     card = AgentCard(agent_id="agent:cu-worker", kid="kid-cu-1", public_key_pem=pub)
     return ComputerUseSession(

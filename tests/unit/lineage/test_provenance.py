@@ -32,7 +32,7 @@ from bernstein.core.lineage.provenance import (
     trust_class_for_source,
     trust_rank,
 )
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 
 # ---------------------------------------------------------------------------
@@ -256,8 +256,8 @@ def test_default_map_used_when_none_passed() -> None:
 
 
 @pytest.fixture
-def recorder(tmp_path: Path) -> LineageRecorder:
-    return LineageRecorder(store=LineageStore(tmp_path / "lineage"), operator_hmac_key=b"0" * 64)
+def recorder(tmp_path: Path) -> SignedLineageLog:
+    return SignedLineageLog(store=LineageStore(tmp_path / "lineage"), operator_hmac_key=b"0" * 64)
 
 
 @pytest.fixture
@@ -267,7 +267,7 @@ def card_and_key() -> tuple[AgentCard, str]:
 
 
 def test_record_tool_result_writes_a_provenance_lineage_entry(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_key: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_key
@@ -298,7 +298,7 @@ def test_record_tool_result_writes_a_provenance_lineage_entry(
 
 
 def test_taint_for_artefact_resolves_latest_tip(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_key: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_key

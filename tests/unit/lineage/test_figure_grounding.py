@@ -19,7 +19,7 @@ import pytest
 from bernstein.core.lineage.artifact_record import record_artifact
 from bernstein.core.lineage.figure_grounding import LineageAnchorResolver, verify_report_figures
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.tasks.artifacts import ArtifactKind
 from bernstein.core.tasks.figures import (
@@ -52,7 +52,7 @@ def _seed_source(tmp_path: Path, card: AgentCard, priv: str, rows: object) -> tu
     log_root = tmp_path / "lineage"
     cards_dir = tmp_path / "cards"
     receipt = record_artifact(
-        recorder=LineageRecorder(store=LineageStore(log_root), operator_hmac_key=_HMAC),
+        recorder=SignedLineageLog(store=LineageStore(log_root), operator_hmac_key=_HMAC),
         sink_root=tmp_path / "artifacts",
         task_id="SRC-1",
         kind=ArtifactKind.DATASET,
@@ -167,7 +167,7 @@ def _seed_report_and_source(
 
     sdd = tmp_path / ".sdd"
     store = LineageStore(sdd / "lineage")
-    rec = LineageRecorder(store=store, operator_hmac_key=_HMAC)
+    rec = SignedLineageLog(store=store, operator_hmac_key=_HMAC)
     src = record_artifact(
         recorder=rec,
         sink_root=sdd / "artifacts",
