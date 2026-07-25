@@ -22,6 +22,7 @@ import logging
 import os
 from contextlib import suppress
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -48,6 +49,15 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 _HTTP_TIMEOUT = 5.0
+
+
+def _package_version() -> str:
+    """Return the installed Bernstein distribution version."""
+    try:
+        return version("bernstein")
+    except PackageNotFoundError:
+        return "0+unknown"
+
 
 # JSON-RPC error codes per spec.
 _PARSE_ERROR = -32700
@@ -354,7 +364,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
 
 _SERVER_INFO: dict[str, Any] = {
     "name": "bernstein",
-    "version": "1.0.0",
+    "version": _package_version(),
 }
 
 _CAPABILITIES: dict[str, Any] = {

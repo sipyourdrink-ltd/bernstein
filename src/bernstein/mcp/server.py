@@ -47,6 +47,7 @@ import json
 import logging
 import os
 from datetime import UTC
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,15 @@ def _patched_convert_result(self, result: Any) -> Any:
 FuncMetadata.convert_result = _patched_convert_result
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
+
+
+def _package_version() -> str:
+    """Return the installed Bernstein distribution version."""
+    try:
+        return version("bernstein")
+    except PackageNotFoundError:
+        return "0+unknown"
+
 
 # Advertised to MCP clients on connect and therefore the only Bernstein text
 # guaranteed to sit in the connected model's context for the whole session.
@@ -1344,6 +1354,7 @@ def create_mcp_server(
 
     active_tier = resolve_active_tier(tier)
     mcp: FastMCP[None] = FastMCP(name, instructions=_SERVER_INSTRUCTIONS)
+    mcp._mcp_server.version = _package_version()
     register_capability_resource(mcp)
     register_prompt_resources(mcp)
     _register_health_tool(mcp)

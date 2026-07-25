@@ -6,6 +6,7 @@ import ast
 import inspect
 import json
 import textwrap
+from importlib.metadata import version
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -392,6 +393,26 @@ class TestMCPMethods:
         result = data["result"]
         assert result["serverInfo"]["name"] == "bernstein"
         assert "capabilities" in result
+
+    @pytest.mark.anyio
+    async def test_initialize_reports_the_package_version_across_transports(
+        self, transport: StreamableHTTPTransport
+    ) -> None:
+        """Both MCP transports identify the installed Bernstein distribution."""
+        from bernstein.mcp.server import create_mcp_server
+
+        expected_version = version("bernstein")
+        stdio_server = create_mcp_server(server_url="http://localhost:8052")
+        stdio_options = stdio_server._mcp_server.create_initialization_options()
+
+        body = _jsonrpc_request("initialize", {"clientInfo": {"name": "test-client"}})
+        status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)
+
+        assert status == 200
+        remote_version = json.loads(resp_body)["result"]["serverInfo"]["version"]
+        assert stdio_options.server_version == expected_version
+        assert remote_version == expected_version
+        assert remote_version != version("mcp")
 
     @pytest.mark.anyio
     async def test_tools_list(self, transport: StreamableHTTPTransport) -> None:
