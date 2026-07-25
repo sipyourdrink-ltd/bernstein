@@ -173,9 +173,7 @@ def emit_summary_card(
     # Issue #3014: surface requested-vs-actual isolation downgrades recorded by
     # the spawner. Guarded so a stubbed/mock spawner without a real list is safe.
     spawner_downgrades = getattr(getattr(orch, "_spawner", None), "isolation_downgrades", None)
-    isolation_downgrades = (
-        [d.as_dict() for d in spawner_downgrades] if isinstance(spawner_downgrades, list) else []
-    )
+    isolation_downgrades = [d.as_dict() for d in spawner_downgrades] if isinstance(spawner_downgrades, list) else []
 
     summary_data = RunSummaryData(
         run_id=orch._run_id,
