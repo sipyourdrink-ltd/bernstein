@@ -596,6 +596,40 @@ def test_refusals_are_anchored_too(tmp_path: Path, receipts_dir: Path, contracts
     assert "spawn" in rows[0].details["forbidden_capabilities"]
 
 
+def test_receipt_is_anchored_as_a_signed_lineage_entry(tmp_path: Path) -> None:
+    """The receipt rides the same signed spine every other receipt does."""
+    from bernstein.adapters.admission import anchor_admission_receipt_in_lineage
+    from bernstein.core.lineage.entry import canonicalise
+    from bernstein.core.lineage.identity import AgentCard, generate_keypair, verify_detached
+    from bernstein.core.lineage.store import LineageStore
+
+    private_key_pem, public_key_pem = generate_keypair()
+    card = AgentCard(agent_id="agent:admission-1", kid="adm-key-1", public_key_pem=public_key_pem)
+    store = LineageStore(tmp_path / "lineage")
+
+    decision = evaluate_admission(_bare_evidence(conformance_verdict="skip"))
+    receipt = build_admission_receipt(decision, generated_at=_NOW.isoformat())
+
+    entry_hash = anchor_admission_receipt_in_lineage(
+        receipt,
+        store=store,
+        operator_hmac_key=b"k" * 32,
+        agent_id=card.agent_id,
+        agent_card=card,
+        private_key_pem=private_key_pem,
+        ts_ns=1_700_000_000_000_000_000,
+    )
+
+    assert entry_hash.startswith("sha256:")
+    entries = [pair for pair in store.read_log() if pair[0].artefact_path == ".sdd/adapters/admission/kimi.json"]
+    assert len(entries) == 1
+    entry, jws = entries[0]
+    assert verify_detached(canonicalise(entry), jws, card)
+    # The receipt's content address rides in the signed entry, so the
+    # signature covers the identity of the refusal, not just its bytes.
+    assert entry.span_id == receipt_sha256(receipt)
+
+
 def test_chain_slice_audit_names_every_unproven_spawn() -> None:
     events = [
         {"kind": GATE_RECEIPT_KIND, "adapter": "kimi", "verdict": VERDICT_ADMIT, "reason": ""},
