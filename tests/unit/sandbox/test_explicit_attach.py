@@ -187,17 +187,48 @@ def test_runtime_name_is_normalised_before_the_gate_reads_it(raw: str) -> None:
     assert is_container_runtime(raw) is (raw.strip().lower() in CONTAINER_SANDBOX_RUNTIMES)
 
 
-def test_container_runtime_set_matches_accepted_sandbox_config_values() -> None:
-    """The gate's runtime set is the accepted ``sandbox.runtime`` set.
+def test_container_runtime_set_is_exactly_the_supported_runtimes() -> None:
+    """The gate's runtime set matches an independently written expectation.
 
-    Deriving one from the other is what stops a newly supported runtime from
-    being accepted by configuration while failing open at the gate.
+    The expected set is spelled out here rather than recomputed from
+    ``SandboxRuntime``. Comparing the derived set against the expression it
+    is defined by is a tautology: it holds for any value, including a typo
+    or a runtime no gate can actually probe, so it cannot detect a change.
+    Adding a runtime has to fail here first, which forces the addition to be
+    reviewed against every consumer pinned below.
     """
-    from typing import get_args
+    assert CONTAINER_SANDBOX_RUNTIMES == frozenset({"docker", "podman"})
 
-    from bernstein.core.security.sandbox import SandboxRuntime
 
-    assert frozenset(get_args(SandboxRuntime)) == CONTAINER_SANDBOX_RUNTIMES
+def test_runtime_consumers_derive_from_the_single_source() -> None:
+    """Every former hardcoded copy of the runtime set now derives from one place.
+
+    Issue #3039: the runtime names used to be written down four times - the
+    ``SandboxRuntime`` type, the ``sandbox.runtime`` config validator, the
+    MCP server sandbox validator, and the CLI's container-implies-``--container``
+    test. Only the first extended the explicit-intent gates, so a runtime
+    added to one of the others failed open. These must stay derived, not
+    re-forked into fresh literals.
+    """
+    from bernstein.core.protocols.mcp.mcp_sandbox import _VALID_RUNTIMES as mcp_runtimes
+    from bernstein.core.security.sandbox import CONTAINER_RUNTIME_NAMES
+
+    assert CONTAINER_SANDBOX_RUNTIMES == CONTAINER_RUNTIME_NAMES
+    assert mcp_runtimes == CONTAINER_RUNTIME_NAMES
+
+
+def test_every_container_runtime_is_offered_by_the_sandbox_flag() -> None:
+    """Each canonical container runtime is reachable from ``--sandbox``.
+
+    The direction pinned here is the one that can silently weaken isolation.
+    A runtime the gates know about but the flag does not offer is merely dead
+    configuration; a container runtime reachable from the flag that the gate
+    set does not contain is the #3039 defect, because the explicit-intent
+    check returns ``False`` for it and the request fails open.
+    """
+    from bernstein.cli.run_bootstrap import SANDBOX_CHOICES
+
+    assert CONTAINER_SANDBOX_RUNTIMES <= frozenset(SANDBOX_CHOICES)
 
 
 def test_orchestrator_attach_gate_does_not_key_on_a_single_runtime_literal() -> None:

@@ -371,8 +371,12 @@ def _propagate_env_flags(
         normalized = sandbox.lower()
         # Only the kernel-isolation backends imply ``--container=1``; cloud
         # and worktree backends manage their own environment so we leave
-        # the legacy flag alone for them.
-        if normalized in {"docker", "podman"}:
+        # the legacy flag alone for them. Issue #3039: the membership test
+        # derives from the single runtime declaration instead of repeating
+        # the literals, so a newly supported runtime sets this flag too.
+        from bernstein.core.security.sandbox import CONTAINER_RUNTIME_NAMES
+
+        if normalized in CONTAINER_RUNTIME_NAMES:
             os.environ["BERNSTEIN_CONTAINER"] = "1"
         os.environ["BERNSTEIN_SANDBOX_RUNTIME"] = normalized
         # Surface the paid-allowed bit so downstream callers (selector,

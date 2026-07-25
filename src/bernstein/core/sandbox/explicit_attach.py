@@ -30,10 +30,10 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING
 
 from bernstein.core.sandbox.selector import SandboxSelectionError
-from bernstein.core.security.sandbox import SandboxRuntime
+from bernstein.core.security.sandbox import CONTAINER_RUNTIME_NAMES
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,12 +43,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Every container runtime an operator can name with ``--sandbox`` /
-#: ``BERNSTEIN_SANDBOX_RUNTIME`` / ``sandbox.runtime``. Derived from the
-#: accepted configuration values so a newly supported runtime is covered by
-#: the explicit-intent gates automatically (issue #3039). Non-container
-#: backends (``worktree`` and the cloud backends) are deliberately absent:
-#: they have no container boundary to lose and keep their own semantics.
-CONTAINER_SANDBOX_RUNTIMES: frozenset[str] = frozenset(get_args(SandboxRuntime))
+#: ``BERNSTEIN_SANDBOX_RUNTIME`` / ``sandbox.runtime``. Aliases the single
+#: runtime declaration in :mod:`bernstein.core.security.sandbox` so a newly
+#: supported runtime is covered by the explicit-intent gates automatically
+#: (issue #3039). Non-container backends (``worktree`` and the cloud
+#: backends) are deliberately absent: they have no container boundary to
+#: lose and keep their own semantics.
+CONTAINER_SANDBOX_RUNTIMES: frozenset[str] = CONTAINER_RUNTIME_NAMES
 
 #: Seconds allowed for the ``<runtime> info`` liveness probe.
 _RUNTIME_PROBE_TIMEOUT_S = 10

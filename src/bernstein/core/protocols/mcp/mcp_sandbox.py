@@ -21,10 +21,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.security.sandbox import CONTAINER_RUNTIME_NAMES
+
 if TYPE_CHECKING:
     from pathlib import Path
 
-_VALID_RUNTIMES = frozenset({"docker", "podman"})
+#: Issue #3039: derived from the single runtime declaration rather than a
+#: second hand-maintained literal, so an MCP server sandbox accepts exactly
+#: the runtimes the rest of the codebase does.
+_VALID_RUNTIMES = CONTAINER_RUNTIME_NAMES
 
 
 # ---------------------------------------------------------------------------
