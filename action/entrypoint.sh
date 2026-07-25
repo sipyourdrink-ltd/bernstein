@@ -250,7 +250,14 @@ run_plan() {
     fi
 
     local status="${STATUS_SUCCESS}"
-    bernstein run "$PLAN" --budget "$BUDGET" --headless || status="${STATUS_FAILURE}"
+    # `--headless` is declared on the root `bernstein` group, not on the `run`
+    # subcommand, so passing it here made Click exit 2 at option parsing and
+    # plan mode never started. `--quiet` is the option `run` actually declares
+    # for this purpose, and it is the one this step needs: it waits for the run
+    # to reach a terminal state instead of detaching. Without that wait the
+    # `|| status=` capture below reports the exit code of a launch rather than
+    # of a run, and the run summary is read before it has been written.
+    bernstein run "$PLAN" --budget "$BUDGET" --quiet || status="${STATUS_FAILURE}"
 
     gha_endgroup
 

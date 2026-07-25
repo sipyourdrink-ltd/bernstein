@@ -43,6 +43,26 @@ When `task` is the literal string `"fix-ci"`, the action:
 This mode is designed for `workflow_run` triggers so it can react to CI
 failures from another workflow.
 
+### Plan mode (`plan: <path>`)
+
+When `plan` is set instead of `task`, the action runs:
+
+```
+bernstein run <plan> --budget <budget> --quiet
+```
+
+`--quiet` is what makes this mode usable in CI. The `run` subcommand renders
+a dashboard on a TTY and otherwise detaches, leaving the run going in the
+background; `--quiet` instead waits for the run to reach a terminal state and
+prints only the final summary. The step therefore blocks until the run really
+finishes, its exit code reflects the run's outcome rather than whether the
+launch succeeded, and `.sdd/run-summary.json` exists by the time the step
+reads it for the `tasks-completed` and `total-cost` outputs.
+
+Note that `--headless` is an option of the root `bernstein` group, not of
+`bernstein run`. Passing it after the `run` subcommand makes the CLI exit 2
+at option parsing without starting anything.
+
 ### Normal mode
 
 When `task` is anything other than `"fix-ci"`, the action runs:
