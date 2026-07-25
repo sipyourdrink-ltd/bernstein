@@ -1506,16 +1506,18 @@ def _log_max_turns_exceeded(exc: BaseException, max_turns: int | None) -> None:
     raw_responses = getattr(run_data, "raw_responses", None) or []
     turns_used: int | str = len(raw_responses) if raw_responses else "unknown"
     # Best-effort detection of already-completed work: the agent signals
-    # completion by POSTing the task /complete endpoint via the run_command
-    # builtin tool, so a "/complete" string inside any tool-call item of the
-    # partial run means the work was ALREADY done when the cap fired.
+    # completion through the run_command builtin tool, so a completion command
+    # inside any tool-call item of the partial run means the work was ALREADY
+    # done when the cap fired. Match both the `bernstein task complete` front
+    # door agents are instructed to use and a direct POST to the endpoint,
+    # which older sessions and hand-written commands still produce.
     work_completed = "unknown"
     try:
         new_items = getattr(run_data, "new_items", None) or []
         for item in new_items:
             raw_item = getattr(item, "raw_item", item)
             arguments = getattr(raw_item, "arguments", None)
-            if isinstance(arguments, str) and "/complete" in arguments:
+            if isinstance(arguments, str) and ("/complete" in arguments or "task complete" in arguments):
                 work_completed = "yes"
                 break
         else:
