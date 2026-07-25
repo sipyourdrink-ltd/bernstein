@@ -94,6 +94,21 @@ def build_mesh_coordinator(
     an operator-set string means a receipt cannot claim to be from a node whose
     key it does not hold -- the two are the same fact.
 
+    That fact only binds if the verifier knows which key a ``node_id`` should
+    have, so the coordinator is always built with a pin map (#2997), never with
+    ``None``:
+
+    * ``cluster.gossip_peer_keys`` supplies the peers this node accepts gossip
+      from.
+    * This node's own public key is pinned to its own ``node_id``, so a peer
+      cannot echo back receipts attributed to us under a key of its choosing,
+      and a node recovering its journal from a peer still folds its own
+      history.
+
+    A MESH node with no configured pins therefore folds no foreign receipts at
+    all rather than trusting whatever key a receipt carries. Closed is the
+    default; opening it is an explicit act.
+
     Args:
         cluster_config: The resolved ``ClusterConfig``. Typed loosely so this
             module stays importable without pulling in the task models.
@@ -125,6 +140,7 @@ def build_mesh_coordinator(
             public_name=_MESH_PUBLIC_KEY_NAME,
         )
         node_id = install_identity_keyid(public_pem.encode("ascii"))
+        trusted_keys = _pinned_peer_keys(cluster_config, node_id=node_id, public_pem=public_pem)
         configured_path = getattr(cluster_config, "claim_journal_path", None)
         journal_path = Path(configured_path) if configured_path else default_claim_journal_path(Path(sdd_dir))
         journal = ClaimJournal(
@@ -139,11 +155,40 @@ def build_mesh_coordinator(
         # answers 409 rather than accepting receipts it cannot verify against.
         logger.error("MESH coordinator unavailable, leaderless claiming disabled: %s", exc)
         return None
+    if not any(pinned != node_id for pinned in trusted_keys):
+        logger.warning(
+            "MESH node %s has no pinned gossip peers: every gossiped receipt will be rejected. "
+            "Add cluster.gossip_peer_keys to accept a peer's receipts.",
+            node_id,
+        )
     return MeshCoordinator(
         journal=journal,
         lease_ttl_s=int(getattr(cluster_config, "claim_lease_ttl_s", DEFAULT_MESH_LEASE_TTL_S)),
         peers=tuple(getattr(cluster_config, "gossip_peers", ()) or ()),
+        trusted_keys=trusted_keys,
     )
+
+
+def _pinned_peer_keys(
+    cluster_config: object,
+    *,
+    node_id: str,
+    public_pem: str,
+) -> dict[str, dict[str, Any]]:
+    """Return the ``node_id`` to JWK pin map this coordinator verifies against.
+
+    Always includes this node's own key, so a receipt attributed to us is only
+    folded when it was signed by us. Peers come from
+    ``cluster.gossip_peer_keys``; a config that pins none yields a map holding
+    only our own entry, which rejects every foreign receipt -- the fail-closed
+    posture #2997 chose as the default.
+    """
+    from bernstein.core.identity.http_signing import public_key_jwk_from_pem
+
+    pins: dict[str, dict[str, Any]] = {node_id: dict(public_key_jwk_from_pem(public_pem.encode("ascii")))}
+    for peer_key in getattr(cluster_config, "gossip_peer_keys", ()) or ():
+        pins[peer_key.node_id] = dict(peer_key.to_jwk())
+    return pins
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,10 +243,12 @@ class MeshCoordinator:
         peers: Gossip peer base URLs. Held for the gossip transport to read;
             the coordinator itself never dials them, so every method here works
             with the network down.
-        trusted_keys: Optional ``node_id`` to public-key JWK pinning applied to
-            every ingested receipt. Without it a gossiped receipt is verified
-            against the key it carries, which authenticates the bytes but not
-            the identity.
+        trusted_keys: ``node_id`` to public-key JWK pinning applied to every
+            ingested receipt. ``None`` verifies a gossiped receipt against the
+            key it carries, which authenticates the bytes but not the identity;
+            an empty map trusts no one. :func:`build_mesh_coordinator` always
+            supplies a map, so ``None`` is reachable only by constructing a
+            coordinator directly (#2997).
     """
 
     def __init__(

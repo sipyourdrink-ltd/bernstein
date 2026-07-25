@@ -1773,6 +1773,117 @@ class NodeInfo:
 
 
 @dataclass(frozen=True)
+class MeshPeerKey:
+    """A gossip peer's pinned identity: its ``node_id`` and its public key.
+
+    A MESH ``node_id`` is not an operator-chosen label -- it is the RFC 7638
+    thumbprint of the node's Ed25519 claim-signing key, so the identity and the
+    key are the same fact. Pinning therefore has a checkable form: the
+    thumbprint of ``public_key_x`` must reproduce ``node_id``, which is what
+    :meth:`node_id_from_key` computes and the seed loader asserts. A pin that
+    does not verify is a typo, not a policy, and is rejected before a node
+    boots with it.
+
+    Attributes:
+        node_id: The peer's install identity id, as it appears in the
+            ``node_id`` field of every receipt that peer signs.
+        public_key_x: Base64url (unpadded) encoding of the peer's raw 32-byte
+            Ed25519 public key -- the JWK ``x`` member per RFC 8037.
+    """
+
+    node_id: str
+    public_key_x: str
+
+    def to_jwk(self) -> dict[str, str]:
+        """Return this key as an RFC 8037 OKP JWK."""
+        return {"kty": "OKP", "crv": "Ed25519", "alg": "EdDSA", "x": self.public_key_x}
+
+    def node_id_from_key(self) -> str:
+        """Return the RFC 7638 thumbprint of :attr:`public_key_x`.
+
+        Equals :attr:`node_id` for a correctly pinned peer; the seed loader
+        compares the two so a pin cannot name a node whose key it does not
+        carry.
+        """
+        import base64
+        import hashlib
+        import json
+
+        canonical = json.dumps(
+            {"crv": "Ed25519", "kty": "OKP", "x": self.public_key_x},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        digest = hashlib.sha256(canonical).digest()
+        return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+    @classmethod
+    def from_material(cls, node_id: str, material: object) -> MeshPeerKey:
+        """Build a pin from the key material an operator can paste into YAML.
+
+        Three forms are accepted, all normalising to the same JWK ``x``:
+
+        * The SPKI PEM a peer publishes at
+          ``.sdd/cluster/identity/claim_signing.pub``.
+        * A JWK mapping (``kty``/``crv`` must be ``OKP``/``Ed25519``).
+        * The bare base64url ``x`` member.
+
+        Args:
+            node_id: The peer's install identity id.
+            material: The key material in one of the three forms above.
+
+        Returns:
+            The normalised :class:`MeshPeerKey`.
+
+        Raises:
+            ValueError: When the material is not a usable Ed25519 public key.
+                The message names the accepted forms so a bad paste is
+                actionable at seed load.
+        """
+        import base64
+
+        if isinstance(material, dict):
+            jwk: dict[str, object] = material
+            if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":
+                raise ValueError("JWK must have kty='OKP' and crv='Ed25519'")
+            x_member = jwk.get("x")
+            if not isinstance(x_member, str) or not x_member.strip():
+                raise ValueError("JWK is missing a non-empty 'x' member")
+            x = x_member.strip()
+        elif isinstance(material, str) and material.strip():
+            text = material.strip()
+            if "-----BEGIN" in text:
+                from cryptography.hazmat.primitives import serialization
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+                try:
+                    loaded = serialization.load_pem_public_key(text.encode("ascii"))
+                except Exception as exc:
+                    raise ValueError(f"not a readable PEM public key: {exc}") from exc
+                if not isinstance(loaded, Ed25519PublicKey):
+                    raise ValueError("PEM public key is not Ed25519")
+                raw = loaded.public_bytes(
+                    serialization.Encoding.Raw,
+                    serialization.PublicFormat.Raw,
+                )
+                x = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+            else:
+                x = text
+        else:
+            raise ValueError(
+                "must be an Ed25519 public key: SPKI PEM text, an OKP JWK mapping, or the base64url 'x' member",
+            )
+
+        try:
+            raw_key = base64.urlsafe_b64decode(x + "=" * (-len(x) % 4))
+        except Exception as exc:
+            raise ValueError(f"public key is not valid base64url: {exc}") from exc
+        if len(raw_key) != 32:
+            raise ValueError(f"Ed25519 public key must decode to 32 bytes, got {len(raw_key)}")
+        return cls(node_id=node_id, public_key_x=x)
+
+
+@dataclass(frozen=True)
 class ClusterConfig:
     """Configuration for distributed cluster mode.
 
@@ -1795,6 +1906,11 @@ class ClusterConfig:
         claim_journal_path: MESH only. Explicit path to the signed claim
             journal. ``None`` uses the conventional
             ``.sdd/cluster/claim_journal.jsonl``.
+        gossip_peer_keys: MESH only. The peers whose gossiped receipts this
+            node will fold, each pinned to the Ed25519 key that must have
+            signed them. Empty means no peer is trusted: a MESH node folds
+            only receipts signed by a pinned key, so gossip is closed until
+            the operator opens it deliberately (#2997).
     """
 
     enabled: bool = False
@@ -1810,6 +1926,7 @@ class ClusterConfig:
     gossip_peers: tuple[str, ...] = ()
     claim_lease_ttl_s: int = 300
     claim_journal_path: str | None = None
+    gossip_peer_keys: tuple[MeshPeerKey, ...] = ()
 
     @property
     def is_mesh(self) -> bool:

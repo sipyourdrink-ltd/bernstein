@@ -6046,6 +6046,9 @@ if __name__ == "__main__":
                 gossip_peers=(cluster_cfg.gossip_peers if cluster_cfg else ()),
                 claim_lease_ttl_s=(cluster_cfg.claim_lease_ttl_s if cluster_cfg else 300),
                 claim_journal_path=(cluster_cfg.claim_journal_path if cluster_cfg else None),
+                # Carried through the env override too: dropping the pins here
+                # would leave a MESH node folding nothing from its peers (#2997).
+                gossip_peer_keys=(cluster_cfg.gossip_peer_keys if cluster_cfg else ()),
             )
 
         # Topology branch (#2558): MESH starts a leaderless coordinator instead
