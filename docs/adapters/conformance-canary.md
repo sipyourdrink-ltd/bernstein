@@ -16,8 +16,9 @@ A nightly workflow
 `src/bernstein/adapters/canary.py`:
 
 * every **primary adapter** (`agy`, `aider`, `claude`, `codex`,
-  `copilot`, `gemini`, `opencode`, `qwen`) against whatever upstream
-  version the runner installed that night;
+  `copilot`, `droid`, `gemini`, `kimi`, `opencode`, `pydantic_ai`,
+  `qwen`) against whatever upstream version the runner installed that
+  night;
 * one **pinned tiny goal** on the cheapest usable model per adapter, so
   daily spend stays bounded and run-to-run diffs isolate upstream drift;
 * the same **in-process conformance check** operators get from

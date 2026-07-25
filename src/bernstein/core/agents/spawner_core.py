@@ -3008,6 +3008,67 @@ class AgentSpawner:
                 verdict.advisory_id,
             )
 
+    def _preflight_adapter_admission(self, adapter_name: str) -> None:
+        """Refuse an adapter that cannot prove conformance admission (#2610).
+
+        Adapter resolution used to be name-based: a key in the registry
+        produced a live adapter regardless of whether its conformance verdict
+        was ``ok`` or ``skip``. A skip is inconclusive, not passing, so that
+        made "unverified" indistinguishable from "trusted" at the most
+        privileged hand-off in the system.
+
+        This re-derives the adapter's admission evidence -- the installed
+        binary version, the pinned contract's content hash, the golden
+        transcript replay, and the nightly canary attestation -- checks it
+        against the sealed admission receipt on disk, and seals a chain-
+        anchored receipt for the decision either way. A refusal receipt names
+        the reason, the capabilities withheld, and the remediation, so a
+        withheld adapter is an actionable finding rather than a silent gap.
+
+        The default policy is warn: the decision is recorded and the spawn
+        proceeds, so an operator sees exactly which adapters would be refused
+        before flipping ``BERNSTEIN_ADAPTER_ADMISSION_POLICY=enforce``. Under
+        enforce the refusal raises. ``mock`` and ``generic`` are always exempt
+        so offline work is never blocked.
+
+        Placed alongside the security-floor preflight and outside the inner
+        spawn ``try`` for the same reason: a refusal is a hard stop, not an
+        alternate-provider failover.
+
+        Raises:
+            AdapterAdmissionRefusal: Under the enforce policy, when the
+                adapter cannot present a fresh, matching admission receipt.
+        """
+        from bernstein.adapters.admission import (
+            POLICY_OFF,
+            AdmissionGate,
+            policy_from_env,
+        )
+
+        policy = policy_from_env()
+        if policy == POLICY_OFF:
+            return
+
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        sdd = self._workdir / ".sdd"
+        try:
+            chain: object | None = AuditChainStore(sdd / "audit")
+        except Exception as exc:
+            logger.debug("adapter admission: chain ctor failed (%s); decision will not be anchored", exc)
+            chain = None
+
+        gate = AdmissionGate(
+            receipts_dir=sdd / "adapters" / "admission",
+            chain=chain,
+            policy=policy,
+            decisions_dir=sdd / "adapters" / "admission" / "decisions",
+        )
+        # Routed through get_adapter so the gate sits on the resolution path
+        # itself: without a receipt the adapter is un-spawnable, not merely
+        # unlogged. The instance is discarded; the spawn uses the cached one.
+        get_adapter(adapter_name, admission_gate=gate)
+
     def _record_adapter_capability_selection(self, adapter_name: str, tasks: list[Task]) -> None:
         """Anchor the capability profile the routed adapter presents (#2663).
 
@@ -4111,6 +4172,13 @@ class AgentSpawner:
                     # refusal raises out of the spawn (hard stop) instead of
                     # falling through to alternate-provider failover.
                     self._preflight_adapter_security_floor(adapter_name)
+
+                    # Receipt-gated admission (#2610): re-derive the adapter's
+                    # conformance evidence and refuse one that cannot present
+                    # a fresh, matching admission receipt, sealing a chain-
+                    # anchored receipt for the decision either way. Same
+                    # placement rationale as the floor preflight above.
+                    self._preflight_adapter_admission(adapter_name)
 
                     # Capability-aware routing (#2663): anchor the profile hash
                     # the resolved adapter presents at dispatch so replay detects

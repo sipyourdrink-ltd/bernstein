@@ -1,0 +1,20 @@
+# Golden transcript for the OpenCode CLI adapter.
+#
+# Pins the observable spawn outcome for the invocation surface the
+# contract in tests/contract/contracts/opencode.yaml declares
+# (``opencode run -m <model> --format json <prompt>``): a SpawnResult
+# carrying the child PID and a log path under the worktree's
+# .sdd/runtime/ directory. Replayed under a mocked subprocess, so the
+# transcript covers adapter-controlled invocation only and never
+# upstream model text.
+name: opencode_adapter_spawn
+adapter_class: bernstein.adapters.opencode.OpenCodeAdapter
+steps:
+  - prompt: "implement feature X"
+    model: "anthropic/claude-sonnet-4-6"
+    expected_pid: 6301
+    expected_log_suffix: "conformance-0.log"
+  - prompt: "run the test suite"
+    model: "openai/gpt-5-mini"
+    expected_pid: 6302
+    expected_log_suffix: "conformance-1.log"

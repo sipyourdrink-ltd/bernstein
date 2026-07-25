@@ -188,6 +188,7 @@ nav:
           - Deferred adapters: adapter-deferred.md
           - Adapter operations: operations/adapters.md
           - Adapter security floor: adapters/security-floor.md
+          - Adapter admission receipts: adapters/admission-receipts.md
           - Session isolation: adapters/session_isolation.md
           - Stream signals: adapters/stream_signals.md
           - Strict output schemas: adapters/schemas.md

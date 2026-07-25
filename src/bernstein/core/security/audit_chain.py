@@ -414,6 +414,17 @@ EVENT_PLUGIN_CONFORMANCE_RECEIPT = "plugin.conformance_receipt"
 #: rather than living only in a CI log.
 EVENT_ADAPTER_CANARY_RECEIPT = "adapter.canary_receipt"
 
+#: Issue #2610 -- emitted for every adapter admission decision, positive and
+#: negative alike. The event binds the adapter, the installed upstream version,
+#: the pinned contract's content hash, the deterministic golden-transcript
+#: replay fingerprint, the conformance run id, and the capabilities the
+#: decision grants or withholds. Recording refusals as first-class events is
+#: the point: a ``skip`` conformance verdict that leaves no record reads as
+#: silent permission, whereas a chain slice carrying refusal events proves
+#: offline both which adapters held spawn authority during a window and why
+#: every other one did not.
+EVENT_ADAPTER_ADMISSION_RECEIPT = "adapter.admission_receipt"
+
 #: Issue #2663 -- emitted when capability-aware routing selects an adapter for a
 #: task. The event binds the chosen adapter, the content-addressed capability
 #: profile it presented at dispatch, and the task requirements it satisfied.
@@ -4224,6 +4235,84 @@ def record_adapter_canary_receipt(
     )
 
 
+def record_adapter_admission_receipt(
+    *,
+    chain: AuditChainStore,
+    adapter: str,
+    binary: str,
+    installed_version: str | None,
+    contract_hash: str,
+    replay_fingerprint: str,
+    conformance_run_id: str,
+    verdict: str,
+    reason: str,
+    allowed_capabilities: list[str],
+    forbidden_capabilities: list[str],
+    receipt_sha256: str,
+    kind: str = EVENT_ADAPTER_ADMISSION_RECEIPT,
+    actor: str = "adapter_admission",
+) -> AuditEvent:
+    """Append an ``adapter.admission_receipt`` event into *chain* (#2610).
+
+    Mirrors one admission decision into the HMAC chain: the adapter, the
+    upstream version it was probed against, the pinned contract's content
+    hash, the deterministic replay fingerprint, the conformance run that
+    derived it, and the capability split the decision granted or withheld.
+
+    Refusals are recorded on exactly the same terms as admissions, which is
+    what makes the record load-bearing. A conformance verdict of ``skip``
+    that produced no event would leave an unverified adapter looking
+    indistinguishable from an unexamined one; with the event, a verifier
+    holding a contiguous chain slice can prove offline which adapters held
+    spawn authority during a window and, for each one that did not, the reason
+    and the capabilities it was denied.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        adapter: Adapter registry key.
+        binary: Binary name the admission probe resolved.
+        installed_version: Captured upstream version, or ``None``.
+        contract_hash: SHA-256 of the pinned contract bytes, ``""`` when the
+            adapter ships none.
+        replay_fingerprint: Deterministic projection of the contract bytes,
+            the binary version, and the golden-transcript replay output.
+        conformance_run_id: Deterministic id of the conformance run behind the
+            decision.
+        verdict: ``admit`` or ``refuse``.
+        reason: Refusal reason; empty on an admission.
+        allowed_capabilities: Capability axes the decision grants.
+        forbidden_capabilities: Capability axes the decision withholds.
+        receipt_sha256: Content hash of the canonical receipt bytes.
+        kind: The receipt ``kind`` discriminator (sealed admission receipt vs
+            gate decision), recorded so the two are never conflated.
+        actor: Recorded actor; defaults to ``"adapter_admission"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADAPTER_ADMISSION_RECEIPT,
+        actor=actor,
+        resource_type="adapter_admission",
+        resource_id=adapter,
+        details={
+            "adapter": adapter,
+            "binary": binary,
+            "installed_version": installed_version,
+            "contract_hash": contract_hash,
+            "replay_fingerprint": replay_fingerprint,
+            "conformance_run_id": conformance_run_id,
+            "verdict": verdict,
+            "reason": reason,
+            "allowed_capabilities": allowed_capabilities.copy(),
+            "forbidden_capabilities": forbidden_capabilities.copy(),
+            "receipt_sha256": receipt_sha256,
+            "kind": kind,
+        },
+    )
+
+
 def record_capability_selection(
     *,
     chain: AuditChainStore,
@@ -7414,6 +7503,7 @@ __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
+    "EVENT_ADAPTER_ADMISSION_RECEIPT",
     "EVENT_ADAPTER_CANARY_RECEIPT",
     "EVENT_ADAPTER_CAPABILITY_REFUSAL",
     "EVENT_ADAPTER_CAPABILITY_SELECTION",
@@ -7546,6 +7636,7 @@ __all__ = [
     "reconstruct_mcp_call_order",
     "record_a2a_message_receipt",
     "record_activity_result",
+    "record_adapter_admission_receipt",
     "record_adapter_canary_receipt",
     "record_adapter_floor_update_receipt",
     "record_adapter_spawn_preflight_receipt",

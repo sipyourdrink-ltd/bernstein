@@ -105,7 +105,10 @@ jobs:
                   print(f"::endgroup::")
                   if rc != 0:
                       print(f"::warning::install failed for {target.adapter} ({spec}); will probe as skip")
-              elif method == "pipx" and spec:
+              elif method in {"pipx", "pip", "uv"} and spec:
+                  # pip / uv / pipx all resolve to the same PyPI distribution;
+                  # `uv tool install` is the one runner-side installer that
+                  # puts the console script on PATH for every one of them.
                   print(f"::group::uv tool install {spec}")
                   rc = subprocess.run(["uv", "tool", "install", spec], check=False).returncode
                   print(f"::endgroup::")

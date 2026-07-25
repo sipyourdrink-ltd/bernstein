@@ -158,8 +158,18 @@ CANARY_MATRIX: tuple[CanaryTarget, ...] = (
     CanaryTarget(adapter="claude", binary="claude", model="haiku"),
     CanaryTarget(adapter="codex", binary="codex", model="gpt-5-mini"),
     CanaryTarget(adapter="copilot", binary="copilot", model="auto"),
+    # droid takes no model flag (the prompt is positional and selection is
+    # account-side); "default" records that the probe runs whatever the
+    # installed CLI is configured for.
+    CanaryTarget(adapter="droid", binary="droid", model="default"),
     CanaryTarget(adapter="gemini", binary="gemini", model="gemini-3.1-flash-lite"),
+    # kimi carries the prompt through ``-c`` and exposes no model flag at
+    # spawn time; same "default" convention as droid and agy.
+    CanaryTarget(adapter="kimi", binary="kimi", model="default"),
     CanaryTarget(adapter="opencode", binary="opencode", model="haiku"),
+    # clai addresses models as "<provider>:<model>"; the cheapest usable tier
+    # keeps nightly spend bounded like every other row.
+    CanaryTarget(adapter="pydantic_ai", binary="clai", model="openai:gpt-5-mini"),
     CanaryTarget(adapter="qwen", binary="qwen", model="qwen3-coder-flash"),
 )
 

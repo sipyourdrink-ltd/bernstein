@@ -256,6 +256,18 @@ def _register_check_subcommand() -> None:
 _register_check_subcommand()
 
 
+def _register_verify_subcommand() -> None:
+    """Attach the receipt-gated admission verify subcommand (#2610)."""
+    try:
+        from bernstein.cli.commands.adapters_verify_cmd import register_adapters_verify
+    except Exception:  # pragma: no cover -- defensive
+        return
+    register_adapters_verify(adapters_group)
+
+
+_register_verify_subcommand()
+
+
 @adapters_group.command("list")
 @click.option(
     "--json",
