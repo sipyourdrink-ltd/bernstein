@@ -72,16 +72,18 @@ shape:
 Malformed lines are skipped with a warning. Non-zero exit treats the
 source as empty for that run.
 
-## Scheduled workflow
+## Running the scan
 
-`.github/workflows/trend-scan.yml` runs the CLI on `workflow_dispatch` by
-default. To enable the weekly schedule, uncomment the `schedule:` block in
-that file. The job uploads the rollup as a workflow artifact for operator
-review; it does not commit or open issues.
+Run the CLI directly, as shown above. There is no longer a GitHub Actions
+workflow for this. The previous `trend-scan.yml` shipped with its `schedule:`
+block commented out and only a `workflow_dispatch` trigger, so it recorded
+zero runs in its lifetime; it was removed rather than left as an unused
+entry in the workflow estate. The CLI is unchanged and remains the supported
+entry point. Reintroduce a workflow if and when someone owns the cadence.
 
 ## Operator workflow
 
-1. Open the latest workflow run, download `trend-scan-rollup`.
+1. Run the CLI and open the rollup it writes under `.sdd/trend-scan/`.
 2. Skim the table; ignore `duplicate` and `recently-closed` rows unless
    context has changed.
 3. For each `new` row that warrants action, run `bernstein backlog new`

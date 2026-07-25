@@ -148,6 +148,7 @@ it is tagged accordingly.
 | `mcp.bernstein_cost` | Y | - | - |
 | `mcp.bernstein_stop` | - | - | - |
 | `mcp.bernstein_approve` | - | - | - |
+| `mcp.bernstein_complete` | - | - | - |
 | `mcp.bernstein_create_subtask` | Y | - | - |
 | `mcp.load_skill` | Y | - | - |
 

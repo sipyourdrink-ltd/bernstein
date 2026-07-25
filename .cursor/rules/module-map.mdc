@@ -351,6 +351,7 @@ alwaysApply: false
 
 | File                  | Purpose |
 |-----------------------|---------|
+| `approval_gate.py`    | The gates shared by every MCP surface that exposes an approval or completion verb |
 | `capability.py`       | Runtime capability cards for the Bernstein MCP server |
 | `cost_meter.py`       | Per-call cost-meter and observability envelope for MCP tool responses |
 | `input_validation.py` | Schema-validated MCP tool-call inputs with deny-by-default |

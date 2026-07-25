@@ -19,8 +19,12 @@ caller-injected ``fetch_fn`` and ``synthesise``, and
 :class:`~bernstein.core.orchestration.activity_modalities.OpsActivity` have no
 caller outside this package. No seed file, plan, backlog entry or server route
 constructs any activity, the goal-driven run loop never dispatches one, and no
-shipped adapter declares a non-git output mode. Routing artifact-mode tasks away
-from the git-only paths is tracked in issue #2996.
+shipped adapter declares a non-git output mode. Every bundled adapter declares
+``git-diff`` output, worktree allocation does not branch on modality, and
+``agent_kind`` on a team role is parsed and validated but not read on the
+execution path. See ``docs/operations/activity-boundary.md`` ("Reachability
+today"), issue #2996 (routing artifact-mode tasks away from git-only paths) and
+issue #3110 (declaring artifact output from a seed, plan, or backlog entry).
 
 The boundary is a small, closed surface:
 

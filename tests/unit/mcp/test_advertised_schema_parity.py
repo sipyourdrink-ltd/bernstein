@@ -108,6 +108,7 @@ _SEEDS: dict[str, list[dict[str, Any]]] = {
     "bernstein_context": [{"task_id": "t-1", "workdir": ".", "verify": True}],
     "bernstein_stop": [{"workdir": "."}],
     "bernstein_approve": [{"task_id": "t-1", "note": "ok"}],
+    "bernstein_complete": [{"task_id": "t-1", "result_summary": "done"}],
     "bernstein_create_subtask": [
         {"parent_task_id": "t-1", "goal": "sub", "role": "backend", "scope": "small", "complexity": "low"},
     ],

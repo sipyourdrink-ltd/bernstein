@@ -80,6 +80,19 @@ def _entry(
     )
 
 
+def _sidecar_path(log_path: Path, entry: LineageEntry) -> Path:
+    """Return the signature sidecar location the store writes and the gate reads.
+
+    The layout is content-addressed: the directory is derived from
+    ``sha256(artefact_path)``, so the artefact path is never joined onto a
+    filesystem path. ``test_attack_5`` pins that this is the only location
+    honoured.
+    """
+    digest = hashlib.sha256(entry.artefact_path.encode()).hexdigest()
+    eh = entry_hash(entry)
+    return log_path.parent / "signatures" / digest[:2] / digest / (eh.replace("sha256:", "") + ".jws")
+
+
 def _append(log_path: Path, entry: LineageEntry, agent: _Agent) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # Append the canonical JCS bytes the real ``LineageStore.append`` writes.
@@ -89,11 +102,9 @@ def _append(log_path: Path, entry: LineageEntry, agent: _Agent) -> None:
     with log_path.open("ab") as f:
         f.write(canonical + b"\n")
     jws = sign_detached(canonical, agent.priv, kid=agent.kid)
-    digest = hashlib.sha256(entry.artefact_path.encode()).hexdigest()
-    sig_dir = log_path.parent / "signatures" / digest[:2] / digest
-    sig_dir.mkdir(parents=True, exist_ok=True)
-    eh = entry_hash(entry)
-    (sig_dir / (eh.replace("sha256:", "") + ".jws")).write_text(jws)
+    sidecar = _sidecar_path(log_path, entry)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(jws)
 
 
 # ── 1. Replay attack ────────────────────────────────────────────────────────
@@ -241,26 +252,53 @@ def test_attack_4_forge_synthetic_jws_with_unknown_kid(tmp_path: Path) -> None:
 
 
 def test_attack_5_path_traversal_does_not_escape_lineage_dir(tmp_path: Path) -> None:
-    """An entry declaring an artefact_path of ``../../../etc/passwd`` must
-    not cause the gate to look up signatures outside ``log_path.parent``.
+    """An entry declaring a traversing artefact_path must not steer the gate's
+    signature lookup outside ``log_path.parent``.
 
-    The recorder is the layer that should refuse the path; the gate's
-    contract here is "no escape" - signature lookup is always
-    sharded by sha256(artefact_path) under log_dir/signatures/."""
+    The recorder is the layer that should refuse the path; the gate's contract
+    here is "no escape" - signature lookup is always sharded by
+    sha256(artefact_path) under ``log_dir/signatures/``, so the attacker's
+    string is never joined onto a filesystem path.
+
+    Asserted in both directions against the gate's own behaviour:
+
+      1. the sidecar at the content-addressed location IS honoured, and
+      2. a byte-identical sidecar planted where the traversal points, outside
+         ``log_dir``, is NOT - the gate reports the signature missing.
+
+    A gate that joined ``artefact_path`` onto ``log_dir/signatures`` would pass
+    (1) and fail (2). The traversal used escapes ``log_dir`` while staying
+    inside ``tmp_path``, so the test never writes outside its own sandbox.
+    """
     log = tmp_path / "lineage" / "log.jsonl"
     cards = tmp_path / "agents"
     a = _Agent("agent:a", "k1")
     _write_card(cards, a)
-    bad = _entry(a, "../../../etc/passwd", _h("1"), [], ts_ns=1)
+    traversing = "../../escape/x.py"
+    bad = _entry(a, traversing, _h("1"), [], ts_ns=1)
     _append(log, bad, a)
-    # Every signature path under tmp_path must stay under log.parent.
-    sig_root = log.parent / "signatures"
-    for sig in sig_root.rglob("*.jws"):
-        # `parents` is a parent-walk; require log.parent on the chain.
-        assert log.parent in sig.parents
-    # Gate runs - must not raise.
+
+    sidecar = _sidecar_path(log, bad)
+    assert sidecar.is_file()
+    assert sidecar.resolve().is_relative_to(log.parent.resolve())
+
+    # 1. The content-addressed sidecar is the one the gate reads.
     result = check(log_path=log, agent_cards_dir=cards)
-    assert isinstance(result.ok, bool)
+    assert result.ok is True, result.failures
+
+    # 2. Move the same signature bytes to where the traversal points. The
+    #    naive join escapes log_dir, so a gate that followed the attacker's
+    #    string would still find a valid signature and stay green.
+    naive_dir = (log.parent / "signatures" / traversing).resolve()
+    assert not naive_dir.is_relative_to(log.parent.resolve())
+    assert naive_dir.is_relative_to(tmp_path.resolve())
+    naive_dir.mkdir(parents=True, exist_ok=True)
+    (naive_dir / sidecar.name).write_text(sidecar.read_text())
+    sidecar.unlink()
+
+    result = check(log_path=log, agent_cards_dir=cards)
+    assert result.ok is False
+    assert any("missing signature sidecar" in f for f in result.failures), result.failures
 
 
 # ── Bonus: forged HMAC ─────────────────────────────────────────────────────

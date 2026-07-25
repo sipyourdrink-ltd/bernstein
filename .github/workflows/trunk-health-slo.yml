@@ -16,11 +16,13 @@ name: Trunk Health SLO
 
 on:
   schedule:
-    # Every two hours keeps the trunk-health view fresh enough for
-    # operator decisions while cutting GitHub API consumption by 75%
-    # versus the previous */30 cadence. Manual workflow_dispatch is
-    # still available for an immediate refresh after recovery.
-    - cron: "0 */2 * * *"
+    # Every six hours. The measured red rate moves on a merge cadence of
+    # roughly 2/hour, so a 2h sample added little over a 6h one, and the
+    # lane has 1 failure in 574 runs. Manual workflow_dispatch is still
+    # available for an immediate refresh after recovery, which is the
+    # supported path for clearing TRUNK_UNSTABLE without waiting for the
+    # next tick.
+    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       threshold_pct:

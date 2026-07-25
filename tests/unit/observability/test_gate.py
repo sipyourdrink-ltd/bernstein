@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 # ``scripts/observability/`` is not an installed package, so load by path.
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "observability" / "gate.py"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SCRIPT_PATH = _REPO_ROOT / "scripts" / "observability" / "gate.py"
 
 
 def _load_module() -> ModuleType:

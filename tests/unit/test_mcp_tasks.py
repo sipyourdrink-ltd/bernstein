@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import pytest
+from mcp.client.experimental.task_handlers import ExperimentalTaskHandlers
+from mcp.client.session import ClientSession
+from mcp.server.fastmcp import FastMCP
+from mcp.shared.memory import create_client_server_memory_streams
 from mcp.types import (
     CallToolResult,
     CancelTaskRequest,
@@ -185,7 +193,7 @@ async def test_cancel_task_endpoint(mock_client: AsyncMock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bernstein_run_with_client_supports_tasks(mock_client: AsyncMock) -> None:
+async def test_bernstein_run_task_augmented_forwards_trace_context(mock_client: AsyncMock) -> None:
     from mcp.types import CallToolRequest, CallToolRequestParams
 
     mcp = create_mcp_server()
@@ -196,8 +204,10 @@ async def test_bernstein_run_with_client_supports_tasks(mock_client: AsyncMock) 
     mock_response.json = MagicMock(return_value=_make_task_dict("task-tasks-support", status="open"))
     mock_client.post = AsyncMock(return_value=mock_response)
 
-    # Mock experimental client capabilities
+    # This call is task-augmented: the client sent task metadata, which is
+    # what makes a CreateTaskResult the correct response shape.
     mock_experimental = MagicMock()
+    mock_experimental.is_task = True
     mock_experimental.client_supports_tasks = True
 
     mock_meta = MagicMock()
@@ -570,3 +580,157 @@ async def test_list_tasks_cursor_translates_to_offset(mock_client: AsyncMock) ->
     assert len(res2.tasks) == 50
     # 100 + 100 >= 150 -> tail reached.
     assert res2.nextCursor is None
+
+
+# ---------------------------------------------------------------------------
+# Tasks-extension gating and declaration (issue #3079)
+# ---------------------------------------------------------------------------
+
+
+async def _stub_list_tasks(context: Any, params: Any) -> ListTasksResult:
+    """Client-side ``tasks/list`` handler used only to declare the capability."""
+    return ListTasksResult(tasks=[])
+
+
+@asynccontextmanager
+async def _tasks_capable_session(mcp: FastMCP[None]) -> AsyncGenerator[ClientSession, None]:
+    """Yield an in-memory client session that declares the tasks capability.
+
+    ``mcp.shared.memory.create_connected_server_and_client_session`` builds a
+    session with no experimental task handlers, so it advertises no ``tasks``
+    capability and cannot distinguish the two predicates under test. The SDK
+    derives ``ClientTasksCapability`` from the configured handlers, so wiring
+    one non-default handler is what makes the server see a tasks-capable
+    client.
+    """
+    low = mcp._mcp_server  # pyright: ignore[reportPrivateUsage]
+    handlers = ExperimentalTaskHandlers(list_tasks=_stub_list_tasks)
+    # Guard the fixture itself: if the SDK stops deriving the capability from
+    # the handlers, the gating tests below would silently stop testing gating.
+    assert handlers.build_capability() is not None
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        client_read, client_write = client_streams
+        server_read, server_write = server_streams
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                lambda: low.run(
+                    server_read,
+                    server_write,
+                    low.create_initialization_options(),
+                    raise_exceptions=False,
+                )
+            )
+            try:
+                async with ClientSession(
+                    read_stream=client_read,
+                    write_stream=client_write,
+                    experimental_task_handlers=handlers,
+                ) as session:
+                    await session.initialize()
+                    yield session
+            finally:
+                tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_plain_call_from_tasks_capable_client_returns_call_tool_result(
+    mock_client: AsyncMock,
+) -> None:
+    """A plain tools/call must get a CallToolResult even from a tasks client.
+
+    Declaring the tasks capability says the client *can* handle task handles,
+    not that this call asked for one. Returning a CreateTaskResult here hands
+    the caller a shape it never requested.
+    """
+    mcp = create_mcp_server()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=_make_task_dict("task-plain-call", status="open"))
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        async with _tasks_capable_session(mcp) as session:
+            res = await session.call_tool("bernstein_run", {"goal": "Plain tools/call"})
+
+    assert isinstance(res, CallToolResult)
+    assert res.isError is False
+    assert res.content, "a CallToolResult must carry the tool's payload"
+    block = res.content[0]
+    assert isinstance(block, TextContent)
+    body = json.loads(block.text)
+    # The cost meter wraps the tool payload under "result" when it is on.
+    if "_meter" in body:
+        body = body["result"]
+    assert body["task_id"] == "task-plain-call"
+
+
+@pytest.mark.asyncio
+async def test_task_augmented_call_returns_create_task_result(mock_client: AsyncMock) -> None:
+    """A tools/call carrying ``task`` metadata must get a CreateTaskResult."""
+    mcp = create_mcp_server()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=_make_task_dict("task-augmented-call", status="open"))
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        async with _tasks_capable_session(mcp) as session:
+            res = await session.experimental.call_tool_as_task(
+                "bernstein_run",
+                {"goal": "Task augmented tools/call"},
+            )
+
+    assert isinstance(res, CreateTaskResult)
+    assert res.task.taskId == "task-augmented-call"
+    assert res.task.status == "working"
+
+
+@pytest.mark.asyncio
+async def test_tools_list_advertises_task_support() -> None:
+    """``execution.taskSupport`` must survive the wire into tools/list."""
+    mcp = create_mcp_server()
+
+    async with _tasks_capable_session(mcp) as session:
+        listed = await session.list_tools()
+
+    by_name = {tool.name: tool for tool in listed.tools}
+
+    run_tool = by_name["bernstein_run"]
+    assert run_tool.execution is not None
+    assert run_tool.execution.taskSupport == "optional"
+
+    handle_tool = by_name["bernstein_task_handle"]
+    assert handle_tool.execution is not None
+    assert handle_tool.execution.taskSupport == "forbidden"
+
+    # A tool with no declared mode advertises nothing, which the extension
+    # reads as the "forbidden" default.
+    assert by_name["bernstein_health"].execution is None
+
+
+@pytest.mark.asyncio
+async def test_task_row_round_trips_to_a_polling_client(mock_client: AsyncMock) -> None:
+    """A ``tasks/get`` row must survive serialisation into a real client.
+
+    ``Task.ttl`` is required and the SDK drops ``None`` fields when it
+    serialises a response, so a row built with ``ttl=None`` reaches the
+    client without the field and is rejected as malformed. Poll the run
+    through a real session so that failure mode cannot come back.
+    """
+    mcp = create_mcp_server()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=_make_task_dict("task-poll", status="in_progress"))
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        async with _tasks_capable_session(mcp) as session:
+            status = await session.experimental.get_task("task-poll")
+
+    assert isinstance(status, GetTaskResult)
+    assert status.taskId == "task-poll"
+    assert status.status == "working"
+    assert status.ttl is not None

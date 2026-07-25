@@ -186,9 +186,9 @@ class TestBernsteinApprove:
     """McpFakeLab correctly exercises bernstein_approve."""
 
     @pytest.mark.asyncio
-    async def test_approve_marks_task_done(self, lab: McpFakeLab) -> None:
+    async def test_approve_marks_pending_approval_task_done(self, lab: McpFakeLab) -> None:
         """bernstein_approve calls /tasks/{id}/complete and returns done status."""
-        lab.seed_task("T-100", status="open")
+        lab.seed_task("T-100", status="pending_approval")
         text = await lab.call_tool("bernstein_approve", {"task_id": "T-100"})
         data = json.loads(text)
         assert data["status"] == "done"
@@ -197,16 +197,65 @@ class TestBernsteinApprove:
     @pytest.mark.asyncio
     async def test_approve_records_note(self, lab: McpFakeLab) -> None:
         """bernstein_approve stores the approval note as result_summary."""
-        lab.seed_task("T-101", status="open")
+        lab.seed_task("T-101", status="pending_approval")
         await lab.call_tool("bernstein_approve", {"task_id": "T-101", "note": "LGTM"})
         assert lab._tasks["T-101"]["result_summary"] == "LGTM"
 
     @pytest.mark.asyncio
     async def test_approve_posts_to_complete_endpoint(self, lab: McpFakeLab) -> None:
         """bernstein_approve must POST to /tasks/{id}/complete - regression guard."""
-        lab.seed_task("T-102", status="open")
+        lab.seed_task("T-102", status="pending_approval")
         await lab.call_tool("bernstein_approve", {"task_id": "T-102"})
         lab.assert_called("POST", "/tasks/T-102/complete")
+
+    @pytest.mark.asyncio
+    async def test_approve_leaves_an_open_task_untouched(self, lab: McpFakeLab) -> None:
+        """An open task has no approval to grant, so it must not be completed."""
+        lab.seed_task("T-103", status="open")
+        text = await lab.call_tool("bernstein_approve", {"task_id": "T-103"})
+        data = json.loads(text)
+        assert data["error"] == "task_not_awaiting_approval"
+        assert data["current_status"] == "open"
+        assert lab._tasks["T-103"]["status"] == "open"
+        assert not any(r.url.path.endswith("/complete") for r in lab.requests)
+
+    @pytest.mark.asyncio
+    async def test_approve_leaves_a_planned_task_in_the_plan_gate(self, lab: McpFakeLab) -> None:
+        """A planned task waits on the plan decision, which is not granted per task."""
+        lab.seed_task("T-104", status="planned")
+        text = await lab.call_tool("bernstein_approve", {"task_id": "T-104"})
+        data = json.loads(text)
+        assert data["error"] == "task_not_awaiting_approval"
+        assert data["current_status"] == "planned"
+        assert lab._tasks["T-104"]["status"] == "planned"
+        assert not any(r.url.path.endswith("/force-claim") for r in lab.requests)
+
+    @pytest.mark.asyncio
+    async def test_complete_marks_task_done(self, lab: McpFakeLab) -> None:
+        """bernstein_complete posts the worker summary to /tasks/{id}/complete."""
+        lab.seed_task("T-105", status="in_progress")
+        text = await lab.call_tool(
+            "bernstein_complete",
+            {"task_id": "T-105", "result_summary": "done and verified"},
+        )
+        data = json.loads(text)
+        assert data["status"] == "done"
+        assert lab._tasks["T-105"]["result_summary"] == "done and verified"
+        lab.assert_called("POST", "/tasks/T-105/complete")
+
+    @pytest.mark.asyncio
+    async def test_complete_leaves_a_waiting_parent_untouched(self, lab: McpFakeLab) -> None:
+        """A parent is completed by its subtasks finishing, not on request."""
+        lab.seed_task("T-106", status="waiting_for_subtasks")
+        text = await lab.call_tool(
+            "bernstein_complete",
+            {"task_id": "T-106", "result_summary": "looked done to me"},
+        )
+        data = json.loads(text)
+        assert data["error"] == "task_not_completable"
+        assert data["current_status"] == "waiting_for_subtasks"
+        assert lab._tasks["T-106"]["status"] == "waiting_for_subtasks"
+        assert not any(r.url.path.endswith("/complete") for r in lab.requests)
 
     @pytest.mark.asyncio
     async def test_approve_missing_task_returns_error(self, lab: McpFakeLab) -> None:

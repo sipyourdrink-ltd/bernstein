@@ -1,8 +1,9 @@
 # Typed activity boundary
 
 The deterministic scheduler is validated for coding agents. The typed activity
-boundary is the contract a non-coding modality - research, browser/computer-use,
-data, ops - would participate through as a replayable step: every activity
+boundary is the one contract a non-coding modality -- research,
+browser/computer-use, data, ops -- participates through as a replayable step:
+every activity
 returns an artifact plus the hashes needed to replay it, so the scheduler stays
 deterministic and the agent stays an opaque stochastic activity behind a
 hash-in / hash-out contract.
@@ -11,12 +12,13 @@ hash-in / hash-out contract.
 bernstein activity verify <run>
 ```
 
-## Scope: what is reachable today
+<!-- scope:activity-boundary-reachability start - delete this section when #2996 and #3110 land -->
+## Reachability today
 
-The boundary, its result contract, and its verification path all ship. Read the
-table before assuming a modality is one flag away.
+The boundary, its result contract, its refusals, and its verification path all
+ship. Read the table before assuming a modality is one flag away.
 
-| Surface | State today |
+| Surface | State on this release |
 |---|---|
 | `ActivityResult` contract, validation, journal anchoring | Ships. Covered by `tests/unit/test_activity_boundary.py`. |
 | `bernstein activity verify <run>` | Ships. Verifies every activity already anchored in a run journal, across modalities. |
@@ -24,14 +26,18 @@ table before assuming a modality is one flag away.
 | Live browser driver | Needs `pip install 'browser-use>=0.7'`. The `browser` extra is deliberately empty so a default install stays license-clean; asking for a live driver without the backend raises a typed refusal naming the package. `--recording` drives a recorded tape with nothing extra installed. |
 | Research activity | Python API only. `ResearchWorker.run()` requires a caller-injected `fetch_fn` and `synthesise`; it fetches nothing itself. |
 | Data / ops activities | Python API only. `DataActivity` and `OpsActivity` have no caller outside `core/orchestration/`. |
-| Dispatch from a goal-driven run | None. A `bernstein -g ...` run never dispatches a non-coding activity. No seed file, plan, backlog entry or server route constructs one. |
+| Dispatch from a goal-driven run | None. A `bernstein -g ...` run never dispatches a non-coding activity. No seed file, plan, backlog entry or server route constructs one (#3110). |
+| Worktree allocation | Does not branch on modality, so a non-git activity still gets a git worktree (#2996). |
 | Adapters declaring a non-git output mode | None. No shipped adapter declares `OutputMode.ARTIFACT`. |
-| `agent_kind` on a role | Parsed and serialised in `core/teams/manifest.py`; no runtime consumer routes on it. |
+| `agent_kind` on a role | Parsed, validated, and round-tripped by the team manifest. No scheduler code reads it, so setting it does not change how a run executes. |
 
 Routing artifact-mode tasks away from the git-only paths is tracked in
-[issue #2996](https://github.com/sipyourdrink-ltd/bernstein/issues/2996). Until
-that lands, read this page as the contract plus one shipped CLI entry point
+[issue #2996](https://github.com/sipyourdrink-ltd/bernstein/issues/2996), and
+declaring artifact output from a seed, plan, or backlog entry in
+[issue #3110](https://github.com/sipyourdrink-ltd/bernstein/issues/3110). Until
+those land, read this page as the contract plus one shipped CLI entry point
 (browser), not as a set of modalities a seed file can select between.
+<!-- scope:activity-boundary-reachability end -->
 
 ## Why
 
@@ -79,7 +85,7 @@ of the content hash.
 
 ## Declaring a role's modality
 
-A team declares which modality a role runs as via `agent_kind` on its
+A team records which modality a role runs as via `agent_kind` on its
 `[[roles]]` entry (default `coding`, so existing manifests are unchanged):
 
 ```toml
@@ -87,6 +93,13 @@ A team declares which modality a role runs as via `agent_kind` on its
 agent_kind = "research"
 role = "scout"
 ```
+
+<!-- scope:activity-boundary-reachability start - delete this note when #2996 and #3110 land -->
+The key is parsed, validated against the known modalities, and round-tripped
+into the canonical manifest. It is not yet read on the execution path: a role
+that declares `agent_kind = "research"` runs exactly as it would without the
+key. Treat it as a forward-compatible declaration, not a dispatch switch.
+<!-- scope:activity-boundary-reachability end -->
 
 ## How verify reconstructs a run
 

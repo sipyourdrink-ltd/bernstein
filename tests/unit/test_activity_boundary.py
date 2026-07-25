@@ -5,9 +5,12 @@ Bernstein's deterministic scheduler is validated for coding agents. The
 research, browser, data, ops -- would participate through as a replayable step:
 every activity returns an artifact plus the hashes needed to replay it, so the
 scheduler stays deterministic and the agent stays an opaque stochastic activity
-behind a hash-in / hash-out contract. The boundary is reachable from the Python
-API only; nothing operator-facing dispatches a non-coding activity today (see
-the scope note in :mod:`bernstein.core.orchestration.activity`).
+behind a hash-in / hash-out contract. ``bernstein activity browser run`` is the
+one non-coding entry point an operator can drive; research, data and ops stay
+Python-API only, and dispatching a non-coding modality from a seed, plan, or
+backlog file is not wired yet. See the scope note in
+:mod:`bernstein.core.orchestration.activity`, "Reachability today" in
+``docs/operations/activity-boundary.md``, and issues #2996 and #3110.
 
 These tests pin the modality-agnostic substrate:
 

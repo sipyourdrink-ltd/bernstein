@@ -279,6 +279,30 @@ the task it watched corresponds to the audited run.
    the journal head, and the chain head, a forged progress claim fails
    verification: the handle *is* the proof, not a view onto it.
 
+### Task-augmented calls (native task handles)
+
+A host that implements the Tasks extension can skip the polling fallback and
+ask for a native task row instead.
+
+- `bernstein_run` advertises `execution.taskSupport: "optional"` in its
+  `tools/list` entry, so a host may invoke it either way. A **plain**
+  `tools/call` returns the usual `CallToolResult` with the run JSON. A
+  **task-augmented** `tools/call` (one that carries `task` in the request
+  params) returns a `CreateTaskResult` whose `task.taskId` the host then
+  drives with `tasks/get`, `tasks/result`, `tasks/list`, and `tasks/cancel`.
+  The response shape follows the call, not the host's declared capability: a
+  tasks-capable host that sends a plain call still gets a `CallToolResult`.
+- `bernstein_task_handle` advertises `execution.taskSupport: "forbidden"`. It
+  is the stateless polling fallback and always answers immediately, so it must
+  not be invoked as a task.
+- Every task row carries a finite `ttl` (24h) rather than the `null` that
+  spells "unlimited". A `null` ttl is dropped from the serialised response and
+  the receiving host rejects the row, so the retention window is stated
+  explicitly. It under-claims: nothing evicts the run.
+
+Hosts with no Tasks support are unaffected and keep using
+`bernstein_task_handle`.
+
 ### Connecting a host trace to the run's artefacts
 
 W3C Trace Context arriving in a request `_meta` (`traceparent` / `tracestate`
@@ -371,7 +395,10 @@ loop loses its meaning, not merely its log.
    `prev_entry_hash`, `entry_hash`, `signature`, `body_hash`), not a bare
    status string.
 
-3. **Complete** with `bernstein_approve` (the existing completion verb).
+3. **Complete** with `bernstein_complete`, passing the summary of what the
+   work produced. This is the worker's completion verb. `bernstein_approve`
+   is not: it grants an approval a task is waiting on and refuses a task the
+   worker is executing (see below).
 
 Every claim and every update appears as an audit-chain entry
 (`task.claim_receipt` and `task.mailbox_message`), and no new audit event type
@@ -391,6 +418,101 @@ settled by replay against the chain rather than by trust, the task lifecycle
 surface over MCP is complete and uniformly provable: create, query, claim,
 update, complete, cancel, each returning an artifact that verifies against the
 chain.
+
+## The approval gate
+
+`bernstein_approve` signs off a finished result that is waiting on a decision.
+It is not a way to finish work: it reads the task first and acts only on the
+state the task lifecycle holds a completed result in, taken from
+`bernstein.core.tasks.lifecycle.APPROVABLE_TASK_STATUSES`.
+
+| Current status | What approval means | Endpoint | Resulting status |
+|---|---|---|---|
+| `pending_approval` | Sign off finished work, recording the approver's note as the result summary. | `POST /tasks/{id}/complete` | `done` |
+
+Any other status is refused with a structured error naming the current status,
+and no state-changing request is sent:
+
+```json
+{
+  "error": "task_not_awaiting_approval",
+  "task_id": "t-42",
+  "current_status": "in_progress",
+  "approvable_statuses": ["pending_approval"],
+  "message": "Task t-42 is in status 'in_progress'. bernstein_approve only acts on a task holding a finished result for sign-off (pending_approval), and never forces another state forward.",
+  "hint": "To finish work you are executing, use bernstein_complete. To report that the task is stuck, post to the task mailbox with bernstein_update. To abandon the work, cancel the task (bernstein task cancel <task_id>)."
+}
+```
+
+A task that is stuck, blocked, or unfinished has no approval to grant. Finish
+work you are executing with `bernstein_complete`, report a blocker with
+`bernstein_update`, or abandon the work with `bernstein task cancel <task_id>`.
+
+### `planned` is decided on the plan, not on the task
+
+A task in `planned` is held by plan mode, and its decision is recorded on the
+plan that holds it: `POST /plans/{plan_id}/approve` records the operator
+decision and promotes every task the plan covers. `bernstein_approve` refuses
+`planned` and says so, because releasing one task at a time would start the
+work while the plan is still `pending` - and `POST /plans/{plan_id}/reject`
+only cancels tasks that are still `planned`, so a task released early survives
+a rejection of the plan it belongs to.
+
+## The completion gate
+
+`bernstein_complete` reports the result of work the caller is executing. It
+reads the task first and posts only from a state a worker holds the task in,
+taken from `bernstein.core.tasks.lifecycle.WORKER_COMPLETABLE_TASK_STATUSES`:
+`open` (the MCP claim path claims from the shared backlog and the completion
+route re-claims the task before applying the payload), `claimed`, and
+`in_progress`.
+
+Three states with a legal transition to `done` are deliberately excluded, so
+that the completion verb cannot be used to clear a task out of the way:
+
+| Refused status | Why | What to do instead |
+|---|---|---|
+| `waiting_for_subtasks` | The parent is completed by its last subtask finishing. Completing it directly marks the parent done while the subtasks are still running. | Let the subtasks finish, or cancel them. |
+| `orphaned` | The worker is gone, so no caller is executing the task. | Crash recovery decides; re-queue it. |
+| `pending_approval` | The result is already recorded and waiting on a decision. | `bernstein_approve`. |
+
+The refusal names the current status:
+
+```json
+{
+  "error": "task_not_completable",
+  "task_id": "t-42",
+  "current_status": "waiting_for_subtasks",
+  "completable_statuses": ["claimed", "in_progress", "open"],
+  "message": "Task t-42 is in status 'waiting_for_subtasks'. bernstein_complete reports the result of work you are executing (claimed, in_progress, open), and does not finish a task that is waiting on its subtasks, whose worker is gone, or whose result is already awaiting a decision."
+}
+```
+
+Both gates are enforced identically on the stdio server and on the streamable
+HTTP transport, from `bernstein.mcp.approval_gate`, so a caller cannot pick a
+transport to get the weaker rule.
+
+The gate does not establish *which* worker is calling: the task server accepts
+a completion from any caller holding `tasks:write`, and the claim identity the
+MCP claim path records lives in the shared backlog file rather than on the
+task. A caller with write access can therefore still complete a task another
+worker is executing. Scope the credential per task (the agent identity JWT
+carries a `task_ids` claim that the server enforces on `POST /tasks/{id}/complete`)
+when that matters.
+
+### What the gates do not cover
+
+Both gates read the task and then write, and the two requests cannot be made
+atomic from the client: `POST /tasks/{id}/complete` takes no expected-state
+precondition. The gate therefore decides *which* endpoint is called, and the
+task server decides whether the call lands.
+
+Where the state machine has no edge to `done` the write is rejected, so a task
+that moves into `blocked` or `cancelled` after the read is not completed. Where
+it has one, the write lands on whatever the task became: a task that enters
+`waiting_for_subtasks` between the read and the write is completed even though
+a direct call in that state is refused. Closing that needs a precondition on
+the completion route rather than a second client-side check.
 
 ## Worked example: pointing a host at the server
 

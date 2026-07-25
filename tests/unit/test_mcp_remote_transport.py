@@ -773,6 +773,135 @@ class TestProxyAuthHeader:
 
 
 # ---------------------------------------------------------------------------
+# Approval gate over the remote transport (#3081)
+# ---------------------------------------------------------------------------
+
+
+class TestRemoteApprovalGate:
+    """The remote transport enforces the same approval gate as the local server.
+
+    The gate would be worthless if a caller could reach the unconditional
+    completion path simply by connecting over HTTP instead of stdio.
+    """
+
+    @pytest.mark.anyio
+    async def test_approve_refuses_a_task_that_is_not_awaiting_approval(
+        self,
+        transport: StreamableHTTPTransport,
+    ) -> None:
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-1", "status": "in_progress"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            raw = await transport._execute_tool("bernstein_approve", {"task_id": "t-1"})
+
+        payload = json.loads(raw)
+        assert payload["error"] == "task_not_awaiting_approval"
+        assert payload["current_status"] == "in_progress"
+        proxy_post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_approve_signs_off_a_pending_approval_task(
+        self,
+        transport: StreamableHTTPTransport,
+    ) -> None:
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-2", "status": "pending_approval"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            await transport._execute_tool("bernstein_approve", {"task_id": "t-2", "note": "LGTM"})
+
+        path, body = proxy_post.call_args[0]
+        assert path == "/tasks/t-2/complete"
+        assert body["result_summary"] == "LGTM"
+
+    @pytest.mark.anyio
+    async def test_approve_refuses_a_planned_task(self, transport: StreamableHTTPTransport) -> None:
+        """Plan mode's decision is not granted per task, on this transport either."""
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-3", "status": "planned"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            raw = await transport._execute_tool("bernstein_approve", {"task_id": "t-3"})
+
+        payload = json.loads(raw)
+        assert payload["error"] == "task_not_awaiting_approval"
+        assert payload["current_status"] == "planned"
+        assert "plan" in payload["hint"].lower()
+        proxy_post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_complete_posts_the_worker_summary(self, transport: StreamableHTTPTransport) -> None:
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-4", "status": "in_progress"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            await transport._execute_tool(
+                "bernstein_complete",
+                {"task_id": "t-4", "result_summary": "shipped"},
+            )
+
+        path, body = proxy_post.call_args[0]
+        assert path == "/tasks/t-4/complete"
+        assert body["result_summary"] == "shipped"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("status", ["waiting_for_subtasks", "orphaned", "pending_approval", ""])
+    async def test_complete_refuses_a_task_the_caller_is_not_executing(
+        self,
+        transport: StreamableHTTPTransport,
+        status: str,
+    ) -> None:
+        """The completion gate is enforced here too, or HTTP is the way around it."""
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-5", "status": status}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            raw = await transport._execute_tool(
+                "bernstein_complete",
+                {"task_id": "t-5", "result_summary": "looked done to me"},
+            )
+
+        payload = json.loads(raw)
+        assert payload["error"] == "task_not_completable"
+        assert payload["current_status"] == (status or "unknown")
+        proxy_post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_advertised_descriptions_match_the_enforced_sets(
+        self,
+        transport: StreamableHTTPTransport,
+    ) -> None:
+        """A model picks a tool from its description, so the two must not drift."""
+        from bernstein.core.tasks.lifecycle import (
+            APPROVABLE_TASK_STATUSES,
+            WORKER_COMPLETABLE_TASK_STATUSES,
+        )
+        from bernstein.mcp.remote_transport import _TOOL_DEFS
+
+        by_name = {d["name"]: d["description"] for d in _TOOL_DEFS}
+        for state in APPROVABLE_TASK_STATUSES:
+            assert state.value in by_name["bernstein_approve"]
+        for state in WORKER_COMPLETABLE_TASK_STATUSES:
+            assert state.value in by_name["bernstein_complete"]
+
+
+# ---------------------------------------------------------------------------
 # Interim validation-scope notice (issue #3088)
 # ---------------------------------------------------------------------------
 
@@ -829,6 +958,9 @@ class TestValidationScopeNotice:
         assert str(len(exposed)) in message
         for name in exposed:
             assert name in message, f"notice does not name exposed tool {name}"
+
+
+# ---------------------------------------------------------------------------
 # WWW-Authenticate challenge on 401 (issue #3075)
 # ---------------------------------------------------------------------------
 

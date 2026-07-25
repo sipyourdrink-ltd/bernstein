@@ -1568,6 +1568,55 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
+  integration-tests:
+    # `tests/integration/**` (126 files) reached CI only through the
+    # `--affected` slice the `test` job runs on pull_request, which selects
+    # the subset the impact map ties to the changed sources. Nothing selected
+    # the directory on push to `main`, so a break that arrives through a path
+    # the map does not model - a changed default, a role template, a
+    # transitive import - landed with the gate green.
+    #
+    # This job runs on every event, pull_request included. Restricting it to
+    # push and merge_group was considered and rejected: `merge_group` never
+    # fires while the merge-queue ruleset is disabled, so a push-only job
+    # reports on `main` after the merge rather than gating it, and the
+    # required `CI gate` context would still pass on a PR having never run
+    # the directory. The impact map's blind spots are the same on a PR as on
+    # a push, so the lane that decides the merge is the one that needs it.
+    #
+    # Cost: 126 files, 264s wall at `--parallel 4`, 456 MB peak RSS. The
+    # runner runs each file in its own subprocess (same OOM-avoidance model
+    # as the unit shards), so memory is bounded by the widest single file.
+    # This runs concurrently with the `test` shards (90-minute timeout), so
+    # it does not extend the critical path.
+    name: Integration tests
+    needs: [lint]  # fast-fail: don't burn a runner if lint fails
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # The integration files are slower than unit files (real subprocesses,
+      # loopback servers, git repos); the default 300s per-file cap is too
+      # tight for the widest of them.
+      BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+      - name: Run integration suite
+        run: |
+          uv run python scripts/run_tests.py \
+            --test-dir tests/integration \
+            --parallel 4
+
   coverage-report:
     name: Coverage report
     needs: [test]
@@ -1879,6 +1928,7 @@ jobs:
       - adapter-integration-macos
       - adapter-conformance-windows
       - test
+      - integration-tests
       - coverage-report
       - test-macos
     timeout-minutes: 3

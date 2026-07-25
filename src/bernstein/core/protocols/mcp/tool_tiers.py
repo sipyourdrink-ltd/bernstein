@@ -65,6 +65,7 @@ TOOL_TIERS: Final[dict[str, ToolTier]] = {
     "bernstein_cost": "standard",
     "bernstein_stop": "standard",
     "bernstein_approve": "standard",
+    "bernstein_complete": "standard",
     "bernstein_create_subtask": "standard",
     "bernstein_claim": "standard",
     "bernstein_update": "standard",

@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_complete",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "result_summary"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]+$"},
+    "result_summary": {"type": "string", "minLength": 1, "maxLength": 8192}
+  }
+}

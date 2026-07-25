@@ -1,6 +1,6 @@
 name: eval-nightly
 
-# Nightly contamination-resistant eval against SWE-bench Pro, Terminal-Bench
+# Weekly contamination-resistant eval against SWE-bench Pro, Terminal-Bench
 # 2.0, and SWE-rebench. Wired but DOES NOT auto-run heavy benchmark suites
 # until the `EVAL_ENABLED` repository secret is set to a truthy value.
 #
@@ -14,9 +14,11 @@ name: eval-nightly
 
 on:
   schedule:
-    # 04:37 UTC nightly. Offset 14 minutes from cluster-tunnel-e2e (04:23)
-    # so the two nightly workflows don't compete for the same runner pool.
-    - cron: "37 4 * * *"
+    # 04:37 UTC weekly on Sunday. Offset 14 minutes from cluster-tunnel-e2e
+    # (04:23) so the two weekly workflows don't compete for the same runner
+    # pool. Moved off a daily cadence because the lane has 0 failures in 77
+    # runs and consumes the same 20-slot pool that PR verdicts queue behind.
+    - cron: "37 4 * * 0"
   workflow_dispatch:
     inputs:
       force_run:

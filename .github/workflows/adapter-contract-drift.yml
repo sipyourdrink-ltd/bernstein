@@ -17,17 +17,22 @@ name: Adapter contract drift
 # there is no batched auto-PR.
 #
 # Triggers:
-#   * Three times daily on schedule so upstream releases surface fast.
+#   * Once daily on schedule so upstream releases surface within 24h.
 #   * On PRs touching adapters or contracts so contract edits get
 #     validated immediately.
 #   * Manual dispatch for operator-driven re-runs.
 
 on:
   schedule:
-    - cron: "0 6,14,22 * * *"
+    # Daily. The matrix is 16 jobs per fire, so the previous 6/14/22
+    # cadence cost 48 jobs a day against the same 20-slot pool that PR
+    # verdicts queue behind. Upstream adapter CLIs do not release often
+    # enough to justify three sweeps a day; workflow_dispatch covers an
+    # immediate re-check after a known upstream release.
+    - cron: "0 6 * * *"
   # Pre-merge validation runs on the merge queue's ephemeral branch instead
   # of on every PR push. merge_group has no paths filter, so the full adapter
-  # matrix runs pre-merge; the thrice-daily cron still surfaces upstream CLI
+  # matrix runs pre-merge; the daily cron still surfaces upstream CLI
   # releases independent of any merge.
   merge_group: {}
   workflow_dispatch:

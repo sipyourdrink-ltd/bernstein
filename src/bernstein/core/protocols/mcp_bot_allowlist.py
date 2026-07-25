@@ -4,8 +4,8 @@ The bernstein.run docs bot may
 optionally consult the live cluster when answering operational questions
 ("how many tasks are open", "what's the cluster health"). To keep that
 surface narrow we expose **only** the four read-only tools below; write
-tools (``bernstein_run``, ``bernstein_approve``, ``bernstein_stop``,
-``bernstein_create_subtask``) must never reach the bot.
+tools (``bernstein_run``, ``bernstein_approve``, ``bernstein_complete``,
+``bernstein_stop``, ``bernstein_create_subtask``) must never reach the bot.
 
 The allowlist lives in code - adding a tool to the bot surface requires a
 review of *this file*, not a config flip. That's deliberate: misconfigured

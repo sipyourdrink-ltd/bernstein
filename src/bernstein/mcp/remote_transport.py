@@ -35,6 +35,12 @@ from bernstein.core.protocols.mcp.stateless_core import (
     legacy_session_header_value,
     months_since_deprecation,
 )
+from bernstein.mcp.approval_gate import (
+    completion_refusal_payload,
+    is_approvable,
+    is_worker_completable,
+    refusal_payload,
+)
 from bernstein.mcp.streaming import InFlightRegistry, cancelled_envelope
 
 if TYPE_CHECKING:
@@ -323,7 +329,13 @@ _TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "bernstein_approve",
-        "description": "Approve a pending/blocked task.",
+        "description": (
+            "Sign off a finished result that is waiting on a decision. Acts "
+            "only on a task in 'pending_approval'; any other status is "
+            "refused, including 'planned', which is released by approving "
+            "the plan it belongs to. Not a way to finish work - use "
+            "bernstein_complete for that."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -331,6 +343,23 @@ _TOOL_DEFS: list[dict[str, Any]] = [
                 "note": {"type": "string", "default": "Approved via MCP"},
             },
             "required": ["task_id"],
+        },
+    },
+    {
+        "name": "bernstein_complete",
+        "description": (
+            "Report the result of work you are executing. Acts only on a task "
+            "you hold ('open', 'claimed', 'in_progress'); a task waiting on "
+            "its subtasks, one whose worker is gone, or one already awaiting "
+            "a decision is refused."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "result_summary": {"type": "string"},
+            },
+            "required": ["task_id", "result_summary"],
         },
     },
     {
@@ -984,9 +1013,32 @@ class StreamableHTTPTransport:
         if name == "bernstein_approve":
             task_id = arguments["task_id"]
             note = arguments.get("note", "Approved via MCP")
+            # The gate is the same one the in-process server enforces: read
+            # the task first and refuse anything that is not holding a
+            # finished result for sign-off, so the remote transport is not a
+            # way around it.
+            raw_task = await self._proxy_get(f"/tasks/{task_id}")
+            current_status = str(json.loads(raw_task).get("status") or "")
+            if not is_approvable(current_status):
+                return json.dumps(refusal_payload(task_id, current_status), indent=2)
             return await self._proxy_post(
                 f"/tasks/{task_id}/complete",
                 {"result_summary": note},
+            )
+
+        if name == "bernstein_complete":
+            # Same read-before-act rule as the in-process server: a worker
+            # reports the result of a task it holds, and a task that is
+            # waiting on its subtasks or whose worker is gone is refused
+            # rather than marked done on request.
+            task_id = arguments["task_id"]
+            raw_task = await self._proxy_get(f"/tasks/{task_id}")
+            current_status = str(json.loads(raw_task).get("status") or "")
+            if not is_worker_completable(current_status):
+                return json.dumps(completion_refusal_payload(task_id, current_status), indent=2)
+            return await self._proxy_post(
+                f"/tasks/{task_id}/complete",
+                {"result_summary": arguments["result_summary"]},
             )
 
         if name == "bernstein_create_subtask":
