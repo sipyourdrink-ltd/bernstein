@@ -129,13 +129,17 @@ def intended_fires(
             firing that never happened.
 
     Returns:
-        The intended fire set. The run's own journal seal is excluded -- it is
-        the run recording itself, not an output anything should react to.
+        The intended fire set. Two kinds of entry are excluded: the run's own
+        journal seal -- it is the run recording itself, not an output anything
+        should react to -- and artifact attempt records, which say a declared
+        output did *not* land. A downstream goal fires when its upstream lands;
+        firing it on the record of a failure to land would invert the meaning of
+        the event (issue #2559).
     """
     events = project_production_events(entries, run_id=run_id, hmac_key=hmac_key)
     out: list[ArtifactProductionEvent] = []
     for event in events:
-        if event.is_journal_seal:
+        if event.is_journal_seal or event.is_attempt:
             continue
         if require_verified and not event.verified:
             continue

@@ -21,6 +21,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from bernstein.core.cost import _MODEL_COST_USD_PER_1K  # pyright: ignore[reportPrivateUsage]
+from bernstein.core.cost.model_prices import is_free_route
 from bernstein.core.defaults import COST, PLAN
 from bernstein.core.models import (
     Complexity,
@@ -124,16 +125,41 @@ _DEFAULT_MODEL_BY_COMPLEXITY: dict[str, str] = PLAN.model_by_complexity
 # Populated at plan creation time from the seed's role_model_policy.
 _ROLE_MODEL_OVERRIDES: dict[str, str] = {}
 _ROLE_CLI_OVERRIDES: dict[str, str] = {}
+# Seed-level defaults (global ``model:``/``cli:`` keys) captured at plan
+# creation. Used as the fallback model/adapter for tasks that carry no
+# per-task or per-role override, so the plan labels and prices the resolved
+# model instead of a hardcoded ``sonnet`` (issue #3013).
+_DEFAULT_MODEL: str | None = None
+_DEFAULT_CLI: str | None = None
 
 
-def configure_plan_models(role_model_policy: dict[str, dict[str, str]] | None) -> None:
-    """Set per-role model/CLI overrides from the seed config.
+def configure_plan_models(
+    role_model_policy: dict[str, dict[str, str]] | None,
+    *,
+    default_model: str | None = None,
+    default_cli: str | None = None,
+) -> None:
+    """Set per-role and seed-level model/CLI overrides from the seed config.
 
-    Called once at startup so _estimate_task_cost uses the correct
+    Called once at startup so :func:`_estimate_task_cost` uses the resolved
     adapter and model names instead of hardcoded Claude defaults.
+
+    Args:
+        role_model_policy: Per-role ``{role: {"cli": ..., "model": ...}}``
+            overrides from the seed.
+        default_model: The seed's global ``model:`` key. Used as the model
+            fallback for tasks with no per-task or per-role model so the plan
+            labels/prices the resolved model rather than ``sonnet`` when a
+            seed sets only a global model (issue #3013).
+        default_cli: The seed's global ``cli:`` key (ignored when ``"auto"``),
+            used as the adapter fallback so free-tier adapters are recognised
+            even without a ``role_model_policy``.
     """
+    global _DEFAULT_MODEL, _DEFAULT_CLI
     _ROLE_MODEL_OVERRIDES.clear()
     _ROLE_CLI_OVERRIDES.clear()
+    _DEFAULT_MODEL = default_model or None
+    _DEFAULT_CLI = default_cli or None
     if role_model_policy:
         for role, policy in role_model_policy.items():
             if "model" in policy:
@@ -148,22 +174,30 @@ def _estimate_task_cost(task: Task) -> TaskCostEstimate:
     Uses scope for token estimation and complexity for model selection,
     then applies the per-1k-token pricing from the cost module.
     """
-    # Determine model - prefer role-specific override, then task.model, then complexity default
+    # Determine model - prefer role override, then task.model, then the
+    # seed's global default model, then the complexity default. The seed
+    # default keeps the plan labelled with the resolved model instead of a
+    # hardcoded ``sonnet`` when a seed sets only a global model (issue #3013).
     model = (
         _ROLE_MODEL_OVERRIDES.get(task.role)
         or task.model
+        or _DEFAULT_MODEL
         or _DEFAULT_MODEL_BY_COMPLEXITY.get(task.complexity.value, "sonnet")
     )
-    cli = _ROLE_CLI_OVERRIDES.get(task.role)
+    cli = _ROLE_CLI_OVERRIDES.get(task.role) or _DEFAULT_CLI
     if cli:
         model = f"{cli}/{model}"
 
     # Estimate tokens
     estimated_tokens = _TOKENS_BY_SCOPE.get(task.scope.value, 80_000)
 
-    # Look up cost rate - free-tier adapters cost $0
+    # Look up cost rate - free-tier adapters and zero-cost model routes
+    # (``:free`` ids or models the run's own metering prices at $0) cost $0.
+    # Sharing ``is_free_route`` with the metering path keeps the plan
+    # estimate and the final ``total_cost`` on the same pricing source
+    # (issue #3013).
     _FREE_ADAPTERS = PLAN.free_adapters
-    if cli and cli.lower() in _FREE_ADAPTERS:
+    if (cli and cli.lower() in _FREE_ADAPTERS) or is_free_route(model):
         rate: float = 0.0
     else:
         rate = COST.fallback_cost_per_1k_tokens

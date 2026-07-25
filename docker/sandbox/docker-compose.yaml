@@ -15,11 +15,12 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    command: >
-      python -m bernstein.cli server
-        --host 0.0.0.0
-        --port 8052
-        --sandbox
+    # The image ENTRYPOINT is `bernstein` (see ../../Dockerfile), so `command:`
+    # supplies only the subcommand and its args - no leading binary name, and
+    # `serve` (not the nonexistent `python -m bernstein.cli server`) is the
+    # real task-server subcommand (issue #3005). `serve` has no --sandbox
+    # flag; sandbox behaviour here is env-driven (BERNSTEIN_SANDBOX* below).
+    command: ["serve", "--host", "0.0.0.0", "--port", "8052"]
     environment:
       - BERNSTEIN_SANDBOX=1
       - BERNSTEIN_SANDBOX_MAX_SESSIONS=20

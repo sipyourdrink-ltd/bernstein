@@ -91,6 +91,7 @@ __all__ = [
     "external_reference_bytes",
     "external_reference_content_hash",
     "is_canonical_artifact_key",
+    "is_glob_pattern",
     "looks_like_artifact_uri",
     "match_artifact_pattern",
     "parse_artifact_key",
@@ -408,6 +409,18 @@ def canonical_artifact_pattern(raw: str) -> str:
     relaxed for a pattern that actually uses them.
     """
     return _parse(raw, allow_glob=True).canonical
+
+
+def is_glob_pattern(raw: str) -> bool:
+    """Whether ``raw`` uses glob metacharacters, i.e. names a set not an artifact.
+
+    A repo-relative key accepts ``*`` and ``?`` as ordinary filename characters,
+    so parsing alone cannot tell a pattern from a key: the distinction has to be
+    made against the raw declaration. Callers that need one concrete artifact --
+    an attempt record has to be keyed under a single URI -- use this to skip the
+    declarations that name a set.
+    """
+    return any(ch in _GLOB_CHARS for ch in raw)
 
 
 def is_canonical_artifact_key(raw: str) -> bool:

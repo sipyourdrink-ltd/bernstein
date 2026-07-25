@@ -189,3 +189,38 @@ def price_model_usage(model: str, input_tokens: int, output_tokens: int) -> Usag
         cost_usd=0.0,
         priced=False,
     )
+
+
+def is_free_route(model: str) -> bool:
+    """Return ``True`` when *model* is a zero-cost route.
+
+    A model is treated as a "free route" when either:
+
+    * its id ends in ``:free`` -- the provider/router convention for a
+      zero-cost route (e.g. ``"openai/gpt-oss-20b:free"``,
+      ``"nvidia/nemotron-3-nano-30b-a3b:free"``); or
+    * it has no entry in :data:`MODEL_COSTS_PER_1M_TOKENS`, i.e.
+      :func:`price_model_usage` would meter it at an explicit ``$0``
+      (``priced=False``), or the entry it matches prices at ``$0``.
+
+    This predicate is the single decision the preflight cost estimator
+    shares with the run's own metering. Because it consults the *same*
+    pricing table (:data:`MODEL_COSTS_PER_1M_TOKENS`) that
+    :func:`price_model_usage` uses to compute ``total_cost``, a route the
+    real run meters at ``$0`` can never be quoted a phantom non-zero
+    estimate up front (issue #3013).
+
+    Args:
+        model: Model name/id as it will be sent to the provider.
+
+    Returns:
+        ``True`` when the model incurs no metered cost, ``False`` otherwise.
+    """
+    normalized = model.strip().lower()
+    if normalized.endswith(":free"):
+        return True
+    # Probe the canonical pricing table with a nominal 1-token call: an
+    # unpriced model (priced=False) or a table entry that prices at $0 both
+    # mean the run's own metering would report no cost for this route.
+    probe = price_model_usage(model, 1, 1)
+    return (not probe.priced) or probe.cost_usd == 0.0

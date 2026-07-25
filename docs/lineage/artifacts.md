@@ -20,6 +20,7 @@ default) or a canonical URI from a **closed** scheme set.
 | How do I inspect one? | `bernstein artifact list` / `log <uri>` / `health <uri>`. |
 | Can the dashboard disagree with the CLI? | No. Both call one function and one serialiser; same state and instant give byte-identical JSON. |
 | Does a write announce itself? | Yes. Every spine entry emits exactly one `artifact.produced` event, with no per-adapter opt-in. |
+| What if a declared output never lands? | An attempt record goes on the chain under that key, so "tried and failed" is not the same answer as "nothing was ever scheduled". |
 
 ## The grammar
 
@@ -98,7 +99,7 @@ bundle's **signed binding**:
 | Bucket | Meaning |
 |---|---|
 | `declared_and_produced` | The intent was honoured. |
-| `declared_but_missing` | Declared and not produced - this is what makes "attempted and failed" distinguishable from "nothing was ever scheduled". |
+| `declared_but_missing` | Declared and not produced. Also written to the chain as an [attempt record](#attempt-records). |
 | `produced_but_undeclared` | A write nobody declared - the classic symptom of an agent drifting off its brief. |
 
 Because the diff lives inside the binding rather than beside it, removing a
@@ -115,6 +116,41 @@ a task that declares no outputs carries no diff at all and canonicalises
 byte-for-byte identically to a pre-feature bundle, so every signature and anchor
 already on disk stays valid.
 
+### Attempt records
+
+The evidence bundle is keyed by *task*. An operator asking about the artifact -
+"did anything try to publish this?" - is coming from the other direction, and a
+declared output that never landed used to leave nothing at all under its key. So
+the absence is recorded on the same chain as the presence.
+
+When a run ends, every concrete declared output is looked up against that run's
+spine. Anything missing gets an **attempt record**: an ordinary spine entry keyed
+by the declared URI, whose `step_id` is `artifact-attempt:<outcome>:<task_id>`
+and whose `content_hash` covers a canonical description of the attempt rather
+than any artifact bytes.
+
+| Outcome | Meaning |
+|---|---|
+| `failed` | The task did not reach a merged, accepted completion. |
+| `incomplete` | The task was accepted, and a declared output is still absent. |
+
+Being an ordinary entry, the record is Merkle-chained, HMAC-tagged and
+tamper-evident per entry, so "task T tried and did not deliver" is as verifiable,
+and as hard to backdate, as a record saying it did.
+
+An attempt is never counted as a production. It does not raise
+`production_count`, it can never be the tip, it is excluded from the keys a run
+is observed to have produced - otherwise the record of a missing output would
+satisfy its own declaration on the next run - and it fires no trigger, because a
+downstream goal reacts to its upstream *landing*.
+
+Glob declarations are skipped: `pkg://pypi/bernstein/*` names a set, so there is
+no single key to record an attempt under. A declaration that wants an attempt
+record has to name the thing it promises.
+
+Reconciliation is fail-open. It runs after the task has already finished, so a
+read-only spine or an unreadable key store costs a record and never a completion.
+
 ## Inspecting an artifact
 
 Three commands answer the questions that used to mean correlating four surfaces
@@ -129,13 +165,16 @@ bernstein artifact health pkg://pypi/bernstein/3.9.0
 `log` is the attribution surface: newest production first, each record naming
 the producing agent identity, the model it ran, the run and step it came from,
 and the spine entry hash that proves it. `verified` is recomputed per entry, so
-a tampered row is *named* rather than averaged into a summary.
+a tampered row is *named* rather than averaged into a summary. Recorded attempts
+follow the productions, under `attempts` in the JSON form; an empty production
+list beside a populated attempt list is the shape that says something tried and
+did not deliver.
 
 `health` rolls the picture up into one verdict:
 
 | Leg | Passes when |
 |---|---|
-| `produced` | At least one spine entry records the key. |
+| `produced` | At least one spine entry *produces* the key. When nothing does, the detail says whether attempts are recorded against it or whether nothing ever tried. |
 | `chain_integrity` | Every entry carrying the key recomputes its hash and HMAC tag, and the chains they sit in verify. |
 | `single_open_tip` | Exactly one set of bytes claims to be current. |
 | `evidence` | The newest sealed evidence bundle that declares the key verifies. |

@@ -108,6 +108,30 @@ class AgentLogAggregator:
         log_path = self._resolve_log_path(session_id)
         return log_path is not None and log_path.exists()
 
+    def log_age_s(self, session_id: str, now: float | None = None) -> float | None:
+        """Return seconds since the session log was last written, or None.
+
+        Uses the log file's mtime (bytes-written recency), NOT the newline
+        count that ``parse_log`` tracks: a model streaming a single large turn
+        (e.g. a 51k-char reasoning block with no newlines) keeps advancing the
+        mtime while ``last_activity_line`` stays flat. This is the positive
+        liveness signal the watchdog consults so a still-writing, non-heartbeat
+        agent is not flagged stale on heartbeat age alone (issue #3012).
+
+        Returns None when the log path cannot be resolved or is unreadable.
+        """
+        import time
+
+        log_path = self._resolve_log_path(session_id)
+        if log_path is None:
+            return None
+        try:
+            mtime = log_path.stat().st_mtime
+        except OSError:
+            return None
+        reference = time.time() if now is None else now
+        return max(reference - mtime, 0.0)
+
     @staticmethod
     def _extract_unique_error_messages(error_events: list[AgentLogEvent], limit: int = 3) -> list[str]:
         """Extract up to *limit* unique error messages from events."""

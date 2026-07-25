@@ -114,6 +114,13 @@ SANDBOX_EXEC_END = "sandbox.exec_end"
 #: Issue #2162 - emitted when a per-agent sandbox session is destroyed.
 SANDBOX_SESSION_DESTROY = "sandbox.session_destroy"
 
+#: Issue #3014 - emitted when a requested container isolation boundary cannot
+#: be provided (no container runtime CLI, SDK, or socket) and the spawn falls
+#: back to a weaker boundary. Details carry the requested-vs-actual isolation
+#: mode and the reason, so the audit chain records the downgrade as a
+#: first-class decision instead of leaving it in a single log WARNING.
+SANDBOX_ISOLATION_DOWNGRADE = "sandbox.isolation_downgrade"
+
 
 class AuditKeyPermissionError(RuntimeError):
     """Raised when the audit key file has permissions looser than 0600."""

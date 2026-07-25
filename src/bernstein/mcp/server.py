@@ -8,16 +8,35 @@ Transport:
     stdio  - for local IDE integration (default ``bernstein mcp``)
     sse    - for remote/web integration (``bernstein mcp --transport sse``)
 
-Tools:
-    bernstein_run     - start an orchestration run with a goal
-    bernstein_status  - get task counts summary
-    bernstein_tasks   - list tasks with optional status filter
-    bernstein_task_handle - verifiable Tasks-extension run handle (poll a run)
-    bernstein_cost    - get cost summary across all roles
-    bernstein_stop    - graceful shutdown (writes SHUTDOWN signal)
-    bernstein_approve - approve a pending/blocked task
-    bernstein_health  - liveness check (always succeeds)
-    load_skill        - load a skill pack body / reference / script (oai-004)
+Tools registered by ``create_mcp_server`` below. The list is exhaustive and
+is asserted against the live registration set by
+``tests/unit/test_mcp_server.py``, so a tool added here without a docstring
+line fails that test. Tiers are declared in
+:data:`bernstein.core.protocols.mcp.tool_tiers.TOOL_TIERS`; the widest tier
+plus lineage exposes all of them.
+
+    bernstein_health        - liveness check (always succeeds)
+    bernstein_run           - start an orchestration run with a goal
+    bernstein_status        - get task counts summary
+    bernstein_tasks         - list tasks with optional status filter
+    bernstein_task_handle   - verifiable run handle, polled by run id
+    bernstein_cost          - get cost summary across all roles
+    bernstein_context       - signed spawn capsule for a worker (#2545)
+    bernstein_claim         - claim the next dependency-gated task
+    bernstein_update        - post progress on a claimed task
+    bernstein_post_artifact - attach an artefact to a task
+    bernstein_stop          - graceful shutdown (writes SHUTDOWN signal)
+    bernstein_approve       - approve a pending/blocked task
+    bernstein_create_subtask - split a claimed task into a child task
+    load_skill              - load a skill pack body / reference / script
+
+Registered from sibling modules by the same ``create_mcp_server`` call:
+
+    bernstein_scenarios       - list scenario definitions (routine_tools)
+    bernstein_scenario        - start a scenario run (routine_tools)
+    bernstein_scenario_status - poll a scenario run (routine_tools)
+    verify_chain              - verify an artefact against the audit chain
+                                (resources.lineage, lineage builds only)
 """
 
 from __future__ import annotations
@@ -76,16 +95,26 @@ FuncMetadata.convert_result = _patched_convert_result
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 
-# Self-description advertised to MCP clients on connect.
+# Advertised to MCP clients on connect and therefore the only Bernstein text
+# guaranteed to sit in the connected model's context for the whole session.
+# It spends that budget on the control loop, not on a system description:
+# a client that starts a run and then polls wrongly pays for a second run.
+# Budget and tool-name accuracy are asserted in tests/unit/test_mcp_server.py.
 _SERVER_INSTRUCTIONS = (
-    "Bernstein: deterministic, verifiable orchestration for CLI coding agents - "
-    "reproducible parallel runs, signed audit trail, air-gap friendly. "
-    "Dispatches goals across 40+ CLI agent adapters (Claude Code, Codex, "
-    "Gemini CLI, and more), each task in its own git worktree behind "
-    "lint/type/test gates. Scheduling is plain Python with no LLM in the "
-    "coordination loop, so runs replay byte-identically. An always-on lineage "
-    "spine and replay journal record every run; an opt-in HMAC-chained audit "
-    "log adds receipts that verify offline."
+    "Bernstein runs CLI coding agents deterministically, one git worktree per "
+    "task, against an offline-verifiable audit chain.\n"
+    "Driving a run:\n"
+    "1. bernstein_run starts a run and returns immediately with a task_id, "
+    "which is the run id. It does not wait for the run to finish.\n"
+    "2. Poll bernstein_task_handle with run_id set to that value. The handle "
+    "is reprojected from the run journal, so it is safe to poll from anywhere.\n"
+    "3. Runs take minutes to hours. Poll on a slow cadence, tens of seconds "
+    "apart. A handle still reading working is normal progress, not a stall, "
+    "so do not start the goal again.\n"
+    "4. Stop polling once status is terminal: completed, failed or cancelled. "
+    "input_required means the run is waiting on you.\n"
+    "For anything deeper, call load_skill with a name from the skill index and "
+    "load only the pack the task needs."
 )
 
 # Timeout for all httpx calls to the task server (seconds).

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
@@ -290,10 +291,13 @@ class TestRenderPrompt:
         ]
         prompt = _render_prompt(tasks, tmp_path, tmp_path)
 
-        assert "T-010" in prompt
-        assert "T-011" in prompt
-        assert "curl" in prompt
-        assert "/complete" in prompt
+        # Completion runs through the first-class CLI, which resolves the token
+        # and the server port itself. The prompt names one command per assigned
+        # task id and leaves no hand-built curl for the agent to quote an auth
+        # header and a JSON body into.
+        assert "bernstein task complete T-010" in prompt
+        assert "bernstein task complete T-011" in prompt
+        assert re.search(r"curl[^\n]*/tasks/\S*?/complete", prompt) is None
         assert "Step 3: Exit" in prompt
 
 

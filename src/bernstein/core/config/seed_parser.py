@@ -2160,6 +2160,9 @@ _SECTION_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
 # cannot connect these pairs.
 _TOP_LEVEL_KEY_ALIASES: dict[str, str] = {
     "tasks": "cells",
+    # No top-level equivalent of --container-image exists; the seed form
+    # is nested under sandbox.image, not a top-level key (see #3023).
+    "container_image": "sandbox.image",
 }
 
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -35,17 +37,35 @@ def _write_log(workdir: Path, session_id: str, line_count: int) -> None:
     log_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_heartbeat_phase(workdir: Path, session_id: str, timestamp: float, phase: str) -> None:
+    hb_path = workdir / ".sdd" / "runtime" / "heartbeats" / f"{session_id}.json"
+    hb_path.parent.mkdir(parents=True, exist_ok=True)
+    hb_path.write_text(json.dumps({"timestamp": timestamp, "phase": phase}), encoding="utf-8")
+
+
+def _age_log(workdir: Path, session_id: str, age_s: float) -> None:
+    """Backdate the log file mtime so it is NOT a fresh liveness signal."""
+    log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+    old = time.time() - age_s
+    os.utime(log_path, (old, old))
+
+
 def _orch(
     workdir: Path,
     *,
     session: AgentSession,
     stall_count: int = 0,
     log_state: dict[str, tuple[int, int]] | None = None,
+    heartbeat_timeout_s: int = 120,
+    heartbeat_starting_timeout_s: int = 300,
 ) -> SimpleNamespace:
     task = Task(id=session.task_ids[0], title="Fix API", description="desc", role="backend")
     return SimpleNamespace(
         _workdir=workdir,
-        _config=SimpleNamespace(heartbeat_timeout_s=120),
+        _config=SimpleNamespace(
+            heartbeat_timeout_s=heartbeat_timeout_s,
+            heartbeat_starting_timeout_s=heartbeat_starting_timeout_s,
+        ),
         _agents={session.id: session},
         _stall_counts={session.task_ids[0]: stall_count},
         _watchdog_log_state={} if log_state is None else dict(log_state),
@@ -102,6 +122,98 @@ def test_collect_watchdog_findings_detects_silent_agent(tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0].source == "heartbeat"
     assert findings[0].severity == "high"
+
+
+# ---------------------------------------------------------------------------
+# Issue #3012: a fresh log mtime is a positive liveness signal that suppresses
+# the heartbeat-staleness incident (real wall-clock; no time patching so the
+# log mtime and the heartbeat content timestamp share one clock).
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_log_suppresses_stale_heartbeat_incident(tmp_path: Path) -> None:
+    """Heartbeat older than the timeout, but the log was written within the
+    grace window -> the agent is alive and NO heartbeat incident is raised
+    (issue #3012)."""
+    workdir = tmp_path
+    now = time.time()
+    session = _session("task-1", spawn_ts=now - 200)
+    orch = _orch(workdir, session=session, heartbeat_timeout_s=120)
+    # Heartbeat 140s old: past the 120s timeout, so absent a liveness signal
+    # this would be a CRITICAL incident.
+    _write_heartbeat(workdir, session.id, now - 140)
+    _write_log(workdir, session.id, 3)  # freshly written -> mtime ~now
+
+    findings = collect_watchdog_findings(orch)
+
+    assert [f for f in findings if f.source == "heartbeat"] == []
+
+
+def test_stale_heartbeat_with_stale_log_still_raises_critical(tmp_path: Path) -> None:
+    """Control for the suppression test: same stale heartbeat, but the log
+    mtime is ALSO past the grace window -> the critical incident still fires,
+    proving the suppression is driven by log freshness, not disabled."""
+    workdir = tmp_path
+    now = time.time()
+    session = _session("task-1", spawn_ts=now - 200)
+    orch = _orch(workdir, session=session, heartbeat_timeout_s=120)
+    _write_heartbeat(workdir, session.id, now - 140)
+    _write_log(workdir, session.id, 3)
+    _age_log(workdir, session.id, age_s=300)  # log not fresh
+
+    findings = collect_watchdog_findings(orch)
+
+    heartbeat = [f for f in findings if f.source == "heartbeat"]
+    assert len(heartbeat) == 1
+    assert heartbeat[0].severity == "critical"
+
+
+def test_starting_phase_uses_configurable_larger_timeout(tmp_path: Path) -> None:
+    """A `starting` agent is judged against the larger, configurable
+    starting-phase timeout, so a heartbeat age past the normal 120s cap but
+    below the starting window raises no incident (issue #3012)."""
+    workdir = tmp_path
+    now = time.time()
+    session = _session("task-1", spawn_ts=now - 400)
+    orch = _orch(
+        workdir,
+        session=session,
+        heartbeat_timeout_s=120,
+        heartbeat_starting_timeout_s=300,
+    )
+    # Heartbeat 140s old with phase=starting: past the 120s cap (would be
+    # critical) but below the 300s starting window and its 150s high-water mark.
+    _write_heartbeat_phase(workdir, session.id, now - 140, phase="starting")
+    _write_log(workdir, session.id, 3)
+    _age_log(workdir, session.id, age_s=300)  # stale log: isolate the phase-timeout effect
+
+    findings = collect_watchdog_findings(orch)
+
+    assert [f for f in findings if f.source == "heartbeat"] == []
+
+
+def test_starting_phase_still_flags_once_past_starting_timeout(tmp_path: Path) -> None:
+    """Beyond the starting-phase window a frozen `starting` heartbeat with no
+    log activity is still flagged critical -- the larger timeout is a grace
+    window, not a permanent exemption."""
+    workdir = tmp_path
+    now = time.time()
+    session = _session("task-1", spawn_ts=now - 600)
+    orch = _orch(
+        workdir,
+        session=session,
+        heartbeat_timeout_s=120,
+        heartbeat_starting_timeout_s=300,
+    )
+    _write_heartbeat_phase(workdir, session.id, now - 360, phase="starting")  # past 300s
+    _write_log(workdir, session.id, 3)
+    _age_log(workdir, session.id, age_s=300)  # not fresh
+
+    findings = collect_watchdog_findings(orch)
+
+    heartbeat = [f for f in findings if f.source == "heartbeat"]
+    assert len(heartbeat) == 1
+    assert heartbeat[0].severity == "critical"
 
 
 def test_watchdog_manager_creates_one_triage_task_for_active_incident(tmp_path: Path) -> None:

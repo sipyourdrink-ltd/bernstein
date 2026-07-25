@@ -48,7 +48,11 @@ TIER_ENV_VAR: Final[str] = "BERNSTEIN_MCP_TOOL_TIER"
 #: tool with tier ``all`` is exposed only when the active tier is ``all``.
 #:
 #: This mapping is the single source of truth for the annotation. Adding a
-#: new tool means adding one line here at declaration time.
+#: new tool means adding one line here at declaration time. A missing entry
+#: is not a no-op: the tool falls back to ``all`` and disappears from
+#: ``tools/list`` under the default ``standard`` tier. A coverage test
+#: (``tests/unit/test_mcp_server.py``) compares the registered tools against
+#: this mapping so an omission fails instead of silently hiding a tool.
 TOOL_TIERS: Final[dict[str, ToolTier]] = {
     # core - always on: liveness plus the read-only surface needed to start
     # and observe a run.
@@ -65,6 +69,7 @@ TOOL_TIERS: Final[dict[str, ToolTier]] = {
     "bernstein_claim": "standard",
     "bernstein_update": "standard",
     "bernstein_post_artifact": "standard",
+    "bernstein_context": "standard",
     "load_skill": "standard",
     # all - power-user surface: the scenario bridge and lineage verifier.
     "bernstein_scenarios": "all",

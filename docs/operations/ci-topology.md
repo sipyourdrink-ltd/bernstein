@@ -188,7 +188,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pentest.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bernstein-ci-fix: {"actions": "read", "contents": "write", "issues": "write", "pull-requests": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read"} | GEMINI_API_KEY, OPENROUTER_API_KEY_FREE |
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
-| .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
+| .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "write", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "write"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |

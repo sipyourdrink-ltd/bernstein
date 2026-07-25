@@ -80,6 +80,44 @@ def protected_resource_metadata(resource_url: str) -> dict[str, Any] | None:
     }
 
 
+def protected_resource_metadata_url(base_url: str) -> str:
+    """Return the absolute URL of the protected-resource metadata document.
+
+    Args:
+        base_url: Scheme and authority the client reached the server on, for
+            example ``https://bernstein.example.com``.
+
+    Returns:
+        The absolute URL the transport serves the metadata document at.
+    """
+    return f"{base_url.rstrip('/')}{PR_METADATA_PATH}"
+
+
+def www_authenticate_challenge(base_url: str) -> str | None:
+    """Build the ``WWW-Authenticate`` value for an unauthenticated request.
+
+    A bare 401 leaves the protected-resource metadata undiscoverable: the
+    client has no path from the refusal to the document. The challenge names
+    the document's absolute URL so a client can start the authorization flow
+    from the refusal alone.
+
+    The value carries nothing but the metadata URL. No token, tenant, user, or
+    issuer identifier is included, so the challenge is safe to return to a
+    caller that has not authenticated.
+
+    Args:
+        base_url: Scheme and authority the client reached the server on.
+
+    Returns:
+        The header value, or ``None`` when no issuer is configured, in which
+        case the anonymous and static-bearer flows are the only advertised
+        paths and no challenge should be emitted.
+    """
+    if not oauth_discovery_enabled():
+        return None
+    return f'Bearer resource_metadata="{protected_resource_metadata_url(base_url)}"'
+
+
 def capability_card_oauth() -> dict[str, Any]:
     """Return the ``auth.oauth`` subtree for the runtime capability card.
 

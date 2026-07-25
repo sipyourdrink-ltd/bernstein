@@ -91,6 +91,7 @@ from bernstein.core.models import (
     AbortReason,
     AgentBackend,
     AgentSession,
+    IsolationDowngrade,
     IsolationMode,
     ModelConfig,
     Task,
@@ -671,13 +672,14 @@ def _render_auth_section(token_path: Path) -> str:
         '  -H "Content-Type: application/json" \\\n'
         '  -d \'{"title": "...", "role": "backend", "description": "..."}\'\n'
         "```\n"
-        "Example - marking a task complete (pass the whole line to `run_command` as ONE string):\n"
+        "Marking a task complete - use the first-class CLI, NOT curl. It reads\n"
+        "the token and the server port itself, so there is no auth header or\n"
+        "JSON body to hand-quote (pass this whole line to `run_command` as ONE string):\n"
         "```bash\n"
-        f"curl -sS -w '\\n%{{http_code}}' -X POST {base}/tasks/<TASK_ID>/complete \\\n"
-        f'  -H "Authorization: Bearer $(cat {absolute})" \\\n'
-        '  -H "Content-Type: application/json" \\\n'
-        '  -d \'{"result_summary": "Done"}\'\n'
+        'bernstein task complete <TASK_ID> --summary "Done"\n'
         "```\n"
+        "It exits non-zero and prints the reason if the server is unreachable or\n"
+        "rejects the token, so you never mis-read a failure as success.\n"
         "If the token file is unreadable for any reason, fall back to the\n"
         "`BERNSTEIN_AUTH_TOKEN` environment variable, which is exported into\n"
         "your shell:\n"
@@ -895,17 +897,16 @@ def _render_batch_prompt(task: Task) -> str:
     Returns:
         Prompt string starting with ``/batch`` that triggers the batch skill.
     """
-    base = _resolve_task_server_url()
     lines: list[str] = [f"/batch {task.description}"]
     if task.owned_files:
         lines.append(f"\nAffected paths: {', '.join(task.owned_files)}")
     lines.extend(
         (
             f"\nTask ID for completion reporting: {task.id}",
-            "\nAfter all batch units are complete, run:\n"
-            f"curl -sS -X POST {base}/tasks/{task.id}/complete "
-            f'-H "Content-Type: application/json" '
-            f'-d \'{{"result_summary": "Batch complete: {task.title}"}}\'',
+            "\nAfter all batch units are complete, mark the task done with the "
+            "first-class CLI (it reads the token and server port itself - no auth "
+            "header or JSON body to hand-quote):\n"
+            f'bernstein task complete {task.id} --summary "Batch complete: {task.title}"',
         )
     )
     return "\n".join(lines)
@@ -1094,19 +1095,12 @@ def _render_prompt(
     project_md = workdir / ".sdd" / "project.md"
     project_context = _read_cached(project_md)
 
-    # Completion instructions with concrete curl commands and retry logic.
-    # The server may briefly restart during hot-reload (evolve mode), so
-    # agents must retry on transient connection errors (--retry-connrefused).
-    # Do NOT use --retry-all-errors: it retries 4xx (e.g. 409 Conflict),
-    # causing infinite loops when task state has changed.
-    completion_base = _resolve_task_server_url()
-    completion_cmds = "\n".join(
-        f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
-        f"-X POST {completion_base}/tasks/{t.id}/complete "
-        f'-H "Content-Type: application/json" '
-        f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
-        for t in tasks
-    )
+    # Completion instructions use the first-class CLI (#3015), NOT a hand-built
+    # curl. The command resolves the token and server port itself and retries a
+    # completion only on connection refused (evolve-mode hot-reload), never on a
+    # 4xx like 409 - so agents never nest a Bearer header and a JSON body inside
+    # one shell string just to mark a task done.
+    completion_cmds = "\n".join(f'bernstein task complete {t.id} --summary "Completed: {t.title}"' for t in tasks)
     instructions = (
         f"Complete these tasks. When ALL are done:\n\n"
         f"**Step 1: Commit your changes**\n"
@@ -1114,10 +1108,9 @@ def _render_prompt(
         f'git add -A && git commit -m "feat: <brief summary of what you did>"\n'
         f"```\n\n"
         f"**Step 2: Mark tasks complete on the task server**\n"
-        f"```bash\n{completion_cmds}\n```\n\n"
-        f"**Important:** Only retry on connection refused / network errors. "
-        f"If the server returns HTTP 409 or any other 4xx error, do NOT retry - "
-        f"the task state has changed and retrying will not help. Just exit.\n\n"
+        f"```bash\n{completion_cmds}\n```\n"
+        f"The command exits non-zero and prints why if the server is unreachable "
+        f"or rejects the token; do not treat a task as done unless it succeeds.\n\n"
         f"**Step 3: Exit**"
     )
 
@@ -1526,6 +1519,11 @@ class AgentSpawner:
         self._runtime_bridge = runtime_bridge
         self._sandbox = sandbox if sandbox is not None and sandbox.enabled else None
         self._sandbox_managers: dict[str, ContainerManager] = {}
+        # Issue #3014: requested-vs-actual isolation downgrades recorded when a
+        # container isolation request cannot be honoured and the spawn falls
+        # back to a weaker boundary. The run summary drains this so the
+        # downgrade is visible in the run outcome, not just a log WARNING.
+        self._isolation_downgrades: list[IsolationDowngrade] = []
         # oai-002 phase 1: optional SandboxBackend-issued session.
         # Phase 2 (oai-002b) routes adapter exec through the session
         # via :mod:`spawner_sandbox_session` when the backend is not
@@ -4891,7 +4889,17 @@ class AgentSpawner:
                 session_id,
                 exc,
             )
-            session.isolation = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+            actual = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+            session.isolation = actual
+            # Issue #3014: the operator configured container isolation and got
+            # a weaker boundary. Record the downgrade so it lands in the run
+            # summary and the audit chain instead of only this WARNING.
+            self._record_isolation_downgrade(
+                session_id=session_id,
+                requested=IsolationMode.CONTAINER.value,
+                actual=actual,
+                reason=str(exc),
+            )
             return adapter.spawn(
                 prompt=prompt,
                 workdir=spawn_cwd,
@@ -4991,7 +4999,18 @@ class AgentSpawner:
                     session_id,
                     exc,
                 )
-                session.isolation = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+                actual = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+                session.isolation = actual
+                # Issue #3014: a non-explicit container isolation request that
+                # could not be provisioned degrades gracefully (the explicit
+                # --sandbox path above refuses instead). Surface and audit the
+                # downgrade so it is visible in the run outcome.
+                self._record_isolation_downgrade(
+                    session_id=session_id,
+                    requested=IsolationMode.CONTAINER.value,
+                    actual=actual,
+                    reason=str(exc),
+                )
                 return adapter.spawn(
                     prompt=prompt,
                     workdir=spawn_cwd,
@@ -5319,6 +5338,64 @@ class AgentSpawner:
                 sbx_session.session_id,
                 port,
             )
+
+    @property
+    def isolation_downgrades(self) -> list[IsolationDowngrade]:
+        """Return the isolation downgrades recorded during this run.
+
+        Issue #3014: each entry is a spawn whose requested container isolation
+        could not be provided and fell back to a weaker boundary. The
+        orchestrator drains this into the end-of-run summary so an operator who
+        asked for stronger isolation sees, at run level, that they got a weaker
+        one.
+        """
+        return list(self._isolation_downgrades)
+
+    def _record_isolation_downgrade(
+        self,
+        *,
+        session_id: str,
+        requested: str,
+        actual: str,
+        reason: str,
+    ) -> None:
+        """Record - and audit - a requested-vs-actual isolation downgrade.
+
+        Issue #3014: a container isolation request that cannot be honoured used
+        to leave only a log WARNING, so an operator who configured ``sandbox:
+        docker`` silently ran on a weaker boundary. This makes the downgrade a
+        first-class, surfaced decision: it
+        is appended to :attr:`_isolation_downgrades` for the run summary and
+        written to the HMAC-chained audit log. Audit emission is best-effort and
+        never blocks the spawn (see :meth:`_emit_sandbox_audit`).
+
+        Args:
+            session_id: Agent session whose isolation was downgraded.
+            requested: Requested isolation mode (an :class:`IsolationMode`
+                value, e.g. ``"container"``).
+            actual: Isolation mode actually provided (e.g. ``"worktree"``).
+            reason: Human-readable cause (typically the runtime error).
+        """
+        self._isolation_downgrades.append(
+            IsolationDowngrade(
+                session_id=session_id,
+                requested=requested,
+                actual=actual,
+                reason=reason,
+            )
+        )
+        from bernstein.core.security.audit import SANDBOX_ISOLATION_DOWNGRADE
+
+        self._emit_sandbox_audit(
+            SANDBOX_ISOLATION_DOWNGRADE,
+            resource_id=session_id,
+            details={
+                "session_id": session_id,
+                "requested_isolation": requested,
+                "actual_isolation": actual,
+                "reason": reason,
+            },
+        )
 
     def _emit_sandbox_audit(self, event_type: str, *, resource_id: str, details: dict[str, Any]) -> None:
         """Append a sandbox lifecycle event to the HMAC-chained audit log.

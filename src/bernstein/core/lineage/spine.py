@@ -80,6 +80,15 @@ SPINE_ENTRY_VERSION = 1
 #: artifact provenance (issue #2789).
 JOURNAL_SEAL_STEP_PREFIX = "replay-journal-head:"
 
+#: ``step_id`` prefix of an artifact *attempt* record: a task declared an output
+#: and the run ended without it landing (see
+#: ``bernstein.core.lineage.artifact_attempt``). The entry is keyed by the
+#: declared artifact URI so the failure is queryable from the artifact side, but
+#: it records the absence of a production rather than one, so every consumer that
+#: answers "what was produced" filters it out the same way it filters the journal
+#: seal (issue #2559). The suffix is the declaring task id.
+ARTIFACT_ATTEMPT_STEP_PREFIX = "artifact-attempt:"
+
 _SPINE_LOG_NAME = "spine.jsonl"
 _SPINE_HEAD_NAME = "spine.head"
 
@@ -657,7 +666,10 @@ class LineageSpine:
             expected_hmac = _compute_hmac(self._hmac_key, body)
             if not _hmac.compare_digest(str(row["hmac"]), expected_hmac):
                 errors.append(f"line {line_no}: hmac mismatch")
-            if not str(row["step_id"]).startswith(JOURNAL_SEAL_STEP_PREFIX):
+            # An attempt record counts with the seal here: neither is a produced
+            # artifact, so a chain built only of them still carries no artifact
+            # provenance (issues #2789, #2559).
+            if not str(row["step_id"]).startswith((JOURNAL_SEAL_STEP_PREFIX, ARTIFACT_ATTEMPT_STEP_PREFIX)):
                 seal_only = False
             prev_hash = str(row["entry_hash"])
 
@@ -703,6 +715,7 @@ def verify_entry(entry: SpineEntry, hmac_key: bytes) -> bool:
 
 
 __all__ = [
+    "ARTIFACT_ATTEMPT_STEP_PREFIX",
     "JOURNAL_SEAL_STEP_PREFIX",
     "SPINE_ENTRY_VERSION",
     "LineageSpine",

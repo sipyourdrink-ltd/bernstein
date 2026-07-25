@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
+from bernstein.core.git.git_pr import _MERGE_DENY_EXACT, _MERGE_DENY_PREFIXES
 from bernstein.core.git.salvage import SalvageResult, salvage_worktree
 from bernstein.core.git.worktree_isolation import validate_worktree_isolation
 from bernstein.core.platform_compat import IS_WINDOWS, process_alive, robust_rmtree
@@ -44,6 +45,9 @@ _GRAVEYARD_DIR_REL = ".sdd/graveyard"
 _GRAVEYARD_REF_PREFIX = "refs/graveyard/"
 _GRAVEYARD_GIT_TIMEOUT_S = 30
 _GRAVEYARD_DEFAULT_PURGE_DAYS = 14
+
+# Local (never-committed) exclude injection (#3017).
+_LOCAL_EXCLUDE_GIT_TIMEOUT_S = 10
 
 
 @dataclass(frozen=True)
@@ -224,7 +228,7 @@ def _apply_sparse_checkout(worktree_path: Path, sparse_paths: Sequence[str]) -> 
         return False
 
 
-def _symlink_dirs(repo_root: Path, worktree_path: Path, dirs: list[str]) -> None:
+def _symlink_dirs(repo_root: Path, worktree_path: Path, dirs: Sequence[str]) -> None:
     """Symlink shared directories from repo root into the worktree.
 
     Args:
@@ -249,7 +253,7 @@ def _symlink_dirs(repo_root: Path, worktree_path: Path, dirs: list[str]) -> None
             logger.warning("Failed to symlink %r into worktree: %s", dir_name, exc)
 
 
-def _copy_files(repo_root: Path, worktree_path: Path, files: list[str]) -> None:
+def _copy_files(repo_root: Path, worktree_path: Path, files: Sequence[str]) -> None:
     """Copy per-worktree files from repo root into the worktree.
 
     Args:
@@ -334,6 +338,266 @@ def setup_worktree_env(
             logger.warning("Worktree setup command timed out after %ds", _SETUP_COMMAND_TIMEOUT_S)
         except OSError as exc:
             logger.warning("Failed to run worktree setup command: %s", exc)
+
+
+def _derive_local_exclude_entries() -> tuple[str, ...]:
+    """Build the local-exclude entry list from the merge guard's own deny list.
+
+    Sourced directly from :data:`bernstein.core.git.git_pr._MERGE_DENY_PREFIXES`
+    and :data:`bernstein.core.git.git_pr._MERGE_DENY_EXACT` rather than
+    duplicated by hand, so the two can never drift apart: every path the
+    merge-preflight guard would refuse is excluded here, at worktree-creation
+    time, before it can ever be staged in the first place.
+
+    ``/CLAUDE.md`` is added on top even though it is not in the guard's deny
+    list: the orchestrator itself generates a session-specific ``CLAUDE.md``
+    at the root of every worktree (see ``worktree_claude_md.write_claude_md``),
+    so it is always a duplicate/decoy file at that path, never a genuine
+    target-repo deliverable. All entries are anchored to the worktree root
+    (leading ``/``) so they cannot shadow a same-named path a target project
+    legitimately keeps elsewhere (e.g. a nested ``docs/CLAUDE.md`` or a
+    ``.claude/`` skill/command the agent was tasked to author).
+    """
+    entries = [f"/{prefix}" for prefix in _MERGE_DENY_PREFIXES]
+    entries.extend(f"/{exact}" for exact in sorted(_MERGE_DENY_EXACT))
+    entries.append("/CLAUDE.md")
+    return tuple(entries)
+
+
+def _resolve_git_dir(worktree_path: Path) -> Path | None:
+    """Resolve the *per-worktree* ``$GIT_DIR`` for *worktree_path*.
+
+    This is deliberately the per-worktree dir (``.git/worktrees/<id>`` for a
+    linked worktree), NOT the shared ``$GIT_COMMON_DIR``. ``.git/info/exclude``
+    was tried first and rejected: it is not a per-worktree file - git always
+    reads it from the *common* git dir shared by every worktree of a
+    repository (confirmed empirically: writing to a linked worktree's own
+    ``.git/worktrees/<id>/info/exclude`` has zero effect on that worktree's
+    status - the common dir's copy is what applies, to *every* worktree of
+    the clone, including the operator's own main checkout). That would
+    silently change what an operator's own ``git add -A`` picks up in their
+    main checkout - e.g. a freshly-created ``bernstein.yaml`` seed config
+    would stop being staged with no warning, confirmed by reproduction. This
+    resolves the per-worktree dir instead so the exclusion set via
+    ``core.excludesFile`` below (see :func:`_ensure_worktree_local_excludes`)
+    is scoped to this one worktree only.
+
+    Returns ``None`` on any failure - the caller treats this as best-effort.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-dir"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_LOCAL_EXCLUDE_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.warning("Could not resolve git-dir for %s: %s", worktree_path, exc)
+        return None
+    if result.returncode != 0 or not isinstance(result.stdout, str) or not result.stdout.strip():
+        logger.warning(
+            "git rev-parse --git-dir failed for %s: %s",
+            worktree_path,
+            result.stderr.strip() if isinstance(result.stderr, str) else result.stderr,
+        )
+        return None
+    git_dir = Path(result.stdout.strip())
+    # ``--path-format=absolute`` guarantees an absolute path on success.
+    # Refuse anything else rather than risk writing into a bogus
+    # relative/CWD-derived location later.
+    if not git_dir.is_absolute():
+        logger.warning(
+            "git rev-parse --git-dir returned a non-absolute path for %s: %r",
+            worktree_path,
+            str(git_dir),
+        )
+        return None
+    return git_dir
+
+
+def _run_git_config(worktree_path: Path, args: list[str]) -> bool:
+    """Run ``git config <args>`` with ``cwd=worktree_path``. Best-effort.
+
+    Returns ``True`` on a clean (returncode 0) run, ``False`` on any
+    failure - logged, never raised.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "config", *args],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_LOCAL_EXCLUDE_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.warning("git config %s failed for %s: %s", args, worktree_path, exc)
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "git config %s exited %d for %s: %s",
+            args,
+            result.returncode,
+            worktree_path,
+            result.stderr.strip() if isinstance(result.stderr, str) else result.stderr,
+        )
+        return False
+    return True
+
+
+_LOCAL_EXCLUDES_FILENAME = "bernstein-local-excludes"
+
+# Keys whose meaning changes the moment ``extensions.worktreeConfig`` is
+# enabled. See :func:`_worktree_config_would_rescope_core_settings`.
+_RESCOPED_BY_WORKTREE_CONFIG = ("core.worktree", "core.bare")
+
+# Sentinel distinguishing "config could not be read" from "key is not set",
+# so an unreadable config can fail closed instead of looking unset.
+_CONFIG_READ_FAILED = "\x00config-read-failed"
+
+
+def _read_shared_git_config(worktree_path: Path, key: str) -> str | None:
+    """Read *key* from the shared (``--local``) repository config.
+
+    ``--local`` is the config file shared by every worktree of the clone
+    (``$GIT_COMMON_DIR/config``), which is the file whose semantics the
+    ``extensions.worktreeConfig`` flag alters.
+
+    Returns the value, ``None`` when the key is not set (git's documented
+    exit code 1), or :data:`_CONFIG_READ_FAILED` on any other failure.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "config", "--local", "--get", key],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_LOCAL_EXCLUDE_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.warning("Could not read %s for %s: %s", key, worktree_path, exc)
+        return _CONFIG_READ_FAILED
+    if result.returncode == 1:
+        # Documented exit code for "key not present".
+        return None
+    if result.returncode != 0:
+        logger.warning("git config --local --get %s exited %d for %s", key, result.returncode, worktree_path)
+        return _CONFIG_READ_FAILED
+    return result.stdout.strip()
+
+
+def _worktree_config_would_rescope_core_settings(worktree_path: Path) -> bool:
+    """Would enabling ``extensions.worktreeConfig`` re-scope this repo's config?
+
+    With the extension off, ``core.worktree`` and ``core.bare`` in the shared
+    repository config apply to the main worktree only. Enabling it removes
+    that exception (git-worktree(1), CONFIGURATION FILE: "the exception for
+    core.bare and core.worktree is gone"), so both immediately start applying
+    to every *linked* worktree of the clone as well.
+
+    Two ordinary setups keep those keys in the shared config:
+
+    * a checkout that is itself a git submodule - its git-dir config always
+      carries ``core.worktree`` pointing at the submodule's working dir
+    * a bare repository that linked worktrees are added to (``core.bare =
+      true``)
+
+    In the first, flipping the extension redirects the agent's worktree onto
+    the git dir itself, so ``git status`` reports the repository internals as
+    untracked and the real tracked files as deleted. In the second, every
+    linked worktree of the clone starts failing with "this operation must be
+    run in a work tree". Both break worktrees bernstein does not own, and the
+    flag is repository-wide and outlives the session.
+
+    So bernstein declines to flip it there and runs without the exclusion -
+    the same degradation as any other setup failure. Fails closed: an
+    unreadable config counts as "would re-scope".
+    """
+    for key in _RESCOPED_BY_WORKTREE_CONFIG:
+        value = _read_shared_git_config(worktree_path, key)
+        if value is None:
+            continue
+        if value == _CONFIG_READ_FAILED:
+            return True
+        if key == "core.bare" and value.strip().lower() != "true":
+            # ``core.bare = false`` is written by plain ``git init``/``clone``
+            # and is harmless to re-scope: a linked worktree is not bare
+            # either way.
+            continue
+        return True
+    return False
+
+
+def _ensure_worktree_local_excludes(worktree_path: Path) -> None:
+    """Scope orchestrator runtime-state exclusion to this worktree only.
+
+    Bernstein orchestrates agents against arbitrary target repositories that
+    have no reason to already ignore bernstein's own runtime state. Without
+    this, an agent that follows its own "finish with ``git add -A && git
+    commit``" instruction stages ``.sdd/*`` runtime state, ``attestations/``,
+    ``auth/``, ``bernstein.yaml``, ``.env``, ``.claude/mcp.json``, and the
+    orchestrator-generated ``CLAUDE.md`` - and the reap-and-merge preflight's
+    forbidden-path guard then refuses the *entire* commit, diverting real
+    work to the graveyard instead of merging it (or, for ``CLAUDE.md``,
+    lets a decoy file merge silently since the guard does not forbid it).
+
+    Mechanism: a bernstein-owned exclude file is written inside this
+    worktree's own per-worktree git dir (never the tracked tree, so it is
+    never staged, committed, or visible in the target repo's history), and
+    wired up via ``git config --worktree core.excludesFile`` - which
+    requires ``extensions.worktreeConfig`` (a one-time, idempotent,
+    repository-local flag; itself never part of the tracked tree). This is
+    the git-native way to scope a config value - and therefore an
+    excludes file - to exactly one worktree. Verified empirically that a
+    second, unconfigured worktree of the same clone and the operator's own
+    main checkout are both completely unaffected: a freshly-created
+    ``bernstein.yaml`` in either still stages normally via ``git add -A``.
+
+    Best-effort throughout: any failure (old git without
+    ``extensions.worktreeConfig`` support, a read-only git dir, ...) is
+    logged and this worktree simply runs without the guard rather than
+    risk leaking the exclusion scope beyond this one worktree.
+
+    Args:
+        worktree_path: Root of the newly-created worktree.
+    """
+    git_dir = _resolve_git_dir(worktree_path)
+    if git_dir is None:
+        return
+
+    if _worktree_config_would_rescope_core_settings(worktree_path):
+        logger.warning(
+            "Shared git config carries core.worktree or core.bare=true for %s; "
+            "enabling extensions.worktreeConfig there would re-scope them onto every "
+            "linked worktree of the clone. Skipping local excludes.",
+            worktree_path,
+        )
+        return
+
+    if not _run_git_config(worktree_path, ["extensions.worktreeConfig", "true"]):
+        logger.warning("Could not enable extensions.worktreeConfig for %s; skipping local excludes", worktree_path)
+        return
+
+    exclude_path = git_dir / _LOCAL_EXCLUDES_FILENAME
+    entries = _derive_local_exclude_entries()
+    content = "\n".join(("# Local agent-orchestrator runtime state (not a project deliverable).", *entries, ""))
+    try:
+        exclude_path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to write local excludes to %s: %s", exclude_path, exc)
+        return
+
+    if not _run_git_config(worktree_path, ["--worktree", "core.excludesFile", str(exclude_path)]):
+        logger.warning("Could not scope core.excludesFile to worktree %s", worktree_path)
+        return
+
+    logger.info("Configured worktree-scoped excludesFile for %s: %s (%s)", worktree_path, exclude_path, entries)
 
 
 def _branch_exists(repo_root: Path, branch: str) -> bool:
@@ -825,6 +1089,16 @@ class WorktreeManager:
         # no ``asyncio.shield`` (shielding an unbounded cleanup would turn a
         # cancel into a hang).
         try:
+            # Ensure runtime/agent-control state is excluded, scoped to
+            # THIS worktree only, before the agent ever runs ``git add -A``
+            # (#3017). Never touches the tracked tree, so nothing here is
+            # staged, committed, or visible in the target repo's history -
+            # and never touches the shared git dir either, so it cannot
+            # change what the operator's own main checkout (or any other
+            # worktree of the same clone) picks up. Must happen before any
+            # setup step that might itself write into the worktree.
+            _ensure_worktree_local_excludes(worktree_path)
+
             # Write lock file for stale detection (T487)
             worker_pid = os.getpid()
             write_worktree_lock(self.repo_root, session_id, pid=worker_pid)

@@ -112,7 +112,29 @@ Worker environment requirements:
   (`worker_cmd.py:38-46`).
 - Python 3.12+ runtime with the same Bernstein version as the central server.
 - Network reachability to the central server's HTTP port.
-- A writable `--workdir` (defaults to `cwd`) for task worktrees.
+- **A git checkout of the target repository at the worker's workspace**
+  (`--workdir`, default `cwd`; `/workspace` in the published cluster image).
+  Every claimed task runs in a git worktree created under this path, so the
+  workspace **must** be a git work tree with at least one commit. **Mount or
+  clone the target repo there before starting the worker.** A worker whose
+  workspace is not a usable git repository refuses to start (see *Workspace
+  preflight* below) rather than registering and claiming tasks it cannot run.
+
+> **Docker/Kubernetes:** the published image does *not* ship a git checkout at
+> `/workspace`. Bind-mount the repo (`-v /path/to/repo:/workspace`) or run an
+> init step that clones it, so `/workspace` is a git checkout with a commit
+> before `bernstein worker` starts.
+
+### Workspace preflight
+
+Before it registers or accepts any claim, the worker verifies its workspace is
+a usable git repository (`WorkerLoop._workspace_setup_error`). If the workspace
+is missing, is not a git work tree, or is a git repo with no commits, the
+worker prints an actionable setup error naming the path and **exits non-zero**
+without registering. This prevents the failure mode where a worker registers,
+claims a task, and then cannot spawn the agent (`git worktree add` -> `fatal:
+not a git repository`), leaving the task stranded in `claimed` with no live
+agent (#3018).
 
 ## JWT node authentication
 
@@ -224,7 +246,10 @@ separately scoped, so a heartbeat-only token cannot be promoted to
 **Worker's CLI adapter is missing or logged out.** Auto-detection falls
 back to `"claude"` (`worker_cmd.py:46-47`). The `_spawn_agent()` call will
 raise inside `AgentSpawner.spawn_for_task()` and the worker logs a warning
-without crashing (`worker_cmd.py:230-258`); the task is left unclaimed.
+without crashing. Because the spawn failed *after* the task was claimed, the
+worker releases the claim back to the pool via `POST /tasks/{id}/release`
+(`WorkerLoop._release_task`), so the task returns to `open` and another node
+can pick it up instead of being stranded in `claimed` (#3018).
 
 ## Observability for cluster health
 

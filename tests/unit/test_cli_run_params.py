@@ -87,3 +87,15 @@ def test_run_params_match_cli_call() -> None:
         f"These run() params are NOT passed in cli() main.py: {missing_in_source}. "
         f"Add '{name}=<value>' to the run.callback() call in main.py."
     )
+
+
+def test_run_has_no_duplicate_click_options() -> None:
+    """Click warns when the same option is declared twice on a command."""
+    from collections import Counter
+
+    names = [param.name for param in run.params]
+    duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
+    assert not duplicates, (
+        f"run declares duplicate Click params: {duplicates}. "
+        "Each option name must appear only once."
+    )

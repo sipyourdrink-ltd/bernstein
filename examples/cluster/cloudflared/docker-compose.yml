@@ -24,13 +24,20 @@ services:
       BERNSTEIN_CLUSTER_ENABLED: "1"
       BERNSTEIN_CLUSTER_AUTH_SECRET: ${BERNSTEIN_CLUSTER_AUTH_SECRET:?required}
       BERNSTEIN_BIND_HOST: "0.0.0.0"
-      BERNSTEIN_BIND_PORT: "8052"
+    # `bernstein cluster` is a read-only client group (bootstrap-ca, nodes,
+    # status, claims) - there is no `bernstein cluster server` subcommand. The
+    # central/coordinator node is started with `serve`, which binds the task
+    # server and (via BERNSTEIN_CLUSTER_ENABLED above) exposes the cluster
+    # endpoints other nodes talk to (issue #3005). The image ENTRYPOINT is
+    # `bernstein` (see the root Dockerfile), so `command:` carries only the
+    # subcommand and args, no leading binary name. BERNSTEIN_BIND_PORT had no
+    # code consumer and is dropped - only --port/BERNSTEIN_BIND_HOST are read.
     command:
-      - "bernstein"
-      - "cluster"
-      - "server"
-      - "--bind"
-      - "0.0.0.0:8052"
+      - "serve"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8052"
     volumes:
       - bernstein-state:/var/lib/bernstein
     networks:

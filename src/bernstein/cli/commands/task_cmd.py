@@ -796,6 +796,63 @@ def _suspension_context(workdir: str, task_id: str) -> tuple[Path, Any, Any]:
     return sdd_dir, chain, ledger
 
 
+@task_group.command("complete")
+@click.argument("task_id")
+@click.option(
+    "--summary",
+    "-s",
+    "summary",
+    required=True,
+    help="Result summary recorded on the task (free-form, max 2000 chars).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Print the server's task payload as JSON.")
+def task_complete(task_id: str, summary: str, as_json: bool) -> None:
+    """Mark a task complete on the running task server.
+
+    First-class replacement for hand-assembling a completion ``curl`` (#3015).
+    The command resolves the task-server URL and the session token itself -
+    from ``BERNSTEIN_SERVER_URL`` / ``.sdd/runtime/server.port`` and
+    ``BERNSTEIN_AUTH_TOKEN`` / the persisted run-token file - so the agent
+    never nests a Bearer header and a JSON body inside one shell string.
+
+    \b
+    Example:
+      bernstein task complete T-abc123 --summary "Created hello.txt and committed"
+    """
+    from bernstein.cli.helpers import ServerAuthError
+
+    try:
+        data = server_post(
+            f"/tasks/{task_id}/complete",
+            {"result_summary": summary},
+            raise_on_auth_error=True,
+            # The server may briefly restart during hot-reload (evolve mode);
+            # retry only on connection refused, never on a 4xx like 409.
+            connect_retries=3,
+            retry_delay=2.0,
+        )
+    except ServerAuthError:
+        console.print(
+            "[red]Task server rejected credentials.[/red] Ensure BERNSTEIN_AUTH_TOKEN is set "
+            "(or run inside the workspace that holds the run token) and retry."
+        )
+        raise SystemExit(1) from None
+
+    if data is None:
+        from bernstein.cli.errors import server_unreachable
+
+        server_unreachable().print()
+        raise SystemExit(1)
+
+    if as_json or is_json():
+        print_json(data)
+        return
+
+    title = data.get("title", task_id)
+    status = data.get("status", "done")
+    console.print(f"[green]Completed:[/green] [bold]{task_id}[/bold] {title} ([dim]status={status}[/dim])")
+
+
 @task_group.command("suspend")
 @click.argument("task_id")
 @click.option("--workdir", default=".", help="Project root directory (parent of .sdd/).", type=click.Path())
