@@ -197,7 +197,7 @@ def test_container_runtime_set_is_exactly_the_supported_runtimes() -> None:
     Adding a runtime has to fail here first, which forces the addition to be
     reviewed against every consumer pinned below.
     """
-    assert CONTAINER_SANDBOX_RUNTIMES == frozenset({"docker", "podman"})
+    assert frozenset({"docker", "podman"}) == CONTAINER_SANDBOX_RUNTIMES
 
 
 def test_runtime_consumers_derive_from_the_single_source() -> None:
@@ -228,7 +228,7 @@ def test_every_container_runtime_is_offered_by_the_sandbox_flag() -> None:
     """
     from bernstein.cli.run_bootstrap import SANDBOX_CHOICES
 
-    assert CONTAINER_SANDBOX_RUNTIMES <= frozenset(SANDBOX_CHOICES)
+    assert frozenset(SANDBOX_CHOICES) >= CONTAINER_SANDBOX_RUNTIMES
 
 
 def test_orchestrator_attach_gate_does_not_key_on_a_single_runtime_literal() -> None:
