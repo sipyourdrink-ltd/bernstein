@@ -174,14 +174,23 @@ class TestSessionSaveBeforeRestart:
 
 
 # ---------------------------------------------------------------------------
-# Curl retry flags in agent prompts
+# Completion resilience across a server hot-reload
 # ---------------------------------------------------------------------------
 
 
-class TestCurlRetryInPrompts:
-    """Verify completion curl commands include --retry flags for resilience."""
+class TestCompletionResilienceInPrompts:
+    """Completion survives a hot-reload without a hand-built retry curl.
 
-    def test_completion_commands_include_retry(self) -> None:
+    Pre-#3015 the prompt embedded a raw ``curl … --retry-connrefused`` so a
+    completion fired while the server restarted (evolve mode) would retry. That
+    resilience now lives inside the ``bernstein task complete`` CLI
+    (``server_post(connect_retries=…)``), so the prompt just instructs the CLI
+    and carries no fragile completion curl.
+    """
+
+    def test_prompt_uses_cli_not_raw_curl_completion(self) -> None:
+        import re
+
         from bernstein.core.models import Task
         from bernstein.core.spawner import _render_prompt
 
@@ -191,20 +200,12 @@ class TestCurlRetryInPrompts:
             description="Fix the bug in module X",
             role="backend",
         )
-        templates_dir = Path("templates/roles")
-        workdir = Path(".")
+        prompt = _render_prompt([task], Path("templates/roles"), Path("."))
 
-        prompt = _render_prompt(
-            [task],
-            templates_dir,
-            workdir,
-        )
-
-        # The curl commands should include retry flags (connrefused only, not all errors)
-        assert "--retry 3" in prompt
-        assert "--retry-delay 2" in prompt
-        assert "--retry-connrefused" in prompt
-        assert "--retry-all-errors" not in prompt
+        # Completion is the CLI front door - the retry lives in the command.
+        assert "bernstein task complete test-1" in prompt
+        # No hand-built completion curl remains to hand-quote a retry into.
+        assert re.search(r"curl[^\n]*/tasks/\S*?/complete", prompt) is None
 
 
 # ---------------------------------------------------------------------------

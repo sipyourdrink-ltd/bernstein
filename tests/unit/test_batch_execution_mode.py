@@ -177,11 +177,12 @@ class TestRenderBatchPrompt:
         assert "src/foo.ts" in prompt
         assert "src/bar.ts" in prompt
 
-    def test_completion_curl_command_included(self) -> None:
+    def test_completion_command_uses_cli(self) -> None:
         task = self._make_task()
         prompt = _render_batch_prompt(task)
-        assert "curl" in prompt
-        assert "/tasks/t-batch-01/complete" in prompt
+        # Completion is the first-class CLI (#3015), not a hand-built curl.
+        assert "bernstein task complete t-batch-01" in prompt
+        assert "/tasks/t-batch-01/complete" not in prompt
 
     def test_no_owned_files_no_paths_line(self) -> None:
         task = self._make_task(owned_files=[])

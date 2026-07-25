@@ -826,6 +826,10 @@ def task_complete(task_id: str, summary: str, as_json: bool) -> None:
             f"/tasks/{task_id}/complete",
             {"result_summary": summary},
             raise_on_auth_error=True,
+            # The server may briefly restart during hot-reload (evolve mode);
+            # retry only on connection refused, never on a 4xx like 409.
+            connect_retries=3,
+            retry_delay=2.0,
         )
     except ServerAuthError:
         console.print(

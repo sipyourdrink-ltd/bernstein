@@ -147,16 +147,47 @@ class TestTaskCompleteCommand:
         assert result.exit_code != 0
 
     def test_unreachable_server_exits_nonzero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A connection error surfaces as a non-zero exit, not a silent success."""
+        """A persistent connection error surfaces as a non-zero exit after retries."""
         import httpx
 
         monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "t")
         monkeypatch.chdir(tmp_path)
-        capture = _Capture()
-        _patch_post(monkeypatch, capture, exc=httpx.ConnectError("refused"))
+        monkeypatch.setattr(helpers.time, "sleep", lambda _s: None)  # no real backoff sleeps
+
+        calls = {"n": 0}
+
+        def _always_refused(url: str, *, json: Any = None, timeout: float = 0.0, headers: Any = None) -> _FakeResponse:
+            calls["n"] += 1
+            raise httpx.ConnectError("refused")
+
+        monkeypatch.setattr(helpers.httpx, "post", _always_refused)
 
         result = CliRunner().invoke(task_group, ["complete", "T-abc", "-s", "done"])
         assert result.exit_code == 1
+        # 1 initial attempt + 3 connect retries (evolve-mode hot-reload window).
+        assert calls["n"] == 4
+
+    def test_retries_on_connect_error_then_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A transient connrefused (server hot-reload) is retried, not failed."""
+        import httpx
+
+        monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "t")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(helpers.time, "sleep", lambda _s: None)
+
+        calls = {"n": 0}
+
+        def _refuse_twice(url: str, *, json: Any = None, timeout: float = 0.0, headers: Any = None) -> _FakeResponse:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise httpx.ConnectError("server restarting")
+            return _FakeResponse({"id": "T-abc", "title": "demo", "status": "done"})
+
+        monkeypatch.setattr(helpers.httpx, "post", _refuse_twice)
+
+        result = CliRunner().invoke(task_group, ["complete", "T-abc", "-s", "done"])
+        assert result.exit_code == 0, result.output
+        assert calls["n"] == 3
 
     def test_json_output_prints_task_payload(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """``--json`` prints the server's task payload for scripting."""
