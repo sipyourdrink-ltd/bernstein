@@ -936,9 +936,7 @@ class TestParseSeedUnknownTopLevelKeys:
         messages = [r.getMessage() for r in caplog.records]
         assert any("zzqqxx" in m for m in messages)
 
-    def test_container_image_key_hints_sandbox_image(
-        self, seed_file: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_container_image_key_hints_sandbox_image(self, seed_file: Path, caplog: pytest.LogCaptureFixture) -> None:
         """``container_image:`` has no top-level equivalent; the warning must
         point operators at ``sandbox.image`` instead of silently dropping the
         value (bug #3023)."""
