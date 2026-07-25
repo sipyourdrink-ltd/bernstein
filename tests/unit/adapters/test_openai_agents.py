@@ -1097,6 +1097,37 @@ class TestRunnerHelpers:
             for rec in caplog.records
         ), f"missing/incomplete MaxTurns warning: {[r.getMessage() for r in caplog.records]}"
 
+    def test_log_max_turns_exceeded_detects_cli_completion(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A completion run through the CLI must still read as completed work.
+
+        Agents mark tasks done with `bernstein task complete`, which carries no
+        `/complete` path. Matching only the path shape would report finished
+        work as lost and send an operator hunting a failure that did not happen.
+        """
+        from types import SimpleNamespace
+
+        from bernstein.adapters.openai_agents_runner import _log_max_turns_exceeded
+
+        run_data = SimpleNamespace(
+            raw_responses=[SimpleNamespace(usage=None) for _ in range(10)],
+            new_items=[
+                SimpleNamespace(
+                    raw_item=SimpleNamespace(
+                        arguments='{"command": "bernstein task complete abc --summary \\"done\\""}'
+                    )
+                )
+            ],
+        )
+        exc = RuntimeError("Max turns (10) exceeded")
+        exc.run_data = run_data  # type: ignore[attr-defined]
+
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents_runner"):
+            _log_max_turns_exceeded(exc, 10)
+
+        assert any("work_already_completed=yes" in rec.getMessage() for rec in caplog.records), (
+            f"CLI completion not detected: {[r.getMessage() for r in caplog.records]}"
+        )
+
     def test_log_max_turns_exceeded_handles_missing_run_data(self, caplog: pytest.LogCaptureFixture) -> None:
         """No run_data on the exception must still produce a WARNING with
         unknowns, never a crash."""

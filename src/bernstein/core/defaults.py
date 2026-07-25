@@ -77,6 +77,9 @@ COPILOT_CLAUDE_TIER_MODELS: Final[frozenset[str]] = frozenset({"opus", "sonnet",
 """Claude cascade tier names that are not valid Copilot model ids; any that reach
 the Copilot adapter are remapped to ``COPILOT_DEFAULT_MODEL``."""
 
+QWEN_INSTALL_HINT: Final[str] = "npm install -g @qwen-code/qwen-code"
+"""Install command for the Qwen CLI package that provides the ``qwen`` binary."""
+
 
 @dataclass(frozen=True)
 class DashboardStaticAsset:

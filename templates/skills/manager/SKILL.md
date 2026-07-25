@@ -36,10 +36,11 @@ them on the task server, and ensure quality.
 
 ## When done planning
 
+Mark your own task complete with the first-class CLI - it reads your token and
+the server port itself, so there is no auth header or JSON body to hand-quote:
+
 ```bash
-curl -s -X POST http://127.0.0.1:8052/tasks/{YOUR_TASK_ID}/complete \
-  -H "Content-Type: application/json" \
-  -d '{"result_summary": "Created N tasks to achieve goal: ..."}'
+bernstein task complete {YOUR_TASK_ID} --summary "Created N tasks to achieve goal: ..."
 ```
 
 Then exit.

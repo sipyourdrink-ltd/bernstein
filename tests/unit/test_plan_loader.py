@@ -79,6 +79,56 @@ def test_load_plan_missing_stages(tmp_path: Path) -> None:
         load_plan_from_yaml(plan_file)
 
 
+def test_load_plan_seed_shaped_file_gives_actionable_error(tmp_path: Path) -> None:
+    """A seed config (goal/cli/model, no stages) passed as a plan gets a clear
+    error naming the seed-vs-plan distinction, not the generic 'stages' message
+    (issue #3009).
+    """
+    plan_file = _write_plan(
+        tmp_path,
+        {"goal": "Build a widget", "cli": "claude", "model": "sonnet"},
+    )
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "seed config" in message
+    assert "bernstein.yaml" in message
+    assert "stages" in message
+
+    # The suggested fix must name an option `bernstein run` actually declares
+    # -- `run` has `--seed`, not `-f` (issue #3009 follow-up: the original fix
+    # pointed at a nonexistent `-f` flag).
+    from bernstein.cli import run_bootstrap
+
+    run_option_flags = {opt for param in run_bootstrap.run.params for opt in getattr(param, "opts", [])}
+    assert "--seed" in run_option_flags
+    assert "--seed" in message
+    assert "-f" not in message
+
+
+def test_load_plan_seed_shaped_file_goal_only(tmp_path: Path) -> None:
+    """The 'goal' key alone (no cli/model) is still enough to detect a seed."""
+    plan_file = _write_plan(tmp_path, {"goal": "Build a widget"})
+    with pytest.raises(PlanLoadError, match="seed config"):
+        load_plan_from_yaml(plan_file)
+
+
+def test_load_plan_top_level_cli_alone_is_not_treated_as_seed(tmp_path: Path) -> None:
+    """A genuine staged plan that sets a top-level `cli:` default but is
+    missing (or typo'd) `stages` must NOT be mislabeled as a seed config --
+    `cli` is a valid top-level PlanConfig key in both shapes, so it is not a
+    reliable seed signal on its own (issue #3009 follow-up).
+    """
+    plan_file = _write_plan(tmp_path, {"name": "Real Plan", "cli": "claude"})
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "seed config" not in message
+    assert "must contain a 'stages' list" in message
+
+
 def test_load_plan_stage_missing_name(tmp_path: Path) -> None:
     plan_file = _write_plan(tmp_path, {"stages": [{"steps": [{"goal": "Step"}]}]})
     with pytest.raises(PlanLoadError, match="Stage 0 is missing a name"):

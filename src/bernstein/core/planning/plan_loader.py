@@ -20,6 +20,17 @@ class PlanLoadError(Exception):
     """Raised when a plan file cannot be loaded or parsed."""
 
 
+# Top-level keys that identify a seed config (``bernstein.yaml`` shape) rather
+# than a staged plan. ``goal`` is the required seed field; ``model`` is a
+# common companion. Deliberately excludes ``cli``, which is also a valid
+# top-level ``PlanConfig`` key (a staged plan may set a default CLI for all
+# its steps) -- keying off it would mislabel a genuine plan with a missing or
+# typo'd ``stages`` list as a seed. Presence of a key from this set on a file
+# that is missing ``stages`` is a reliable signal that the file was meant to
+# be a seed, not a plan (issue #3009).
+_SEED_SHAPED_KEYS = ("goal", "model")
+
+
 @dataclass
 class RepoRef:
     """A repository reference declared in a multi-repo plan.
@@ -152,6 +163,15 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
 
     stages = data.get("stages")
     if not stages:
+        found_seed_keys = [key for key in _SEED_SHAPED_KEYS if key in data]
+        if found_seed_keys:
+            found = ", ".join(repr(key) for key in found_seed_keys)
+            raise PlanLoadError(
+                f"{path} looks like a seed config, not a staged plan (found "
+                f"{found} but no 'stages' list). Name it 'bernstein.yaml' so "
+                f"it is auto-discovered, pass it with '--seed {path}', or add "
+                "a 'stages:' list to make it a plan."
+            )
         raise PlanLoadError("Plan file must contain a 'stages' list")
 
     # Extract plan-level config

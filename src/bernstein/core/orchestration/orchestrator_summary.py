@@ -170,6 +170,11 @@ def emit_summary_card(
         completed_tasks=len(done_tasks),
     )
 
+    # Issue #3014: surface requested-vs-actual isolation downgrades recorded by
+    # the spawner. Guarded so a stubbed/mock spawner without a real list is safe.
+    spawner_downgrades = getattr(getattr(orch, "_spawner", None), "isolation_downgrades", None)
+    isolation_downgrades = [d.as_dict() for d in spawner_downgrades] if isinstance(spawner_downgrades, list) else []
+
     summary_data = RunSummaryData(
         run_id=orch._run_id,
         tasks_completed=len(done_tasks),
@@ -181,6 +186,7 @@ def emit_summary_card(
         sequential_time_seconds=savings.sequential_time_seconds,
         cost_per_task_usd=savings.cost_per_task_usd,
         routing_savings_usd=savings.routing_savings_usd,
+        isolation_downgrades=isolation_downgrades,
     )
 
     sdd_dir = orch._workdir / ".sdd"

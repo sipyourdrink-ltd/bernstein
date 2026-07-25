@@ -4834,6 +4834,21 @@ class Orchestrator:
             )
         return ""
 
+    def _collect_isolation_downgrades(self) -> list[dict[str, str]]:
+        """Return requested-vs-actual isolation downgrades from the spawner.
+
+        Issue #3014: when a container isolation request cannot be honoured, the
+        spawn falls back to a weaker boundary and records the downgrade.
+        Draining it into the run summary makes the downgrade visible in the run
+        outcome.
+        Guarded so an older or stubbed spawner without the attribute never
+        breaks summary emission.
+        """
+        downgrades = getattr(self._spawner, "isolation_downgrades", None)
+        if not isinstance(downgrades, list):
+            return []
+        return [d.as_dict() for d in downgrades]
+
     def _emit_summary_card(
         self,
         done_tasks: list[Task],
@@ -4872,6 +4887,7 @@ class Orchestrator:
             wall_clock_seconds=wall_clock_s,
             total_cost_usd=total_cost,
             quality_score=quality_score,
+            isolation_downgrades=self._collect_isolation_downgrades(),
         )
 
         sdd_dir = self._workdir / ".sdd"

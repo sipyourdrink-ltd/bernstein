@@ -419,6 +419,73 @@ docker compose logs -f bernstein-orchestrator
 > `bernstein-worker` replicas (or migrate to the SQLite/Redis backends -
 > separate ticket) for parallelism.
 
+### Container sandbox isolation (`--sandbox docker`)
+
+Per-agent container isolation runs each agent in its own container instead of a
+git worktree. It is requested **only** through the sandbox configuration - there
+are exactly three sources, and they are independent of every other setting:
+
+| Source | Example |
+|---|---|
+| The `sandbox:` section of `bernstein.yaml` | `sandbox: {enabled: true, runtime: docker}` |
+| The `--sandbox` CLI flag | `bernstein run plan.yaml --sandbox docker` |
+| The `BERNSTEIN_SANDBOX_RUNTIME` env var | `BERNSTEIN_SANDBOX_RUNTIME=docker` (set by `--sandbox`) |
+
+> **Compliance presets do not change your isolation boundary.** The
+> `regulated` preset (like the other presets - `development`, `standard`,
+> `hipaa`) controls audit logging, the HMAC audit chain, signed WAL, data
+> residency, SBOM generation, approval gates, mandatory human review, and
+> evidence-bundle export. It has **no** isolation or sandbox setting:
+> `compliance` and `sandbox` are parsed as separate sections and neither reads
+> the other. A `regulated` run uses whatever `sandbox:` specifies - which, if you
+> have not set it, is the default worktree isolation. If you want container
+> isolation, request it explicitly with `sandbox:` or `--sandbox`; selecting a
+> compliance preset will not do it for you.
+
+Inside the published `ghcr.io/sipyourdrink-ltd/bernstein` image the docker
+backend is **not available by default** - the image is intentionally lean and
+ships none of the three things it needs:
+
+1. **A container-runtime CLI** on `PATH` inside the container (`docker` or
+   `podman`).
+2. **The Python Docker SDK** - install the `docker` extra
+   (`pip install "bernstein[docker]"`, i.e. `pip install docker`).
+3. **A mounted Docker socket** so the in-container client can reach the host
+   daemon: bind-mount `/var/run/docker.sock`.
+
+Provide all three and the backend attaches and runs each agent in a sibling
+container. The shipped `docker-compose.yaml` includes a ready-to-uncomment
+socket mount on the worker/orchestrator services; you still need an image that
+contains the CLI + `docker` extra (build a thin layer on top of the base image
+rather than baking docker into the base image).
+
+> **macOS / Docker Desktop.** Docker Desktop restricts which host paths can be
+> bind-mounted into containers; a socket or workspace mount outside the shared
+> paths fails with "mounts denied". This is a Docker Desktop file-sharing
+> constraint, not a Bernstein limitation - add the path under Docker Desktop →
+> Settings → Resources → File sharing, or run the cluster on Linux.
+
+**What happens when the runtime is unavailable.** Container isolation that
+cannot be provided never silently becomes worktree isolation:
+
+| How isolation was requested | Runtime missing |
+|---|---|
+| `--sandbox docker` | **refuses** - a `SandboxSelectionError` naming the cause. The check runs at wiring time, so a missing Docker SDK or a dead daemon aborts the run *before any agent spawns*; if the daemon attaches but a per-agent session cannot be provisioned, the spawn refuses rather than dropping to a host spawn |
+| A container request configured without `--sandbox` (e.g. `sandbox:` in `bernstein.yaml`) | **downgrades to worktree isolation, surfaced and audited** |
+
+A downgrade is no longer a log-only event. It is recorded in the end-of-run
+summary (`summary.json` → `isolation_downgrades`, plus an "Isolation downgrade"
+row on the summary card) and as a `sandbox.isolation_downgrade` entry in the
+HMAC-chained audit log carrying the requested and actual isolation modes. An
+operator who asked for a stronger boundary can therefore see at run level that a
+weaker one was used - and prove it from the audit chain afterwards.
+
+If your posture requires the run to *fail closed* rather than continue on a
+weaker boundary, pin the backend with `--sandbox docker` and confirm the run
+aborts when no runtime is present. Note that a downgrade is reported per agent
+session, so a run that spawns several agents on a runtime-less host records one
+entry per affected session.
+
 ### Backing up state
 
 `.sdd/` is mounted as a named volume (`sdd-data`). To back it up:

@@ -8,7 +8,7 @@
 #   - Claude Code:  npm install -g @anthropic-ai/claude-code  + ANTHROPIC_API_KEY
 #   - Codex CLI:    npm install -g @openai/codex              + OPENAI_API_KEY
 #   - Gemini CLI:   npm install -g @google/gemini-cli         + GOOGLE_API_KEY
-#   - Qwen:         npm install -g qwen-code                  + DASHSCOPE_API_KEY or OPENROUTER_API_KEY_FREE
+#   - Qwen:         npm install -g @qwen-code/qwen-code       + OPENROUTER_API_KEY_FREE
 #
 # You don't need all four. Bernstein uses whatever is installed.
 # Run:  bernstein run

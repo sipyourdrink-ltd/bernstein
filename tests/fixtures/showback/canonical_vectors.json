@@ -1,6 +1,6 @@
 {
   "schema": "showback-canonical-vectors-v1",
-  "notes": "Cross-language vectors for the tenant showback canonical core. money_parse/money_render cover the operator-facing decimal-string format (nano-USD fixed scale, 9 fractional digits); float_bridge covers the one-time conversion from the float spend ledger (shortest round-trip decimal of the IEEE 754 double, then ROUND_HALF_EVEN to 1e-9); nfc covers the reject-don't-repair text policy; statements bind validated payload trees to RFC 8785 canonical bytes via sha256.",
+  "notes": "Cross-language vectors for the tenant showback canonical core. money_parse/money_render cover the operator-facing decimal-string format (nano-USD fixed scale, 9 fractional digits); float_bridge covers the one-time conversion from the float spend ledger (shortest round-trip decimal of the IEEE 754 double, then ROUND_HALF_EVEN to 1e-9); nfc covers the reject-don't-repair text policy; statements bind validated payload trees to RFC 8785 canonical bytes via sha256. The statement vectors below the seed set are anchored: their canonical bytes were generated with rfc8785 0.1.4 (Python) and independently reproduced by erdtman canonicalize 3.0.0 (Node) in the agent-passport-system cross-impl suite. Note that nano_usd values are JSON numbers and the boundary cases deliberately exceed the IEEE 754 double-exact integer range, so a reader must parse them with a bigint-aware JSON parser to reproduce these vectors.",
   "money_parse": [
     {
       "desc": "integer dollars",
@@ -96,6 +96,26 @@
       "desc": "reject non-ascii digits",
       "input": "١",
       "error": "money-format"
+    },
+    {
+      "desc": "largest nano amount an ieee 754 double holds exactly",
+      "input": "9007199.254740991",
+      "nano_usd": 9007199254740991
+    },
+    {
+      "desc": "nano amount at the double-exact boundary",
+      "input": "9007199.254740992",
+      "nano_usd": 9007199254740992
+    },
+    {
+      "desc": "nano amount past the double-exact boundary, string path only",
+      "input": "9007199.254740993",
+      "nano_usd": 9007199254740993
+    },
+    {
+      "desc": "negative nano amount past the double-exact boundary",
+      "input": "-9007199.254740993",
+      "nano_usd": -9007199254740993
     }
   ],
   "money_render": [
@@ -123,6 +143,26 @@
       "desc": "large amount",
       "nano_usd": 12345678900000000,
       "text": "12345678.900000000"
+    },
+    {
+      "desc": "largest nano amount an ieee 754 double holds exactly",
+      "nano_usd": 9007199254740991,
+      "text": "9007199.254740991"
+    },
+    {
+      "desc": "nano amount at the double-exact boundary",
+      "nano_usd": 9007199254740992,
+      "text": "9007199.254740992"
+    },
+    {
+      "desc": "nano amount past the double-exact boundary, string path only",
+      "nano_usd": 9007199254740993,
+      "text": "9007199.254740993"
+    },
+    {
+      "desc": "negative nano amount past the double-exact boundary",
+      "nano_usd": -9007199254740993,
+      "text": "-9007199.254740993"
     }
   ],
   "float_bridge": [
@@ -189,6 +229,29 @@
     {
       "desc": "hangul jamo sequence is rejected",
       "codepoints": "U+1100 U+1161"
+    },
+    {
+      "desc": "combining marks out of canonical order are rejected",
+      "codepoints": "U+0071 U+0307 U+0323"
+    },
+    {
+      "desc": "combining marks in canonical order pass",
+      "codepoints": "U+0071 U+0323 U+0307",
+      "ok": true
+    },
+    {
+      "desc": "supplementary-plane composition exclusion is rejected",
+      "codepoints": "U+1D15E"
+    },
+    {
+      "desc": "supplementary-plane decomposed pair passes",
+      "codepoints": "U+1D157 U+1D165",
+      "ok": true
+    },
+    {
+      "desc": "ligature is nfc stable and is not decomposed as nfkc would",
+      "codepoints": "U+FB01",
+      "ok": true
     }
   ],
   "statements": [
@@ -229,13 +292,119 @@
       "sha256": "585eebacd614720327a4b3d10554da2114550cca525452a11c26671468eac4aa"
     },
     {
-      "desc": "unicode label precomposed",
+      "desc": "flat object with two ascii members",
       "payload": {
-        "schema": "showback-statement-v1",
-        "tenant": "café",
-        "total_nano_usd": "0"
+        "agentId": "agent-001",
+        "scope": "read"
       },
-      "sha256": "487d16e5a75ca4433ef06afa0be031496b1b0090613c3f48e3e96b31f59aa440"
+      "sha256": "598fa19ccadbc8df940a9cde9bff497c094ff209818b2bc36e5fac8d5cc2f477"
+    },
+    {
+      "desc": "null member is preserved, not stripped",
+      "payload": {
+        "agentId": "agent-001",
+        "metadata": null,
+        "scope": "read"
+      },
+      "sha256": "52a6250f9b8d4df9654556cb46fcf3a6b3829693643578bacfa344831cc6d99d"
+    },
+    {
+      "desc": "members sorted by key, not by insertion order",
+      "payload": {
+        "zebra": 1,
+        "alpha": 2,
+        "middle": 3
+      },
+      "sha256": "8279885d9e6f748807a4a8838376aad819aee964979d576d496aa9a67ea2bd6a"
+    },
+    {
+      "desc": "null nested inside a child object",
+      "payload": {
+        "outer": {
+          "inner": null,
+          "value": 42
+        },
+        "top": "ok"
+      },
+      "sha256": "02f4d61eb43de15b3680d6c9d2e1852ba3947e78521c2ba7de8e4afb640ef043"
+    },
+    {
+      "desc": "null element inside an array",
+      "payload": {
+        "items": [
+          1,
+          null,
+          3
+        ]
+      },
+      "sha256": "df088e3ff71850c361e768d9ca5141426005ad9497b6d4cf6ec3e082fe663e75"
+    },
+    {
+      "desc": "empty object and empty array",
+      "payload": {
+        "emptyArr": [],
+        "emptyObj": {}
+      },
+      "sha256": "2e49ff7a9de29f7f42b6cfb0e7a9826b5743d888aed3029df47b773b4393d0d4"
+    },
+    {
+      "desc": "non-ascii key values emitted as raw utf-8",
+      "payload": {
+        "name": "Тимофій",
+        "emoji": "🔐"
+      },
+      "sha256": "f04c986f5b3862ad3c6ee7b26b54846bad39e101a27e98f72772023c40584fc6"
+    },
+    {
+      "desc": "action_ref pre-image shape",
+      "payload": {
+        "agentId": "did:aps:z6Mkfoo",
+        "actionType": "code_execution",
+        "scopeRequired": [
+          "commerce:read",
+          "commerce:write"
+        ],
+        "timestamp": "2026-05-21T00:00:00Z"
+      },
+      "sha256": "956fb10ca09e093086c856517a8f93c11416f5b84b0a01634bc5ebfff41670d3"
+    },
+    {
+      "desc": "attribution four-tuple with null in params",
+      "payload": {
+        "agentId": "a",
+        "actionType": "t",
+        "params": {
+          "k": null,
+          "v": 1
+        },
+        "nonce": "n0"
+      },
+      "sha256": "c0686ef2cbb2b1c38b149598c50a60b0c01c2fd0ef9fd35f81eabb1aced6d591"
+    },
+    {
+      "desc": "tab and newline escapes",
+      "payload": {
+        "raw": "line1\tcol2\nline3"
+      },
+      "sha256": "87d59a36d71d2c4e2bebe9b0badb8d1e028e8b925cfdec41c824d6f874853922"
+    },
+    {
+      "desc": "boolean literals",
+      "payload": {
+        "active": true,
+        "revoked": false
+      },
+      "sha256": "9135447f8ef8e76a18f1e9b8457c3764002d36b2bf247a0f2ee9eb836dddcd4f"
+    },
+    {
+      "desc": "supplementary-plane property names where code point and utf-16 order agree",
+      "payload": {
+        "a": 1,
+        "中": 2,
+        "😀": 3,
+        "😁": 4
+      },
+      "sha256": "5d93bf574c9410e623e62518df36b19b04c5bf2a8024adfa93598ed015d6dea0"
     }
   ]
 }

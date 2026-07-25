@@ -17,6 +17,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from bernstein.core.defaults import QWEN_INSTALL_HINT
+
 logger = logging.getLogger(__name__)
 
 console = Console()
@@ -41,7 +43,7 @@ _CLI_INSTALL_HINT: dict[str, str] = {
     "claude": "https://claude.ai/code",
     "codex": "npm install -g @openai/codex",
     "gemini": "npm install -g @google/gemini-cli",
-    "qwen": "npm install -g qwen-code",
+    "qwen": QWEN_INSTALL_HINT,
 }
 
 # Primary API key env var(s) per adapter.

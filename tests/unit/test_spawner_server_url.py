@@ -45,32 +45,50 @@ class TestResolveTaskServerUrl:
 
 
 class TestRenderPromptServerUrl:
-    def test_completion_url_uses_server_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_completion_uses_cli_not_embedded_url(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#2808 + #3015: completion no longer bakes a per-task endpoint URL in.
+
+        The worker-node loopback bug (#2808) is now structurally impossible: the
+        prompt instructs ``bernstein task complete``, which resolves
+        ``BERNSTEIN_SERVER_URL`` at runtime rather than embedding a completion
+        URL that could point at the wrong host.
+        """
         monkeypatch.setenv("BERNSTEIN_SERVER_URL", "http://central:9000")
         prompt = _render_prompt([_task()], tmp_path, tmp_path)
-        assert "http://central:9000/tasks/T-1/complete" in prompt
-        assert _LOCAL_DEFAULT not in prompt
+        assert "bernstein task complete T-1" in prompt
+        assert "/tasks/T-1/complete" not in prompt
 
-    def test_completion_url_defaults_to_local_when_env_unset(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_completion_uses_cli_when_env_unset(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BERNSTEIN_SERVER_URL", raising=False)
         prompt = _render_prompt([_task()], tmp_path, tmp_path)
-        assert f"{_LOCAL_DEFAULT}/tasks/T-1/complete" in prompt
+        assert "bernstein task complete T-1" in prompt
+        assert "/tasks/T-1/complete" not in prompt
 
 
 class TestRenderBatchPromptServerUrl:
-    def test_completion_url_uses_server_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_completion_uses_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BERNSTEIN_SERVER_URL", "http://central:9000")
         prompt = _render_batch_prompt(_task())
-        assert "http://central:9000/tasks/T-1/complete" in prompt
-        assert _LOCAL_DEFAULT not in prompt
+        assert "bernstein task complete T-1" in prompt
+        assert "/tasks/T-1/complete" not in prompt
 
 
 class TestRenderAuthSectionServerUrl:
     def test_curl_examples_use_server_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BERNSTEIN_SERVER_URL", "http://central:9000")
         section = _render_auth_section(tmp_path / "token")
+        # The subtask-creation curl still honours the configured server URL.
         assert "POST http://central:9000/tasks" in section
-        assert "http://central:9000/tasks/<TASK_ID>/complete" in section
         assert _LOCAL_DEFAULT not in section
+
+    def test_completion_uses_cli_not_embedded_url(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Completion is the first-class CLI (#3015), which resolves the URL itself.
+
+        The auth section no longer embeds a completion endpoint URL: the agent
+        runs ``bernstein task complete`` and the command resolves the server
+        port at runtime, so there is no ``…/complete`` curl to server-URL-adjust.
+        """
+        monkeypatch.setenv("BERNSTEIN_SERVER_URL", "http://central:9000")
+        section = _render_auth_section(tmp_path / "token")
+        assert "bernstein task complete" in section
+        assert "/complete" not in section

@@ -123,6 +123,17 @@ class TestClassifyCommandApprove:
         result = classify_command("head -n 1 pyproject.toml | grep version")
         assert result.decision == Decision.APPROVE
 
+    def test_task_complete_cli_is_as_approvable_as_the_curl_it_replaces(self) -> None:
+        """The completion CLI must classify the same as the request it replaces.
+
+        Agents mark work done with ``bernstein task complete`` instead of
+        hand-building a POST to the localhost task server. Both reach the same
+        endpoint, so the CLI form must not drop to ASK and strand an unattended
+        run at an approval prompt it has no operator to answer.
+        """
+        cmd = 'bernstein task complete T-010 --summary "Completed: Implement feature"'
+        assert classify_command(cmd).decision == Decision.APPROVE
+
     def test_curl_bernstein_server(self) -> None:
         cmd = (
             "curl -s --retry 3 --retry-delay 2 -X POST "
