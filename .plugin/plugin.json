@@ -1,6 +1,6 @@
 {
   "name": "bernstein",
-  "version": "3.9.0",
+  "version": "3.10.0",
   "description": "Deterministic orchestrator for CLI coding agents. Spawn parallel agents in per-task git worktrees, verify their work, and merge results; no model in the coordination loop, so runs replay byte-identically.",
   "author": {
     "name": "chernistry",
