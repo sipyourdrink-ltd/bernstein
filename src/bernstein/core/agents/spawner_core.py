@@ -672,13 +672,14 @@ def _render_auth_section(token_path: Path) -> str:
         '  -H "Content-Type: application/json" \\\n'
         '  -d \'{"title": "...", "role": "backend", "description": "..."}\'\n'
         "```\n"
-        "Example - marking a task complete (pass the whole line to `run_command` as ONE string):\n"
+        "Marking a task complete - use the first-class CLI, NOT curl. It reads\n"
+        "the token and the server port itself, so there is no auth header or\n"
+        "JSON body to hand-quote (pass this whole line to `run_command` as ONE string):\n"
         "```bash\n"
-        f"curl -sS -w '\\n%{{http_code}}' -X POST {base}/tasks/<TASK_ID>/complete \\\n"
-        f'  -H "Authorization: Bearer $(cat {absolute})" \\\n'
-        '  -H "Content-Type: application/json" \\\n'
-        '  -d \'{"result_summary": "Done"}\'\n'
+        'bernstein task complete <TASK_ID> --summary "Done"\n'
         "```\n"
+        "It exits non-zero and prints the reason if the server is unreachable or\n"
+        "rejects the token, so you never mis-read a failure as success.\n"
         "If the token file is unreadable for any reason, fall back to the\n"
         "`BERNSTEIN_AUTH_TOKEN` environment variable, which is exported into\n"
         "your shell:\n"
@@ -896,17 +897,16 @@ def _render_batch_prompt(task: Task) -> str:
     Returns:
         Prompt string starting with ``/batch`` that triggers the batch skill.
     """
-    base = _resolve_task_server_url()
     lines: list[str] = [f"/batch {task.description}"]
     if task.owned_files:
         lines.append(f"\nAffected paths: {', '.join(task.owned_files)}")
     lines.extend(
         (
             f"\nTask ID for completion reporting: {task.id}",
-            "\nAfter all batch units are complete, run:\n"
-            f"curl -sS -X POST {base}/tasks/{task.id}/complete "
-            f'-H "Content-Type: application/json" '
-            f'-d \'{{"result_summary": "Batch complete: {task.title}"}}\'',
+            "\nAfter all batch units are complete, mark the task done with the "
+            "first-class CLI (it reads the token and server port itself - no auth "
+            "header or JSON body to hand-quote):\n"
+            f'bernstein task complete {task.id} --summary "Batch complete: {task.title}"',
         )
     )
     return "\n".join(lines)
@@ -1095,19 +1095,12 @@ def _render_prompt(
     project_md = workdir / ".sdd" / "project.md"
     project_context = _read_cached(project_md)
 
-    # Completion instructions with concrete curl commands and retry logic.
-    # The server may briefly restart during hot-reload (evolve mode), so
-    # agents must retry on transient connection errors (--retry-connrefused).
-    # Do NOT use --retry-all-errors: it retries 4xx (e.g. 409 Conflict),
-    # causing infinite loops when task state has changed.
-    completion_base = _resolve_task_server_url()
-    completion_cmds = "\n".join(
-        f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
-        f"-X POST {completion_base}/tasks/{t.id}/complete "
-        f'-H "Content-Type: application/json" '
-        f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
-        for t in tasks
-    )
+    # Completion instructions use the first-class CLI (#3015), NOT a hand-built
+    # curl. The command resolves the token and server port itself and retries a
+    # completion only on connection refused (evolve-mode hot-reload), never on a
+    # 4xx like 409 - so agents never nest a Bearer header and a JSON body inside
+    # one shell string just to mark a task done.
+    completion_cmds = "\n".join(f'bernstein task complete {t.id} --summary "Completed: {t.title}"' for t in tasks)
     instructions = (
         f"Complete these tasks. When ALL are done:\n\n"
         f"**Step 1: Commit your changes**\n"
@@ -1115,10 +1108,9 @@ def _render_prompt(
         f'git add -A && git commit -m "feat: <brief summary of what you did>"\n'
         f"```\n\n"
         f"**Step 2: Mark tasks complete on the task server**\n"
-        f"```bash\n{completion_cmds}\n```\n\n"
-        f"**Important:** Only retry on connection refused / network errors. "
-        f"If the server returns HTTP 409 or any other 4xx error, do NOT retry - "
-        f"the task state has changed and retrying will not help. Just exit.\n\n"
+        f"```bash\n{completion_cmds}\n```\n"
+        f"The command exits non-zero and prints why if the server is unreachable "
+        f"or rejects the token; do not treat a task as done unless it succeeds.\n\n"
         f"**Step 3: Exit**"
     )
 

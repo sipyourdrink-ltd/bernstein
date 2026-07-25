@@ -36,6 +36,11 @@ _TEST_REQUIRED_PREFIXES = (
 DEFAULT_TEST_FILE_TIMEOUT_SECONDS = 300
 TEST_FILE_TIMEOUT_ENV = "BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS"
 
+# Directory discovered when no ``--test-dir`` is passed. The CI shards rely on
+# this default, and scripts/check_test_collection.py reads this constant to
+# derive what the shards collect, so the two cannot drift apart.
+DEFAULT_TEST_DIR = "tests/unit"
+
 # A heavily-parallel shard can transiently exhaust the OS thread table, which
 # surfaces as this CPython error rather than a genuine test failure. A single
 # serial retry distinguishes the environmental flake from a real regression.
@@ -417,7 +422,7 @@ def main() -> None:
         default=default_workers,
         help=f"Number of parallel workers (1=sequential, default={default_workers})",
     )
-    parser.add_argument("--test-dir", default="tests/unit", help="Test directory")
+    parser.add_argument("--test-dir", default=DEFAULT_TEST_DIR, help="Test directory")
     parser.add_argument(
         "--affected",
         nargs="?",

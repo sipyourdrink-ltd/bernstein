@@ -227,7 +227,14 @@ def server_get(path: str, *, raise_on_auth_error: bool = False) -> dict[str, Any
         return None
 
 
-def server_post(path: str, payload: dict[str, Any], *, raise_on_auth_error: bool = False) -> dict[str, Any] | None:
+def server_post(
+    path: str,
+    payload: dict[str, Any],
+    *,
+    raise_on_auth_error: bool = False,
+    connect_retries: int = 0,
+    retry_delay: float = 0.0,
+) -> dict[str, Any] | None:
     """POST to the task server.  Returns None if server is unreachable.
 
     Args:
@@ -236,21 +243,36 @@ def server_post(path: str, payload: dict[str, Any], *, raise_on_auth_error: bool
         raise_on_auth_error: When ``True``, a ``401``/``403`` from a reachable
             server raises :class:`ServerAuthError` instead of returning
             ``None``. Defaults to ``False`` to preserve the existing contract.
+        connect_retries: Extra attempts made **only** on a connection refused /
+            transient network error (``httpx.ConnectError``). The task server
+            can briefly restart during hot-reload (evolve mode), so a completion
+            POST fired in that window should retry rather than fail. A ``4xx``
+            such as ``409`` is never retried - the task state changed and a
+            retry would not help (mirrors ``--retry-connrefused``, never
+            ``--retry-all-errors``). Defaults to ``0`` (no retry).
+        retry_delay: Seconds to sleep between connect retries.
     """
-    try:
-        resp = httpx.post(f"{resolve_server_url()}{path}", json=payload, timeout=5.0, headers=auth_headers())
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
-    except httpx.ConnectError:
-        return None
-    except httpx.HTTPStatusError as exc:
-        if raise_on_auth_error and exc.response.status_code in (401, 403):
-            raise ServerAuthError(exc.response.status_code) from exc
-        console.print(f"[red]Server error:[/red] {exc}")
-        return None
-    except Exception as exc:
-        console.print(f"[red]Server error:[/red] {exc}")
-        return None
+    attempts = max(0, connect_retries) + 1
+    for attempt in range(attempts):
+        try:
+            resp = httpx.post(f"{resolve_server_url()}{path}", json=payload, timeout=5.0, headers=auth_headers())
+            resp.raise_for_status()
+            return resp.json()  # type: ignore[no-any-return]
+        except httpx.ConnectError:
+            if attempt < attempts - 1:
+                if retry_delay > 0:
+                    time.sleep(retry_delay)
+                continue
+            return None
+        except httpx.HTTPStatusError as exc:
+            if raise_on_auth_error and exc.response.status_code in (401, 403):
+                raise ServerAuthError(exc.response.status_code) from exc
+            console.print(f"[red]Server error:[/red] {exc}")
+            return None
+        except Exception as exc:
+            console.print(f"[red]Server error:[/red] {exc}")
+            return None
+    return None
 
 
 def require_server_reachable() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -13,6 +14,8 @@ from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
 from bernstein.adapters.plugin_sdk import AdapterCapability
 from bernstein.adapters.qwen import QwenAdapter
+from bernstein.core.defaults import QWEN_INSTALL_HINT
+from bernstein.core.orchestration.preflight import _CLI_INSTALL_HINT
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -526,6 +529,10 @@ class TestQwenAdapterName:
 
 
 class TestQwenSpawnMissingBinary:
+    def test_install_hint_uses_scoped_qwen_code_package(self) -> None:
+        assert QWEN_INSTALL_HINT == "npm install -g @qwen-code/qwen-code"
+        assert _CLI_INSTALL_HINT["qwen"] == QWEN_INSTALL_HINT
+
     def test_file_not_found_raises_runtime_error(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         settings = _default_settings()
@@ -535,7 +542,7 @@ class TestQwenSpawnMissingBinary:
                 side_effect=FileNotFoundError("No such file"),
             ),
             patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
-            pytest.raises(RuntimeError, match="not found in PATH"),
+            pytest.raises(RuntimeError, match=re.escape(QWEN_INSTALL_HINT)),
         ):
             adapter.spawn(
                 prompt="hello",

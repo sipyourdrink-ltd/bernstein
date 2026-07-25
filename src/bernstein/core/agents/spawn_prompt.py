@@ -1334,7 +1334,7 @@ _CACHEABLE_PROTOCOL_PREFIX = (
     "All agents follow the Bernstein agent protocol:\n"
     "- Work in an isolated git worktree on a branch named ``agent/<session_id>``.\n"
     "- Check signal files (WAKEUP, SHUTDOWN, COMMAND) every 60 seconds.\n"
-    "- Report progress via heartbeat and mark tasks complete with curl.\n"
+    "- Report progress via heartbeat and mark tasks complete with `bernstein task complete`.\n"
     "- Never push to main; always create a PR.\n"
 )
 

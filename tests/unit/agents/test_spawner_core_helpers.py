@@ -214,10 +214,12 @@ def test_render_batch_prompt_omits_paths_when_none(make_task: Any) -> None:
     assert "Affected paths" not in _render_batch_prompt(task)
 
 
-def test_render_batch_prompt_includes_completion_curl(make_task: Any) -> None:
-    """The prompt embeds the per-task completion endpoint."""
+def test_render_batch_prompt_uses_completion_cli(make_task: Any) -> None:
+    """The prompt marks the task done via the CLI, not a hand-built curl (#3015)."""
     task = make_task(id="T-77")
-    assert "/tasks/T-77/complete" in _render_batch_prompt(task)
+    prompt = _render_batch_prompt(task)
+    assert "bernstein task complete T-77" in prompt
+    assert "/tasks/T-77/complete" not in prompt
 
 
 # ---------------------------------------------------------------------------

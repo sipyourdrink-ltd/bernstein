@@ -14,6 +14,9 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 | macOS safety net | Nightly + push-on-sensitive | `.github/workflows/ci-macos-nightly.yml` |
 | Required check | Single `CI gate` job | `.github/workflows/ci.yml` |
 | Concurrency | PR-scoped cancel, push-scoped non-cancel | `.github/workflows/ci.yml` |
+| Collection completeness | Guard test, fails on an uncollected test file | `scripts/check_test_collection.py` |
+| Required-context presence | Operator command + advisory PR step | `scripts/check_required_contexts.py` |
+| Type-check scope | Blocking vs advisory scopes | `docs/operations/type-check-scope.md` |
 
 ## macOS matrix policy (closes #1468)
 
@@ -102,15 +105,37 @@ and still reports on `pull_request` and `merge_group`.
 
 ## Concurrency policy
 
-Per-PR runs share a group keyed by PR number, `cancel-in-progress`
-on. New pushes to a PR cancel older runs.
+| Event | Group key | `cancel-in-progress` |
+|-------|-----------|----------------------|
+| `pull_request` | PR number | true |
+| push to `main`, `merge_group`, `workflow_dispatch` | branch + `github.sha` | false |
 
-Push-to-main runs share a group keyed by branch, also
-`cancel-in-progress` on. A wave of rapid merges supersedes earlier
-runs so the macOS pool does not hold a queue.
+Per-PR runs share a group keyed by PR number, stable across pushes
+to the same PR. A new commit cancels the older run, so reviewers
+only ever wait on the latest push and we don't burn minutes on
+stale SHAs.
+
+Push-to-main runs are keyed per-SHA and never cancel. Every commit
+that lands on main runs its own full-matrix CI to completion, so
+the commit history carries a real per-commit pass/fail signal
+instead of a run of "cancelled" markers left behind when a burst of
+merges supersedes each other. A cancelled run on an already-merged
+commit reads as red forever and hides genuine failures behind
+noise; keying main by SHA removes that class of false red.
+
+Tradeoff: a rapid merge wave now keeps N full main runs alive
+instead of one. The branch-scoped policy this replaces was chosen
+after a May 2026 wave of 13 merges in 90 minutes saturated the
+runner queue. The load stays bounded because main pushes are merged
+PRs, far fewer than PR-branch pushes, and PR-branch pushes still
+cancel, so the saturation source stays capped. The durable fix for
+burst load is the merge queue: `ci.yml` already triggers on
+`merge_group`, which tests each batch once on the prospective
+merged SHA.
 
 Background: see issue #1273 for the wave-merge race and the
-PR-vs-push split.
+PR-vs-push split. The rationale is restated in the comment block
+above the `concurrency:` key in `.github/workflows/ci.yml`.
 
 ## Per-PR meta lanes
 
@@ -149,3 +174,80 @@ intentional-skip allow-lists. The aggregator understands:
 
 If you add a new conditionally-gated job, register it in the
 appropriate allow-list inside the `roll-up` step of `ci-gate`.
+
+## Gate evaluation coverage
+
+A green gate is only evidence of correctness when the gate evaluated the
+work. Two guards make the difference between "everything passed" and
+"nothing ran" visible.
+
+### Collection completeness
+
+`scripts/check_test_collection.py` walks `tests/` and reports any test
+file that no CI configuration collects. The collected set is derived from
+the workflows themselves, not restated:
+
+| Source | What it contributes |
+|---|---|
+| `run:` bodies in `.github/workflows/*.yml` | Every `pytest` / `run_tests.py` invocation |
+| `scripts/run_tests.py::DEFAULT_TEST_DIR` | The directory the shards discover when no `--test-dir` is given |
+| `scripts/test_impact.py::TEST_DIRS` | The universe a `--affected` run can select from |
+
+Rules the derivation applies:
+
+- a `run_tests.py` directory collects `test_*.py` only (its `rglob`
+  pattern), so a `*_test.py` file under a shard directory counts as
+  uncollected;
+- a `pytest` directory collects pytest's own `python_files` patterns;
+- a `-k`-narrowed invocation credits nothing (the expression, not the
+  path, decides what runs);
+- a `-m`-narrowed invocation credits the path (collection still walks it).
+
+`tests/unit/scripts/test_check_test_collection.py` runs the derivation in
+the shards, so adding a test file somewhere no shard reaches fails CI.
+A file that is deliberately not run in CI needs an entry, with a reason,
+in that script's `ALLOWLIST`; an entry that stops matching a file is
+reported as stale and must be removed.
+
+```bash
+uv run python scripts/check_test_collection.py          # report
+uv run python scripts/check_test_collection.py --json   # machine-readable
+```
+
+### Required-context presence
+
+A head commit that never produced a check-run for a required context
+shows the same empty failure list as a commit whose checks all passed.
+`scripts/check_required_contexts.py` names which of the two a commit is
+in. The required contexts are read from
+`.github/workflows/required-check-canary.yml`
+(`BRANCH_PROTECTION_CONTEXTS_JSON`) - the same in-tree source the
+scheduled branch-protection audit compares live settings against. The
+script reads check-runs only; it never touches branch protection.
+
+```bash
+uv run python scripts/check_required_contexts.py --pr 1234
+uv run python scripts/check_required_contexts.py --sha "$GITHUB_SHA" --json
+```
+
+| State | Meaning |
+|---|---|
+| `missing` | No check-run with that name on the commit - the context never ran |
+| `pending` | Present, not finished |
+| `failing` | Completed as failure / timed_out / cancelled / action_required |
+| `skipped` | Completed as skipped |
+| `passing` | Completed as success / neutral |
+
+Exit status is non-zero only for `missing`; a red required check is the
+merge gate's business, an absent one is this script's. The same command
+runs as an advisory step in `pr-observability-summary.yml` (opt-in via
+the `deep-review` label or `workflow_dispatch`) and reports into the job
+summary without gating.
+
+Reach for it when a PR reads BLOCKED with no visible failures: either a
+required context is `missing`, or it is present and `failing`.
+
+### Type-check scope
+
+Which paths each type job covers, and what the `|| true` runs report,
+are documented in `docs/operations/type-check-scope.md`.

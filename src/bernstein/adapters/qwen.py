@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
+from bernstein.core.defaults import QWEN_INSTALL_HINT
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
@@ -230,7 +231,7 @@ class QwenAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError("qwen not found in PATH. Install it with: npm install -g qwen-code") from exc
+                raise RuntimeError(f"qwen not found in PATH. Install it with: {QWEN_INSTALL_HINT}") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing qwen: {exc}") from exc
 
