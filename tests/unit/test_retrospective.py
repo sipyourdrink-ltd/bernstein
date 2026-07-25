@@ -9,16 +9,23 @@ from typing import TYPE_CHECKING
 from bernstein.core.metrics import MetricsCollector
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.retrospective import (
+    EXIT_RUN_HEALTHY,
+    EXIT_RUN_UNHEALTHY,
     TERMINATOR_AGENT_COMPLETED,
     TERMINATOR_AGENT_REPORTED_FAILURE,
     TERMINATOR_AUTO_COMPLETED_AFTER_DEATH,
+    TERMINATOR_INCOMPLETE_DECLARED,
     TERMINATOR_JANITOR_REJECTED,
     TERMINATOR_WATCHDOG_KILLED,
     _build_recommendations,
     _fmt_seconds,
     classify_task_terminator,
     compute_run_health,
+    count_incomplete_declared,
+    count_never_terminal,
     generate_retrospective,
+    run_health_exit_code,
+    run_healthy_from_status_counts,
 )
 
 if TYPE_CHECKING:
@@ -212,6 +219,55 @@ class TestGenerateRetrospective:
         content = (tmp_path / "runtime" / "retrospective.md").read_text()
         assert "### By role" in content
         assert "qa" in content
+
+    def test_incomplete_declared_task_reports_unhealthy(self, tmp_path: Path) -> None:
+        """Issue #3010 end-to-end: an empty done/failed run whose only declared
+        task is still open/claimed at shutdown must render UNHEALTHY, not the
+        old '0/0 ... HEALTHY'. The full task-status histogram carries the
+        stuck task even when done_tasks/failed_tasks are empty."""
+        collector = MetricsCollector(metrics_dir=tmp_path / "metrics")
+        generate_retrospective(
+            done_tasks=[],
+            failed_tasks=[],
+            collector=collector,
+            runtime_dir=tmp_path / "runtime",
+            run_start_ts=time.time() - 30,
+            full_status_counts={"open": 1},
+        )
+        content = (tmp_path / "runtime" / "retrospective.md").read_text()
+        assert "- **Verdict:** UNHEALTHY" in content
+        assert "- **Verdict:** HEALTHY" not in content
+
+        assert "Declared task unfinished" in content
+
+    def test_stuck_task_is_not_double_counted_across_sections(self, tmp_path: Path) -> None:
+        """One reaped no-output task must be counted ONCE.
+
+        The collector sees it as unresolved (started, never completed) and the
+        status histogram sees it as open, so summing the two signals reported
+        "2/2 task terminations were NOT genuine" while the Overview said
+        "0 done / 1 total" -- the same task counted twice, and the two sections
+        contradicting each other.
+        """
+        collector = MetricsCollector(metrics_dir=tmp_path / "metrics")
+        # Task started via the collector but never completed -> unresolved.
+        collector.start_task("T-stuck", "manager", "sonnet", "qwen")
+        generate_retrospective(
+            done_tasks=[],
+            failed_tasks=[],
+            collector=collector,
+            runtime_dir=tmp_path / "runtime",
+            run_start_ts=time.time() - 30,
+            # ...and still open server-side -> incomplete-declared. Same task.
+            full_status_counts={"open": 1},
+        )
+        content = (tmp_path / "runtime" / "retrospective.md").read_text()
+
+        assert "- **Verdict:** UNHEALTHY" in content
+        # Overview and Run Health must agree on the denominator: 1 task, not 2.
+        assert "0 done / 1 total" in content
+        assert "1/1 task terminations were NOT genuine" in content
+        assert "2/2 task terminations were NOT genuine" not in content
 
     def test_duration_stats_from_metrics(self, tmp_path: Path) -> None:
         collector = _collector_with_tasks(
@@ -433,6 +489,93 @@ class TestComputeRunHealth:
     def test_unresolved_in_metrics_forces_unhealthy(self) -> None:
         healthy, _counts = compute_run_health([_make_task(id="T-ok", status="done")], n_unresolved=1)
         assert healthy is False
+
+    def test_incomplete_declared_task_forces_unhealthy_on_empty_run(self) -> None:
+        """Issue #3010: a single-task run whose only agent produced zero model
+        output and was reaped left its one task open/claimed -- neither done nor
+        failed -- so done+failed was empty. A 0/0 run with a declared task that
+        never finished must NOT be HEALTHY, and the reap must show in the tally
+        rather than being silently dropped."""
+        healthy, counts = compute_run_health([], n_incomplete_declared=1)
+        assert healthy is False
+        assert counts.get(TERMINATOR_INCOMPLETE_DECLARED, 0) == 1
+
+    def test_incomplete_declared_alongside_completed_still_unhealthy(self) -> None:
+        healthy, counts = compute_run_health([_make_task(id="T-ok", status="done")], n_incomplete_declared=1)
+        assert healthy is False
+        assert counts[TERMINATOR_AGENT_COMPLETED] == 1
+        assert counts[TERMINATOR_INCOMPLETE_DECLARED] == 1
+
+    def test_zero_incomplete_declared_preserves_empty_counts(self) -> None:
+        """The incomplete-declared key must not leak into the empty-run tally."""
+        healthy, counts = compute_run_health([], n_incomplete_declared=0)
+        assert healthy is True
+        assert counts == {}
+
+
+class TestCountIncompleteDeclared:
+    def test_none_histogram_is_zero(self) -> None:
+        assert count_incomplete_declared(None) == 0
+
+    def test_counts_open_claimed_in_progress_orphaned(self) -> None:
+        histogram = {"open": 1, "claimed": 2, "in_progress": 1, "orphaned": 1, "done": 3, "failed": 1}
+        assert count_incomplete_declared(histogram) == 5
+
+    def test_excludes_terminal_and_parking_states(self) -> None:
+        histogram = {"done": 2, "failed": 1, "refused": 1, "planned": 1, "suspended": 1, "pending_approval": 1}
+        assert count_incomplete_declared(histogram) == 0
+
+
+class TestCountNeverTerminal:
+    """The two never-terminated signals describe one population, so they are
+    combined by max() -- summing counted the same reaped task twice and made
+    the Run Health totals disagree with the Overview."""
+
+    def test_overlapping_signals_are_not_summed(self) -> None:
+        # The #3010 repro: ONE task, seen by both the collector (unresolved)
+        # and the status histogram (open) -> it must count once, not twice.
+        assert count_never_terminal(1, 1) == 1
+
+    def test_takes_the_larger_estimate(self) -> None:
+        assert count_never_terminal(3, 1) == 3
+        assert count_never_terminal(1, 4) == 4
+
+    def test_zero_when_neither_signal_fired(self) -> None:
+        assert count_never_terminal(0, 0) == 0
+
+
+class TestRunHealthExitCode:
+    def test_healthy_exits_zero(self) -> None:
+        assert run_health_exit_code(healthy=True) == EXIT_RUN_HEALTHY == 0
+
+    def test_unhealthy_exits_distinct_nonzero(self) -> None:
+        code = run_health_exit_code(healthy=False)
+        assert code == EXIT_RUN_UNHEALTHY
+        assert code != 0
+
+    def test_unhealthy_code_does_not_collide_with_cli_error_codes(self) -> None:
+        """The outcome signal is only machine-readable if it cannot be confused
+        with a CLI error: click raises UsageError/NoSuchOption with exit code 2,
+        run_bootstrap raises SystemExit(2) on seed/config failures, and 1 is the
+        generic error code."""
+        assert EXIT_RUN_UNHEALTHY not in (0, 1, 2)
+
+
+class TestRunHealthyFromStatusCounts:
+    def test_none_or_empty_is_healthy(self) -> None:
+        assert run_healthy_from_status_counts(None) is True
+        assert run_healthy_from_status_counts({}) is True
+
+    def test_all_done_is_healthy(self) -> None:
+        assert run_healthy_from_status_counts({"total": 3, "done": 3}) is True
+
+    def test_stuck_declared_task_is_unhealthy(self) -> None:
+        # Issue #3010 repro: total 1, done 0, failed 0, but the one task is
+        # still open -> the run did not meet its goal.
+        assert run_healthy_from_status_counts({"total": 1, "open": 1}) is False
+
+    def test_failed_task_is_unhealthy(self) -> None:
+        assert run_healthy_from_status_counts({"total": 1, "failed": 1}) is False
 
 
 class TestRunHealthInRecommendations:

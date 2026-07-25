@@ -91,6 +91,7 @@ from bernstein.core.models import (
     AbortReason,
     AgentBackend,
     AgentSession,
+    IsolationDowngrade,
     IsolationMode,
     ModelConfig,
     Task,
@@ -1518,6 +1519,11 @@ class AgentSpawner:
         self._runtime_bridge = runtime_bridge
         self._sandbox = sandbox if sandbox is not None and sandbox.enabled else None
         self._sandbox_managers: dict[str, ContainerManager] = {}
+        # Issue #3014: requested-vs-actual isolation downgrades recorded when a
+        # container isolation request cannot be honoured and the spawn falls
+        # back to a weaker boundary. The run summary drains this so the
+        # downgrade is visible in the run outcome, not just a log WARNING.
+        self._isolation_downgrades: list[IsolationDowngrade] = []
         # oai-002 phase 1: optional SandboxBackend-issued session.
         # Phase 2 (oai-002b) routes adapter exec through the session
         # via :mod:`spawner_sandbox_session` when the backend is not
@@ -4883,7 +4889,17 @@ class AgentSpawner:
                 session_id,
                 exc,
             )
-            session.isolation = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+            actual = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+            session.isolation = actual
+            # Issue #3014: the operator configured container isolation and got
+            # a weaker boundary. Record the downgrade so it lands in the run
+            # summary and the audit chain instead of only this WARNING.
+            self._record_isolation_downgrade(
+                session_id=session_id,
+                requested=IsolationMode.CONTAINER.value,
+                actual=actual,
+                reason=str(exc),
+            )
             return adapter.spawn(
                 prompt=prompt,
                 workdir=spawn_cwd,
@@ -4983,7 +4999,18 @@ class AgentSpawner:
                     session_id,
                     exc,
                 )
-                session.isolation = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+                actual = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+                session.isolation = actual
+                # Issue #3014: a non-explicit container isolation request that
+                # could not be provisioned degrades gracefully (the explicit
+                # --sandbox path above refuses instead). Surface and audit the
+                # downgrade so it is visible in the run outcome.
+                self._record_isolation_downgrade(
+                    session_id=session_id,
+                    requested=IsolationMode.CONTAINER.value,
+                    actual=actual,
+                    reason=str(exc),
+                )
                 return adapter.spawn(
                     prompt=prompt,
                     workdir=spawn_cwd,
@@ -5311,6 +5338,64 @@ class AgentSpawner:
                 sbx_session.session_id,
                 port,
             )
+
+    @property
+    def isolation_downgrades(self) -> list[IsolationDowngrade]:
+        """Return the isolation downgrades recorded during this run.
+
+        Issue #3014: each entry is a spawn whose requested container isolation
+        could not be provided and fell back to a weaker boundary. The
+        orchestrator drains this into the end-of-run summary so an operator who
+        asked for stronger isolation sees, at run level, that they got a weaker
+        one.
+        """
+        return list(self._isolation_downgrades)
+
+    def _record_isolation_downgrade(
+        self,
+        *,
+        session_id: str,
+        requested: str,
+        actual: str,
+        reason: str,
+    ) -> None:
+        """Record - and audit - a requested-vs-actual isolation downgrade.
+
+        Issue #3014: a container isolation request that cannot be honoured used
+        to leave only a log WARNING, so an operator who configured ``sandbox:
+        docker`` silently ran on a weaker boundary. This makes the downgrade a
+        first-class, surfaced decision: it
+        is appended to :attr:`_isolation_downgrades` for the run summary and
+        written to the HMAC-chained audit log. Audit emission is best-effort and
+        never blocks the spawn (see :meth:`_emit_sandbox_audit`).
+
+        Args:
+            session_id: Agent session whose isolation was downgraded.
+            requested: Requested isolation mode (an :class:`IsolationMode`
+                value, e.g. ``"container"``).
+            actual: Isolation mode actually provided (e.g. ``"worktree"``).
+            reason: Human-readable cause (typically the runtime error).
+        """
+        self._isolation_downgrades.append(
+            IsolationDowngrade(
+                session_id=session_id,
+                requested=requested,
+                actual=actual,
+                reason=reason,
+            )
+        )
+        from bernstein.core.security.audit import SANDBOX_ISOLATION_DOWNGRADE
+
+        self._emit_sandbox_audit(
+            SANDBOX_ISOLATION_DOWNGRADE,
+            resource_id=session_id,
+            details={
+                "session_id": session_id,
+                "requested_isolation": requested,
+                "actual_isolation": actual,
+                "reason": reason,
+            },
+        )
 
     def _emit_sandbox_audit(self, event_type: str, *, resource_id: str, details: dict[str, Any]) -> None:
         """Append a sandbox lifecycle event to the HMAC-chained audit log.

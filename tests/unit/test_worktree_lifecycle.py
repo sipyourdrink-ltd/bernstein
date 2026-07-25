@@ -31,6 +31,11 @@ def _fail(stderr: str = "git error", stdout: str = "") -> MagicMock:
     return m
 
 
+def _argv_list(mock_run: MagicMock) -> list[list[str]]:
+    """Return the argv of every recorded ``subprocess.run`` call, in order."""
+    return [c.args[0] for c in mock_run.call_args_list]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -61,24 +66,46 @@ class TestCreate:
         assert result == expected
 
     def test_calls_git_worktree_add(self, mgr: WorktreeManager, repo_root: Path) -> None:
+        add_argv = [
+            "git",
+            "worktree",
+            "add",
+            str(repo_root / ".sdd/worktrees/sess1"),
+            "-b",
+            "agent/sess1",
+        ]
+
         with patch("subprocess.run", return_value=_ok()) as mock_run:
             mgr.create("sess1")
 
-        mock_run.assert_called_once_with(
+        # The HEAD-validity pre-check runs first, so a repository left with a
+        # broken HEAD by a crashed agent is reported as such instead of
+        # surfacing as an opaque ``git worktree add`` failure. ``assert_has_calls``
+        # asserts the relative order of the two.
+        mock_run.assert_has_calls(
             [
-                "git",
-                "worktree",
-                "add",
-                str(repo_root / ".sdd/worktrees/sess1"),
-                "-b",
-                "agent/sess1",
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            input=None,
+                call(
+                    ["git", "rev-parse", "--verify", "HEAD"],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=10,
+                ),
+                call(
+                    add_argv,
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                    input=None,
+                ),
+            ]
         )
+        assert _argv_list(mock_run).count(add_argv) == 1
 
     def test_creates_base_directory(self, mgr: WorktreeManager, repo_root: Path) -> None:
         with patch("subprocess.run", return_value=_ok()):
@@ -119,6 +146,11 @@ class TestCleanup:
         with patch("subprocess.run", return_value=_ok()) as mock_run:
             mgr.cleanup("sess1")
 
+        # The orphan-commit count sits between the two on purpose: it is what
+        # lets cleanup rescue committed-but-unmerged agent work to the
+        # graveyard before the force delete makes it unreachable. Asserting it
+        # here in order means a regression that drops the check, or moves it
+        # after ``branch -D``, fails this test.
         expected_calls = [
             call(
                 [
@@ -131,19 +163,41 @@ class TestCleanup:
                 cwd=repo_root,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
                 input=None,
+            ),
+            call(
+                [
+                    "git",
+                    "rev-list",
+                    "agent/sess1",
+                    "--not",
+                    "--exclude=agent/sess1",
+                    "--branches",
+                    "--count",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
             ),
             call(
                 ["git", "branch", "-D", "agent/sess1"],
                 cwd=repo_root,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
                 input=None,
             ),
         ]
         mock_run.assert_has_calls(expected_calls)
+        assert _argv_list(mock_run).count(["git", "branch", "-D", "agent/sess1"]) == 1
 
     def test_does_not_raise_on_worktree_remove_failure(self, mgr: WorktreeManager) -> None:
         """cleanup() is best-effort - individual git failures should not propagate."""
@@ -221,8 +275,33 @@ class TestRoundTrip:
             assert path == repo_root / ".sdd/worktrees/trip1"
             mgr.cleanup("trip1")
 
-        # 3 subprocess calls: worktree add, worktree remove, branch -D
-        assert mock_run.call_count == 3
+        argv = _argv_list(mock_run)
+        worktree_path = repo_root / ".sdd/worktrees/trip1"
+
+        # create(): HEAD-validity pre-check, then the worktree add.
+        assert argv[:2] == [
+            ["git", "rev-parse", "--verify", "HEAD"],
+            ["git", "worktree", "add", str(worktree_path), "-b", "agent/trip1"],
+        ]
+
+        # cleanup(): remove the worktree, count the commits the branch delete
+        # would orphan, then delete the branch. Anchored to the tail rather
+        # than to a total call count so that adding a further worktree
+        # provisioning step to create() does not make this assertion lie about
+        # the teardown order it exists to protect.
+        assert argv[-3:] == [
+            ["git", "worktree", "remove", "--force", str(worktree_path)],
+            [
+                "git",
+                "rev-list",
+                "agent/trip1",
+                "--not",
+                "--exclude=agent/trip1",
+                "--branches",
+                "--count",
+            ],
+            ["git", "branch", "-D", "agent/trip1"],
+        ]
 
 
 # ---------------------------------------------------------------------------

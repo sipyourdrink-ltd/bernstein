@@ -3,7 +3,7 @@
 When an agent's cross-model review verdicts decline (N consecutive request_changes),
 checkpoint progress, send a graceful shutdown, and arrange for the replacement agent
 to receive a summarised context encoding what was already tried.  This turns context
-window exhaustion - Devin's main weakness - into a Bernstein strength.
+window exhaustion from a run-ending failure into a recoverable checkpoint.
 
 Lifecycle
 ---------

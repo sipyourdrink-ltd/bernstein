@@ -712,3 +712,197 @@ class TestProxyAuthHeader:
 
         headers = mock_client.post.call_args.kwargs.get("headers") or {}
         assert headers.get("Authorization") == "Bearer post-tok"
+
+
+# ---------------------------------------------------------------------------
+# WWW-Authenticate challenge on 401 (issue #3075)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _oauth_issuer(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Configure an OAuth issuer for the duration of a test."""
+    issuer = "https://idp.example.com"
+    monkeypatch.setenv("BERNSTEIN_MCP_OAUTH_ISSUER", issuer)
+    monkeypatch.delenv("BERNSTEIN_MCP_OAUTH_SCOPES", raising=False)
+    return issuer
+
+
+@pytest.fixture
+def _no_oauth_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BERNSTEIN_MCP_OAUTH_ISSUER", raising=False)
+    monkeypatch.delenv("BERNSTEIN_MCP_OAUTH_SCOPES", raising=False)
+
+
+_PROXY_HEADERS = {"host": "bernstein.example.com", "x-forwarded-proto": "https"}
+
+
+def _www_authenticate(headers: dict[str, str]) -> str | None:
+    """Return the WWW-Authenticate value regardless of header casing."""
+    for key, value in headers.items():
+        if key.lower() == "www-authenticate":
+            return value
+    return None
+
+
+class TestUnauthorizedChallenge:
+    """A 401 with no challenge leaves the served protected-resource metadata
+    undiscoverable: the client has no path from the refusal to the document."""
+
+    @pytest.mark.anyio
+    async def test_401_carries_resource_metadata_challenge(
+        self,
+        bearer_transport: StreamableHTTPTransport,
+        _oauth_issuer: str,
+    ) -> None:
+        status, headers, _ = await bearer_transport.handle_request(
+            "POST",
+            "/mcp",
+            dict(_PROXY_HEADERS),
+            _jsonrpc_request("ping"),
+        )
+        assert status == 401
+        assert _www_authenticate(headers) == (
+            'Bearer resource_metadata="https://bernstein.example.com/.well-known/oauth-protected-resource"'
+        )
+
+    @pytest.mark.anyio
+    async def test_challenge_url_resolves_to_the_served_document(
+        self,
+        bearer_transport: StreamableHTTPTransport,
+        _oauth_issuer: str,
+    ) -> None:
+        """The advertised URL must fetch the metadata the transport serves."""
+        from urllib.parse import urlsplit
+
+        _, headers, _ = await bearer_transport.handle_request(
+            "POST",
+            "/mcp",
+            dict(_PROXY_HEADERS),
+            _jsonrpc_request("ping"),
+        )
+        challenge = _www_authenticate(headers)
+        assert challenge is not None
+        advertised = challenge.split('resource_metadata="', 1)[1].rstrip('"')
+        split = urlsplit(advertised)
+        assert split.scheme == "https"
+        assert split.netloc == "bernstein.example.com"
+
+        meta_status, _, meta_body = await bearer_transport.handle_request(
+            "GET",
+            split.path,
+            dict(_PROXY_HEADERS),
+            b"",
+        )
+        assert meta_status == 200
+        payload = json.loads(meta_body)
+        assert payload["resource"] == "https://bernstein.example.com/mcp"
+        assert payload["authorization_servers"] == [_oauth_issuer]
+
+    @pytest.mark.anyio
+    async def test_no_challenge_without_issuer(
+        self,
+        bearer_transport: StreamableHTTPTransport,
+        _no_oauth_issuer: None,
+    ) -> None:
+        """Anonymous and static-bearer deployments are unchanged."""
+        status, headers, body = await bearer_transport.handle_request(
+            "POST",
+            "/mcp",
+            dict(_PROXY_HEADERS),
+            _jsonrpc_request("ping"),
+        )
+        assert status == 401
+        assert _www_authenticate(headers) is None
+        assert body == b'{"error":"unauthorized"}'
+
+    @pytest.mark.anyio
+    async def test_401_body_is_unchanged_with_issuer(
+        self,
+        bearer_transport: StreamableHTTPTransport,
+        _oauth_issuer: str,
+    ) -> None:
+        status, _, body = await bearer_transport.handle_request(
+            "POST",
+            "/mcp",
+            dict(_PROXY_HEADERS),
+            _jsonrpc_request("ping"),
+        )
+        assert status == 401
+        assert body == b'{"error":"unauthorized"}'
+
+    @pytest.mark.anyio
+    async def test_challenge_carries_no_tenant_token_or_user_identifier(
+        self,
+        _oauth_issuer: str,
+        _clear_token_env: None,
+    ) -> None:
+        """The challenge is a public pointer, so it must name nothing private."""
+        cfg = RemoteMCPConfig(path="/mcp", auth_type="bearer", auth_token="super-secret-token")
+        transport = StreamableHTTPTransport(config=cfg, server_url="https://test:8052")
+        _, headers, _ = await transport.handle_request(
+            "POST",
+            "/mcp",
+            {
+                "host": "bernstein.example.com",
+                "x-forwarded-proto": "https",
+                "authorization": "Bearer presented-token-value",
+                "x-bernstein-tenant": "tenant-4711",
+                "x-bernstein-user": "operator-jane",
+            },
+            _jsonrpc_request("ping"),
+        )
+        challenge = _www_authenticate(headers)
+        assert challenge is not None
+        for secret in (
+            "super-secret-token",
+            "presented-token-value",
+            "tenant-4711",
+            "operator-jane",
+        ):
+            assert secret not in challenge
+
+    @pytest.mark.anyio
+    async def test_challenge_rejects_header_injection_via_host(
+        self,
+        bearer_transport: StreamableHTTPTransport,
+        _oauth_issuer: str,
+    ) -> None:
+        """The Host header is client-supplied; it must not break the value."""
+        _, headers, _ = await bearer_transport.handle_request(
+            "POST",
+            "/mcp",
+            {"host": 'evil"\r\nx-injected: 1', "x-forwarded-proto": "https"},
+            _jsonrpc_request("ping"),
+        )
+        challenge = _www_authenticate(headers)
+        assert challenge is not None
+        assert "\r" not in challenge
+        assert "\n" not in challenge
+        assert challenge.count('"') == 2
+
+    def test_every_401_goes_through_the_challenge_helper(self) -> None:
+        """Guard: a future 401 added without the helper would silently drop the
+        challenge, so no other site in the module may return a bare 401."""
+        source = textwrap.dedent(inspect.getsource(remote_transport_module))
+        tree = ast.parse(source)
+        builder = "_unauthorized_response"
+        exempt: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == builder:
+                exempt.update(inner.lineno for inner in ast.walk(node) if isinstance(inner, ast.Return))
+        offenders: list[int] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Tuple):
+                continue
+            elts = node.value.elts
+            if not elts:
+                continue
+            first = elts[0]
+            if isinstance(first, ast.Constant) and first.value == 401 and node.lineno not in exempt:
+                offenders.append(node.lineno)
+        assert exempt, f"{builder} not found; the guard below would pass vacuously"
+        assert offenders == [], (
+            f"401 returned as a literal tuple at lines {offenders}; build it with "
+            "_unauthorized_response so the WWW-Authenticate challenge is always attached"
+        )

@@ -22,6 +22,7 @@ from bernstein.cli.helpers import (
 from bernstein.cli.run import render_run_summary_from_dict
 from bernstein.cli.ui import make_console
 from bernstein.core.cost import estimate_run_cost
+from bernstein.core.cost.model_prices import is_free_route
 from bernstein.core.cost.preflight import CostBand, compute_band, format_band
 from bernstein.core.plan_loader import load_plan_from_yaml
 from bernstein.core.runtime_state import directory_size_bytes
@@ -178,6 +179,55 @@ def _show_run_summary() -> None:
     _surface_merge_refusals(Path.cwd(), since_ts=_CLI_RUN_EPOCH, console=con)
 
 
+def _exit_nonzero_on_unhealthy_run(status_payload: object) -> None:
+    """Set ``bernstein run``'s exit code from the final run-health verdict.
+
+    A run that completes but did not honestly meet its goal -- a task failed,
+    or a declared task never terminated (e.g. the manager agent produced no
+    model output and was reaped) -- must not exit 0, so an operator scripting
+    ``bernstein run && deploy`` never deploys on a run that accomplished
+    nothing (issue #3010).
+
+    The verdict is applied ONLY when the run actually reached a terminal state.
+    ``_wait_for_run_completion`` returns a payload for both terminal states --
+    quiescence, and "orchestrator gone while declared tasks are still
+    non-terminal" (the issue #3010 shape) -- and ``None`` for every "no
+    verdict" case (deadline expired with the run still in flight, or the
+    server unreachable). This function maps ``None`` to exit 0 rather than
+    guessing: a long-running-but-healthy run must never be reported as a
+    failure just for outliving the CLI's wait deadline.
+
+    Note that the discriminator between "ended with work unfinished" and
+    "still starting up" is orchestrator liveness, not the task counts -- both
+    show work outstanding. See ``_wait_for_run_completion``.
+
+    The counts are read from the full per-status histogram when the wait
+    attached one (``task_counts``), because a ``/status`` payload has no bucket
+    for ``in_progress`` or ``orphaned`` -- a run left with a task stuck in
+    either would otherwise read as "nothing outstanding" and exit 0.
+    """
+    if not isinstance(status_payload, dict):
+        return
+    from bernstein.core.quality.retrospective import (
+        run_health_exit_code,
+        run_healthy_from_status_counts,
+    )
+
+    counts: dict[str, object] = status_payload
+    for key in ("task_counts", "summary"):
+        candidate = status_payload.get(key)
+        if isinstance(candidate, dict):
+            counts = candidate
+            break
+    if run_healthy_from_status_counts(counts):  # type: ignore[arg-type]
+        return
+    console.print(
+        "[red]Run did not meet its goal[/red] -- a declared task never completed or a task "
+        "failed. See .sdd/runtime/retrospective.md for the run-health breakdown."
+    )
+    raise SystemExit(run_health_exit_code(healthy=False))
+
+
 def _drain_completed_backlog_files() -> None:
     """Move backlog files for terminal tasks from ``claimed/`` to ``closed/``.
 
@@ -221,6 +271,10 @@ class RunCostEstimate:
         high_usd: Legacy single-point high estimate (kept for back-compat).
         band: Optional calibrated p50/p90 band. Populated for new callers;
             legacy callers can leave it unset.
+        free_route: True when the resolved model is a zero-cost route (a
+            ``:free`` id or a model the run's own metering prices at $0). The
+            estimate is then a hard $0 rather than a phantom fixed rate
+            (issue #3013).
     """
 
     task_count: int | None
@@ -228,6 +282,7 @@ class RunCostEstimate:
     low_usd: float
     high_usd: float
     band: CostBand | None = None
+    free_route: bool = False
 
 
 def _estimate_task_count(workdir: Path, plan_file: Path | None, goal: str | None) -> int | None:
@@ -372,7 +427,15 @@ def _estimate_run_preview(
     billable_count = est_task_count if est_task_count is not None else 1
     est_model, est_cli, est_role = _resolve_model_and_cli(seed_file, model_override, seed=seed)
 
-    if est_cli in _FREE_ADAPTERS:
+    # A run is free either because the adapter runs models locally at $0
+    # (ollama/qwen/gemini) or because the *resolved model* is a zero-cost
+    # route -- a ``:free`` id or a model the run's own metering
+    # (``price_model_usage``) prices at $0.  Keying the estimate on the
+    # resolved model, not a fixed Anthropic rate, keeps the pre-run banner
+    # and the final ``total_cost`` drawn from the same pricing source, so a
+    # free route is never quoted a phantom estimate (issue #3013).
+    free_route = est_cli in _FREE_ADAPTERS or is_free_route(est_model)
+    if free_route:
         low_usd, high_usd = 0.0, 0.0
         band = CostBand(
             p50=0.0,
@@ -399,6 +462,7 @@ def _estimate_run_preview(
         low_usd=low_usd,
         high_usd=high_usd,
         band=band,
+        free_route=free_route,
     )
 
 
@@ -440,12 +504,24 @@ def _emit_preflight_runtime_warnings(
             basis = f"based on {estimate.task_count} task(s) at {estimate.model} pricing"
         else:
             basis = f"per task at {estimate.model} pricing, task count not yet planned"
+        if estimate.free_route:
+            # A zero-cost route (:free / unpriced) must not be quoted a
+            # phantom rate: the real run meters it at $0 (issue #3013).
+            if estimate.task_count is not None:
+                basis = f"free route - no cost ({estimate.model}), based on {estimate.task_count} task(s)"
+            else:
+                basis = f"free route - no cost ({estimate.model}), task count not yet planned"
         if band is not None:
             console.print(f"[bold yellow]{format_band(band)}[/bold yellow]")
-            samples_note = (
-                f"{band.samples} historical sample(s)" if not band.cold_start else "no history yet - using heuristic"
-            )
-            console.print(f"[dim]{basis}, {samples_note}[/dim]")
+            if estimate.free_route:
+                console.print(f"[dim]{basis}[/dim]")
+            else:
+                samples_note = (
+                    f"{band.samples} historical sample(s)"
+                    if not band.cold_start
+                    else "no history yet - using heuristic"
+                )
+                console.print(f"[dim]{basis}, {samples_note}[/dim]")
         else:
             console.print(
                 f"[bold yellow]Estimated cost:[/bold yellow] ${estimate.low_usd:.2f}-${estimate.high_usd:.2f} {basis}"
@@ -543,15 +619,43 @@ def _finalize_run_output(*, quiet: bool) -> None:
     pre-drain state, and (b) it keeps cleanup correct even when the renderer
     raises ``SystemExit`` or ``KeyboardInterrupt``.
 
+    Exit-code mapping applies on EVERY branch, not only ``--quiet``. Nothing
+    turns ``--quiet`` on automatically and no documented workflow passes it, so
+    binding the outcome signal to that one flag left the ordinary invocations
+    -- the dashboard, the Rich fallback, and the non-interactive detach --
+    exiting 0 on a run that did not meet its goal (issue #3010, whose own
+    reproduction went down the non-interactive branch).
+
+    What each branch can honestly report differs, because they observe
+    different things:
+
+    * ``--quiet`` waits for a terminal state, so it reports both of them:
+      quiescence, and an orchestrator confirmed gone with work outstanding.
+    * The other three do not wait. They check ONCE, after their own work is
+      done, and report only an already-quiescent run. The "orchestrator gone"
+      verdict is an inference from absence that needs a confirmation window
+      across several observations (see ``_wait_for_run_completion``), which a
+      single poll cannot supply.
+
+    The non-interactive branch in particular detaches by design after roughly
+    one spawner tick, so its check usually finds the run still in flight and
+    changes nothing. It fires when a run reached a terminal state inside that
+    window, which is the fast-failure case.
+
     Args:
         quiet: When True, wait for quiescence and print only the terminal summary.
     """
-    from bernstein.cli.run_bootstrap import _wait_for_run_completion, exec_restart
+    from bernstein.cli.run_bootstrap import (
+        _poll_quiescent_status,
+        _wait_for_run_completion,
+        exec_restart,
+    )
 
     try:
         if quiet:
-            _wait_for_run_completion()
+            final_status = _wait_for_run_completion()
             _show_run_summary()
+            _exit_nonzero_on_unhealthy_run(final_status)
             return
 
         from bernstein.cli.terminal_caps import detect_capabilities
@@ -572,9 +676,13 @@ def _finalize_run_output(*, quiet: bool) -> None:
             except Exception:
                 # Textual failed at runtime -- fall through to fallback
                 _try_fallback_display()
+            # The operator watched the run to its end in the dashboard, so a
+            # finished run is the common case here, not the edge one.
+            _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         elif caps.is_tty:
             # TTY but Textual not supported -- use Rich fallback (TUI-003)
             _try_fallback_display()
+            _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         else:
             # Non-interactive output detaches from the run immediately, so a
             # spawn refusal in the background orchestrator would never reach
@@ -588,6 +696,9 @@ def _finalize_run_output(*, quiet: bool) -> None:
                 console.print(f"[red]Run failed before any work started:[/red] {reason}")
                 console.print("Details: run 'bernstein status' or read .sdd/runtime/retrospective.md")
                 raise SystemExit(1)
+            # A run that already reached a terminal state within the detach
+            # window must not report success on its way out.
+            _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
             console.print("Run continues in the background (check: bernstein status).")
     finally:
         _drain_completed_backlog_files()

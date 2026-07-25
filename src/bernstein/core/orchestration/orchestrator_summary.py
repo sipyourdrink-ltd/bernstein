@@ -37,6 +37,8 @@ def generate_run_summary(
     orch: Any,
     done_tasks: list[Task],
     failed_tasks: list[Task],
+    *,
+    full_status_counts: dict[str, int] | None = None,
 ) -> None:
     """Write a run completion summary to .sdd/runtime/summary.md.
 
@@ -44,6 +46,10 @@ def generate_run_summary(
         orch: The orchestrator instance.
         done_tasks: Tasks that completed successfully.
         failed_tasks: Tasks that failed.
+        full_status_counts: Per-status task histogram at this moment. Without
+            it the retrospective sees only done and failed, so a run whose
+            tasks are all still open/claimed/in-progress/orphaned reports
+            ``0/0`` and HEALTHY (issue #3010).
     """
     runtime_dir = orch._workdir / ".sdd" / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -113,6 +119,13 @@ def generate_run_summary(
     # spawned just before this point can still fail afterwards. Mark the
     # retrospective INTERIM so a stale HEALTHY snapshot is never mistaken
     # for the final report (see A5 stale-retrospective bug).
+    #
+    # The histogram is threaded through even for an interim report, because
+    # when quiescence holds with zero terminal tasks the orchestrator's tick
+    # loop never exits and no FINAL retrospective is ever written, leaving this
+    # one as the run's only verdict. Giving the orchestrator a terminal state
+    # for that case is a separate change to the main loop, tracked apart from
+    # this PR.
     generate_retrospective(
         done_tasks=done_tasks,
         failed_tasks=failed_tasks,
@@ -120,6 +133,7 @@ def generate_run_summary(
         runtime_dir=runtime_dir,
         run_start_ts=orch._run_start_ts,
         trigger_reason="mid-run",
+        full_status_counts=full_status_counts,
     )
 
     emit_summary_card(
@@ -170,6 +184,11 @@ def emit_summary_card(
         completed_tasks=len(done_tasks),
     )
 
+    # Issue #3014: surface requested-vs-actual isolation downgrades recorded by
+    # the spawner. Guarded so a stubbed/mock spawner without a real list is safe.
+    spawner_downgrades = getattr(getattr(orch, "_spawner", None), "isolation_downgrades", None)
+    isolation_downgrades = [d.as_dict() for d in spawner_downgrades] if isinstance(spawner_downgrades, list) else []
+
     summary_data = RunSummaryData(
         run_id=orch._run_id,
         tasks_completed=len(done_tasks),
@@ -181,6 +200,7 @@ def emit_summary_card(
         sequential_time_seconds=savings.sequential_time_seconds,
         cost_per_task_usd=savings.cost_per_task_usd,
         routing_savings_usd=savings.routing_savings_usd,
+        isolation_downgrades=isolation_downgrades,
     )
 
     sdd_dir = orch._workdir / ".sdd"

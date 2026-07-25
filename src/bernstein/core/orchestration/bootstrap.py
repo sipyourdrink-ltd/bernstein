@@ -42,6 +42,13 @@ from bernstein.core.orchestration.preflight import (
     gemini_has_auth,
     preflight_checks,
 )
+from bernstein.core.orchestration.process_utils import (
+    LIVENESS_ALIVE,
+    ORCHESTRATOR_PROCESS_MARKERS,
+    WATCHDOG_POLL_S,
+    Liveness,
+    classify_pidfile_liveness,
+)
 from bernstein.core.seed import (
     NotifyConfig,
     SeedConfig,
@@ -896,13 +903,41 @@ def _watchdog_check_process(
     now: float,
     restart_fn: Any,
     post_restart_fn: Any | None = None,
+    liveness: Liveness | None = None,
 ) -> tuple[float | None, int, bool]:
-    """Check a single watchdog-monitored process and restart if dead.
+    """Check a single watchdog-monitored process and restart if it is not up.
+
+    Anything that is not positively alive is restarted, including a missing or
+    unreadable pidfile. That is deliberate and it is the only safe default for a
+    RECOVERY component: refusing to restart is the destructive choice here, and
+    it is permanent, because nothing else recreates ``spawner.pid`` once it is
+    gone. ``bernstein doctor --fix`` / ``bernstein status --fix``
+    (``cli/commands/status_cmd.py::_fix_stale_pids``) deletes precisely the
+    pidfile of a process that has already crashed, so "crashed, and then its
+    stale pidfile was cleaned up" is an ordinary state that must still recover.
+
+    Teardown is NOT a reason to withhold a restart here, because this process is
+    not alive to see it: ``DrainCoordinator._stop_infrastructure`` kills
+    ``watchdog.pid`` FIRST and only removes pidfiles at the end of
+    ``_phase_cleanup``. The supervisor is already dead before teardown deletes
+    anything. ``run_watchdog`` still checks for teardown before calling this,
+    for the case where the supervisor outlives its own SIGTERM.
+
+    ``liveness`` is the classification of the pidfile this supervisor owns, from
+    :func:`classify_pidfile_liveness` -- the same classifier the CLI's
+    run-completion verdict reads, so the two subsystems cannot disagree about
+    what "gone" means. Its job here is the reverse of its job in the CLI: it
+    prevents an unrelated process that inherited a recycled pid from passing as
+    our live orchestrator and thereby SUPPRESSING a restart the run needs.
+    ``LIVENESS_ALIVE`` is the only value that withholds one.
+
+    Omitting ``liveness`` falls back to a bare ``_is_alive(pid)`` for callers
+    that have no pidfile to classify.
 
     Returns:
         Updated (alive_since, restarts, give_up_logged) tuple.
     """
-    if pid is not None and _is_alive(pid):
+    if liveness == LIVENESS_ALIVE or (liveness is None and pid is not None and _is_alive(pid)):
         if alive_since is None:
             return now, restarts, give_up_logged
         if restarts > 0 and (now - alive_since) >= reset_after_s:
@@ -914,7 +949,7 @@ def _watchdog_check_process(
             return alive_since, 0, False
         return alive_since, restarts, give_up_logged
 
-    # Process is dead
+    # Not positively alive: dead, or a pid we cannot attribute to our pidfile.
     if restarts >= max_restarts:
         if not give_up_logged:
             logger.error(
@@ -943,10 +978,45 @@ def _watchdog_check_process(
     return None, restarts, give_up_logged
 
 
+def _supervisor_should_stand_down(workdir: Path) -> str | None:
+    """Positive evidence that this supervisor must stop restarting things.
+
+    Returns a short reason, or ``None`` to keep supervising.
+
+    Only POSITIVE evidence counts, because the default has to be to recover: a
+    supervisor that withholds a restart on a merely ambiguous reading leaves the
+    run with no orchestrator and nothing to notice, permanently. Two signals
+    qualify:
+
+    * ``.sdd/runtime/draining`` -- written by ``DrainCoordinator._phase_freeze``
+      when it cannot reach the server to set drain mode, which is exactly the
+      teardown case where this loop would otherwise fight the teardown.
+    * ``watchdog.pid`` no longer naming this process -- we have been superseded
+      or killed (teardown SIGTERMs it first), so we are not the supervisor of
+      record any more and must not act as one.
+
+    A missing pidfile for a SUPERVISED process is deliberately not on this list.
+    It is the ordinary aftermath of a crash plus ``bernstein doctor --fix``, and
+    must still recover.
+    """
+    runtime = workdir / ".sdd" / "runtime"
+    if (runtime / "draining").exists():
+        return "draining marker present"
+    watchdog_pid_path = runtime / "watchdog.pid"
+    if watchdog_pid_path.exists():
+        try:
+            recorded = int(watchdog_pid_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        if recorded != os.getpid():
+            return f"watchdog.pid names pid {recorded}, not this supervisor ({os.getpid()})"
+    return None
+
+
 def run_watchdog(
     workdir: Path,
     port: int,
-    poll_s: float = 5.0,
+    poll_s: float = WATCHDOG_POLL_S,
     adapter: str | None = None,
     model: str | None = None,
     seed_path: Path | None = None,
@@ -962,6 +1032,17 @@ def run_watchdog(
     process its restart budget back. Without this, the watchdog gives up
     forever after 5 transient failures across the entire run (incident
     2026-04-11).
+
+    A dead orchestrator is therefore a RECOVERABLE state, not a terminal one,
+    for as long as this loop is running with restart budget left. Anything else
+    that wants to conclude the orchestrator will not come back has to outwait
+    ``poll_s`` -- which is why that period is a shared constant
+    (``process_utils.WATCHDOG_POLL_S``) rather than a private default here, and
+    why the CLI's run-completion verdict sizes its confirmation window from it.
+
+    The loop stands down only on positive teardown evidence (see
+    :func:`_supervisor_should_stand_down`). Everything else recovers, including
+    a supervised process whose pidfile has gone missing.
 
     Args:
         workdir: Project root directory.
@@ -988,8 +1069,13 @@ def run_watchdog(
         time.sleep(poll_s)
         now = time.monotonic()
 
+        stand_down = _supervisor_should_stand_down(workdir)
+        if stand_down is not None:
+            logger.info("Recovery supervisor standing down this cycle: %s", stand_down)
+            continue
+
         # Check server
-        server_pid = _read_pid(server_pid_path)
+        server_liveness, server_pid = classify_pidfile_liveness(server_pid_path)
         server_alive_since, server_restarts, server_give_up_logged = _watchdog_check_process(
             name="Server",
             pid=server_pid,
@@ -1001,10 +1087,17 @@ def run_watchdog(
             now=now,
             restart_fn=lambda: _start_server(workdir, port),
             post_restart_fn=lambda: _wait_for_server(port),
+            liveness=server_liveness,
         )
 
-        # Check orchestrator/spawner (only restart if server is alive)
-        spawner_pid = _read_pid(spawner_pid_path)
+        # Check orchestrator/spawner (only restart if server is alive). The
+        # command-line markers keep an unrelated process that inherited a
+        # recycled pid from passing as our live orchestrator and suppressing a
+        # restart the run needs.
+        spawner_liveness, spawner_pid = classify_pidfile_liveness(
+            spawner_pid_path,
+            expect_cmdline=ORCHESTRATOR_PROCESS_MARKERS,
+        )
 
         def _restart_spawner() -> int:
             cur_server_pid = _read_pid(server_pid_path)
@@ -1023,6 +1116,7 @@ def run_watchdog(
             reset_after_s=restart_reset_after_s,
             now=now,
             restart_fn=_restart_spawner,
+            liveness=spawner_liveness,
         )
 
 

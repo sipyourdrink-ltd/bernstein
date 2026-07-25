@@ -62,6 +62,12 @@ _LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # Env var names used to pick up the bearer auth token if not provided explicitly.
 _TOKEN_ENV_VARS = ("BERNSTEIN_MCP_TOKEN", "BERNSTEIN_MCP_AUTH_TOKEN")
 
+# Characters a request authority may keep once it is echoed back into a
+# response header or body: registered names, IPv4 and bracketed IPv6 literals,
+# and a port. Everything else, CR and LF and the quote character included, is
+# dropped by :func:`_sanitise_authority`.
+_AUTHORITY_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:[]%")
+
 # Clear-text scheme, spelled as a bare token so a browser origin can only be
 # built from it deliberately. Any origin carrying this scheme has to prove it
 # is loopback-pinned (see ``RemoteMCPConfig.__post_init__``).
@@ -99,6 +105,24 @@ def _resolve_token_from_env() -> str:
 def _is_localhost(host: str) -> bool:
     """Return True if ``host`` refers to the loopback interface only."""
     return host in _LOCALHOST_HOSTS
+
+
+def _sanitise_authority(authority: str) -> str:
+    """Filter a request authority down to host and port characters.
+
+    The value reaches us from a client-supplied ``Host`` header and is
+    interpolated into response headers and bodies, so anything outside the
+    character set a host, an IPv6 literal, and a port may use is dropped. CR,
+    LF, and the quote character are the ones that matter: they would otherwise
+    terminate a header value or escape a quoted header parameter.
+
+    Args:
+        authority: Raw authority, for example ``bernstein.example.com:8053``.
+
+    Returns:
+        The filtered authority, possibly empty when nothing survived.
+    """
+    return "".join(c for c in authority.strip() if c in _AUTHORITY_CHARS)
 
 
 def _origin_host(origin: str) -> str | None:
@@ -455,11 +479,7 @@ class StreamableHTTPTransport:
 
         # Auth check.
         if not self._authenticate(headers):
-            return (
-                401,
-                {"content-type": _CONTENT_TYPE_JSON},
-                b'{"error":"unauthorized"}',
-            )
+            return self._unauthorized_response(headers)
 
         # Legacy protocol-session shim: the removed header is accepted (and
         # ignored) for a bounded window, then refused with the removal date.
@@ -985,6 +1005,58 @@ class StreamableHTTPTransport:
 
     # -- OAuth discovery -----------------------------------------------------
 
+    def _request_base_url(self, headers: dict[str, str]) -> str:
+        """Return the scheme and authority the client reached this server on.
+
+        Both the protected-resource metadata document and the
+        ``WWW-Authenticate`` challenge on a 401 are built from this, so the URL
+        a client is pointed at cannot drift from the URL that serves the
+        document.
+
+        ``Host`` and ``X-Forwarded-Proto`` are supplied by the client or by a
+        proxy in front of it, and the result is interpolated into a response
+        header, so the authority is filtered down to the characters a host and
+        port may contain. That drops CR, LF, and the quote character before
+        they can terminate the header value or the quoted parameter.
+
+        Args:
+            headers: HTTP request headers (lower-cased keys).
+
+        Returns:
+            An absolute base URL with no trailing slash.
+        """
+        fallback = f"{self._config.host}:{self._config.port}"
+        authority = _sanitise_authority(headers.get("host", "")) or _sanitise_authority(fallback)
+        scheme = "https" if headers.get("x-forwarded-proto", "").lower() == "https" else "http"
+        return f"{scheme}://{authority}"
+
+    def _unauthorized_response(
+        self,
+        headers: dict[str, str],
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Build the 401 response, including the discovery challenge.
+
+        Every 401 the transport emits is built here. When an OAuth issuer is
+        configured, the response carries a ``WWW-Authenticate`` challenge
+        naming the protected-resource metadata URL, so a client that is refused
+        can locate the document and start the authorization flow instead of
+        stopping at the refusal. Without an issuer no challenge is emitted and
+        the anonymous and static-bearer flows are unchanged.
+
+        Args:
+            headers: HTTP request headers (lower-cased keys).
+
+        Returns:
+            Tuple of (401, response_headers, response_body).
+        """
+        from bernstein.mcp.oauth import www_authenticate_challenge
+
+        resp_headers = {"content-type": _CONTENT_TYPE_JSON}
+        challenge = www_authenticate_challenge(self._request_base_url(headers))
+        if challenge is not None:
+            resp_headers["www-authenticate"] = challenge
+        return (401, resp_headers, b'{"error":"unauthorized"}')
+
     @staticmethod
     def _is_well_known(path: str) -> bool:
         """Return True for the protected-resource discovery path.
@@ -1012,11 +1084,9 @@ class StreamableHTTPTransport:
         )
 
         if path == PR_METADATA_PATH:
-            # Build the absolute resource URL from the Host header so the
+            # Build the absolute resource URL from the request base so the
             # advertised resource matches what the client called.
-            host = headers.get("host", f"{self._config.host}:{self._config.port}")
-            scheme = headers.get("x-forwarded-proto", "http")
-            resource_url = f"{scheme}://{host}{self._config.path}"
+            resource_url = f"{self._request_base_url(headers)}{self._config.path}"
             meta = protected_resource_metadata(resource_url)
         else:
             meta = None

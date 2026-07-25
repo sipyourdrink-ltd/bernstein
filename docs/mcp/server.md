@@ -63,8 +63,26 @@ the IdP:
 |------|----------|
 | `/.well-known/oauth-protected-resource` | RFC 9728 / MCP-draft protected-resource metadata pointing at the issuer; the `resource` field is built from the request `Host` and `X-Forwarded-Proto` headers. |
 
+Every `401` the streamable HTTP transport returns while an issuer is
+configured carries a challenge naming that document, so a client that is
+refused can locate it without knowing the well-known path in advance:
+
+```
+WWW-Authenticate: Bearer resource_metadata="https://bernstein.example.com/.well-known/oauth-protected-resource"
+```
+
+The URL is built from the same request base (`Host` plus
+`X-Forwarded-Proto`) as the `resource` field inside the document, so the
+advertised URL and the served path cannot drift. The value names nothing
+but that URL: no token, tenant, user, or issuer identifier appears in it.
+When no issuer is configured the header is omitted entirely and the
+anonymous and static-bearer flows behave exactly as before. The `401` body
+is `{"error":"unauthorized"}` in both cases.
+
 The discovery handshake is:
 
+0. Client calls `/mcp` without credentials, is refused with `401`, and
+   reads the metadata URL from `WWW-Authenticate`.
 1. Client fetches `/.well-known/oauth-protected-resource` from Bernstein.
 2. Client reads `authorization_servers[0]` (the configured issuer URL).
 3. Client fetches the IdP's own RFC 8414 metadata from the IdP, for
@@ -168,6 +186,31 @@ error:
 
 `isError` is not set: a cancel is a client-initiated stop, not a tool failure.
 Cancelling an unknown or already-settled id is a no-op.
+
+## Connect-time instructions
+
+The server sends an `instructions` string on connect. It is the only
+Bernstein text guaranteed to stay in a connected model's context for the
+whole session, so it carries the control loop rather than a description of
+the system:
+
+1. One clause of identity.
+2. The start-then-poll loop: `bernstein_run` returns a `task_id` which is the
+   run id, `bernstein_task_handle` is polled with that value as `run_id`,
+   runs take minutes to hours, poll tens of seconds apart, and stop at a
+   terminal status (`completed`, `failed`, `cancelled`).
+3. One pointer to `load_skill` for anything deeper.
+
+Two rules keep the text honest, both enforced in
+`tests/unit/test_mcp_server.py`:
+
+- The string stays at or under 900 characters.
+- Every tool name it mentions is registered on the server, so instruction
+  text cannot outlive a tool rename.
+
+The `src/bernstein/mcp/server.py` module docstring lists every tool the
+module registers, and the same test asserts that list against the live
+registration set.
 
 ## Driving long-running runs from an MCP host (Tasks extension)
 
@@ -330,6 +373,9 @@ chain.
    export BERNSTEIN_MCP_OAUTH_ISSUER=https://idp.example.com
    # restart the server to pick up the env var, then:
    curl -s http://127.0.0.1:8053/.well-known/oauth-protected-resource
+
+   # or start from the refusal and follow the challenge:
+   curl -si http://127.0.0.1:8053/mcp -d '{}' | grep -i www-authenticate
    ```
 
    The protected-resource document points at the IdP via

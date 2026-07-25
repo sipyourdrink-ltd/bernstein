@@ -49,6 +49,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.lineage.artifact_attempt import attempt_outcome, attempt_task_id, is_attempt_step_id
 from bernstein.core.lineage.artifact_uri import ArtifactURIError, canonical_artifact_key
 from bernstein.core.lineage.spine import LineageSpine, SpineStatus, verify_entry
 
@@ -66,10 +67,12 @@ __all__ = [
     "LEG_PASS",
     "LEG_STALE",
     "RED",
+    "ArtifactAttempt",
     "ArtifactHealth",
     "ArtifactProduction",
     "ArtifactState",
     "HealthLeg",
+    "artifact_attempts",
     "artifact_health_json",
     "artifact_log",
     "artifact_log_json",
@@ -88,8 +91,9 @@ LEG_STALE = "stale"
 LEG_NOT_APPLICABLE = "not_applicable"
 
 #: Version stamped into the serialised verdict. A consumer pinning a verdict
-#: document knows which projection produced it.
-HEALTH_SCHEMA_VERSION = 1
+#: document knows which projection produced it. Bumped to 2 when the attempt
+#: counters joined the document (issue #2559).
+HEALTH_SCHEMA_VERSION = 2
 
 _SPINE_LOG_NAME = "spine.jsonl"
 _BUNDLES_SUBPATH = (".sdd", "evidence", "bundles")
@@ -137,6 +141,44 @@ class ArtifactProduction:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactAttempt:
+    """One recorded attempt to produce an artifact that did not land.
+
+    A task declared this artifact and the run ended without it on the chain
+    (issue #2559). The record is an ordinary spine entry, so it carries the same
+    attribution a production does -- which identity, which model, which run --
+    and the same per-entry integrity verdict. Its presence is what separates
+    "something tried and failed" from "nothing was ever scheduled".
+    """
+
+    run_id: str
+    entry_hash: str
+    task_id: str
+    outcome: str
+    actor: str
+    model: str
+    timestamp: int
+    verified: bool
+
+    @property
+    def order_key(self) -> tuple[int, str]:
+        """Total order over attempts, on the same terms as productions."""
+        return (self.timestamp, self.entry_hash)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "actor": self.actor,
+            "entry_hash": self.entry_hash,
+            "model": self.model,
+            "outcome": self.outcome,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "timestamp": self.timestamp,
+            "verified": self.verified,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactState:
     """Everything read off disk for one artifact key, frozen before use.
 
@@ -147,6 +189,7 @@ class ArtifactState:
 
     uri: str
     productions: tuple[ArtifactProduction, ...] = ()
+    attempts: tuple[ArtifactAttempt, ...] = ()
     chain_errors: tuple[str, ...] = ()
     evidence_task_id: str = ""
     evidence_verified: bool | None = None
@@ -156,6 +199,11 @@ class ArtifactState:
     def ordered(self) -> tuple[ArtifactProduction, ...]:
         """Productions oldest-first in the total order."""
         return tuple(sorted(self.productions, key=lambda p: p.order_key))
+
+    @property
+    def ordered_attempts(self) -> tuple[ArtifactAttempt, ...]:
+        """Attempts oldest-first in the total order."""
+        return tuple(sorted(self.attempts, key=lambda a: a.order_key))
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,12 +233,16 @@ class ArtifactHealth:
     tip_run_id: str = ""
     last_produced_at: int | None = None
     production_count: int = 0
+    attempt_count: int = 0
+    last_attempt_at: int | None = None
     schema_version: int = HEALTH_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         """Return the canonical verdict document."""
         return {
+            "attempt_count": self.attempt_count,
             "evaluated_at": self.evaluated_at,
+            "last_attempt_at": self.last_attempt_at,
             "last_produced_at": self.last_produced_at,
             "legs": [leg.to_dict() for leg in self.legs],
             "production_count": self.production_count,
@@ -341,6 +393,7 @@ def collect_artifact_state(
 
     lineage_root = workdir / ".sdd" / "lineage"
     productions: list[ArtifactProduction] = []
+    attempts: list[ArtifactAttempt] = []
     chain_errors: list[str] = []
 
     for run_id in _run_ids(lineage_root):
@@ -353,6 +406,25 @@ def collect_artifact_state(
         if not matched:
             continue
         for entry in matched:
+            verified = verify_entry(entry, hmac_key)
+            # An attempt record is keyed by the artifact but records that the
+            # artifact did *not* land, so it is kept in its own bucket: counting
+            # it as a production would make a failure look like a delivery
+            # (issue #2559).
+            if is_attempt_step_id(entry.step_id):
+                attempts.append(
+                    ArtifactAttempt(
+                        run_id=run_id,
+                        entry_hash=entry.entry_hash,
+                        task_id=attempt_task_id(entry.step_id),
+                        outcome=attempt_outcome(entry.step_id),
+                        actor=entry.actor,
+                        model=entry.model,
+                        timestamp=entry.timestamp,
+                        verified=verified,
+                    )
+                )
+                continue
             productions.append(
                 ArtifactProduction(
                     run_id=run_id,
@@ -362,7 +434,7 @@ def collect_artifact_state(
                     model=entry.model,
                     step_id=entry.step_id,
                     timestamp=entry.timestamp,
-                    verified=verify_entry(entry, hmac_key),
+                    verified=verified,
                 )
             )
         result = spine.verify()
@@ -376,6 +448,7 @@ def collect_artifact_state(
     return ArtifactState(
         uri=key,
         productions=tuple(productions),
+        attempts=tuple(attempts),
         chain_errors=tuple(chain_errors),
         evidence_task_id=evidence_task,
         evidence_verified=evidence_verified,
@@ -388,30 +461,51 @@ def collect_artifact_state(
 # ---------------------------------------------------------------------------
 
 
+def _never_produced_detail(state: ArtifactState) -> str:
+    """Explain *why* nothing is recorded under this key.
+
+    The two answers demand different responses. "Nothing was ever scheduled" is a
+    planning question; "task T declared this and did not deliver" is a failed run
+    to go and read. Naming the declaring tasks and the outcome turns the second
+    into a lookup instead of a walk across run directories.
+    """
+    attempts = state.ordered_attempts
+    if not attempts:
+        return "no spine entry records this artifact; nothing has ever produced it"
+    tasks = ", ".join(sorted({a.task_id for a in attempts if a.task_id}))
+    outcomes = ", ".join(sorted({a.outcome for a in attempts if a.outcome}))
+    return (
+        f"never produced, but {len(attempts)} attempt(s) are recorded against it "
+        f"(declared by task(s) {tasks or '-'}; outcome(s) {outcomes or '-'})"
+    )
+
+
 def _tip_legs(state: ArtifactState) -> tuple[list[HealthLeg], ArtifactProduction | None]:
     """Return the production-, integrity- and tip-related legs plus the tip."""
     ordered = state.ordered
+
+    # Both no-production cases are red -- the artifact is not there either way --
+    # but the operator's next move differs completely, so the detail has to name
+    # which one it is. Before attempt records existed, this leg said exactly the
+    # same thing to a task that tried and died as to a URI nothing was ever
+    # scheduled to produce (issue #2559).
     if not ordered:
-        return [
-            HealthLeg(
-                name="produced",
-                status=LEG_FAIL,
-                detail="no spine entry records this artifact; nothing has ever produced it",
-            )
-        ], None
+        legs: list[HealthLeg] = [HealthLeg(name="produced", status=LEG_FAIL, detail=_never_produced_detail(state))]
+    else:
+        legs = [HealthLeg(name="produced", status=LEG_PASS, detail=f"{len(ordered)} production(s) recorded")]
 
-    legs: list[HealthLeg] = [
-        HealthLeg(name="produced", status=LEG_PASS, detail=f"{len(ordered)} production(s) recorded")
-    ]
-
+    # Integrity covers attempt entries too: a forged or edited attempt record is
+    # as much a chain failure as a forged production, and an artifact whose only
+    # entries are tampered attempts must not report a clean chain.
     unverified = [p.entry_hash for p in ordered if not p.verified]
+    unverified += [a.entry_hash for a in state.ordered_attempts if not a.verified]
     if unverified or state.chain_errors:
         detail_parts: list[str] = []
         if unverified:
             detail_parts.append("tampered entry: " + ", ".join(sorted(unverified)))
         detail_parts.extend(state.chain_errors)
         legs.append(HealthLeg(name="chain_integrity", status=LEG_FAIL, detail="; ".join(detail_parts)))
-    else:
+    elif ordered or state.ordered_attempts:
         legs.append(
             HealthLeg(
                 name="chain_integrity",
@@ -419,6 +513,9 @@ def _tip_legs(state: ArtifactState) -> tuple[list[HealthLeg], ArtifactProduction
                 detail="every entry hash and HMAC tag recomputes",
             )
         )
+
+    if not ordered:
+        return legs, None
 
     tip = ordered[-1]
     contenders = [p for p in ordered if p.timestamp == tip.timestamp]
@@ -517,6 +614,8 @@ def compute_artifact_health(
         tip_run_id=tip.run_id if tip else "",
         last_produced_at=tip.timestamp if tip else None,
         production_count=len(state.productions),
+        attempt_count=len(state.attempts),
+        last_attempt_at=state.ordered_attempts[-1].timestamp if state.attempts else None,
     )
 
 
@@ -571,6 +670,48 @@ def artifact_log(
     return records[:limit] if limit > 0 else records
 
 
-def artifact_log_json(records: Iterable[ArtifactProduction], *, uri: str) -> str:
-    """Serialise an attribution log canonically, for the CLI and the route."""
-    return _canonical_json({"productions": [r.to_dict() for r in records], "uri": uri})
+def artifact_attempts(
+    workdir: Path,
+    uri: str,
+    *,
+    hmac_key: bytes,
+    limit: int = 0,
+) -> tuple[ArtifactAttempt, ...]:
+    """Return recorded attempts on ``uri``, newest-first.
+
+    An attempt is a task that declared this artifact and did not deliver it
+    (issue #2559). Reading them beside the productions is what makes "attempted
+    and failed" a one-command answer: the declaring task, the outcome, the
+    identity and model that ran, and the entry hash that proves each claim.
+
+    Args:
+        workdir: Project root containing ``.sdd``.
+        uri: The artifact key.
+        hmac_key: Audit-chain HMAC key.
+        limit: Maximum records to return; ``0`` means all.
+    """
+    state = collect_artifact_state(workdir, uri, hmac_key=hmac_key, include_evidence=False)
+    records = tuple(reversed(state.ordered_attempts))
+    return records[:limit] if limit > 0 else records
+
+
+def artifact_log_json(
+    records: Iterable[ArtifactProduction],
+    *,
+    uri: str,
+    attempts: Iterable[ArtifactAttempt] = (),
+) -> str:
+    """Serialise an attribution log canonically, for the CLI and the route.
+
+    Attempts travel in the same document as productions on purpose: an empty
+    ``productions`` list next to a populated ``attempts`` list is the shape that
+    says "something tried and did not deliver", and splitting them across two
+    calls would let a consumer see one without the other.
+    """
+    return _canonical_json(
+        {
+            "attempts": [a.to_dict() for a in attempts],
+            "productions": [r.to_dict() for r in records],
+            "uri": uri,
+        }
+    )

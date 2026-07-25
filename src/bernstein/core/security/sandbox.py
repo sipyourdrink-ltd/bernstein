@@ -139,8 +139,21 @@ def parse_docker_sandbox(raw: object | None) -> DockerSandbox | None:
     """
     if raw is None:
         return None
+    if isinstance(raw, str):
+        runtime_shorthand = raw.strip()
+        if runtime_shorthand not in _VALID_RUNTIMES:
+            valid = ", ".join(sorted(_VALID_RUNTIMES))
+            raise ValueError(
+                f"sandbox: {raw!r} is not a valid runtime shorthand. "
+                f"Use one of {valid} (matching --sandbox), "
+                f"or the mapping form, e.g. sandbox: {{runtime: docker}}"
+            )
+        raw = {"runtime": runtime_shorthand}
     if not isinstance(raw, Mapping):
-        raise ValueError("sandbox must be a mapping")
+        raise ValueError(
+            "sandbox must be a mapping (e.g. sandbox: {runtime: docker}) "
+            "or a runtime name string (e.g. sandbox: docker)"
+        )
 
     data = cast("Mapping[str, object]", raw)
     enabled = _parse_bool(data.get("enabled", True), "sandbox.enabled")

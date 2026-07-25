@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      checks: read
       contents: read
       pull-requests: write
       security-events: read
@@ -65,6 +66,29 @@ jobs:
           mkdir -p .ci/observability
           uv run bernstein doctor observe --json --no-persist \
             > .ci/observability/observe.json || true
+
+      - name: Report required-context presence on the PR head
+        # A head commit missing a required check context produces the same
+        # empty failure list as one whose checks all passed. This step names
+        # which of the two the PR is in. Advisory: `continue-on-error` keeps
+        # the report out of the gate - mergeability is still decided by the
+        # required contexts themselves.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          set -uo pipefail
+          report="$(uv run python scripts/check_required_contexts.py --pr "$PR_NUMBER" 2>&1)" && rc=0 || rc=$?
+          {
+            echo "### Required-context presence"
+            echo ""
+            echo '```text'
+            echo "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$report"
+          exit "$rc"
 
       - name: Build PR summary markdown
         id: build

@@ -20,7 +20,7 @@ is unit-testable without a network. Adapter execution uses an injectable
 tests and offline smoke runs; real CLI adapters plug in via the public
 ``YAMLRunner.run`` API.
 
-The schema is deliberately small and stable - the moat is the integration
+The schema is deliberately small and stable - the value is in the integration
 with the existing taxonomy and calibration log, not the schema surface.
 """
 

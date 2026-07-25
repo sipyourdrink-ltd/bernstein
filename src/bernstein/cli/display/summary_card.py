@@ -32,6 +32,12 @@ class RunSummaryData:
     sequential_time_seconds: float | None = None
     cost_per_task_usd: float = 0.0
     routing_savings_usd: float = 0.0
+    # Issue #3014: spawns whose requested container isolation could not be
+    # honoured and fell back to a weaker boundary. Each item carries
+    # ``session_id``/``requested``/``actual``/``reason`` so the run outcome
+    # shows requested-vs-actual isolation instead of hiding the downgrade in a
+    # log WARNING.
+    isolation_downgrades: list[dict[str, str]] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
 
     @property
@@ -146,6 +152,17 @@ def build_summary_card(data: RunSummaryData) -> Table:
         else:
             q_color = "red"
         table.add_row("Quality score", f"[{q_color}]{pct:.0f}%[/{q_color}]")
+
+    # Issue #3014: surface any isolation downgrade so an operator who requested
+    # a stronger boundary (``sandbox:`` config or ``--sandbox docker``) sees at
+    # run level that a weaker one was used.
+    if data.isolation_downgrades:
+        requested = data.isolation_downgrades[0].get("requested", "container")
+        actual = data.isolation_downgrades[0].get("actual", "worktree")
+        table.add_row(
+            "[yellow]Isolation downgrade[/yellow]",
+            f"[yellow]{requested} -> {actual} (x{len(data.isolation_downgrades)})[/yellow]",
+        )
 
     return table
 
