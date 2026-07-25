@@ -76,6 +76,7 @@ __all__ = [
     "content_digest",
     "default_keystore",
     "install_identity_keyid",
+    "public_key_jwk_from_pem",
     "record_signature",
     "sign_outbound",
     "sign_request",
@@ -132,11 +133,7 @@ def install_identity_keyid(public_pem: bytes) -> str:
     Returns:
         A short, URL-safe thumbprint string suitable as an HTTP-sig ``keyid``.
     """
-    raw = serialization.load_pem_public_key(public_pem).public_bytes(
-        serialization.Encoding.Raw,
-        serialization.PublicFormat.Raw,
-    )
-    x = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    x = public_key_jwk_from_pem(public_pem)["x"]
     canonical = json.dumps(
         {"crv": "Ed25519", "kty": "OKP", "x": x},
         sort_keys=True,
@@ -144,6 +141,32 @@ def install_identity_keyid(public_pem: bytes) -> str:
     ).encode("ascii")
     digest = hashlib.sha256(canonical).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def public_key_jwk_from_pem(public_pem: bytes) -> dict[str, str]:
+    """Return the RFC 8037 OKP JWK for an Ed25519 SPKI PEM public key.
+
+    The counterpart to :func:`install_identity_keyid`: the thumbprint answers
+    "what is this key's identity", this answers "what key does that identity
+    have". Verifiers that pin a key by identity need both halves.
+
+    Args:
+        public_pem: SPKI PEM bytes of an Ed25519 public key.
+
+    Returns:
+        A JWK with ``kty='OKP'``, ``crv='Ed25519'``, ``alg='EdDSA'`` and the
+        base64url-encoded raw public key as ``x``.
+    """
+    raw = serialization.load_pem_public_key(public_pem).public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    return {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "alg": "EdDSA",
+        "x": base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii"),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -46,6 +46,7 @@ from bernstein.core.models import (
     BridgeConfigSet,
     ClusterConfig,
     ClusterTopology,
+    MeshPeerKey,
     OpenClawBridgeConfig,
     SmtpConfig,
     TestAgentConfig,
@@ -1294,6 +1295,52 @@ def _parse_storage(raw: object) -> StorageConfig | None:
     )
 
 
+def _parse_gossip_peer_keys(raw: object) -> tuple[MeshPeerKey, ...]:
+    """Parse and verify ``cluster.gossip_peer_keys`` (issue #2997).
+
+    The mapping is ``node_id -> Ed25519 public key``, where the key may be the
+    SPKI PEM a peer publishes, an OKP JWK mapping, or the bare base64url ``x``.
+
+    Every pin is checked, not merely parsed: a MESH ``node_id`` is the RFC 7638
+    thumbprint of the signing key, so the declared id must be reproducible from
+    the pinned key. A mismatch means the operator pasted one peer's id next to
+    another peer's key, which would pin the wrong identity -- caught here, at
+    seed load, rather than at the first gossip.
+
+    Returns:
+        The pins in ``node_id`` order, so the parsed config is deterministic
+        regardless of how the YAML mapping was written.
+
+    Raises:
+        SeedError: When the section is not a mapping, an id is not a non-empty
+            string, a key is unreadable, or a pin's thumbprint disagrees with
+            the id it is filed under.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        raise SeedError(
+            f"cluster.gossip_peer_keys must be a mapping of node_id to public key, got: {type(raw).__name__}"
+        )
+    pins: list[MeshPeerKey] = []
+    for node_id_raw, material in cast("dict[object, object]", raw).items():
+        if not isinstance(node_id_raw, str) or not node_id_raw.strip():
+            raise SeedError(f"cluster.gossip_peer_keys keys must be non-empty node ids, got: {node_id_raw!r}")
+        node_id = node_id_raw.strip()
+        try:
+            pin = MeshPeerKey.from_material(node_id, material)
+        except ValueError as exc:
+            raise SeedError(f"cluster.gossip_peer_keys[{node_id!r}]: {exc}") from None
+        if pin.node_id_from_key() != node_id:
+            raise SeedError(
+                f"cluster.gossip_peer_keys[{node_id!r}] is pinned to a key whose identity is "
+                f"{pin.node_id_from_key()!r}. A MESH node_id is the thumbprint of its claim-signing "
+                "key, so the id and the key must agree.",
+            )
+        pins.append(pin)
+    return tuple(sorted(pins, key=lambda pin: pin.node_id))
+
+
 def _parse_cluster(raw: object) -> ClusterConfig | None:
     """Parse the optional ``cluster`` section."""
     if raw is None:
@@ -1326,10 +1373,22 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         raise SeedError(f"cluster.claim_lease_ttl_s must be a positive integer, got: {lease_raw!r}")
     journal_path_raw: object = cluster_dict.get("claim_journal_path")
     journal_path: str | None = str(journal_path_raw) if journal_path_raw is not None else None
-    if topology is not ClusterTopology.MESH and (gossip_peers or journal_path):
+    peer_keys = _parse_gossip_peer_keys(cluster_dict.get("gossip_peer_keys"))
+    if topology is not ClusterTopology.MESH and (gossip_peers or journal_path or peer_keys):
         raise SeedError(
-            "cluster.gossip_peers / cluster.claim_journal_path apply to topology 'mesh' only, "
-            f"but topology is {topology.value!r}",
+            "cluster.gossip_peers / cluster.claim_journal_path / cluster.gossip_peer_keys "
+            f"apply to topology 'mesh' only, but topology is {topology.value!r}",
+        )
+    if topology is ClusterTopology.MESH and gossip_peers and not peer_keys:
+        # A MESH node folds only receipts signed by a pinned key (#2997), so
+        # gossip configured without pins would push receipts out and fold none
+        # back. Failing here names the missing key instead of leaving the
+        # operator to infer it from a peer that never converges.
+        raise SeedError(
+            "cluster.gossip_peers is set but cluster.gossip_peer_keys is empty: a MESH node "
+            "folds only receipts signed by a pinned peer key, so gossip would be accepted from "
+            "no one. Pin each peer as 'gossip_peer_keys: {<node_id>: <ed25519 public key>}' "
+            "(the peer's .sdd/cluster/identity/claim_signing.pub).",
         )
     return ClusterConfig(
         enabled=bool(cluster_dict.get("enabled", False)),
@@ -1342,6 +1401,7 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         gossip_peers=tuple(gossip_peers),
         claim_lease_ttl_s=lease_raw,
         claim_journal_path=journal_path,
+        gossip_peer_keys=peer_keys,
     )
 
 

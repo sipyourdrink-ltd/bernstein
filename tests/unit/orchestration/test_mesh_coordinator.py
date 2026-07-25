@@ -644,6 +644,8 @@ def test_seed_parser_accepts_and_validates_mesh_keys(tmp_path: Path) -> None:
             "enabled": True,
             "topology": "mesh",
             "gossip_peers": ["https://peer-b:8052", " https://peer-c:8052 "],
+            # Gossip peers require pinned identities (#2997).
+            "gossip_peer_keys": {_node_id_for(7): _public_pem(7)},
             "claim_lease_ttl_s": 90,
             "claim_journal_path": str(tmp_path / "j.jsonl"),
         }
@@ -661,6 +663,116 @@ def test_seed_parser_accepts_and_validates_mesh_keys(tmp_path: Path) -> None:
         _parse_cluster({"topology": "mesh", "claim_lease_ttl_s": 0})
     with pytest.raises(SeedError, match="apply to topology 'mesh' only"):
         _parse_cluster({"topology": "star", "gossip_peers": ["https://peer-b:8052"]})
+
+
+# ---------------------------------------------------------------------------
+# Pinned peer identities (issue #2997)
+# ---------------------------------------------------------------------------
+
+
+def _public_pem(seed: int) -> str:
+    """Return the SPKI PEM an operator would copy out of a peer's install."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    return (
+        Ed25519PrivateKey.from_private_bytes(bytes([seed]) * 32)
+        .public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode("ascii")
+    )
+
+
+def _node_id_for(seed: int) -> str:
+    """Return the node id a peer signing with ``seed`` will declare."""
+    from bernstein.core.identity.http_signing import install_identity_keyid
+
+    return install_identity_keyid(_public_pem(seed).encode("ascii"))
+
+
+def test_seed_parser_accepts_every_documented_pin_form() -> None:
+    """PEM, JWK, and bare base64url ``x`` all normalise to the same pin."""
+    from bernstein.core.config.seed_parser import _parse_cluster
+    from bernstein.core.identity.http_signing import public_key_jwk_from_pem
+
+    node_id = _node_id_for(7)
+    jwk = public_key_jwk_from_pem(_public_pem(7).encode("ascii"))
+    for material in (_public_pem(7), jwk, jwk["x"]):
+        cfg = _parse_cluster({"topology": "mesh", "gossip_peer_keys": {node_id: material}})
+        assert cfg is not None
+        assert len(cfg.gossip_peer_keys) == 1
+        assert cfg.gossip_peer_keys[0].node_id == node_id
+        assert cfg.gossip_peer_keys[0].public_key_x == jwk["x"]
+
+
+def test_seed_parser_rejects_gossip_peers_configured_without_pinned_keys() -> None:
+    """Gossip without pins would push receipts out and fold none back."""
+    from bernstein.core.config.seed_parser import SeedError, _parse_cluster
+
+    with pytest.raises(SeedError, match="gossip_peer_keys is empty"):
+        _parse_cluster({"topology": "mesh", "gossip_peers": ["https://peer-b:8052"]})
+
+
+def test_seed_parser_rejects_pinned_keys_under_a_non_mesh_topology() -> None:
+    """The pin map is a MESH-only key, like the rest of the MESH surface."""
+    from bernstein.core.config.seed_parser import SeedError, _parse_cluster
+
+    with pytest.raises(SeedError, match="apply to topology 'mesh' only"):
+        _parse_cluster({"topology": "star", "gossip_peer_keys": {_node_id_for(7): _public_pem(7)}})
+
+
+def test_seed_parser_rejects_a_pin_whose_key_does_not_derive_its_node_id() -> None:
+    """A node id *is* its key's thumbprint, so a pin is checkable, not asserted.
+
+    Filing peer B's key under peer A's id would pin the wrong identity and
+    silently accept B's receipts as A's. The mismatch is arithmetic, so it is
+    caught at seed load rather than at the first gossip.
+    """
+    from bernstein.core.config.seed_parser import SeedError, _parse_cluster
+
+    with pytest.raises(SeedError, match="pinned to a key whose identity is"):
+        _parse_cluster({"topology": "mesh", "gossip_peer_keys": {_node_id_for(9): _public_pem(7)}})
+
+
+def test_seed_parser_rejects_malformed_pin_material() -> None:
+    """A bad paste fails the seed load with what the key should look like."""
+    from bernstein.core.config.seed_parser import SeedError, _parse_cluster
+
+    with pytest.raises(SeedError, match="must be a mapping of node_id to public key"):
+        _parse_cluster({"topology": "mesh", "gossip_peer_keys": ["not-a-mapping"]})
+    with pytest.raises(SeedError, match="must decode to 32 bytes"):
+        _parse_cluster({"topology": "mesh", "gossip_peer_keys": {"n": "c2hvcnQ"}})
+    with pytest.raises(SeedError, match="must be an Ed25519 public key"):
+        _parse_cluster({"topology": "mesh", "gossip_peer_keys": {"n": 42}})
+    with pytest.raises(SeedError, match="kty='OKP'"):
+        _parse_cluster({"topology": "mesh", "gossip_peer_keys": {"n": {"kty": "RSA"}}})
+
+
+def test_mesh_coordinator_is_built_with_a_pin_map_that_is_never_none(tmp_path: Path) -> None:
+    """The production build path always pins: closed by default (#2997).
+
+    Self-pinning is part of that map, so a peer cannot gossip receipts forged
+    in this node's name even before any peer is configured.
+    """
+    from bernstein.core.config.seed_parser import _parse_cluster
+
+    node_id = _node_id_for(7)
+    cfg = _parse_cluster({"enabled": True, "topology": "mesh", "gossip_peer_keys": {node_id: _public_pem(7)}})
+    assert cfg is not None
+
+    coordinator = build_mesh_coordinator(cfg, sdd_dir=tmp_path / ".sdd")
+    assert coordinator is not None
+    pins = coordinator._trusted_keys  # the wiring under test
+    assert pins is not None
+    assert pins[node_id]["x"] == cfg.gossip_peer_keys[0].public_key_x
+    assert coordinator.node_id in pins
+
+    bare = build_mesh_coordinator(
+        ClusterConfig(enabled=True, topology=ClusterTopology.MESH),
+        sdd_dir=tmp_path / "bare" / ".sdd",
+    )
+    assert bare is not None
+    assert bare._trusted_keys == {bare.node_id: bare._trusted_keys[bare.node_id]}
 
 
 def test_star_cluster_config_keeps_its_defaults() -> None:
