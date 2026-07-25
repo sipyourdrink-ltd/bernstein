@@ -30,7 +30,7 @@ if command -v gemini &>/dev/null; then
     AGENTS+=("gemini (Gemini CLI / Google)")
 fi
 if command -v qwen &>/dev/null; then
-    AGENTS+=("qwen (Qwen / Alibaba / OpenRouter)")
+    AGENTS+=("qwen (Qwen / OpenRouter)")
 fi
 
 if [[ ${#AGENTS[@]} -eq 0 ]]; then
