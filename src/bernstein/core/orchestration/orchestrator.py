@@ -166,6 +166,7 @@ if TYPE_CHECKING:
     from bernstein.core.permission_mode import PermissionMode
     from bernstein.core.protocols.cluster.mesh_coordinator import MeshCoordinator
     from bernstein.core.quality_gates import QualityGatesConfig
+    from bernstein.core.security.sandbox import SandboxRuntime
     from bernstein.core.spawner import AgentSpawner
     from bernstein.evolution.loop import EvolutionLoop
 
@@ -5805,16 +5806,33 @@ if __name__ == "__main__":
         _container_image = os.environ.get("BERNSTEIN_CONTAINER_IMAGE", "bernstein-agent:latest")
         _two_phase = os.environ.get("BERNSTEIN_TWO_PHASE_SANDBOX", "0").strip() in ("1", "true", "yes")
         _sandbox_runtime = os.environ.get("BERNSTEIN_SANDBOX_RUNTIME", "").strip().lower()
+        # Issue #3039: the explicit-attach gate below keys on "a container
+        # runtime was named", so podman gets the same wiring-time probe -
+        # and the same refusal - as docker.
+        from bernstein.core.sandbox.explicit_attach import (
+            is_container_runtime as _is_container_runtime,
+        )
+
         sandbox_config = (
             seed.sandbox if seed is not None and seed.sandbox is not None and seed.sandbox.enabled else None
         )
         if _sandbox_runtime:
+            from typing import cast
+
             from bernstein.core.sandbox import DockerSandbox
 
             base_sandbox = sandbox_config or DockerSandbox(enabled=True)
+            # Issue #3039: carry through whichever container runtime the
+            # operator named rather than mapping everything but one literal
+            # onto docker. Non-container names (worktree, the cloud
+            # backends) keep the historical docker default - they are
+            # executed by their own path, not by this config.
+            _cfg_runtime: SandboxRuntime = (
+                cast("SandboxRuntime", _sandbox_runtime) if _is_container_runtime(_sandbox_runtime) else "docker"
+            )
             sandbox_config = DockerSandbox(
                 enabled=True,
-                runtime="podman" if _sandbox_runtime == "podman" else "docker",
+                runtime=_cfg_runtime,
                 default_image=_container_image or base_sandbox.default_image,
                 adapter_images=base_sandbox.adapter_images,
                 cpu_cores=base_sandbox.cpu_cores,
@@ -5848,17 +5866,26 @@ if __name__ == "__main__":
         #
         # BERNSTEIN_SANDBOX_RUNTIME is only ever set by an explicit
         # ``--sandbox`` flag, so reaching this block always means the
-        # operator explicitly requested container isolation. A missing
-        # Docker SDK or dead daemon is therefore a loud failure
-        # (SandboxSelectionError) rather than a silent degrade to legacy
-        # container / host worktree execution, which would drop the
-        # isolation boundary without a console signal (issue #2809).
+        # operator explicitly requested container isolation. An unusable
+        # runtime is therefore a loud failure (SandboxSelectionError)
+        # rather than a silent degrade to legacy container / host worktree
+        # execution, which would drop the isolation boundary without a
+        # console signal (issue #2809).
+        #
+        # The gate keys on "the operator named a container runtime", not on
+        # the literal string "docker" (issue #3039): a docker-only gate let
+        # ``--sandbox podman`` skip the wiring-time probe entirely and fall
+        # through to worktree execution with no refusal, so the one runtime
+        # that failed closed was the one the gate happened to name. Runtimes
+        # without a first-party SandboxBackend (podman) are verified here and
+        # then keep the CLI-driven sandbox path; the probe exists so an
+        # explicit request fails closed, not to change how they execute.
         _docker_sandbox_backend = None
         _docker_manifest_factory = None
-        if _sandbox_runtime == "docker":
+        if _is_container_runtime(_sandbox_runtime):
             import subprocess as _subprocess
 
-            from bernstein.core.sandbox.explicit_attach import attach_docker_backend
+            from bernstein.core.sandbox.explicit_attach import attach_container_backend
             from bernstein.core.sandbox.manifest import GitRepoEntry, WorkspaceManifest
 
             _branch_result = _subprocess.run(
@@ -5877,16 +5904,26 @@ if __name__ == "__main__":
                     repo=GitRepoEntry(src_path=_src, branch=_branch),
                 )
 
-            # Fail fast at wiring time so a dead daemon surfaces before
-            # any spawn. ``explicit=True`` turns an unavailable backend
-            # into a raised SandboxSelectionError instead of a silent
-            # host fallback.
-            _docker_sandbox_backend = attach_docker_backend(explicit=True)
-            _docker_manifest_factory = _make_docker_manifest
-            logger.info(
-                "Docker sandbox backend attached; one session per agent spawn (branch=%s)",
-                _current_branch,
-            )
+            # Fail fast at wiring time so an unusable runtime surfaces
+            # before any spawn. ``explicit=True`` turns an unavailable
+            # runtime into a raised SandboxSelectionError instead of a
+            # silent host fallback, for whichever runtime was named.
+            _docker_sandbox_backend = attach_container_backend(_sandbox_runtime, explicit=True)
+            if _docker_sandbox_backend is not None:
+                _docker_manifest_factory = _make_docker_manifest
+                logger.info(
+                    "Docker sandbox backend attached; one session per agent spawn (branch=%s)",
+                    _current_branch,
+                )
+            else:
+                # Verified but backend-less (podman): the CLI-driven sandbox
+                # path below runs the agents. Reaching here means the probe
+                # passed - an unavailable runtime raised above.
+                logger.info(
+                    "Container runtime %s verified; agents run through the %s CLI sandbox",
+                    _sandbox_runtime,
+                    _sandbox_runtime,
+                )
 
         def _teardown_docker_sandbox() -> None:
             """Destroy any Docker sandbox sessions the backend still tracks.

@@ -1,10 +1,17 @@
-"""Unit tests for explicit-override-aware Docker backend attachment.
+"""Unit tests for explicit-override-aware container backend attachment.
 
 Regression coverage for issue #2809: an explicit ``--sandbox docker``
 override that cannot be satisfied (missing Docker SDK, dead daemon) must
 fail loudly with :class:`SandboxSelectionError` instead of silently
 degrading to host / worktree execution. Auto-selected Docker (no explicit
 override) must still fall back quietly.
+
+Regression coverage for issue #3039: the wiring-time gate keys on "the
+operator named a container runtime", never on the literal ``"docker"``. A
+docker-only gate let ``--sandbox podman`` skip the probe entirely, so the
+runtime that failed closed was the one the gate happened to name and every
+other one failed open. The parametrised cases below run over the canonical
+runtime set, so adding a runtime cannot reintroduce the gap silently.
 """
 
 from __future__ import annotations
@@ -14,8 +21,37 @@ from typing import Any
 import pytest
 
 from bernstein.core.sandbox.backends.docker import DockerUnavailableError
-from bernstein.core.sandbox.explicit_attach import attach_docker_backend
+from bernstein.core.sandbox.explicit_attach import (
+    CONTAINER_SANDBOX_RUNTIMES,
+    attach_container_backend,
+    attach_docker_backend,
+    is_container_runtime,
+)
 from bernstein.core.sandbox.selector import SandboxSelectionError
+
+# ``--sandbox`` choices that are not container runtimes. They own their own
+# provisioning semantics and must not be probed or refused by this gate.
+NON_CONTAINER_SANDBOX_CHOICES = (
+    "worktree",
+    "e2b",
+    "modal",
+    "daytona",
+    "blaxel",
+    "runloop",
+    "vercel",
+    "microvm",
+)
+
+
+def _unavailable(runtime: str) -> str:
+    """Probe stub standing in for a runtime CLI that is not installed."""
+    return f"Container runtime CLI '{runtime}' not found on PATH."
+
+
+def _available(runtime: str) -> None:
+    """Probe stub standing in for a healthy runtime CLI."""
+    del runtime
+    return None
 
 
 class _UnavailableBackend:
@@ -77,3 +113,106 @@ def test_auto_selected_docker_available_returns_backend() -> None:
     backend = _AvailableBackend()
     result = attach_docker_backend(explicit=False, backend=backend)  # type: ignore[arg-type]
     assert result is backend
+
+
+# ---------------------------------------------------------------------------
+# Issue #3039: the gate keys on "a container runtime was named"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("runtime", sorted(CONTAINER_SANDBOX_RUNTIMES))
+def test_explicit_container_runtime_unavailable_raises(runtime: str) -> None:
+    """Every accepted container runtime refuses when it cannot be provided."""
+    with pytest.raises(SandboxSelectionError) as excinfo:
+        attach_container_backend(
+            runtime,
+            explicit=True,
+            backend=_UnavailableBackend(),  # type: ignore[arg-type]
+            probe=_unavailable,
+        )
+
+    err = excinfo.value
+    assert err.attempted == (runtime,)
+    # Same shape as the historical docker refusal: name the flag, name the
+    # runtime, and say plainly that host execution is being refused.
+    assert f"--sandbox {runtime}" in err.reason
+    assert "refusing to fall back" in err.reason.lower()
+
+
+@pytest.mark.parametrize("runtime", sorted(CONTAINER_SANDBOX_RUNTIMES))
+def test_auto_selected_container_runtime_unavailable_falls_back_quietly(runtime: str) -> None:
+    """Without the explicit bit an unavailable runtime still degrades."""
+    result = attach_container_backend(
+        runtime,
+        explicit=False,
+        backend=_UnavailableBackend(),  # type: ignore[arg-type]
+        probe=_unavailable,
+    )
+    assert result is None
+
+
+@pytest.mark.parametrize("runtime", sorted(CONTAINER_SANDBOX_RUNTIMES))
+def test_available_container_runtime_never_raises(runtime: str) -> None:
+    """A healthy runtime passes the gate whether or not it has a backend."""
+    result = attach_container_backend(
+        runtime,
+        explicit=True,
+        backend=_AvailableBackend(),  # type: ignore[arg-type]
+        probe=_available,
+    )
+    # docker returns its first-party backend; podman rides the CLI sandbox
+    # path, so the gate's only job there is to have not raised.
+    assert result is None or result.name == "docker"
+
+
+@pytest.mark.parametrize("runtime", NON_CONTAINER_SANDBOX_CHOICES)
+def test_non_container_runtime_is_never_probed_or_refused(runtime: str) -> None:
+    """worktree and the cloud backends are left entirely alone by this gate."""
+    probed: list[str] = []
+
+    def _tracking_probe(name: str) -> str | None:
+        probed.append(name)
+        return _unavailable(name)
+
+    result = attach_container_backend(runtime, explicit=True, probe=_tracking_probe)
+
+    assert result is None
+    assert probed == []
+    assert is_container_runtime(runtime) is False
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "DOCKER", " Podman "])
+def test_runtime_name_is_normalised_before_the_gate_reads_it(raw: str) -> None:
+    """Case and padding never decide whether isolation is enforced."""
+    assert is_container_runtime(raw) is (raw.strip().lower() in CONTAINER_SANDBOX_RUNTIMES)
+
+
+def test_container_runtime_set_matches_accepted_sandbox_config_values() -> None:
+    """The gate's runtime set is the accepted ``sandbox.runtime`` set.
+
+    Deriving one from the other is what stops a newly supported runtime from
+    being accepted by configuration while failing open at the gate.
+    """
+    from typing import get_args
+
+    from bernstein.core.security.sandbox import SandboxRuntime
+
+    assert frozenset(get_args(SandboxRuntime)) == CONTAINER_SANDBOX_RUNTIMES
+
+
+def test_orchestrator_attach_gate_does_not_key_on_a_single_runtime_literal() -> None:
+    """The orchestrator's wiring-time gate is runtime-agnostic.
+
+    The gate lives in the orchestrator's ``__main__`` block, so it cannot be
+    imported and called. Reading the source is the available way to keep the
+    exact defect from #3039 - a gate spelled ``_sandbox_runtime == "docker"``,
+    which skipped the availability probe for every other runtime - from coming
+    back.
+    """
+    from pathlib import Path
+
+    import bernstein.core.orchestration.orchestrator as orchestrator_module
+
+    source = Path(orchestrator_module.__file__).read_text(encoding="utf-8")
+    assert '_sandbox_runtime == "docker"' not in source
+    assert "attach_container_backend(_sandbox_runtime, explicit=True)" in source

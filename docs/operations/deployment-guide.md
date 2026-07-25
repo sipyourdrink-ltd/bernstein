@@ -470,8 +470,17 @@ cannot be provided never silently becomes worktree isolation:
 
 | How isolation was requested | Runtime missing |
 |---|---|
-| `--sandbox docker` | **refuses** - a `SandboxSelectionError` naming the cause. The check runs at wiring time, so a missing Docker SDK or a dead daemon aborts the run *before any agent spawns*; if the daemon attaches but a per-agent session cannot be provisioned, the spawn refuses rather than dropping to a host spawn |
+| `--sandbox docker` **or** `--sandbox podman` - any explicitly named container runtime | **refuses** - a `SandboxSelectionError` naming the runtime and the cause. The check runs at wiring time, so a missing runtime CLI, a missing Docker SDK, or a dead daemon aborts the run *before any agent spawns*; if the runtime attaches but a per-agent sandbox cannot be started, the spawn refuses rather than dropping to a worktree or host spawn |
 | A container request configured without `--sandbox` (e.g. `sandbox:` in `bernstein.yaml`) | **downgrades to worktree isolation, surfaced and audited** |
+| The legacy `--container` flag (no `--sandbox`) | **downgrades to no isolation, surfaced and audited** - the agent runs on the host |
+
+> **An explicitly requested container runtime never silently degrades - for
+> every supported runtime.** The refusal is gated on "the operator named a
+> container runtime with `--sandbox` / `BERNSTEIN_SANDBOX_RUNTIME`", not on
+> which runtime was named, so `podman` and `docker` behave identically. If you
+> pin a runtime, the run either gets that boundary or stops. Non-container
+> `--sandbox` choices (`worktree` and the cloud backends) are unaffected: they
+> keep their own selection and fallback semantics.
 
 A downgrade is no longer a log-only event. It is recorded in the end-of-run
 summary (`summary.json` → `isolation_downgrades`, plus an "Isolation downgrade"
@@ -481,10 +490,10 @@ operator who asked for a stronger boundary can therefore see at run level that a
 weaker one was used - and prove it from the audit chain afterwards.
 
 If your posture requires the run to *fail closed* rather than continue on a
-weaker boundary, pin the backend with `--sandbox docker` and confirm the run
-aborts when no runtime is present. Note that a downgrade is reported per agent
-session, so a run that spawns several agents on a runtime-less host records one
-entry per affected session.
+weaker boundary, pin the backend with `--sandbox docker` or `--sandbox podman`
+and confirm the run aborts when no runtime is present. Note that a downgrade is
+reported per agent session, so a run that spawns several agents on a
+runtime-less host records one entry per affected session.
 
 ### Backing up state
 

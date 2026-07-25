@@ -87,9 +87,14 @@ def test_spawn_in_sandbox_uses_sandbox_path(tmp_path: Path) -> None:
     assert sandbox_spawn.call_args.kwargs["adapter_name"] == "claude"
 
 
-def test_spawn_in_sandbox_falls_back_to_adapter_on_runtime_failure(tmp_path: Path) -> None:
+def test_spawn_in_sandbox_falls_back_to_adapter_on_runtime_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Runtime setup errors should fall back to the normal worktree adapter path."""
 
+    # The fallback is for a container request the operator did not pin with
+    # ``--sandbox``; a pinned container runtime refuses instead (issue #3039).
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
     adapter = FakeAdapter("codex")
     sandbox = DockerSandbox(enabled=True)
     session = AgentSession(id="S-2", role="backend")
@@ -193,9 +198,7 @@ def test_non_explicit_docker_request_downgrade_is_surfaced_and_audited(
 
     # 2) Audited in the HMAC-chained audit log with requested-vs-actual isolation.
     audit_dir = tmp_path / ".sdd" / "audit"
-    downgrade_events = [
-        e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"
-    ]
+    downgrade_events = [e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"]
     assert len(downgrade_events) == 1
     details = downgrade_events[0]["details"]
     assert isinstance(details, dict)
@@ -242,6 +245,4 @@ def test_worktree_only_spawner_records_no_downgrade(tmp_path: Path) -> None:
     assert spawner.isolation_downgrades == []
     audit_dir = tmp_path / ".sdd" / "audit"
     if audit_dir.exists():
-        assert not [
-            e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"
-        ]
+        assert not [e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"]
