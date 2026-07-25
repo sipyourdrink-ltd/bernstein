@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from bernstein.core.models import NodeCapacity, NodeInfo, NodeStatus
 from bernstein.core.server import (
+    ClaimGossipRequest,
+    ClaimGossipResponse,
+    ClaimGossipResult,
     ClusterStatusResponse,
     NodeHeartbeatRequest,
     NodeRegisterRequest,
@@ -21,6 +25,7 @@ from bernstein.core.server import (
 
 if TYPE_CHECKING:
     from bernstein.core.cluster import NodeRegistry
+    from bernstein.core.protocols.cluster.mesh_coordinator import MeshCoordinator
 
 router = APIRouter()
 
@@ -39,6 +44,23 @@ def _get_store(request: Request) -> TaskStore:
 
 def _get_node_registry(request: Request) -> NodeRegistry:
     return request.app.state.node_registry  # type: ignore[no-any-return]
+
+
+def _get_mesh_coordinator(request: Request) -> MeshCoordinator:
+    """Return the wired MESH coordinator, or 409 when the node is not MESH.
+
+    Refusing rather than lazily constructing one is deliberate: gossiping into
+    a node whose topology is STAR would fold receipts into a journal nothing
+    reads, so the peer would believe it had converged with a node that is still
+    taking its assignments from a central server.
+    """
+    coordinator: MeshCoordinator | None = getattr(request.app.state, "mesh_coordinator", None)
+    if coordinator is None:
+        raise HTTPException(
+            status_code=409,
+            detail="claim gossip requires cluster.topology 'mesh'; this node is not running MESH",
+        )
+    return coordinator
 
 
 def _verify_cluster_auth(request: Request, required_scope: str) -> None:
@@ -191,6 +213,65 @@ def cluster_status(request: Request) -> ClusterStatusResponse:
         available_slots=summary["available_slots"],
         active_agents=summary["active_agents"],
         nodes=[NodeResponse(**n) for n in summary["nodes"]],
+    )
+
+
+@router.post(
+    "/cluster/claims/gossip",
+    responses={
+        401: {"description": "Cluster authentication failed"},
+        409: {"description": "Node is not running the MESH topology"},
+    },
+)
+def gossip_claims(body: ClaimGossipRequest, request: Request) -> ClaimGossipResponse:
+    """Fold peer claim receipts into this node's signed journal (#2558).
+
+    The leaderless counterpart to ``POST /cluster/steal``: no node decides who
+    gets what here. Each receipt is folded only after its Ed25519 signature and
+    its chain link both verify, so an unverifiable receipt is never written.
+
+    A receipt that does not extend the local head is *not* merged. It produces
+    a signed ``fork`` receipt carrying the divergence entry index, which the
+    response surfaces through ``forked``. Silent merge would be the one failure
+    mode a leaderless design cannot recover from: two partitions would each
+    hold a coherent-looking journal describing incompatible work.
+
+    Authorisation reuses the node-heartbeat scope: gossip is a peer-to-peer
+    fleet-membership operation, not an administrative one.
+    """
+    from bernstein.core.cluster_auth import SCOPE_NODE_HEARTBEAT
+    from bernstein.core.orchestration.tracker_pipeline import ClaimReceipt
+
+    _verify_cluster_auth(request, SCOPE_NODE_HEARTBEAT)
+    coordinator = _get_mesh_coordinator(request)
+
+    try:
+        receipts = [ClaimReceipt.from_dict(raw) for raw in body.receipts]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"malformed claim receipt: {exc}") from exc
+
+    now = time.time()
+    results: list[ClaimGossipResult] = []
+    accepted = 0
+    forked = False
+    for receipt, outcome in zip(receipts, coordinator.ingest_many(receipts, now=now), strict=False):
+        results.append(
+            ClaimGossipResult(
+                entry_hash=receipt.entry_hash,
+                status=outcome.status,
+                reason=outcome.reason,
+                divergence_index=outcome.divergence_index,
+            )
+        )
+        if outcome.status == "applied":
+            accepted += 1
+        if outcome.status == "forked":
+            forked = True
+    return ClaimGossipResponse(
+        head=coordinator.head(),
+        accepted=accepted,
+        results=results,
+        forked=forked,
     )
 
 

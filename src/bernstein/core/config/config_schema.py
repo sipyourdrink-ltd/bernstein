@@ -387,6 +387,11 @@ class ClusterSchema(BaseModel):
     node_timeout_s: int = Field(default=60, ge=1)
     server_url: str | None = None
     bind_host: str = "127.0.0.1"
+    # MESH-only keys (issue #2558): leaderless coordination through the signed
+    # claim journal. Ignored on the STAR path, which keeps its central server.
+    gossip_peers: list[str] = Field(default_factory=list)
+    claim_lease_ttl_s: int = Field(default=300, ge=1)
+    claim_journal_path: str | None = None
 
 
 class RemoteSchema(BaseModel):

@@ -1743,6 +1743,13 @@ class ClusterConfig:
             When set, the central server serves over HTTPS with the supplied
             cert chain and worker httpx clients present a client cert.
             See :mod:`bernstein.core.protocols.cluster.cluster_tls`.
+        gossip_peers: MESH only. Peer base URLs this node gossips claim
+            receipts to. Empty on STAR, where coordination is central.
+        claim_lease_ttl_s: MESH only. Lease duration granted to a self-claim
+            in the signed claim journal.
+        claim_journal_path: MESH only. Explicit path to the signed claim
+            journal. ``None`` uses the conventional
+            ``.sdd/cluster/claim_journal.jsonl``.
     """
 
     enabled: bool = False
@@ -1753,6 +1760,16 @@ class ClusterConfig:
     server_url: str | None = None  # Central server URL (worker nodes connect here)
     bind_host: str = "127.0.0.1"  # Default: localhost only
     tls: TLSConfig | None = None
+    # MESH-only keys (issue #2558). Unused on STAR, whose behaviour is
+    # unchanged by their presence.
+    gossip_peers: tuple[str, ...] = ()
+    claim_lease_ttl_s: int = 300
+    claim_journal_path: str | None = None
+
+    @property
+    def is_mesh(self) -> bool:
+        """``True`` when this config selects the leaderless MESH topology."""
+        return self.topology is ClusterTopology.MESH
 
     @property
     def cluster_url_scheme(self) -> str:

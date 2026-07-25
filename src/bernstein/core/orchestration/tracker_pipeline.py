@@ -96,7 +96,9 @@ __all__ = [
     "DEFAULT_PER_ROLE_MAX_IN_FLIGHT",
     "FAILURE_BLOCK_BEGIN",
     "FAILURE_BLOCK_END",
+    "ClaimFork",
     "ClaimHold",
+    "ClaimIngestResult",
     "ClaimJournal",
     "ClaimJournalVerifyResult",
     "ClaimLedger",
@@ -154,25 +156,56 @@ leaderless MESH path (issue #2558) constructs a :class:`ClaimJournal` and
 threads it into :class:`ClaimLedger`.
 """
 
-CLAIM_JOURNAL_SCHEMA_VERSION: Final[int] = 2
+CLAIM_JOURNAL_SCHEMA_VERSION: Final[int] = 3
 """On-disk schema version stamped into every :class:`ClaimReceipt`.
 
 Bumping requires a parallel reader for the old version, mirroring the
-tracker-audit stream's versioning contract.
+tracker-audit stream's versioning contract. :func:`_claim_signing_bytes`
+provides that parallel reader by *projecting away* fields introduced after a
+receipt's own ``schema_version``, so an older receipt's ``entry_hash``
+recomputes byte-identically under a newer binary and an append-only journal
+written by a previous release keeps verifying.
 
 v2 adds the ``superseded_node_id`` / ``superseded_claimer_id`` reference
 fields so a ``supersede`` receipt records the loser's identity as data it
 speaks *about* while its own ``node_id`` / ``claimer_id`` name the
 reconciling node that signs it (issue #2558).
+
+v3 adds the ``fork`` kind's reference fields (``fork_divergence_index`` /
+``fork_entry_hash`` / ``fork_local_head``) and ``target_entry_hash``, the
+claim ``entry_hash`` a ``release`` / ``expire`` receipt acts on. Both follow
+the same referenced-data rule v2 established: the receipt's own identity
+fields always name its signer, and what it speaks about is carried as data.
+"""
+
+_CLAIM_FIELDS_BY_SCHEMA: Final[dict[int, frozenset[str]]] = {
+    3: frozenset(
+        {
+            "target_entry_hash",
+            "fork_divergence_index",
+            "fork_entry_hash",
+            "fork_local_head",
+        },
+    ),
+}
+"""Receipt fields introduced *at* each schema version, keyed by that version.
+
+Used by :func:`_claim_signing_bytes` to reconstruct the exact body an older
+release hashed, so the chain of a journal written before an upgrade still
+verifies byte-for-byte. Version 2 and below is the implicit base set.
 """
 
 CLAIM_RECEIPT_KINDS: Final[frozenset[str]] = frozenset(
-    {"claim", "release", "renew", "expire", "supersede"},
+    {"claim", "release", "renew", "expire", "supersede", "fork"},
 )
 """The closed set of :class:`ClaimReceipt` kinds.
 
 Exposed as a module constant so downstream tools can introspect the taxonomy
 without reaching into the dataclass internals.
+
+``fork`` is an *observation*, not a claim transition: it records that a
+gossiped receipt failed to extend the local head, so the fold ignores it for
+holder selection while :meth:`ClaimJournal.verify` and the CLI surface it.
 """
 
 FAILURE_BLOCK_BEGIN: Final[str] = "```yaml bernstein:failure"
@@ -968,6 +1001,10 @@ class ClaimReceipt:
     winner_entry_hash: str | None = None
     superseded_node_id: str | None = None
     superseded_claimer_id: str | None = None
+    target_entry_hash: str | None = None
+    fork_divergence_index: int | None = None
+    fork_entry_hash: str | None = None
+    fork_local_head: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in CLAIM_RECEIPT_KINDS:
@@ -1002,6 +1039,10 @@ class ClaimReceipt:
         winner_entry_hash = data.get("winner_entry_hash")
         superseded_node_id = data.get("superseded_node_id")
         superseded_claimer_id = data.get("superseded_claimer_id")
+        target_entry_hash = data.get("target_entry_hash")
+        fork_divergence_index = data.get("fork_divergence_index")
+        fork_entry_hash = data.get("fork_entry_hash")
+        fork_local_head = data.get("fork_local_head")
         return cls(
             schema_version=int(data["schema_version"]),
             kind=str(data["kind"]),
@@ -1020,6 +1061,10 @@ class ClaimReceipt:
             winner_entry_hash=None if winner_entry_hash is None else str(winner_entry_hash),
             superseded_node_id=None if superseded_node_id is None else str(superseded_node_id),
             superseded_claimer_id=(None if superseded_claimer_id is None else str(superseded_claimer_id)),
+            target_entry_hash=None if target_entry_hash is None else str(target_entry_hash),
+            fork_divergence_index=(None if fork_divergence_index is None else int(fork_divergence_index)),
+            fork_entry_hash=None if fork_entry_hash is None else str(fork_entry_hash),
+            fork_local_head=None if fork_local_head is None else str(fork_local_head),
         )
 
 
@@ -1030,10 +1075,21 @@ def _claim_signing_bytes(receipt: ClaimReceipt) -> bytes:
     ``signature`` and ``entry_hash`` fields are blanked so the digest is
     reproducible from the same body during replay or verification, and so the
     chain hash never depends on which node signed the receipt.
+
+    Fields introduced *after* the receipt's own ``schema_version`` are dropped
+    before canonicalisation, so a receipt written by an older release hashes
+    over exactly the body that release hashed. Without that projection an
+    upgrade would silently invalidate every prior entry in an append-only
+    journal -- indistinguishable, to :meth:`ClaimJournal.verify`, from tamper.
     """
     body = asdict(receipt)
     body["signature"] = {}
     body["entry_hash"] = ""
+    version = int(receipt.schema_version)
+    for introduced_at, names in _CLAIM_FIELDS_BY_SCHEMA.items():
+        if version < introduced_at:
+            for name in names:
+                body.pop(name, None)
     return _canonical_bytes(body)
 
 
@@ -1058,6 +1114,23 @@ def _tail_hash_from_handle(fp: IO[bytes]) -> str:
             continue
         last_hash = json.loads(stripped.decode("utf-8"))["entry_hash"]
     return last_hash
+
+
+def _entry_hashes_from_handle(fp: IO[bytes]) -> list[str]:
+    """Return every ``entry_hash`` in order from an open journal handle.
+
+    Like :func:`_tail_hash_from_handle`, reads from the start of ``fp`` so a
+    caller already holding the exclusive append lock resolves the whole chain
+    without opening a second descriptor.
+    """
+    fp.seek(0)
+    hashes: list[str] = []
+    for raw in fp:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        hashes.append(str(json.loads(stripped.decode("utf-8"))["entry_hash"]))
+    return hashes
 
 
 @dataclass(frozen=True, slots=True)
@@ -1086,13 +1159,42 @@ class ClaimHold:
 
 
 @dataclass(frozen=True, slots=True)
+class ClaimFork:
+    """One recorded divergence between a gossiped chain and the local one.
+
+    Projected from a ``fork`` receipt. ``divergence_index`` is the number of
+    leading local entries the rejected receipt's chain provably shares: entries
+    from that index onward are divergent. ``entry_hash`` is the rejected
+    receipt, ``local_head`` the local head at the moment it was rejected, and
+    ``observed_by`` the node that signed the observation.
+    """
+
+    divergence_index: int
+    entry_hash: str
+    local_head: str
+    observed_by: str
+    fork_receipt_hash: str
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the canonical dict form used by :meth:`ClaimState.canonical_bytes`."""
+        return {
+            "divergence_index": self.divergence_index,
+            "entry_hash": self.entry_hash,
+            "local_head": self.local_head,
+            "observed_by": self.observed_by,
+            "fork_receipt_hash": self.fork_receipt_hash,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ClaimState:
     """The projected claim state -- the pure fold of an ordered receipt set.
 
     ``holds`` maps each claimed key to its single deterministic holder;
     ``superseded`` is the set of every claim ``entry_hash`` that lost (whether
     by an explicit ``supersede`` receipt or by the lowest-``entry_hash`` rule);
-    ``head`` is the journal head hash (the ``entry_hash`` of the last receipt).
+    ``forks`` is every divergence a ``fork`` receipt recorded; ``head`` is the
+    journal head hash (the ``entry_hash`` of the last receipt).
 
     Two nodes folding the same ordered receipt set must produce a
     byte-identical :meth:`canonical_bytes` and an identical ``head``.
@@ -1101,6 +1203,7 @@ class ClaimState:
     holds: Mapping[tuple[str, str, str], ClaimHold]
     superseded: frozenset[str]
     head: str
+    forks: tuple[ClaimFork, ...] = ()
 
     def holder(self, tracker: str, ticket_id: str, role: str) -> ClaimHold | None:
         """Return the current holder of the key, or ``None`` if unheld."""
@@ -1109,6 +1212,7 @@ class ClaimState:
     def canonical_bytes(self) -> bytes:
         """Return the deterministic JCS serialisation for byte-comparison."""
         payload = {
+            "forks": [fork.as_dict() for fork in self.forks],
             "head": self.head,
             "holds": [self.holds[k].as_dict() for k in sorted(self.holds)],
             "superseded": sorted(self.superseded),
@@ -1146,9 +1250,18 @@ def _active_buckets(
                 if hold.claimer_id == receipt.claimer_id and hold.node_id == receipt.node_id:
                     bucket[entry_hash] = replace(hold, lease_expires_at=receipt.lease_expires_at)
         elif receipt.kind in ("release", "expire"):
-            for entry_hash, hold in list(bucket.items()):
-                if hold.claimer_id == receipt.claimer_id and hold.node_id == receipt.node_id:
-                    del bucket[entry_hash]
+            # A receipt naming ``target_entry_hash`` acts on exactly that claim
+            # (schema v3). That is what lets a node retire a *peer's* expired
+            # lease without impersonating it: the receipt's own identity stays
+            # its signer's, and the hold it retires is referenced data. Older
+            # receipts carry no target, so they fall back to the v2 rule --
+            # retire every hold whose identity matches the receipt's own.
+            if receipt.target_entry_hash is not None:
+                bucket.pop(receipt.target_entry_hash, None)
+            else:
+                for entry_hash, hold in list(bucket.items()):
+                    if hold.claimer_id == receipt.claimer_id and hold.node_id == receipt.node_id:
+                        del bucket[entry_hash]
         elif receipt.kind == "supersede" and receipt.supersedes is not None:
             bucket.pop(receipt.supersedes, None)
             explicit_superseded.add(receipt.supersedes)
@@ -1177,17 +1290,96 @@ def project_claims(receipts: Sequence[ClaimReceipt]) -> ClaimState:
             if entry_hash != winner_entry_hash:
                 superseded.add(entry_hash)
     head = receipts[-1].entry_hash if receipts else GENESIS_PREV_HASH
-    return ClaimState(holds=holds, superseded=frozenset(superseded), head=head)
+    return ClaimState(
+        holds=holds,
+        superseded=frozenset(superseded),
+        head=head,
+        forks=_project_forks(receipts),
+    )
+
+
+def _project_forks(receipts: Sequence[ClaimReceipt]) -> tuple[ClaimFork, ...]:
+    """Return every divergence recorded by a ``fork`` receipt, in journal order.
+
+    Kept ordered by position rather than sorted so the sequence reads as the
+    order the node observed the divergences; two nodes folding the same ordered
+    receipts still agree byte-for-byte because the input order is the same.
+    """
+    forks_seen: list[ClaimFork] = []
+    for receipt in receipts:
+        if receipt.kind != "fork" or receipt.fork_entry_hash is None:
+            continue
+        forks_seen.append(
+            ClaimFork(
+                divergence_index=int(receipt.fork_divergence_index or 0),
+                entry_hash=receipt.fork_entry_hash,
+                local_head=receipt.fork_local_head or GENESIS_PREV_HASH,
+                observed_by=receipt.node_id,
+                fork_receipt_hash=receipt.entry_hash,
+            ),
+        )
+    return tuple(forks_seen)
+
+
+def _divergence_index(local_hashes: Sequence[str], foreign_prev_hash: str) -> int:
+    """Return how many leading local entries a rejected receipt provably shares.
+
+    When ``foreign_prev_hash`` names local entry ``i``, the two chains agree
+    through ``i`` and disagree at ``i + 1`` -- that is the divergence index.
+    When it is genesis, or names an entry the local chain has never seen, the
+    chains share no verifiable prefix and the index is ``0``. The two cases are
+    told apart by the ``fork_local_head`` the fork receipt records alongside.
+    """
+    if foreign_prev_hash == GENESIS_PREV_HASH:
+        return 0
+    for index, entry_hash in enumerate(local_hashes):
+        if entry_hash == foreign_prev_hash:
+            return index + 1
+    return 0
 
 
 @dataclass(frozen=True, slots=True)
 class ClaimJournalVerifyResult:
-    """Outcome of :meth:`ClaimJournal.verify`."""
+    """Outcome of :meth:`ClaimJournal.verify`.
+
+    ``ok`` covers *integrity*: every chain link, every recomputed entry hash,
+    every Ed25519 node signature, and -- when an audit chain is supplied --
+    every audit-chain anchor. ``forks`` is reported separately because a fork
+    is a correctly-signed, correctly-chained record of a divergence: the local
+    journal is intact, but coordination history is not single-threaded. A
+    caller that treats a journal as authoritative must check both.
+    """
 
     ok: bool
     entry_count: int
     bad_index: int | None = None
     failures: list[str] = field(default_factory=list)
+    head: str = GENESIS_PREV_HASH
+    forks: tuple[ClaimFork, ...] = ()
+    anchors_checked: bool = False
+
+    @property
+    def clean(self) -> bool:
+        """``True`` when integrity holds *and* no fork was recorded."""
+        return self.ok and not self.forks
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimIngestResult:
+    """Outcome of :meth:`ClaimJournal.ingest` for one gossiped receipt.
+
+    ``status`` is one of ``"applied"`` (the receipt extended the local head and
+    was folded), ``"duplicate"`` (already present -- gossip is idempotent),
+    ``"forked"`` (it did not extend the local head; a signed ``fork`` receipt
+    was appended and the foreign receipt was *not* merged), or ``"rejected"``
+    (the signature or the recomputed entry hash failed, so nothing was written).
+    """
+
+    status: str
+    head: str
+    reason: str | None = None
+    fork_receipt: ClaimReceipt | None = None
+    divergence_index: int | None = None
 
 
 class ClaimJournal:
@@ -1246,6 +1438,10 @@ class ClaimJournal:
         winner_entry_hash: str | None = None,
         superseded_node_id: str | None = None,
         superseded_claimer_id: str | None = None,
+        target_entry_hash: str | None = None,
+        fork_divergence_index: int | None = None,
+        fork_entry_hash: str | None = None,
+        fork_local_head: str | None = None,
     ) -> ClaimReceipt:
         """Append one signed receipt and return the materialised entry.
 
@@ -1288,6 +1484,10 @@ class ClaimJournal:
                     winner_entry_hash=winner_entry_hash,
                     superseded_node_id=superseded_node_id,
                     superseded_claimer_id=superseded_claimer_id,
+                    target_entry_hash=target_entry_hash,
+                    fork_divergence_index=fork_divergence_index,
+                    fork_entry_hash=fork_entry_hash,
+                    fork_local_head=fork_local_head,
                 )
                 digest = compute_claim_entry_hash(unsigned)
                 signed = replace(unsigned, entry_hash=digest)
@@ -1404,9 +1604,124 @@ class ClaimJournal:
                 cursor_ts += 1
         return emitted
 
+    # -- gossip ingest -------------------------------------------------
+
+    def ingest(
+        self,
+        receipt: ClaimReceipt,
+        *,
+        ts_ns: int,
+        trusted_keys: Mapping[str, dict[str, Any]] | None = None,
+    ) -> ClaimIngestResult:
+        """Fold one gossiped receipt, or record a signed fork if it diverges.
+
+        The order is deliberate and is the whole security property of the
+        gossip path: the Ed25519 signature and the recomputed ``entry_hash``
+        are checked *before* anything touches the journal, so an unverifiable
+        receipt is never written and never folded. Only then is the chain link
+        considered.
+
+        Three outcomes:
+
+        * The receipt's ``prev_entry_hash`` is the local head -- it extends the
+          chain, so it is written verbatim (its bytes, and therefore its hash
+          and signature, are preserved exactly) and folded.
+        * Its ``entry_hash`` is already on disk -- gossip is idempotent, so
+          this is a no-op ``duplicate``.
+        * It does not extend the local head -- the two chains have diverged. A
+          signed ``fork`` receipt carrying the divergence entry index, the
+          rejected receipt's hash, and the local head is appended, and the
+          foreign receipt is **not** merged. A partition surfaces as a
+          recorded, signed observation rather than a silent overwrite.
+
+        Args:
+            receipt: The gossiped receipt.
+            ts_ns: Explicit timestamp for any fork receipt minted here.
+            trusted_keys: Optional map of ``node_id`` to public-key JWK. When
+                supplied the signer's key must match the pinned one, so a
+                receipt cannot be accepted under a key it shipped itself.
+
+        Returns:
+            A :class:`ClaimIngestResult` naming the outcome and the resulting
+            local head.
+        """
+        if compute_claim_entry_hash(receipt) != receipt.entry_hash:
+            return ClaimIngestResult(
+                status="rejected",
+                head=self.head(),
+                reason="entry_hash mismatch (tampered payload)",
+            )
+        trusted = None if trusted_keys is None else trusted_keys.get(receipt.node_id)
+        if trusted_keys is not None and trusted is None:
+            return ClaimIngestResult(
+                status="rejected",
+                head=self.head(),
+                reason=f"no trusted key pinned for node {receipt.node_id!r}",
+            )
+        sig_check = verify_head_signature(
+            receipt.entry_hash.split(":", 1)[1],
+            receipt.signature,
+            trusted_public_key_jwk=trusted,
+        )
+        if not sig_check.ok:
+            return ClaimIngestResult(
+                status="rejected",
+                head=self.head(),
+                reason=f"signature failure ({'; '.join(sig_check.errors)})",
+            )
+
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a+b") as fp, _exclusive_lock(fp):
+                hashes = _entry_hashes_from_handle(fp)
+                if receipt.entry_hash in hashes:
+                    return ClaimIngestResult(status="duplicate", head=hashes[-1])
+                local_head = hashes[-1] if hashes else GENESIS_PREV_HASH
+                if receipt.prev_entry_hash == local_head:
+                    fp.seek(0, os.SEEK_END)
+                    fp.write(_canonical_bytes(asdict(receipt)) + b"\n")
+                    fp.flush()
+                    os.fsync(fp.fileno())
+                    applied = True
+                else:
+                    applied = False
+                    divergence_index = _divergence_index(hashes, receipt.prev_entry_hash)
+            if applied:
+                self._anchor(receipt)
+                return ClaimIngestResult(status="applied", head=receipt.entry_hash)
+
+        # Fork: minted outside the locked section because ``append`` takes the
+        # same advisory lock on its own descriptor. The divergence facts were
+        # captured under the lock above, so the recorded observation describes
+        # the state that actually rejected the receipt.
+        fork_receipt = self.append(
+            kind="fork",
+            tracker=receipt.tracker,
+            ticket_id=receipt.ticket_id,
+            role=receipt.role,
+            claimer_id=self._node_id,
+            lease_expires_at=0.0,
+            ts_ns=ts_ns,
+            fork_divergence_index=divergence_index,
+            fork_entry_hash=receipt.entry_hash,
+            fork_local_head=local_head,
+        )
+        return ClaimIngestResult(
+            status="forked",
+            head=fork_receipt.entry_hash,
+            reason=(f"prev_entry_hash {receipt.prev_entry_hash} does not extend local head {local_head}"),
+            fork_receipt=fork_receipt,
+            divergence_index=divergence_index,
+        )
+
     # -- verify -------------------------------------------------------
 
-    def verify(self, *, trusted_keys: Mapping[str, dict[str, Any]] | None = None) -> ClaimJournalVerifyResult:
+    def verify(
+        self,
+        *,
+        trusted_keys: Mapping[str, dict[str, Any]] | None = None,
+        chain: AuditChainStore | None = None,
+    ) -> ClaimJournalVerifyResult:
         """Replay the journal offline, checking chain links and signatures.
 
         Walks every receipt confirming the ``prev_entry_hash`` linkage, the
@@ -1416,12 +1731,38 @@ class ClaimJournal:
         public-key JWK by ``node_id``; when omitted the embedded key is trusted
         on first use (the signature still authenticates the bytes against *a*
         key, catching an unsigned tamper).
+
+        When ``chain`` is supplied every receipt's audit-chain anchor is
+        re-checked too: the HMAC chain must carry a
+        ``cluster.claim_journal_receipt`` event whose ``journal_entry_hash``
+        equals the receipt's. That closes the last gap an offline verifier
+        would otherwise have -- a journal internally consistent with itself but
+        never anchored, i.e. a chain someone rebuilt wholesale.
+
+        Forks are reported in ``forks`` rather than as an integrity failure: a
+        ``fork`` receipt is a correctly-signed record that the chain diverged,
+        so the file is intact but the coordination history is not. Callers
+        wanting "intact *and* single-threaded" should read
+        :attr:`ClaimJournalVerifyResult.clean`.
+
+        Runs with no live nodes and no network: everything it needs is the
+        journal file plus, optionally, the local audit chain.
         """
         if not self.path.exists():
-            return ClaimJournalVerifyResult(ok=True, entry_count=0)
+            return ClaimJournalVerifyResult(ok=True, entry_count=0, head=GENESIS_PREV_HASH)
+
+        anchored: set[str] | None = None
+        if chain is not None:
+            from bernstein.core.security.audit_chain import EVENT_CLAIM_JOURNAL_RECEIPT
+
+            anchored = {
+                str(event.details.get("journal_entry_hash"))
+                for event in chain.query(event_type=EVENT_CLAIM_JOURNAL_RECEIPT, include_archived=True)
+            }
 
         prev_hash = GENESIS_PREV_HASH
         ordinal = 0
+        receipts: list[ClaimReceipt] = []
         with self.path.open("rb") as fp:
             for raw in fp:
                 stripped = raw.strip()
@@ -1467,9 +1808,26 @@ class ClaimJournal:
                         bad_index=ordinal,
                         failures=[f"entry {ordinal}: signature failure ({'; '.join(sig_check.errors)})"],
                     )
+                if anchored is not None and receipt.entry_hash not in anchored:
+                    return ClaimJournalVerifyResult(
+                        ok=False,
+                        entry_count=ordinal,
+                        bad_index=ordinal,
+                        failures=[
+                            f"entry {ordinal}: no audit-chain anchor for {receipt.entry_hash}",
+                        ],
+                        anchors_checked=True,
+                    )
+                receipts.append(receipt)
                 prev_hash = receipt.entry_hash
                 ordinal += 1
-        return ClaimJournalVerifyResult(ok=True, entry_count=ordinal)
+        return ClaimJournalVerifyResult(
+            ok=True,
+            entry_count=ordinal,
+            head=prev_hash,
+            forks=_project_forks(receipts),
+            anchors_checked=anchored is not None,
+        )
 
     # -- internals ----------------------------------------------------
 
