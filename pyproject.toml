@@ -196,6 +196,25 @@ dev = [
     # floors (click>=8.3.3, opentelemetry-sdk>=1.41.1). Install via
     # `uv tool install semgrep` (isolated env). See .github/workflows/ci.yml
     # and docs/contributing/testing.md.
+    #
+    # Type stubs for dependencies that ship no inline annotations. Mirror of
+    # [dependency-groups].dev. Everything below is typeshed's own `types-*`
+    # distribution except lxml-stubs (published by the lxml developers) and
+    # boto3-stubs / botocore-stubs (published by the mypy_boto3 project).
+    # Stub-only wheels: no runtime code, no import cost. They are dev-only
+    # because they are consumed by `uv run mypy src`.
+    "types-pyyaml>=6.0.12.20260724",  # pyyaml
+    "types-jsonschema>=4.26.0.20260518",  # jsonschema
+    "types-reportlab>=4.5.1.20260724",  # reportlab
+    "types-defusedxml>=0.7.0.20260504",  # defusedxml
+    "types-psutil>=7.2.2.20260518",  # psutil
+    "types-croniter>=6.2.4.20260711",  # croniter
+    "types-qrcode>=8.2.0.20260518",  # qrcode (gui extra)
+    "types-grpcio>=1.82.1.20260724",  # grpcio (grpc extra)
+    "types-grpcio-reflection>=1.0.0.20260508",  # grpcio-reflection (grpc extra)
+    "lxml-stubs>=0.5.1",  # lxml, via signxml (SAML assertion parsing)
+    "boto3-stubs>=1.43.56",  # boto3 (s3 / r2 extras), published by the mypy_boto3 project
+    "botocore-stubs>=1.43.14",  # botocore, same publisher
 ]
 grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=5.29"]
 k8s = ["kubernetes>=35.0.0"]
@@ -758,6 +777,61 @@ warn_unused_configs = true
 module = ["bernstein.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# Installed dependencies that ship neither a `py.typed` marker nor a
+# published stub distribution. Checked against PyPI: there is no
+# `types-asn1crypto`, `types-kubernetes` or `types-e2b-code-interpreter`,
+# and the `google.cloud` namespace package carries no marker of its own
+# even though the individual `google-cloud-*` distributions do.
+#
+# Every other untyped import in the tree is resolved by a real stub
+# package in [dependency-groups].dev instead - see the block there. This
+# list is the residue, and it should shrink as upstream adds markers, not
+# grow. Adding an entry here means "no type information exists anywhere";
+# it is not a place to park a package we simply have not stubbed yet.
+module = [
+    "asn1crypto.*",  # RFC 3161 ASN.1 parsing, core/security/rfc3161_verifier.py
+    "e2b_code_interpreter.*",  # `e2b` extra, core/sandbox/backends/e2b.py
+    "google.cloud.*",  # `gcs` extra, core/security/secrets_broker.py
+    "kubernetes.*",  # `k8s` extra, core/orchestration/operator.py
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Optional backends imported inside a function body behind a try/except
+# ImportError, with a typed fallback when absent. They are absent from the
+# environment `uv run mypy src` sees - the first group is not declared in
+# [project] at all, the second is behind an extra that a plain `uv sync`
+# does not install - so mypy reports `import-not-found`.
+#
+# `ignore_missing_imports` only applies to an import that fails to
+# resolve. Where the package is present and ships inline annotations
+# (`datasets`, `spiffe`, and most of the first group), mypy reads the real
+# types and this override does nothing - so it silences the "not
+# installed" noise without masking a typed surface.
+#
+# The first group is deliberately not installed rather than un-stubbed:
+# pulling it into the dev group to read those annotations would add native
+# toolchains (sounddevice/PortAudio, weasyprint/cairo+pango), multi-
+# gigabyte ML runtimes (faster-whisper), and import-time-patching APM
+# agents (ddtrace, newrelic) to every CI job.
+module = [
+    "asyncpg.*",  # core/persistence/store_postgres.py, cli/commands/status_cmd.py
+    "ddtrace.*",  # core/observability/apm_integration.py
+    "faster_whisper.*",  # cli/commands/voice_cmd.py
+    "newrelic.*",  # core/observability/apm_integration.py
+    "redis.*",  # core/persistence/store_redis.py
+    "sigstore.*",  # core/security/{sigstore_attestation,audit_receipt}.py
+    "sounddevice.*",  # cli/commands/voice_cmd.py
+    "tiktoken.*",  # tui/context_tokens.py
+    "weasyprint.*",  # core/observability/postmortem.py
+    "zstandard.*",  # core/observability/trace_store.py
+    # Declared extras, absent from a plain `uv sync`:
+    "datasets.*",  # `eval` extra, benchmark/{swe_bench,programbench}.py
+    "spiffe.*",  # `spiffe` extra, core/identity/spiffe/workload_api.py
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
@@ -873,6 +947,25 @@ dev = [
     # click<8.2 and opentelemetry-sdk<1.38, conflicts with our
     # click>=8.3.3 / opentelemetry-sdk>=1.41.1 floors. Mirror of
     # [project.optional-dependencies].dev.
+    #
+    # Type stubs for dependencies that ship no inline annotations. Mirror of
+    # [project.optional-dependencies].dev. Everything below is typeshed's
+    # own `types-*` distribution except lxml-stubs (published by the lxml
+    # developers) and boto3-stubs / botocore-stubs (mypy_boto3 project).
+    # Stub-only wheels: no runtime code, no import cost. They are dev-only
+    # because they are consumed by `uv run mypy src`.
+    "types-pyyaml>=6.0.12.20260724",  # pyyaml
+    "types-jsonschema>=4.26.0.20260518",  # jsonschema
+    "types-reportlab>=4.5.1.20260724",  # reportlab
+    "types-defusedxml>=0.7.0.20260504",  # defusedxml
+    "types-psutil>=7.2.2.20260518",  # psutil
+    "types-croniter>=6.2.4.20260711",  # croniter
+    "types-qrcode>=8.2.0.20260518",  # qrcode (gui extra)
+    "types-grpcio>=1.82.1.20260724",  # grpcio (grpc extra)
+    "types-grpcio-reflection>=1.0.0.20260508",  # grpcio-reflection (grpc extra)
+    "lxml-stubs>=0.5.1",  # lxml, via signxml (SAML assertion parsing)
+    "boto3-stubs>=1.43.56",  # boto3 (s3 / r2 extras), published by the mypy_boto3 project
+    "botocore-stubs>=1.43.14",  # botocore, same publisher
 ]
 
 [tool.mutmut]
