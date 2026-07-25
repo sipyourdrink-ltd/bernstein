@@ -211,10 +211,10 @@ def artifact_health_cmd(
 
     Exit codes: 0 = green or amber, 2 = red.
 
-    The verdict is a pure function of the collected state and ``--at``, and the
-    ``--json`` bytes come from the same function the server route calls, so a
-    verdict recomputed here equals the one the dashboard shows for the same
-    state and instant.
+    The verdict is a pure function of the collected state and the evaluation
+    instant, and the JSON comes from the same function the server route calls,
+    so a verdict recomputed here equals the one the dashboard shows for the
+    same state and instant.
     """
     import json
     import sys
@@ -230,13 +230,14 @@ def artifact_health_cmd(
         at=instant,
         cadence_seconds=cadence_seconds,
     )
+    verdict = json.loads(payload)
 
     if output_json:
         click.echo(payload)
     else:
-        _render_health(json.loads(payload))
+        _render_health(verdict)
 
-    if json.loads(payload)["verdict"] == RED:
+    if verdict["verdict"] == RED:
         sys.exit(_EXIT_BAD)
 
 
