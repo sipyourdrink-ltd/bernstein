@@ -476,3 +476,118 @@ def test_ci_gate_rollup_passes_on_push(ci_doc: dict[str, object], tmp_path: Path
         plan={"docs_only": "false", "macos_sensitive": "false"},
     )
     assert proc.returncode == 0, f"CI gate roll-up must pass on push.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+# ---------------------------------------------------------------------------
+# Merge-queue required-context coverage (#2966)
+#
+# Every context branch protection requires on a PR must also be reportable on
+# a `merge_group` ref, otherwise the queue waits forever for a check that can
+# never publish. See docs/operations/merge-queue.md ::
+# "Required-check coverage under `merge_group`".
+# ---------------------------------------------------------------------------
+
+REVIEW_BOT_ACK_CONTEXT = "review-bot-ack"
+REVIEW_BOT_ACK_WF = Path(".github/workflows/review-bot-ack.yml")
+
+# Mirrors `repos/sipyourdrink-ltd/bernstein/branches/main/protection`
+# -> required_status_checks.contexts. Keep in sync with the canary's
+# BRANCH_PROTECTION_CONTEXTS_JSON.
+BRANCH_PROTECTION_CONTEXTS = (REQUIRED_CONTEXT, REVIEW_BOT_ACK_CONTEXT)
+
+
+def _on(doc: dict[str, object]) -> dict[str, object]:
+    # PyYAML 1.1 parses a bare ``on:`` key as the boolean True.
+    on = doc.get(True, doc.get("on"))
+    assert isinstance(on, dict), "workflow must have an `on:` block"
+    return on
+
+
+def _merge_group_context_emitters() -> dict[str, list[str]]:
+    """Map check-run name -> ``file::job`` for jobs reachable on merge_group."""
+    emitters: dict[str, list[str]] = {}
+    for wf_path in sorted(WORKFLOWS_DIR.glob("*.yml")):
+        doc = yaml.safe_load(wf_path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            continue
+        on = doc.get(True, doc.get("on"))
+        if not isinstance(on, dict) or "merge_group" not in on:
+            continue
+        jobs = doc.get("jobs")
+        if not isinstance(jobs, dict):
+            continue
+        for key, body in jobs.items():
+            if not isinstance(body, dict):
+                continue
+            name = body.get("name")
+            if not isinstance(name, str):
+                continue
+            # A job gated to some *other* event cannot report on the queue.
+            guard = str(body.get("if") or "")
+            if "github.event_name != 'merge_group'" in guard:
+                continue
+            emitters.setdefault(name, []).append(f"{wf_path.name}::{key}")
+    return emitters
+
+
+@pytest.mark.parametrize("context", BRANCH_PROTECTION_CONTEXTS)
+def test_required_context_has_a_merge_group_emitter(context: str) -> None:
+    """Each PR-required context must be publishable on a merge_group ref."""
+    emitters = _merge_group_context_emitters()
+    assert context in emitters, (
+        f"No workflow publishes the required context {context!r} on a "
+        "`merge_group` event. Enabling the merge queue would wedge every merge: "
+        "the queue blocks forever on a required check that never reports. Add a "
+        "`merge_group:` trigger and a job whose `name:` is exactly this context. "
+        f"Contexts currently reachable on merge_group: {sorted(emitters)}"
+    )
+
+
+def test_ci_merge_group_trigger_is_unconditional(ci_doc: dict[str, object]) -> None:
+    """`ci.yml`'s merge_group trigger must carry no filters.
+
+    This is what makes ``ci-gate-stub.yml`` safe to leave on ``pull_request``
+    only. The stub exists because ci.yml's ``pull_request`` trigger is
+    ``paths-ignore``-filtered, so a fully-ignored diff never publishes
+    ``CI gate``. ``paths``/``paths-ignore`` are evaluated only for ``push``,
+    ``pull_request`` and ``pull_request_target``, so on a merge group ci.yml
+    always runs and always publishes the context - no stub needed.
+
+    Adding any filter here (or gating the job on an event) would silently
+    wedge the queue for every diff the filter excludes.
+    """
+    merge_group = _on(ci_doc).get("merge_group")
+    assert merge_group in (None, {}), (
+        "ci.yml `merge_group:` must stay unconditional (`merge_group: {}`); "
+        f"found {merge_group!r}. A filtered merge_group trigger means some "
+        "merge groups never publish `CI gate` and sit in the queue forever."
+    )
+
+
+def test_review_bot_ack_has_merge_group_passthrough() -> None:
+    """The queue-side emitter for `review-bot-ack` must stay wired.
+
+    The real gate evaluates PR review threads and has nothing to evaluate on
+    the queue's ephemeral ref, so a dedicated pass-through job republishes the
+    identical context name there. Without it the context cannot be required on
+    the ruleset, and the two gates (PR entry vs queue merge) drift apart.
+    """
+    doc = yaml.safe_load(REVIEW_BOT_ACK_WF.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict)
+    assert "merge_group" in _on(doc), "review-bot-ack.yml must trigger on merge_group"
+
+    jobs = doc.get("jobs")
+    assert isinstance(jobs, dict)
+    passthrough = [
+        key
+        for key, body in jobs.items()
+        if isinstance(body, dict)
+        and body.get("name") == REVIEW_BOT_ACK_CONTEXT
+        and "merge_group" in str(body.get("if") or "")
+        and "!=" not in str(body.get("if") or "")
+    ]
+    assert passthrough, (
+        f"review-bot-ack.yml must keep a job named {REVIEW_BOT_ACK_CONTEXT!r} "
+        "gated to `github.event_name == 'merge_group'` so the context reports "
+        "on queued groups."
+    )

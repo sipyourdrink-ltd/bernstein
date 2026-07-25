@@ -75,7 +75,7 @@ After enabling, `gh pr merge --auto` will route the PR into the merge queue inst
 
 ### 3. Require the `CI gate` aggregator
 
-Do not enumerate individual CI job names in `required_status_checks.contexts`. The literal job names drift (the type-check context is `Type check report`, and the test matrix reports sharded contexts such as `Test (ubuntu-latest, Python 3.13, shard 1)`), and a context that never reports wedges every merge on `main`. The `ci-gate` job in `ci.yml` (context `CI gate`) already rolls up every upstream job result with conditional allowed-skips, so it is the single context to require - the same recommendation as [merge-queue.md](merge-queue.md).
+Do not enumerate individual CI job names in `required_status_checks.contexts`. The literal job names drift (the type-check context is `Type check report`, and the test matrix reports sharded contexts such as `Test (ubuntu-latest, Python 3.13, shard 1)`), and a context that never reports wedges every merge on `main`. The `ci-gate` job in `ci.yml` (context `CI gate`) already rolls up every upstream job result with conditional allowed-skips, so it is the single *CI* context to require, alongside `review-bot-ack` - the same recommendation as [merge-queue.md](merge-queue.md).
 
 ```bash
 gh api -X PATCH "repos/sipyourdrink-ltd/bernstein/branches/main/protection" \
@@ -88,7 +88,7 @@ gh api -X PATCH "repos/sipyourdrink-ltd/bernstein/branches/main/protection" \
 Notes:
 
 - `CI gate` covers `Repo hygiene`, `Lint`, `Type check report`, `Workflow lint`, `Lineage Gate`, `Bandit (security)`, `pip-audit (deps)`, the full sharded test matrix, and the rest of the `ci.yml` jobs it declares in `needs:`.
-- `review-bot-ack` runs on `pull_request` only. It belongs in the legacy branch-protection list above (queue entry), never in the merge-queue ruleset, which must require `CI gate` only; a PR-only check on the ruleset makes the queue wait forever. The main-red-guard step in `pr-policy.yml` is advisory (it warns, never fails) and is not a required context.
+- `review-bot-ack` runs on `pull_request`, `pull_request_review` **and** `merge_group`. It belongs in the legacy branch-protection list above (queue entry) *and* in the merge-queue ruleset's `required_status_checks`: `review-bot-ack.yml` carries a `merge-group-pass` job that republishes the identical context on the queue's ephemeral ref, so requiring it there cannot wedge the queue. See [merge-queue.md](merge-queue.md) for the coverage table. The main-red-guard step in `pr-policy.yml` is advisory (it warns, never fails) and is not a required context.
 - `docs-drift / Run drift check` is path-filtered (it does not report on PRs that touch no docs-relevant paths), so it must not be a blanket required check; its main-branch failure mode is the post-merge gate described in the TL;DR.
 - `PR policy` (the consolidated per-PR policy job that carries the autosync steps) is intentionally NOT required. The autosync steps run to amend the PR; if the amend fails (e.g. branch-protection rejects the push) we want the next push to retry rather than blocking the merge.
 
@@ -97,7 +97,7 @@ Notes:
 1. Open a PR that intentionally diverges `AGENTS.md` from canonical IR. Confirm the `PR policy` job runs the autosync steps and amends the PR head with a regen commit.
 2. Cause `ci.yml` on main to fail (e.g. force-push a known-bad commit to a sandbox branch, then merge with admin override). Open a fresh PR. Confirm the main-red-guard step in `PR policy` emits a warning and job summary pointing at the failing SHA.
 3. Trigger the nightly sweep manually via `gh workflow run nightly-drift-sweep.yml`. Confirm it either no-ops (no drift) or opens a sweep PR labelled `automated`.
-4. Queue two PRs via auto-merge. Confirm GitHub batches them into a single merge-group CI run via the new `merge_group:` trigger.
+4. Queue two PRs via auto-merge. Confirm each one gets its own merge-group CI run via the `merge_group:` trigger, and that `main` advances to the exact SHA the queue tested. The queue is configured with `max_entries_to_merge: 1` so one PR lands per push; see [merge-queue.md](merge-queue.md) for why.
 
 ## Windows-lane promotion (self-promoting gate)
 
