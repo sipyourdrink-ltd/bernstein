@@ -392,6 +392,10 @@ class ClusterSchema(BaseModel):
     gossip_peers: list[str] = Field(default_factory=list)
     claim_lease_ttl_s: int = Field(default=300, ge=1)
     claim_journal_path: str | None = None
+    # Pinned peer identities (issue #2997): node_id -> Ed25519 public key,
+    # given as SPKI PEM text, an OKP JWK mapping, or the bare base64url 'x'.
+    # A MESH node folds only receipts signed by a pinned key.
+    gossip_peer_keys: dict[str, Any] = Field(default_factory=dict)
 
 
 class RemoteSchema(BaseModel):

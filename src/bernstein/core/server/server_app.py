@@ -667,6 +667,36 @@ async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
                 logger.info("SSE bus: cleaned up %d stale subscribers", removed)
 
 
+def _install_artifact_event_publisher(bus: SSEBus | None) -> None:
+    """Point the lineage write boundary's event sink at ``bus`` (issue #2559).
+
+    Passing ``None`` clears the sink, which the lifespan does on shutdown so a
+    stopped server does not leave the orchestrator publishing into a dead bus.
+
+    The write boundary swallows anything this raises: an artifact write that
+    landed in the spine must not be undone because a notification could not be
+    delivered. Journaling happens either way, so a run with no server attached
+    still replays the identical fan-out.
+    """
+    from bernstein.adapters.base import set_artifact_event_publisher
+    from bernstein.core.server.sse_events import SSEEvent
+
+    if bus is None:
+        set_artifact_event_publisher(None)
+        return
+
+    def _publish(event: Any) -> None:
+        payload = event.to_payload()
+        sse = SSEEvent.artifact_produced(
+            uri=payload.pop("uri"),
+            entry_hash=payload.pop("entry_hash"),
+            **payload,
+        )
+        bus.publish(sse.event.value, json.dumps(sse.data, sort_keys=True))
+
+    set_artifact_event_publisher(_publish)
+
+
 # ---------------------------------------------------------------------------
 # Helpers used by route modules
 # ---------------------------------------------------------------------------
@@ -1011,6 +1041,11 @@ def create_app(
         reaper = asyncio.create_task(_reaper_loop(store))
         # Launch SSE heartbeat loop
         sse_heartbeat = asyncio.create_task(_sse_heartbeat_loop(sse_bus))
+        # Issue #2559: mirror artifact production events onto the SSE bus.
+        # The events are journaled beside the spine regardless; this only adds
+        # live delivery while a server is up, and the sink is cleared on
+        # shutdown so a stopped server never holds a stale bus reference.
+        _install_artifact_event_publisher(sse_bus)
         # Launch the node-stale reaper whenever the /cluster/nodes routes are
         # mounted (always) rather than only when cluster auth is enabled. Node
         # liveness reaping is not part of the auth layer, and a worker can only
@@ -1026,6 +1061,7 @@ def create_app(
         )
         yield
         # Shutdown
+        _install_artifact_event_publisher(None)
         reaper.cancel()
         sse_heartbeat.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1348,6 +1384,7 @@ def create_app(
     from bernstein.core.routes.agent_comparison import router as agent_comparison_router
     from bernstein.core.routes.api_v1 import build_router as build_api_v1_router
     from bernstein.core.routes.approvals import router as approvals_router
+    from bernstein.core.routes.artifacts import router as artifacts_router
     from bernstein.core.routes.audit_log import router as audit_log_router
     from bernstein.core.routes.batch_ops import router as batch_ops_router
     from bernstein.core.routes.custom_metrics import router as custom_metrics_router
@@ -1442,6 +1479,7 @@ def create_app(
         session_peek_router,
         orchestrator_holds_router,
         review_board_router,
+        artifacts_router,
         missions_router,
         a2a_jsonrpc_router,
     ]

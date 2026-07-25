@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from bernstein.core.models import ClusterConfig
+from bernstein.core.models import ClusterConfig, MeshPeerKey
 from click.testing import CliRunner
+from cryptography.hazmat.primitives import serialization
 from fastapi.testclient import TestClient
 
 from bernstein.cli.commands.cluster_cmd import cluster_group
@@ -37,7 +38,6 @@ _SECRET = "cluster-shared-secret-value"  # NOSONAR - test fixture, not a real cr
 
 
 def _kms(tmp_path: Path, *, seed: int, name: str) -> object:
-    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     from bernstein.core.security.lineage_kms import FileBasedKMSAdapter
@@ -55,15 +55,44 @@ def _kms(tmp_path: Path, *, seed: int, name: str) -> object:
     return FileBasedKMSAdapter(key_path, kid=name)
 
 
-def _peer(tmp_path: Path, *, node_id: str = "peer-node", seed: int = 7) -> MeshCoordinator:
-    """A remote node whose receipts are gossiped into the server under test."""
+def _peer(
+    tmp_path: Path,
+    *,
+    node_id: str = "peer-node",
+    seed: int = 7,
+    label: str | None = None,
+) -> MeshCoordinator:
+    """A remote node whose receipts are gossiped into the server under test.
+
+    ``label`` names the peer's own journal file and key material independently
+    of the ``node_id`` its receipts declare, so a test can build a node that
+    *claims* an identity it does not hold.
+    """
+    slug = label or node_id
     return MeshCoordinator(
         journal=ClaimJournal(
-            tmp_path / f"{node_id}.jsonl",
-            kms_adapter=_kms(tmp_path, seed=seed, name=f"{node_id}-key"),  # type: ignore[arg-type]
+            tmp_path / f"{slug}.jsonl",
+            kms_adapter=_kms(tmp_path, seed=seed, name=f"{slug}-key"),  # type: ignore[arg-type]
             node_id=node_id,
         ),
     )
+
+
+def _pin(node_id: str, *, seed: int = 7) -> MeshPeerKey:
+    """The pin an operator would configure for a peer signing with ``seed``."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from bernstein.core.identity.http_signing import public_key_jwk_from_pem
+
+    public_pem = (
+        Ed25519PrivateKey.from_private_bytes(bytes([seed]) * 32)
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    return MeshPeerKey(node_id=node_id, public_key_x=public_key_jwk_from_pem(public_pem)["x"])
 
 
 # ---------------------------------------------------------------------------
@@ -72,9 +101,9 @@ def _peer(tmp_path: Path, *, node_id: str = "peer-node", seed: int = 7) -> MeshC
 
 
 class TestGossipRoute:
-    """Verify-before-fold, STAR refusal, and fork reporting."""
+    """Verify-before-fold, peer-key pinning, STAR refusal, and fork reporting."""
 
-    def _mesh_client(self, tmp_path: Path) -> TestClient:
+    def _mesh_client(self, tmp_path: Path, *, pins: tuple[MeshPeerKey, ...] = ()) -> TestClient:
         app = create_app(
             jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl",
             auth_token=_SECRET,
@@ -82,6 +111,7 @@ class TestGossipRoute:
                 enabled=True,
                 topology=ClusterTopology.MESH,
                 auth_token=_SECRET,
+                gossip_peer_keys=pins,
             ),
         )
         return TestClient(app)
@@ -117,10 +147,10 @@ class TestGossipRoute:
         assert "mesh" in response.json()["detail"].lower()
 
     def test_mesh_node_folds_verified_receipts(self, tmp_path: Path) -> None:
-        """A signed, chain-extending receipt is folded and changes the head."""
+        """A signed, chain-extending receipt from a pinned peer is folded."""
         peer = _peer(tmp_path)
         peer.claim(tracker="jira", ticket_id="T-1", role="backend", claimer_id="w-peer", now=1000.0)
-        client = self._mesh_client(tmp_path)
+        client = self._mesh_client(tmp_path, pins=(_pin("peer-node"),))
 
         body = self._push(client, peer.journal.read())
         assert body["accepted"] == 1
@@ -137,7 +167,7 @@ class TestGossipRoute:
         """The signature and hash are checked before anything is written."""
         peer = _peer(tmp_path)
         peer.claim(tracker="jira", ticket_id="T-1", role="backend", claimer_id="w-peer", now=1000.0)
-        client = self._mesh_client(tmp_path)
+        client = self._mesh_client(tmp_path, pins=(_pin("peer-node"),))
 
         wire = peer.journal.read()[0].to_dict()
         wire["claimer_id"] = "attacker"
@@ -156,7 +186,7 @@ class TestGossipRoute:
 
     def test_divergent_chain_reports_a_fork(self, tmp_path: Path) -> None:
         """A receipt that does not extend the local head forks, never merges."""
-        client = self._mesh_client(tmp_path)
+        client = self._mesh_client(tmp_path, pins=(_pin("peer-node"),))
         coordinator = client.app.state.mesh_coordinator  # type: ignore[attr-defined]
         # The server already has a local entry, so a peer receipt built on
         # genesis cannot extend it.
@@ -194,6 +224,99 @@ class TestGossipRoute:
             headers={"Authorization": f"Bearer {_SECRET}"},
         )
         assert response.status_code == 422
+
+    # -- peer-key pinning (#2997) --------------------------------------
+
+    def test_receipt_signed_by_a_key_that_is_not_the_pinned_one_is_rejected(self, tmp_path: Path) -> None:
+        """A node_id must be *proved*, not asserted, over the real route.
+
+        The impostor holds a valid cluster token and mints a receipt that is
+        internally perfect: correctly chained, correctly hashed, and validly
+        Ed25519-signed by the key it holds. The only thing wrong with it is
+        that the key is not the one pinned for the ``node_id`` it declares.
+
+        Both receipts travel through ``POST /cluster/claims/gossip`` -- the
+        production path, with the coordinator built by ``create_app`` from
+        config -- because the defect this covers is the *wiring*: calling the
+        coordinator directly would pass even with nothing wired.
+        """
+        pinned = _pin("peer-node", seed=7)
+        client = self._mesh_client(tmp_path, pins=(pinned,))
+
+        impostor = _peer(tmp_path, node_id="peer-node", seed=9, label="impostor")
+        impostor.claim(tracker="jira", ticket_id="T-1", role="backend", claimer_id="w-impostor", now=1000.0)
+        body = self._push(client, impostor.journal.read())
+
+        assert body["accepted"] == 0
+        assert body["results"][0]["status"] == "rejected"  # type: ignore[index]
+        assert "signature" in str(body["results"][0]["reason"]).lower()  # type: ignore[index]
+
+        coordinator = client.app.state.mesh_coordinator  # type: ignore[attr-defined]
+        # Nothing was written: the journal is not merely un-folded, it is empty.
+        assert coordinator.state().holder("jira", "T-1", "backend") is None
+        assert coordinator.journal.read() == []
+
+        # The pin admits the real holder of that identity, so the rejection
+        # above is the pin working, not gossip being broken outright.
+        genuine = _peer(tmp_path, node_id="peer-node", seed=7, label="genuine")
+        genuine.claim(tracker="jira", ticket_id="T-1", role="backend", claimer_id="w-peer", now=1000.0)
+        accepted = self._push(client, genuine.journal.read())
+        assert accepted["accepted"] == 1
+        assert coordinator.state().holder("jira", "T-1", "backend") is not None
+
+    def test_a_mesh_node_with_no_pins_folds_nothing(self, tmp_path: Path) -> None:
+        """Fail-closed default: an unpinned node_id is refused, not trusted.
+
+        Before #2997 no production path populated the pin map, so a receipt was
+        verified against the key it shipped with -- authenticating the bytes but
+        not the sender. A MESH node now starts closed.
+        """
+        peer = _peer(tmp_path)
+        peer.claim(tracker="jira", ticket_id="T-1", role="backend", claimer_id="w-peer", now=1000.0)
+        client = self._mesh_client(tmp_path)
+
+        body = self._push(client, peer.journal.read())
+        assert body["accepted"] == 0
+        assert body["results"][0]["status"] == "rejected"  # type: ignore[index]
+        assert "no trusted key pinned" in str(body["results"][0]["reason"])  # type: ignore[index]
+
+        coordinator = client.app.state.mesh_coordinator  # type: ignore[attr-defined]
+        assert coordinator.state().holder("jira", "T-1", "backend") is None
+
+    def test_a_pinned_peer_cannot_speak_for_another_pinned_peer(self, tmp_path: Path) -> None:
+        """Holding one pinned key does not confer another peer's identity."""
+        client = self._mesh_client(tmp_path, pins=(_pin("peer-b", seed=7), _pin("peer-c", seed=9)))
+
+        # peer-c's key, signing a receipt that declares peer-b's node_id.
+        crossed = _peer(tmp_path, node_id="peer-b", seed=9, label="crossed")
+        crossed.claim(tracker="jira", ticket_id="T-1", role="backend", claimer_id="w", now=1000.0)
+
+        body = self._push(client, crossed.journal.read())
+        assert body["results"][0]["status"] == "rejected"  # type: ignore[index]
+        coordinator = client.app.state.mesh_coordinator  # type: ignore[attr-defined]
+        assert coordinator.journal.read() == []
+
+    def test_the_node_pins_its_own_key_to_its_own_node_id(self, tmp_path: Path) -> None:
+        """A peer cannot echo back receipts forged in this node's name.
+
+        Self-pinning also keeps recovery working: a node that lost its journal
+        can still fold its own history back from a peer, because the receipts
+        it wrote verify against the key it still holds.
+        """
+        client = self._mesh_client(tmp_path)
+        coordinator = client.app.state.mesh_coordinator  # type: ignore[attr-defined]
+
+        forger = _peer(tmp_path, node_id=coordinator.node_id, seed=11, label="forger")
+        forger.claim(tracker="jira", ticket_id="T-1", role="backend", claimer_id="w", now=1000.0)
+        body = self._push(client, forger.journal.read())
+        assert body["results"][0]["status"] == "rejected"  # type: ignore[index]
+
+        # This node's own receipt, gossiped back to it, is a duplicate -- it
+        # verifies against the self-pin rather than being refused as unknown.
+        local = coordinator.claim(tracker="jira", ticket_id="T-2", role="qa", claimer_id="w", now=1000.0)
+        assert local.granted is True
+        echoed = self._push(client, coordinator.journal.read())
+        assert [r["status"] for r in echoed["results"]] == ["duplicate"]  # type: ignore[index,union-attr]
 
 
 # ---------------------------------------------------------------------------

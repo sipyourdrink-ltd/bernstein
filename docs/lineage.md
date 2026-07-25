@@ -242,7 +242,7 @@ Entries signed under `k-2025-01` continue to verify against the retained card; n
 
 ## See also
 
-- [Artifact keys](lineage/artifacts.md) - the URI grammar, external-artifact anchoring, and declared outputs.
+- [Artifact keys](lineage/artifacts.md) - the URI grammar, external-artifact anchoring, declared outputs, the `artifact list|log|health` surfaces, and production events.
 - [ADR-009: Lineage v1](decisions/009-lineage-v1.md) - design rationale, schema, threat model.
 - [Compliance - EU AI Act Article 12 bundle](compliance/eu-ai-act-article-12-bundle.md) - the bundle format detail.
 - [Regulatory lineage export](compliance/lineage-export.md) - operator export guide.

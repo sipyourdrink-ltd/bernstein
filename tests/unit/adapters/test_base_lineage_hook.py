@@ -18,7 +18,7 @@ from bernstein.adapters.base import (
     post_write_lineage_hook,
 )
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
-from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.lineage.spine import LineageSpine, SpineEntry
 
 
 @pytest.fixture
@@ -113,7 +113,9 @@ def test_hook_fails_closed_when_enabled(
     from bernstein.adapters import base as base_module
 
     class _BoomSpine(LineageSpine):
-        def record(self, **_kw: object) -> str:  # type: ignore[override]
+        # The boundary appends through ``record_entry`` (issue #2559) so it can
+        # project the production event off the entry it just wrote.
+        def record_entry(self, **_kw: object) -> SpineEntry:  # type: ignore[override]
             raise RuntimeError("disk on fire")
 
     monkeypatch.setattr(base_module, "LineageSpine", _BoomSpine)
