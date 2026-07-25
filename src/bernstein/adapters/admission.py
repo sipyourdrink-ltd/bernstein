@@ -1018,7 +1018,7 @@ def anchor_admission_receipt_in_lineage(
     """Seal one admission receipt as a signed lineage entry. Returns its hash.
 
     Anchors the receipt the way every other Bernstein receipt subsystem does
-    -- through :func:`bernstein.core.lineage.recorder.seal_write` -- so the
+    -- through :func:`bernstein.core.lineage.signed_write.seal_write` -- so the
     receipt carries an Ed25519 detached-JWS signature and an operator-HMAC
     envelope on top of its content address. The artefact path is derived from
     the adapter key and the fingerprint, so successive receipts for one
@@ -1042,7 +1042,7 @@ def anchor_admission_receipt_in_lineage(
     Returns:
         The lineage entry hash.
     """
-    from bernstein.core.lineage.recorder import seal_write
+    from bernstein.core.lineage.signed_write import seal_write
 
     view = AdapterAdmissionReceipt(receipt)
     sha = view.sha256
@@ -1237,13 +1237,23 @@ def preflight_admission(
 
     Returns:
         The gate's :class:`AdmissionDecision`, or ``None`` when the adapter is
-        exempt or the gate is disabled.
+        exempt, the gate is disabled, or ``adapter`` is not an adapter key.
 
     Raises:
         AdapterAdmissionRefusal: Under :data:`POLICY_ENFORCE`, when admission
             cannot be proved.
     """
     if policy == POLICY_OFF or adapter in ADMISSION_EXEMPT:
+        return None
+
+    # Every field of the receipt is serialised into the audit chain, so a
+    # non-string adapter key would poison the anchor with an unserialisable
+    # value rather than producing a decision. Only a test double reaches here
+    # with one (a spawner constructed around a stubbed adapter), and there is
+    # no contract, transcript, or receipt filename such a key could address -
+    # so there is nothing to gate and nothing to record.
+    if not isinstance(adapter, str) or not adapter:
+        logger.debug("admission: skipping gate for non-string adapter key %r", type(adapter).__name__)
         return None
 
     clock = now if now is not None else datetime.now(UTC)
