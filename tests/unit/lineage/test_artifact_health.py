@@ -298,6 +298,79 @@ def test_ordering_breaks_ties_on_entry_hash_so_the_tip_is_unambiguous() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The evidence leg reads real sealed bundles
+# ---------------------------------------------------------------------------
+
+
+def _seal_bundle(workdir: Path, task_id: str, *, declared_and_produced: tuple[str, ...], ts: int) -> None:
+    """Seal a real evidence bundle whose signed binding cites ``declared_and_produced``."""
+    from bernstein.core.evidence.bundle import run_evidence_gate
+    from bernstein.core.evidence.output_diff import OutputDiff
+
+    run_evidence_gate(
+        workdir=workdir,
+        task_id=task_id,
+        producers=[],
+        timestamp=ts,
+        hmac_key=_KEY,
+        output_diff=OutputDiff(declared_and_produced=declared_and_produced),
+    )
+
+
+def test_a_verifying_bundle_that_declares_the_artifact_passes_the_leg(tmp_path: Path) -> None:
+    _record(tmp_path, _URI, b"wheel", ts=100)
+    _seal_bundle(tmp_path, "T-release", declared_and_produced=(_URI,), ts=100)
+
+    payload = artifact_health_json(tmp_path, _URI, hmac_key=_KEY, at=500)
+    evidence = _leg(payload, "evidence")
+    assert evidence["status"] == LEG_PASS
+    assert "T-release" in evidence["detail"]
+    assert json.loads(payload)["verdict"] == GREEN
+
+
+def test_a_bundle_that_does_not_declare_the_artifact_is_ignored(tmp_path: Path) -> None:
+    """Association runs through the bundle's *signed* binding, not proximity."""
+    _record(tmp_path, _URI, b"wheel", ts=100)
+    _seal_bundle(tmp_path, "T-other", declared_and_produced=("dist/unrelated.whl",), ts=100)
+
+    assert _leg(artifact_health_json(tmp_path, _URI, hmac_key=_KEY, at=500), "evidence")["status"] == (
+        LEG_NOT_APPLICABLE
+    )
+
+
+def test_a_tampered_bundle_fails_the_leg_and_turns_the_verdict_red(tmp_path: Path) -> None:
+    _record(tmp_path, _URI, b"wheel", ts=100)
+    _seal_bundle(tmp_path, "T-release", declared_and_produced=(_URI,), ts=100)
+
+    from bernstein.core.evidence.bundle import bundle_path
+
+    path = bundle_path(tmp_path, "T-release")
+    row = json.loads(path.read_bytes())
+    row["gate_passed"] = not row["gate_passed"]
+    path.write_bytes(json.dumps(row).encode())
+
+    payload = artifact_health_json(tmp_path, _URI, hmac_key=_KEY, at=500)
+    assert _leg(payload, "evidence")["status"] == LEG_FAIL
+    assert json.loads(payload)["verdict"] == RED
+
+
+def test_the_newest_declaring_bundle_wins(tmp_path: Path) -> None:
+    _record(tmp_path, _URI, b"wheel", ts=100)
+    _seal_bundle(tmp_path, "T-old", declared_and_produced=(_URI,), ts=100)
+    _seal_bundle(tmp_path, "T-new", declared_and_produced=(_URI,), ts=200)
+
+    assert "T-new" in _leg(artifact_health_json(tmp_path, _URI, hmac_key=_KEY, at=500), "evidence")["detail"]
+
+
+def test_a_malformed_bundle_does_not_crash_the_projection(tmp_path: Path) -> None:
+    _record(tmp_path, _URI, b"wheel", ts=100)
+    bundles = tmp_path / ".sdd" / "evidence" / "bundles"
+    bundles.mkdir(parents=True)
+    (bundles / "T-corrupt.json").write_bytes(b"{not json")
+    assert json.loads(artifact_health_json(tmp_path, _URI, hmac_key=_KEY, at=500))["verdict"] == GREEN
+
+
+# ---------------------------------------------------------------------------
 # Attribution (AC5) and listing
 # ---------------------------------------------------------------------------
 
