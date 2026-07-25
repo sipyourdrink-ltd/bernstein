@@ -20,6 +20,7 @@ All tests isolate state with ``tmp_path``; no sockets are opened.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import date
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -510,6 +511,28 @@ class TestCallIndexAllocation:
         assert chain.query(event_type=EVENT_MCP_STATELESS_CALL) == []
 
 
+def _held_against_other_threads(lock: threading.Lock | threading.RLock) -> bool:
+    """Return whether ``lock`` would block an acquire from a *different* thread.
+
+    The append lock is re-entrant, so the owning thread can always re-acquire
+    it and ``locked()`` is not part of the re-entrant lock's public surface.
+    Probing from another thread states the guarantee the test is really about:
+    a concurrent writer is kept out for the whole critical section.
+    """
+    outcome: dict[str, bool] = {}
+
+    def _probe() -> None:
+        acquired = lock.acquire(blocking=False)
+        outcome["acquired"] = acquired
+        if acquired:
+            lock.release()
+
+    prober = threading.Thread(target=_probe)
+    prober.start()
+    prober.join()
+    return not outcome["acquired"]
+
+
 class TestChainReconstruction:
     def _seed(self, tmp_path: Path, count: int = 3) -> AuditChainStore:
         chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
@@ -582,7 +605,7 @@ class TestChainReconstruction:
         real_verify = chain._log.verify
 
         def _spy_verify() -> tuple[bool, list[str]]:
-            observed["locked_during_verify"] = chain._append_lock.locked()
+            observed["locked_during_verify"] = _held_against_other_threads(chain._append_lock)
             return real_verify()
 
         chain._log.verify = _spy_verify  # type: ignore[method-assign]
@@ -590,7 +613,7 @@ class TestChainReconstruction:
         assert ok
         assert observed["locked_during_verify"] is True
         # The lock is released once the operation returns.
-        assert not chain._append_lock.locked()
+        assert not _held_against_other_threads(chain._append_lock)
 
 
 # ---------------------------------------------------------------------------
