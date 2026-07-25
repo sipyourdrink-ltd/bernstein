@@ -296,6 +296,11 @@ _ALLOW_PATTERNS: Final[list[str]] = [
     # HTTP to localhost Bernstein server (task completion, status checks)
     r"^curl\s+.*http://127\.0\.0\.1:8052",
     r"^curl\s+.*localhost:8052",
+    # Completion front door. It posts to the same localhost task server the
+    # curl patterns above already allow, and resolves the port and the agent
+    # token itself, so it must not be less approvable than the hand-built
+    # request it replaces.
+    r"^bernstein\s+task\s+complete(\s|$)",
     # Output formatting
     r"^jq(\s|$)",
     r"^column(\s|$)",

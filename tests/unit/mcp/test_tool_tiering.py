@@ -141,6 +141,21 @@ def test_standard_tier_adds_mutation_and_skill_tools() -> None:
     assert "bernstein_scenario" not in advertised
 
 
+def test_context_capsule_tool_is_in_the_standard_tier() -> None:
+    # bernstein_context lets a worker that lost its session reload its own
+    # signed assignment capsule, so it must be reachable at the default tier
+    # rather than only when an operator sets the tier to ``all``.
+    assert TOOL_TIERS["bernstein_context"] == "standard"
+    assert "bernstein_context" in tools_for_tier("standard")
+    assert "bernstein_context" in tools_for_tier("all")
+    assert "bernstein_context" not in tools_for_tier("core")
+
+
+def test_default_tier_advertises_the_context_capsule_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(TIER_ENV_VAR, raising=False)
+    assert "bernstein_context" in _advertised(None)
+
+
 def test_all_tier_exposes_scenario_bridge() -> None:
     advertised = _advertised("all")
     assert "bernstein_scenarios" in advertised

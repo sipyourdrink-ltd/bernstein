@@ -39,6 +39,51 @@ def test_parse_docker_sandbox_rejects_invalid_runtime() -> None:
         parse_docker_sandbox({"runtime": "firecracker"})
 
 
+def test_parse_docker_sandbox_accepts_string_shorthand() -> None:
+    """``sandbox: docker`` is shorthand for ``sandbox: {runtime: docker}``.
+
+    The CLI's ``--sandbox docker`` flag takes a bare backend-name string;
+    the seed key should accept the same natural mirror instead of forcing
+    operators to discover the mapping form (bug #3023).
+    """
+
+    shorthand = parse_docker_sandbox("docker")
+    mapping = parse_docker_sandbox({"runtime": "docker"})
+
+    assert shorthand == mapping
+
+
+def test_parse_docker_sandbox_accepts_podman_string_shorthand() -> None:
+    """The string shorthand supports every valid runtime, not just docker."""
+
+    shorthand = parse_docker_sandbox("podman")
+    mapping = parse_docker_sandbox({"runtime": "podman"})
+
+    assert shorthand == mapping
+
+
+def test_parse_docker_sandbox_rejects_invalid_string_shorthand() -> None:
+    """An invalid string shorthand names the valid runtimes and the mapping form."""
+
+    with pytest.raises(ValueError, match="docker") as excinfo:
+        parse_docker_sandbox("nonsense")
+
+    message = str(excinfo.value)
+    assert "docker" in message
+    assert "podman" in message
+    assert "runtime" in message  # points operators at the {runtime: ...} mapping form
+
+
+def test_parse_docker_sandbox_mapping_form_still_works() -> None:
+    """The pre-existing mapping form keeps parsing unchanged."""
+
+    sandbox = parse_docker_sandbox({"runtime": "docker", "image": "bernstein/base:latest"})
+
+    assert sandbox is not None
+    assert sandbox.runtime == "docker"
+    assert sandbox.default_image == "bernstein/base:latest"
+
+
 def test_spawn_in_sandbox_uses_adapter_specific_image(tmp_path: Path) -> None:
     """The manager should be created with the image chosen for the adapter."""
 

@@ -103,15 +103,15 @@ def test_wiki_build_respects_custom_output_path(fixture_repo: Path, tmp_path: Pa
     assert "public_api" in target.read_text(encoding="utf-8")
 
 
-def test_wiki_help_advertises_paid_alternative() -> None:
+def test_wiki_help_describes_local_operation() -> None:
     runner = CliRunner()
     result = runner.invoke(wiki_group, ["--help"])
 
     assert result.exit_code == 0
-    # Per parent-ticket cross-cutting requirement: help text names the
-    # paid alternative + its price so end-users see the comparison.
-    assert "Devin" in result.output
-    assert "$20" in result.output
+    # The help text states where the command runs, so an operator can tell
+    # it needs no network and no external service before invoking it.
+    assert "locally" in result.output
+    assert "offline" in result.output
 
 
 def test_wiki_build_handles_repo_with_no_python(tmp_path: Path) -> None:

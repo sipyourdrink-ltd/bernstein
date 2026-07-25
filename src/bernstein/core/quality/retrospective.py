@@ -197,6 +197,17 @@ TERMINATOR_AGENT_COMPLETED = "agent_completed"
 # "Verdict: HEALTHY" / "Agent-completed: 1".
 TERMINATOR_AGENT_REPORTED_FAILURE = "agent_reported_failure"
 
+# A DECLARED task that never reached any terminal outcome. This is NOT a
+# classify_task_terminator category (that function only ever sees done+failed
+# tasks); it is derived from the full task-status histogram in
+# generate_retrospective and threaded into compute_run_health. Ground truth:
+# issue #3010 -- a single-task run whose manager agent produced zero model
+# output and was reaped left its one task open/claimed (neither done nor
+# failed), so done+failed was empty, total was 0, and the run reported
+# "0/0 ... -> HEALTHY" and exited 0. A declared task that simply never
+# finished is exactly the dishonest-success this module exists to prevent.
+TERMINATOR_INCOMPLETE_DECLARED = "incomplete_declared"
+
 # Categories that do NOT represent a genuine agent-reported outcome. A run
 # where most terminations fall in this set is not "healthy" no matter how
 # high the raw completion_rate looks.
@@ -214,6 +225,100 @@ _NON_AGENT_CATEGORIES: frozenset[str] = frozenset(
 # A run is UNHEALTHY when more than this fraction of task terminations were
 # non-agent-caused (watchdog/timeout/janitor/other-forced/auto-completed).
 _UNHEALTHY_NON_AGENT_FRACTION = 0.5
+
+#: Task-status-histogram buckets that mean a declared task was still
+#: unfinished at final shutdown -- it was open/claimed/in-progress/orphaned
+#: rather than having reached any terminal outcome. Intentional parking states
+#: (``planned`` awaiting approval, ``suspended`` operator-parked,
+#: ``pending_approval``) and dependency-wait states are deliberately excluded
+#: so plan-mode / parked runs are not mislabelled unhealthy; only tasks that
+#: were actively declared-and-working-but-never-finished count (issue #3010).
+_INCOMPLETE_DECLARED_STATUSES: frozenset[str] = frozenset({"open", "claimed", "in_progress", "orphaned"})
+
+# ---------------------------------------------------------------------------
+# Run-outcome exit contract (``bernstein run``)
+# ---------------------------------------------------------------------------
+#
+# ``bernstein run`` must exit non-zero when the run did not honestly succeed so
+# an operator scripting ``bernstein run && deploy`` never deploys on a run that
+# accomplished nothing (issue #3010). The mapping is a pure function of the
+# run-health verdict so the exit path is unit-testable without the CLI.
+EXIT_RUN_HEALTHY = 0
+#: Distinct non-zero code for a completed-but-not-HEALTHY run (goal unmet:
+#: forced kills dominated, a task failed, work was discarded, or a declared
+#: task was never finished).
+#:
+#: Deliberately NOT 1 or 2: 1 is the generic CLI/bootstrap error code, and 2 is
+#: already taken twice over -- click raises ``UsageError``/``NoSuchOption`` with
+#: exit code 2, and ``cli/run_bootstrap.py`` itself raises ``SystemExit(2)`` on
+#: seed/config failures. Reusing either would make "you passed a bad flag" and
+#: "the run did not meet its goal" indistinguishable to a script, defeating the
+#: machine-readable outcome signal this constant exists to provide.
+EXIT_RUN_UNHEALTHY = 3
+
+
+def run_health_exit_code(healthy: bool) -> int:
+    """Map a run-health verdict to a ``bernstein run`` process exit code."""
+    return EXIT_RUN_HEALTHY if healthy else EXIT_RUN_UNHEALTHY
+
+
+def run_healthy_from_status_counts(status_counts: dict[str, int] | None) -> bool:
+    """Conservative run-health verdict from a ``/status`` histogram payload.
+
+    Used by the CLI's synchronous completion path to set ``bernstein run``'s
+    exit code without reconstructing every ``Task``. Mirrors
+    :func:`compute_run_health`'s hard rules on the fields ``/status`` exposes:
+    any FAILED task, or any DECLARED task still unfinished
+    (open/claimed/in-progress/orphaned) at final shutdown, is NOT healthy
+    (issue #3010). A payload with no terminal failures and nothing left
+    unfinished is healthy. An empty/None payload is vacuously healthy.
+
+    The authoritative, text-classified verdict (forced-kill fractions,
+    auto-completed-after-death, merge refusals) still lives in
+    :func:`generate_retrospective`; this is the projection of its hard rules
+    onto the histogram so a completed-but-empty-goal run exits non-zero.
+    """
+    if not status_counts:
+        return True
+    n_failed = int(status_counts.get("failed", 0) or 0)
+    if n_failed > 0:
+        return False
+    return count_incomplete_declared(status_counts) == 0
+
+
+def count_incomplete_declared(full_status_counts: dict[str, int] | None) -> int:
+    """Count declared tasks still unfinished (non-terminal) at final shutdown.
+
+    Derived from the full task-status histogram (every status the task server
+    knows about, not just done/failed). Returns the number of tasks in an
+    actively-declared-but-unfinished bucket (see
+    :data:`_INCOMPLETE_DECLARED_STATUSES`). ``0`` for a ``None``/empty
+    histogram.
+    """
+    if not full_status_counts:
+        return 0
+    return sum(
+        int(count or 0) for status, count in full_status_counts.items() if status in _INCOMPLETE_DECLARED_STATUSES
+    )
+
+
+def count_never_terminal(n_unresolved: int, n_incomplete_declared: int) -> int:
+    """Combine the two never-reached-a-terminal-outcome signals without double-counting.
+
+    ``n_unresolved`` (collector-derived: started via ``start_task()``, absent
+    from done/failed, ``end_time is None``) and ``n_incomplete_declared``
+    (histogram-derived: open/claimed/in-progress/orphaned at shutdown) are two
+    independent *estimates of the same population* -- tasks that were declared
+    and never terminated -- read from two different sources. The same reaped
+    no-output task typically appears in BOTH, so summing them counts it twice
+    and makes the Run Health totals disagree with the Overview.
+
+    Taking the maximum keeps whichever source saw more such tasks (neither is
+    strictly a superset: the collector misses tasks it never started, the
+    histogram misses tasks the server already dropped) while never counting one
+    task twice.
+    """
+    return max(int(n_unresolved), int(n_incomplete_declared))
 
 
 def classify_task_terminator(task: Task) -> str:
@@ -330,6 +435,7 @@ def compute_run_health(
     all_tasks: list[Task],
     n_unresolved: int = 0,
     n_refused_merges: int = 0,
+    n_incomplete_declared: int = 0,
 ) -> tuple[bool, dict[str, int]]:
     """Compute the run-health verdict and per-terminator-category counts.
 
@@ -346,29 +452,45 @@ def compute_run_health(
             merges discard completed work without producing a failed task,
             so any refusal forces ``healthy`` to ``False`` -- including for
             an otherwise-empty 0/0 run (gh-2756).
+        n_incomplete_declared: Count of DECLARED tasks still unfinished at
+            final shutdown -- open/claimed/in-progress/orphaned rather than
+            done/failed (see :func:`count_incomplete_declared`). A declared
+            task that neither completed nor failed means the run did not meet
+            its goal, so any such task forces ``healthy`` to ``False`` --
+            including for an otherwise-empty 0/0 run where the only task's
+            agent produced no output and was reaped (issue #3010).
 
     Returns:
         Tuple of ``(healthy, counts)`` where ``counts`` maps each
         ``TERMINATOR_*`` category to the number of tasks in it.
+        ``TERMINATOR_INCOMPLETE_DECLARED`` is added (only when non-zero) so
+        the reaped-no-output task is reflected in the tally rather than
+        silently dropped.
 
         Hard rule (bug fix): ``healthy`` is ``False`` whenever ANY task
         has status FAILED, or ``n_unresolved > 0``, or
-        ``n_refused_merges > 0``, or there is at least
-        one ``TERMINATOR_AUTO_COMPLETED_AFTER_DEATH`` -- regardless of the
-        text-pattern classification below. This does not depend on
-        ``classify_task_terminator`` finding a forced-kill marker in the
-        task's free text, because that classification is a best-effort
+        ``n_refused_merges > 0``, or ``n_incomplete_declared > 0``, or there
+        is at least one ``TERMINATOR_AUTO_COMPLETED_AFTER_DEATH`` --
+        regardless of the text-pattern classification below. This does not
+        depend on ``classify_task_terminator`` finding a forced-kill marker
+        in the task's free text, because that classification is a best-effort
         proxy that can miss real failures (e.g. a provider error with no
         forced-kill keyword -- see TERMINATOR_AGENT_REPORTED_FAILURE).
         Absent any hard-rule trigger, ``healthy`` is ``False`` when more
         than ``_UNHEALTHY_NON_AGENT_FRACTION`` of terminations were
         non-agent-caused (watchdog/timeout/janitor/other-forced/
         auto-completed-after-death/agent-reported-failure). An empty task
-        list with no unresolved tasks is vacuously healthy.
+        list with no unresolved and no incomplete-declared tasks is
+        vacuously healthy.
     """
     counts: dict[str, int] = defaultdict(int)
     for t in all_tasks:
         counts[classify_task_terminator(t)] += 1
+    # Surface the reaped-no-output / never-finished task in the tally so it is
+    # not silently dropped (issue #3010). Only set when non-zero to preserve
+    # the empty-run ``counts == {}`` contract.
+    if n_incomplete_declared > 0:
+        counts[TERMINATOR_INCOMPLETE_DECLARED] = n_incomplete_declared
 
     # Hard rule (gh-2756): a refused merge means completed agent work was
     # discarded, and the affected task never shows up as FAILED -- checked
@@ -377,13 +499,13 @@ def compute_run_health(
     if n_refused_merges > 0:
         return False, counts.copy()
 
-    total = len(all_tasks) + n_unresolved
+    total = len(all_tasks) + count_never_terminal(n_unresolved, n_incomplete_declared)
     if total == 0:
         return True, counts.copy()
 
     n_failed = sum(1 for t in all_tasks if t.status == TaskStatus.FAILED)
     auto_completed = counts.get(TERMINATOR_AUTO_COMPLETED_AFTER_DEATH, 0)
-    if n_failed > 0 or auto_completed > 0 or n_unresolved > 0:
+    if n_failed > 0 or auto_completed > 0 or n_unresolved > 0 or n_incomplete_declared > 0:
         return False, counts.copy()
 
     non_agent = sum(counts.get(cat, 0) for cat in _NON_AGENT_CATEGORIES)
@@ -396,10 +518,19 @@ def _write_run_health_section(
     all_tasks: list[Task],
     n_unresolved: int = 0,
     n_refused_merges: int = 0,
+    n_incomplete_declared: int = 0,
 ) -> tuple[bool, dict[str, int]]:
     """Write the Run Health section and return (healthy, counts) for reuse in Recommendations."""
-    healthy, counts = compute_run_health(all_tasks, n_unresolved=n_unresolved, n_refused_merges=n_refused_merges)
-    total = len(all_tasks) + n_unresolved
+    healthy, counts = compute_run_health(
+        all_tasks,
+        n_unresolved=n_unresolved,
+        n_refused_merges=n_refused_merges,
+        n_incomplete_declared=n_incomplete_declared,
+    )
+    # Same de-duplicated total the Overview section uses: n_unresolved and
+    # n_incomplete_declared describe the same never-terminated tasks seen from
+    # two sources, so they are combined by max(), not summed.
+    total = len(all_tasks) + count_never_terminal(n_unresolved, n_incomplete_declared)
     agent_completed = counts.get(TERMINATOR_AGENT_COMPLETED, 0)
     watchdog_killed = counts.get(TERMINATOR_WATCHDOG_KILLED, 0)
     janitor_rejected = counts.get(TERMINATOR_JANITOR_REJECTED, 0)
@@ -412,7 +543,8 @@ def _write_run_health_section(
     logger.info(
         "run health: %d/%d agent-completed, %d watchdog-killed, %d janitor-rejected, "
         "%d timeout-killed, %d other-forced, %d auto-completed-after-death, "
-        "%d agent-reported-failure, %d unresolved-in-metrics, %d merges-refused -> %s",
+        "%d agent-reported-failure, %d unresolved-in-metrics, %d incomplete-declared, "
+        "%d merges-refused -> %s",
         agent_completed,
         total,
         watchdog_killed,
@@ -422,6 +554,7 @@ def _write_run_health_section(
         auto_completed,
         agent_reported_failure,
         n_unresolved,
+        n_incomplete_declared,
         n_refused_merges,
         verdict,
     )
@@ -440,11 +573,23 @@ def _write_run_health_section(
             f"| Timeout-killed | {timeout_killed} |",
             f"| Auto-completed after agent death | {auto_completed} |",
             f"| Other forced termination | {other_forced} |",
+            f"| Declared task unfinished (no output / never terminated) | {n_incomplete_declared} |",
             f"| Unresolved in metrics (started, outcome never reconciled) | {n_unresolved} |",
             f"| Merge refused by guard (agent work discarded) | {n_refused_merges} |",
             "",
         )
     )
+    if n_incomplete_declared > 0:
+        lines.extend(
+            (
+                f"- **Warning:** {n_incomplete_declared} declared task(s) never reached a terminal "
+                "outcome (neither done nor failed) -- the run ended while they were still "
+                "open/claimed/in-progress. The goal was not met. A common cause is an agent that "
+                "produced no model output (0 tokens) and was reaped -- the model may have rejected "
+                "the request (context/rate limit). Check .sdd/runtime/*.log for the agent transcript.",
+                "",
+            )
+        )
     if n_refused_merges > 0:
         lines.extend(
             (
@@ -816,9 +961,37 @@ def generate_retrospective(
             sorted({r.branch for r in merge_refusals}),
         )
 
+    # ------------------------------------------------------------------
+    # Declared-but-unfinished tasks: the run ended while a declared task was
+    # still open/claimed/in-progress/orphaned -- neither done nor failed.
+    # ------------------------------------------------------------------
+    #
+    # done_tasks/failed_tasks (and the collector reconciliation above) only see
+    # terminal outcomes; a task whose agent produced zero model output and was
+    # reaped can be left non-terminal, invisible to both. Without this the run
+    # reported "0/0 ... -> HEALTHY" and `bernstein run` exited 0 for a run that
+    # accomplished nothing (issue #3010). Derived from the full task-status
+    # histogram so it is caught regardless of collector state.
+    n_incomplete_declared = count_incomplete_declared(full_status_counts)
+    if n_incomplete_declared:
+        logger.warning(
+            "retrospective: %d declared task(s) never reached a terminal outcome "
+            "(open/claimed/in-progress/orphaned at shutdown) -- goal not met; counting "
+            "them against run health rather than reporting HEALTHY 0/0 (issue #3010). "
+            "histogram=%s",
+            n_incomplete_declared,
+            full_status_counts,
+        )
+
+    # The Overview and the Run Health section must agree, so both count the
+    # never-terminated tasks the same de-duplicated way: n_unresolved and
+    # n_incomplete_declared are two views of one population (see
+    # count_never_terminal), and summing them reported the same reaped task
+    # twice -- "2/2 terminations were NOT genuine" against "0 done / 1 total".
+    n_never_terminal = count_never_terminal(n_unresolved, n_incomplete_declared)
     n_done = len(done_tasks)
-    n_failed = len(failed_tasks) + n_unresolved
-    total = len(all_tasks) + n_unresolved
+    n_failed = len(failed_tasks) + n_never_terminal
+    total = len(all_tasks) + n_never_terminal
     completion_rate = (n_done / total * 100) if total else 0.0
 
     _status_histogram = full_status_counts if full_status_counts is not None else {"done": n_done, "failed": n_failed}
@@ -972,6 +1145,7 @@ def generate_retrospective(
         all_tasks,
         n_unresolved=n_unresolved,
         n_refused_merges=n_refused_merges,
+        n_incomplete_declared=n_incomplete_declared,
     )
 
     _write_failure_analysis(lines, done_tasks, failed_tasks)

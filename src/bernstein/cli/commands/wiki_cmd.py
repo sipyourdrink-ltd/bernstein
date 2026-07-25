@@ -24,11 +24,10 @@ _DEFAULT_OUTPUT = Path("WIKI.md")
 
 @click.group("wiki")
 def wiki_group() -> None:
-    """Render a Markdown wiki for the current repo (local, free).
+    """Render a Markdown wiki for the current repo.
 
-    Paid alternative: Devin Wiki / DeepWiki ($20/mo Pro, $500/mo Teams,
-    ACU pay-as-you-go). ``bernstein wiki`` runs on your laptop with no
-    contract, no per-token billing, and no cloud round-trip.
+    Runs locally, with no network round-trip and no external service, so
+    it works offline and on private repositories.
     """
 
 

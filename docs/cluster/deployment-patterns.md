@@ -143,6 +143,16 @@ so mounts fail with permission errors. Add `user: "0:0"` (compose) or
 `--user 0:0` (`docker run`) to the worker service on macOS, or use a named
 volume instead of a bind mount.
 
+**The worker's workspace must be a git checkout of the target repo.** Each
+claimed task runs in a git worktree created under the workspace, so a worker
+started against a non-git `/workspace` refuses to start (workspace preflight,
+#3018) instead of claiming tasks it cannot run. The published image does *not*
+ship a checkout at `/workspace`; bind-mount the repo (`-v /path/to/repo:/workspace`)
+or clone it in an init step so `/workspace` is a git work tree with at least one
+commit before `bernstein worker` starts. See
+[`operations/cluster-mode.md`](../operations/cluster-mode.md#worker-setup) for
+the full requirement.
+
 ---
 
 ## Pattern 2 - Cloudflare Tunnel

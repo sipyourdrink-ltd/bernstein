@@ -382,6 +382,41 @@ def _terminate_stuck_agent(orch: Any, session: Any, age: float) -> None:
     _reap_session_heartbeat_loop(orch, session, reason="no_heartbeat_kill")
 
 
+def _agent_has_fresh_liveness_signal(orch: Any, session: Any) -> bool:
+    """Whether the agent's LOG or GIT tree changed within the grace window.
+
+    Reuses ``agent_lifecycle._probe_liveness_signals`` -- the SAME probe that
+    defers the reap-cycle death judgment -- so the escalation ladder never
+    SIGTERMs an agent that is demonstrably alive: e.g. a non-heartbeat adapter
+    (``consumes_heartbeat_dir=False``) streaming its first turn, whose log/git
+    tree changed within the liveness grace window even though its only
+    heartbeat file is the spawn-time one. Applying this HERE, before the
+    ladder fires, fixes the disagreement where ``heartbeat_escalation`` killed
+    on heartbeat age alone while ``liveness_judgment`` -- running one tick too
+    late -- would have found the agent alive (issue #3012).
+
+    Only the LOG and GIT mtimes count: the heartbeat is already known stale in
+    the escalation path (that is why we are here), so the heartbeat file's own
+    mtime is not an independent liveness signal -- a genuinely frozen agent
+    with no log/git activity is still escalated and killed (issue #2796).
+
+    The lazy import avoids the ``heartbeat`` <-> ``agent_lifecycle`` import
+    cycle. Any failure is treated as "no fresh signal" so a genuine stall
+    still escalates.
+    """
+    workdir = getattr(orch, "_workdir", None)
+    if not isinstance(workdir, Path):
+        return False
+    try:
+        from bernstein.core.agents.agent_lifecycle import _probe_liveness_signals
+
+        result = _probe_liveness_signals(orch, session, time.time())
+    except Exception:
+        return False
+    grace_s = AGENT.liveness_grace_s
+    return any(age is not None and age < grace_s for age in (result.get("log_age_s"), result.get("git_age_s")))
+
+
 def _escalate_heartbeat(
     orch: Any,
     session: Any,
@@ -399,6 +434,11 @@ def _escalate_heartbeat(
     process is force-killed (SIGTERM then SIGKILL via the escalation ladder) so
     it is reaped and the slot frees (issue #2796). ``write_shutdown`` is itself
     idempotent per episode, so the soft SHUTDOWN below is emitted at most once.
+
+    Liveness gate (issue #3012): a stale heartbeat alone never justifies a
+    kill. If the agent's log/git tree changed within the grace window it is
+    alive, so no SIGTERM/SIGKILL and no soft SHUTDOWN is sent this tick; the
+    ladder is reset so a genuine later stall re-escalates from the start.
     """
     signal_mgr = orch._signal_mgr
     task_title = _session_task_title(session)
@@ -408,6 +448,20 @@ def _escalate_heartbeat(
         # Healthy again (or never stale): drop any prior escalation state so a
         # later stall episode re-escalates from the start.
         ladder.reset_agent(session.id)
+    elif _agent_has_fresh_liveness_signal(orch, session):
+        # Stale heartbeat BUT a fresh log/git liveness signal: the agent is
+        # demonstrably alive (see _agent_has_fresh_liveness_signal). Do NOT
+        # escalate on heartbeat age alone. Reset the ladder and skip the soft
+        # SHUTDOWN/WAKEUP a live agent should not receive.
+        ladder.reset_agent(session.id)
+        logger.info(
+            "heartbeat_escalation: NOT escalating agent %s despite heartbeat age %.0fs "
+            "-- fresh log/git liveness signal within grace window (agent is alive); will "
+            "re-evaluate once the log actually goes stale",
+            session.id,
+            age,
+        )
+        return
     else:
         action = ladder.check_and_escalate(session.id, age, pid=session.pid)
         if action is not None and action.tier >= EscalationTier.SIGKILL:

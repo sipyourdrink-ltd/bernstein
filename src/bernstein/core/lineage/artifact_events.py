@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import (
+    ARTIFACT_ATTEMPT_STEP_PREFIX,
     JOURNAL_SEAL_STEP_PREFIX,
     LineageSpine,
     SpineEntry,
@@ -130,6 +131,18 @@ class ArtifactProductionEvent:
         module exists to close.
         """
         return self.step_id.startswith(JOURNAL_SEAL_STEP_PREFIX)
+
+    @property
+    def is_attempt(self) -> bool:
+        """Whether this event records a declared output that did *not* land.
+
+        An attempt record is a spine entry like any other -- journaled, replayed,
+        tamper-evident -- so the conformance property (one event per spine entry)
+        holds over it and the fan-out stays exact. But it is the record of an
+        absence, so every consumer answering "what was produced" filters it out,
+        exactly as it filters the run's journal seal (issue #2559).
+        """
+        return self.step_id.startswith(ARTIFACT_ATTEMPT_STEP_PREFIX)
 
     def to_payload(self) -> dict[str, Any]:
         """Return the canonical payload dict (the SSE ``data`` body)."""
@@ -355,10 +368,16 @@ def emit_production_event(
 def observed_artifact_keys(lineage_root: Path, *, run_id: str) -> tuple[str, ...]:
     """Return the artifact keys a run is *observed* to have produced.
 
-    Sorted and deduplicated. The run's own journal seal is excluded: it records
-    the run recording itself, not a deliverable, and counting it as production
-    would put ``.sdd/runs/<id>/journal.jsonl`` into every completion diff as an
-    undeclared write.
+    Sorted and deduplicated. Two kinds of entry are excluded:
+
+    * the run's own journal seal -- it records the run recording itself, not a
+      deliverable, and counting it as production would put
+      ``.sdd/runs/<id>/journal.jsonl`` into every completion diff as an
+      undeclared write;
+    * artifact **attempt** records -- they are keyed by a declared output that
+      did *not* land, so counting one as production would let the record of a
+      missing output satisfy its own declaration and quietly erase the finding
+      (issue #2559).
 
     An empty tuple means "this run's spine carries no produced artifact", which
     is a genuine observation. It is **not** the same as having no observation at
@@ -366,7 +385,15 @@ def observed_artifact_keys(lineage_root: Path, *, run_id: str) -> tuple[str, ...
     because a diff computed against an absent observation manufactures findings
     out of ignorance.
     """
-    return tuple(sorted({e.uri for e in load_production_events(lineage_root, run_id=run_id) if not e.is_journal_seal}))
+    return tuple(
+        sorted(
+            {
+                e.uri
+                for e in load_production_events(lineage_root, run_id=run_id)
+                if not e.is_journal_seal and not e.is_attempt
+            }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

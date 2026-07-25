@@ -3065,6 +3065,13 @@ def _reap_and_cleanup_session(
         # side inference. No-op when the orchestrator has no recorder.
         record_task_merged(getattr(orch, "_recorder", None), task_id=task.id, agent_id=session.id)
 
+    # issue #2559: reconcile what the task declared it would produce against what
+    # this run's spine actually carries, and record an artifact-keyed attempt for
+    # anything missing. Runs for delivered and undelivered tasks alike: a declared
+    # output that is absent is a finding either way, and only the recorded outcome
+    # differs. Fail-open; never blocks completion.
+    _reconcile_declared_outputs(orch, task, session, delivered=bool(janitor_passed and not skip_merge and merge_ok))
+
     # issue #2365: capture the task diff as a content-addressed review artifact
     # (the bytes a reviewer inspects on the board) before the worktree is
     # reclaimed, for merged and unmerged tasks alike. Chained into the run
@@ -3127,6 +3134,77 @@ def _capture_review_diff(orch: Any, task: Task, session: AgentSession) -> None:
         record_task_diff_captured(recorder, task_id=task.id, summary=summary)
     except Exception as exc:
         logger.debug("review diff capture failed for task %s: %s", task.id, exc)
+
+
+def _reconcile_declared_outputs(orch: Any, task: Task, session: AgentSession, *, delivered: bool) -> None:
+    """Record an artifact-keyed attempt for each declared output that did not land.
+
+    ``Task.declared_outputs`` says what the task meant to leave behind. Whether it
+    did is answered per URI against this run's spine -- the chain is already keyed
+    by artifact, so the lookup is exact and needs no attribution of individual
+    writes to individual tasks.
+
+    Without this, a task that declared an output and died left nothing under that
+    key, so the artifact side could not tell it apart from a URI nothing was ever
+    scheduled to produce (issue #2559). With it, the failure is a chain fact:
+    HMAC-tagged, replayable, and answerable by ``bernstein artifact health``.
+
+    Fail-open, twice over: the whole body is guarded, and
+    :func:`~bernstein.core.lineage.artifact_attempt.reconcile_declared_outputs`
+    never raises on its own. The task has already finished by the time this runs,
+    and nothing about describing it may change that outcome.
+
+    Args:
+        orch: The orchestrator; supplies the workdir and the run recorder.
+        task: The completing task.
+        session: The agent session that ran it; supplies the acting identity.
+        delivered: Whether the task reached a merged, janitor-accepted completion.
+            Drives the recorded outcome, not whether a record is written: a task
+            that was accepted while a declared output is missing is a finding in
+            its own right.
+    """
+    try:
+        # Read through ``getattr``, and inside the guard: this seam is duck-typed
+        # (``orch`` is ``Any``, and callers pass task-shaped objects that need not
+        # carry every field), so a task without the attribute is a shape to skip,
+        # not a completion to fail.
+        declared = getattr(task, "declared_outputs", None)
+        if not declared:
+            # Zero-touch: tasks that never declared an output pay nothing and
+            # leave the chain byte-for-byte as it was.
+            return
+        from bernstein.core.lineage.artifact_attempt import (
+            ATTEMPT_OUTCOME_FAILED,
+            ATTEMPT_OUTCOME_INCOMPLETE,
+            reconcile_declared_outputs,
+        )
+        from bernstein.core.security.audit import load_or_create_audit_key
+
+        run_id = getattr(getattr(orch, "_recorder", None), "run_id", "")
+        if not run_id:
+            return
+        missing = reconcile_declared_outputs(
+            orch._workdir / ".sdd" / "lineage",
+            run_id=run_id,
+            declared=declared,
+            task_id=task.id,
+            actor=session.id,
+            model=task.model or "",
+            hmac_key=load_or_create_audit_key(),
+            # The spine write boundary stamps ``time.time_ns()``; an attempt has
+            # to share that unit or it would sort against productions wrongly.
+            timestamp=time.time_ns(),
+            outcome=ATTEMPT_OUTCOME_INCOMPLETE if delivered else ATTEMPT_OUTCOME_FAILED,
+            reason="task completed without the declared output" if delivered else "task did not complete",
+        )
+        if missing:
+            logger.info(
+                "task %s declared %d output(s) that did not land; attempt record(s) written",
+                task.id,
+                len(missing),
+            )
+    except Exception as exc:
+        logger.debug("declared-output reconciliation failed for task %s: %s", task.id, exc)
 
 
 def _cleanup_batch_session(orch: Any, session: AgentSession) -> None:

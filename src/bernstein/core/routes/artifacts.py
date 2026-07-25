@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from bernstein.core.lineage.artifact_health import (
+    artifact_attempts,
     artifact_log,
     artifact_log_json,
     list_artifact_keys,
@@ -123,9 +124,21 @@ def artifact_health(request: Request) -> Response:
 
 @router.get("/artifacts/log")
 def artifact_log_route(request: Request) -> Response:
-    """Return productions of ``?uri=``, newest first (the attribution log)."""
+    """Return productions of ``?uri=``, newest first (the attribution log).
+
+    Recorded attempts -- tasks that declared this artifact and did not deliver it
+    -- travel in the same document under ``attempts`` (issue #2559), so a
+    consumer cannot see the productions without also seeing what tried and
+    failed. Byte-identical to what the CLI prints for the same state.
+    """
     uri = _required_uri(request)
     limit = _int_param(request, "limit") or 0
     limit = min(max(limit, 0), _MAX_LOG_LIMIT)
-    records = artifact_log(_workdir(request), uri, hmac_key=_hmac_key(), limit=limit)
-    return Response(content=artifact_log_json(records, uri=uri), media_type=_JSON_MEDIA_TYPE)
+    workdir = _workdir(request)
+    key = _hmac_key()
+    records = artifact_log(workdir, uri, hmac_key=key, limit=limit)
+    attempts = artifact_attempts(workdir, uri, hmac_key=key, limit=limit)
+    return Response(
+        content=artifact_log_json(records, uri=uri, attempts=attempts),
+        media_type=_JSON_MEDIA_TYPE,
+    )

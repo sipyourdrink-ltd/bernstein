@@ -226,3 +226,37 @@ def test_capability_card_reports_oauth_disabled(_no_issuer: None) -> None:
     # When off, oauth2_pkce remains planned, not supported.
     assert "oauth2_pkce" in card["auth"]["planned"]
     assert "oauth2_pkce" not in card["auth"]["supported"]
+
+
+# ---------------------------------------------------------------------------
+# WWW-Authenticate challenge helper (issue #3075)
+# ---------------------------------------------------------------------------
+
+
+def test_challenge_is_none_without_issuer(_no_issuer: None) -> None:
+    from bernstein.mcp.oauth import www_authenticate_challenge
+
+    assert www_authenticate_challenge("https://bernstein.example.com") is None
+
+
+def test_challenge_points_at_the_metadata_path(_with_issuer: str) -> None:
+    from bernstein.mcp.oauth import (
+        PR_METADATA_PATH,
+        protected_resource_metadata_url,
+        www_authenticate_challenge,
+    )
+
+    base = "https://bernstein.example.com"
+    url = protected_resource_metadata_url(base)
+    assert url == f"{base}{PR_METADATA_PATH}"
+    assert www_authenticate_challenge(base) == f'Bearer resource_metadata="{url}"'
+    # The challenge names the document, never the issuer or any credential.
+    assert _with_issuer not in www_authenticate_challenge(base)
+
+
+def test_challenge_normalises_a_trailing_slash_on_the_base(_with_issuer: str) -> None:
+    from bernstein.mcp.oauth import protected_resource_metadata_url
+
+    assert protected_resource_metadata_url("https://bernstein.example.com/") == (
+        "https://bernstein.example.com/.well-known/oauth-protected-resource"
+    )

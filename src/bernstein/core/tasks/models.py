@@ -1182,6 +1182,42 @@ class IsolationMode(StrEnum):
     CONTAINER = "container"
 
 
+@dataclass(frozen=True, slots=True)
+class IsolationDowngrade:
+    """A requested isolation boundary that could not be provided.
+
+    Issue #3014: when a spawn is routed to container isolation - via the
+    ``sandbox:`` config, ``--sandbox docker``, or ``BERNSTEIN_SANDBOX_RUNTIME``
+    - but no container runtime is available, the spawn falls back to a weaker
+    boundary (worktree, or none). Left as a bare log WARNING, that downgrade is
+    invisible to the operator who asked for the stronger boundary. Recording it
+    as a typed value lets the run summary and the HMAC-chained audit log both
+    surface requested-vs-actual isolation, so the weaker posture is an auditable
+    decision rather than a silent substitution.
+
+    Attributes:
+        session_id: Agent session whose isolation was downgraded.
+        requested: The isolation mode that was requested (an
+            :class:`IsolationMode` value, e.g. ``"container"``).
+        actual: The isolation mode actually provided (e.g. ``"worktree"``).
+        reason: Human-readable cause (typically the container-runtime error).
+    """
+
+    session_id: str
+    requested: str
+    actual: str
+    reason: str
+
+    def as_dict(self) -> dict[str, str]:
+        """Return a JSON-serialisable mapping for run-summary rendering."""
+        return {
+            "session_id": self.session_id,
+            "requested": self.requested,
+            "actual": self.actual,
+            "reason": self.reason,
+        }
+
+
 class AgentBackend(StrEnum):
     """Agent execution backend.
 
@@ -1490,6 +1526,12 @@ class OrchestratorConfig:
     # Unified with AGENT.heartbeat_stale_s. Previously 900s; now defaults to 120s.
     # Deployments that explicitly relied on the 900s value must set this field explicitly.
     heartbeat_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_stale_s))
+    # Time-to-first-turn cap for agents still in the `starting` phase. Kept
+    # separate from (and larger than) ``heartbeat_timeout_s`` so a slow/free
+    # model that takes >120s to its first turn is not reaped mid-work while a
+    # non-heartbeat adapter has only its spawn-time heartbeat on disk (issue
+    # #3012). Overridable via ``tuning.agent.heartbeat_starting_timeout_s``.
+    heartbeat_starting_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_starting_timeout_s))
     heartbeat_enabled: bool = True
     # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical) so
     # ``tuning.orchestrator.max_agent_runtime_s`` overrides the starting

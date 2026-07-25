@@ -162,24 +162,38 @@ def artifact_log_cmd(uri: str, workdir: Path, limit: int, output_json: bool) -> 
     The first record is the current tip: the agent identity and model behind the
     bytes that are live right now. ``verified`` is recomputed per entry, so a
     tampered row is named here instead of being averaged away.
-    """
-    from bernstein.core.lineage.artifact_health import artifact_log, artifact_log_json
 
-    records = artifact_log(workdir.resolve(), uri, hmac_key=_spine_hmac_key(), limit=limit)
+    Recorded *attempts* are listed after the productions: tasks that declared
+    this artifact and did not deliver it. An empty production list next to a
+    populated attempt list is the answer to "did anything try?", which used to
+    require reading run directories by hand.
+    """
+    from bernstein.core.lineage.artifact_health import artifact_attempts, artifact_log, artifact_log_json
+
+    key = _spine_hmac_key()
+    records = artifact_log(workdir.resolve(), uri, hmac_key=key, limit=limit)
+    attempts = artifact_attempts(workdir.resolve(), uri, hmac_key=key, limit=limit)
 
     if output_json:
-        click.echo(artifact_log_json(records, uri=uri))
+        click.echo(artifact_log_json(records, uri=uri, attempts=attempts))
         return
-    if not records:
-        console.print(f"[yellow]no productions recorded for[/yellow] {uri}")
+    if not records and not attempts:
+        console.print(f"[yellow]nothing recorded for[/yellow] {uri}")
         return
     console.print(f"[bold]{uri}[/bold]")
+    if not records:
+        console.print("  [yellow]no productions recorded[/yellow]")
     for i, record in enumerate(records):
         marker = "[green]OK[/green]" if record.verified else "[red]TAMPERED[/red]"
         label = "tip" if i == 0 else "   "
         console.print(f"  {label} {marker} {record.entry_hash}")
         console.print(f"        actor={record.actor or '-'} model={record.model or '-'} run={record.run_id}")
         console.print(f"        content={record.content_hash} step={record.step_id or '-'}")
+    for attempt in attempts:
+        marker = "[green]OK[/green]" if attempt.verified else "[red]TAMPERED[/red]"
+        console.print(f"  [yellow]attempt[/yellow] {marker} {attempt.entry_hash}")
+        console.print(f"        task={attempt.task_id or '-'} outcome={attempt.outcome or '-'}")
+        console.print(f"        actor={attempt.actor or '-'} model={attempt.model or '-'} run={attempt.run_id}")
 
 
 @artifact_group.command("health")

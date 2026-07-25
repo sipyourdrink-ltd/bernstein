@@ -152,6 +152,47 @@ class WorkerLoop:
             headers["Authorization"] = f"Bearer {self._auth_token}"
         return headers
 
+    def _workspace_setup_error(self) -> str | None:
+        """Return a setup error if the workspace cannot run agents, else None.
+
+        A worker executes every claimed task by adding a git worktree under its
+        workspace (``AgentSpawner`` -> ``WorktreeManager``). When the workspace
+        is not a usable git checkout, ``git worktree add`` fails with ``fatal:
+        not a git repository`` -- but only *after* the task has been claimed,
+        stranding it in ``claimed`` with no live agent (#3018). This preflight
+        surfaces the unusable workspace *before* the worker registers or accepts
+        any claim, so the worker refuses to start with an actionable message
+        instead of claiming work it cannot execute.
+
+        A "usable" workspace is a git work tree with at least one commit: the
+        worktree branch (``git worktree add <path> -b <branch>``) is created
+        from ``HEAD``, so an empty repo with no commit cannot back a spawn
+        either.
+        """
+        from bernstein.core.git.git_basic import is_git_repo, run_git
+
+        workdir = self._workdir
+        if not workdir.is_dir():
+            return (
+                f"Worker workspace {workdir} does not exist. Mount or check out the target "
+                "repository at this path before starting the worker (the published cluster "
+                "image expects the repo at /workspace)."
+            )
+        if not is_git_repo(workdir):
+            return (
+                f"Worker workspace {workdir} is not a git repository. Each task runs in a git "
+                "worktree created under the workspace, so the workspace must be a git checkout "
+                "of the target repo. Mount or clone the repo at this path (e.g. /workspace in "
+                "the published cluster image) before starting the worker."
+            )
+        if not run_git(["rev-parse", "--verify", "HEAD"], workdir).ok:
+            return (
+                f"Worker workspace {workdir} is a git repository with no commits. "
+                "'git worktree add' branches from HEAD, so the workspace repo needs at least "
+                "one commit before the worker can spawn agents."
+            )
+        return None
+
     @staticmethod
     def _is_claude_adapter(adapter_name: str) -> bool:
         """Whether an adapter serves the Claude tier-name cascade (sonnet/opus/haiku)."""
@@ -441,6 +482,24 @@ class WorkerLoop:
         except httpx.HTTPError as exc:
             logger.warning("Failed to report failure for %s: %s", task_id, exc)
 
+    def _release_task(self, client: httpx.Client, task_id: str, reason: str) -> None:
+        """Release a claimed task back to the open pool after a failed spawn.
+
+        A task the worker claimed but could not start (agent spawn failed) must
+        return to ``open`` so another node can take it, instead of staying
+        ``claimed`` with no live agent (#3018). Distinct from :meth:`_fail_task`,
+        which marks the task terminally failed rather than re-queuing it.
+        """
+        try:
+            client.post(
+                f"{self._server_url}/tasks/{task_id}/release",
+                json={"reason": reason},
+                headers=self._headers(),
+                timeout=10.0,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("Failed to release task %s back to pool: %s", task_id, exc)
+
     def _report_finished(self, client: httpx.Client) -> None:
         """Post queued terminal outcomes for reaped agents to the server.
 
@@ -554,6 +613,12 @@ class WorkerLoop:
             if pid is not None:
                 self._active_tasks[task_id] = pid
                 console.print(f"  [green]Claimed[/green] {task_id}: {task.get('title', '')[:50]} (pid={pid})")
+            else:
+                # Spawn failed: release the claim so another node can run the
+                # task, instead of leaving it stranded in 'claimed' with no live
+                # agent (#3018).
+                self._release_task(client, task_id, "agent spawn failed on worker; released back to pool")
+                console.print(f"  [yellow]Spawn failed[/yellow] for {task_id}; released back to pool")
 
     def _unregister(self, client: httpx.Client, node_id: str | None) -> None:
         """Graceful shutdown: unregister from the server."""
@@ -569,6 +634,15 @@ class WorkerLoop:
 
     def run(self) -> None:
         """Main worker loop. Blocks until SIGINT/SIGTERM."""
+        # Preflight the workspace before registering or accepting any claim. A
+        # worker whose workspace is not a usable git checkout cannot spawn a
+        # single agent, so it must refuse to start rather than register, claim
+        # tasks, and strand them in 'claimed' (#3018).
+        setup_error = self._workspace_setup_error()
+        if setup_error is not None:
+            console.print(f"[red]Worker cannot start:[/red] {setup_error}")
+            raise SystemExit(1)
+
         self._running = True
 
         def _handle_signal(signum: int, _frame: object) -> None:

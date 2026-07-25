@@ -61,6 +61,7 @@ from bernstein.core.server import (
     TaskFailRequest,
     TaskPatchRequest,
     TaskProgressRequest,
+    TaskReleaseRequest,
     TaskReopenRequest,
     TaskResponse,
     TaskSelfCreate,
@@ -1485,6 +1486,42 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
     _update_file_health(request, task.id, list(task.owned_files), "failure")
     _record_agent_trust(request, task.role, success=False)
 
+    return task_to_response(task)
+
+
+@router.post(
+    "/tasks/{task_id}/release",
+    responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
+)
+async def release_task(task_id: str, body: TaskReleaseRequest, request: Request) -> TaskResponse:
+    """Release a claimed task back to the open pool without failing it.
+
+    A cluster worker that claims a task but cannot start its agent (e.g. the
+    workspace is not a usable git checkout, or the adapter spawn fails) must
+    return the task to the pool so another node can pick it up, rather than
+    stranding it in ``claimed`` with no live agent (#3018). Distinct from
+    ``/fail`` (terminal FAILED) and ``/reopen`` (DONE -> OPEN): the task
+    transitions CLAIMED/IN_PROGRESS -> OPEN and is immediately claimable again.
+    """
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
+        task = await store.release(task_id, body.reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except IllegalTransitionError as exc:
+        logger.warning(
+            "task.release 409: task_id=%s current_status=%s reason=%s",
+            sanitize_log(task_id),
+            existing_task.status.value if existing_task is not None else "unknown",
+            sanitize_log(str(exc)),
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
     return task_to_response(task)
 
 

@@ -336,6 +336,17 @@ class TaskReopenRequest(BaseModel):
         return _sanitize_reason(value, info.field_name or "reason")
 
 
+class TaskReleaseRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/release."""
+
+    reason: str = ""
+
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
+
+
 class TaskCancelRequest(BaseModel):
     """Body for POST /tasks/{task_id}/cancel."""
 

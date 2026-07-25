@@ -577,8 +577,8 @@ def evolve_spawn_manager(
     description = (
         f"You are a PRODUCT DIRECTOR in EVOLVE mode (cycle {cycle_number}). "
         "Think strategically: what would make this project genuinely useful "
-        "to developers? What do competitors lack? What's the shortest path "
-        "to a feature that gets people excited?\n\n"
+        "to developers? Which gaps are unaddressed today? What is the shortest path "
+        "to a feature developers would actually use?\n\n"
         "Create tasks for specialist agents to implement. "
         "You plan, they code.\n\n"
         f"## This cycle's focus: {focus_area.replace('_', ' ')}\n"

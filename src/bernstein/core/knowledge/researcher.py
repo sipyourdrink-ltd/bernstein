@@ -229,7 +229,7 @@ def format_research_context(report: ResearchReport) -> str:
 
     if report.competitors:
         lines = "\n\n".join(r.content for r in report.competitors)
-        sections.append(f"### Competitor landscape\n{lines}")
+        sections.append(f"### Tooling landscape\n{lines}")
 
     if report.user_needs:
         lines = "\n\n".join(r.content for r in report.user_needs)
@@ -246,7 +246,7 @@ def format_research_context(report: ResearchReport) -> str:
         "\n\n## Market Research (auto-generated)\n"
         + "\n\n".join(sections)
         + "\n\nBased on this research, create tasks that:\n"
-        "1. Build features no competitor has\n"
+        "1. Address the gaps this research surfaced\n"
         "2. Solve real pain points developers face\n"
         "3. Adopt trending patterns early\n"
     )

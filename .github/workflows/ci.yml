@@ -560,9 +560,28 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
       - name: Run pyright (advisory)
+        # Advisory by design, and this job is not in ci-gate's needs, so it
+        # gates nothing. Its scope is the repo-wide pyright configuration in
+        # pyproject.toml [tool.pyright]; the blocking subset is the separate
+        # pyright-strict-zone job. The error count is echoed as a number so
+        # the advisory backlog moving is observable rather than silent.
+        # Scope and promotion path: docs/operations/type-check-scope.md.
         run: |
-          uv run pyright 2>&1 | tail -1 || true
-          echo "::notice::Typecheck is advisory while module decomposition shims are being typed"
+          log="$RUNNER_TEMP/pyright-advisory.log"
+          uv run pyright >"$log" 2>&1 || true
+          tail -1 "$log"
+          counts="$(grep -E '^[0-9]+ error' "$log" | tail -1 || true)"
+          echo "::notice::Advisory pyright (repo-wide scope, gates nothing): ${counts:-no summary line}"
+          {
+            echo "### Advisory pyright"
+            echo ""
+            echo "| scope | blocking | result |"
+            echo "|---|---|---|"
+            echo "| repo-wide (\`[tool.pyright]\`) | no | ${counts:-unknown} |"
+            echo ""
+            echo "Blocking subset: \`pyrightconfig.strict.json\` (job \`Pyright strict (security + cluster)\`)."
+            echo "Scope reference: \`docs/operations/type-check-scope.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   dead-code:
     name: Dead code (Vulture)
@@ -1253,7 +1272,23 @@ jobs:
             tail -20 "$log"
             exit 1
           fi
-          echo "mypy repo-wide (advisory): $(tail -1 "$log")" >> "$GITHUB_STEP_SUMMARY"
+          # The `|| true` above makes this run advisory. Report its scope and
+          # error count as explicit numbers so the backlog moving in either
+          # direction is observable rather than silent. Only the gated zone
+          # below can fail this job.
+          advisory_errors="$(grep -cE ': error: ' "$log" || true)"
+          echo "::notice::Advisory mypy (scope: src/, gates nothing): ${advisory_errors} error(s)"
+          {
+            echo "### mypy scope"
+            echo ""
+            echo "| run | scope | blocking | errors |"
+            echo "|---|---|---|---|"
+            echo "| advisory | \`src/\` (\`[tool.mypy]\`) | no | ${advisory_errors} |"
+            echo "| gated zone | \`mypy.gate.ini\` \`files\` minus \`exclude\` | yes | must be 0 |"
+            echo ""
+            echo "Advisory tail: \`$(tail -1 "$log")\`"
+            echo "Scope reference: \`docs/operations/type-check-scope.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Run mypy strict on the gated zone
         # The gated zone is defined in mypy.gate.ini. Widen it by removing
         # entries from `exclude` as each module reaches strict cleanliness.
