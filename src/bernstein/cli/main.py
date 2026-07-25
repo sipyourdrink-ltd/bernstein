@@ -1117,6 +1117,12 @@ cli.add_command(watch_cmd, "watch")
 cli.add_command(wiki_group, "wiki")
 cli.add_command(listen_cmd, "listen")
 cli.add_command(self_update_cmd, "self-update")
+
+# Provenance-verified update lifecycle: check, update, pin, rollback (#2942)
+from bernstein.cli.commands.self_update_cmd import self_group  # noqa: E402
+
+cli.add_command(self_group, "self")
+
 cli.add_command(undo_cmd, "undo")
 cli.add_command(worker, "worker")
 cli.add_command(worktrees_group, "worktrees")

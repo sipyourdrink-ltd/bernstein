@@ -3054,6 +3054,15 @@ class AgentSpawner:
         spawn ``try`` for the same reason: a refusal is a hard stop, not an
         alternate-provider failover.
 
+        The gate is invoked directly rather than through
+        :func:`~bernstein.adapters.registry.get_adapter`. A spawner can be
+        constructed around an adapter instance that was injected rather than
+        resolved from the registry -- test doubles and third-party adapters
+        both do this -- and re-resolving its name here would raise "unknown
+        adapter" for a spawn that is otherwise legitimate. ``get_adapter``
+        keeps its own ``admission_gate`` parameter for callers that do resolve
+        by name; both routes reach the same gate.
+
         Raises:
             AdapterAdmissionRefusal: Under the enforce policy, when the
                 adapter cannot present a fresh, matching admission receipt.
@@ -3083,10 +3092,7 @@ class AgentSpawner:
             policy=policy,
             decisions_dir=sdd / "adapters" / "admission" / "decisions",
         )
-        # Routed through get_adapter so the gate sits on the resolution path
-        # itself: without a receipt the adapter is un-spawnable, not merely
-        # unlogged. The instance is discarded; the spawn uses the cached one.
-        get_adapter(adapter_name, admission_gate=gate)
+        gate.admit(adapter_name)
 
     def _record_adapter_capability_selection(self, adapter_name: str, tasks: list[Task]) -> None:
         """Anchor the capability profile the routed adapter presents (#2663).

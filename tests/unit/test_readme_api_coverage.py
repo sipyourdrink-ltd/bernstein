@@ -308,6 +308,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Bot-added: drift autofix (regen_contract_drift.py)
         "artifact",
         "datasource",
+        # Provenance-verified update lifecycle: check, update, pin, rollback (#2942)
+        "self",
     }
 )
 

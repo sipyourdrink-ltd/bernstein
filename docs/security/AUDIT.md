@@ -68,6 +68,9 @@ The package includes:
   verify, Merkle seal, SIEM, recovery.
 - [Multi-tenant audit-chain export](audit-multitenant.md) - per-tenant slice with
   optional RFC 3161 timestamping.
+- [Delegation narrowing](delegation-narrowing.md) - recomputing child-subset-of-parent
+  authority, separation of duties, and decision-time charter binding from delegation
+  receipts.
 - [DSSE / in-toto envelope](audit-dsse-envelope.md) - third-party-verifiable wrapper
   over the bundle.
 - [EU AI Act Article 12 evidence pack](../compliance/eu-ai-act-article-12-bundle.md)
