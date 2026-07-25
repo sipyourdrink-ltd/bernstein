@@ -935,3 +935,17 @@ class TestParseSeedUnknownTopLevelKeys:
 
         messages = [r.getMessage() for r in caplog.records]
         assert any("zzqqxx" in m for m in messages)
+
+    def test_container_image_key_hints_sandbox_image(
+        self, seed_file: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``container_image:`` has no top-level equivalent; the warning must
+        point operators at ``sandbox.image`` instead of silently dropping the
+        value (bug #3023)."""
+        seed_file.write_text('goal: "Test"\ncontainer_image: bernstein-qwen:3.9.0\n')
+
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            parse_seed(seed_file)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("container_image" in m and "sandbox.image" in m for m in messages)
