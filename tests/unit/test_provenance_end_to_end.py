@@ -18,7 +18,7 @@ from bernstein.core.lineage.provenance import (
     taint_for_artefact,
     verify_taint,
 )
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.security.auto_approve import Decision, classify_command
 from bernstein.core.security.capability_matrix import (
@@ -52,7 +52,7 @@ def _cards_dir(tmp_path: Path, card: AgentCard) -> Path:
 
 def test_untrusted_result_confined_end_to_end(tmp_path: Path) -> None:
     store = LineageStore(tmp_path / "lineage")
-    recorder = LineageRecorder(store=store, operator_hmac_key=_OP_SECRET)
+    recorder = SignedLineageLog(store=store, operator_hmac_key=_OP_SECRET)
     priv, pub = generate_keypair()
     card = AgentCard(agent_id="agent:gw", kid="k1", public_key_pem=pub)
     cards = _cards_dir(tmp_path, card)

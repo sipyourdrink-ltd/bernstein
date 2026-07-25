@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.tui.output_styles import OutputStyle, StyleConfig, load_output_styles, load_style
+from bernstein.core.config.output_styles import OutputStyle, StyleConfig, load_output_styles, load_style
 
 # --- Fixtures ---
 

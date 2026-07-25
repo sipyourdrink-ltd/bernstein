@@ -603,6 +603,77 @@ def agents_resume(session_id: str) -> None:
         console.print(f"[yellow]No tracked session '{session_id}'.[/yellow]")
 
 
+@agents_group.command("trust")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(),
+    help="Project root (parent of .sdd/).",
+)
+@click.option("--agent", "agent_id", default=None, help="Show the full profile for one agent id.")
+@click.option("--as-json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def agents_trust(workdir: str, agent_id: str | None, as_json: bool) -> None:
+    """Show per-agent trust tiers and the permissions each tier grants.
+
+    Trust is recorded from task outcomes in ``.sdd/trust/<agent_id>.json``:
+    completions raise the consecutive-success streak, failures reset it, and
+    a security violation both resets the streak and counts against the
+    promotion policy.  ``--agent`` prints one agent's permission profile.
+    """
+    import json as _json
+
+    from bernstein.core.agents.agent_trust import AgentTrustStore, TrustEvaluator
+
+    store = AgentTrustStore(Path(workdir).resolve() / ".sdd")
+    scores = store.list_all()
+    if agent_id is not None:
+        scores = [s for s in scores if s.agent_id == agent_id]
+
+    if as_json:
+        click.echo(_json.dumps([s.to_dict() for s in scores], indent=2))
+        return
+
+    if not scores:
+        console.print("[dim]No agent trust records yet. Trust accrues as tasks complete.[/dim]")
+        return
+
+    from rich.table import Table
+
+    evaluator = TrustEvaluator()
+    table = Table(title="Agent trust", show_header=True, header_style="bold cyan")
+    table.add_column("Agent")
+    table.add_column("Tier")
+    table.add_column("Done")
+    table.add_column("Failed")
+    table.add_column("Violations")
+    table.add_column("Streak")
+    table.add_column("Next promotion")
+
+    for score in sorted(scores, key=lambda s: s.agent_id):
+        can_promote, reason = evaluator.can_promote(score)
+        table.add_row(
+            score.agent_id,
+            score.trust_level.value,
+            str(score.tasks_completed),
+            str(score.tasks_failed),
+            f"[red]{score.security_violations}[/red]" if score.security_violations else "0",
+            str(score.consecutive_successes),
+            "[green]eligible[/green]" if can_promote else f"[dim]{reason}[/dim]",
+        )
+
+    console.print(table)
+
+    if agent_id is not None and scores:
+        perms = scores[0].permissions
+        console.print()
+        console.print(f"[bold]Permission profile for tier {scores[0].trust_level.value}[/bold]")
+        console.print(f"  allowed paths:    {', '.join(perms.allowed_paths) or '(none)'}")
+        console.print(f"  denied paths:     {', '.join(perms.denied_paths) or '(none)'}")
+        console.print(f"  allowed commands: {', '.join(perms.allowed_commands) or '(none)'}")
+        console.print(f"  denied commands:  {', '.join(perms.denied_commands) or '(none)'}")
+
+
 @agents_group.command("discover")
 @click.option("--net", "include_network", is_flag=True, default=False, help="Also search GitHub and npm.")
 def agents_discover(include_network: bool) -> None:

@@ -6,8 +6,7 @@ exercised elsewhere:
   * ``install-hooks`` - git-hook install, idempotency, --force, no-repo error
   * ``plugins``       - empty + populated + corrupt-meta listing
   * ``github setup`` / ``github test-webhook`` - static guidance output
-  * ``ideate``        - server-unreachable exit, --as-json, panel render
-  * ``quarantine list`` / ``quarantine clear`` - server-backed flows + confirm
+  * ``quarantine list`` / ``quarantine clear`` - workspace-backed flows + confirm
   * ``recap``         - server-unreachable exit, --as-json, table render
   * ``trace`` group   - missing dir, no-trace, legacy alias, reindex, verify
 
@@ -18,6 +17,7 @@ module's namespace; filesystem commands run inside an isolated cwd.
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,7 +25,6 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.advanced_cmd import (
     github_group,
-    ideate,
     install_hooks,
     plugins_cmd,
     quarantine_group,
@@ -34,6 +33,7 @@ from bernstein.cli.commands.advanced_cmd import (
     retro,
     trace_cmd,
 )
+from bernstein.core.security.quarantine import QUARANTINE_EXPIRY_DAYS
 
 _SERVER_GET = "bernstein.cli.commands.advanced_cmd.server_get"
 _SERVER_POST = "bernstein.cli.commands.advanced_cmd.server_post"
@@ -152,90 +152,109 @@ def test_github_test_webhook_reports_configured() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ideate
-# ---------------------------------------------------------------------------
-
-
-def test_ideate_server_unreachable_exits_one() -> None:
-    runner = CliRunner()
-    with patch(_SERVER_GET, return_value=None):
-        result = runner.invoke(ideate, [])
-    assert result.exit_code == 1, result.output
-
-
-def test_ideate_as_json_emits_ideas() -> None:
-    ideas = {"ideas": [{"title": "Speed up", "description": "cache it"}, {"title": "B", "description": "b"}]}
-    runner = CliRunner()
-    with patch(_SERVER_GET, return_value=ideas):
-        result = runner.invoke(ideate, ["--count", "1", "--as-json"])
-    assert result.exit_code == 0, result.output
-    assert "Speed up" in result.output
-
-
-def test_ideate_panel_render_respects_count() -> None:
-    ideas = {"ideas": [{"title": f"Idea{i}", "description": "d"} for i in range(5)]}
-    runner = CliRunner()
-    with patch(_SERVER_GET, return_value=ideas):
-        result = runner.invoke(ideate, ["--count", "2"])
-    assert result.exit_code == 0, result.output
-    assert "Idea 1" in result.output
-    assert "Idea 2" in result.output
-
-
-# ---------------------------------------------------------------------------
 # quarantine
 # ---------------------------------------------------------------------------
 
 
-def test_quarantine_list_server_unreachable_exits_one() -> None:
-    runner = CliRunner()
-    with patch(_SERVER_GET, return_value=None):
-        result = runner.invoke(quarantine_group, ["list"])
-    assert result.exit_code == 1, result.output
+def _write_quarantine(root: Path, entries: list[dict[str, object]]) -> None:
+    """Write a quarantine file in the shape ``QuarantineStore`` persists."""
+    path = root / ".sdd" / "runtime" / "quarantine.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entries), encoding="utf-8")
 
 
-def test_quarantine_list_empty() -> None:
+def test_quarantine_list_empty_without_a_server() -> None:
     runner = CliRunner()
-    with patch(_SERVER_GET, return_value={"tasks": []}):
+    with runner.isolated_filesystem():
         result = runner.invoke(quarantine_group, ["list"])
     assert result.exit_code == 0, result.output
     assert "No quarantined tasks" in result.output
 
 
-def test_quarantine_list_renders_rows() -> None:
-    data = {"tasks": [{"id": "t1", "title": "Failed task", "reason": "timeout"}]}
+def test_quarantine_list_renders_store_rows() -> None:
     runner = CliRunner()
-    with patch(_SERVER_GET, return_value=data):
+    with runner.isolated_filesystem() as tmp:
+        _write_quarantine(
+            Path(tmp),
+            [
+                {
+                    "task_title": "Failed task",
+                    "fail_count": 3,
+                    "last_failure": date.today().isoformat(),
+                    "reason": "timeout",
+                    "action": "skip",
+                }
+            ],
+        )
         result = runner.invoke(quarantine_group, ["list"])
     assert result.exit_code == 0, result.output
     assert "Failed task" in result.output
     assert "timeout" in result.output
 
 
-def test_quarantine_clear_with_confirm_flag() -> None:
+def test_quarantine_list_hides_expired_entries_unless_all() -> None:
     runner = CliRunner()
-    with patch(_SERVER_POST, return_value={"cleared": 3}):
+    stale = (date.today() - timedelta(days=QUARANTINE_EXPIRY_DAYS + 1)).isoformat()
+    with runner.isolated_filesystem() as tmp:
+        _write_quarantine(
+            Path(tmp),
+            [{"task_title": "Old task", "fail_count": 4, "last_failure": stale, "reason": "gone", "action": "skip"}],
+        )
+        default = runner.invoke(quarantine_group, ["list"])
+        with_all = runner.invoke(quarantine_group, ["list", "--all"])
+    assert "No quarantined tasks" in default.output
+    assert "Old task" in with_all.output
+
+
+def test_quarantine_clear_with_confirm_flag_empties_the_store() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp:
+        root = Path(tmp)
+        _write_quarantine(
+            root,
+            [
+                {"task_title": f"t{i}", "fail_count": 3, "last_failure": date.today().isoformat(), "reason": "boom"}
+                for i in range(3)
+            ],
+        )
         result = runner.invoke(quarantine_group, ["clear", "--confirm"])
+        remaining = json.loads((root / ".sdd" / "runtime" / "quarantine.json").read_text())
     assert result.exit_code == 0, result.output
     assert "Cleared 3 task" in result.output
+    assert remaining == []
+
+
+def test_quarantine_clear_single_task_leaves_siblings() -> None:
+    runner = CliRunner()
+    today = date.today().isoformat()
+    with runner.isolated_filesystem() as tmp:
+        root = Path(tmp)
+        _write_quarantine(
+            root,
+            [
+                {"task_title": "keep", "fail_count": 3, "last_failure": today, "reason": "a"},
+                {"task_title": "drop", "fail_count": 3, "last_failure": today, "reason": "b"},
+            ],
+        )
+        result = runner.invoke(quarantine_group, ["clear", "--task", "drop", "--confirm"])
+        remaining = json.loads((root / ".sdd" / "runtime" / "quarantine.json").read_text())
+    assert result.exit_code == 0, result.output
+    assert [e["task_title"] for e in remaining] == ["keep"]
 
 
 def test_quarantine_clear_declined_at_prompt() -> None:
     runner = CliRunner()
-    # Answer "n" to the confirmation prompt -> no server call, cancelled.
-    with patch(_SERVER_POST) as mock_post:
+    with runner.isolated_filesystem() as tmp:
+        root = Path(tmp)
+        _write_quarantine(
+            root,
+            [{"task_title": "t1", "fail_count": 3, "last_failure": date.today().isoformat(), "reason": "boom"}],
+        )
         result = runner.invoke(quarantine_group, ["clear"], input="n\n")
-    # Declining must short-circuit before any server call is made.
-    mock_post.assert_not_called()
+        remaining = json.loads((root / ".sdd" / "runtime" / "quarantine.json").read_text())
     assert result.exit_code == 0, result.output
     assert "Cancelled" in result.output
-
-
-def test_quarantine_clear_server_unreachable_exits_one() -> None:
-    runner = CliRunner()
-    with patch(_SERVER_POST, return_value=None):
-        result = runner.invoke(quarantine_group, ["clear", "--confirm"])
-    assert result.exit_code == 1, result.output
+    assert len(remaining) == 1
 
 
 # ---------------------------------------------------------------------------

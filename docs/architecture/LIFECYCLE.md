@@ -134,9 +134,9 @@ Terminal states have no outbound transitions. Computed by the lifecycle kernel:
 
 Task timeouts are not static. The adaptive timeout system (`src/bernstein/core/orchestration/adaptive_timeout.py`) adjusts wall-clock timeouts based on historical task durations. Default scope-based timeouts are defined in `src/bernstein/core/defaults.py` (`TASK.scope_timeout_s`): small=15 min, medium=30 min, large=60 min, XL=120 min.
 
-### Graduated Access Control
+### Agent Trust Tiers
 
-The graduated access control system (`src/bernstein/core/security/graduated_access.py`) gates which lifecycle transitions an agent is permitted to perform based on its trust level and track record. New agents start with restricted permissions that expand as they demonstrate reliability.
+Per-agent trust tiers (`src/bernstein/core/agents/agent_trust.py`) track each role's completed tasks, failures, and security violations in `.sdd/trust/<agent_id>.json`, and map each tier onto an `AgentPermissions` profile. Trust is recorded when a task completes or fails and is inspectable with `bernstein agents trust`.
 
 ---
 

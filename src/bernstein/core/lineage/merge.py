@@ -130,7 +130,7 @@ def build_merge_entry(
 
     The merge entry's ``operator_hmac`` covers the JCS-canonical bytes of the
     entry with the ``operator_hmac`` field blanked - identical to the scheme
-    used by :class:`bernstein.core.lineage.recorder.LineageRecorder` so the
+    used by :func:`bernstein.core.lineage.signed_write.seal_write` so the
     CI gate accepts both kinds of entry under the same operator secret.
 
     Returns a list of `(entry, jws)` pairs. Caller is responsible for appending

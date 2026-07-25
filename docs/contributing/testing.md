@@ -24,6 +24,7 @@ locally without waiting for the cloud runner.
 | **Beartype** (claw)         | Runtime type-contract violations on public security/cluster APIs  | PR                  |
 | **syrupy** (snapshot)       | JSONL/audit/lineage wire-format drift                             | PR                  |
 | **Pyright strict zone**     | Untyped/implicit-Any leakage in `core/security/`, `core/protocols/cluster/` | PR                  |
+| **mypy strict zone**        | Same, from mypy's inference, in `core/{evidence,identity,lineage,persistence}/` | PR                  |
 | **Vulture**                 | Dead code (unused functions/classes/vars at confidence ≥80)       | PR                  |
 | **diff-cover** (LEVEL 1)    | Changed lines below the committed diff-coverage floor             | PR (advisory)       |
 | **coverage ratchet** (LEVEL 2) | Total coverage dropped below the committed high-water mark      | push to main (advisory) |
@@ -72,6 +73,15 @@ BEARTYPE_USE_CLAW=enable \
 uv run pyright --typecheckingmode strict \
   src/bernstein/core/security/ \
   src/bernstein/core/protocols/cluster/
+
+# mypy strict zone (gated). Widen it by removing entries from `exclude`
+# in mypy.gate.ini as each module reaches strict cleanliness.
+uv run mypy --config-file mypy.gate.ini
+
+# mypy repo-wide (advisory - settings in pyproject.toml [tool.mypy]).
+# Carries a pre-existing backlog; the CI job only fails here if the run
+# aborts before checking the tree.
+uv run mypy src
 
 # Vulture
 vulture src/ vulture_whitelist.py --min-confidence 80 --exclude tests,docs

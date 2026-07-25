@@ -87,6 +87,7 @@ alwaysApply: false
 |-----------------------------|---------|
 | `_contract.py`              | Adapter contract loader and capability checker |
 | `acp_channel.py`            | Adapter-side binding for the ACP event channel (#2522) |
+| `admission.py`              | Receipt-gated adapter admission with signed refusal receipts (#2610) |
 | `advisories.py`             | Adapter minimum-safe-version advisories (supply-chain posture) |
 | `agy.py`                    | Antigravity CLI (``agy``) adapter |
 | `aichat.py`                 | AIChat CLI adapter |
@@ -177,7 +178,6 @@ alwaysApply: false
 
 | File                    | Purpose |
 |-------------------------|---------|
-| `api_warmup.py`         | API preconnect warmup -- send a minimal request to warm provider connections |
 | `badge.py`              | Powered-by badge helper for ``bernstein init --add-badge`` |
 | `commit_stats.py`       | Commit attribution stats: gather per-role commit stats via git log |
 | `dashboard.py`          | Bernstein TUI -- retro-futuristic agent orchestration dashboard |
@@ -287,7 +287,6 @@ alwaysApply: false
 | File                      | Purpose |
 |---------------------------|---------|
 | `accessibility.py`        | TUI-013: Accessibility mode for the Bernstein TUI |
-| `activity_tracker.py`     | Activity tracking metrics with duration accounting |
 | `agent_duration.py`       | Agent duration display for TUI agent panel |
 | `agent_log.py`            | Log and quality gate widgets for the Bernstein TUI |
 | `agent_states.py`         | TUI-005: Visual distinction for agent states |
@@ -313,13 +312,10 @@ alwaysApply: false
 | `log_viewer.py`           | Syntax highlighting, diff folding, and markdown rendering for agent logs |
 | `mouse_support.py`        | TUI-017: Mouse support for panel interaction |
 | `notification_badge.py`   | TUI-020: Notification badge for background events |
-| `output_styles.py`        | Output style customization -- load per-project agent output format preferences |
 | `progress_bar.py`         | TUI-010: Task progress bar with completion percentage |
 | `scheduling_panel.py`     | Scheduling panel widget for TUI - visualizes scheduling decisions |
 | `session_analytics.py`    | Session analytics - analyze task traces for insights |
 | `session_recorder.py`     | TUI-019: Session recording and playback |
-| `session_rename.py`       | Session rename functionality - rename the current session safely |
-| `session_tags.py`         | Session tag system - add searchable tags to the current orchestration session |
 | `snapshot_testing.py`     | TUI visual regression snapshot testing utilities |
 | `split_pane.py`           | TUI-008: Split-pane view (tasks list + live agent log) |
 | `status_bar.py`           | Status, scratchpad, and coordinator widgets for the Bernstein TUI |

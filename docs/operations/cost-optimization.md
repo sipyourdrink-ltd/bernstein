@@ -233,16 +233,6 @@ For a multi-run aggregate of the same comparison see `bernstein cost` -
 the `--json` payload includes `savings_vs_opus_usd` over the configured
 window.
 
-## Peak-hour routing
-
-Route non-urgent tasks to off-peak windows to reduce costs:
-
-```yaml
-# Configured in bernstein.yaml or via src/bernstein/core/cost/peak_hour_router.py
-peak_hour_routing:
-  enabled: true
-```
-
 ## Cost monitoring and alerts
 
 ### Budget alerts

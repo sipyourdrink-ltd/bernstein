@@ -18,25 +18,18 @@ Boundary entry mapped onto :meth:`LineageSpine.record`::
     model         -> phase id
     timestamp     -> caller-supplied stable int (default 0)
 
-The legacy :func:`make_lineage_hook` (v1 ``LineageWriter``) is retained for
-tests and out-of-tree callers that already hold a writer; it is never
-constructed inside ``src/``.
+The v1 WAL-backed hook that used to live here has been retired (issue #2960):
+nothing under ``src/`` names or types against the deprecated
+``bernstein.core.persistence.lineage.LineageWriter`` any more.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import time
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine
-from bernstein.core.persistence.lineage import (
-    AgentRef,
-    ArtifactRef,
-    LineageRecord,
-    hash_file,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -44,11 +37,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.orchestration.phase_gates import GateResult
     from bernstein.core.orchestration.phase_pipeline import Phase
-    from bernstein.core.persistence.lineage import LineageWriter
     from bernstein.core.tasks.models import Task
-
-
-PHASE_GATE_REGULATORY_CLASS = "phase_gate"
 
 
 def gate_results_summary(results: list[GateResult]) -> dict[str, Any]:
@@ -117,76 +106,6 @@ def _boundary_content(
         "rules": [{"rule_id": r.rule_id, "outcome": r.outcome.value} for r in results],
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
-def build_phase_gate_record(
-    *,
-    task: Task,
-    phase: Phase,
-    boundary: tuple[Phase, Phase],
-    results: list[GateResult],
-    artifact_path: Path,
-) -> LineageRecord:
-    """Build a :class:`LineageRecord` for a single boundary evaluation."""
-    output_ref = ArtifactRef(
-        path=str(artifact_path),
-        sha256=hash_file(artifact_path),
-    )
-    return LineageRecord(
-        output_artifact=output_ref,
-        inputs=[],
-        producer=AgentRef(
-            agent_id=f"phase_gate:{phase.value}",
-            run_id=task.id,
-            tick_id=f"{boundary[0].value}->{boundary[1].value}",
-        ),
-        prompt_sha=_prompt_sha(results),
-        model=phase.value,
-        cost_usd=0.0,
-        tokens=0,
-        timestamp=time.time(),
-        regulatory_class=PHASE_GATE_REGULATORY_CLASS,
-    )
-
-
-def make_lineage_hook(
-    writer: LineageWriter,
-    *,
-    artifact_path_resolver: Callable[[Task, Phase], Path] | None = None,
-) -> Any:
-    """Return a hook usable as :attr:`PhasedRunner.gate_lineage_hook`.
-
-    The closure captures *writer* and the optional resolver so callers
-    don't have to thread the writer through the runner constructor.
-
-    Args:
-        writer: WAL-backed lineage writer for the active run.
-        artifact_path_resolver: Optional callable mapping
-            ``(task, phase) -> Path`` to override the default
-            ``.sdd/runtime/phase_artifacts/<task_id>/<phase>.json`` lookup.
-    """
-    from pathlib import Path as _Path
-
-    def _hook(
-        task: Task,
-        phase: Phase,
-        boundary: tuple[Phase, Phase],
-        results: list[GateResult],
-    ) -> None:
-        if artifact_path_resolver is not None:
-            artifact_path = artifact_path_resolver(task, phase)
-        else:
-            artifact_path = _Path(".sdd/runtime/phase_artifacts") / task.id / f"{phase.value}.json"
-        record = build_phase_gate_record(
-            task=task,
-            phase=phase,
-            boundary=boundary,
-            results=results,
-            artifact_path=artifact_path,
-        )
-        writer.emit(record, actor=f"phase_gate:{phase.value}")
-
-    return _hook
 
 
 def make_spine_lineage_hook(
@@ -392,11 +311,8 @@ def build_phased_runner_with_gate_lineage(
 
 
 __all__ = [
-    "PHASE_GATE_REGULATORY_CLASS",
-    "build_phase_gate_record",
     "build_phased_runner_with_gate_lineage",
     "gate_results_summary",
     "make_adjudication_hook",
-    "make_lineage_hook",
     "make_spine_lineage_hook",
 ]

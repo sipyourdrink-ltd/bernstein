@@ -6,7 +6,7 @@ This module contains advanced/specialized commands (excluding eval/benchmark whi
   mcp_server
   quarantine_group (list, clear)
   completions, live, dashboard
-  ideate, install_hooks, plugins_cmd, doctor, recap, help_all, retro
+  install_hooks, plugins_cmd, doctor, recap, help_all, retro
 
 All commands and groups are registered with the main CLI group in main.py.
 """
@@ -411,61 +411,6 @@ def help_all(ctx: click.Context) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ideate
-# ---------------------------------------------------------------------------
-
-
-@click.command("ideate")
-@click.option(
-    "--count",
-    "-c",
-    type=int,
-    default=3,
-    show_default=True,
-    help="Number of improvement ideas to generate.",
-)
-@click.option(
-    "--focus",
-    "-f",
-    default=None,
-    help="Focus area (e.g. 'performance', 'testing', 'docs').",
-)
-@click.option(
-    "--as-json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Output raw JSON.",
-)
-def ideate(count: int, focus: str | None, as_json: bool) -> None:
-    """Generate improvement ideas for the project.
-
-    Scans the codebase and generates N actionable improvement proposals.
-    """
-    data = server_get("/ideate")
-    if data is None:
-        from bernstein.cli.errors import server_unreachable
-
-        server_unreachable().print()
-        raise SystemExit(1)
-
-    ideas = data.get("ideas", [])
-    if as_json:
-        console.print_json(json.dumps(ideas[:count]))
-        return
-
-    from rich.panel import Panel
-
-    for i, idea in enumerate(ideas[:count], 1):
-        panel = Panel(
-            idea.get("description", ""),
-            title=f"Idea {i}: {idea.get('title', '')}",
-            border_style="cyan",
-        )
-        console.print(panel)
-
-
-# ---------------------------------------------------------------------------
 # install-hooks
 # ---------------------------------------------------------------------------
 
@@ -510,6 +455,14 @@ exit 0
 # ---------------------------------------------------------------------------
 
 
+_TRUST_COLOURS: dict[str, str] = {
+    "trusted": "green",
+    "verified": "blue",
+    "community": "yellow",
+    "unknown": "red",
+}
+
+
 @click.command("plugins")
 @click.option(
     "--workdir",
@@ -517,11 +470,23 @@ exit 0
     show_default=True,
     help="Project root directory.",
 )
-def plugins_cmd(workdir: str) -> None:
+@click.option(
+    "--trust-details",
+    is_flag=True,
+    default=False,
+    help="Print the full trust assessment panel for every plugin.",
+)
+def plugins_cmd(workdir: str, trust_details: bool) -> None:
     """List and manage Bernstein plugins.
 
     Plugins extend Bernstein with custom agents, roles, and integrations.
+    Each row carries a trust assessment derived from the plugin's own
+    signals - signature file, packaging metadata, README, tests - so an
+    unreviewed plugin is visible before it is loaded.  ``--trust-details``
+    prints the full signal breakdown for each one.
     """
+    from bernstein.plugins.plugin_trust import check_plugin_trust, format_trust_warning
+
     plugins_dir = Path(workdir) / ".bernstein" / "plugins"
     if not plugins_dir.exists():
         console.print("[dim]No plugins directory found.[/dim]")
@@ -533,24 +498,54 @@ def plugins_cmd(workdir: str) -> None:
     table.add_column("Name")
     table.add_column("Version")
     table.add_column("Type")
+    table.add_column("Trust")
+    table.add_column("Score")
+
+    low_trust: list[Any] = []
 
     for plugin_dir in sorted(plugins_dir.glob("*")):
-        if plugin_dir.is_dir():
-            meta_file = plugin_dir / "meta.json"
-            if meta_file.exists():
-                try:
-                    import json as _json
+        if not plugin_dir.is_dir():
+            continue
+        meta_file = plugin_dir / "meta.json"
+        if not meta_file.exists():
+            continue
 
-                    meta = _json.loads(meta_file.read_text())
-                    table.add_row(
-                        plugin_dir.name,
-                        meta.get("version", "?"),
-                        meta.get("type", "custom"),
-                    )
-                except Exception:
-                    table.add_row(plugin_dir.name, "?", "custom")
+        try:
+            meta = json.loads(meta_file.read_text())
+            version = meta.get("version", "?")
+            plugin_type = meta.get("type", "custom")
+        except Exception:
+            version, plugin_type = "?", "custom"
+
+        try:
+            trust = check_plugin_trust(plugin_dir)
+        except OSError as exc:
+            _LOGGER.debug("Trust check failed for %s: %s", plugin_dir.name, exc)
+            table.add_row(plugin_dir.name, version, plugin_type, "[dim]n/a[/dim]", "-")
+            continue
+
+        colour = _TRUST_COLOURS.get(trust.risk_level, "white")
+        table.add_row(
+            plugin_dir.name,
+            version,
+            plugin_type,
+            f"[{colour}]{trust.risk_level}[/{colour}]",
+            f"{trust.trust_score}/100",
+        )
+        if trust.risk_level in ("unknown", "community"):
+            low_trust.append(trust)
 
     console.print(table)
+
+    if trust_details:
+        for trust in low_trust:
+            console.print(format_trust_warning(trust))
+    elif low_trust:
+        names = ", ".join(t.plugin_name for t in low_trust)
+        console.print(
+            f"[yellow]WARNING:[/yellow] limited trust signals for: {names}. "
+            "Review the source before loading; run with --trust-details for the breakdown."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -964,6 +959,63 @@ def doctor_promptware_scan_cmd(
 # recap
 # ---------------------------------------------------------------------------
 
+_DURATION_UNITS: dict[str, int] = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(spec: str) -> float:
+    """Parse a duration like ``90s``, ``45m``, ``6h``, ``2d`` into seconds.
+
+    A bare number is read as minutes, matching how operators usually phrase
+    "how long was I away".
+
+    Args:
+        spec: Duration string.
+
+    Returns:
+        Duration in seconds.
+
+    Raises:
+        click.BadParameter: If *spec* is not a positive duration.
+    """
+    text = spec.strip().lower()
+    if not text:
+        raise click.BadParameter("duration cannot be empty")
+    unit = _DURATION_UNITS.get(text[-1])
+    number = text[:-1] if unit is not None else text
+    multiplier = unit if unit is not None else 60
+    try:
+        value = float(number)
+    except ValueError:
+        raise click.BadParameter(f"not a duration: {spec!r} (try 45m, 6h, 2d)") from None
+    if value <= 0:
+        raise click.BadParameter(f"duration must be positive: {spec!r}")
+    return value * multiplier
+
+
+def _recap_since(since: str, workdir: str, *, as_json: bool) -> None:
+    """Render the workspace-local "since you were away" report."""
+    from bernstein.tui.away_summary import format_away_report, generate_away_summary
+
+    seconds = parse_duration(since)
+    root = Path(workdir).resolve()
+    summary = generate_away_summary(time.time() - seconds, root)
+
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "completed_tasks": summary.completed_tasks,
+                    "failed_tasks": summary.failed_tasks,
+                    "cost_spent": summary.cost_spent,
+                    "duration_s": summary.duration_s,
+                    "events": summary.events,
+                }
+            )
+        )
+        return
+
+    console.print(format_away_report(summary))
+
 
 @click.command("recap")
 @click.option(
@@ -973,17 +1025,37 @@ def doctor_promptware_scan_cmd(
     help="Path to task archive.",
 )
 @click.option(
+    "--since",
+    default=None,
+    help="Report only what happened in the last DURATION (e.g. 45m, 6h, 2d) from workspace files, without a server.",
+)
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(),
+    help="Project root (parent of .sdd/); used with --since.",
+)
+@click.option(
     "--as-json",
     "as_json",
     is_flag=True,
     default=False,
     help="Output raw JSON.",
 )
-def recap(archive: str, as_json: bool) -> None:
+def recap(archive: str, since: str | None, workdir: str, as_json: bool) -> None:
     """Post-run summary: tasks, pass/fail, cost.
 
     Reads the task archive and prints a summary of what happened.
+
+    With ``--since`` the summary is built from the workspace's own
+    ``.sdd/`` metrics and task journal instead of the task server, so it
+    still answers "what happened while I was away" after the run has ended.
     """
+    if since is not None:
+        _recap_since(since, workdir, as_json=as_json)
+        return
+
     try:
         data = server_get("/recap", raise_on_auth_error=True)
     except ServerAuthError:
@@ -2350,58 +2422,102 @@ def completions(ctx: click.Context, shell: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+_QUARANTINE_REL_PATH = Path(".sdd") / "runtime" / "quarantine.json"
+
+
+def quarantine_store_path(workdir: str | Path = ".") -> Path:
+    """Return the quarantine state file the orchestrator writes.
+
+    Args:
+        workdir: Project root (parent of ``.sdd/``).
+
+    Returns:
+        Absolute path to ``.sdd/runtime/quarantine.json``.
+    """
+    return Path(workdir).resolve() / _QUARANTINE_REL_PATH
+
+
 @click.group("quarantine")
 def quarantine_group() -> None:
-    """Manage quarantined tasks (failed, blocked, etc.)."""
+    """Inspect and clear cross-run task quarantine.
+
+    Quarantine state lives in the workspace at ``.sdd/runtime/quarantine.json``
+    and is written by the orchestrator, so these commands read and write it
+    directly and do not need a running task server.
+    """
 
 
 @quarantine_group.command("list")
-def _quarantine_list() -> None:  # type: ignore[reportUnusedFunction]
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(),
+    help="Project root (parent of .sdd/).",
+)
+@click.option("--all", "show_all", is_flag=True, default=False, help="Include expired entries.")
+def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[reportUnusedFunction]
     """List quarantined tasks."""
-    data = server_get("/quarantine")
-    if data is None:
-        from bernstein.cli.errors import server_unreachable
+    from bernstein.core.security.quarantine import QUARANTINE_THRESHOLD, QuarantineStore
 
-        server_unreachable().print()
-        raise SystemExit(1)
-
-    tasks = data.get("tasks", [])
-    if not tasks:
+    store = QuarantineStore(quarantine_store_path(workdir))
+    entries = store.load() if show_all else store.get_all()
+    if not entries:
         console.print("[dim]No quarantined tasks.[/dim]")
         return
 
     from rich.table import Table
 
     table = Table(show_header=True, header_style="bold red")
-    table.add_column("ID", style="dim")
-    table.add_column("Title")
+    table.add_column("Task", style="dim")
+    table.add_column("Failures")
+    table.add_column("Last failure")
+    table.add_column("Action")
     table.add_column("Reason")
 
-    for t in tasks:
-        table.add_row(t.get("id", "?"), t.get("title", "?"), t.get("reason", "?"))
+    for entry in entries:
+        fail_style = "bold red" if entry.fail_count >= QUARANTINE_THRESHOLD else "yellow"
+        table.add_row(
+            entry.task_title,
+            f"[{fail_style}]{entry.fail_count}[/{fail_style}]",
+            entry.last_failure,
+            entry.action,
+            entry.reason,
+        )
 
     console.print(table)
 
 
 @quarantine_group.command("clear")
 @click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(),
+    help="Project root (parent of .sdd/).",
+)
+@click.option("--task", "task_title", default=None, help="Clear only this task title.")
+@click.option(
     "--confirm",
     is_flag=True,
     default=False,
     help="Skip confirmation prompt.",
 )
-def _quarantine_clear(confirm: bool) -> None:  # type: ignore[reportUnusedFunction]
-    """Clear all quarantined tasks."""
-    if not confirm and not click.confirm("Clear all quarantined tasks?"):
+def _quarantine_clear(workdir: str, task_title: str | None, confirm: bool) -> None:  # type: ignore[reportUnusedFunction]
+    """Clear quarantine entries."""
+    from bernstein.core.security.quarantine import QuarantineStore
+
+    store = QuarantineStore(quarantine_store_path(workdir))
+    before = store.load()
+    target = [e for e in before if task_title is None or e.task_title == task_title]
+    if not target:
+        console.print("[dim]No quarantined tasks.[/dim]")
+        return
+
+    prompt = "Clear all quarantined tasks?" if task_title is None else f"Clear quarantine for {task_title!r}?"
+    if not confirm and not click.confirm(prompt):
         console.print("[dim]Cancelled.[/dim]")
         return
 
-    result = server_post("/quarantine/clear", {})
-    if result is None:
-        from bernstein.cli.errors import server_unreachable
-
-        server_unreachable().print()
-        raise SystemExit(1)
-
-    count = result.get("cleared", 0)
-    console.print(f"[green]Cleared {count} task(s).[/green]")
+    store.clear(task_title)
+    console.print(f"[green]Cleared {len(target)} task(s).[/green]")

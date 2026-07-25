@@ -70,10 +70,6 @@ The process of filtering environment variables before spawning agents to prevent
 
 A message sent to a stalled agent to prompt it to continue working. Part of the heartbeat and idle detection system. Implemented in `src/bernstein/core/orchestration/nudge_manager.py`.
 
-### Peak-Hour Router
-
-A cost-aware scheduling component that routes tasks to cheaper providers or defers non-urgent work during peak pricing hours. Implemented in `src/bernstein/core/cost/peak_hour_router.py`.
-
 ### Protocol Negotiation
 
 Runtime handshake that determines which protocol version (MCP, A2A, ACP) a connected client or agent supports, ensuring compatibility is verified at connection time rather than at failure time. Implemented in `src/bernstein/core/protocols/protocol_negotiation.py`.

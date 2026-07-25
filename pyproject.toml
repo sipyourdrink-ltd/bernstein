@@ -153,6 +153,10 @@ dev = [
     "respx>=0.22",
     "ruff>=0.9",
     "pyright>=1.1",
+    # Declared so `uv run mypy` resolves the project interpreter instead of
+    # falling through to whatever `mypy` sits on PATH. A PATH mypy bound to
+    # Python < 3.12 cannot parse PEP 695 `type` aliases and aborts the run.
+    "mypy>=1.18.2",
     "import-linter>=2.0",  # Architecture contracts (`uv run lint-imports`)
     # CI hardening 2026 - see docs/contributing/testing.md.
     "schemathesis>=4.18.1",  # OpenAPI fuzz / contract sweep on FastAPI app
@@ -725,6 +729,35 @@ exclude = [
     "src/bernstein/core/autoheal/idempotency.py",
 ]
 
+[tool.mypy]
+# Repo-wide mypy settings for the documented `uv run mypy src` command.
+# This run is advisory: mypy has a large pre-existing backlog because it
+# never actually parsed the tree (see the note on `python_version` below).
+# The subset that gates CI lives in mypy.gate.ini, the same way the
+# repo-wide pyright run is advisory and pyrightconfig.strict.json gates.
+#
+# `python_version` is pinned rather than inherited from whatever
+# interpreter happens to run mypy. It matches [tool.pyright] pythonVersion
+# and the `requires-python` floor. Note that this pins the *target*
+# version only - PEP 695 `type` aliases (11 of them in src/) still need
+# the interpreter running mypy to be >= 3.12, because mypy parses with the
+# host `ast` module. That is why mypy is a declared dev dependency: an
+# undeclared `uv run mypy` falls through to a PATH mypy that may be bound
+# to an older interpreter, and the run then aborts on the first alias with
+# `Invalid syntax` before checking anything.
+python_version = "3.12"
+files = ["src"]
+namespace_packages = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+# Legacy `bernstein.core.*` / `bernstein.cli.*` import paths are served at
+# runtime by the `sys.meta_path` finders in src/bernstein/core/__init__.py
+# and src/bernstein/cli/__init__.py, not by files on disk. No static
+# checker can follow a meta-path redirect, so these resolve to nothing.
+module = ["bernstein.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
@@ -795,6 +828,11 @@ dev = [
     "respx>=0.22",
     "ruff>=0.9",
     "pyright>=1.1",
+    # Declared so `uv run mypy` resolves the project interpreter instead of
+    # falling through to whatever `mypy` sits on PATH. A PATH mypy bound to
+    # Python < 3.12 cannot parse PEP 695 `type` aliases and aborts the run.
+    # Mirror of [project.optional-dependencies].dev.
+    "mypy>=1.18.2",
     "scikit-learn>=1.5",
     # Pinned to the 3.x line - the focused harness in
     # scripts/mutmut_critical.py / scripts/mutmut_lineage.py is validated

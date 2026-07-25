@@ -40,7 +40,6 @@ def test_advanced_cmd_imports() -> None:
     assert hasattr(advanced_cmd, "completions")
     assert hasattr(advanced_cmd, "live")
     assert hasattr(advanced_cmd, "dashboard")
-    assert hasattr(advanced_cmd, "ideate")
     assert hasattr(advanced_cmd, "install_hooks")
     assert hasattr(advanced_cmd, "plugins_cmd")
     assert hasattr(advanced_cmd, "doctor")
@@ -72,7 +71,6 @@ def test_backward_compat_main_imports() -> None:
         eval_group,
         github_group,
         help_all,
-        ideate,
         install_hooks,
         list_tasks,
         live,
@@ -116,7 +114,6 @@ def test_backward_compat_main_imports() -> None:
     assert logs_cmd is not None
     assert live is not None
     assert dashboard is not None
-    assert ideate is not None
     assert install_hooks is not None
     assert plugins_cmd is not None
     assert doctor is not None

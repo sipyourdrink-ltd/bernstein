@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.lineage.identity import AgentCard
-    from bernstein.core.lineage.recorder import LineageRecorder
+    from bernstein.core.lineage.signed_write import SignedLineageLog
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +399,7 @@ def _provenance_artefact_path(tool_name: str, content_hash: str) -> str:
 
 
 def record_tool_result(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     *,
     tool_name: str,
     result_bytes: bytes,
@@ -414,7 +414,7 @@ def record_tool_result(
     """Record a tool result as a signed, content-addressed provenance entry.
 
     Args:
-        recorder: The lineage recorder to append through.
+        recorder: The signed lineage log to append through.
         tool_name: Producing surface (e.g. ``web.fetch``); only namespaces the
             path -- the trust class is authoritative.
         result_bytes: The exact tool-result bytes (content-addressed).

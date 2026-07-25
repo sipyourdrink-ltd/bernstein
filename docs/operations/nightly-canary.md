@@ -34,7 +34,7 @@ tears down. These are the paths the unit suite mocks:
 |------|---------------------|
 | `subprocess_spawn` | `MockAgentAdapter.spawn()` forks a real `subprocess.Popen`; the canary reaps it and asserts a clean exit + a written log |
 | `git_worktree` | `WorktreeManager.create()` runs a real `git worktree add`; `.cleanup()` runs `git worktree remove`; the canary asserts no leftover worktree |
-| `audit_and_lineage` | real HMAC-chained `AuditChainStore` append + `verify()`, then a real Ed25519-signed `LineageRecorder` receipt re-verified through `lineage.gate.check` (the auditor's own gate) |
+| `audit_and_lineage` | real HMAC-chained `AuditChainStore` append + `verify()`, then a real Ed25519-signed `seal_write` receipt re-verified through `lineage.gate.check` (the auditor's own gate) |
 
 Each flow runs independently: one failure does not stop the others, so a
 single run surfaces every broken surface, not just the first.

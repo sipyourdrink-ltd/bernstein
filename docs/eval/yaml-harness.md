@@ -163,7 +163,7 @@ Every run writes a lineage stub (`*.lineage.json`) next to its JSON output:
 ```
 
 The stub is intentionally minimal so it can be emitted from offline runs
-(no HMAC, no signing material). When wired into `LineageRecorder`, the same
+(no HMAC, no signing material). When wired into the signed-write path, the same
 `artefact_path` + `content_hash` flow into the full lineage log entry.
 
 ## Python API

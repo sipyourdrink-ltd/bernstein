@@ -1789,7 +1789,7 @@ class TestFiguresGroundedSignal:
 
         from bernstein.core.lineage.artifact_record import record_artifact
         from bernstein.core.lineage.identity import AgentCard, generate_keypair
-        from bernstein.core.lineage.recorder import LineageRecorder
+        from bernstein.core.lineage.signed_write import SignedLineageLog
         from bernstein.core.lineage.store import LineageStore
         from bernstein.core.tasks.artifacts import ArtifactKind
         from bernstein.core.tasks.figures import Figure, FigureAnchor, ReportBundle
@@ -1797,7 +1797,7 @@ class TestFiguresGroundedSignal:
         sdd = tmp_path / ".sdd"
         priv, pub = generate_keypair()
         card = AgentCard(agent_id="agent:analyst", kid="key-fg", public_key_pem=pub)
-        rec = LineageRecorder(store=LineageStore(sdd / "lineage"), operator_hmac_key=self._HMAC)
+        rec = SignedLineageLog(store=LineageStore(sdd / "lineage"), operator_hmac_key=self._HMAC)
         src = record_artifact(
             recorder=rec,
             sink_root=sdd / "artifacts",

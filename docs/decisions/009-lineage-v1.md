@@ -49,7 +49,7 @@ Agent (in worktree)
   │
   │ writes file foo.py via Bernstein adapter
   ▼
-LineageRecorder.record_write(artefact_path, new_content)
+signed_write.seal_write(artefact_path, new_content)
   │
   │ ① compute content_hash = sha256(new_content)
   │ ② look up current tip(s) of foo.py from tips/<hash-of-path>.json
@@ -69,7 +69,7 @@ OTel span emitted; cross-links to span_id in audit.jsonl
 
 | Component | Module | Lines (target) | Owner agent |
 |---|---|---|---|
-| `LineageRecorder` | `core/lineage/recorder.py` | ~300 | A |
+| Signed-write path (`seal_write` / `SignedLineageLog`) | `core/lineage/signed_write.py` | ~300 | A |
 | Entry schema + JCS canonical | `core/lineage/entry.py` | ~150 | A |
 | Storage / log writer | `core/lineage/store.py` | ~250 | A |
 | Conflict detector + CI gate | `core/lineage/gate.py` | ~200 | B |
@@ -170,7 +170,7 @@ When `bernstein conduct` spawns an agent:
 
 ### 5.2 Signing flow per write
 
-1. Recorder builds entry (without signature).
+1. `seal_write` builds entry (without signature).
 2. Canonicalize per RFC 8785 (JCS).
 3. `entry_hash = sha256(canonical_bytes)`.
 4. `jws = Ed25519-JWS-detached(entry_hash, key=agent.private_key, kid=agent.card.kid)`.
@@ -189,6 +189,39 @@ External auditor (with `bernstein-verify`):
 4. Verifies JWS using card's public key.
 5. Walks `parent_hashes` chain back to genesis.
 6. Verifies tips: every artefact must have exactly one open tip OR a merge entry resolving prior forks.
+
+### 5.4 The supported signed-write API
+
+`bernstein.core.lineage.signed_write` is the only supported way to land a
+signed entry on disk:
+
+| Surface | Use for |
+|---|---|
+| `seal_write(store, operator_hmac_key, *, artefact_path, new_content, ...)` | One-shot signed append. Returns the entry hash. |
+| `SignedLineageLog(store, operator_hmac_key=...)` | The object form, for callers sealing many writes against one store. `record_write(...)` takes the same keyword arguments. |
+
+Both perform the §5.2 flow and hand the `(entry, jws)` pair to
+`LineageStore.append`, which owns the fsync/flock and the sidecar layout of §4.
+
+**Choosing between the signed path and the spine.** `LineageSpine` is the
+always-on Merkle+HMAC provenance chain every adapter artifact write routes
+through; it proves ordering and integrity for a whole run. The signed path
+proves something the spine cannot: an Ed25519 detached JWS verifiable offline
+against a published Agent Card by someone holding no operator secret, an
+operator-HMAC envelope that catches post-signing substitution independently of
+that signature, and a caller-controlled `span_id` that receipt subsystems
+repurpose as a binding digest so receipt-core fields are covered by both. Use
+the spine for run provenance; use `signed_write` when the artefact has to be
+verifiable by a third party. Both substrates ship.
+
+**Deprecated.** `core/lineage/recorder.py::LineageRecorder` is a compatibility
+shim over `SignedLineageLog` and warns on construction;
+`core/persistence/lineage.py::LineageWriter` (WAL-backed) is deprecated for new
+code. Neither is constructed, imported, or used as a type anywhere in `src/`,
+and `tests/unit/lineage/test_spine_deprecations.py` fails CI if that changes.
+The same guard pins `LineageStore.append(entry, jws=...)` to
+`signed_write.py` alone, so a signed write cannot regress onto a deprecated
+substrate without tripping it.
 
 ---
 
@@ -419,7 +452,7 @@ These run as `tests/property/test_lineage_properties.py`:
 ### 12.3 Mutation testing (`mutmut`)
 
 Run on:
-- `core/lineage/recorder.py`
+- `core/lineage/signed_write.py`
 - `core/lineage/gate.py`
 - `core/lineage/store.py`
 - `cli/verify_main.py`

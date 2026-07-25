@@ -1,6 +1,7 @@
-"""Tests for `LineageRecorder` - the full record_write pipeline.
+"""Tests for the supported signed-lineage write path (issue #2960).
 
-These cover the orchestration the recorder performs on top of `LineageStore`:
+These cover the orchestration ``SignedLineageLog`` / ``seal_write`` perform on
+top of `LineageStore`:
 
   * content_hash computed from the bytes about to be written.
   * Tip lookup → parent_hashes wired correctly (genesis vs successor).
@@ -23,7 +24,7 @@ from bernstein.core.lineage.identity import (
     generate_keypair,
     verify_detached,
 )
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 
 
@@ -41,8 +42,8 @@ def card_and_keys() -> tuple[AgentCard, str]:
 
 
 @pytest.fixture
-def recorder(tmp_path: Path, hmac_key: bytes) -> LineageRecorder:
-    return LineageRecorder(store=LineageStore(tmp_path / "lineage"), operator_hmac_key=hmac_key)
+def recorder(tmp_path: Path, hmac_key: bytes) -> SignedLineageLog:
+    return SignedLineageLog(store=LineageStore(tmp_path / "lineage"), operator_hmac_key=hmac_key)
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ def recorder(tmp_path: Path, hmac_key: bytes) -> LineageRecorder:
 
 def test_genesis_write_creates_entry_with_no_parents(
     tmp_path: Path,
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_keys
@@ -77,7 +78,7 @@ def test_genesis_write_creates_entry_with_no_parents(
 
 
 def test_successor_write_parents_chain_to_prior_tip(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_keys
@@ -106,7 +107,7 @@ def test_successor_write_parents_chain_to_prior_tip(
 
 
 def test_writes_to_distinct_artefacts_are_independent(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_keys
@@ -141,7 +142,7 @@ def test_writes_to_distinct_artefacts_are_independent(
 
 
 def test_recorded_jws_verifies_against_card(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_keys
@@ -155,13 +156,13 @@ def test_recorded_jws_verifies_against_card(
         span_id="span-1",
     )
     entry, jws = next(iter(recorder.store.read_log()))
-    # The recorder signs the JCS-canonical entry bytes; the verifier (gate)
+    # The signed-write path signs the JCS-canonical entry bytes; the verifier (gate)
     # recomputes the same bytes - see ADR-009 §5.2.
     assert verify_detached(canonicalise(entry), jws, card) is True
 
 
 def test_signature_does_not_verify_against_wrong_card(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_keys
@@ -186,7 +187,7 @@ def test_signature_does_not_verify_against_wrong_card(
 
 
 def test_operator_hmac_matches_recomputed_envelope(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
     hmac_key: bytes,
 ) -> None:
@@ -215,7 +216,7 @@ def test_operator_hmac_matches_recomputed_envelope(
 
 
 def test_operator_hmac_differs_under_tamper(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
     hmac_key: bytes,
 ) -> None:
@@ -245,7 +246,7 @@ def test_operator_hmac_differs_under_tamper(
 
 
 def test_rejects_path_traversal(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_keys
@@ -262,7 +263,7 @@ def test_rejects_path_traversal(
 
 
 def test_rejects_absolute_path(
-    recorder: LineageRecorder,
+    recorder: SignedLineageLog,
     card_and_keys: tuple[AgentCard, str],
 ) -> None:
     card, priv = card_and_keys
@@ -286,7 +287,7 @@ def test_rejects_absolute_path(
 def entry_hash_payload(canonical_bytes: bytes) -> bytes:
     """Legacy helper retained for back-compat with older test imports.
 
-    The recorder now signs the JCS-canonical entry bytes directly so callers
+    The signed-write path signs the JCS-canonical entry bytes directly so callers
     should pass ``canonicalise(entry)`` to ``verify_detached``; this helper
     is kept so external test modules that import it keep working.
     """

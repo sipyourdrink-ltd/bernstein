@@ -7,7 +7,7 @@ Bernstein has two related path safety surfaces:
    args, gitignore patterns, etc. Bugs here surface as broken path
    matching on either platform.
 
-2. ``bernstein.core.lineage.recorder._is_unsafe_path`` - the
+2. ``bernstein.core.lineage.signed_write._is_unsafe_path`` - the
    defence-in-depth check that rejects absolute and traversal
    artefact paths before they reach disk. A regression here is a
    direct path-traversal vulnerability (the recorder could write
@@ -40,7 +40,7 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from bernstein.core.config.platform_compat import normalize_path
-from bernstein.core.lineage.recorder import _is_unsafe_path
+from bernstein.core.lineage.signed_write import _is_unsafe_path
 
 _SAFE_SEG = st.text(
     alphabet=st.characters(

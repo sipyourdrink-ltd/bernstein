@@ -188,6 +188,7 @@ nav:
           - Deferred adapters: adapter-deferred.md
           - Adapter operations: operations/adapters.md
           - Adapter security floor: adapters/security-floor.md
+          - Adapter admission receipts: adapters/admission-receipts.md
           - Session isolation: adapters/session_isolation.md
           - Stream signals: adapters/stream_signals.md
           - Strict output schemas: adapters/schemas.md
@@ -291,6 +292,7 @@ nav:
           - Fleet directory registry: fleet/directory-registry.md
           - Air-gap install: installation/air-gap.md
           - Migrations: operations/migrations.md
+          - Updates (check, verify, apply): operations/updates.md
           - Self-update: operations/self-update.md
           - Shell completions: operations/shell-completions.md
           - Pilot-to-production graduation: operations/graduation.md
@@ -443,6 +445,7 @@ nav:
           - SOC 2 audit: security/AUDIT.md
           - Audit log: security/audit-log.md
           - Multi-tenant audit export: security/audit-multitenant.md
+          - Delegation narrowing: security/delegation-narrowing.md
           - DSSE / in-toto envelope: security/audit-dsse-envelope.md
           - EU AI Act Article 12: compliance/eu-ai-act-article-12-bundle.md
           - EU residency setup: compliance/eu-residency-customer-setup.md

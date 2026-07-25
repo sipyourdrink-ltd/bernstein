@@ -357,10 +357,6 @@ for name, info in summary.items():
     print(f"{name}: {'allowed' if allowed else 'blocked by policy'}")
 ```
 
-## Peak-Hour Routing
-
-Peak-hour routing (`src/bernstein/core/cost/peak_hour_router.py`) extends model policy with time-based constraints. It can automatically shift non-urgent tasks to cheaper providers or off-peak windows, complementing the static allow/deny policy.
-
 ## Related
 
 - **Router** - `src/bernstein/core/routing/router.py` (re-exports from `router_core.py` and `router_policies.py`) - Core routing engine

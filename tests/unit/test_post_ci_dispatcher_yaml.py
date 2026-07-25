@@ -262,3 +262,101 @@ def test_dispatcher_grants_cover_callee_requests(dispatcher: dict[str, Any], chi
         "conclusion: startup_failure with zero check_runs and every child silently stops running. "
         f"Widen the job's `permissions:` block to cover {required}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Merge-queue readiness: the auto-release chain must survive the queue (#2966)
+#
+# Chain under the queue:
+#   queue merges -> push to `main` at the SAME SHA the queue tested
+#                -> ci.yml (push) -> workflow_run -> this dispatcher
+#                -> auto-release -> tag -> publish.
+#
+# Two properties keep that chain intact, and both are one careless edit away
+# from silently breaking (green CI, no tag, no error). See
+# docs/operations/merge-queue.md :: "Auto-release through the queue".
+# ---------------------------------------------------------------------------
+
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+# The merge queue runs CI on an ephemeral ref named
+# `gh-readonly-queue/<base>/pr-<n>-<base_sha>`, never on `main` itself.
+MERGE_QUEUE_REF_PREFIX = "gh-readonly-queue/"
+
+# The auto-release gate keys on a `version = ` change in this file, so it must
+# never be excluded from the `push` CI run the dispatcher listens for.
+RELEASE_TRIGGER_PATH = "pyproject.toml"
+
+
+@pytest.fixture(scope="module")
+def ci_workflow() -> dict[str, Any]:
+    return _load(CI_WORKFLOW)
+
+
+def test_dispatcher_does_not_listen_on_merge_queue_refs(dispatcher: dict[str, Any]) -> None:
+    """A queue ref must never dispatch auto-release.
+
+    `merge_group` CI runs report `head_branch` as the ephemeral
+    `gh-readonly-queue/...` ref. Those runs are speculative - the entry can
+    still be ejected - so tagging off one would publish a release for a
+    commit that never landed on `main`. The `branches: [main]` filter is
+    what prevents it.
+    """
+    wfr = _on(dispatcher).get("workflow_run")
+    assert isinstance(wfr, dict)
+    branches = wfr.get("branches")
+    assert branches == ["main"], (
+        "dispatcher must stay filtered to `branches: [main]`. Widening it to the "
+        f"merge queue's `{MERGE_QUEUE_REF_PREFIX}**` refs would tag releases from "
+        "speculative queue builds that may never merge."
+    )
+    for pattern in branches:
+        assert not pattern.startswith(MERGE_QUEUE_REF_PREFIX), (
+            f"`{pattern}` matches a merge-queue ephemeral ref; see above"
+        )
+
+
+def test_ci_push_trigger_still_covers_main(ci_workflow: dict[str, Any]) -> None:
+    """The post-queue push to `main` is what reaches this dispatcher.
+
+    The merge queue advances `main` to the same SHA it tested and emits an
+    ordinary `push` event (actor `github-merge-queue[bot]`). If ci.yml ever
+    stopped triggering on `push` to `main`, no `workflow_run` would fire and
+    every release would stop silently.
+    """
+    push = _on(ci_workflow).get("push")
+    assert isinstance(push, dict), "ci.yml must keep a `push:` trigger"
+    assert push.get("branches") == ["main"], (
+        "ci.yml must keep `push.branches: [main]`; post-ci-dispatcher.yml listens "
+        "for the CI run produced by the post-queue push to main."
+    )
+
+
+def test_ci_push_paths_ignore_does_not_cover_release_trigger(
+    ci_workflow: dict[str, Any],
+) -> None:
+    """`pyproject.toml` must keep triggering CI on `main`.
+
+    auto-release only tags when the triggering commit changed `version = ` in
+    pyproject.toml. Path-ignoring it would mean the version-bump merge never
+    runs CI, never produces a `workflow_run`, and never reaches the release
+    gate - with no failure anywhere to notice.
+    """
+    push = _on(ci_workflow).get("push")
+    assert isinstance(push, dict)
+    ignored = [str(p) for p in (push.get("paths-ignore") or [])]
+    offenders = [p for p in ignored if not p.startswith("!") and (p == RELEASE_TRIGGER_PATH or p in {"*", "**"})]
+    assert not offenders, (
+        f"ci.yml `push.paths-ignore` must not exclude `{RELEASE_TRIGGER_PATH}` "
+        f"(found {offenders}); the auto-release listener would never fire for a "
+        "version bump."
+    )
+
+
+def test_ci_declares_merge_group_trigger(ci_workflow: dict[str, Any]) -> None:
+    """CI must run on the queue's ephemeral ref, otherwise nothing gates it."""
+    on = _on(ci_workflow)
+    assert "merge_group" in on, (
+        "ci.yml must declare a `merge_group:` trigger; without it the `CI gate` "
+        "required context never reports on a queued group and the queue wedges."
+    )

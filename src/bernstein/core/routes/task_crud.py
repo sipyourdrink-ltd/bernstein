@@ -697,6 +697,35 @@ def _try_generate_sbom(request: Request) -> None:
         logger.warning("SBOM generation failed (non-fatal)", exc_info=True)
 
 
+def _record_agent_trust(request: Request, role: str, *, success: bool) -> None:
+    """Record a task outcome against the acting role's trust tier.
+
+    Trust tiers live in ``.sdd/trust/<agent_id>.json`` and map onto an
+    ``AgentPermissions`` profile (see
+    :mod:`bernstein.core.agents.agent_trust`); ``bernstein agents trust``
+    reads them back.  Fires synchronously but swallows all exceptions so a
+    trust-store problem can never fail a task route.
+
+    Args:
+        request: FastAPI request (for ``sdd_dir`` access).
+        role: Role of the agent that finished the task.
+        success: Whether the task completed successfully.
+    """
+    if not role:
+        return
+    sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None:
+        return
+    try:
+        from bernstein.core.agents.agent_trust import AgentTrustStore
+
+        AgentTrustStore(sdd_dir).record_task_outcome(role, success=success)
+    # intentional-broad-except: trust accounting is advisory and must not
+    # propagate to the route.
+    except Exception:
+        logger.warning("agent_trust: update failed (non-fatal)", exc_info=True)
+
+
 def _update_file_health(
     request: Request,
     task_id: str,
@@ -1365,6 +1394,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                     list(failed_task.owned_files),
                     "failure",
                 )
+                _record_agent_trust(request, failed_task.role, success=False)
             raise HTTPException(status_code=422, detail=detail) from None
         except IllegalTransitionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -1384,6 +1414,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
 
         # Update per-file health scores (fire-and-forget)
         _update_file_health(request, task.id, list(task.owned_files), "success")
+        _record_agent_trust(request, task.role, success=True)
 
         return task_to_response(task)
 
@@ -1452,6 +1483,7 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
 
     # Update per-file health scores with failure outcome (fire-and-forget)
     _update_file_health(request, task.id, list(task.owned_files), "failure")
+    _record_agent_trust(request, task.role, success=False)
 
     return task_to_response(task)
 

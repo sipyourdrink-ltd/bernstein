@@ -27,8 +27,6 @@ source_modules =
 forbidden_modules =
     bernstein.cli
     bernstein.tui
-ignore_imports =
-    bernstein.core.orchestration.activity_summary_poller -> bernstein.tui.activity_tracker
 
 
 # ---------------------------------------------------------------------------

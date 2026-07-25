@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from bernstein.cli.main import cli
 from bernstein.core.lineage.artifact_record import record_artifact
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
-from bernstein.core.lineage.recorder import LineageRecorder
+from bernstein.core.lineage.signed_write import SignedLineageLog
 from bernstein.core.lineage.store import LineageStore
 from bernstein.core.tasks.artifacts import ArtifactKind
 
@@ -24,7 +24,7 @@ def _seed_artifact(workdir: Path, task_id: str, artifact: object) -> None:
     priv_pem, pub_pem = generate_keypair()
     card = AgentCard(agent_id="agent:worker", kid="key-001", public_key_pem=pub_pem)
     record_artifact(
-        recorder=LineageRecorder(store=LineageStore(sdd / "lineage"), operator_hmac_key=_SECRET.encode("utf-8")),
+        recorder=SignedLineageLog(store=LineageStore(sdd / "lineage"), operator_hmac_key=_SECRET.encode("utf-8")),
         sink_root=sdd / "artifacts",
         task_id=task_id,
         kind=ArtifactKind.OPS_RESULT,
@@ -108,7 +108,7 @@ def _seed_report(workdir: Path, task_id: str, body: str) -> None:
     sdd = workdir / ".sdd"
     priv_pem, pub_pem = generate_keypair()
     card = AgentCard(agent_id="agent:worker", kid="key-001", public_key_pem=pub_pem)
-    rec = LineageRecorder(store=LineageStore(sdd / "lineage"), operator_hmac_key=_SECRET.encode("utf-8"))
+    rec = SignedLineageLog(store=LineageStore(sdd / "lineage"), operator_hmac_key=_SECRET.encode("utf-8"))
     src = record_artifact(
         recorder=rec,
         sink_root=sdd / "artifacts",

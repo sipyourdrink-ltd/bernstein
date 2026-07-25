@@ -14,7 +14,7 @@ collapses the feature rather than merely losing its log:
 
 * :mod:`bernstein.core.persistence.cas_store` -- the pre-action screenshot bytes
   are stored once by SHA-256 (dedup, byte-exact retrieval on replay).
-* :mod:`bernstein.core.lineage.recorder` / ``store`` -- the action anchor is the
+* :mod:`bernstein.core.lineage.signed_write` / ``store`` -- the action anchor is the
   entry's ``content_hash`` and its ``parent_hashes`` is the prior anchor, so the
   action stream is a single-parent, HMAC-enveloped, Ed25519-signed lineage
   chain. The signed head anchor is the run's identity.
@@ -55,7 +55,7 @@ from bernstein.core.security.audit_chain import (
 
 if TYPE_CHECKING:
     from bernstein.core.lineage.identity import AgentCard
-    from bernstein.core.lineage.recorder import LineageRecorder
+    from bernstein.core.lineage.signed_write import SignedLineageLog
     from bernstein.core.lineage.store import LineageStore
     from bernstein.core.persistence.cas_store import CASStore
     from bernstein.core.security.audit_chain import AuditChainStore
@@ -214,7 +214,7 @@ class ComputerUseSession:
         worktree_id: Worktree the run is isolated to.
         cas: Content-addressed blob store (reused, not re-created).
         audit_chain: Audit chain store.
-        lineage_recorder: The lineage recorder (holds the operator HMAC key).
+        lineage_recorder: The signed lineage log (holds the operator HMAC key).
         agent_card: Agent Card carrying the signing public key id.
         private_key_pem: PEM-encoded Ed25519 private key for the agent.
         run_byte_cap: Per-run cumulative screenshot byte cap.
@@ -228,7 +228,7 @@ class ComputerUseSession:
         worktree_id: str,
         cas: CASStore,
         audit_chain: AuditChainStore,
-        lineage_recorder: LineageRecorder,
+        lineage_recorder: SignedLineageLog,
         agent_card: AgentCard,
         private_key_pem: str,
         run_byte_cap: int = DEFAULT_RUN_BYTE_CAP,

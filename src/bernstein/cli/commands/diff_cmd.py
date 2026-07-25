@@ -299,6 +299,96 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
 
 
 # ---------------------------------------------------------------------------
+# Folded and word-level renderers
+# ---------------------------------------------------------------------------
+
+
+def render_folded(diff_text: str, max_folded_lines: int) -> str:
+    """Render *diff_text* with every hunk collapsed to a summary plus N lines.
+
+    Files stay expanded so the per-file ``+A/-R`` header and each hunk header
+    remain visible; hunk bodies are truncated to *max_folded_lines*.
+
+    Args:
+        diff_text: Raw unified diff.
+        max_folded_lines: Lines to keep per hunk before the fold marker.
+
+    Returns:
+        The folded rendering, or an empty string when nothing parsed.
+    """
+    from bernstein.tui.diff_folding import parse_diff, render_folding_diff, toggle_file_fold
+
+    files = parse_diff(diff_text)
+    if not files:
+        return ""
+    for file_diff in files:
+        toggle_file_fold(file_diff)  # default state is folded; expand the file shell
+    return render_folding_diff(files, max_folded_lines=max_folded_lines)
+
+
+def _pair_changed_lines(lines: list[str]) -> list[tuple[str | None, str | None]]:
+    """Pair removed lines with their replacements inside one hunk.
+
+    A run of ``-`` lines followed by a run of ``+`` lines is zipped
+    positionally; leftovers on either side pair with ``None``.
+    """
+    pairs: list[tuple[str | None, str | None]] = []
+    removed: list[str] = []
+    added: list[str] = []
+
+    def _flush() -> None:
+        for i in range(max(len(removed), len(added))):
+            pairs.append(
+                (
+                    removed[i] if i < len(removed) else None,
+                    added[i] if i < len(added) else None,
+                )
+            )
+        removed.clear()
+        added.clear()
+
+    for line in lines:
+        if line.startswith("-") and not line.startswith("---"):
+            if added:
+                _flush()
+            removed.append(line[1:])
+        elif line.startswith("+") and not line.startswith("+++"):
+            added.append(line[1:])
+        else:
+            _flush()
+    _flush()
+    return pairs
+
+
+def render_word_level(diff_text: str) -> None:
+    """Print *diff_text* with word-level highlighting on replaced lines.
+
+    Paired ``-``/``+`` lines are rendered by
+    :func:`bernstein.tui.diff_render.render_word_diff` so only the tokens that
+    actually changed are highlighted; pure additions and deletions fall back to
+    whole-line colouring.
+    """
+    from bernstein.tui.diff_render import render_word_diff
+
+    for file_diff in parse_diff_hunks(diff_text):
+        console.print(f"[bold]{file_diff[0]}[/bold]")
+        for pair in _pair_changed_lines(file_diff[1]):
+            old_line, new_line = pair
+            if old_line is not None and new_line is not None:
+                render_word_diff(console, old_line, new_line)
+            elif old_line is not None:
+                console.print(f"  [red]-[/red] [red]{old_line}[/red]")
+            elif new_line is not None:
+                console.print(f"  [green]+[/green] [green]{new_line}[/green]")
+        console.print()
+
+
+def parse_diff_hunks(diff_text: str) -> list[tuple[str, list[str]]]:
+    """Return ``(filename, lines)`` pairs for each file in *diff_text*."""
+    return list(_parse_diff_files(diff_text).items())
+
+
+# ---------------------------------------------------------------------------
 # Side-by-side comparison renderer
 # ---------------------------------------------------------------------------
 
@@ -513,6 +603,20 @@ def _render_stat_only(resolved: ResolvedDiff, root: Path, base: str) -> None:
 )
 @click.option("--stat", "stat_only", is_flag=True, default=False, help="Show diff --stat summary only.")
 @click.option("--raw", is_flag=True, default=False, help="Print raw diff without syntax highlighting.")
+@click.option("--fold", is_flag=True, default=False, help="Collapse each hunk to a summary plus a few lines.")
+@click.option(
+    "--fold-lines",
+    default=3,
+    show_default=True,
+    help="Lines kept per hunk when --fold is set.",
+)
+@click.option(
+    "--word-diff",
+    "word_diff",
+    is_flag=True,
+    default=False,
+    help="Highlight only the words that changed on replaced lines.",
+)
 @click.option(
     "--compare",
     nargs=2,
@@ -527,6 +631,9 @@ def diff_cmd(
     workdir: str,
     stat_only: bool,
     raw: bool,
+    fold: bool,
+    fold_lines: int,
+    word_diff: bool,
     compare: tuple[str, str] | None,
 ) -> None:
     """Show the git diff of what an agent changed for a task.
@@ -538,6 +645,8 @@ def diff_cmd(
     Examples:
       bernstein diff 90307ac2                         # single task diff
       bernstein diff 90307ac2 --stat                  # summary only
+      bernstein diff 90307ac2 --fold                  # collapse long hunks
+      bernstein diff 90307ac2 --word-diff             # highlight changed words
       bernstein diff --compare backend-abc qa-def     # side-by-side
       bernstein diff --compare task1 task2 --stat     # stat comparison
     """
@@ -610,6 +719,17 @@ def diff_cmd(
     if raw:
         console.print(resolved.diff_text)
         return
+
+    if word_diff:
+        render_word_level(resolved.diff_text)
+        return
+
+    if fold:
+        folded = render_folded(resolved.diff_text, fold_lines)
+        if folded:
+            console.print(folded)
+            return
+        console.print("[dim]Diff could not be parsed for folding; showing full diff.[/dim]")
 
     # Syntax-highlighted diff
     from rich.syntax import Syntax

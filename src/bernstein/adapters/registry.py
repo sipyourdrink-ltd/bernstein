@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -59,6 +59,23 @@ from bernstein.adapters.ralphex import RalphexAdapter
 from bernstein.adapters.rovo import RovoAdapter
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class AdmissionGateLike(Protocol):
+    """Structural type of the receipt-gated admission check (issue #2610).
+
+    Declared structurally rather than imported so the registry keeps no
+    dependency on :mod:`bernstein.adapters.admission`: the registry is what
+    every adapter module resolves through, and a concrete import here would
+    put the admission machinery on the import path of the whole catalogue.
+    The concrete gate is :class:`bernstein.adapters.admission.AdmissionGate`.
+    """
+
+    def admit(self, adapter: str) -> object | None:
+        """Raise when *adapter* cannot prove admission; return the decision."""
+        ...
+
 
 _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     # Successor CLI for the discontinued non-enterprise hosted gemini
@@ -200,15 +217,28 @@ def _load_entrypoint_adapters() -> None:
             logger.warning("Failed to load entry-point adapter %r: %s", ep.name, exc)
 
 
-def get_adapter(cli_name: str) -> CLIAdapter:
+def get_adapter(cli_name: str, *, admission_gate: AdmissionGateLike | None = None) -> CLIAdapter:
     """Get adapter by name, e.g. 'aider', 'claude', 'cody', 'codex', 'continue', 'gemini', or 'generic'.
 
     For 'generic', returns a GenericAdapter with default settings.
     For known adapters, instantiates the corresponding class.
     Third-party adapters are discovered from the ``bernstein.adapters`` entry-point group.
 
+    Resolution is name-based by default, which is what the enumeration
+    surfaces need: ``bernstein adapters list``, the conformance report and
+    ``bernstein doctor`` all have to inspect adapters they would never be
+    allowed to spawn. Passing ``admission_gate`` makes resolution proof-based
+    instead (issue #2610): the adapter is handed back only when it can present
+    a fresh admission receipt whose replay fingerprint still matches the
+    installed binary and the pinned contract. The spawn path supplies a gate;
+    nothing else does.
+
     Args:
         cli_name: Adapter name to look up.
+        admission_gate: Optional :class:`~bernstein.adapters.admission.
+            AdmissionGate` (structurally, an :class:`AdmissionGateLike`).
+            When supplied, the adapter must clear receipt-gated admission
+            before it is returned.
 
     Returns:
         An instantiated CLIAdapter.
@@ -217,8 +247,13 @@ def get_adapter(cli_name: str) -> CLIAdapter:
         ValueError: If the adapter name is not recognized, or if it names an
             adapter that has been removed (the message then carries the
             replacement guidance from :data:`_REMOVED_ADAPTERS`).
+        bernstein.adapters.admission.AdapterAdmissionRefusal: When a gate is
+            supplied under the enforce policy and the adapter cannot prove
+            admission.
     """
     if cli_name == "generic":
+        if admission_gate is not None:
+            admission_gate.admit(cli_name)
         return GenericAdapter(cli_command="generic-cli", display_name="Generic CLI")
 
     _load_entrypoint_adapters()
@@ -233,6 +268,12 @@ def get_adapter(cli_name: str) -> CLIAdapter:
             raise ValueError(removed)
         available = ", ".join(sorted([*_ADAPTERS.keys(), "generic"]))
         raise ValueError(f"Unknown adapter '{cli_name}'. Available: {available}")
+
+    # The gate runs after the name resolves so an unknown adapter still gets
+    # the plain "unknown adapter" message rather than a refusal receipt for a
+    # name that was never registered.
+    if admission_gate is not None:
+        admission_gate.admit(cli_name)
 
     if isinstance(adapter_cls, CLIAdapter):
         return adapter_cls

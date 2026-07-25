@@ -20,6 +20,8 @@ network, no agent spawn) and the output is consumable both by humans
 | `bernstein adapters check <name>`               | Drill down to one adapter |
 | `bernstein adapters check --format json`        | CI-consumable payload keyed on `adapters` and `summary` |
 | `bernstein adapters check --strict`             | Exit non-zero on any `conformance == "fail"` row |
+| `bernstein adapters verify <name>`              | Re-derive the admission fingerprint and check it against the sealed receipt |
+| `bernstein adapters verify <name> --seal`       | Seal and anchor a fresh admission receipt from the current evidence |
 
 ## What every row contains
 
@@ -122,8 +124,14 @@ The check is in-process and never spawns pytest:
    stripped).
 
 Adapters that lack a contract YAML fall through with `conformance ==
-"skip"` and an empty capability set. This is intentional - the
-contract suite ships with curated coverage of the load-bearing CLIs.
+"skip"` and an empty capability set. The report is a survey surface, so a
+`skip` here is informational.
+
+At the spawn boundary the same `skip` is not informational. Admission
+receipts refuse an adapter whose conformance verdict is anything other than
+`ok` and seal a refusal record naming the reason and the remediation, so an
+unverified adapter cannot receive task context on the strength of being
+importable. See [adapter admission receipts](../adapters/admission-receipts.md).
 
 ## CI integration
 
@@ -144,5 +152,8 @@ historical reports.
 * `bernstein adapters contract-check <name>` - deeper contract check
   for a single adapter (includes model-list assertions when an auth
   secret is set).
+* `bernstein adapters verify <name>` - re-derive the deterministic
+  admission fingerprint and check it against the sealed receipt; exits
+  non-zero when the adapter would be refused at spawn.
 * `bernstein doctor` - host-readiness checks; surfaces a subset of the
   adapter status alongside other environment signals.
