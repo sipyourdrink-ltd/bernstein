@@ -69,6 +69,7 @@ from bernstein.core.distribution.update_advisory import (
     store_cached_advisory,
     store_cached_feed,
     store_receipt,
+    trust_root_fingerprint,
     verify_advisory_document,
     verify_release_feed_document,
     verify_wheel_against_advisory,
@@ -754,9 +755,13 @@ def rollback_cmd(trust_root: Path | None, auto_yes: bool, workdir: Path | None) 
         console.print("[dim]Rollback cancelled.[/dim]")
         return
 
+    # The rollback target's provenance comes from the same two facts a forward
+    # install pins: the wheel hash the verified feed names, and the trust root
+    # that vouched for that feed.
     preimage = {
         "candidate_wheel_sha256": entry.wheel_sha256,
-        "trust_root_fingerprint": verification.feed.body_sha256(),
+        "trust_root_fingerprint": trust_root_fingerprint(pem),
+        "feed_sha256": verification.feed.body_sha256(),
     }
     _install_verified(
         root,

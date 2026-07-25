@@ -729,6 +729,9 @@ class TestRollback:
         rows = AuditChainStore(workdir / ".sdd" / "audit").query(event_type=EVENT_SELF_UPDATE)
         assert rows[-1].details["direction"] == "rollback"
         assert rows[-1].details["to_version"] == "3.10.0"
+        assert rows[-1].details["wheel_sha256"] == _WHEEL_SHA256
+        # The rollback pins the same trust root a forward install would.
+        assert str(rows[-1].details["provenance_key_fingerprint"]).startswith("sha256:")
 
     def test_refuses_while_a_run_is_active(
         self,
