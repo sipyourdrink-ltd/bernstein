@@ -102,15 +102,37 @@ and still reports on `pull_request` and `merge_group`.
 
 ## Concurrency policy
 
-Per-PR runs share a group keyed by PR number, `cancel-in-progress`
-on. New pushes to a PR cancel older runs.
+| Event | Group key | `cancel-in-progress` |
+|-------|-----------|----------------------|
+| `pull_request` | PR number | true |
+| push to `main`, `merge_group`, `workflow_dispatch` | branch + `github.sha` | false |
 
-Push-to-main runs share a group keyed by branch, also
-`cancel-in-progress` on. A wave of rapid merges supersedes earlier
-runs so the macOS pool does not hold a queue.
+Per-PR runs share a group keyed by PR number, stable across pushes
+to the same PR. A new commit cancels the older run, so reviewers
+only ever wait on the latest push and we don't burn minutes on
+stale SHAs.
+
+Push-to-main runs are keyed per-SHA and never cancel. Every commit
+that lands on main runs its own full-matrix CI to completion, so
+the commit history carries a real per-commit pass/fail signal
+instead of a run of "cancelled" markers left behind when a burst of
+merges supersedes each other. A cancelled run on an already-merged
+commit reads as red forever and hides genuine failures behind
+noise; keying main by SHA removes that class of false red.
+
+Tradeoff: a rapid merge wave now keeps N full main runs alive
+instead of one. The branch-scoped policy this replaces was chosen
+after a May 2026 wave of 13 merges in 90 minutes saturated the
+runner queue. The load stays bounded because main pushes are merged
+PRs, far fewer than PR-branch pushes, and PR-branch pushes still
+cancel, so the saturation source stays capped. The durable fix for
+burst load is the merge queue: `ci.yml` already triggers on
+`merge_group`, which tests each batch once on the prospective
+merged SHA.
 
 Background: see issue #1273 for the wave-merge race and the
-PR-vs-push split.
+PR-vs-push split. The rationale is restated in the comment block
+above the `concurrency:` key in `.github/workflows/ci.yml`.
 
 ## Per-PR meta lanes
 
