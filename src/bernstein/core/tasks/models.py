@@ -1186,15 +1186,14 @@ class IsolationMode(StrEnum):
 class IsolationDowngrade:
     """A requested isolation boundary that could not be provided.
 
-    Issue #3014: when a spawn is routed to container isolation - directly via
-    ``--sandbox docker`` or, more subtly, because a compliance preset
-    (``regulated``) implied it - but no container runtime is available, the
-    spawn falls back to a weaker boundary (worktree, or none). Left as a bare
-    log WARNING, that downgrade is invisible to the operator who asked for the
-    stronger boundary. Recording it as a typed value lets the run summary and
-    the HMAC-chained audit log both surface requested-vs-actual isolation, so
-    the weaker posture is an auditable decision rather than a silent
-    substitution.
+    Issue #3014: when a spawn is routed to container isolation - via the
+    ``sandbox:`` config, ``--sandbox docker``, or ``BERNSTEIN_SANDBOX_RUNTIME``
+    - but no container runtime is available, the spawn falls back to a weaker
+    boundary (worktree, or none). Left as a bare log WARNING, that downgrade is
+    invisible to the operator who asked for the stronger boundary. Recording it
+    as a typed value lets the run summary and the HMAC-chained audit log both
+    surface requested-vs-actual isolation, so the weaker posture is an auditable
+    decision rather than a silent substitution.
 
     Attributes:
         session_id: Agent session whose isolation was downgraded.

@@ -419,14 +419,32 @@ docker compose logs -f bernstein-orchestrator
 > `bernstein-worker` replicas (or migrate to the SQLite/Redis backends -
 > separate ticket) for parallelism.
 
-### Container sandbox isolation (`--sandbox docker` and the `regulated` preset)
+### Container sandbox isolation (`--sandbox docker`)
 
-Per-agent container isolation (requested directly with `--sandbox docker`, or
-implied by the `--compliance regulated` preset, which selects a stronger
-isolation boundary) runs each agent in its own container instead of a git
-worktree. Inside the published `ghcr.io/sipyourdrink-ltd/bernstein` image this
+Per-agent container isolation runs each agent in its own container instead of a
+git worktree. It is requested **only** through the sandbox configuration - there
+are exactly three sources, and they are independent of every other setting:
+
+| Source | Example |
+|---|---|
+| The `sandbox:` section of `bernstein.yaml` | `sandbox: {enabled: true, runtime: docker}` |
+| The `--sandbox` CLI flag | `bernstein run plan.yaml --sandbox docker` |
+| The `BERNSTEIN_SANDBOX_RUNTIME` env var | `BERNSTEIN_SANDBOX_RUNTIME=docker` (set by `--sandbox`) |
+
+> **Compliance presets do not change your isolation boundary.** The
+> `regulated` preset (like the other presets - `development`, `standard`,
+> `hipaa`) controls audit logging, the HMAC audit chain, signed WAL, data
+> residency, SBOM generation, approval gates, mandatory human review, and
+> evidence-bundle export. It has **no** isolation or sandbox setting:
+> `compliance` and `sandbox` are parsed as separate sections and neither reads
+> the other. A `regulated` run uses whatever `sandbox:` specifies - which, if you
+> have not set it, is the default worktree isolation. If you want container
+> isolation, request it explicitly with `sandbox:` or `--sandbox`; selecting a
+> compliance preset will not do it for you.
+
+Inside the published `ghcr.io/sipyourdrink-ltd/bernstein` image the docker
 backend is **not available by default** - the image is intentionally lean and
-ships none of the three things the docker backend needs:
+ships none of the three things it needs:
 
 1. **A container-runtime CLI** on `PATH` inside the container (`docker` or
    `podman`).
@@ -447,23 +465,26 @@ rather than baking docker into the base image).
 > constraint, not a Bernstein limitation - add the path under Docker Desktop →
 > Settings → Resources → File sharing, or run the cluster on Linux.
 
-**What happens when the runtime is unavailable.** The behaviour depends on how
-the isolation was requested:
+**What happens when the runtime is unavailable.** Container isolation that
+cannot be provided never silently becomes worktree isolation:
 
-| Request | Runtime present | Runtime missing |
-|---|---|---|
-| Explicit `--sandbox docker` | runs in a container | **refuses** - the run fails with a clear `SandboxSelectionError` rather than silently downgrading |
-| `regulated` preset (implied) | runs in a container | **downgrades to worktree isolation, surfaced and audited** |
+| How isolation was requested | Runtime missing |
+|---|---|
+| `--sandbox docker`, where a sandbox backend provisions a session per spawn | **refuses** - the run fails with a `SandboxSelectionError` naming the cause, rather than dropping to a host spawn |
+| Any other configured container request (e.g. `sandbox:` in `bernstein.yaml`, which is the path the published image takes) | **downgrades to worktree isolation, surfaced and audited** |
 
-For the preset-implied case the downgrade is no longer a silent, log-only
-event: it is recorded in the end-of-run summary (`summary.json` →
-`isolation_downgrades`, and an "Isolation downgrade" row on the summary card)
-and as a `sandbox.isolation_downgrade` entry in the HMAC-chained audit log,
-carrying the requested-vs-actual isolation mode. An operator who selected a
-stronger boundary can therefore see, at run level, that a weaker one was used -
-and prove it from the audit chain. If your compliance posture requires the run
-to *fail closed* instead, request the backend explicitly with `--sandbox
-docker`, which refuses rather than downgrades.
+A downgrade is no longer a log-only event. It is recorded in the end-of-run
+summary (`summary.json` → `isolation_downgrades`, plus an "Isolation downgrade"
+row on the summary card) and as a `sandbox.isolation_downgrade` entry in the
+HMAC-chained audit log carrying the requested and actual isolation modes. An
+operator who asked for a stronger boundary can therefore see at run level that a
+weaker one was used - and prove it from the audit chain afterwards.
+
+If your posture requires the run to *fail closed* rather than continue on a
+weaker boundary, pin the backend with `--sandbox docker` and confirm the run
+aborts when no runtime is present. Note that a downgrade is reported per agent
+session, so a run that spawns several agents on a runtime-less host records one
+entry per affected session.
 
 ### Backing up state
 

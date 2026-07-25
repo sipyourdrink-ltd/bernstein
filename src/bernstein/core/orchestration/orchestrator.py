@@ -4837,10 +4837,10 @@ class Orchestrator:
     def _collect_isolation_downgrades(self) -> list[dict[str, str]]:
         """Return requested-vs-actual isolation downgrades from the spawner.
 
-        Issue #3014: when a container isolation request (explicit or implied by
-        the ``regulated`` compliance preset) cannot be honoured, the spawn
-        falls back to a weaker boundary and records the downgrade. Draining it
-        into the run summary makes the downgrade visible in the run outcome.
+        Issue #3014: when a container isolation request cannot be honoured, the
+        spawn falls back to a weaker boundary and records the downgrade.
+        Draining it into the run summary makes the downgrade visible in the run
+        outcome.
         Guarded so an older or stubbed spawner without the attribute never
         breaks summary emission.
         """

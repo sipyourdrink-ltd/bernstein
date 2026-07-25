@@ -130,18 +130,24 @@ def _read_audit_events(audit_dir: Path) -> list[dict[str, object]]:
     return events
 
 
-def test_preset_implied_downgrade_is_surfaced_and_audited(
+def test_non_explicit_docker_request_downgrade_is_surfaced_and_audited(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Issue #3014: a preset-implied docker isolation request that cannot be
+    """Issue #3014: a non-explicit docker isolation request that cannot be
 
     honoured (no container runtime) must record a *surfaced* downgrade the run
     summary can render AND an audit-chain entry noting requested-vs-actual
-    isolation - not just a log WARNING. The explicit ``--sandbox docker`` path
-    already refuses (issue #2809); this covers the preset-implied fallback.
+    isolation - not just a log WARNING.
+
+    "Non-explicit" here means the sandbox came from the ``sandbox:`` section of
+    bernstein.yaml rather than from the ``--sandbox`` flag, so the
+    ``BERNSTEIN_SANDBOX_RUNTIME`` intent signal is unset and the spawn degrades
+    gracefully instead of refusing (the explicit path refuses - issue #2809).
+    This is the path the published image takes.
     """
     monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
-    # Preset-implied, NOT explicit: the --sandbox intent signal is unset.
+    # Configured via `sandbox:`, NOT pinned by --sandbox: the intent signal is
+    # unset, so this exercises the graceful-degradation path.
     monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
 
     adapter = FakeAdapter("codex")
