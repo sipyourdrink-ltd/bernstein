@@ -26,11 +26,31 @@ import time
 from pathlib import Path
 from typing import cast
 
+# Changed paths for which an empty affected set is a coverage hole rather than
+# a legitimate no-op, so the shards fail closed instead of reporting green.
 _TEST_REQUIRED_PREFIXES = (
     ".github/workflows/",
     "scripts/",
     "src/",
     "tests/",
+)
+
+# Test suites that are exempt from the fail-closed rule above.
+#
+# The affected-test selector's dependency map indexes only the suites listed in
+# ``scripts/test_impact.TEST_DIRS`` (tests/unit and tests/integration). A change
+# confined to any other suite therefore yields an empty affected set no matter
+# what the change contains, so the fail-closed rule would reject it forever.
+#
+# The suites listed here are safe to exempt because each one is executed in
+# full, unconditionally, by its own required job on every pull request, so the
+# shards are not the surface that covers them. Only add a prefix here once that
+# is true of it; ``tests/unit/scripts/test_run_tests_affected_gate.py`` pins
+# both halves of that condition.
+_SELF_COVERED_TEST_PREFIXES = (
+    "tests/contract/",
+    "tests/property/",
+    "tests/snapshot/",
 )
 
 DEFAULT_TEST_FILE_TIMEOUT_SECONDS = 300
@@ -407,8 +427,20 @@ def discover_changed_files(base: str) -> list[str]:
 
 
 def changed_files_require_tests(changed_files: list[str]) -> bool:
-    """Return True when an empty affected set must fail closed."""
-    return any(Path(path).as_posix().startswith(_TEST_REQUIRED_PREFIXES) for path in changed_files)
+    """Return True when an empty affected set must fail closed.
+
+    Paths under ``_SELF_COVERED_TEST_PREFIXES`` are ignored: a dedicated
+    required job runs those suites in full, and the affected-test selector
+    cannot map them, so they can never satisfy the rule. Every other path is
+    still judged by ``_TEST_REQUIRED_PREFIXES``, so a mixed change that also
+    touches source, scripts, workflows, or an indexed test suite keeps failing
+    closed on an empty affected set.
+    """
+    return any(
+        path.startswith(_TEST_REQUIRED_PREFIXES)
+        for path in (Path(raw).as_posix() for raw in changed_files)
+        if not path.startswith(_SELF_COVERED_TEST_PREFIXES)
+    )
 
 
 def main() -> None:
