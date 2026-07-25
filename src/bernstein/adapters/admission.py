@@ -1042,7 +1042,7 @@ def anchor_admission_receipt_in_lineage(
     Returns:
         The lineage entry hash.
     """
-    from bernstein.core.lineage.recorder import seal_write
+    from bernstein.core.lineage.signed_write import seal_write
 
     view = AdapterAdmissionReceipt(receipt)
     sha = view.sha256

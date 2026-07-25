@@ -54,6 +54,16 @@ if sys.platform == "win32":
 else:
     import fcntl  # type: ignore[no-redef]
 
+from bernstein.core.lineage.artifact_uri import (
+    REASON_ABSOLUTE,
+    REASON_EMPTY,
+    REASON_MALFORMED_URI,
+    REASON_NON_CANONICAL,
+    REASON_TRAVERSAL,
+    REASON_UNKNOWN_SCHEME,
+    artifact_key_rejection_reason,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -99,20 +109,43 @@ def _validate_run_id(run_id: str) -> str:
     return run_id
 
 
-def _reject_unsafe_artifact_path(artifact_path: str) -> None:
-    """Reject absolute paths and ``..`` traversal in ``artifact_path``.
+#: Boundary wording for each rejection code from
+#: :func:`bernstein.core.lineage.artifact_uri.artifact_key_rejection_reason`.
+#: The three legacy codes keep their pre-#2559 message verbatim so existing
+#: callers and tests that match on the error text are unaffected.
+_REJECTION_MESSAGES = {
+    REASON_EMPTY: "empty artifact_path",
+    REASON_ABSOLUTE: "absolute artifact_path not allowed",
+    REASON_TRAVERSAL: "path traversal in artifact_path",
+    REASON_UNKNOWN_SCHEME: "unknown artifact URI scheme in artifact_path",
+    REASON_MALFORMED_URI: "malformed artifact URI in artifact_path",
+    REASON_NON_CANONICAL: "non-canonical artifact URI in artifact_path",
+}
 
-    Lineage paths are repo-relative POSIX strings. An attacker
-    controlling the call site must not smuggle ``../`` outside the repo
-    or anchor an artifact at ``/etc/passwd``.
+
+def _reject_unsafe_artifact_path(artifact_path: str) -> None:
+    """Reject anything that is not a canonical artifact key (issue #2559).
+
+    A spine key is either a repo-relative POSIX path (the implicit scheme, and
+    what every historical entry carries) or a canonical artifact URI from the
+    closed scheme set in :mod:`bernstein.core.lineage.artifact_uri`.
+
+    Repo paths take the same branch as before: an attacker controlling the call
+    site still cannot smuggle ``../`` outside the repo or anchor an artifact at
+    ``/etc/passwd``, and every path accepted before is accepted now.
+
+    What changes is that a string carrying ``://`` is no longer treated as a
+    filename. It used to slip past all three checks and be stored verbatim, so
+    the chain could carry a key whose scheme meant nothing. It is now parsed,
+    and rejected unless its scheme is known and its spelling is canonical.
     """
-    if not artifact_path:
-        raise ValueError("empty artifact_path")
-    if artifact_path.startswith("/") or (len(artifact_path) > 2 and artifact_path[1:3] == ":\\"):
-        raise ValueError(f"absolute artifact_path not allowed: {artifact_path!r}")
-    segments = artifact_path.replace("\\", "/").split("/")
-    if any(seg == ".." for seg in segments):
-        raise ValueError(f"path traversal in artifact_path: {artifact_path!r}")
+    reason = artifact_key_rejection_reason(artifact_path)
+    if reason is None:
+        return
+    message = _REJECTION_MESSAGES[reason]
+    if reason == REASON_EMPTY:
+        raise ValueError(message)
+    raise ValueError(f"{message}: {artifact_path!r}")
 
 
 # ---------------------------------------------------------------------------

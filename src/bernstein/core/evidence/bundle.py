@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.evidence.output_diff import OutputDiff
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import (
     SPINE_ENTRY_VERSION,
@@ -79,6 +80,7 @@ __all__ = [
     "EvidenceProducer",
     "EvidenceStore",
     "EvidenceVerifyResult",
+    "OutputDiff",
     "ProducerOutcome",
     "StoredBlob",
     "build_evidence_bundle",
@@ -465,15 +467,26 @@ class EvidenceBundle:
     signer_public_key_pem: str = ""
     signature: str = ""
     journal_entry_hash: str = ""
+    # Issue #2559: the declared-vs-produced output diff, inside the *binding*
+    # so the undeclared-write finding is covered by the signature and the spine
+    # anchor rather than being advisory metadata a tamperer could strip.
+    output_diff: OutputDiff | None = None
 
     def _binding(self) -> dict[str, Any]:
-        return {
+        binding: dict[str, Any] = {
             "v": self.schema_version,
             "task_id": self.task_id,
             "items": [item.to_dict() for item in self.items],
             "gate_passed": self.gate_passed,
             "timestamp": self.timestamp,
         }
+        # Dropped when absent or empty, exactly like ``trust_class`` on a
+        # lineage entry: a bundle for a task that declares no outputs
+        # canonicalises byte-for-byte identically to a pre-#2559 bundle, so
+        # every sealed signature and spine anchor already on disk stays valid.
+        if self.output_diff is not None and not self.output_diff.is_empty:
+            binding["output_diff"] = self.output_diff.to_dict()
+        return binding
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical bytes (signed + spine-hashed)."""
@@ -493,6 +506,7 @@ class EvidenceBundle:
     @classmethod
     def from_bytes(cls, raw: bytes) -> EvidenceBundle:
         row = json.loads(raw)
+        raw_diff = row.get("output_diff")
         return cls(
             task_id=str(row["task_id"]),
             items=tuple(EvidenceItem.from_dict(i) for i in row.get("items", [])),
@@ -502,6 +516,7 @@ class EvidenceBundle:
             signer_public_key_pem=str(row.get("signer_public_key_pem", "")),
             signature=str(row.get("signature", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
+            output_diff=OutputDiff.from_dict(raw_diff) if isinstance(raw_diff, dict) else None,
         )
 
     @property
@@ -692,6 +707,7 @@ def build_evidence_bundle(
     store: EvidenceStore | None = None,
     chain: AuditChainStore | None = None,
     install_rev: str = "",
+    output_diff: OutputDiff | None = None,
 ) -> EvidenceBundle:
     """Store producer outputs, bind + sign + anchor them into a bundle (AC1).
 
@@ -745,6 +761,7 @@ def build_evidence_bundle(
         items=tuple(items),
         gate_passed=gate_passed,
         timestamp=timestamp,
+        output_diff=output_diff,
     )
     payload = unsigned.to_canonical_bytes()
     signature = sign_payload(payload, private_key_pem)
@@ -768,6 +785,7 @@ def build_evidence_bundle(
         signer_public_key_pem=public_key_pem,
         signature=signature,
         journal_entry_hash=anchor,
+        output_diff=unsigned.output_diff,
     )
     path = bundle_path(workdir, task_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -801,6 +819,7 @@ def run_evidence_gate(
     hmac_key: bytes | None = None,
     install_rev: str = "",
     producer_timeout_s: int = 600,
+    output_diff: OutputDiff | None = None,
 ) -> tuple[EvidenceBundle, bool]:
     """Run declared producers at gate time and seal a bundle (AC1, AC5).
 
@@ -834,6 +853,7 @@ def run_evidence_gate(
         timestamp=timestamp,
         chain=chain,
         install_rev=install_rev,
+        output_diff=output_diff,
     )
     return bundle, bundle.gate_passed
 

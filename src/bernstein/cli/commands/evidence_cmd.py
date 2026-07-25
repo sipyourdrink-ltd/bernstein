@@ -17,10 +17,14 @@ a tampered evidence file is detected exactly like a tampered chain entry.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from bernstein.cli.helpers import console
+
+if TYPE_CHECKING:
+    from bernstein.core.evidence.output_diff import OutputDiff
 
 
 def _load_hmac_key() -> bytes:
@@ -98,7 +102,31 @@ def evidence_show_cmd(task: str, workdir: str) -> None:
             item.content_hash.split(":", 1)[-1][:16] + "…",
         )
     console.print(table)
+    _render_output_diff(bundle.output_diff)
     console.print(f"\n[dim]Verify offline:[/dim] bernstein evidence verify {bundle.task_id}\n")
+
+
+def _render_output_diff(diff: OutputDiff | None) -> None:
+    """Render the declared-vs-produced output diff, when the bundle carries one.
+
+    Bundles sealed before issue #2559, and bundles for tasks that declared no
+    outputs, carry no diff and print nothing at all -- the command's output for
+    an existing bundle is unchanged.
+    """
+    if diff is None or diff.is_empty:
+        return
+    console.print()
+    console.print("[bold]Declared outputs[/bold]")
+    for uri in diff.declared_and_produced:
+        console.print(f"  [green]produced[/green]   {uri}")
+    for uri in diff.declared_but_missing:
+        console.print(f"  [red]missing[/red]    {uri}")
+    for uri in diff.produced_but_undeclared:
+        console.print(f"  [yellow]undeclared[/yellow] {uri}")
+    if diff.has_findings:
+        console.print(
+            "  [dim]Findings are inside the signed binding; 'bernstein evidence verify' proves them offline.[/dim]"
+        )
 
 
 @evidence_group.command("verify")
