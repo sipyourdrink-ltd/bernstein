@@ -25,7 +25,6 @@ import httpx
 
 from bernstein.core import heartbeat as heartbeat_protocol
 from bernstein.core.cost import price_model_usage
-from bernstein.core.janitor import verify_task
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import AbortReason, AgentSession, Task, TaskStatus, TransitionReason
@@ -33,6 +32,7 @@ from bernstein.core.task_lifecycle import (
     collect_completion_data,
     retry_or_fail_task,
 )
+from bernstein.core.tasks.artifact_completion import is_artifact_mode, verify_task_completion
 from bernstein.core.tick_pipeline import (
     block_task,
     complete_task,
@@ -1996,8 +1996,10 @@ def handle_orphaned_task(
     # Collect structured completion data from agent log
     completion_data = collect_completion_data(orch._workdir, session)
 
-    if task.completion_signals:
-        passed, failed_signals = verify_task(task, orch._workdir)
+    # Artifact-mode tasks run the pass even with no declared signals: the
+    # signed receipt it records is their completion identity (issue #2608).
+    if task.completion_signals or is_artifact_mode(task):
+        passed, failed_signals = verify_task_completion(task, orch._workdir)
         if passed:
             try:
                 result_payload: dict[str, Any] = {

@@ -1,14 +1,27 @@
-"""``bernstein artifact verify``: prove a non-coding artifact (issue #2608).
+"""``bernstein artifact``: verify, inspect and score outputs by artifact key.
 
-A non-coding task's output (report / dataset / action log / ops result) is
-recorded as a signed, content-addressed lineage entry. ``artifact verify``
-re-derives the canonical hash from the stored bytes, ties it to the signed
-entry, and runs the lineage gate (Ed25519 signature + operator HMAC chain +
-parent integrity). It fails - non-zero exit - on any post-hoc byte alteration
-of the artifact or a removed lineage entry, so "the agent produced this exact
-artifact" is a cryptographic check, not a trust exercise.
+Two commands answer a *task* question:
 
     bernstein artifact verify <task_id>
+
+re-derives a non-coding task's canonical artifact hash from the stored bytes,
+ties it to the signed entry, and runs the lineage gate (Ed25519 signature +
+operator HMAC chain + parent integrity), so "the agent produced this exact
+artifact" is a cryptographic check rather than a trust exercise (issue #2608).
+
+The rest answer an *artifact* question, keyed by canonical artifact URI rather
+than by the task that happened to produce it (issue #2559)::
+
+    bernstein artifact list
+    bernstein artifact log <uri>
+    bernstein artifact health <uri>
+
+``log`` is the attribution surface: which agent identity, running which model,
+produced the current tip of this PR / package / deployment, read off the chain.
+``health`` is the rolled-up verdict -- chain integrity, a single current set of
+bytes, evidence, cadence -- recomputed offline from ``.sdd`` state alone. Its
+``--json`` output is produced by the same function the server route calls, so
+the CLI and the dashboard cannot disagree about an artifact.
 
 This is the singular ``artifact`` group; the plural ``artifacts`` group lists
 agent-posted, journal-anchored task artifacts (issue #2553) and is unrelated.
@@ -23,13 +36,20 @@ import click
 
 from bernstein.cli.helpers import console
 
+#: Exit code for a red / unverifiable verdict. Matches ``artifact verify`` so a
+#: script can treat any non-zero from this group as "do not trust this output".
+_EXIT_BAD = 2
+
 
 @click.group("artifact")
 def artifact_group() -> None:
-    """Verify a task's signed, content-addressed artifact.
+    """Verify, inspect and score outputs by artifact key.
 
     \b
       bernstein artifact verify <task_id>
+      bernstein artifact list
+      bernstein artifact log <uri>
+      bernstein artifact health <uri>
     """
 
 
@@ -90,6 +110,153 @@ def artifact_verify_cmd(task_id: str, workdir: Path, operator_secret_env: str, o
 
     if not result.ok:
         sys.exit(2)
+
+
+_workdir_option = click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True, path_type=Path),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+
+
+def _spine_hmac_key() -> bytes:
+    """Return the audit-chain key the lineage spine tags entries with."""
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    return load_or_create_audit_key()
+
+
+@artifact_group.command("list")
+@_workdir_option
+@click.option("--output-json", is_flag=True, help="Emit JSON instead of human text.")
+def artifact_list_cmd(workdir: Path, output_json: bool) -> None:
+    """List every artifact key the local lineage spines carry."""
+    import json
+
+    from bernstein.core.lineage.artifact_health import list_artifact_keys
+
+    counts = list_artifact_keys(workdir.resolve())
+    ordered = sorted(counts.items())
+
+    if output_json:
+        click.echo(json.dumps({"artifacts": [{"productions": n, "uri": u} for u, n in ordered]}, sort_keys=True))
+        return
+    if not ordered:
+        console.print("[yellow]no artifacts recorded[/yellow]")
+        return
+    for uri, count in ordered:
+        console.print(f"  {count:>4}  {uri}")
+
+
+@artifact_group.command("log")
+@click.argument("uri")
+@_workdir_option
+@click.option("--limit", type=int, default=0, show_default=True, help="Max records (0 = all).")
+@click.option("--output-json", is_flag=True, help="Emit JSON instead of human text.")
+def artifact_log_cmd(uri: str, workdir: Path, limit: int, output_json: bool) -> None:
+    """Show who produced URI, newest first, with the entry hash that proves it.
+
+    The first record is the current tip: the agent identity and model behind the
+    bytes that are live right now. ``verified`` is recomputed per entry, so a
+    tampered row is named here instead of being averaged away.
+    """
+    from bernstein.core.lineage.artifact_health import artifact_log, artifact_log_json
+
+    records = artifact_log(workdir.resolve(), uri, hmac_key=_spine_hmac_key(), limit=limit)
+
+    if output_json:
+        click.echo(artifact_log_json(records, uri=uri))
+        return
+    if not records:
+        console.print(f"[yellow]no productions recorded for[/yellow] {uri}")
+        return
+    console.print(f"[bold]{uri}[/bold]")
+    for i, record in enumerate(records):
+        marker = "[green]OK[/green]" if record.verified else "[red]TAMPERED[/red]"
+        label = "tip" if i == 0 else "   "
+        console.print(f"  {label} {marker} {record.entry_hash}")
+        console.print(f"        actor={record.actor or '-'} model={record.model or '-'} run={record.run_id}")
+        console.print(f"        content={record.content_hash} step={record.step_id or '-'}")
+
+
+@artifact_group.command("health")
+@click.argument("uri")
+@_workdir_option
+@click.option(
+    "--at",
+    type=int,
+    default=None,
+    help="Evaluation instant, in the unit the spine timestamps use. Defaults to the wall clock. "
+    "Pin it to reproduce a verdict byte-for-byte.",
+)
+@click.option(
+    "--cadence-seconds",
+    type=int,
+    default=None,
+    help="Declared refresh cadence. Omit when the artifact declares none; the cadence leg then reports "
+    "not_applicable rather than failing.",
+)
+@click.option("--output-json", is_flag=True, help="Emit the canonical JSON verdict instead of human text.")
+def artifact_health_cmd(
+    uri: str,
+    workdir: Path,
+    at: int | None,
+    cadence_seconds: int | None,
+    output_json: bool,
+) -> None:
+    """Recompute URI's health verdict offline from local .sdd state.
+
+    Exit codes: 0 = green or amber, 2 = red.
+
+    The verdict is a pure function of the collected state and the evaluation
+    instant, and the JSON comes from the same function the server route calls,
+    so a verdict recomputed here equals the one the dashboard shows for the
+    same state and instant.
+    """
+    import json
+    import sys
+    import time
+
+    from bernstein.core.lineage.artifact_health import RED, artifact_health_json
+
+    instant = at if at is not None else int(time.time())
+    payload = artifact_health_json(
+        workdir.resolve(),
+        uri,
+        hmac_key=_spine_hmac_key(),
+        at=instant,
+        cadence_seconds=cadence_seconds,
+    )
+    verdict = json.loads(payload)
+
+    if output_json:
+        click.echo(payload)
+    else:
+        _render_health(verdict)
+
+    if verdict["verdict"] == RED:
+        sys.exit(_EXIT_BAD)
+
+
+def _render_health(verdict: dict) -> None:
+    """Render a verdict document as human text."""
+    colour = {"green": "green", "amber": "yellow", "red": "red"}.get(str(verdict["verdict"]), "white")
+    console.print(f"[{colour}]{str(verdict['verdict']).upper()}[/{colour}] {verdict['uri']}")
+    tip = verdict.get("tip") or {}
+    if tip.get("entry_hash"):
+        console.print(f"  tip     {tip['entry_hash']}")
+        console.print(f"  actor   {tip.get('actor') or '-'}  model {tip.get('model') or '-'}")
+    for leg in verdict.get("legs", []):
+        status = str(leg["status"])
+        mark = {
+            "pass": "[green]pass[/green]",
+            "fail": "[red]fail[/red]",
+            "stale": "[yellow]stale[/yellow]",
+        }.get(status, f"[dim]{status}[/dim]")
+        console.print(f"  {mark:<24} {leg['name']}: {leg['detail']}")
 
 
 def _json_verdict(result: object) -> dict:

@@ -365,11 +365,20 @@ class ArtifactSpec:
     Defaults to ``code_diff`` so an existing coding task that carries no spec is
     unchanged. ``canonicalisation`` names the serialisation rule; an empty
     string means "the kind's default rule" (see :attr:`canonical_rule`).
+
+    ``output_path`` is the workdir-relative POSIX path the agent writes its
+    produced artifact to. It is what makes an artifact-mode task *executable*:
+    the completion path reads those bytes, canonicalises them under
+    :attr:`kind`, and records the signed lineage entry that stands in for the
+    git SHA a coding task would have produced. An empty string selects the
+    per-task default (see
+    :func:`bernstein.core.tasks.artifact_completion.artifact_output_path`).
     """
 
     kind: ArtifactKind = ArtifactKind.CODE_DIFF
     canonicalisation: str = ""
     criteria: tuple[ArtifactCriterion, ...] = field(default_factory=tuple)
+    output_path: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ArtifactKind):
@@ -387,6 +396,7 @@ class ArtifactSpec:
             "kind": self.kind.value,
             "canonicalisation": self.canonicalisation,
             "criteria": [c.to_dict() for c in self.criteria],
+            "output_path": self.output_path,
         }
 
     @classmethod
@@ -396,6 +406,7 @@ class ArtifactSpec:
             kind=ArtifactKind(str(data.get("kind", ArtifactKind.CODE_DIFF.value))),
             canonicalisation=str(data.get("canonicalisation", "")),
             criteria=criteria,
+            output_path=str(data.get("output_path", "")),
         )
 
     @classmethod

@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from bernstein.adapters._contract import AdapterStrategy, OutputMode
 from bernstein.core.orchestration.commit_completion import (
     DEFAULT_CONTINUATION_NUDGE,
     RETRY_LIMIT,
@@ -520,3 +521,109 @@ class TestLifecycleEmitter:
         assert decision.should_retry is True
         assert result == "spawned"
         assert recorder.calls != []
+
+
+# ---------------------------------------------------------------------------
+# Output-mode axis (issue #2608)
+# ---------------------------------------------------------------------------
+
+
+class _ArtifactModeAdapter(_StubAdapter):
+    """Stub whose declared strategy is artifact output mode."""
+
+    def strategy(self) -> AdapterStrategy:
+        return AdapterStrategy(output_mode=OutputMode.ARTIFACT)
+
+
+class _GitDiffAdapter(_StubAdapter):
+    """Stub whose declared strategy is the default git-diff output mode."""
+
+    def strategy(self) -> AdapterStrategy:
+        return AdapterStrategy()
+
+
+class TestOutputModeGatesTheCommitCheck:
+    """An artifact-mode run has no commit, so an unmoved HEAD is not a defect."""
+
+    def test_artifact_mode_never_nudges_for_a_missing_commit(self) -> None:
+        adapter = _ArtifactModeAdapter(supports_session_continuation=True)
+        decision = decide_retry(
+            adapter=adapter,  # type: ignore[arg-type]
+            verdict=CompletionVerdict(committed=False, before="a" * 40, after="a" * 40, reason="head_did_not_move"),
+            exit_code=0,
+            attempts=0,
+        )
+        assert decision == RetryDecision(should_retry=False, reason="artifact_output_mode")
+
+    def test_task_level_override_beats_the_adapter_declaration(self) -> None:
+        """One adapter drives both a coding task and a report task."""
+        adapter = _GitDiffAdapter(supports_session_continuation=True)
+        verdict = CompletionVerdict(committed=False, before="a" * 40, after="a" * 40, reason="head_did_not_move")
+
+        assert (
+            decide_retry(
+                adapter=adapter,  # type: ignore[arg-type]
+                verdict=verdict,
+                exit_code=0,
+                attempts=0,
+            ).should_retry
+            is True
+        )
+
+        assert decide_retry(
+            adapter=adapter,  # type: ignore[arg-type]
+            verdict=verdict,
+            exit_code=0,
+            attempts=0,
+            output_mode=OutputMode.ARTIFACT,
+        ) == RetryDecision(should_retry=False, reason="artifact_output_mode")
+
+    def test_git_diff_mode_keeps_the_existing_truth_table(self) -> None:
+        adapter = _GitDiffAdapter(supports_session_continuation=True)
+        decision = decide_retry(
+            adapter=adapter,  # type: ignore[arg-type]
+            verdict=CompletionVerdict(committed=False, before="a" * 40, after="a" * 40, reason="head_did_not_move"),
+            exit_code=0,
+            attempts=0,
+            output_mode=OutputMode.GIT_DIFF,
+        )
+        assert decision == RetryDecision(should_retry=True, reason="needs_retry")
+
+    def test_a_non_zero_exit_still_outranks_the_output_mode(self) -> None:
+        """Failure handling owns a crashed run whatever it was producing."""
+        decision = decide_retry(
+            adapter=_ArtifactModeAdapter(supports_session_continuation=True),  # type: ignore[arg-type]
+            verdict=CompletionVerdict(committed=False, before="a" * 40, after="a" * 40, reason="head_did_not_move"),
+            exit_code=1,
+            attempts=0,
+        )
+        assert decision == RetryDecision(should_retry=False, reason="non_zero_exit")
+
+    def test_an_adapter_without_a_strategy_defaults_to_git_diff(self) -> None:
+        """A stub with no ``strategy()`` must not silently skip the check."""
+        decision = decide_retry(
+            adapter=_StubAdapter(supports_session_continuation=True),  # type: ignore[arg-type]
+            verdict=CompletionVerdict(committed=False, before="a" * 40, after="a" * 40, reason="head_did_not_move"),
+            exit_code=0,
+            attempts=0,
+        )
+        assert decision == RetryDecision(should_retry=True, reason="needs_retry")
+
+    def test_maybe_retry_continuation_forwards_the_override(self, repo: Path) -> None:
+        """The convenience wrapper honours a task-level artifact declaration."""
+        check = CommitCompletionCheck()
+        before = check.snapshot_before(repo)
+        recorder = _SpawnRecorder(return_value="spawned")
+        decision, _verdict, result = maybe_retry_continuation(
+            adapter=_GitDiffAdapter(supports_session_continuation=True, continuation_args_value=["--continue"]),  # type: ignore[arg-type]
+            workdir=repo,
+            before=before,
+            session_id="sess-artifact",
+            exit_code=0,
+            original_prompt="p",
+            spawn_fn=recorder,
+            output_mode=OutputMode.ARTIFACT,
+        )
+        assert decision == RetryDecision(should_retry=False, reason="artifact_output_mode")
+        assert result is None
+        assert recorder.calls == []

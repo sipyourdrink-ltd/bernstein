@@ -29,10 +29,13 @@ EVENT_NODE_CORDONED: Final[str] = "CLUSTER_NODE_CORDONED"
 EVENT_NODE_DRAINED: Final[str] = "CLUSTER_NODE_DRAINED"
 EVENT_TASK_STOLEN: Final[str] = "CLUSTER_TASK_STOLEN"
 EVENT_SCALE_DECISION: Final[str] = "CLUSTER_SCALE_DECISION"
+EVENT_CLAIM_GOSSIPED: Final[str] = "CLUSTER_CLAIM_GOSSIPED"
+EVENT_CLAIM_FORKED: Final[str] = "CLUSTER_CLAIM_FORKED"
 
 _RESOURCE_NODE: Final[str] = "cluster_node"
 _RESOURCE_TASK: Final[str] = "cluster_task"
 _RESOURCE_SCALE: Final[str] = "cluster_scale"
+_RESOURCE_CLAIM: Final[str] = "cluster_claim"
 
 # Reasons for CLUSTER_NODE_LEFT.  Closed set - anything else is bucketed
 # under "unknown" before the audit entry is written.
@@ -163,6 +166,80 @@ def record_task_stolen(
     )
 
 
+def record_claim_gossiped(
+    *,
+    entry_hash: str,
+    kind: str,
+    from_node: str,
+    to_node: str,
+    status: str,
+) -> None:
+    """Record CLUSTER_CLAIM_GOSSIPED -- one MESH claim receipt crossing nodes.
+
+    Complements the receipt's own ``cluster.claim_journal_receipt`` anchor: the
+    anchor proves *what* the receipt said, this proves *that a peer accepted it
+    and when*. ``status`` is the :class:`ClaimIngestResult` outcome, so a
+    rejected receipt (bad signature, bad hash) leaves a trail too.
+
+    Args:
+        entry_hash: The gossiped receipt's Merkle ``entry_hash``.
+        kind: The receipt kind (``claim`` / ``release`` / ...).
+        from_node: The node that signed the receipt.
+        to_node: The node that ingested it.
+        status: ``applied`` / ``duplicate`` / ``rejected``.
+    """
+    _safe_log(
+        EVENT_CLAIM_GOSSIPED,
+        actor="cluster.mesh_gossip",
+        resource_type=_RESOURCE_CLAIM,
+        resource_id=entry_hash,
+        details={
+            "entry_hash": entry_hash,
+            "kind": kind,
+            "from_node": from_node,
+            "to_node": to_node,
+            "status": status,
+        },
+    )
+
+
+def record_claim_forked(
+    *,
+    entry_hash: str,
+    local_head: str,
+    divergence_index: int,
+    from_node: str,
+    observed_by: str,
+) -> None:
+    """Record CLUSTER_CLAIM_FORKED -- a gossiped chain that did not extend ours.
+
+    A fork is the one MESH outcome an operator must never miss: it means two
+    partitions each believe they hold a coherent coordination history.
+    ``divergence_index`` is how many leading local entries the rejected chain
+    provably shares, so the split is locatable from the audit log alone.
+
+    Args:
+        entry_hash: The rejected receipt's ``entry_hash``.
+        local_head: The local journal head that rejected it.
+        divergence_index: Entry index at which the two chains diverge.
+        from_node: The node that signed the rejected receipt.
+        observed_by: The node that recorded the fork.
+    """
+    _safe_log(
+        EVENT_CLAIM_FORKED,
+        actor="cluster.mesh_gossip",
+        resource_type=_RESOURCE_CLAIM,
+        resource_id=entry_hash,
+        details={
+            "entry_hash": entry_hash,
+            "local_head": local_head,
+            "divergence_index": divergence_index,
+            "from_node": from_node,
+            "observed_by": observed_by,
+        },
+    )
+
+
 def record_scale_decision(
     *,
     action: str,
@@ -186,12 +263,16 @@ def record_scale_decision(
 
 
 __all__ = [
+    "EVENT_CLAIM_FORKED",
+    "EVENT_CLAIM_GOSSIPED",
     "EVENT_NODE_CORDONED",
     "EVENT_NODE_DRAINED",
     "EVENT_NODE_LEFT",
     "EVENT_NODE_REGISTERED",
     "EVENT_SCALE_DECISION",
     "EVENT_TASK_STOLEN",
+    "record_claim_forked",
+    "record_claim_gossiped",
     "record_node_cordoned",
     "record_node_drained",
     "record_node_left",

@@ -4996,13 +4996,13 @@ class TestCheckEvolve:
 
 
 class TestParallelVerification:
-    """verify_task() calls for multiple done tasks run concurrently."""
+    """verify_task_completion() calls for multiple done tasks run concurrently."""
 
     def test_multiple_done_tasks_verified_concurrently(self, tmp_path: Path) -> None:
         """Multiple done tasks with signals are verified in parallel.
 
-        Mocks verify_task with a 0.2s sleep. With 4 tasks running serially
-        this would take ~0.8s; in parallel it should finish in ~0.2s.
+        Mocks verify_task_completion with a 0.2s sleep. With 4 tasks running
+        serially this would take ~0.8s; in parallel it should finish in ~0.2s.
         """
         import threading
         from unittest.mock import patch
@@ -5033,7 +5033,12 @@ class TestParallelVerification:
         )
         orch = _build_orchestrator(tmp_path, transport)
 
-        with patch("bernstein.core.tasks.task_lifecycle.verify_task", side_effect=slow_verify):
+        # Patch the symbol the janitor enqueue actually submits to the pool.
+        # #2990 moved the completion dispatch seam from ``verify_task`` to
+        # ``verify_task_completion`` so an artifact-mode task resolves to the
+        # receipt path; a code_diff task still reaches ``verify_task`` beneath
+        # it. Patching the retired name binds nothing.
+        with patch("bernstein.core.tasks.task_lifecycle.verify_task_completion", side_effect=slow_verify):
             t_start = time.time()
             result = TickResult()
             orch._process_completed_tasks(tasks_with_signals, result)
@@ -5053,14 +5058,14 @@ class TestParallelVerification:
 
 
 class TestProcessCompletedTasksParallel:
-    """_process_completed_tasks runs verify_task() concurrently."""
+    """_process_completed_tasks runs verify_task_completion() concurrently."""
 
     def test_multiple_done_tasks_verified_concurrently(self, tmp_path: Path) -> None:
-        """verify_task() for N done tasks must run in parallel, not serially.
+        """Verification for N done tasks must run in parallel, not serially.
 
-        We mock verify_task to sleep 0.2 s per task.  With 4 tasks the serial
-        total would be >= 0.8 s; the parallel total (max_workers=4) should be
-        well under 0.5 s.
+        We mock verify_task_completion to sleep 0.2 s per task.  With 4 tasks
+        the serial total would be >= 0.8 s; the parallel total (max_workers=4)
+        should be well under 0.5 s.
         """
         import time
         from unittest.mock import patch
@@ -5103,7 +5108,9 @@ class TestProcessCompletedTasksParallel:
                 intervals.append((begin, time.monotonic()))
             return True, []
 
-        with patch("bernstein.core.tasks.task_lifecycle.verify_task", side_effect=slow_verify):
+        # See the sibling test: the dispatch seam is ``verify_task_completion``
+        # since #2990.
+        with patch("bernstein.core.tasks.task_lifecycle.verify_task_completion", side_effect=slow_verify):
             tick_result = TickResult()
             orch._process_completed_tasks([Task.from_dict(d) for d in task_dicts], tick_result)
 

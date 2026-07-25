@@ -387,6 +387,15 @@ class ClusterSchema(BaseModel):
     node_timeout_s: int = Field(default=60, ge=1)
     server_url: str | None = None
     bind_host: str = "127.0.0.1"
+    # MESH-only keys (issue #2558): leaderless coordination through the signed
+    # claim journal. Ignored on the STAR path, which keeps its central server.
+    gossip_peers: list[str] = Field(default_factory=list)
+    claim_lease_ttl_s: int = Field(default=300, ge=1)
+    claim_journal_path: str | None = None
+    # Pinned peer identities (issue #2997): node_id -> Ed25519 public key,
+    # given as SPKI PEM text, an OKP JWK mapping, or the bare base64url 'x'.
+    # A MESH node folds only receipts signed by a pinned key.
+    gossip_peer_keys: dict[str, Any] = Field(default_factory=dict)
 
 
 class RemoteSchema(BaseModel):

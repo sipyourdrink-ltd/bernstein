@@ -38,6 +38,14 @@ The janitor evaluates each `CompletionSignal` declared on the task
 | `file_contains`  | A regex matches the file's content.                                     |
 | `llm_review`     | Synchronous LLM review against a written rubric.                        |
 | `llm_judge`      | Async LLM judge (`judge_task()`, `janitor.py:462`); used for ambiguous tasks. |
+| `schema_valid` / `criteria_match` / `hash_stable` / `figures_grounded` | Artifact-mode criteria over the produced artifact's canonical bytes. They fail closed on the filesystem path; only `evaluate_artifact_signals()`, called with the artifact in scope, can pass one. |
+
+Which evaluator runs is decided by the task's declared artifact kind.
+`verify_task_completion()` (`core/tasks/artifact_completion.py`) is the seam the
+completion paths call: a `code_diff` task falls through to `verify_task()`
+below, unchanged; an artifact-mode task is evaluated against the artifact it
+produced and completes on a signed lineage receipt rather than a commit. See
+[../operations/artifacts.md](../operations/artifacts.md).
 
 `verify_task()` (`janitor.py:80-97`) reduces all signals to a single
 pass/fail and a list of failure descriptions. The async

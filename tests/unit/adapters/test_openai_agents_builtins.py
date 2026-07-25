@@ -23,6 +23,8 @@ These cover the hard conditions the builtins must satisfy:
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -136,12 +138,32 @@ class TestRunCommandNoShell:
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0]
         assert stdout == payload
 
-    def test_no_shell_expansion_of_glob(self, tmp_path: Path) -> None:
+    def test_no_shell_expansion_of_glob(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         (tmp_path / "one.txt").write_text("")
         (tmp_path / "two.txt").write_text("")
         _events, emit = _sink()
-        # A shell would expand ``*.txt``; argv passes it literally.
-        out = run_command_in_workdir(tmp_path, ["printf", "%s", "*.txt"], emit=emit)
+
+        # Echo argv[1] back from the running interpreter rather than from a
+        # coreutils helper. On Windows the ``printf`` that resolves on PATH is
+        # the MSYS2 build Git for Windows ships, and the MSYS runtime
+        # glob-expands argv itself before ``main()`` when the parent is not an
+        # MSYS process - so a literal ``*.txt`` arrives already split into
+        # ``one.txt two.txt`` with no shell anywhere in the chain, and the
+        # assertion measured the helper instead of this function. CPython never
+        # globs argv on any platform, so the shell=False contract is what is
+        # under test here.
+        #
+        # ``argv[0]`` must be a bare name (resolve_command rejects absolute
+        # paths and path separators), and the interpreter's own directory is
+        # not necessarily on PATH - pytest is invoked as
+        # ``sys.executable -m pytest``, which does not activate the venv. Put
+        # it on PATH so the bare name resolves deterministically everywhere.
+        monkeypatch.setenv("PATH", os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""))
+        out = run_command_in_workdir(
+            tmp_path,
+            [os.path.basename(sys.executable), "-c", "import sys; sys.stdout.write(sys.argv[1])", "*.txt"],
+            emit=emit,
+        )
         stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0]
         assert stdout == "*.txt"
 

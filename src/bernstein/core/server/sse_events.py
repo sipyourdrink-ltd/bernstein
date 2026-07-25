@@ -23,6 +23,7 @@ class SSEEventType(StrEnum):
     TASK_RETRIED = "task.retried"
     TASK_ARTIFACT = "task.artifact"
     TASK_PROGRESS = "task.progress"
+    ARTIFACT_PRODUCED = "artifact.produced"
     AGENT_SPAWNED = "agent.spawned"
     AGENT_EXITED = "agent.exited"
     GATE_RESULT = "gate.result"
@@ -189,6 +190,37 @@ class SSEEvent:
             | {
                 "task_id": task_id,
                 "vector_hash": vector_hash,
+            },
+        )
+
+    @classmethod
+    def artifact_produced(cls, uri: str, entry_hash: str, **extra: Any) -> SSEEvent:
+        """Create an artifact.produced event (#2559).
+
+        Emitted from the single lineage write boundary for every artifact that
+        lands in the spine, so a downstream goal fires when the upstream output
+        actually lands instead of guessing on a cron. The payload is the
+        projection of the spine entry -- identity and provenance, never the
+        artifact bytes -- and carries ``verified`` so a consumer can tell a
+        production event apart from one replayed over a tampered chain.
+
+        Args:
+            uri: The canonical artifact key that was produced.
+            entry_hash: Spine entry hash identifying this exact production.
+            **extra: The rest of the projected payload (``content_hash``,
+                ``actor``, ``model``, ``run_id``, ``verified``, ...).
+
+        Returns:
+            SSEEvent instance.
+        """
+        # Identity fields win over ``extra`` so a caller cannot rebind the
+        # artifact or the entry it claims to project from.
+        return cls(
+            event=SSEEventType.ARTIFACT_PRODUCED,
+            data=extra
+            | {
+                "uri": uri,
+                "entry_hash": entry_hash,
             },
         )
 

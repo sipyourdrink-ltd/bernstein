@@ -39,7 +39,7 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.hook_events import HookEvent
-from bernstein.core.janitor import run_janitor, verify_task
+from bernstein.core.janitor import run_janitor
 from bernstein.core.metrics import get_collector
 from bernstein.core.replay.review_board import (
     record_task_diff_captured,
@@ -49,6 +49,7 @@ from bernstein.core.replay.review_board import (
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
+from bernstein.core.tasks.artifact_completion import is_artifact_mode, verify_task_completion
 from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard, meta_task_kind
 from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.tasks.models import (
@@ -3695,7 +3696,7 @@ def _enqueue_alive_exit_janitor_pass(
 
     Mirrors the dead-exit scheduling in
     ``bernstein.core.agents.agent_lifecycle.handle_orphaned_task``: that path
-    runs ``verify_task`` synchronously, then issues ``POST /complete`` or
+    runs ``verify_task_completion`` synchronously, then issues ``POST /complete`` or
     ``retry_or_fail_task``. The alive-exit path has been wired through
     ``process_completed_tasks`` + ``_process_single_completed_task`` for
     months, but in practice it can be skipped when the orchestrator
@@ -3717,12 +3718,16 @@ def _enqueue_alive_exit_janitor_pass(
             scheduled (e.g. ``"alive_exit_tick"``, ``"alive_exit_drain"``).
 
     Returns:
-        The future tracking the verify_task result, or None if the
+        The future tracking the verification result, or None if the
         task has no completion signals (a no-op enqueue; a subsequent
         process_completed_tasks iteration can still process it as
         auto-verified).
     """
-    if not task.completion_signals:
+    # An artifact-mode task is enqueued even with no declared signals: its
+    # completion identity *is* the signed receipt this pass records, so
+    # skipping the pass would leave the task with nothing to complete on
+    # (issue #2608). A signal-less coding task keeps the auto-verify default.
+    if not task.completion_signals and not is_artifact_mode(task):
         logger.info(
             "janitor: enqueued pass task=%s session=%s role=%s reason=%s "
             "no_completion_signals=true (will be marked verified by default)",
@@ -3760,7 +3765,7 @@ def _enqueue_alive_exit_janitor_pass(
         # Defensive: if the orchestrator has no executor we still want a
         # synchronous verify so the task does not silently vanish.
         try:
-            return _JanitorSyncFuture(verify_task(task, orch._workdir))
+            return _JanitorSyncFuture(verify_task_completion(task, orch._workdir))
         except Exception as exc:  # pragma: no cover - defensive only
             logger.warning(
                 "janitor: sync-verify failed for task=%s reason=%s exc=%s",
@@ -3779,13 +3784,13 @@ def _enqueue_alive_exit_janitor_pass(
             judge_model,
             judge_provider,
         )
-    return executor.submit(verify_task, task, orch._workdir)
+    return executor.submit(verify_task_completion, task, orch._workdir)
 
 
 class _JanitorSyncFuture:
     """Backport of ``concurrent.futures.Future``-like used when no executor exists.
 
-    Holds a pre-computed verify_task result and exposes ``result()`` /
+    Holds a pre-computed verification result and exposes ``result()`` /
     ``done()`` to look like a Future, so the rest of the pipeline can
     treat it uniformly.
     """
@@ -3814,9 +3819,12 @@ def process_completed_tasks(
 
     Tasks whose completion signals include any ``llm_judge`` entry dispatch
     to the async ``run_janitor`` pipeline (wrapped via ``asyncio.run`` in a
-    worker thread), since ``verify_task`` is sync-only and rejects
+    worker thread), since the sync path is sync-only and rejects
     ``llm_judge`` signals outright. All other tasks keep the sync
-    ``verify_task`` fast path.
+    ``verify_task_completion`` fast path, which dispatches on the task's
+    declared output mode: an artifact-mode task (issue #2608) is verified
+    against its produced artifact and completes on a signed lineage receipt,
+    every other task on the filesystem/git signals it has always used.
 
     Args:
         orch: Orchestrator instance.
@@ -3835,7 +3843,8 @@ def process_completed_tasks(
         return
 
     # Fan-out: submit verification calls in parallel. llm_judge signals need
-    # the async run_janitor pipeline; everything else uses verify_task.
+    # the async run_janitor pipeline; everything else uses
+    # verify_task_completion.
     #
     # DEFECT 30 FIX: previously the alive-exit janitor enqueue was implicit
     # in the executor.submit() call below; an ops decision (premature

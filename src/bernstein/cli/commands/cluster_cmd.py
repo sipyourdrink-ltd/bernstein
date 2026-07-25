@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import httpx
@@ -393,3 +394,190 @@ def cluster_status_cmd(as_json: bool, server_url: str | None) -> None:
     )
     nodes = data.get("nodes", []) if isinstance(data.get("nodes"), list) else []
     _render_nodes_table(nodes, time.time())
+
+
+# ---------------------------------------------------------------------------
+# ``bernstein cluster claims`` -- the signed MESH claim journal (#2558)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_claim_journal_path(workdir: str, journal_path: str | None) -> Path:
+    """Return the claim-journal path to read, without touching the network.
+
+    An explicit ``--journal`` wins so an operator can verify a journal copied
+    off a machine that is gone; otherwise the conventional path under the
+    project's ``.sdd/`` is used.
+    """
+    if journal_path:
+        return Path(journal_path).expanduser().resolve()
+    from bernstein.core.orchestration.tracker_pipeline import default_claim_journal_path
+
+    return default_claim_journal_path(Path(workdir).resolve() / ".sdd")
+
+
+def _read_claim_receipts(path: Path) -> list[dict[str, Any]]:
+    """Return the raw receipt dicts on disk, in journal order."""
+    if not path.exists():
+        raise click.ClickException(
+            f"no claim journal at {path}\n"
+            "The journal is written only by the MESH topology; set cluster.topology to 'mesh', "
+            "or pass --journal to point at one.",
+        )
+    receipts: list[dict[str, Any]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        stripped = raw.strip()
+        if stripped:
+            receipts.append(json.loads(stripped))
+    return receipts
+
+
+@cluster_group.group("claims")
+def cluster_claims_group() -> None:
+    """Read and verify the signed MESH claim journal.
+
+    \b
+      bernstein cluster claims log      # every receipt, in chain order
+      bernstein cluster claims head     # the current head hash
+      bernstein cluster claims verify   # offline replay: links, signatures, anchors
+
+    Every subcommand reads the journal file directly. None of them contacts a
+    server, so the coordination history stays readable when the fleet is down.
+    """
+
+
+@cluster_claims_group.command("log")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of a table.")
+@click.option("--journal", "journal_path", default=None, help="Path to the claim journal (default: .sdd/cluster/).")
+@click.option("--workdir", default=".", help="Project directory holding .sdd/.")
+@click.option("--limit", default=0, type=int, help="Show only the last N receipts (0 = all).")
+def cluster_claims_log(as_json: bool, journal_path: str | None, workdir: str, limit: int) -> None:
+    """List every claim receipt in chain order."""
+    from rich.table import Table
+
+    path = _resolve_claim_journal_path(workdir, journal_path)
+    receipts = _read_claim_receipts(path)
+    if limit > 0:
+        receipts = receipts[-limit:]
+    if as_json or is_json():
+        print_json(receipts)
+        return
+    table = Table(title=f"Claim journal ({path})", show_lines=False, header_style="bold cyan")
+    table.add_column("#", justify="right")
+    table.add_column("kind")
+    table.add_column("key")
+    table.add_column("claimer")
+    table.add_column("node")
+    table.add_column("entry_hash")
+    for index, receipt in enumerate(receipts):
+        key = f"{receipt.get('tracker', '')}/{receipt.get('ticket_id', '')}/{receipt.get('role', '')}"
+        kind = str(receipt.get("kind", "?"))
+        style = "red" if kind == "fork" else ("yellow" if kind == "supersede" else "green")
+        table.add_row(
+            str(index),
+            f"[{style}]{kind}[/{style}]",
+            key,
+            str(receipt.get("claimer_id", "")),
+            str(receipt.get("node_id", "")),
+            str(receipt.get("entry_hash", ""))[:23],
+        )
+    console.print(table)
+
+
+@cluster_claims_group.command("head")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of text.")
+@click.option("--journal", "journal_path", default=None, help="Path to the claim journal (default: .sdd/cluster/).")
+@click.option("--workdir", default=".", help="Project directory holding .sdd/.")
+def cluster_claims_head(as_json: bool, journal_path: str | None, workdir: str) -> None:
+    """Print the journal head hash and entry count."""
+    from bernstein.core.lineage.tracker_audit import GENESIS_PREV_HASH
+
+    path = _resolve_claim_journal_path(workdir, journal_path)
+    receipts = _read_claim_receipts(path)
+    head = str(receipts[-1]["entry_hash"]) if receipts else GENESIS_PREV_HASH
+    if as_json or is_json():
+        print_json({"head": head, "entries": len(receipts), "journal": str(path)})
+        return
+    console.print(f"[bold]head[/bold]    {head}")
+    console.print(f"[dim]entries {len(receipts)}  journal {path}[/dim]")
+
+
+@cluster_claims_group.command("verify")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of text.")
+@click.option("--journal", "journal_path", default=None, help="Path to the claim journal (default: .sdd/cluster/).")
+@click.option("--workdir", default=".", help="Project directory holding .sdd/.")
+@click.option(
+    "--check-anchors/--no-check-anchors",
+    default=True,
+    help="Also confirm every receipt is anchored in the local HMAC audit chain.",
+)
+def cluster_claims_verify(as_json: bool, journal_path: str | None, workdir: str, check_anchors: bool) -> None:
+    """Replay the journal offline and report the head, tamper, and forks.
+
+    Runs with no live nodes: it needs the journal file and, for the anchor
+    check, the local audit chain. Confirms every ``prev_entry_hash`` link,
+    every recomputed ``entry_hash``, every Ed25519 node signature, and every
+    audit-chain anchor, then prints the head hash.
+
+    \b
+    Exit codes:
+      0  intact, no fork
+      1  integrity failure -- the failing entry index is printed
+      2  intact but forked -- the divergence entry index is printed
+    """
+    from bernstein.core.orchestration.tracker_pipeline import ClaimJournal
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.server.dashboard_tokens import resolve_dashboard_hmac_key
+
+    root = Path(workdir).resolve()
+    sdd_dir = root / ".sdd"
+    path = _resolve_claim_journal_path(workdir, journal_path)
+    if not path.exists():
+        _read_claim_receipts(path)  # raises the actionable ClickException
+
+    chain: AuditChainStore | None = None
+    if check_anchors and (sdd_dir / "audit").exists():
+        chain = AuditChainStore(sdd_dir / "audit", key=resolve_dashboard_hmac_key(sdd_dir))
+
+    # Verification is a pure read: the KMS adapter is never asked to sign, so
+    # a journal can be verified on a machine that holds no signing key at all.
+    journal = ClaimJournal(path, kms_adapter=cast("Any", None), node_id="verifier")
+    result = journal.verify(chain=chain)
+
+    payload = {
+        "ok": result.ok,
+        "clean": result.clean,
+        "head": result.head,
+        "entries": result.entry_count,
+        "bad_index": result.bad_index,
+        "failures": result.failures,
+        "anchors_checked": result.anchors_checked,
+        "forks": [
+            {
+                "divergence_index": fork.divergence_index,
+                "entry_hash": fork.entry_hash,
+                "local_head": fork.local_head,
+                "observed_by": fork.observed_by,
+            }
+            for fork in result.forks
+        ],
+    }
+    if as_json or is_json():
+        print_json(payload)
+    elif not result.ok:
+        console.print(f"[bold red]FAILED[/bold red] at entry index {result.bad_index}")
+        for failure in result.failures:
+            console.print(f"  [red]{failure}[/red]")
+    else:
+        anchor_note = "links + signatures + audit anchors" if result.anchors_checked else "links + signatures"
+        console.print(f"[bold green]OK[/bold green] {result.entry_count} entries verified ({anchor_note})")
+        console.print(f"[bold]head[/bold] {result.head}")
+        for fork in result.forks:
+            console.print(
+                f"[bold red]FORK[/bold red] at divergence entry index {fork.divergence_index}: "
+                f"{fork.entry_hash} did not extend {fork.local_head} (observed by {fork.observed_by})"
+            )
+
+    if not result.ok:
+        raise SystemExit(1)
+    if result.forks:
+        raise SystemExit(2)

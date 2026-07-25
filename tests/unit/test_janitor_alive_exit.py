@@ -97,15 +97,19 @@ def test_enqueue_alive_exit_janitor_logs_and_submits(
         future = _enqueue_alive_exit_janitor_pass(orch, task, reason="alive_exit_tick")
 
     assert future is not None, "janitor future must be returned for tasks with completion_signals"
-    # Executor got a verify_task or run_janitor submission.
+    # Executor got a completion-verification or run_janitor submission.
     assert len(executor.submitted) == 1
     fn, args, _ = executor.submitted[0]
-    # Either verify_task (sync) or _verify_via_janitor (async) is acceptable.
-    from bernstein.core.janitor import verify_task
+    # Either verify_task_completion (sync) or _verify_via_janitor (async) is
+    # acceptable. #2990 moved the dispatch seam from ``verify_task`` to
+    # ``verify_task_completion`` so an artifact-mode task resolves to the
+    # signed-receipt path; a code_diff task still reaches ``verify_task``
+    # beneath it.
+    from bernstein.core.tasks.artifact_completion import verify_task_completion
 
-    assert fn in (verify_task, task_lifecycle._verify_via_janitor)
-    if fn is verify_task:
-        # verify_task(task, workdir)
+    assert fn in (verify_task_completion, task_lifecycle._verify_via_janitor)
+    if fn is verify_task_completion:
+        # verify_task_completion(task, workdir)
         assert args[0] is task
     else:
         # _verify_via_janitor(task, workdir, server_url)
@@ -292,15 +296,20 @@ def test_process_single_completed_task_logs_alive_exit_start(
 
 
 def test_dead_path_janitor_pass_unchanged() -> None:
-    """Sanity: the dead-exit ``verify_task`` call site is untouched.
+    """Sanity: the dead-exit verification call site stays synchronous.
 
-    Regresses the safe carve-out: item 30 must NOT modify
-    ``handle_orphaned_task`` (read-only territory).
+    Regresses the safe carve-out: item 30 must NOT make
+    ``handle_orphaned_task`` enqueue its pass instead of running it inline.
+
+    The callee name tracks the dispatch seam: #2990 swapped ``verify_task``
+    for ``verify_task_completion`` on both exit paths so an artifact-mode task
+    completes on its signed receipt. What this test guards is the *inline*
+    call, not which function is inlined.
     """
     import inspect
 
     from bernstein.core.agents import agent_lifecycle
 
     src = inspect.getsource(agent_lifecycle.handle_orphaned_task)
-    # The synchronous verify_task call must still be present.
-    assert "passed, failed_signals = verify_task(task, orch._workdir)" in src
+    # The synchronous completion-verification call must still be present.
+    assert "passed, failed_signals = verify_task_completion(task, orch._workdir)" in src

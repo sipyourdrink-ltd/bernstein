@@ -159,7 +159,10 @@ def test_append_chains_prev_entry_hash(tmp_path: Path) -> None:
     assert r1.prev_entry_hash.startswith("sha256:")
     assert r2.prev_entry_hash == r1.entry_hash
     assert journal.head() == r2.entry_hash
-    assert set(CLAIM_RECEIPT_KINDS) == {"claim", "release", "renew", "expire", "supersede"}
+    # Closed taxonomy. ``fork`` joined in phase 4 (#2558): it records that two
+    # chains diverged, not a claim transition, so the fold ignores it for
+    # holder selection while ``verify`` and the CLI surface it.
+    assert set(CLAIM_RECEIPT_KINDS) == {"claim", "release", "renew", "expire", "supersede", "fork"}
 
 
 def test_signature_verifies_and_tamper_fails(tmp_path: Path) -> None:

@@ -22,12 +22,15 @@ import time
 from typing import TYPE_CHECKING
 
 from bernstein.core.evidence.bundle import parse_producers, run_evidence_gate
+from bernstein.core.evidence.output_diff import compute_output_diff
 from bernstein.core.security.sanitize import sanitize_log
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from bernstein.core.evidence.bundle import EvidenceBundle
+    from bernstein.core.evidence.output_diff import OutputDiff
     from bernstein.core.tasks.models import Task
 
 logger = logging.getLogger(__name__)
@@ -35,11 +38,26 @@ logger = logging.getLogger(__name__)
 __all__ = ["seal_evidence_on_completion"]
 
 
+def _output_diff_for(task: Task, produced_outputs: Sequence[str] | None) -> OutputDiff | None:
+    """Return the declared-vs-produced diff for ``task``, or ``None`` to skip.
+
+    ``None`` for ``produced_outputs`` means the caller has no observation of
+    what the task produced -- which is not the same as observing that it
+    produced nothing. Sealing an all-missing diff from an absent observation
+    would manufacture findings out of ignorance, so the diff is skipped and the
+    bundle stays byte-identical to a pre-#2559 bundle.
+    """
+    if produced_outputs is None or not task.declared_outputs:
+        return None
+    return compute_output_diff(task.declared_outputs, produced_outputs)
+
+
 def seal_evidence_on_completion(
     workdir: Path,
     task: Task,
     *,
     timestamp: int | None = None,
+    produced_outputs: Sequence[str] | None = None,
 ) -> EvidenceBundle | None:
     """Seal an evidence bundle for a completing task, fail-open (AC1).
 
@@ -53,15 +71,22 @@ def seal_evidence_on_completion(
     Args:
         workdir: The durable project root the bundle is anchored under (the
             orchestrator work dir, not the ephemeral session worktree).
-        task: The completing task; its ``evidence_producers`` drive the gate.
+        task: The completing task; its ``evidence_producers`` drive the gate
+            and its ``declared_outputs`` drive the output diff.
         timestamp: Seal timestamp; defaults to the wall clock.
+        produced_outputs: Canonical artifact keys the task actually produced,
+            when the caller has observed them. Supplying them seals the
+            three-way declared-vs-produced diff into the bundle's signed
+            binding (issue #2559). ``None`` -- the default -- means no
+            observation is available and no diff is sealed, so the bundle is
+            byte-identical to what this gate produced before.
 
     Returns:
         The sealed :class:`EvidenceBundle`, or ``None`` when the task declared
-        no producers or the gate raised.
+        nothing to seal or the gate raised.
     """
     producer_specs = task.evidence_producers
-    if not producer_specs:
+    if not producer_specs and not (task.declared_outputs and produced_outputs is not None):
         # Zero-touch no-op: tasks that never opted in pay no cost and leave no
         # trace, so existing completions are byte-for-byte unchanged.
         return None
@@ -73,6 +98,7 @@ def seal_evidence_on_completion(
             task_id=task.id,
             producers=producers,
             timestamp=timestamp if timestamp is not None else int(time.time()),
+            output_diff=_output_diff_for(task, produced_outputs),
         )
     except Exception as exc:  # fail-open: sealing must never fail a task completion
         logger.warning(
