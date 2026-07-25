@@ -107,7 +107,6 @@ The LLM judge used for eval scoring lives outside this package, in
 
 ## Cost and quota management
 
-- Peak-hour scheduling (`cost/peak_hour_router.py`) for time-of-day cost optimization
 - Cost anomaly detection, forecasting, and root cause analysis
 - Budget actions and completion budgets
 - Cost arbitrage across providers

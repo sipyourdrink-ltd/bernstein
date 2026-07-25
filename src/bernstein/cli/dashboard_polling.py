@@ -139,13 +139,18 @@ def _load_agents() -> list[dict[str, Any]]:
 
 
 def _load_quarantine() -> dict[str, Any]:
-    """Load quarantine data from local file or server."""
+    """Load quarantine data written by the orchestrator.
+
+    ``QuarantineStore`` serialises a bare JSON *list* of entries; the reader
+    previously looked for a ``{"entries": [...]}`` object, so every populated
+    file was silently reported as zero quarantined tasks.
+    """
     p = Path(".sdd/runtime/quarantine.json")
     if not p.exists():
         return {"count": 0, "tasks": []}
     try:
-        data: dict[str, Any] = json.loads(p.read_text())
-        entries: list[Any] = data.get("entries", [])
+        data: Any = json.loads(p.read_text())
+        entries: list[Any] = data if isinstance(data, list) else data.get("entries", [])
         return {"count": len(entries), "tasks": entries}
     except Exception as exc:
         logger.warning("Failed to load quarantine.json: %s", exc)

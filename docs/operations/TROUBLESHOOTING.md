@@ -192,7 +192,7 @@ cat .sdd/runtime/cost_report.json
 - Use cheaper models for low-complexity tasks: the router maps `Complexity.LOW` tasks to `haiku` automatically (see `PLAN.model_by_complexity` in `src/bernstein/core/defaults.py`).
 - Enable `batch_eligible` for non-urgent tasks (approximately 50% cost reduction via batch APIs).
 - Review per-agent cost with `bernstein cost --by model` and kill runaway agents.
-- Use peak-hour routing (`core/cost/peak_hour_router.py`) to shift non-urgent work to off-peak windows.
+- Mark non-urgent tasks `batch_eligible` so they run through the batch router instead of the interactive path.
 
 ---
 

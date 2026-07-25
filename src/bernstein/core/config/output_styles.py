@@ -3,6 +3,9 @@
 Reads style definitions from ``.bernstein/output-styles/`` (Markdown files
 with YAML frontmatter) and produces a combined style prompt appended to the
 agent system instructions.
+
+Lives under ``core/config`` rather than ``tui`` because the spawn-prompt
+renderers are its only consumers, and core must not import the TUI package.
 """
 
 from __future__ import annotations

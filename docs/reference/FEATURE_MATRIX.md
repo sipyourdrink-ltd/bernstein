@@ -7,11 +7,11 @@ The "Docs status" column reflects whether a page-level reference exists
 (`Full`) or whether the capability is documented in source / module
 docstrings only (`Brief`). `Full` rows link to their reference page.
 
-Rows still marked `Brief` are deliberate: the capability either has no
-operator-facing surface to document, or exists in source but cannot be
-invoked from any CLI, API, or config path today. The unreachable subset
-is tracked in
-[issue #2973](https://github.com/sipyourdrink-ltd/bernstein/issues/2973).
+Rows still marked `Brief` are deliberate: the capability is reachable from
+the surface named in its Notes column, but is documented in source and
+module docstrings rather than on its own reference page. Every row names a
+surface an operator can invoke; `tests/unit/test_cli_server_route_parity.py`
+additionally holds the CLI's server calls to the registered route table.
 
 ---
 
@@ -65,7 +65,6 @@ is tracked in
 | Cost analysis (`cost`, history/anomaly hooks) | Full | `bernstein cost`, cost anomaly detection active |
 | [Per-agent token progress](../observability/token-progress.md) | Full | Tracked in `api_usage.py`, surfaced in `bernstein status` |
 | [Session analytics](../operations/session-analytics.md) | Full | `bernstein recap` shows session-level stats |
-| Agent activity tracking | Brief | Activity metrics in `metrics/` |
 | [Debug bundle](../operations/debug-bundle.md) | Full | `bernstein debug` collects logs/state/config for triage |
 
 ## Safety and governance
@@ -80,13 +79,12 @@ is tracked in
 | Circuit breaker | Full | Halts misbehaving agents, writes SHUTDOWN signal |
 | [Token growth monitor](../operations/token-growth-monitor.md) | Full | Auto-intervention on runaway consumption |
 | [Cost anomaly detection](../operations/cost-anomaly-detection.md) | Full | Z-score based, acts via task completion |
-| Peak-hour scheduling | Brief | `peak_hour_router.py` for cost-aware time-of-day routing |
 | [Agent loop detection](../operations/agent-loop-detection.md) | Full | Kills agents in edit-loop cycles |
 | [Deadlock detection](../architecture/deadlock-detection.md) | Full | Wait-for graph, automatic victim selection |
 | [Cross-model verification](../architecture/quality-pipeline.md) | Full | A different model reviews completed diffs (opt-in) |
 | [Behaviour anomaly detection](../operations/observability-overview.md) | Full | Flags agents whose runtime metrics deviate statistically from baseline (`core/observability/behavior_anomaly.py`) |
 | [Context degradation detector](../architecture/context-degradation-detector.md) | Full | Monitors quality over time, restarts when degraded |
-| Progressive permission prompts | Brief | Per-agent permission levels |
+| Agent trust tiers | Brief | `bernstein agents trust`; tiers accrue from task outcomes in `.sdd/trust/` and map to an `AgentPermissions` profile (`core/agents/agent_trust.py`) |
 
 ## Verifiability and provenance
 
@@ -189,20 +187,17 @@ is tracked in
 | [Cascade fallback manager (cross-adapter failover)](../architecture/model-routing.md) | Full | Cross-adapter provider failover (`core/routing/cascade.py`) |
 | [Batch router](../architecture/batch-routing.md) | Full | Task batching for non-urgent work |
 | [Prompt caching](../operations/performance-tuning.md) | Full | SHA-256 system prefix deduplication |
-| Output style customization | Brief | Configurable agent output format |
+| Output style customization | Brief | `.bernstein/output-styles/*.md`, selected by `output_style:` in `bernstein.yaml`, injected into the spawn prompt |
 | [Installation mismatch detection](../operations/doctor.md) | Full | Detects adapter/installation gaps |
-| API preconnect warmup | Brief | Connection warmup before heavy runs |
 | [Worker badge identity](../operations/worker-process-identity.md) | Full | Process identification in `ps`/Activity Monitor |
 | [Keybinding system (TUI)](../operations/tui-keybindings.md) | Full | Configurable TUI keyboard shortcuts |
-| Diff folding display | Brief | Folded diff rendering in agent output |
-| Word-level diff rendering | Brief | Character-level change highlighting |
-| Contextual tips system | Brief | In-context hints for agents |
-| Session tag system | Brief | Tag and filter runs |
-| Rename session | Brief | Session renaming command |
-| Security review command | Brief | `bernstein security-review` |
+| Diff folding display | Brief | `bernstein diff --fold`; the TUI agent log also folds long diffs in its historical tail |
+| Word-level diff rendering | Brief | `bernstein diff --word-diff` highlights only the tokens that changed |
+| Contextual tips system | Brief | One cooldown-limited hint after an interactive command; `BERNSTEIN_NO_TIPS` opts out |
+| Security review command | Brief | `bernstein security-review` pattern-scans a diff for secrets, injection, and weak crypto |
 | [Commit attribution stats](../operations/commit-attribution.md) | Full | Per-agent commit statistics |
-| Away summary generation | Brief | Summarize what happened while you were away |
-| Plugin trust warning | Brief | Warns on unverified plugins |
+| Away summary generation | Brief | `bernstein recap --since 6h` builds the report from workspace files, no server needed |
+| Plugin trust warning | Brief | Trust tier and score per plugin in `bernstein plugins` (`--trust-details` for the signal breakdown) |
 | [Cumulative progress tracking](../observability/cumulative-progress.md) | Full | Progress tracking across runs |
 
 ## CLI commands
@@ -242,10 +237,9 @@ is tracked in
 | [`bernstein verify`](cli/verify.md) | Full | Merkle/HMAC verification |
 | `bernstein benchmark` | Full | Benchmark suite |
 | [`bernstein eval`](../eval/golden-harness.md) | Full | Evaluation harness |
-| `bernstein ideate` | Brief | Creative evolution |
 | `bernstein workspace` | Full | Multi-repo workspace |
 | [`bernstein config`](../operations/global-config.md) | Full | Configuration management |
-| `bernstein quarantine` | Brief | Cross-run task quarantine |
+| `bernstein quarantine` | Brief | Cross-run task quarantine read from `.sdd/runtime/quarantine.json` (`list`, `clear`) |
 | [`bernstein cache`](../concepts/semantic-caching.md) | Full | Response cache management |
 | [`bernstein test-adapter`](../adapters/test-adapter.md) | Full | Adapter smoke test |
 | [`bernstein add-task`](cli/task-lifecycle.md) | Full | Inject task via CLI |

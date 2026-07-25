@@ -27,7 +27,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "access_log": "bernstein.core.server.access_log",
     "acp": "bernstein.core.protocols.acp",
     "acp_ide_bridge": "bernstein.core.protocols.acp_ide_bridge",
-    "activity_summary_poller": "bernstein.core.orchestration.activity_summary_poller",
     "adapter_autodetect": "bernstein.core.agents.adapter_autodetect",
     "adapter_health": "bernstein.core.agents.adapter_health",
     "adaptive_parallelism": "bernstein.core.orchestration.adaptive_parallelism",

@@ -49,7 +49,7 @@ class AgentLogWidget(RichLog):
         rule_line = rule_char * side_len + label + rule_char * side_len
         self.write(Text.from_markup(f"[bold cyan]{rule_line}[/bold cyan]"))
 
-    def load_historical_lines(self, lines: list[str]) -> None:
+    def load_historical_lines(self, lines: list[str], *, fold_diffs: bool = True) -> None:
         """Load pre-existing log lines rendered in a dim style.
 
         Call this once at startup before any :meth:`append_line` calls.
@@ -58,7 +58,17 @@ class AgentLogWidget(RichLog):
         Args:
             lines: Raw log lines (already formatted/timestamped by the
                 source file).  Empty or whitespace-only lines are skipped.
+            fold_diffs: Collapse unified-diff blocks in the historical tail to
+                a summary line before rendering.  Agent logs routinely carry
+                multi-hundred-line diffs that would otherwise push every other
+                historical entry out of the scrollback.
         """
+        if fold_diffs and lines:
+            from bernstein.tui.log_viewer import apply_diff_folding
+
+            folded = apply_diff_folding("\n".join(raw.rstrip("\n") for raw in lines))
+            lines = folded.splitlines()
+
         for raw_line in lines:
             stripped = raw_line.rstrip()
             if not stripped:

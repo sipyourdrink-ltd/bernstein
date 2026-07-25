@@ -1007,6 +1007,22 @@ def _build_file_scope_context(tasks: list[Task]) -> str:
         return ""
 
 
+def _render_output_style(workdir: Path) -> str:
+    """Return the operator's active output-style prompt fragment, if any.
+
+    Styles live in ``.bernstein/output-styles/*.md``; ``output_style:`` in
+    ``bernstein.yaml`` selects which one is active.  Returns an empty string
+    when the workspace defines no styles, so the section is simply absent.
+    """
+    try:
+        from bernstein.core.config.output_styles import load_output_styles
+
+        return load_output_styles(workdir).get_prompt()
+    except Exception as exc:
+        logger.debug("Output style resolution failed: %s", exc)
+        return ""
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -1225,6 +1241,9 @@ def _render_prompt(
         logger.debug("Recommendation rendering failed: %s", exc)
     if project_context:
         sections.append(deduplicate_section(f"\n## Project context\n{project_context}\n"))
+    output_style_prompt = _render_output_style(workdir)
+    if output_style_prompt:
+        sections.append(deduplicate_section(f"\n## Output style\n{output_style_prompt}\n"))
     if token_budget > 0:
         if token_budget >= 1_000_000:
             budget_hint = f"~{token_budget // 1_000_000}M"

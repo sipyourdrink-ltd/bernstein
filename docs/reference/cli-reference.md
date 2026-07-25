@@ -315,7 +315,13 @@ A subcommand group; defaults to `bernstein logs tail`.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--archive PATH` | `.sdd/archive/tasks.jsonl` | Path to task archive. |
+| `--since DURATION` | none | Build the report from workspace files instead of the task server (`45m`, `6h`, `2d`; a bare number is minutes). |
+| `--workdir PATH` | `.` | Project root, used with `--since`. |
 | `--as-json` | off | Emit raw JSON. |
+
+With `--since` the summary is the "since you were away" report: completed and
+failed tasks, provider errors, and estimated cost read from `.sdd/` alone, so
+it still answers what happened after the run and its server have exited.
 
 #### `bernstein retro`
 
@@ -456,13 +462,20 @@ The two groups share most flags:
 
 #### `bernstein diff`
 
-Show what changed between two task states.
+Show the diff an agent produced for a task, resolved from its live worktree,
+its merged branch, or the merge commit.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `TASK_A` | required | First task ID. |
-| `TASK_B` | required | Second task ID. |
-| `--unified N` | 3 | Unified-diff context lines. |
+| `TASK_ID` | required unless `--compare` | Task whose agent diff to show. |
+| `--base REV` | `main` | Base branch to diff against. |
+| `--workdir PATH` | `.` | Project root. |
+| `--stat` | off | Show the `--stat` summary only. |
+| `--raw` | off | Print the raw diff without syntax highlighting. |
+| `--fold` | off | Collapse each hunk to its header plus a few lines. |
+| `--fold-lines N` | 3 | Lines kept per hunk when `--fold` is set. |
+| `--word-diff` | off | Highlight only the tokens that changed on replaced lines. |
+| `--compare A B` | none | Side-by-side comparison of two agents' work. |
 
 ---
 
@@ -486,6 +499,7 @@ Show what changed between two task states.
 | `match` | `--role X` `--task TEXT` - show which agent best matches. |
 | `sandbox-backends` | List available sandbox backends. |
 | `discover` | Auto-detect installed CLI agents. `--net` also searches GitHub/npm. |
+| `trust` | Per-agent trust tiers from task outcomes (`--agent ID` adds the tier's permission profile, `--as-json` for machine output). |
 
 #### `bernstein test-adapter`
 
@@ -532,14 +546,18 @@ See [`operations/cluster-mode.md`](../operations/cluster-mode.md) for the full s
 | `bernstein manifest` | Manifest mgmt (group). | `cli/commands/manifest_cmd.py:18` |
 | `bernstein templates` | Project template mgmt (group). | `cli/commands/templates_cmd.py:41` |
 | `bernstein skill` | Skill usage provenance (group): install receipts + provenance graph. | `cli/commands/skill_cmd.py:1` |
+| `bernstein security-review` | Pattern-scan a diff for security issues. | `cli/commands/security_review_cmd.py` |
 
 #### `bernstein plugins`
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--workdir` | `.` | Project root. |
+| `--trust-details` | off | Print the full trust-signal breakdown for each low-trust plugin. |
 
-Lists plugins in `.bernstein/plugins/<name>/meta.json`.
+Lists plugins in `.bernstein/plugins/<name>/meta.json` with a trust tier and
+score derived from the plugin's own signals - signature file, packaging
+metadata, README, tests - so an unreviewed plugin is visible before it loads.
 
 #### `bernstein skills`
 
@@ -839,12 +857,29 @@ hashes; the command exits non-zero otherwise.
 
 #### `bernstein quarantine`
 
+Reads and writes `.sdd/runtime/quarantine.json`, the cross-run quarantine the
+orchestrator maintains, so neither subcommand needs a running task server.
+
 | Subcommand | Purpose |
 |---|---|
-| `list` | List quarantined tasks. |
-| `clear` | Clear all quarantined tasks. `--confirm` to skip prompt. |
+| `list` | List active quarantine entries. `--all` includes expired ones, `--workdir PATH` selects the project root. |
+| `clear` | Clear entries. `--task TITLE` clears one, `--confirm` skips the prompt. |
 
 (`cli/commands/advanced_cmd.py`.)
+
+#### `bernstein security-review`
+
+Pattern-scans a unified diff without calling a model. Exit `0` clean or
+advisory-only, `1` on any critical/high finding, `2` when there is no diff.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `TASK_ID` | none | Scan the diff one agent produced for that task. |
+| `--workdir PATH` | `.` | Project root. |
+| `--base REV` | `main` | Base revision when scanning the working tree. |
+| `--diff-file PATH` | none | Scan a saved diff; `-` reads stdin. |
+| `--as-json` | off | Emit findings as JSON. |
+| `--fail-on-any` | off | Exit non-zero on any finding, not just critical/high. |
 
 #### `bernstein approve-tool` / `bernstein reject-tool`
 
@@ -1184,7 +1219,6 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 |---|---|---|
 | `bernstein explain CONCEPT` | Concept explainer. | `cli/explain_help_cmd.py:171` |
 | `bernstein help-all` | Comprehensive help screen. | `cli/commands/advanced_cmd.py:378` |
-| `bernstein ideate` | Generate improvement ideas. | `cli/commands/advanced_cmd.py:393` |
 | `bernstein aliases` | Show CLI aliases. | `cli/aliases.py` |
 | `bernstein fingerprint` | Replay verification (group). | `cli/fingerprint_cmd.py:37` |
 | `bernstein graph` | Dependency graph (group). | `cli/graph_cmd.py:19` |
@@ -1275,14 +1309,6 @@ Experimental voice control (see [`operations/voice-control.md`](../operations/vo
 |---|---|---|
 | `CONCEPT` | required | Concept name (e.g. `cascade-router`, `wal`, `janitor`). |
 | `--format {text\|markdown\|json}` | text | Output format. |
-
-#### `bernstein ideate`
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `-c, --count N` | 3 | Number of improvement ideas. |
-| `-f, --focus AREA` | none | Focus area (e.g. `performance`, `testing`, `docs`). |
-| `--as-json` | off | Emit raw JSON. |
 
 #### `bernstein test`
 
