@@ -126,6 +126,7 @@ Specific shapes where the value lands:
 - platform teams that need an audit log of agent decisions: enable `--audit` and the orchestrator writes one row per scheduling decision, you can grep it
 - anyone burning more than $1k/mo on coding agents who wants determinism: you can replay yesterday's plan and get yesterday's task graph
 - forward-deployed engineers dropping into a client repo: credentials stay in your env, not the client's; agents you spawn are whichever CLI tool the client already trusts
+- teams whose pipeline also produces non-code deliverables (a report, a dataset, an ops result): a task can declare an artifact contract and complete on a signed lineage receipt instead of a git commit, verifiable offline with `bernstein artifact verify` - see [docs/operations/artifacts.md](docs/operations/artifacts.md)
 
 If you nodded at two of those bullets, this fits.
 
@@ -133,9 +134,9 @@ If you nodded at two of those bullets, this fits.
 
 - "I want one pair-programmer to chat with about my code": a single CLI agent is fine. Bernstein adds orchestration overhead you don't need.
 - prototypes where merge gates are overkill: the lint/types/tests/cross-model-review pipeline is value when the cost of a bad merge is real, friction when you're throwing the repo away on Friday.
-- non-coding tasks (research, writing, data analysis pipelines): Bernstein wraps CLI coding agents specifically, not generic LLM workflows.
 - anyone who wants a SaaS wrapper with a credit-card form: Bernstein is on-prem only by design.
 - teams that need a vendor with a support SLA and a contract: solo open-source project. GitHub issues are how support happens.
+- generic LLM chat workflows with no verifiable deliverable: a task has to produce something checkable - a commit, or an artifact whose canonical bytes a criterion can be evaluated against.
 - research-shape "let the agents collaborate emergently" use cases: the deterministic scheduler is a hard wall there.
 
 ## how it compares

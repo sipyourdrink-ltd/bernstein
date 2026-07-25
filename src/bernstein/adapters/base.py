@@ -423,9 +423,10 @@ class CLIAdapter(ABC):
     #: the dispatch loop falls back to plain process-exit detection.
     supports_session_log_watch: bool = False
 
-    #: Per-adapter strategy declaration across the three axes defined in
-    #: :mod:`bernstein.adapters._contract` - resume, dangerous-mode, and
-    #: event-channel. Left ``None`` here so the canonical declaration lives
+    #: Per-adapter strategy declaration across the four axes defined in
+    #: :mod:`bernstein.adapters._contract` - resume, dangerous-mode,
+    #: event-channel, and output-mode. Left ``None`` here so the canonical
+    #: declaration lives
     #: in ``STRATEGY_MATRIX`` keyed by registry name; subclasses MAY override
     #: with an inline :class:`~bernstein.adapters._contract.AdapterStrategy`
     #: to keep the declaration next to the implementation. Read it through
