@@ -97,15 +97,15 @@ def test_enqueue_alive_exit_janitor_logs_and_submits(
         future = _enqueue_alive_exit_janitor_pass(orch, task, reason="alive_exit_tick")
 
     assert future is not None, "janitor future must be returned for tasks with completion_signals"
-    # Executor got a verify_task or run_janitor submission.
+    # Executor got a verify_task_completion or run_janitor submission.
     assert len(executor.submitted) == 1
     fn, args, _ = executor.submitted[0]
-    # Either verify_task (sync) or _verify_via_janitor (async) is acceptable.
-    from bernstein.core.janitor import verify_task
+    # Either the sync completion dispatcher or _verify_via_janitor (async).
+    from bernstein.core.tasks.artifact_completion import verify_task_completion
 
-    assert fn in (verify_task, task_lifecycle._verify_via_janitor)
-    if fn is verify_task:
-        # verify_task(task, workdir)
+    assert fn in (verify_task_completion, task_lifecycle._verify_via_janitor)
+    if fn is verify_task_completion:
+        # verify_task_completion(task, workdir)
         assert args[0] is task
     else:
         # _verify_via_janitor(task, workdir, server_url)
@@ -292,15 +292,18 @@ def test_process_single_completed_task_logs_alive_exit_start(
 
 
 def test_dead_path_janitor_pass_unchanged() -> None:
-    """Sanity: the dead-exit ``verify_task`` call site is untouched.
+    """Sanity: the dead-exit synchronous verification call site is untouched.
 
     Regresses the safe carve-out: item 30 must NOT modify
-    ``handle_orphaned_task`` (read-only territory).
+    ``handle_orphaned_task`` (read-only territory). The call goes through
+    ``verify_task_completion``, the single completion entry point that
+    dispatches on the task's output mode and falls through to
+    ``janitor.verify_task`` for every non-artifact task.
     """
     import inspect
 
     from bernstein.core.agents import agent_lifecycle
 
     src = inspect.getsource(agent_lifecycle.handle_orphaned_task)
-    # The synchronous verify_task call must still be present.
-    assert "passed, failed_signals = verify_task(task, orch._workdir)" in src
+    # The synchronous verification call must still be present.
+    assert "passed, failed_signals = verify_task_completion(task, orch._workdir)" in src
