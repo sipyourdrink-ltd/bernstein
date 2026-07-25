@@ -668,6 +668,40 @@ class LineageSpine:
         return SpineVerifyResult(status=SpineStatus.OK, count=count)
 
 
+def verify_entry(entry: SpineEntry, hmac_key: bytes) -> bool:
+    """Whether one materialised entry is intact on its own terms.
+
+    Recomputes the entry hash from the entry's own fields and the HMAC tag over
+    its body, so a single-byte mutation of any hashed field or of the tag
+    returns ``False``. This is the per-entry counterpart of
+    :meth:`LineageSpine.verify`, which additionally walks the ``prev_hash``
+    linkage across the whole chain.
+
+    Split out because a per-artifact projection needs a verdict for the exact
+    entries that carry one artifact key, not for the run's whole chain: a
+    tampered entry belonging to a different artifact must not turn every other
+    artifact in the same run red.
+
+    Returns:
+        ``True`` when both the entry hash and the HMAC tag recompute.
+    """
+    expected_hash = compute_entry_hash(
+        prev_hash=entry.prev_hash,
+        artifact_path=entry.artifact_path,
+        content_hash=entry.content_hash,
+        actor=entry.actor,
+        step_id=entry.step_id,
+        model=entry.model,
+        timestamp=entry.timestamp,
+        traceparent=entry.traceparent,
+        tracestate=entry.tracestate,
+        baggage=entry.baggage,
+    )
+    if not _hmac.compare_digest(entry.entry_hash, expected_hash):
+        return False
+    return _hmac.compare_digest(entry.hmac, _compute_hmac(hmac_key, entry.body()))
+
+
 __all__ = [
     "JOURNAL_SEAL_STEP_PREFIX",
     "SPINE_ENTRY_VERSION",
@@ -678,4 +712,5 @@ __all__ = [
     "SpineVerifyResult",
     "compute_entry_hash",
     "content_hash_of",
+    "verify_entry",
 ]

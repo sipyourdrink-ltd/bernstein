@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from bernstein.core.lineage.artifact_events import emit_production_event
 from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.platform_compat import (
     kill_process_group,
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.config.platform_compat import ProcessReapReceipt
+    from bernstein.core.lineage.artifact_events import ArtifactProductionEvent
     from bernstein.core.lineage.identity import AgentCard
     from bernstein.core.models import AbortReason, ApiTierInfo, ModelConfig
 
@@ -1070,6 +1072,24 @@ def _filter_lineage_baggage(baggage: str | None) -> str | None:
     return ",".join(kept) if kept else None
 
 
+#: Process-wide sink for ``artifact.produced`` events (issue #2559). Left
+#: ``None`` in a plain CLI run: the event is still journaled beside the spine,
+#: so the fan-out stays replayable with no server attached. The task server
+#: installs a publisher at startup to mirror events onto the SSE bus.
+_ARTIFACT_EVENT_PUBLISHER: Callable[[ArtifactProductionEvent], None] | None = None
+
+
+def set_artifact_event_publisher(publisher: Callable[[ArtifactProductionEvent], None] | None) -> None:
+    """Install (or clear) the live sink for artifact production events.
+
+    The publisher is best-effort and its exceptions are swallowed at the write
+    boundary: a subscriber that cannot keep up must not fail the artifact write
+    that fed it.
+    """
+    global _ARTIFACT_EVENT_PUBLISHER  # one process-wide sink, by design
+    _ARTIFACT_EVENT_PUBLISHER = publisher
+
+
 def _lineage_enabled() -> bool:
     """Return whether the lineage spine write boundary is active.
 
@@ -1146,7 +1166,7 @@ def record_artifact_write(
         traceparent = None
         tracestate = None
 
-    return LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key).record(
+    entry = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key).record_entry(
         artifact_path=artifact_path,
         content=content,
         actor=actor,
@@ -1157,6 +1177,20 @@ def record_artifact_write(
         tracestate=tracestate,
         baggage=baggage,
     )
+
+    # Issue #2559: exactly one production event per spine entry, emitted from
+    # the same boundary the entry was written at, so there is no per-adapter
+    # opt-in to forget and no path that records provenance without announcing
+    # it. Fail-open by construction (see ``emit_production_event``): the entry
+    # above is already durable, and the event set is re-derivable from it, so a
+    # journal or bus failure must not undo a successful write.
+    emit_production_event(
+        lineage_root,
+        run_id=run_id,
+        entry=entry,
+        publish=_ARTIFACT_EVENT_PUBLISHER,
+    )
+    return entry.entry_hash
 
 
 def post_write_lineage_hook(
