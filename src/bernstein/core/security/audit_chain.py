@@ -7499,6 +7499,136 @@ def record_pool_warm_quarantine(
     )
 
 
+# ---------------------------------------------------------------------------
+# Provenance-verified release update advisory (#2942)
+# ---------------------------------------------------------------------------
+
+#: Issue #2942 -- one update check, sealed. Binds the installed version, the
+#: provenance-verified candidate, that candidate's wheel hash, and the signed
+#: surface delta to a position in the chain, so "on date D we checked, found
+#: vV, verified its provenance, and deferred" is reconstructable rather than
+#: an ephemeral print. Only hashes, versions, and counts are recorded.
+EVENT_UPDATE_ADVISORY = "update.advisory"
+
+#: Issue #2942 -- one install or rollback of the orchestrator itself. Binds
+#: the from/to versions, the wheel hash that was verified before pip ran, and
+#: the signing identity the provenance chained to, so an upgrade is as
+#: reconstructable as any other chain event and its predecessor is known.
+EVENT_SELF_UPDATE = "self.update"
+
+
+def record_update_advisory(
+    *,
+    chain: AuditChainStore,
+    advisory_sha256: str,
+    installed_version: str,
+    candidate_version: str | None,
+    candidate_wheel_sha256: str | None,
+    provenance_verified: bool,
+    surface_delta: dict[str, Any],
+    feed_sha256: str,
+    trust_root_fingerprint: str,
+    actor: str = "update_advisory",
+) -> AuditEvent:
+    """Append an ``update.advisory`` event into *chain* (#2942).
+
+    Mirrors one provenance-verified update check into the HMAC chain: the
+    content hash of the sealed advisory, the version pair, the candidate's
+    wheel hash, whether provenance verified, and the signed surface delta. An
+    operator can prove offline which release they were told about, which
+    signing identity vouched for it, and where in the chain the check sat --
+    which is what separates the advisory from a version-string diff.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        advisory_sha256: Content hash of the canonical advisory bytes.
+        installed_version: Version installed when the check ran.
+        candidate_version: Verified candidate, or ``None`` when up to date.
+        candidate_wheel_sha256: Wheel hash the candidate would install.
+        provenance_verified: True iff the candidate's release manifest
+            verified against the configured trust root before being surfaced.
+        surface_delta: Signed surface classification of the gap.
+        feed_sha256: Content hash of the verified release feed body.
+        trust_root_fingerprint: Fingerprint of the trust root that vouched.
+        actor: Recorded actor; defaults to ``"update_advisory"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_UPDATE_ADVISORY,
+        actor=actor,
+        resource_type="update_advisory",
+        resource_id=advisory_sha256,
+        details={
+            "advisory_sha256": advisory_sha256,
+            "installed_version": installed_version,
+            "candidate_version": candidate_version,
+            "candidate_wheel_sha256": candidate_wheel_sha256,
+            "provenance_verified": provenance_verified,
+            "surface_delta": dict(surface_delta),
+            "feed_sha256": feed_sha256,
+            "trust_root_fingerprint": trust_root_fingerprint,
+        },
+    )
+
+
+def record_self_update_receipt(
+    *,
+    chain: AuditChainStore,
+    receipt_sha256: str,
+    direction: str,
+    from_version: str,
+    to_version: str,
+    wheel_sha256: str,
+    provenance_key_fingerprint: str,
+    advisory_sha256: str,
+    attestation_verified: bool | None,
+    actor: str = "self_update",
+) -> AuditEvent:
+    """Append a ``self.update`` install/rollback receipt into *chain* (#2942).
+
+    Recorded after the wheel hash has been checked against the
+    provenance-verified advisory and before the operator is told the upgrade
+    succeeded, so the chain names the exact artefact that was installed.
+    ``direction`` distinguishes a forward install from a rollback; because
+    both are receipted, the predecessor of any installed version is known
+    from the chain rather than from a plaintext breadcrumb file.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_sha256: Content hash of the canonical receipt bytes.
+        direction: ``"install"`` or ``"rollback"``.
+        from_version: Version in place before the change.
+        to_version: Version in place after the change.
+        wheel_sha256: Hash of the wheel that was verified and installed.
+        provenance_key_fingerprint: Trust root the provenance chained to.
+        advisory_sha256: The advisory this install was authorised by.
+        attestation_verified: Tri-state Sigstore result -- True verified,
+            False refused, None skipped (no verifier available).
+        actor: Recorded actor; defaults to ``"self_update"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SELF_UPDATE,
+        actor=actor,
+        resource_type="self_update_receipt",
+        resource_id=receipt_sha256,
+        details={
+            "receipt_sha256": receipt_sha256,
+            "direction": direction,
+            "from_version": from_version,
+            "to_version": to_version,
+            "wheel_sha256": wheel_sha256,
+            "provenance_key_fingerprint": provenance_key_fingerprint,
+            "advisory_sha256": advisory_sha256,
+            "attestation_verified": attestation_verified,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -7595,6 +7725,7 @@ __all__ = [
     "EVENT_RUN_SSH_TASK",
     "EVENT_SCHEDULE_COLLISION",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
+    "EVENT_SELF_UPDATE",
     "EVENT_SIGNAL_GATE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
@@ -7615,6 +7746,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
     "EVENT_TOURNAMENT_SELECTION",
+    "EVENT_UPDATE_ADVISORY",
     "EVENT_WEBHOOK_NODE_RECEIPT",
     "EVENT_WEBHOOK_PAYLOAD_ANCHOR",
     "EVENT_WORK_LEDGER_ANCHOR",
@@ -7721,6 +7853,7 @@ __all__ = [
     "record_run_ssh_task",
     "record_schedule_collision",
     "record_schedule_fire_projection",
+    "record_self_update_receipt",
     "record_sensitive_gate",
     "record_signal_gate_projection",
     "record_skill_install_receipt",
@@ -7741,6 +7874,7 @@ __all__ = [
     "record_task_suspension",
     "record_thread_approval",
     "record_tournament_selection",
+    "record_update_advisory",
     "record_webhook_node_receipt",
     "record_webhook_payload_anchor",
     "record_work_ledger_anchor",

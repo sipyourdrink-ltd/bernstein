@@ -252,7 +252,8 @@ additionally holds the CLI's server calls to the registered route table.
 | [`bernstein watch`](../operations/watch.md) | Full | Directory file watcher |
 | [`bernstein listen`](../operations/voice-control.md) | Full | Voice commands (experimental) |
 | [`bernstein completions`](../operations/shell-completions.md) | Full | Shell completion scripts |
-| [`bernstein self-update`](../operations/self-update.md) | Full | Upgrade from PyPI |
+| [`bernstein self`](../operations/updates.md) | Full | Provenance-verified update lifecycle: signed feed, chain-anchored advisory, pre-install wheel verification, pin, receipted rollback |
+| [`bernstein self-update`](../operations/self-update.md) | Full | Compatibility alias for `bernstein self` |
 | [`bernstein plugins`](../integrations/plugin-sdk.md) | Full | List active plugins |
 | [`bernstein install-hooks`](../contributing/git-hooks.md) | Full | Install git hooks |
 | [`bernstein debug`](../operations/debug-bundle.md) | Full | Generate debug bundle for triage |

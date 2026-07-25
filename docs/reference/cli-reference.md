@@ -978,7 +978,8 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `bernstein debug-bundle` | Bug-report bundle. | `cli/debug_cmd.py:81` |
 | `bernstein debug` | (alias of debug-bundle) | `cli/main.py:825` |
 | `bernstein doctor` | Self-diagnostics. | `cli/doctor_cmd.py:281` |
-| `bernstein self-update` | Upgrade Bernstein. | `cli/self_update_cmd.py:189` |
+| `bernstein self` | Provenance-verified update lifecycle (group). | `cli/commands/self_update_cmd.py:self_group` |
+| `bernstein self-update` | Compatibility alias for `bernstein self`. | `cli/commands/self_update_cmd.py:self_update_cmd` |
 | `bernstein man-pages` | Man-page generator. | `cli/man_page.py:man_pages_cmd` |
 | `bernstein completions` | Shell completion script. | `cli/commands/advanced_cmd.py:1076` |
 | `bernstein config-path` | Show config path. | `cli/config_path_cmd.py:54` |
@@ -1008,12 +1009,24 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `--include-logs` | on | Include `.sdd/logs/`. |
 | `--include-secrets` | off | (NOT recommended) include credential blobs. |
 
+#### `bernstein self`
+
+| Subcommand | Purpose |
+|---|---|
+| `check-update` | Verify the signed release feed offline and seal a chain-anchored advisory. |
+| `update` | Install the verified candidate; refuses mid-run, verifies the wheel hash first. |
+| `pin VERSION` / `unpin` | Signed version pin the updater will not cross without `--override-pin`. |
+| `rollback` | Return to the previous receipted version. |
+
+See [Updates: check, verify, apply](../operations/updates.md).
+
 #### `bernstein self-update`
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--channel {stable\|beta}` | stable | Release channel. |
-| `--check-only` | off | Print available version, do not install. |
+| `--check` | off | Same as `bernstein self check-update`. |
+| `--rollback` | off | Same as `bernstein self rollback`. |
+| `--yes`, `-y` | off | Skip the confirmation prompt. |
 
 #### `bernstein completions`
 
