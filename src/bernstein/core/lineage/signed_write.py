@@ -41,12 +41,21 @@ code. The signed-append operation itself is not deprecated and lives here.
 :meth:`LineageStore.append` is reached from nowhere else in ``src/``, so a
 signed write cannot silently regress onto a deprecated substrate.
 
-Path safety
------------
+Artifact keys and path safety
+-----------------------------
 
-Absolute paths and ``..`` traversal are rejected before any HMAC or signature
-is computed, so a caller that controls ``artefact_path`` cannot anchor an
-artefact outside the repo.
+``artefact_path`` is an *artifact key* (issue #2559): either a repo-relative
+POSIX path -- the implicit default scheme, and what every historical entry
+carries -- or a canonical URI from the closed scheme set in
+:mod:`bernstein.core.lineage.artifact_uri` (``pr``, ``pkg``, ``deploy``,
+``doc``), which lets a signed entry attribute an artifact whose bytes never
+lived in the worktree.
+
+The key is validated before any HMAC or signature is computed, through the same
+decision function the spine boundary uses, so the two write boundaries cannot
+drift apart. Absolute paths and ``..`` traversal are rejected, so a caller that
+controls the key cannot anchor an artefact outside the repo; an unknown or
+non-canonical URI is rejected rather than stored as if it were a filename.
 """
 
 from __future__ import annotations
@@ -56,6 +65,15 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from bernstein.core.lineage.artifact_uri import (
+    REASON_ABSOLUTE,
+    REASON_EMPTY,
+    REASON_MALFORMED_URI,
+    REASON_NON_CANONICAL,
+    REASON_TRAVERSAL,
+    REASON_UNKNOWN_SCHEME,
+    artifact_key_rejection_reason,
+)
 from bernstein.core.lineage.entry import LineageEntry, canonicalise, compute_operator_hmac, entry_hash
 from bernstein.core.lineage.identity import sign_detached
 
@@ -65,28 +83,45 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Boundary wording for each rejection code from
+#: :func:`bernstein.core.lineage.artifact_uri.artifact_key_rejection_reason`.
+#: The three legacy codes keep their pre-#2559 message verbatim, so a caller
+#: matching on the error text is unaffected.
+_REJECTION_MESSAGES = {
+    REASON_EMPTY: "empty artefact_path",
+    REASON_ABSOLUTE: "absolute artefact_path not allowed",
+    REASON_TRAVERSAL: "path traversal in artefact_path",
+    REASON_UNKNOWN_SCHEME: "unknown artefact URI scheme",
+    REASON_MALFORMED_URI: "malformed artefact URI",
+    REASON_NON_CANONICAL: "non-canonical artefact URI",
+}
+
 
 def _is_unsafe_path(artefact_path: str) -> str | None:
-    """Return a reason string if the path is unsafe; ``None`` otherwise.
+    """Return a reason string if the key is unsafe; ``None`` otherwise.
 
-    Rules:
+    Delegates the decision to
+    :func:`bernstein.core.lineage.artifact_uri.artifact_key_rejection_reason`,
+    the single function the spine boundary also routes through, so the two
+    write boundaries cannot drift apart on what a legal artifact key is
+    (issue #2559).
 
-      * Absolute paths (``/...`` or ``C:\\...``) are rejected - lineage paths
-        are repo-relative POSIX strings.
-      * Any segment equal to ``..`` is rejected (path traversal).
-      * Empty paths are rejected.
+    Repo-relative paths keep their previous verdict exactly:
+
+      * absolute paths (``/...`` or ``C:\\...``) are rejected - a repo lineage
+        key is a repo-relative POSIX string;
+      * any segment equal to ``..`` is rejected (path traversal), treating
+        ``\\`` as a separator too (defence in depth);
+      * empty keys are rejected.
+
+    In addition, a canonical artifact URI from the closed scheme set is now
+    accepted, and a string carrying ``://`` with an unknown scheme or a
+    non-canonical spelling is rejected instead of being stored as a filename.
     """
-    if not artefact_path:
-        return "empty artefact_path"
-    # POSIX absolute (`/foo`) or Windows-style drive prefix (`C:\foo`).
-    if artefact_path.startswith("/") or (len(artefact_path) > 2 and artefact_path[1:3] == ":\\"):
-        return "absolute artefact_path not allowed"
-    # Normalise separator-style: lineage canonical is POSIX, so we treat
-    # ``\`` as a separator too for the safety check (defence in depth).
-    segments = artefact_path.replace("\\", "/").split("/")
-    if any(seg == ".." for seg in segments):
-        return "path traversal in artefact_path"
-    return None
+    reason = artifact_key_rejection_reason(artefact_path)
+    if reason is None:
+        return None
+    return _REJECTION_MESSAGES[reason]
 
 
 def seal_write(

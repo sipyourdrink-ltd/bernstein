@@ -164,11 +164,65 @@ if TYPE_CHECKING:
     from bernstein.core.backlog_parser import ParsedBacklogTask
     from bernstein.core.container import ContainerConfig
     from bernstein.core.permission_mode import PermissionMode
+    from bernstein.core.protocols.cluster.mesh_coordinator import MeshCoordinator
     from bernstein.core.quality_gates import QualityGatesConfig
     from bernstein.core.spawner import AgentSpawner
     from bernstein.evolution.loop import EvolutionLoop
 
 logger = logging.getLogger(__name__)
+
+
+def start_cluster_coordinator(
+    cluster_cfg: ClusterConfig | None,
+    *,
+    sdd_dir: Path,
+) -> MeshCoordinator | None:
+    """Start the coordination path this cluster topology selects (#2558).
+
+    ``ClusterTopology.MESH`` was declared in the enum and accepted by config
+    but nothing ever branched on it, so a ``topology: mesh`` deployment silently
+    ran STAR. This is that branch.
+
+    * **STAR** (and ``hierarchical``, and cluster mode off) -> ``None``. The
+      central ``NodeRegistry`` and ``POST /cluster/steal`` remain the arbiter
+      and nothing about that path changes.
+    * **MESH** -> a :class:`MeshCoordinator` over the signed, Merkle-chained
+      claim journal. There is no central arbiter to consult: nodes self-claim
+      against the journal and converge by the deterministic ``entry_hash``
+      rule.
+
+    Provisioning the journal and the node signing identity happens here, at
+    startup, so a misconfigured MESH deployment fails at boot with one loud log
+    line rather than mid-run on the first claim.
+
+    Args:
+        cluster_cfg: The resolved cluster config, or ``None`` when cluster mode
+            is off.
+        sdd_dir: The project ``.sdd`` directory holding the journal and the
+            node signing identity.
+
+    Returns:
+        The MESH coordinator, or ``None`` for every non-MESH topology.
+    """
+    if cluster_cfg is None or cluster_cfg.topology is not ClusterTopology.MESH:
+        return None
+    from bernstein.core.protocols.cluster.mesh_coordinator import build_mesh_coordinator
+
+    coordinator = build_mesh_coordinator(cluster_cfg, sdd_dir=sdd_dir)
+    if coordinator is None:
+        logger.error(
+            "cluster.topology is 'mesh' but the claim journal could not be provisioned; "
+            "leaderless coordination is disabled",
+        )
+        return None
+    logger.info(
+        "MESH topology: leaderless claim journal at %s (node %s, %d gossip peer(s)); "
+        "the central node registry and /cluster/steal are not used",
+        coordinator.journal.path,
+        coordinator.node_id,
+        len(coordinator.peers),
+    )
+    return coordinator
 
 
 def _build_container_config(iso: ContainerIsolationConfig) -> ContainerConfig | None:
@@ -5989,7 +6043,14 @@ if __name__ == "__main__":
                 node_timeout_s=(cluster_cfg.node_timeout_s if cluster_cfg else 60),
                 server_url=os.environ.get("BERNSTEIN_SERVER_URL") or (cluster_cfg.server_url if cluster_cfg else None),
                 bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
+                gossip_peers=(cluster_cfg.gossip_peers if cluster_cfg else ()),
+                claim_lease_ttl_s=(cluster_cfg.claim_lease_ttl_s if cluster_cfg else 300),
+                claim_journal_path=(cluster_cfg.claim_journal_path if cluster_cfg else None),
             )
+
+        # Topology branch (#2558): MESH starts a leaderless coordinator instead
+        # of taking its assignments from the central node registry.
+        start_cluster_coordinator(cluster_cfg, sdd_dir=workdir / ".sdd")
 
         # Resolve compliance can force approval gates
         if compliance_config and compliance_config.approval_gates and approval_mode == "auto":

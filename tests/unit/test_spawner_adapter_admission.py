@@ -21,7 +21,6 @@ from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.admission import (
     GATE_RECEIPT_KIND,
-    REASON_NO_RECEIPT,
     VERDICT_REFUSE,
     AdapterAdmissionRefusal,
 )
@@ -106,7 +105,13 @@ def test_warn_policy_records_but_does_not_block(
     mock_adapter_factory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The default: observable first, blocking only when opted into."""
+    """The default: observable first, blocking only when opted into.
+
+    The exact refusal reason depends on whether the host happens to have the
+    upstream binary installed (``no_receipt`` when it does, ``conformance_skip``
+    when it does not), so the assertion is on the verdict and the record - the
+    two things the warn policy is defined by - rather than on the reason.
+    """
     monkeypatch.delenv(_POLICY_ENV, raising=False)
     spawner = _spawner(tmp_path, mock_adapter_factory())
 
@@ -114,7 +119,8 @@ def test_warn_policy_records_but_does_not_block(
 
     events = _admission_events(tmp_path)
     assert len(events) == 1
-    assert events[0].details["reason"] == REASON_NO_RECEIPT  # type: ignore[attr-defined]
+    assert events[0].details["verdict"] == VERDICT_REFUSE  # type: ignore[attr-defined]
+    assert events[0].details["reason"]  # type: ignore[attr-defined]
 
 
 def test_off_policy_skips_the_gate_entirely(
@@ -126,6 +132,51 @@ def test_off_policy_skips_the_gate_entirely(
     spawner = _spawner(tmp_path, mock_adapter_factory())
 
     spawner._preflight_adapter_admission("opencode")
+
+    assert _admission_events(tmp_path) == []
+
+
+def test_unregistered_adapter_name_is_refused_not_crashed(
+    tmp_path: Path,
+    mock_adapter_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A spawner can hold an adapter that was injected, not registry-resolved.
+
+    Test doubles and third-party adapters are both constructed directly and
+    handed to the spawner, so their name need not resolve in ``_ADAPTERS``.
+    The gate must record a refusal for such a name rather than raising the
+    registry's "unknown adapter" ``ValueError`` out of an unrelated preflight.
+    """
+    monkeypatch.delenv(_POLICY_ENV, raising=False)
+    spawner = _spawner(tmp_path, mock_adapter_factory())
+
+    spawner._preflight_adapter_admission("mockcli")
+
+    events = _admission_events(tmp_path)
+    assert len(events) == 1
+    assert events[0].details["adapter"] == "mockcli"  # type: ignore[attr-defined]
+    assert events[0].details["verdict"] == VERDICT_REFUSE  # type: ignore[attr-defined]
+
+
+def test_non_string_adapter_key_is_skipped_not_serialised(
+    tmp_path: Path,
+    mock_adapter_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stubbed adapter key must not reach the chain as an unserialisable value.
+
+    Spawner tests construct the spawner around a ``MagicMock``, so the name
+    that flows into the preflight is not always a string. Every receipt field
+    is JSON-serialised into the audit chain, so passing one through would
+    raise ``TypeError`` from the anchor rather than producing a decision.
+    """
+    from unittest.mock import MagicMock
+
+    monkeypatch.delenv(_POLICY_ENV, raising=False)
+    spawner = _spawner(tmp_path, mock_adapter_factory())
+
+    spawner._preflight_adapter_admission(MagicMock())  # type: ignore[arg-type]
 
     assert _admission_events(tmp_path) == []
 

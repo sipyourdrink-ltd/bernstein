@@ -432,6 +432,40 @@ def _normalize_evidence_producers(raw: object) -> list[dict[str, Any]]:
     return producers
 
 
+def _normalize_declared_outputs(raw: object) -> list[str]:
+    """Coerce a ``declared_outputs`` payload into canonical artifact keys.
+
+    Each entry is an artifact URI or a repo-relative path, optionally carrying
+    ``*`` / ``**`` / ``?`` to declare a set (``dist/*.whl``). Entries are
+    canonicalised through
+    :func:`bernstein.core.lineage.artifact_uri.canonical_artifact_pattern`, then
+    deduplicated and sorted so the field is a pure function of the *set* the
+    operator declared: two spellings of one artifact, or the same artifacts
+    listed in a different order, produce the identical stored value and
+    therefore the identical completion diff (issue #2559).
+
+    A malformed entry raises at task construction rather than silently
+    degrading into "declared nothing" at completion time -- a declaration that
+    quietly disappears is worse than no declaration, because the missing-output
+    finding it was supposed to produce also disappears.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str | bytes):
+        raise TypeError("Task.declared_outputs must be a list of artifact keys, got a single string")
+    if not isinstance(raw, list | tuple):
+        raise TypeError(f"Task.declared_outputs must be a list, got {type(raw).__name__}")
+
+    from bernstein.core.lineage.artifact_uri import canonical_artifact_pattern
+
+    canonical: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str):
+            raise TypeError(f"each declared output must be a string, got {type(entry).__name__}")
+        canonical.add(canonical_artifact_pattern(entry))
+    return sorted(canonical)
+
+
 @dataclass
 class Task:
     """A unit of work for an agent."""
@@ -550,6 +584,15 @@ class Task:
     # list = no evidence bundle is sealed for this task. Parsed by
     # ``bernstein.core.evidence.bundle.parse_producers``.
     evidence_producers: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    # Issue #2559: the artifacts this task intends to produce, as canonical
+    # artifact keys or patterns (``dist/*.whl``, ``pkg://pypi/bernstein/3.9.0``,
+    # ``pr://github.com/acme/widget/2559``). Where ``evidence_producers``
+    # declares how the work is *verified*, this declares what the work is
+    # supposed to *leave behind*, which is what makes "attempted and failed"
+    # distinguishable from "nothing was scheduled" at completion. Normalised by
+    # ``_normalize_declared_outputs`` into a sorted, deduplicated list. Empty
+    # list = the task declares no outputs and the completion diff is skipped.
+    declared_outputs: list[str] = field(default_factory=list[str])
     # Explicit override for compute_max_turns()'s complexity-based auto-computation
     # (see bernstein.core.agents.claude_max_turns.compute_max_turns). When set,
     # this value is used verbatim for the Claude adapter's --max-turns flag,
@@ -627,6 +670,7 @@ class Task:
             "story_id": self.story_id,
             "attachments": list(self.attachments),
             "evidence_producers": [dict(p) for p in self.evidence_producers],
+            "declared_outputs": list(self.declared_outputs),
             "max_turns": self.max_turns,
         }
 
@@ -746,6 +790,7 @@ class Task:
             story_id=(str(raw["story_id"]) if raw.get("story_id") else None),
             attachments=_normalize_attachments(raw.get("attachments")),
             evidence_producers=_normalize_evidence_producers(raw.get("evidence_producers")),
+            declared_outputs=_normalize_declared_outputs(raw.get("declared_outputs")),
             max_turns=(lambda v: None if v is None else int(v))(raw.get("max_turns")),
         )
 
@@ -1743,6 +1788,13 @@ class ClusterConfig:
             When set, the central server serves over HTTPS with the supplied
             cert chain and worker httpx clients present a client cert.
             See :mod:`bernstein.core.protocols.cluster.cluster_tls`.
+        gossip_peers: MESH only. Peer base URLs this node gossips claim
+            receipts to. Empty on STAR, where coordination is central.
+        claim_lease_ttl_s: MESH only. Lease duration granted to a self-claim
+            in the signed claim journal.
+        claim_journal_path: MESH only. Explicit path to the signed claim
+            journal. ``None`` uses the conventional
+            ``.sdd/cluster/claim_journal.jsonl``.
     """
 
     enabled: bool = False
@@ -1753,6 +1805,16 @@ class ClusterConfig:
     server_url: str | None = None  # Central server URL (worker nodes connect here)
     bind_host: str = "127.0.0.1"  # Default: localhost only
     tls: TLSConfig | None = None
+    # MESH-only keys (issue #2558). Unused on STAR, whose behaviour is
+    # unchanged by their presence.
+    gossip_peers: tuple[str, ...] = ()
+    claim_lease_ttl_s: int = 300
+    claim_journal_path: str | None = None
+
+    @property
+    def is_mesh(self) -> bool:
+        """``True`` when this config selects the leaderless MESH topology."""
+        return self.topology is ClusterTopology.MESH
 
     @property
     def cluster_url_scheme(self) -> str:

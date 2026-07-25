@@ -108,12 +108,18 @@ _NONTRIVIAL_SIGNAL_TYPES = frozenset(
     }
 )
 
-# Completion-signal types that operate on an artifact's canonical bytes rather
-# than the filesystem (issue #2608, #2888). Only :func:`evaluate_artifact_signals`,
-# which has the produced artifact in scope, can pass one; every filesystem-path
-# evaluation of these types fails closed (issue #2968), so a declared gate that
-# no evaluator checked can never read as verified.
-_ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stable", "figures_grounded"})
+#: Completion-signal types that operate on an artifact's canonical bytes rather
+#: than the filesystem (issues #2608, #2888). Only
+#: :func:`evaluate_artifact_signals`, which has the produced artifact in scope,
+#: can pass one; every filesystem-path evaluation of these types fails closed
+#: (issue #2968), so a declared gate that no evaluator checked can never read as
+#: verified. The evaluator that reaches them in production is the artifact-mode
+#: completion path (:mod:`bernstein.core.tasks.artifact_completion`), which
+#: loads the artifact and dispatches them here.
+ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stable", "figures_grounded"})
+
+#: Back-compat alias for the module-private spelling.
+_ARTIFACT_SIGNAL_TYPES = ARTIFACT_SIGNAL_TYPES
 
 
 def _has_nontrivial_passing_signal(task: Task, signal_results: list[tuple[str, bool, str]]) -> bool:

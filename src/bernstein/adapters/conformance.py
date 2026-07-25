@@ -208,7 +208,7 @@ class StrategyDeclarationError(AssertionError):
     """Raised when a shipped adapter is missing its strategy declaration.
 
     Issue #1627 AC #2: every adapter under the registry must declare its
-    resume / dangerous-mode / event-channel strategy. A missing row in
+    resume / dangerous-mode / event-channel / output-mode strategy. A missing row in
     :data:`bernstein.adapters._contract.STRATEGY_MATRIX` is a hard failure
     surfaced by :func:`assert_strategies_declared`.
     """
@@ -238,7 +238,7 @@ def assert_strategies_declared(adapter_names: list[str] | None = None) -> None:
     if missing:
         raise StrategyDeclarationError(
             "adapters missing a strategy declaration in STRATEGY_MATRIX "
-            f"(resume / dangerous-mode / event-channel): {', '.join(missing)}"
+            f"(resume / dangerous-mode / event-channel / output-mode): {', '.join(missing)}"
         )
 
 

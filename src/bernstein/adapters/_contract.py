@@ -452,7 +452,7 @@ def list_contracts(contracts_dir: Path | None = None) -> list[str]:
 # Per-adapter strategy enums (issue #1627)
 # ---------------------------------------------------------------------------
 #
-# Every CLI agent expresses the same three concepts differently:
+# Every CLI agent expresses the same four concepts differently:
 #
 #   * resume        - ``--resume <id>`` for some, ``--session-id <id>`` for
 #                     others, a subcommand ``<cli> resume <id>`` for a third
@@ -463,6 +463,9 @@ def list_contracts(contracts_dir: Path | None = None) -> list[str]:
 #   * event channel  - the surface Bernstein observes for lifecycle signals:
 #                     stream-json, the canonical ``BERNSTEIN:<KIND>`` text
 #                     grammar, upstream hooks, or PTY polling.
+#   * output mode    - what the adapter's run *produces* as its unit of work:
+#                     a git commit on the worktree branch, or a canonical
+#                     artifact recorded as a signed lineage entry.
 #
 # Capturing each axis as a typed per-adapter enum compresses the scattered
 # ``if adapter == "X"`` conditionals into one dispatch per axis and makes
@@ -519,12 +522,31 @@ class EventChannel(StrEnum):
     NONE = "none"
 
 
+class OutputMode(StrEnum):
+    """What an adapter's run produces as the completion unit for a task.
+
+    The axis decides which completion check owns the verdict. ``git_diff``
+    tasks complete on workspace HEAD movement (see
+    :mod:`bernstein.core.orchestration.commit_completion`). ``artifact`` tasks
+    have no commit to check: the completion identity is the signed lineage
+    entry hash recorded from the produced artifact's canonical bytes
+    (see :mod:`bernstein.core.tasks.artifact_completion`).
+    """
+
+    #: The run's product is a commit on the worktree branch (the coding path).
+    GIT_DIFF = "git-diff"
+    #: The run's product is a canonical artifact recorded as a signed lineage
+    #: entry - a report, dataset, action log, or ops result.
+    ARTIFACT = "artifact"
+
+
 class StrategyView(TypedDict):
-    """JSON-serialisable view of an :class:`AdapterStrategy`'s three axes."""
+    """JSON-serialisable view of an :class:`AdapterStrategy`'s four axes."""
 
     resume: str
     dangerous_mode: str
     event_channel: str
+    output_mode: str
 
 
 class StrategyRow(StrategyView):
@@ -535,11 +557,15 @@ class StrategyRow(StrategyView):
 
 @dataclass(frozen=True)
 class AdapterStrategy:
-    """The declared strategy of a single adapter across all three axes."""
+    """The declared strategy of a single adapter across all four axes."""
 
     resume: ResumeStrategy = ResumeStrategy.UNSUPPORTED
     dangerous_mode: DangerousModeStrategy = DangerousModeStrategy.UNSUPPORTED
     event_channel: EventChannel = EventChannel.TEXT_SIGNALS
+    #: Defaults to ``git_diff``: every shipped CLI coding agent completes by
+    #: committing. An adapter driving a non-coding worker declares ``artifact``
+    #: so the completion path reads its canonical output instead of HEAD.
+    output_mode: OutputMode = OutputMode.GIT_DIFF
 
     def to_dict(self) -> StrategyView:
         """Return a JSON-serialisable view for operator-facing tables."""
@@ -547,6 +573,7 @@ class AdapterStrategy:
             "resume": str(self.resume),
             "dangerous_mode": str(self.dangerous_mode),
             "event_channel": str(self.event_channel),
+            "output_mode": str(self.output_mode),
         }
 
 
@@ -726,7 +753,7 @@ def undeclared_strategies(adapter_names: list[str]) -> list[str]:
 def strategy_table(adapter_names: list[str] | None = None) -> list[StrategyRow]:
     """Return one row per adapter for the operator-facing strategy table.
 
-    Each row is a :class:`StrategyRow` (``adapter`` plus the three axes).
+    Each row is a :class:`StrategyRow` (``adapter`` plus the four axes).
     Rows are sorted by adapter name so operators can compare adapters at a
     glance (issue #1627 AC #4). When ``adapter_names`` is ``None`` the full
     matrix is rendered.

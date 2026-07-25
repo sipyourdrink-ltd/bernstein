@@ -1259,6 +1259,17 @@ def create_app(
     application.state.a2a_server_auth = A2AServerAuth.from_env()  # type: ignore[attr-defined]
     application.state.acp_handler = acp_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
+    # MESH topology branch (#2558): only a MESH node carries a coordinator, so
+    # ``POST /cluster/claims/gossip`` answers 409 everywhere else rather than
+    # folding a peer's receipts into a journal nothing arbitrates through.
+    # STAR keeps ``node_registry`` as its sole coordination surface, unchanged.
+    from bernstein.core.protocols.cluster.mesh_coordinator import build_mesh_coordinator
+
+    application.state.mesh_coordinator = build_mesh_coordinator(  # type: ignore[attr-defined]
+        effective_cluster,
+        sdd_dir=sdd_dir,
+        chain=_audit_chain,
+    )
     application.state.cluster_authenticator = cluster_authenticator  # type: ignore[attr-defined]
     application.state.sse_bus = sse_bus  # type: ignore[attr-defined]
     application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/

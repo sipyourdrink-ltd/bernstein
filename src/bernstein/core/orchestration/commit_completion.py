@@ -11,6 +11,12 @@ compares it after the process exits. If the agent declared success
 retry through the adapter's session-continuation primitive with a
 corrective nudge. The recursion is capped at exactly one retry.
 
+The check applies only to runs whose declared ``output_mode`` is
+``git_diff`` (see :class:`bernstein.adapters._contract.OutputMode`). An
+``artifact``-mode run completes on a signed lineage receipt instead of a
+commit, so an unmoved HEAD is its contract rather than an anomaly and the
+retry path is declined outright (issue #2608).
+
 The check is intentionally adapter-agnostic: it only depends on the
 adapter exposing two capabilities -- ``supports_session_continuation`` and
 ``continuation_args(session_id)`` -- both declared on
@@ -41,6 +47,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from bernstein.adapters._contract import OutputMode
 from bernstein.core.git.git_basic import rev_parse_head
 
 if TYPE_CHECKING:
@@ -244,6 +251,23 @@ def _safe_rev_parse(workdir: Path) -> str:
         return ""
 
 
+def _resolved_output_mode(adapter: CLIAdapter, override: OutputMode | None) -> OutputMode:
+    """Return the effective output mode for a run.
+
+    An explicit ``override`` (the task's declared artifact contract) wins over
+    the adapter's declared axis, so one adapter can drive both a coding task
+    and a report task. Absent both, the conservative default is ``git_diff``:
+    the coding path stays the default and an undeclared adapter never silently
+    skips the commit check.
+    """
+    if override is not None:
+        return override
+    try:
+        return adapter.strategy().output_mode
+    except Exception:  # pragma: no cover -- defensive: a stub adapter in tests
+        return OutputMode.GIT_DIFF
+
+
 def adapter_supports_continuation(adapter: CLIAdapter) -> bool:
     """Return ``True`` if the adapter advertises session continuation.
 
@@ -263,8 +287,8 @@ class RetryDecision:
         should_retry: ``True`` when a continuation spawn is warranted.
         reason: Short tag for tracing. One of ``"committed"``,
             ``"head_unknown"``, ``"adapter_unsupported"``,
-            ``"non_zero_exit"``, ``"retry_cap_reached"``, or
-            ``"needs_retry"``.
+            ``"non_zero_exit"``, ``"retry_cap_reached"``,
+            ``"artifact_output_mode"``, or ``"needs_retry"``.
     """
 
     should_retry: bool
@@ -277,6 +301,7 @@ def decide_retry(
     verdict: CompletionVerdict,
     exit_code: int,
     attempts: int,
+    output_mode: OutputMode | None = None,
 ) -> RetryDecision:
     """Decide whether to launch a continuation retry.
 
@@ -292,12 +317,22 @@ def decide_retry(
             failure path.
         attempts: Number of continuation retries already performed for
             this session. Must be ``0`` on the first call.
+        output_mode: The run's declared output mode. ``artifact``
+            completes on a signed lineage receipt rather than a commit
+            (issue #2608), so an unmoved HEAD is the expected outcome
+            and must never trigger the "you forgot to commit" nudge.
+            Defaults to the adapter's declared axis when omitted.
 
     Returns:
         A :class:`RetryDecision` documenting the call.
     """
     if exit_code != 0:
         return RetryDecision(should_retry=False, reason="non_zero_exit")
+    # An artifact-mode run has no commit to check: HEAD not moving is the
+    # contract, not a failure. Decided before the verdict is consulted so a
+    # non-coding task can never be nudged to commit work that has none.
+    if _resolved_output_mode(adapter, output_mode) is not OutputMode.GIT_DIFF:
+        return RetryDecision(should_retry=False, reason="artifact_output_mode")
     # Surface the "no baseline" case before the committed shortcut: an
     # unknown HEAD reports ``committed=True`` defensively, but the
     # trace-level reason "head_unknown" is the more useful tag.
@@ -344,6 +379,7 @@ def maybe_retry_continuation(
     check: CommitCompletionCheck | None = None,
     nudge: str = DEFAULT_CONTINUATION_NUDGE,
     spawn_fn: ContinuationSpawnFn | None = None,
+    output_mode: OutputMode | None = None,
 ) -> tuple[RetryDecision, CompletionVerdict, SpawnResult | None]:
     """Convenience wrapper around verify + decide + (optional) spawn.
 
@@ -369,6 +405,9 @@ def maybe_retry_continuation(
             When ``None`` the helper does not spawn; callers wiring
             into a heavier dispatch layer should pass a closure that
             forwards into their own spawn machinery.
+        output_mode: The run's declared output mode; forwarded to
+            :func:`decide_retry`. Pass ``artifact`` for a task that
+            completes on a signed lineage receipt instead of a commit.
 
     Returns:
         A 3-tuple of ``(decision, verdict, retry_result)``. The third
@@ -382,6 +421,7 @@ def maybe_retry_continuation(
         verdict=verdict,
         exit_code=exit_code,
         attempts=attempts,
+        output_mode=output_mode,
     )
     if not decision.should_retry or spawn_fn is None:
         return decision, verdict, None

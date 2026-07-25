@@ -19,8 +19,13 @@ LINEAGE_ENTRY_VERSION = 1
 # activity-worker output kinds (``report`` / ``dataset`` / ``action_log`` /
 # ``ops_result``) so a non-coding artifact can be a first-class signed lineage
 # record, and the query-receipt surface (issue #2887) adds ``query-result`` for
-# a content-addressed data-source result set. The set stays closed - membership
-# only widens and an unknown kind still raises in
+# a content-addressed data-source result set. The artifact-URI namespace
+# (issue #2559) adds ``external`` for an artifact whose bytes do not live in
+# the worktree - a release PR, a published package, a deployed image, a
+# rendered page - which is anchored *by reference* via
+# :func:`bernstein.core.lineage.artifact_uri.external_reference_content_hash`
+# rather than by hashing bytes the chain can reach. The set stays closed -
+# membership only widens and an unknown kind still raises in
 # :meth:`LineageEntry.__post_init__`.
 ARTEFACT_KINDS: frozenset[str] = frozenset(
     {
@@ -34,6 +39,7 @@ ARTEFACT_KINDS: frozenset[str] = frozenset(
         "action_log",
         "ops_result",
         "query-result",
+        "external",
     }
 )
 

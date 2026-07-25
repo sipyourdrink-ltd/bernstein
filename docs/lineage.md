@@ -12,6 +12,7 @@ This page is the **user-facing** reference. For the design rationale see
 | Question | Answer |
 |---|---|
 | What gets logged? | Every agent write to a tracked file or config. |
+| How is an entry keyed? | By an [artifact key](lineage/artifacts.md): a repo-relative path, or a `pr://` / `pkg://` / `deploy://` / `doc://` URI. |
 | Where does it live? | `.sdd/lineage/log.jsonl` (append-only) + per-entry detached JWS sidecars. |
 | Who signs? | The agent itself, with an Ed25519 key issued at spawn time. |
 | Who verifies? | Anyone with `bernstein-verify` (a standalone PyPI wheel). No Bernstein install required. |
@@ -241,6 +242,7 @@ Entries signed under `k-2025-01` continue to verify against the retained card; n
 
 ## See also
 
+- [Artifact keys](lineage/artifacts.md) - the URI grammar, external-artifact anchoring, and declared outputs.
 - [ADR-009: Lineage v1](decisions/009-lineage-v1.md) - design rationale, schema, threat model.
 - [Compliance - EU AI Act Article 12 bundle](compliance/eu-ai-act-article-12-bundle.md) - the bundle format detail.
 - [Regulatory lineage export](compliance/lineage-export.md) - operator export guide.

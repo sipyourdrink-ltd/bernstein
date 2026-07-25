@@ -93,7 +93,7 @@ journal path.
 
 | Piece | What it is |
 |-------|------------|
-| `ClaimReceipt` | One signed entry: `claim` / `release` / `renew` / `expire` / `supersede`, binding `{tracker, ticket_id, role, claimer_id, node_id, lease_expires_at, prev_entry_hash, entry_hash}`. |
+| `ClaimReceipt` | One signed entry: `claim` / `release` / `renew` / `expire` / `supersede` / `fork`, binding `{tracker, ticket_id, role, claimer_id, node_id, lease_expires_at, prev_entry_hash, entry_hash}`. |
 | `ClaimJournal` | Append-only JSONL store. Each receipt chains over the previous head and is Ed25519-signed with the node install identity; each is anchored into the HMAC audit chain (`cluster.claim_journal_receipt`). |
 | `project_claims(receipts)` | Pure fold: the same ordered receipt set yields a byte-identical `ClaimState` and identical head hash on any node. |
 
@@ -111,7 +111,33 @@ once every loser is superseded is a no-op.
 **Verify.** `ClaimJournal.verify()` replays the journal offline, checking
 every `prev_entry_hash` link, every recomputed `entry_hash`, and every
 Ed25519 signature; a single flipped byte or a dropped receipt fails at the
-exact entry index.
+exact entry index. Passing `chain=` also re-checks that every receipt is
+anchored in the HMAC audit chain, which catches a journal that is
+internally consistent but was never anchored. `bernstein cluster claims
+verify` is the operator entry point — see
+[`docs/cluster/deployment-patterns.md`](../cluster/deployment-patterns.md).
+
+**Gossip and forks.** `ClaimJournal.ingest(receipt, ...)` folds a peer's
+receipt only after its signature and its recomputed hash verify, and only
+when its `prev_entry_hash` extends the local head. A receipt that does not
+extend the head is **not** merged: it appends a signed `fork` receipt
+carrying the divergence entry index, which `verify()` reports through
+`ClaimJournalVerifyResult.forks`. Use `.clean` for "intact *and* not
+forked"; `.ok` alone means only that the file itself is intact.
+
+**Referenced data vs. signer identity.** A receipt's `claimer_id` /
+`node_id` always name its signer. What it speaks *about* is carried
+separately: `supersedes` (plus `superseded_*`) for a supersession,
+`target_entry_hash` for the claim a `release` / `expire` retires, and the
+`fork_*` fields for a divergence. That is what lets one node retire a
+peer's expired lease without a verifier ever seeing a receipt signed by a
+key that does not match the identity it declares.
+
+**Schema versioning.** `CLAIM_JOURNAL_SCHEMA_VERSION` is stamped on every
+receipt, and the signing payload projects away fields introduced *after* a
+receipt's own version. An append-only journal written by an earlier release
+therefore keeps verifying byte-for-byte across an upgrade instead of
+reporting tamper on entries nobody touched.
 
 **Multi-writer safety.** Each append resolves the chain tail and writes the
 new receipt as one critical section under a single exclusive advisory lock

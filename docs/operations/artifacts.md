@@ -53,6 +53,65 @@ with the same inputs produce:
 
 A one-byte change to the input changes both.
 
+## Completing a task on a receipt instead of a commit
+
+A task whose `ArtifactSpec` declares any kind other than `code_diff` is in
+**artifact mode**. It completes without a commit: the orchestrator reads the
+artifact the agent produced, evaluates every declared completion signal against
+it, and - only when they all pass - records the signed lineage entry whose hash
+is the task's completion identity. That entry hash is what a git SHA is for a
+coding task.
+
+### Declaring one
+
+```yaml
+artifact_spec:
+  kind: report
+  output_path: reports/weekly.md      # workdir-relative; must not escape the workdir
+completion_signals:
+  - type: schema_valid
+    value: '{"type": "object", "required": ["id"]}'
+  - type: hash_stable
+    value: 'sha256:...'
+```
+
+`output_path` is where the agent writes its deliverable. Leave it empty and the
+task defaults to `.sdd/outbox/<task-id>/artifact`.
+
+The bytes are read in the shape the kind expects: JSONL rows for `dataset` and
+`action_log`, a JSON object for `ops_result`, text for `report` (or a figures
+bundle when the file is one - see [Figure grounding](#figure-grounding-report-artifacts)).
+
+### What the operator gets
+
+| Outcome | Result |
+|---|---|
+| Every signal passes | Canonical bytes + `receipt.json` under `.sdd/artifacts/<task-id>/`, a signed entry in `.sdd/lineage/log.jsonl`, task marked done |
+| Any signal fails | **No receipt.** The task fails with the per-signal detail, exactly as a failing coding task does |
+| No artifact written | The task fails with `wrote no output at <path>` |
+| `output_path` is absolute or contains `..` | Rejected before any bytes are read |
+
+A receipt asserts that the declared gates held, so a failing gate never mints
+one. Verify any receipt afterwards with `bernstein artifact verify` (below).
+
+### Why the commit check does not fire
+
+`decide_retry` in `commit_completion` consults the run's **output mode** before
+the HEAD verdict. An artifact-mode run has no commit, so an unmoved HEAD is the
+contract rather than a defect and the "you exited without committing" nudge is
+never sent. The mode comes from the adapter's declared `output_mode` axis
+(every shipped adapter declares `git-diff`) and can be overridden per task, so
+one adapter can drive both a coding task and a report task.
+
+### Signing identity
+
+The receipt is signed by a stable identity, `agent:artifact-completion`,
+provisioned on first use under `.sdd/artifacts/identity/` and published as an
+Agent Card at `.sdd/agents/agent:artifact-completion/card.json` where the
+lineage gate reads it. The `agent_id` and `kid` are constants and the private
+key signs a detached sidecar, so two installs holding different keys still
+produce the identical entry hash for the same artifact.
+
 ## Verification criteria
 
 A task's `ArtifactSpec` may declare typed criteria evaluated against the
@@ -208,11 +267,19 @@ and the command exits `2`.
   report bundle; the figures verdict is part of `verify_artifact`).
 - `src/bernstein/core/lineage/entry.py` - the widened, still-closed
   `ARTEFACT_KINDS`.
+- `src/bernstein/core/tasks/artifact_completion.py` - the completion path:
+  load, evaluate every signal with the artifact in scope, record the receipt.
+- `src/bernstein/adapters/_contract.py` - the `output_mode` strategy axis.
 - the `artifact` group in `src/bernstein/cli/commands/artifact_cmd.py`.
 
 ## Scope
 
-This is the typed contract layer plus figure grounding for report artifacts.
-Wiring the artifact path into the adapter `output_mode` axis, skipping worktree
-allocation for artifact-mode tasks, and the `commit_completion` branch are a
-separate follow-up; a coding task stays on the git-diff path and is unchanged.
+The typed contract, figure grounding for report artifacts, the `output_mode`
+adapter axis, and the completion path that records a receipt instead of a git
+SHA. A coding task stays on the git-diff path and is unchanged: `code_diff` is
+still the default kind, every shipped adapter still declares `git-diff`, and the
+filesystem completion signals still evaluate exactly as before.
+
+Not yet wired: skipping worktree allocation for artifact-mode tasks (an
+artifact task is allocated a worktree it does not need), and the provider-batch
+path in `batch_api`, which commits by construction and so stays git-only.

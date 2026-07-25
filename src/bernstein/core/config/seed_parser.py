@@ -1311,6 +1311,26 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
     auth_token: str | None = str(auth_token_raw) if auth_token_raw is not None else None
     server_url_raw: object = cluster_dict.get("server_url")
     server_url: str | None = str(server_url_raw) if server_url_raw is not None else None
+    # MESH keys (issue #2558). Validated here rather than at first use so a
+    # typo fails the seed load, not a node mid-claim with a half-built journal.
+    peers_raw: object = cluster_dict.get("gossip_peers", [])
+    if not isinstance(peers_raw, list):
+        raise SeedError(f"cluster.gossip_peers must be a list, got: {type(peers_raw).__name__}")
+    gossip_peers: list[str] = []
+    for index, peer in enumerate(cast("list[object]", peers_raw)):
+        if not isinstance(peer, str) or not peer.strip():
+            raise SeedError(f"cluster.gossip_peers[{index}] must be a non-empty string, got: {peer!r}")
+        gossip_peers.append(peer.strip())
+    lease_raw: object = cluster_dict.get("claim_lease_ttl_s", 300)
+    if not isinstance(lease_raw, int) or isinstance(lease_raw, bool) or lease_raw < 1:
+        raise SeedError(f"cluster.claim_lease_ttl_s must be a positive integer, got: {lease_raw!r}")
+    journal_path_raw: object = cluster_dict.get("claim_journal_path")
+    journal_path: str | None = str(journal_path_raw) if journal_path_raw is not None else None
+    if topology is not ClusterTopology.MESH and (gossip_peers or journal_path):
+        raise SeedError(
+            "cluster.gossip_peers / cluster.claim_journal_path apply to topology 'mesh' only, "
+            f"but topology is {topology.value!r}",
+        )
     return ClusterConfig(
         enabled=bool(cluster_dict.get("enabled", False)),
         topology=topology,
@@ -1319,6 +1339,9 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         node_timeout_s=cast("int", cluster_dict.get("node_timeout_s", 60)),
         server_url=server_url,
         bind_host=str(cluster_dict.get("bind_host", "127.0.0.1")),
+        gossip_peers=tuple(gossip_peers),
+        claim_lease_ttl_s=lease_raw,
+        claim_journal_path=journal_path,
     )
 
 

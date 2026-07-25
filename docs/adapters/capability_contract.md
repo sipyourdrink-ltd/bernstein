@@ -18,7 +18,7 @@ The enums and the declaration matrix live in
 Strategy is **declared**, not probed: Bernstein never runs the CLI at start
 just to discover its capabilities.
 
-## The three axes
+## The four axes
 
 ### Resume strategy (`ResumeStrategy`)
 
@@ -59,6 +59,20 @@ The surface Bernstein reads for an adapter's lifecycle signals.
 | `poll-pty` | No structured channel; Bernstein polls a PTY or log for liveness. |
 | `none` | No event channel; process-exit detection only. |
 
+### Output mode (`OutputMode`)
+
+What the adapter's run produces as the completion unit for a task - the axis
+that decides which completion check owns the verdict.
+
+| Value | Meaning |
+| --- | --- |
+| `git-diff` | The run's product is a commit on the worktree branch. Completion is workspace HEAD movement (`commit_completion`). |
+| `artifact` | The run's product is a canonical artifact recorded as a signed lineage entry. Completion is the entry hash (`artifact_completion`); HEAD is not consulted. |
+
+Every shipped adapter declares `git-diff` (the default), so the coding path is
+unchanged. See [../operations/artifacts.md](../operations/artifacts.md) for the
+artifact-mode completion path.
+
 ## Declaring a strategy
 
 The canonical declaration is a row in `STRATEGY_MATRIX`, keyed by registry
@@ -80,7 +94,8 @@ setting the class attribute `strategy_override` to an `AdapterStrategy`.
 Read the resolved strategy through `CLIAdapter.strategy()`, never the raw
 attribute: the resolver applies the inline override first, then the matrix
 keyed by registry name, then the conservative `DEFAULT_ADAPTER_STRATEGY`
-(no native resume, dangerous mode unsupported, text-signal channel).
+(no native resume, dangerous mode unsupported, text-signal channel,
+git-diff output mode).
 
 ## Conformance
 

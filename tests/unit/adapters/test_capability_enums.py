@@ -20,6 +20,7 @@ from bernstein.adapters._contract import (
     AdapterStrategy,
     DangerousModeStrategy,
     EventChannel,
+    OutputMode,
     ResumeStrategy,
     resume_capability,
     strategy_for,
@@ -101,6 +102,16 @@ def test_default_adapter_strategy_is_conservative() -> None:
     assert DEFAULT_ADAPTER_STRATEGY.resume is ResumeStrategy.UNSUPPORTED
     assert DEFAULT_ADAPTER_STRATEGY.dangerous_mode is DangerousModeStrategy.UNSUPPORTED
     assert DEFAULT_ADAPTER_STRATEGY.event_channel is EventChannel.TEXT_SIGNALS
+    assert DEFAULT_ADAPTER_STRATEGY.output_mode is OutputMode.GIT_DIFF
+
+
+def test_every_shipped_adapter_declares_git_diff_output_mode() -> None:
+    """The coding path is the default: adding the axis changed no adapter."""
+    assert {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF} == set()
+
+
+def test_output_mode_is_a_closed_two_value_axis() -> None:
+    assert {m.value for m in OutputMode} == {"git-diff", "artifact"}
 
 
 def test_strategy_for_unknown_adapter_returns_default() -> None:
@@ -112,11 +123,13 @@ def test_adapter_strategy_to_dict_round_trips() -> None:
         resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.ENV_VAR,
         event_channel=EventChannel.HOOKS,
+        output_mode=OutputMode.ARTIFACT,
     )
     assert strategy.to_dict() == {
         "resume": "flag",
         "dangerous_mode": "env-var",
         "event_channel": "hooks",
+        "output_mode": "artifact",
     }
 
 
@@ -180,7 +193,7 @@ def test_strategy_table_rows_sorted_and_complete() -> None:
     rows = strategy_table(["gemini", "aider"])
     assert [r["adapter"] for r in rows] == ["aider", "gemini"]
     for row in rows:
-        assert set(row) == {"adapter", "resume", "dangerous_mode", "event_channel"}
+        assert set(row) == {"adapter", "resume", "dangerous_mode", "event_channel", "output_mode"}
 
 
 def test_strategy_conformance_table_covers_registry() -> None:
