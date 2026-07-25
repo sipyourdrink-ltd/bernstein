@@ -405,6 +405,7 @@ nav:
           - Nightly canary: operations/nightly-canary.md
           - CI: operations/ci.md
           - CI topology: operations/ci-topology.md
+          - Type-check scope: operations/type-check-scope.md
           - Post-CI dispatcher: operations/post-ci-dispatcher.md
           - Review pipeline DSL: operations/review-pipeline.md
           - Review and autofix receipts: operations/review-receipts.md
