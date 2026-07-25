@@ -2074,6 +2074,60 @@ class TaskStore:
             )
             return task
 
+    async def release(self, task_id: str, reason: str = "") -> Task:
+        """Release an in-flight task back to OPEN so another node can claim it.
+
+        Distinct from :meth:`fail` (terminal FAILED) and :meth:`reopen`
+        (DONE -> OPEN): this returns a CLAIMED/IN_PROGRESS task to the pool
+        without marking it failed. It exists for the case where a worker claims
+        a task but cannot start its agent -- e.g. the workspace is unusable or
+        the adapter spawn fails -- so the task must not be stranded in CLAIMED
+        with no live agent (#3018).
+
+        Unlike :meth:`force_claim`, the original priority is preserved, so a
+        released task does not jump ahead of untried work; it simply becomes
+        claimable again by any node.
+
+        Args:
+            task_id: Task identifier.
+            reason: Why the task is being released (audited on the transition).
+
+        Returns:
+            The updated Task (now OPEN).
+
+        Raises:
+            KeyError: If task_id does not exist.
+            IllegalTransitionError: If the task is not CLAIMED or IN_PROGRESS.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            # Validate the transition *before* mutating the index so an illegal
+            # release (e.g. the task is already OPEN or terminal) cannot leave
+            # the task de-indexed. Only in-flight tasks can be released.
+            if task.status not in (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+                raise IllegalTransitionError("task", task.id, task.status.value, TaskStatus.OPEN.value)
+            self._index_remove(task)
+            transition_task(
+                task,
+                TaskStatus.OPEN,
+                actor="task_store",
+                reason=reason or "released_to_pool",
+            )
+            task.claimed_at = None
+            task.claimed_by_session = None
+            task.assigned_agent = None
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            logger.info(
+                "task.release: task_id=%s reason=%s",
+                sanitize_log(task_id),
+                sanitize_log(reason or "released_to_pool"),
+            )
+            return task
+
     async def abandon(
         self,
         task_id: str,
