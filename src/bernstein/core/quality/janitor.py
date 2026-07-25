@@ -109,9 +109,10 @@ _NONTRIVIAL_SIGNAL_TYPES = frozenset(
 )
 
 # Completion-signal types that operate on an artifact's canonical bytes rather
-# than the filesystem (issue #2608, #2888). The filesystem-oriented
-# :func:`evaluate_signal` defers these to :func:`evaluate_artifact_signals`,
-# which has the produced artifact in scope.
+# than the filesystem (issue #2608, #2888). Only :func:`evaluate_artifact_signals`,
+# which has the produced artifact in scope, can pass one; every filesystem-path
+# evaluation of these types fails closed (issue #2968), so a declared gate that
+# no evaluator checked can never read as verified.
 _ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stable", "figures_grounded"})
 
 
@@ -277,12 +278,15 @@ def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]
         case "llm_judge":
             # llm_judge requires async evaluation - use judge_task() instead.
             return False, "llm_judge requires async evaluation via judge_task()"
-        case "schema_valid" | "criteria_match" | "hash_stable" | "figures_grounded":
+        case _ if signal.type in _ARTIFACT_SIGNAL_TYPES:
             # Artifact-mode criteria operate on the produced artifact's canonical
             # bytes (and, for figures_grounded, on lineage reads), not the
             # filesystem. They are dispatched by evaluate_artifact_signals() once
             # the artifact is in scope; the filesystem path recognises them (so
-            # they are never "unknown") but cannot evaluate them here.
+            # they are never "unknown") but cannot evaluate them here, and so
+            # fails closed. Membership is read from _ARTIFACT_SIGNAL_TYPES rather
+            # than re-listed, so adding a type to the set cannot leave this arm
+            # behind.
             return False, f"{signal.type} requires artifact-mode evaluation via evaluate_artifact_signals()"
     return False, f"unknown signal type: {signal.type}"
 
@@ -410,6 +414,15 @@ def _evaluate_figures_grounded_signal(
 def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
     """Verify all completion signals for a task.
 
+    Every declared signal is dispatched through :func:`evaluate_signal`, which
+    owns the per-type default; this function never decides an outcome of its
+    own. Artifact-mode criteria therefore fail closed here with the detail
+    ``evaluate_signal`` already produces (issue #2968): the filesystem path
+    does not have the produced artifact in scope, and a declared gate that no
+    evaluator checked must not report as passed. Only
+    :func:`evaluate_artifact_signals`, called with the artifact in scope, can
+    pass them.
+
     Args:
         task: Task with completion_signals to check.
         workdir: Project root for path resolution.
@@ -422,11 +435,6 @@ def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
     """
     failed: list[str] = []
     for signal in task.completion_signals:
-        # Artifact-mode criteria are verified against the produced artifact by
-        # evaluate_artifact_signals(), not against the filesystem, so the
-        # filesystem verify path skips them rather than spuriously failing.
-        if signal.type in _ARTIFACT_SIGNAL_TYPES:
-            continue
         passed, detail = evaluate_signal(signal, workdir)
         if not passed:
             desc = f"{signal.type}: {signal.value}"
@@ -443,6 +451,14 @@ def _collect_signal_results(
 ) -> list[tuple[str, bool, str]]:
     """Evaluate all signals and return structured results.
 
+    Shares :func:`evaluate_signal` with :func:`verify_task`, so the two paths
+    report the same outcome for the same signal type by construction. The one
+    signal type omitted here is ``llm_judge``, which :func:`run_janitor`
+    genuinely does evaluate later in the same pass via
+    :func:`_evaluate_judge_signals`; artifact-mode signals have no such
+    in-pass evaluator and so fail closed rather than being dropped
+    (issue #2968).
+
     Args:
         task: Task with completion_signals to check.
         workdir: Project root for path resolution.
@@ -454,8 +470,6 @@ def _collect_signal_results(
     for signal in task.completion_signals:
         if signal.type == "llm_judge":
             continue  # Evaluated async in run_janitor via judge_task()
-        if signal.type in _ARTIFACT_SIGNAL_TYPES:
-            continue  # Evaluated against the artifact via evaluate_artifact_signals()
         desc = f"{signal.type}: {signal.value}"
         passed, detail = evaluate_signal(signal, workdir)
         results.append((desc, passed, detail))

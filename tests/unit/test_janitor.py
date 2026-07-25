@@ -1672,6 +1672,112 @@ class TestArtifactSignals:
         assert evaluate_artifact_signals(task, "prose\n") == []
 
 
+class TestArtifactSignalDefaultsFailClosed:
+    """Issue #2968: a declared signal that no evaluator checked must not pass.
+
+    ``evaluate_signal`` owns the per-type default. ``verify_task`` and
+    ``_collect_signal_results`` both dispatch every signal through it, so the
+    task-level paths cannot report a verdict the single-signal evaluator would
+    not. Only ``evaluate_artifact_signals`` -- which has the produced artifact
+    in scope -- can pass an artifact-mode signal.
+    """
+
+    # Types whose evaluation shells out (``test_passes``) or calls an LLM
+    # (``llm_review``). Every other declared type is exercised below, so a
+    # newly declared signal type joins the divergence check automatically.
+    _SIDE_EFFECTING = frozenset({"test_passes", "llm_review"})
+
+    @staticmethod
+    def _declared_types() -> tuple[str, ...]:
+        from typing import get_args, get_type_hints
+
+        return get_args(get_type_hints(CompletionSignal)["type"])
+
+    def _pure_types(self) -> list[str]:
+        return [t for t in self._declared_types() if t not in self._SIDE_EFFECTING]
+
+    def test_schema_valid_only_task_does_not_verify_as_passed(self, tmp_path: Path) -> None:
+        """The headline case: the only signal is artifact-mode, nothing evaluated it."""
+        task = _make_task(signals=[CompletionSignal(type="schema_valid", value='{"type": "object"}')])
+
+        passed, failed = verify_task(task, tmp_path)
+
+        assert passed is False
+        assert len(failed) == 1
+        assert "schema_valid" in failed[0]
+        assert "evaluate_artifact_signals()" in failed[0]
+
+    def test_artifact_types_are_declared_signal_types(self) -> None:
+        from bernstein.core.quality.janitor import _ARTIFACT_SIGNAL_TYPES
+
+        assert set(self._declared_types()).issuperset(_ARTIFACT_SIGNAL_TYPES)
+
+    def test_verify_task_never_diverges_from_evaluate_signal(self, tmp_path: Path) -> None:
+        """Both paths must agree per signal type -- not just for today's types."""
+        for sig_type in self._pure_types():
+            signal = CompletionSignal(type=sig_type, value="x")  # type: ignore[arg-type]
+            single_passed, single_detail = evaluate_signal(signal, tmp_path)
+
+            task_passed, failed = verify_task(_make_task(signals=[signal]), tmp_path)
+
+            assert task_passed is single_passed, sig_type
+            if single_passed:
+                assert failed == [], sig_type
+            else:
+                assert failed == [f"{sig_type}: x ({single_detail})"], sig_type
+
+    def test_collect_signal_results_agrees_with_verify_task(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.janitor import _ARTIFACT_SIGNAL_TYPES, _collect_signal_results
+
+        for sig_type in sorted(_ARTIFACT_SIGNAL_TYPES):
+            signal = CompletionSignal(type=sig_type, value="x")  # type: ignore[arg-type]
+            task = _make_task(signals=[signal])
+
+            verify_passed, _failed = verify_task(task, tmp_path)
+            results = _collect_signal_results(task, tmp_path)
+
+            assert verify_passed is False, sig_type
+            assert len(results) == 1, sig_type
+            desc, passed, detail = results[0]
+            assert passed is verify_passed, sig_type
+            assert desc == f"{sig_type}: x"
+            assert detail == evaluate_signal(signal, tmp_path)[1]
+
+    @pytest.mark.asyncio
+    async def test_run_janitor_rejects_artifact_only_task(self, tmp_path: Path) -> None:
+        task = _make_task(signals=[CompletionSignal(type="hash_stable", value="sha256:deadbeef")])
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert [desc for desc, ok, _ in results[0].signal_results if not ok] == ["hash_stable: sha256:deadbeef"]
+
+    def test_filesystem_only_task_is_unchanged(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.janitor import _collect_signal_results
+
+        (tmp_path / "out.txt").write_text("done")
+        task = _make_task(signals=[CompletionSignal(type="path_exists", value="out.txt")])
+
+        assert verify_task(task, tmp_path) == (True, [])
+        assert _collect_signal_results(task, tmp_path) == [("path_exists: out.txt", True, "exists")]
+
+    def test_passing_filesystem_signal_does_not_mask_artifact_signal(self, tmp_path: Path) -> None:
+        (tmp_path / "out.txt").write_text("done")
+        task = _make_task(
+            signals=[
+                CompletionSignal(type="path_exists", value="out.txt"),
+                CompletionSignal(type="criteria_match", value="[]"),
+            ]
+        )
+
+        passed, failed = verify_task(task, tmp_path)
+
+        assert passed is False
+        assert len(failed) == 1
+        assert failed[0].startswith("criteria_match: []")
+
+
 class TestFiguresGroundedSignal:
     """Issue #2888: the figures_grounded completion signal and its severity."""
 

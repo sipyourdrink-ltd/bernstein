@@ -67,6 +67,15 @@ artifact bytes (in addition to the six filesystem/test completion signals):
 
 Each has a closed evaluator; none executes artifact-supplied code.
 
+These four criteria are only evaluable with the produced artifact in scope. The
+janitor's filesystem verification path cannot see it, so it reports them as
+**not passed** with the detail
+`<type> requires artifact-mode evaluation via evaluate_artifact_signals()`.
+That is the deliberate default: a declared completion gate that no evaluator
+checked must never read as verified. Declare an artifact-mode criterion only on
+a task that is completed through the artifact path; on a task verified from the
+filesystem it will hold the task open rather than pass silently.
+
 ## `bernstein artifact verify`
 
 ```
