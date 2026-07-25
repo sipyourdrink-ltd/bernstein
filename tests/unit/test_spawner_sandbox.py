@@ -193,9 +193,7 @@ def test_non_explicit_docker_request_downgrade_is_surfaced_and_audited(
 
     # 2) Audited in the HMAC-chained audit log with requested-vs-actual isolation.
     audit_dir = tmp_path / ".sdd" / "audit"
-    downgrade_events = [
-        e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"
-    ]
+    downgrade_events = [e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"]
     assert len(downgrade_events) == 1
     details = downgrade_events[0]["details"]
     assert isinstance(details, dict)
@@ -242,6 +240,4 @@ def test_worktree_only_spawner_records_no_downgrade(tmp_path: Path) -> None:
     assert spawner.isolation_downgrades == []
     audit_dir = tmp_path / ".sdd" / "audit"
     if audit_dir.exists():
-        assert not [
-            e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"
-        ]
+        assert not [e for e in _read_audit_events(audit_dir) if e["event_type"] == "sandbox.isolation_downgrade"]
