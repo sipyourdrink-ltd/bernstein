@@ -183,7 +183,7 @@ def render_skill_template(
     Supported placeholders:
 
     - ``{{SESSION_ID}}``: agent session identifier
-    - ``{{COMPLETE_CMDS}}``: ``bernstein task complete`` command per task
+    - ``{{COMPLETE_CMDS}}``: curl commands to mark all tasks complete
     - ``{{TASK_IDS}}``: space-separated task ID list
 
     Args:
@@ -196,14 +196,16 @@ def render_skill_template(
     """
     task_list = tasks or []
 
-    # Build one completion command per task. This is the same first-class CLI
-    # the spawned prompt instructs, so the injected skill cannot hand the agent
-    # a second, conflicting way to mark a task done. The command resolves the
-    # task-server port and the agent token itself, which is why no host, auth
-    # header or JSON body appears here.
+    # Build per-task completion curl commands
     complete_cmds_parts: list[str] = []
     for task in task_list:
-        cmd = f'```bash\nbernstein task complete {task.id} --summary "Completed: {task.title}"\n```'
+        cmd = (
+            "```bash\n"
+            f"curl -s --retry 3 -X POST http://127.0.0.1:8052/tasks/{task.id}/complete \\\n"
+            '  -H "Content-Type: application/json" \\\n'
+            f'  -d \'{{"result_summary": "Completed: {task.title}"}}\'\n'
+            "```"
+        )
         complete_cmds_parts.append(cmd)
     complete_cmds = (
         "\n\n".join(complete_cmds_parts)

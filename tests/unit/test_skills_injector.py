@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import subprocess
 from pathlib import Path
 
@@ -26,17 +25,12 @@ class TestRenderSkillTemplate:
         assert "backend-abc123" in result
         assert "{{SESSION_ID}}" not in result
 
-    def test_replaces_complete_cmds_with_completion_cli(self) -> None:
-        """The injected skill must name the same CLI the spawned prompt does.
-
-        The skill is injected into every agent workspace alongside the prompt.
-        If it kept a hand-built request the agent would hold two conflicting
-        ways to mark a task done, which is the confusion the CLI removes.
-        """
+    def test_replaces_complete_cmds_with_task_curl(self) -> None:
         tasks = [_make_task(id="T-001", title="Fix bug")]
         result = render_skill_template("{{COMPLETE_CMDS}}", tasks=tasks)
-        assert "bernstein task complete T-001" in result
-        assert re.search(r"curl[^\n]*/tasks/\S*?/complete", result) is None
+        assert "T-001" in result
+        assert "curl" in result
+        assert "/complete" in result
 
     def test_replaces_complete_cmds_for_multiple_tasks(self) -> None:
         tasks = [
