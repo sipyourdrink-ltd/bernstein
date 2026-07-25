@@ -87,7 +87,8 @@ ALLOWLIST: dict[str, str] = {
         "Sits at the tests/ root, so no shard collects it. Pending relocation into tests/integration/."
     ),
     "tests/endpoints/test_certify_verify.py": (
-        "tests/endpoints/ is outside every shard directory. Pending relocation into tests/unit/endpoints/."
+        "tests/endpoints/ is outside every shard directory. Binds a loopback HTTP "
+        "server, so relocation into tests/integration/ is pending."
     ),
     "tests/observability/test_gate.py": (
         "tests/observability/ is outside every shard directory. Pending relocation into tests/unit/observability/."
