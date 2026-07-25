@@ -476,7 +476,7 @@ class A2AHandler:
         """Return the Agent Card for the Bernstein orchestrator."""
         return AgentCard(
             name="bernstein-orchestrator",
-            description="Multi-agent orchestration system for CLI coding agents",
+            description="Deterministic orchestrator for CLI coding agents, one git worktree per task",
             capabilities=["task_orchestration", "agent_spawning", "code_review", "a2a_message"],
             protocol_version="0.1",
             endpoint=f"{self._server_url}/a2a",

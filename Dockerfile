@@ -13,8 +13,8 @@ RUN pip install --no-cache-dir hatchling==1.29.0 && \
 FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
 
 LABEL org.opencontainers.image.title="bernstein" \
-      org.opencontainers.image.description="Declarative agent orchestration for engineering teams" \
-      org.opencontainers.image.source="https://github.com/bernstein-ai/bernstein" \
+      org.opencontainers.image.description="Deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). No model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically." \
+      org.opencontainers.image.source="https://github.com/sipyourdrink-ltd/bernstein" \
       io.modelcontextprotocol.server.name="io.github.sipyourdrink-ltd/bernstein"
 
 # Install git (required for git_ops) and curl (healthcheck)

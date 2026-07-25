@@ -1,7 +1,7 @@
 {
   "name": "bernstein-orchestrator",
   "version": "1.9.0",
-  "description": "Declarative agent orchestration for engineering teams. Spawn parallel AI coding agents, verify with tests, commit clean code.",
+  "description": "Deterministic orchestrator for CLI coding agents. Spawn parallel agents in per-task git worktrees, verify with tests, commit clean code; no model in the coordination loop, so runs replay byte-identically.",
   "keywords": [
     "ai",
     "agents",

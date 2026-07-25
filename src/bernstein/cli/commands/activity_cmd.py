@@ -1,10 +1,15 @@
 """``bernstein activity``: verify typed activity boundary crossings (#2311).
 
-Bernstein's deterministic scheduler dispatches any agent modality -- research,
+Bernstein's deterministic scheduler takes any agent modality -- research,
 browser/computer-use, data, ops, coding -- behind one typed activity boundary,
 anchoring each crossing into the run's canonical event journal as an
 ``activity.result`` entry that pins the ``evidence_set_hash`` (a pure function of
 the content-addressed evidence the activity gathered).
+
+``verify`` covers every anchored modality. On the dispatch side this group ships
+one non-coding entry point, ``activity browser run``; research, data and ops
+activities are constructed through the Python API today (see
+``docs/operations/activity-boundary.md`` for the scope table).
 
     bernstein activity verify <run>
 

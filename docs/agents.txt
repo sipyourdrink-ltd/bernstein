@@ -1,6 +1,6 @@
 User-agent: *
 Name: Bernstein
-Description: Deterministic, verifiable orchestration for CLI coding agents - reproducible parallel runs, signed audit trail, air-gap friendly
+Description: Deterministic orchestrator for CLI coding agents - no model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically; signed lineage and an opt-in HMAC audit chain, air-gap friendly
 Homepage: https://bernstein.readthedocs.io/
 Repository: https://github.com/sipyourdrink-ltd/bernstein
 Package: https://pypi.org/project/bernstein/

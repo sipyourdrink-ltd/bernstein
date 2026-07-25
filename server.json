@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sipyourdrink-ltd/bernstein",
-  "description": "Deterministic, verifiable orchestration for CLI coding agents. 40+ adapters, air-gap friendly.",
+  "description": "Deterministic orchestrator for CLI coding agents. Byte-identical replay, 40+ adapters, air-gap.",
   "websiteUrl": "https://bernstein.run",
   "repository": {
     "url": "https://github.com/sipyourdrink-ltd/bernstein",

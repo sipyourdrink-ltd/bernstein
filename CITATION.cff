@@ -3,12 +3,15 @@ message: "If you use Bernstein in academic or industry work, please cite it usin
 type: software
 title: "Bernstein: a deterministic Python orchestrator for CLI coding agents"
 abstract: >-
-  Bernstein is a deterministic Python scheduler that runs a crew of CLI
-  coding agents (Claude Code, Codex, Gemini CLI, and 40 more) against a
-  single goal in parallel git worktrees, with an HMAC-signed audit chain
-  over every step.  The scheduler contains zero LLM calls in its
-  coordination loop; replay of yesterday's plan reproduces yesterday's
-  task graph exactly.
+  Bernstein is a deterministic orchestrator that runs a crew of CLI coding
+  agents (Claude Code, Codex, Gemini CLI, and 40+ more) against a single
+  goal in per-task git worktrees.  There is no model in the coordination
+  loop, so replay of yesterday's plan reproduces yesterday's task graph
+  byte-identically.  Every step carries signed lineage, and an opt-in
+  HMAC-SHA256 audit chain covers every scheduling decision.  Verification
+  splits by key material: the Ed25519 signature legs and the Merkle seal
+  check from the on-disk artefacts alone, while replaying the HMAC chain
+  needs the install's audit key.
 authors:
   - given-names: Alex
     family-names: Chernysh
@@ -29,8 +32,8 @@ keywords:
   - gemini-cli
   - aider
   - software-engineering
-version: "1.10.4"
-date-released: "2026-05-08"
+version: "3.9.0"
+date-released: "2026-07-24"
 preferred-citation:
   type: software
   title: "Bernstein: a deterministic Python orchestrator for CLI coding agents"

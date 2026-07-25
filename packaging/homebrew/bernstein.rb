@@ -1,7 +1,7 @@
 class Bernstein < Formula
   include Language::Python::Virtualenv
 
-  desc "Declarative agent orchestration for engineering teams"
+  desc "Deterministic orchestrator for CLI coding agents"
   homepage "https://github.com/sipyourdrink-ltd/bernstein"
   # URL and sha256 are auto-updated by CI on each release
   url "https://files.pythonhosted.org/packages/source/b/bernstein/bernstein-VERSION.tar.gz"

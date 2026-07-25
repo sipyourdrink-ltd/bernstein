@@ -1,6 +1,6 @@
 # Bernstein Plugin for Cursor
 
-Orchestrate parallel AI coding agents from Cursor. Monitor tasks, agents, costs, approve plans - all from the chat.
+Drive Bernstein, a deterministic orchestrator for CLI coding agents, from Cursor. Monitor tasks, agents, costs, approve plans - all from the chat.
 
 ## Skills
 

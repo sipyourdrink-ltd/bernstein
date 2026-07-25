@@ -1,6 +1,6 @@
 """Adapter minimum-safe-version advisories (supply-chain posture).
 
-Bernstein spawns 30+ third-party CLI coding agents.  When an installed adapter
+Bernstein spawns 40+ third-party CLI coding agents.  When an installed adapter
 binary sits below a known-unsafe version floor, operators should be warned
 before that binary is trusted to run inside a worker.  This module holds a
 curated, data-driven floor map plus a pure comparison helper.

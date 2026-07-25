@@ -134,7 +134,7 @@ class BackstageExporter:
             kind="Component",
             name="bernstein",
             namespace=config.namespace,
-            description="Multi-agent orchestration system for CLI coding agents",
+            description="Deterministic orchestrator for CLI coding agents, one git worktree per task",
             labels={
                 "app.bernstein.io/tier": "orchestrator",
             },

@@ -144,7 +144,7 @@ build_comment() {
 
 <details>
 <summary>What is Bernstein?</summary>
-Bernstein is a multi-agent orchestration system that hires short-lived CLI coding agents to complete tasks autonomously.
+Bernstein is a deterministic orchestrator that hires short-lived CLI coding agents, one git worktree per task. No model sits in its coordination loop, so runs replay byte-identically.
 Learn more at https://github.com/sipyourdrink-ltd/bernstein
 </details>
 MARKDOWN

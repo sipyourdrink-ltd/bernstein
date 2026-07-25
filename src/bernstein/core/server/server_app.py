@@ -1091,7 +1091,8 @@ def create_app(
         title="Bernstein Task Server",
         version="1.0.0",
         description=(
-            "Bernstein REST API - multi-agent orchestration for CLI coding agents.\n\n"
+            "Bernstein REST API - deterministic orchestrator for CLI coding agents, "
+            "one git worktree per task.\n\n"
             "## Authentication\n\n"
             "Authentication is ENABLED by default.  Include a Bearer token in "
             "all requests:\n\n"

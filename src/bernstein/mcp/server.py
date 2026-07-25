@@ -102,8 +102,9 @@ _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 # a client that starts a run and then polls wrongly pays for a second run.
 # Budget and tool-name accuracy are asserted in tests/unit/test_mcp_server.py.
 _SERVER_INSTRUCTIONS = (
-    "Bernstein runs CLI coding agents deterministically, one git worktree per "
-    "task, against an offline-verifiable audit chain.\n"
+    "Bernstein is a deterministic orchestrator for CLI coding agents, one git "
+    "worktree per task, so runs replay byte-identically. Verifying the audit "
+    "chain offline needs the install audit key.\n"
     "Driving a run:\n"
     "1. bernstein_run starts a run and returns immediately with a task_id, "
     "which is the run id. It does not wait for the run to finish.\n"

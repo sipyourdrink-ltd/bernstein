@@ -2,9 +2,11 @@
 
 ## Overview
 
-Bernstein is a deterministic orchestrator for CLI coding agents. Think Kubernetes for containers, but for AI coding agents: you declare what you want, the control plane schedules it, short-lived agents execute in isolated worktrees, and a janitor verifies the output before anything lands.
+Bernstein is a deterministic orchestrator for CLI coding agents. You declare what you want, the control plane schedules it, short-lived agents execute in per-task git worktrees, and a janitor verifies the output before anything lands.
 
-The orchestrator is **deterministic Python** - zero LLM tokens on coordination. Every scheduling decision, every retry, every spawn is auditable code, not a model response.
+The orchestrator is **deterministic Python** - no model in the coordination loop. Every scheduling decision, every retry, every spawn is auditable code, not a model response, so the same plan replays to a byte-identical task graph.
+
+Verification splits by what the checker holds. The Ed25519 signature legs (`bernstein artifact verify`, the lineage gate) and the Merkle seal (`bernstein audit verify --merkle-only`) check from the on-disk artefacts alone. Replaying the per-line HMAC chain (`bernstein audit verify`, `--hmac-only`, `audit verify-hmac`) needs the install's audit key, which by design lives outside the audit volume.
 
 ---
 

@@ -5,8 +5,10 @@ alwaysApply: true
 
 # Bernstein Orchestrator Context
 
-You are working in a project managed by **Bernstein**, a multi-agent orchestration system.
-Bernstein runs at `http://127.0.0.1:8052` and coordinates parallel AI coding agents.
+You are working in a project managed by **Bernstein**, a deterministic orchestrator for
+CLI coding agents. Bernstein runs at `http://127.0.0.1:8052` and coordinates parallel
+CLI coding agents, one git worktree per task. There is no model in its coordination
+loop, so the same plan replays to a byte-identical task graph.
 
 ## Key concepts
 
