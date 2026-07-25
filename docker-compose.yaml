@@ -45,6 +45,20 @@ x-bernstein-common: &bernstein-common
   volumes:
     - sdd-data:/workspace/.sdd
     - project-data:/workspace/project
+    # Container sandbox isolation (`--sandbox docker` / the `regulated`
+    # compliance preset) runs each agent in its own sibling container. It needs
+    # THREE things the lean base image does not ship - uncomment the socket
+    # mount below AND use an image that adds the runtime CLI + Docker SDK:
+    #   1. a `docker` (or `podman`) CLI on PATH inside the container;
+    #   2. the Python Docker SDK: `pip install "bernstein[docker]"`;
+    #   3. the host Docker socket, mounted here.
+    # Without all three, an explicit `--sandbox docker` run refuses, while a
+    # `regulated`-preset run downgrades to worktree isolation - now surfaced in
+    # the run summary and the `sandbox.isolation_downgrade` audit entry, not a
+    # silent WARNING. See docs/operations/deployment-guide.md#container-sandbox-isolation---sandbox-docker-and-the-regulated-preset.
+    # SECURITY: mounting the Docker socket grants the container control of the
+    # host daemon (≈ host root). Enable it only on trusted cluster hosts.
+    # - /var/run/docker.sock:/var/run/docker.sock
   depends_on:
     bernstein-server:
       condition: service_healthy

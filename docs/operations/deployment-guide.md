@@ -419,6 +419,52 @@ docker compose logs -f bernstein-orchestrator
 > `bernstein-worker` replicas (or migrate to the SQLite/Redis backends -
 > separate ticket) for parallelism.
 
+### Container sandbox isolation (`--sandbox docker` and the `regulated` preset)
+
+Per-agent container isolation (requested directly with `--sandbox docker`, or
+implied by the `--compliance regulated` preset, which selects a stronger
+isolation boundary) runs each agent in its own container instead of a git
+worktree. Inside the published `ghcr.io/sipyourdrink-ltd/bernstein` image this
+backend is **not available by default** - the image is intentionally lean and
+ships none of the three things the docker backend needs:
+
+1. **A container-runtime CLI** on `PATH` inside the container (`docker` or
+   `podman`).
+2. **The Python Docker SDK** - install the `docker` extra
+   (`pip install "bernstein[docker]"`, i.e. `pip install docker`).
+3. **A mounted Docker socket** so the in-container client can reach the host
+   daemon: bind-mount `/var/run/docker.sock`.
+
+Provide all three and the backend attaches and runs each agent in a sibling
+container. The shipped `docker-compose.yaml` includes a ready-to-uncomment
+socket mount on the worker/orchestrator services; you still need an image that
+contains the CLI + `docker` extra (build a thin layer on top of the base image
+rather than baking docker into the base image).
+
+> **macOS / Docker Desktop.** Docker Desktop restricts which host paths can be
+> bind-mounted into containers; a socket or workspace mount outside the shared
+> paths fails with "mounts denied". This is a Docker Desktop file-sharing
+> constraint, not a Bernstein limitation - add the path under Docker Desktop →
+> Settings → Resources → File sharing, or run the cluster on Linux.
+
+**What happens when the runtime is unavailable.** The behaviour depends on how
+the isolation was requested:
+
+| Request | Runtime present | Runtime missing |
+|---|---|---|
+| Explicit `--sandbox docker` | runs in a container | **refuses** - the run fails with a clear `SandboxSelectionError` rather than silently downgrading |
+| `regulated` preset (implied) | runs in a container | **downgrades to worktree isolation, surfaced and audited** |
+
+For the preset-implied case the downgrade is no longer a silent, log-only
+event: it is recorded in the end-of-run summary (`summary.json` →
+`isolation_downgrades`, and an "Isolation downgrade" row on the summary card)
+and as a `sandbox.isolation_downgrade` entry in the HMAC-chained audit log,
+carrying the requested-vs-actual isolation mode. An operator who selected a
+stronger boundary can therefore see, at run level, that a weaker one was used -
+and prove it from the audit chain. If your compliance posture requires the run
+to *fail closed* instead, request the backend explicitly with `--sandbox
+docker`, which refuses rather than downgrades.
+
 ### Backing up state
 
 `.sdd/` is mounted as a named volume (`sdd-data`). To back it up:
