@@ -3,9 +3,11 @@
 # Local: `pre-commit install && pre-commit run --all-files`.
 # In CI: pre-commit.ci (https://pre-commit.ci/) auto-fixes formatting / lint
 # drift on PRs by pushing follow-up commits. No new repo secret required.
-# Heavy checks (mypy / pyright / pytest) stay in GitHub Actions on purpose.
+# Heavy checks (mypy / pyright / pytest) stay in GitHub Actions on purpose:
+# pytest in the `test` matrix, pyright in `Pyright strict (security +
+# cluster)`, mypy in `mypy strict (lineage substrate)`.
 #
-# Refs: #1273.
+# Refs: #1273, #2977.
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit

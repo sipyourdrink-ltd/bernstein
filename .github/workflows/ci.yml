@@ -1218,6 +1218,47 @@ jobs:
         # files to the allow-list as they reach strict cleanliness.
         run: uv run pyright --project pyrightconfig.strict.json
 
+  mypy-strict-zone:
+    # mypy strict against the lineage / persistence / evidence / identity
+    # substrate. Same split as the pyright job above: the repo-wide
+    # `uv run mypy src` run stays advisory (pyproject.toml [tool.mypy]),
+    # the gated zone fails PR on any new error in the listed packages.
+    name: mypy strict (lineage substrate)
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+      - name: Check the whole tree parses
+        # Guards the failure this job was added for: mypy aborting on the
+        # first PEP 695 `type` alias and checking nothing. `uv run mypy`
+        # must resolve the project interpreter (>= 3.12), not a PATH mypy
+        # bound to an older one. Parse-only, so the advisory backlog does
+        # not fail the job - but a syntax abort does.
+        run: |
+          log="$RUNNER_TEMP/mypy-full.log"
+          uv run mypy src >"$log" 2>&1 || true
+          tail -1 "$log"
+          if grep -q 'errors prevented further checking' "$log"; then
+            echo "::error::mypy aborted before checking the tree"
+            tail -20 "$log"
+            exit 1
+          fi
+          echo "mypy repo-wide (advisory): $(tail -1 "$log")" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run mypy strict on the gated zone
+        # The gated zone is defined in mypy.gate.ini. Widen it by removing
+        # entries from `exclude` as each module reaches strict cleanliness.
+        run: uv run mypy --config-file mypy.gate.ini
+
   # ─── Slow checks (cancel old runs, 15-45 min) ─────────────────────────
 
   adapter-integration:
@@ -1798,6 +1839,7 @@ jobs:
       - pip-audit
       - beartype
       - pyright-strict-zone
+      - mypy-strict-zone
       - adapter-integration
       - adapter-integration-macos
       - adapter-conformance-windows
@@ -1839,6 +1881,7 @@ jobs:
               "beartype",
               "adapter-integration",
               "pyright-strict-zone",
+              "mypy-strict-zone",
               "semgrep",
               "bandit",
               "pip-audit",
