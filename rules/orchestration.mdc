@@ -4,7 +4,7 @@ alwaysApply: false
 globs: "**/*.py"
 ---
 
-This project uses Bernstein for multi-agent orchestration. When working on tasks:
+This project uses Bernstein, a deterministic orchestrator for CLI coding agents. When working on tasks:
 
 - State lives in `.sdd/`, not in agent memory. Read files there for context.
 - Each agent gets a git worktree. Commit your work; the orchestrator merges it.

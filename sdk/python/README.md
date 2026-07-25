@@ -1,6 +1,6 @@
 # bernstein-sdk
 
-Python integration SDK for the [Bernstein](https://github.com/sasha-labs/bernstein) multi-agent orchestration system.
+Python integration SDK for [Bernstein](https://github.com/sipyourdrink-ltd/bernstein), a deterministic orchestrator for CLI coding agents.
 
 Connect CI/CD pipelines, issue trackers (Jira, Linear), and chat tools (Slack, Teams) to Bernstein's task server.
 

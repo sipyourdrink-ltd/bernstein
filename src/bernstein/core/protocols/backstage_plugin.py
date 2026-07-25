@@ -378,7 +378,7 @@ def _task_api_openapi_stub(server_url: str) -> str:
         "info": {
             "title": "Bernstein Task Server",
             "version": "1.0.0",
-            "description": "Multi-agent orchestration task server API",
+            "description": "Bernstein task server API - deterministic orchestration of CLI coding agents",
         },
         "servers": [{"url": server_url}],
         "paths": {
