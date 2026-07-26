@@ -365,15 +365,35 @@ def _compute_hmac(key: bytes, prev_hmac: str, entry: dict[str, Any]) -> str:
 #: thread out for the whole nested section, so re-entrancy never widens the
 #: window it exists to close.
 #:
-#: Guards are keyed by the *resolved* audit dir and never evicted. Resolving is
-#: load-bearing, not tidiness: two spellings of one directory would map to two
-#: guards, and a thread that entered under one spelling and re-entered under the
-#: other would see depth 0 and re-take the ``flock`` it already holds. Eviction
-#: is unsafe for the same reason a lock cannot be recreated while held, and the
-#: live set is one entry per audit dir a process actually writes to.
+#: Guards are keyed by the audit dir's ``(st_dev, st_ino)`` and never evicted.
+#: The identity is load-bearing, not tidiness: two spellings of one directory
+#: must map to one guard, or a thread that entered under one spelling and
+#: re-entered under the other sees depth 0 and re-takes the ``flock`` it already
+#: holds -- a self-deadlock, not a race. A resolved path string is *not* a
+#: sufficient identity: ``Path.resolve()`` resolves symlinks but does not fold
+#: case, and this project builds and runs on case-insensitive filesystems, so
+#: ``.../auditdir`` and ``.../AuditDir`` name one inode under two strings.
+#: Eviction is unsafe for the same reason a lock cannot be recreated while held,
+#: and the live set is one entry per audit dir a process actually writes to.
 _APPEND_GUARDS: dict[str, threading.RLock] = {}
 _APPEND_GUARDS_LOCK = threading.Lock()
 _APPEND_DEPTH = threading.local()
+
+
+def _audit_dir_key(audit_dir: Path) -> str:
+    """Return a spelling-independent identity for one audit directory.
+
+    ``(st_dev, st_ino)`` is stable across every spelling that reaches the same
+    directory: case variants, symlinks, relative and absolute forms, and bind
+    mounts of the same filesystem. Falls back to the resolved path only when
+    the directory cannot be stat'ed, which callers inside the lock never hit
+    because they create it first.
+    """
+    try:
+        stat_result = audit_dir.stat()
+    except OSError:  # pragma: no cover - the dir is created before every use
+        return f"path:{audit_dir.resolve()}"
+    return f"{stat_result.st_dev}:{stat_result.st_ino}"
 
 
 def _append_guard(audit_key: str) -> threading.RLock:
@@ -389,7 +409,7 @@ def _append_guard(audit_key: str) -> threading.RLock:
 def _inside_append_section(audit_dir: Path) -> bool:
     """Whether this thread currently holds *audit_dir*'s append section."""
     depths: dict[str, int] = getattr(_APPEND_DEPTH, "depths", None) or {}
-    return depths.get(str(audit_dir.resolve()), 0) > 0
+    return depths.get(_audit_dir_key(audit_dir), 0) > 0
 
 
 @contextlib.contextmanager
@@ -417,7 +437,7 @@ def _chain_append_lock(audit_dir: Path) -> Iterator[None]:
     wait for the outermost section to end.
     """
     audit_dir.mkdir(parents=True, exist_ok=True)
-    audit_key = str(audit_dir.resolve())
+    audit_key = _audit_dir_key(audit_dir)
     guard = _append_guard(audit_key)
     depths: dict[str, int] | None = getattr(_APPEND_DEPTH, "depths", None)
     if depths is None:
@@ -456,6 +476,67 @@ def _path_size(path: Path) -> int:
         return path.stat().st_size
     except OSError:
         return -1
+
+
+#: Sentinel stamp for a segment that is absent or unreadable.
+_ABSENT_STAMP: tuple[int, int, int, int] = (-1, -1, -1, -1)
+
+
+def _segment_stamp(path: Path) -> tuple[int, int, int, int]:
+    """Return ``(st_dev, st_ino, st_size, st_mtime_ns)`` for a live segment.
+
+    Byte length alone is not evidence that a segment is the one a writer last
+    appended to. A segment can be removed and regrown - retention compresses an
+    expired day and unlinks the original, an operator restores from a backup, a
+    container remounts a volume - and two identically shaped records occupy
+    exactly the same number of bytes, so the replacement can present the cached
+    length while holding a different chain. Identity ``(st_dev, st_ino)`` is
+    what distinguishes "still the same file" from "a different file of the same
+    size"; length still has to be there because an append by another writer
+    keeps the inode. ``st_mtime_ns`` is carried as a third signal at no extra
+    cost, though its resolution is filesystem-dependent and nothing relies on
+    it alone.
+    """
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return _ABSENT_STAMP
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+    )
+
+
+def _read_live_segment(log_path: Path, audit_dir: Path) -> bytes | None:
+    """Read a live segment, following retention when it archived it mid-read.
+
+    Every reader lists the live segments and then reads them, and ``archive()``
+    removes a segment between those two steps for any reader that happens to be
+    running. Before this existed the read raised ``FileNotFoundError`` and took
+    down chain recovery, ``query`` and ``verify`` alike - a routine retention
+    cycle could crash an unrelated process.
+
+    Retention writes the compressed copy and only then unlinks the original, so
+    a segment that vanished is already present in archived form. Reading that
+    copy returns exactly the bytes the live file held, which keeps the chain
+    linkage continuous instead of leaving a hole the verifier would report as
+    corruption. ``None`` means neither form is readable, which is a real
+    finding rather than a race.
+    """
+    try:
+        return log_path.read_bytes()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return None
+    gz_path = audit_dir / RetentionPolicy().archive_subdir / f"{log_path.name}.gz"
+    try:
+        with gzip.open(gz_path, "rb") as handle:
+            return handle.read()
+    except (OSError, EOFError):
+        return None
 
 
 def _split_jsonl_bytes(raw_bytes: bytes) -> list[bytes]:
@@ -517,6 +598,38 @@ class _ChainWalkContext:
     total: dict[str, int] = field(default_factory=dict)
     missing_newline: dict[str, str] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
+
+
+#: Details key by which a record states the chain head it was written onto.
+CHAIN_ANCHOR_KEY = "prev_chain_digest"
+
+#: Event types that carried :data:`CHAIN_ANCHOR_KEY` with a different meaning
+#: before v3.11: the skill catalogue used it for "the previous install of this
+#: entry", which is a real record but never the immediate predecessor. Current
+#: writers on that path record ``prior_install_chain_head`` instead, so this set
+#: only covers segments written by older versions and can be dropped once those
+#: chains have aged out of retention. Nothing is weakened by the exemption: the
+#: MAC and the ``prev_hmac`` linkage still cover those records in full, and the
+#: field they carry no longer makes a claim about chain position.
+_LEGACY_ANCHOR_EVENT_TYPES = frozenset({"skill.catalog.install", "skill.catalog.upgrade"})
+
+
+def _stated_predecessor(entry: dict[str, Any]) -> str | None:
+    """Return the chain predecessor a record states, or ``None`` if it states none.
+
+    An absent or empty value is not a claim: a caller with no chain wired
+    records ``""``, which says "I make no assertion about my position" rather
+    than asserting a false one.
+    """
+    if str(entry.get("event_type", "")) in _LEGACY_ANCHOR_EVENT_TYPES:
+        return None
+    details = entry.get("details")
+    if not isinstance(details, dict):
+        return None
+    stated = cast("dict[str, Any]", details).get(CHAIN_ANCHOR_KEY)
+    if not isinstance(stated, str) or not stated:
+        return None
+    return stated
 
 
 def _verify_log_bytes(
@@ -653,7 +766,23 @@ def _verify_log_bytes(
 
         if line_messages:
             _fail(line_no, line_offset, len(raw_line), "invalid_hmac", tuple(line_messages))
-        elif ctx is not None:
+            prev_hmac = stored_hmac
+            continue
+
+        stated = _stated_predecessor(entry)
+        if stated is not None and not _hmac.compare_digest(stated, entry_prev):
+            # Reported straight into ``errors`` and deliberately *not* into
+            # ``ctx.failures``: the bytes are canonical and the MAC is genuine,
+            # so this line is not damage. Feeding it to the tear model would
+            # shorten the verified prefix and reclassify honest history as
+            # crash-shaped tail damage an operator is invited to acknowledge
+            # away -- turning a hard failure into something clearable.
+            errors.append(
+                f"{display_name}:{line_no}: stated chain predecessor {stated[:16]}… "
+                f"is not the record's own predecessor {entry_prev[:16]}…"
+            )
+
+        if ctx is not None:
             line_end = line_offset + len(raw_line)
             if line_end < len(raw_bytes):
                 line_end += 1  # the terminator this line owns
@@ -1376,12 +1505,13 @@ class AuditLog:
         else:
             self._key = load_or_create_audit_key(key_path)
         self._prev_hmac = self._recover_chain_tail()
-        # Tracks the day file and its byte length after this instance's last
-        # append, so ``log`` can skip re-reading the tail from disk when no
-        # other writer has touched the file since (issue #2791). ``None`` /
-        # ``-1`` force a re-sync on the first append.
+        # Tracks the day file and its identity+length stamp after this
+        # instance's last append, so ``log`` can skip re-reading the tail from
+        # disk when no other writer has touched the file since (issue #2791).
+        # ``None`` / :data:`_ABSENT_STAMP` force a re-sync on the first append.
+        # See :func:`_segment_stamp` for why the stamp is not just the length.
         self._synced_path: Path | None = None
-        self._synced_size = -1
+        self._synced_stamp: tuple[int, int, int, int] = _ABSENT_STAMP
 
     # -- chain recovery -----------------------------------------------------
 
@@ -1407,7 +1537,13 @@ class AuditLog:
         """
         live_files = sorted(self._audit_dir.glob(_JSONL_GLOB), reverse=True)
         for log_path in live_files:
-            tip = _chain_tail_from_bytes(log_path.read_bytes(), self._key)
+            raw = _read_live_segment(log_path, self._audit_dir)
+            if raw is None:
+                # Retention removed the segment between the listing and the
+                # read and no archived copy is readable yet; the archived pass
+                # below covers the same history.
+                continue
+            tip = _chain_tail_from_bytes(raw, self._key)
             if tip is not None:
                 return tip
 
@@ -1492,21 +1628,28 @@ class AuditLog:
         therefore moves the head. Reading first would publish a head the next
         append does not chain onto.
 
-        Fast path: when the day file is byte-length-identical to what this
-        instance's own last append left it at, no other writer has touched it,
-        our own append always ends in ``b"\\n"`` so the tail cannot be torn,
-        and both the tear probe and the full rescan are skipped. The probe
-        must stay behind this branch: unconditionally it is a stat + open +
-        seek + read on every append, which is a measurable fraction of append
-        throughput.
+        Fast path: when the day file is the same file, of the same length, as
+        the one this instance's own last append left behind, no other writer
+        has touched it, our own append always ends in ``b"\\n"`` so the tail
+        cannot be torn, and both the tear probe and the full rescan are
+        skipped. The probe must stay behind this branch: unconditionally it is
+        a stat + open + seek + read on every append, which is a measurable
+        fraction of append throughput.
+
+        "Same file" is a real part of that test, not decoration. Length alone
+        stopped being sufficient once a segment could be removed and regrown
+        (see :func:`_segment_stamp`): the fast path then fired over a segment
+        holding a different chain, and the append chained onto a head that was
+        no longer on disk. The stamp is read from the same ``stat`` the length
+        comes from, so the check costs nothing extra.
 
         The slow path records what it synced, so a nested append inside the
         same ``append_transaction`` section takes the fast path instead of
         re-scanning the segment it just scanned. The caller must hold the
         chain append lock.
         """
-        size = _path_size(log_path)
-        if log_path == self._synced_path and size == self._synced_size:
+        stamp = _segment_stamp(log_path)
+        if log_path == self._synced_path and stamp == self._synced_stamp:
             return
         # One read serves both the tear gate and head recovery, so the slow
         # path costs a single pass over the day segment - the same order as
@@ -1523,11 +1666,16 @@ class AuditLog:
             if local_head is not None:
                 self._prev_hmac = local_head
                 self._synced_path = log_path
-                self._synced_size = len(raw)
+                # Length comes from the bytes actually read, not from a second
+                # stat: a writer that appended between the stat and the read
+                # would otherwise have its record folded into a stamp whose
+                # head predates it. Recording the shorter length errs towards
+                # a wasted rescan, which is the safe direction.
+                self._synced_stamp = (stamp[0], stamp[1], len(raw), stamp[3])
                 return
         self._prev_hmac = self._recover_chain_tail()
         self._synced_path = log_path
-        self._synced_size = _path_size(log_path)
+        self._synced_stamp = _segment_stamp(log_path)
 
     def _mint_record(
         self,
@@ -1668,7 +1816,7 @@ class AuditLog:
 
         self._prev_hmac = event.hmac
         self._synced_path = log_path
-        self._synced_size = landed
+        self._synced_stamp = _segment_stamp(log_path)
         return True
 
     # -- write --------------------------------------------------------------
@@ -1734,7 +1882,7 @@ class AuditLog:
 
             self._prev_hmac = computed_hmac
             self._synced_path = log_path
-            self._synced_size = _path_size(log_path)
+            self._synced_stamp = _segment_stamp(log_path)
         return event
 
     # -- verify -------------------------------------------------------------
@@ -1840,7 +1988,10 @@ class AuditLog:
                 if already > total:
                     return self.scan_verified(None, event_type=event_type)
                 if already == 0:
-                    raw = path.read_bytes()
+                    raw = _read_live_segment(path, self._audit_dir)
+                    if raw is None:
+                        # Retention removed it between the stat and the read.
+                        continue
                     total = len(raw)
 
             if use_index and already == 0 and raw is not None:
@@ -1991,7 +2142,14 @@ class AuditLog:
                 return ChainVerifyReport(hard_errors=errors)
             prev_hmac = _verify_log_bytes(raw, gz_path.name, prev_hmac, self._key, errors, ctx)
         for log_path in live_files:
-            prev_hmac = _verify_log_bytes(log_path.read_bytes(), log_path.name, prev_hmac, self._key, errors, ctx)
+            raw = _read_live_segment(log_path, self._audit_dir)
+            if raw is None:
+                # Listed, then removed by retention before it could be read,
+                # with no archived copy to fall back on. Reporting it beats
+                # crashing: verification must stay total.
+                errors.append(f"{log_path.name}: segment disappeared during verification")
+                return ChainVerifyReport(hard_errors=errors)
+            prev_hmac = _verify_log_bytes(raw, log_path.name, prev_hmac, self._key, errors, ctx)
 
         return _build_verify_report(errors, ctx)
 
@@ -2004,6 +2162,16 @@ class AuditLog:
         older than ``policy.retention_days`` are gzip-compressed into the
         archive subdirectory.  The original ``.jsonl`` file is removed after
         a successful compress.
+
+        Each segment's compress and unlink happen inside one cross-process
+        append section. The pair is not separable: the archived copy holds the
+        segment as it stood when the compress read it, so an append that landed
+        after the copy and before the unlink would exist only in the file about
+        to be removed. Holding the section also keeps a writer from re-syncing
+        its head off a segment that is halfway through being replaced. The
+        section is taken per segment rather than once for the whole run, so a
+        long retention pass does not hold the chain against every writer for
+        its full duration.
 
         Args:
             policy: Retention settings.  Uses defaults if ``None``.
@@ -2042,11 +2210,16 @@ class AuditLog:
             # ``.gz`` that the verifier would later read (the original
             # ``.jsonl`` is only unlinked once the full ``.gz`` is on disk).
             tmp_path = gz_path.with_name(f"{gz_path.name}.tmp")
-            with log_path.open("rb") as f_in, gzip.open(tmp_path, "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
-            tmp_path.replace(gz_path)
-
-            log_path.unlink()
+            with _chain_append_lock(self._audit_dir):
+                if not log_path.exists():
+                    # Another retention pass took this segment while we waited
+                    # for the section.
+                    skipped.append(log_path.name)
+                    continue
+                with log_path.open("rb") as f_in, gzip.open(tmp_path, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+                tmp_path.replace(gz_path)
+                log_path.unlink()
             archived.append(log_path.name)
             logger.info("Archived audit log %s -> %s", log_path.name, gz_path.name)
 
@@ -2107,12 +2280,14 @@ class AuditLog:
         if include_archived:
             discarded: list[str] = []
             sources.extend(_read_archived_segment(gz, discarded) for gz in _archived_segment_paths(self._audit_dir))
-        sources.extend(path.read_bytes() for path in sorted(self._audit_dir.glob(_JSONL_GLOB)))
+        sources.extend(_read_live_segment(path, self._audit_dir) for path in sorted(self._audit_dir.glob(_JSONL_GLOB)))
 
         for blob in sources:
             if blob is None:
-                # Unreadable archive segment (corrupt gzip). ``verify`` reports
-                # it with a named error; a query simply has nothing to yield.
+                # An unreadable archived segment (corrupt gzip), or a live one
+                # retention removed mid-query with no readable archived copy.
+                # ``verify`` reports either with a named error; a query simply
+                # has nothing to yield.
                 continue
             # Per-line strict decode: an undecodable line is dropped whole
             # rather than becoming replacement characters, so a query never

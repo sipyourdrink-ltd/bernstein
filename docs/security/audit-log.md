@@ -248,6 +248,51 @@ filename, line number, expected vs stored prefix:
   ! 2026-05-07.jsonl:43: prev_hmac mismatch (expected a1b2c3d4… got deadbeef…)
 ```
 
+### The chain position a record states about itself
+
+many records carry `details.prev_chain_digest`: the chain head the
+writer says the record was appended onto. downstream consumers read
+it as the record's anchor - payment receipts lift it verbatim,
+capability tokens check their own `audit_head` against it, admission
+and SLA receipts link through it.
+
+the `hmac` covers the *bytes* of that statement, not its truth. a
+record naming a predecessor it never had signs exactly as cleanly as
+one naming its real predecessor, so a false anchor used to verify
+green. `verify` now compares the stated value against the record's own
+`prev_hmac` and reports the disagreement in its own words:
+
+```
+  ! 2026-05-07.jsonl:42: stated chain predecessor dededededededede… is not
+    the record's own predecessor 113651ab625159dc…
+```
+
+this is deliberately *not* worded as an HMAC or `prev_hmac` mismatch.
+those two mean the bytes or the linkage were altered. this one means
+the bytes are intact and authentic while the claim inside them is
+wrong - a writer defect, not tampering - and it is reported as a hard
+error, never as acknowledgeable tear evidence.
+
+an absent or empty `prev_chain_digest` is not a claim and is not
+checked: a writer with no chain wired records `""`, which asserts
+nothing.
+
+`bernstein audit seal` refuses over a false anchor for the same reason
+it refuses over a broken chain: a fresh root would pin a history that
+contains a claim known to be untrue. an operator who needs a seal over
+a chain carrying one - a record written by a pre-v3.11 writer, say -
+takes the documented forensic path, `--allow-broken-chain`, which
+never advances the checkpoint.
+
+one legacy exemption exists. before v3.11 the skill catalogue used the
+same key for "the previous install event *for this entry*", which is a
+real record but never the immediate predecessor. current catalogue
+writers record `prior_install_chain_head` instead, and
+`skill.catalog.install` / `skill.catalog.upgrade` records are exempt
+from the anchor check so segments written by older versions do not
+report a defect that has been removed. those records are still fully
+covered by the MAC and by `prev_hmac` linkage.
+
 run from cron (every 15 min is fine - the verify is read-only and a
 day's worth of events checks in milliseconds):
 
@@ -414,6 +459,15 @@ derived from today's UTC date). there is no in-process compaction;
 old files are gzipped into `.sdd/audit/archive/` by
 `AuditLog.archive(RetentionPolicy(retention_days=…))`, default 90
 days. invoke it from a maintenance job or a periodic timer.
+
+each segment's compress and unlink run inside one cross-process append
+section, taken per segment rather than once for the whole pass. the
+pair is not separable: the `.gz` holds the segment as the compress read
+it, so an append landing between the copy and the unlink would exist
+only in the file about to be removed. readers are tolerant of the same
+window from the other side - a segment that disappears between listing
+and reading is followed into its archived copy rather than raising, so
+a retention cycle can no longer take down an unrelated process.
 
 a minimal `logrotate` snippet, if you'd rather not run the python
 archiver:
