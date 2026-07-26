@@ -146,7 +146,9 @@ it is tagged accordingly.
 | `mcp.bernstein_status` | Y | - | - |
 | `mcp.bernstein_tasks` | Y | - | - |
 | `mcp.bernstein_cost` | Y | - | - |
-| `mcp.bernstein_stop` | - | - | - |
+| `mcp.bernstein_shutdown_orchestrator` | - | - | - |
+| `mcp.bernstein_cancel` | - | - | - |
+| `mcp.bernstein_stop` (deprecated alias) | - | - | - |
 | `mcp.bernstein_approve` | - | - | - |
 | `mcp.bernstein_complete` | - | - | - |
 | `mcp.bernstein_create_subtask` | Y | - | - |

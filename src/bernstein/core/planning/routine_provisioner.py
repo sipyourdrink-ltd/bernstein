@@ -165,7 +165,7 @@ def build_routine_prompt(scenario: ScenarioRecipe, bernstein_url: str) -> str:
         f"   - scenario_id: `{scenario.scenario_id}`\n"
         "   - context: short summary of the trigger event\n"
         "   - pr_number / branch: from the trigger payload when present\n"
-        "2. Poll `bernstein_scenario` with action=\"status\" and the returned\n"
+        '2. Poll `bernstein_scenario` with action="status" and the returned\n'
         "   orchestration_id every 30s.\n"
         "3. When all tasks finish, summarise outcomes:\n"
         "   - per-task status (passed / failed)\n"

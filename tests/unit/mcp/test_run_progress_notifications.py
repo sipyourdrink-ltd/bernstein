@@ -18,9 +18,9 @@ import pytest
 
 from bernstein.core.replay.progress import ProgressVector, fold_progress
 from bernstein.mcp.server import (
+    _PROGRESS_TICKS,
     _maybe_emit_progress,
     _progress_notification_payload,
-    _PROGRESS_TICKS,
     _run_status_impl,
     _should_emit_progress,
 )
@@ -145,9 +145,7 @@ async def test_token_emits_one_tick_and_suppresses_the_unchanged_repoll(
 async def test_advancing_fold_emits_again(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     import bernstein.core.replay.progress as progress_module
 
-    monkeypatch.setattr(
-        progress_module, "project_task_progress", lambda *_a, **_k: _vector(journal_rows=_ROWS[:1])
-    )
+    monkeypatch.setattr(progress_module, "project_task_progress", lambda *_a, **_k: _vector(journal_rows=_ROWS[:1]))
     ctx = _ctx(token="tok-1")
     await _maybe_emit_progress(ctx, tmp_path / ".sdd", "run-1")
     assert ctx.report_progress.await_count == 1
@@ -159,9 +157,7 @@ async def test_advancing_fold_emits_again(tmp_path: Any, monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
-async def test_emission_failure_never_reaches_the_tool_result(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_emission_failure_never_reaches_the_tool_result(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from bernstein.core.replay.journal import EventJournal
 
     monkeypatch.chdir(tmp_path)

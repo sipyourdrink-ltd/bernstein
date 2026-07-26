@@ -42,6 +42,7 @@ _SERVER_URL = "http://localhost:8052"
 #: Reaching one of these decides work, so it may only happen behind a gate.
 _TERMINAL_ROUTES: tuple[str, ...] = ("/complete", "/force-claim", "/fail", "/cancel")
 
+
 #: (tool, status) pairs allowed to reach a terminal route, derived from the
 #: state machine so the allowance cannot drift from what the gates enforce.
 def _cancellable_statuses() -> frozenset[str]:

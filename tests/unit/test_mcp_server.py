@@ -13,6 +13,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _result_text(result: object) -> str:
     """Return the text block of a tool result.
 
@@ -23,7 +24,6 @@ def _result_text(result: object) -> str:
     if hasattr(result, "content"):
         return result.content[0].text  # type: ignore[union-attr]
     return result[0][0].text  # type: ignore[index]
-
 
 
 def _make_status_payload() -> dict:
@@ -113,12 +113,10 @@ def test_every_registered_tool_has_an_explicit_tier(tmp_path) -> None:  # type: 
     manager's registry against the declaration turns that silent drop into a
     test failure at the moment the tool is added.
     """
-    from bernstein.core.protocols.mcp.tool_tiers import TOOL_TIERS
-    from bernstein.mcp.server import create_mcp_server
-
     # The ``all`` tier keeps every registered tool, and lineage registration
     # is opt-in, so this build is the widest possible registration set.
-    from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES
+    from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES, TOOL_TIERS
+    from bernstein.mcp.server import create_mcp_server
 
     mcp = create_mcp_server(
         server_url="http://localhost:8052",

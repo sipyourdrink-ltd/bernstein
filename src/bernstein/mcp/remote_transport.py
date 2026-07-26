@@ -126,6 +126,7 @@ def _origin_allowed(origin: str, allowed: list[str]) -> bool:
                 return True
     return False
 
+
 # Hostnames considered safe for listening without a configured auth token.
 _LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -1164,11 +1165,7 @@ class StreamableHTTPTransport:
             return {"contents": [{"uri": uri, "mimeType": _CONTENT_TYPE_JSON, "text": text}]}
 
         if uri == SKILL_INDEX_RESOURCE_URI:
-            return {
-                "contents": [
-                    {"uri": uri, "mimeType": _CONTENT_TYPE_JSON, "text": self._skill_index_body()}
-                ]
-            }
+            return {"contents": [{"uri": uri, "mimeType": _CONTENT_TYPE_JSON, "text": self._skill_index_body()}]}
 
         if uri.startswith("lineage://"):
             if not self._lineage_enabled():
@@ -1374,9 +1371,7 @@ class StreamableHTTPTransport:
             if detail:
                 body["tasks"] = tasks
             else:
-                body["tasks"] = [
-                    {k: t.get(k) for k in ("id", "title", "role", "status")} for t in tasks
-                ]
+                body["tasks"] = [{k: t.get(k) for k in ("id", "title", "role", "status")} for t in tasks]
         return json.dumps(body)
 
     async def _run_tool(self, arguments: dict[str, Any]) -> str:
@@ -1430,9 +1425,7 @@ class StreamableHTTPTransport:
                         "task_id": task_id,
                         "status": current,
                         "cancelled": False,
-                        "message": (
-                            f"Task {task_id} is already in a terminal or non-cancellable state ({current})."
-                        ),
+                        "message": (f"Task {task_id} is already in a terminal or non-cancellable state ({current})."),
                     }
                 )
             resp = await client.post(
@@ -1451,9 +1444,7 @@ class StreamableHTTPTransport:
                         "task_id": task_id,
                         "status": moved,
                         "cancelled": False,
-                        "message": (
-                            f"Task {task_id} is already in a terminal or non-cancellable state ({moved})."
-                        ),
+                        "message": (f"Task {task_id} is already in a terminal or non-cancellable state ({moved})."),
                     }
                 )
             resp.raise_for_status()

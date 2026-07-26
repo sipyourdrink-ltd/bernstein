@@ -62,9 +62,7 @@ def _req(method: str, params: dict | None = None, req_id: int = 1) -> bytes:
 
 
 async def test_disallowed_origin_returns_403(transport: StreamableHTTPTransport) -> None:
-    status, _, body = await transport.handle_request(
-        "POST", "/mcp", {"origin": "http://evil.example"}, _req("ping")
-    )
+    status, _, body = await transport.handle_request("POST", "/mcp", {"origin": "http://evil.example"}, _req("ping"))
     assert status == 403
     assert b"origin" in body.lower()
 
@@ -72,9 +70,7 @@ async def test_disallowed_origin_returns_403(transport: StreamableHTTPTransport)
 async def test_allowed_origin_is_served(transport: StreamableHTTPTransport) -> None:
     # The default allow list pins clear-text origins to loopback with a port
     # glob, so any localhost port is an allowed browser origin.
-    status, _, _body = await transport.handle_request(
-        "POST", "/mcp", {"origin": "http://localhost:5173"}, _req("ping")
-    )
+    status, _, _body = await transport.handle_request("POST", "/mcp", {"origin": "http://localhost:5173"}, _req("ping"))
     assert status == 200
 
 
@@ -84,15 +80,11 @@ async def test_absent_origin_is_served(transport: StreamableHTTPTransport) -> No
     assert status == 200
 
 
-async def test_origin_check_has_a_one_release_opt_out(
-    _clean_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_origin_check_has_a_one_release_opt_out(_clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BERNSTEIN_MCP_REMOTE_HEADER_CHECKS", "0")
     cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="none")
     transport = StreamableHTTPTransport(config=cfg, server_url="http://test:8052")
-    status, _, _body = await transport.handle_request(
-        "POST", "/mcp", {"origin": "http://evil.example"}, _req("ping")
-    )
+    status, _, _body = await transport.handle_request("POST", "/mcp", {"origin": "http://evil.example"}, _req("ping"))
     assert status == 200
 
 
@@ -122,9 +114,7 @@ async def test_absent_protocol_version_is_served_as_default(transport: Streamabl
     assert status == 200
 
 
-async def test_version_check_shares_the_opt_out(
-    _clean_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_version_check_shares_the_opt_out(_clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BERNSTEIN_MCP_REMOTE_HEADER_CHECKS", "off")
     cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="none")
     transport = StreamableHTTPTransport(config=cfg, server_url="http://test:8052")
@@ -260,9 +250,7 @@ async def test_lineage_resources_served_when_enabled(
     stats = json.loads(json.loads(resp)["result"]["contents"][0]["text"])
     assert stats["total_entries"] == 0
 
-    status, _, resp = await transport.handle_request(
-        "POST", "/mcp", {}, _req("resources/templates/list")
-    )
+    status, _, resp = await transport.handle_request("POST", "/mcp", {}, _req("resources/templates/list"))
     templates = {t["uriTemplate"] for t in json.loads(resp)["result"]["resourceTemplates"]}
     assert "lineage://artefact/{artefact_path}" in templates
 
@@ -284,7 +272,7 @@ async def test_resources_read_unknown_uri_is_an_error(transport: StreamableHTTPT
 async def test_remote_tools_list_advertises_the_consolidated_names(
     transport: StreamableHTTPTransport,
 ) -> None:
-    status, _, resp = await transport.handle_request("POST", "/mcp", {}, _req("tools/list"))
+    _status, _, resp = await transport.handle_request("POST", "/mcp", {}, _req("tools/list"))
     names = {t["name"] for t in json.loads(resp)["result"]["tools"]}
     assert {
         "bernstein_run",

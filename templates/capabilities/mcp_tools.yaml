@@ -13,6 +13,12 @@ tools:
     capabilities: [private_data]
   - name: mcp.bernstein_cost
     capabilities: [private_data]
+  - name: mcp.bernstein_shutdown_orchestrator
+    capabilities: []
+  - name: mcp.bernstein_cancel
+    capabilities: []
+  # Deprecated alias of mcp.bernstein_shutdown_orchestrator, kept callable
+  # for one minor release (removed in v3.12.0).
   - name: mcp.bernstein_stop
     capabilities: []
   - name: mcp.bernstein_approve

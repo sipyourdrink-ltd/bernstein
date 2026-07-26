@@ -187,5 +187,8 @@ def test_http_transport_health_enveloped(_meter_on: None) -> None:
     assert status == 200
     text = json.loads(resp_body)["result"]["content"][0]["text"]
     parsed = json.loads(text)
-    assert parsed["result"]["status"] == "ok"
+    # bernstein_health is a deprecated alias (#3087): the liveness body sits
+    # under the deprecation wrapper, which sits under the meter envelope.
+    assert parsed["result"]["result"]["status"] == "ok"
+    assert parsed["result"]["replacement"] == "bernstein_status"
     assert parsed["_meter"]["tool"] == "bernstein_health"

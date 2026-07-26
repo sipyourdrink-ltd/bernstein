@@ -1504,6 +1504,7 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         except Exception as exc:
             return _error_response(exc)
 
+
 def _register_skill_tools(mcp: FastMCP[None]) -> None:
     """Register the ``load_skill`` progressive-disclosure tool (oai-004).
 
