@@ -435,6 +435,63 @@ class TestGetAffectedTests:
             "tests/unit/test_ci_workflow_yaml.py",
         ]
 
+    def test_package_data_change_selects_tests_of_owning_package(self, tmp_path: Path) -> None:
+        """Non-Python package data maps to the tests of its owning package.
+
+        A built asset (e.g. the shipped GUI bundle) has no import edge, so
+        without package-data attribution a change confined to it selects
+        nothing and the shard gate fails closed on a change that the owning
+        package's tests genuinely cover.
+        """
+        import test_impact as ti  # type: ignore[import]
+
+        src = tmp_path / "src"
+        dep_map = self._make_dep_map(tmp_path, src=src)
+
+        bundle = src / "bernstein" / "core" / "static" / "index.html"
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        bundle.write_text("<html></html>\n")
+
+        orig_src, orig_root = ti.SRC_ROOT, ti.ROOT
+        ti.SRC_ROOT = src
+        ti.ROOT = tmp_path
+        try:
+            changed = [str(bundle.relative_to(tmp_path))]
+            affected = get_affected_tests(changed, dep_map)
+        finally:
+            ti.SRC_ROOT = orig_src
+            ti.ROOT = orig_root
+
+        assert any("test_models.py" in str(p) for p in affected)
+        assert not any("test_other.py" in str(p) for p in affected)
+
+    def test_package_data_outside_any_package_selects_nothing(self, tmp_path: Path) -> None:
+        """A data file with no enclosing package keeps the empty affected set.
+
+        Attribution stops at ``src_root``; a stray file directly under it has
+        no owning package, so the fail-closed rule in ``scripts/run_tests.py``
+        still fires rather than silently picking an arbitrary suite.
+        """
+        import test_impact as ti  # type: ignore[import]
+
+        src = tmp_path / "src"
+        dep_map = self._make_dep_map(tmp_path, src=src)
+
+        stray = src / "orphan.dat"
+        stray.write_text("data\n")
+
+        orig_src, orig_root = ti.SRC_ROOT, ti.ROOT
+        ti.SRC_ROOT = src
+        ti.ROOT = tmp_path
+        try:
+            changed = [str(stray.relative_to(tmp_path))]
+            affected = get_affected_tests(changed, dep_map)
+        finally:
+            ti.SRC_ROOT = orig_src
+            ti.ROOT = orig_root
+
+        assert affected == []
+
     def test_conftest_change_runs_all(self, tmp_path: Path) -> None:
         import test_impact as ti  # type: ignore[import]
 

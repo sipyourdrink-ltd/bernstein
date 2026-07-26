@@ -284,6 +284,40 @@ def _collect_tests_for_modules(
     return affected
 
 
+def _asset_owner_packages(changed_files: list[str], root: Path, src_root: Path) -> set[str]:
+    """Map non-Python files under ``src_root`` to their nearest enclosing package.
+
+    Package data (a built GUI bundle, templates, schema files) carries no
+    import edge, so a change confined to it would otherwise produce an empty
+    affected set and trip the fail-closed rule in ``scripts/run_tests.py``
+    even though the tests that exercise the owning package genuinely cover
+    the data it ships. Attributing the file to its nearest package with an
+    ``__init__.py`` lets the selector treat the change as a change to that
+    package.
+    """
+    packages: set[str] = set()
+    for rel_path in changed_files:
+        file_path = root / Path(rel_path)
+        if file_path.suffix == ".py" or not file_path.is_relative_to(src_root):
+            continue
+        for parent in file_path.parents:
+            if parent == src_root or not parent.is_relative_to(src_root):
+                break
+            if (parent / "__init__.py").exists():
+                packages.add(".".join(parent.relative_to(src_root).parts))
+                break
+    return packages
+
+
+def _modules_within_packages(packages: set[str], source_imports: dict[str, object]) -> set[str]:
+    """Return indexed modules that live inside any of ``packages``."""
+    modules: set[str] = set()
+    for package in packages:
+        prefix = package + "."
+        modules.update(module for module in source_imports if module == package or module.startswith(prefix))
+    return modules
+
+
 def compat_get_affected_tests(
     changed_files: list[str],
     dep_map: dict[str, Any],
@@ -307,6 +341,16 @@ def compat_get_affected_tests(
         file_path = root / rel_path
         if file_path.suffix == ".py" and file_path.is_relative_to(src_root):
             changed_modules.add(_path_to_module(file_path, src_root))
+
+    # Non-Python package data (e.g. the shipped GUI bundle) is attributed to
+    # its owning package: every indexed module inside that package counts as
+    # changed, so the tests that import the package run against the new data.
+    changed_modules.update(
+        _modules_within_packages(
+            _asset_owner_packages(changed_files, root, src_root),
+            source_imports,
+        )
+    )
 
     all_affected = _expand_transitive_modules(changed_modules, source_imports)
     affected_tests = _collect_changed_test_files(changed_files, root, test_deps)
