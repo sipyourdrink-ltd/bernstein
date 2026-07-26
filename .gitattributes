@@ -1,0 +1,8 @@
+# Generated artefacts. Marking them keeps GitHub from counting them in
+# language statistics and collapses them by default in review diffs, so a
+# routine refresh does not bury the hand-written changes in the same PR.
+#
+# docs/reference/openapi.json is rebuilt by scripts/generate_openapi.py and
+# pinned by tests/unit/test_openapi_snapshot_drift.py; edit the routes, not
+# the snapshot.
+docs/reference/openapi.json linguist-generated=true
