@@ -76,11 +76,19 @@ The measured cost of running the whole directory is 264s wall at
 critical path.
 
 Note that a file-level pass is not the same as a directory-level pass.
-`scripts/run_tests.py` reports a file whose tests all skip as `PASS`, and
-around a dozen files under `tests/integration/` are gated behind
+Around a dozen files under `tests/integration/` are gated behind
 credentials or SDKs a hosted runner does not have (`E2B_API_KEY`,
 `OPENAI_API_KEY`, `BERNSTEIN_TEST_API_KEY`, the object-store sinks, the
 opt-in `cluster_e2e` marker). Those files execute no assertions here.
+
+`scripts/run_tests.py` reports them as `NO TESTS` rather than `PASS`, and
+totals them separately (`Files: P passed, F failed, N ran no tests, T
+total`), so the passing count is a count of files that actually executed
+something. A file that ran nothing is not a failure - a credential-gated
+suite and an empty impact-based selection are both legitimate - but it is
+not evidence either. A file that exits 0 without a pytest terminal summary
+*is* a failure: pytest prints one on every completed run, so its absence
+means the subprocess stopped being pytest before it could report.
 
 ## macOS matrix policy (closes #1468)
 
