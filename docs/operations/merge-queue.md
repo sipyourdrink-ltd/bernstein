@@ -67,7 +67,7 @@ Every context required on a PR also reports on a `merge_group` ref:
 |------------------|-------------------|------------------------|
 | `CI gate` | `ci.yml` :: `ci-gate` | Yes - `merge_group: {}` |
 | `CI gate` | `ci-gate-stub.yml` :: `ci-gate` | No - `pull_request` only, and **correct** (see below) |
-| `review-bot-ack` | `review-bot-ack.yml` :: `merge-group-pass` | Yes - `if: github.event_name == 'merge_group'` |
+| `review-bot-ack` | `review-bot-ack.yml` :: `merge-group-verify` | Yes - `if: github.event_name == 'merge_group'` |
 
 `ci-gate-stub.yml` deliberately has no `merge_group` trigger. It exists
 only because `ci.yml`'s `pull_request` trigger carries a `paths-ignore:`
@@ -88,8 +88,8 @@ queue for every diff the filter excludes. It is locked by
 > An earlier revision of this runbook said the opposite, on the grounds
 > that the workflow triggered only on `pull_request` /
 > `pull_request_review`. That is no longer true: `review-bot-ack.yml`
-> declares `merge_group: {}` and carries a `merge-group-pass` job that
-> republishes the identical `review-bot-ack` context on the queue's
+> declares `merge_group: {}` and carries a `merge-group-verify` job that
+> publishes the identical `review-bot-ack` context on the queue's
 > ephemeral ref. Requiring it on the queue cannot wedge anything, and
 > leaving it out would leave two divergent definitions of "required" -
 > the PR gate enforcing two contexts and the queue enforcing one.
