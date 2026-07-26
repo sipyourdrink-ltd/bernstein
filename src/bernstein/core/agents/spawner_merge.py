@@ -50,19 +50,24 @@ def _allow_merge_to_default_branch(env: dict[str, str] | None = None) -> bool:
     return raw is not None and raw.strip().lower() in _TRUTHY_ALLOW
 
 
-def _record_merge_refusal(worktree_root: Path, session_id: str, branch: str) -> None:
-    """Persist a visible record that a default-branch merge was refused.
+def _record_merge_refusal(
+    worktree_root: Path,
+    session_id: str,
+    branch: str,
+    reason: str = "target-is-default-branch",
+) -> None:
+    """Persist a visible record that a merge was refused.
 
     Written to ``.sdd/runtime/refused_merges.jsonl`` next to the pending-push
     journal so an operator (and any postmortem) can see exactly which session
-    was blocked, on which branch, and when.
+    was blocked, on which branch, why, and when.
     """
     import json as _json
 
     entry = {
         "session_id": _sanitise_for_log(session_id),
         "branch": _sanitise_for_log(branch),
-        "reason": "target-is-default-branch",
+        "reason": _sanitise_for_log(reason),
         "ts": time.time(),
     }
     try:
@@ -84,6 +89,63 @@ def _sanitise_for_log(value: str) -> str:
     called inside the spawner hot path.
     """
     return value.replace("\r", "").replace("\n", "") if value else value
+
+
+# ---------------------------------------------------------------------------
+# Blast-radius reversibility gate (issue #1322, wired in by #3135)
+# ---------------------------------------------------------------------------
+
+
+def _incoming_change(worktree_root: Path, branch: str) -> tuple[list[str], str]:
+    """Return ``(files, diff_text)`` for what merging ``branch`` would bring in.
+
+    Both are computed against the merge base with the checked-out branch, so
+    the score describes this merge rather than the branch's whole history.
+    An unreadable branch yields an empty change, which the scorer treats as
+    a zero-risk one; the gate below refuses only on evidence.
+    """
+    from bernstein.core.git_ops import run_git
+
+    spec = f"HEAD...{branch}"
+    names = run_git(["diff", "--name-only", spec], worktree_root, timeout=30)
+    if names.returncode != 0:
+        return [], ""
+    files = [line.strip() for line in names.stdout.splitlines() if line.strip()]
+    body = run_git(["diff", spec], worktree_root, timeout=60)
+    return files, body.stdout if body.returncode == 0 else ""
+
+
+def _blast_radius_refusal(
+    session: AgentSession,
+    worktree_root: Path,
+    branch: str,
+) -> MergeResult | None:
+    """Refuse the merge when it exceeds the operator's blast-radius ceiling.
+
+    Returns ``None`` when the merge may proceed, which includes the default
+    case where no ceiling was requested.
+    """
+    from bernstein.core.lifecycle.blast_radius_gate import ceiling_requested, evaluate_pre_merge
+
+    if not ceiling_requested():
+        return None
+
+    files, diff_text = _incoming_change(worktree_root, branch)
+    decision = evaluate_pre_merge(files=files, diff_text=diff_text)
+    if decision is None or decision.allowed:
+        return None
+
+    _record_merge_refusal(worktree_root, session.id, branch, reason="blast-radius-ceiling")
+    logger.error(
+        "Refusing to merge agent work from %s: %s",
+        _sanitise_for_log(session.id),
+        _sanitise_for_log(decision.reason),
+    )
+    from bernstein.core.metric_collector import get_collector
+
+    for task_id in session.task_ids:
+        get_collector().record_merge_result(task_id, success=False)
+    return MergeResult(success=False, conflicting_files=[], error=decision.reason)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +203,13 @@ def _run_merge_and_push(
                 f"default branch; set {ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 to override"
             ),
         )
+
+    # Reversibility gate (#1322): an operator who set ``--max-blast-radius``
+    # gets the ceiling evaluated here, on the change this merge would land.
+    # Off by default; a run without the flag reaches the merge unchanged.
+    blast_radius_refusal = _blast_radius_refusal(session, worktree_root, f"agent/{session.id}")
+    if blast_radius_refusal is not None:
+        return blast_radius_refusal
 
     merge_start = time.perf_counter()
     # Provenance: record the call site before invoking the merge so the

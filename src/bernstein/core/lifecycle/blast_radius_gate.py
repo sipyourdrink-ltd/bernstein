@@ -2,15 +2,20 @@
 
 This module is the single integration point between the blast-radius scorer
 in :mod:`bernstein.core.quality.blast_radius` and the merge / deploy gate.
-It is intentionally tiny: orchestrator callers invoke
-:func:`install_blast_radius_gate` after building a
-:class:`bernstein.core.security.blocking_hooks.BlockingHookRunner`. The
-function is a no-op unless the operator opted in via
-``--max-blast-radius`` (which propagates the ``BERNSTEIN_MAX_BLAST_RADIUS``
-env var).
+:func:`install_blast_radius_gate` registers the hook on a
+:class:`bernstein.core.security.blocking_hooks.BlockingHookRunner`;
+:func:`evaluate_pre_merge` is the caller-facing entry point that builds a
+runner, installs the hook and evaluates one candidate merge.  Both are
+no-ops unless the operator opted in via ``--max-blast-radius`` (which
+propagates the ``BERNSTEIN_MAX_BLAST_RADIUS`` env var).
 
 Default behaviour stays unchanged: when the env var is unset, no hook is
 registered and the gate is a pass-through.
+
+Requesting a ceiling that cannot be honoured is not the same as not
+requesting one.  When the env var carries a value the gate cannot use,
+:func:`evaluate_pre_merge` denies instead of passing, so a merge never
+reports success under a ceiling that was never evaluated.
 """
 
 from __future__ import annotations
@@ -20,12 +25,28 @@ import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bernstein.core.security.blocking_hooks import BlockingHookRunner
+    from collections.abc import Sequence
+
+    from bernstein.core.security.blocking_hooks import BlockingHookResult, BlockingHookRunner
 
 logger = logging.getLogger(__name__)
 
 #: Operator-visible env var that carries the ceiling from `bernstein run`.
 ENV_MAX_BLAST_RADIUS: str = "BERNSTEIN_MAX_BLAST_RADIUS"
+
+#: Blocking-hook event this gate registers on.
+PRE_MERGE_EVENT: str = "pre_merge"
+
+
+def ceiling_requested() -> bool:
+    """Return ``True`` when the operator asked for a ceiling at all.
+
+    Distinct from :func:`_read_ceiling` returning a value: a malformed or
+    out-of-range setting is still a request, and must not be treated as
+    "no gate wanted".
+    """
+    raw = os.environ.get(ENV_MAX_BLAST_RADIUS)
+    return raw is not None and raw.strip() != ""
 
 
 def _read_ceiling() -> float | None:
@@ -62,9 +83,68 @@ def install_blast_radius_gate(runner: BlockingHookRunner) -> bool:
     from bernstein.core.quality.blast_radius import make_pre_merge_hook
 
     hook = make_pre_merge_hook(max_score=ceiling)
-    runner.register("pre_merge", hook)
+    runner.register(PRE_MERGE_EVENT, hook)
     logger.info("Blast-radius reversibility gate active: ceiling=%.4f (pre_merge).", ceiling)
     return True
 
 
-__all__ = ["ENV_MAX_BLAST_RADIUS", "install_blast_radius_gate"]
+def evaluate_pre_merge(*, files: Sequence[str], diff_text: str) -> BlockingHookResult | None:
+    """Evaluate one candidate merge against the operator's ceiling.
+
+    Builds a :class:`BlockingHookRunner`, installs the gate on it through
+    :func:`install_blast_radius_gate`, and runs the ``pre_merge`` event for
+    the supplied change.
+
+    Args:
+        files: Paths the merge would bring in.
+        diff_text: Diff body for the content detectors.
+
+    Returns:
+        ``None`` when no ceiling was requested, so the caller proceeds
+        exactly as before.  Otherwise the hook result: ``allowed=False``
+        carries a reason naming the computed score and the ceiling.
+    """
+    if not ceiling_requested():
+        return None
+
+    from bernstein.core.hook_events import BlockingHookPayload, HookEvent
+    from bernstein.core.security.blocking_hooks import BlockingHookResult, BlockingHookRunner
+
+    raw = os.environ.get(ENV_MAX_BLAST_RADIUS, "")
+    runner = BlockingHookRunner()
+    try:
+        if not install_blast_radius_gate(runner):
+            # The operator asked for a ceiling and did not get one.  Passing
+            # here would report a gate that was never evaluated.
+            return BlockingHookResult(
+                allowed=False,
+                reason=(
+                    f"refused: {ENV_MAX_BLAST_RADIUS}={raw!r} is not a usable ceiling "
+                    f"in [0, 1], so the requested blast-radius gate could not be installed"
+                ),
+                hook_name="blast_radius",
+            )
+        payload = BlockingHookPayload(
+            event=HookEvent.PRE_MERGE,
+            action="merge",
+            context={"files": tuple(files), "diff_text": diff_text},
+        )
+        return runner.run(PRE_MERGE_EVENT, payload)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Blast-radius gate could not be evaluated: %s", exc)
+        return BlockingHookResult(
+            allowed=False,
+            reason=f"refused: blast-radius gate could not be evaluated ({exc})",
+            hook_name="blast_radius",
+        )
+    finally:
+        runner.shutdown()
+
+
+__all__ = [
+    "ENV_MAX_BLAST_RADIUS",
+    "PRE_MERGE_EVENT",
+    "ceiling_requested",
+    "evaluate_pre_merge",
+    "install_blast_radius_gate",
+]
