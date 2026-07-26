@@ -910,9 +910,15 @@ class ScheduleSupervisor:
             params_hash=params_hash,
         )
 
-        # Capture-head and append are one section: see _AuditChainAdapter.
+        # Capture-head and append are one section: see _AuditChainAdapter. A
+        # counterfactual appends nothing, so there is no record for the head to
+        # be wrong about and no reason to hold the chain against every other
+        # writer while a fire that did not happen is recorded.
         if self._chain is None:
             prev_chain = ""
+            chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
+        elif counterfactual:
+            prev_chain = self._chain.chain_tail
             chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
         else:
             with self._chain.transaction():
