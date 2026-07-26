@@ -973,8 +973,13 @@ def _build_verify_report(errors: list[str], ctx: _ChainWalkContext) -> ChainVeri
 
     # Unsealed tail tear: every non-verifying line after the last verifying
     # record of the chain's final segment, extending to end of file. Damage
-    # with verified records after it is not a tail and stays hard.
-    if ctx.order:
+    # with verified records after it is not a tail and stays hard. A chain
+    # with no verifying record at all is not a tear either: a crash damages
+    # the suffix of history that verified, so when nothing verifies the
+    # damage is a broken or foreign chain (e.g. written under a different
+    # key) and must stay a hard error rather than something an operator is
+    # invited to acknowledge away.
+    if ctx.order and any(ctx.ok_end.values()):
         final = ctx.order[-1]
         ok_end = ctx.ok_end.get(final, 0)
         tail_indices = [

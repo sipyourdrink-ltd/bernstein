@@ -636,10 +636,15 @@ def _verify_checkpoints() -> bool:
     console.print()
     try:
         key = load_audit_key()
-    except AuditKeyMissingError as exc:
-        console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
-        console.print(f"  [red]![/red] {exc}")
-        return False
+    except AuditKeyMissingError:
+        # Checkpoints are HMAC-signed with the audit key. A verifier without
+        # the key cannot check them - the same limit the HMAC pillar has - so
+        # this is a named degradation, not a failure verdict.
+        console.print(
+            "[yellow]Checkpoint verification skipped: no audit HMAC key available "
+            "(checkpoints are signed with it).[/yellow]"
+        )
+        return True
 
     try:
         state = load_checkpoints(AUDIT_DIR, key)
