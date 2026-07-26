@@ -14,6 +14,18 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+def _result_text(result: object) -> str:
+    """Return the text block of a tool result.
+
+    Structured tools (#3086) answer with a ``CallToolResult`` whose text
+    block is unchanged; the rest answer with the legacy (content, meta)
+    tuple FastMCP returns.
+    """
+    if hasattr(result, "content"):
+        return result.content[0].text  # type: ignore[union-attr]
+    return result[0][0].text  # type: ignore[index]
+
+
 def _make_status_payload() -> dict:
     return {
         "total": 10,
@@ -101,11 +113,11 @@ def test_every_registered_tool_has_an_explicit_tier(tmp_path) -> None:  # type: 
     manager's registry against the declaration turns that silent drop into a
     test failure at the moment the tool is added.
     """
-    from bernstein.core.protocols.mcp.tool_tiers import TOOL_TIERS
-    from bernstein.mcp.server import create_mcp_server
-
     # The ``all`` tier keeps every registered tool, and lineage registration
     # is opt-in, so this build is the widest possible registration set.
+    from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES, TOOL_TIERS
+    from bernstein.mcp.server import create_mcp_server
+
     mcp = create_mcp_server(
         server_url="http://localhost:8052",
         tier="all",
@@ -113,8 +125,10 @@ def test_every_registered_tool_has_an_explicit_tier(tmp_path) -> None:  # type: 
         lineage_root=tmp_path,
     )
     registered = {t.name for t in mcp._tool_manager.list_tools()}
-    undeclared = sorted(registered - set(TOOL_TIERS))
+    undeclared = sorted(registered - set(TOOL_TIERS) - set(DEPRECATED_TOOL_ALIASES))
     assert not undeclared, f"MCP tools registered without a TOOL_TIERS entry: {undeclared}"
+    # And the aliases account for every remaining registered name.
+    assert registered - set(TOOL_TIERS) <= set(DEPRECATED_TOOL_ALIASES)
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +157,7 @@ async def test_bernstein_run_creates_task() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_run", {"goal": "Add auth", "role": "backend"})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     assert "task-run-01" in text
     mock_client.post.assert_awaited_once()
     call_kwargs = mock_client.post.call_args
@@ -171,7 +185,7 @@ async def test_bernstein_run_uses_default_role() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_run", {"goal": "Do something"})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     assert "task-run-02" in text
     posted_json = mock_client.post.call_args.kwargs.get("json") or mock_client.post.call_args[1].get("json", {})
     assert posted_json.get("role") == "backend"
@@ -201,7 +215,7 @@ async def test_bernstein_status_returns_summary() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_status", {})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     assert "open" in text
     assert "done" in text
     mock_client.get.assert_awaited_once()
@@ -234,7 +248,7 @@ async def test_bernstein_tasks_lists_tasks() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_tasks", {})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     assert "t1" in text
     assert "t2" in text
 
@@ -289,7 +303,7 @@ async def test_bernstein_cost_returns_cost_summary() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_cost", {})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     assert "0.12" in text or "cost" in text.lower()
 
 
@@ -311,9 +325,9 @@ async def test_bernstein_stop_sends_stop_signal(tmp_path: Path) -> None:
     (tmp_path / ".sdd").mkdir()
     mcp = create_mcp_server(server_url="http://localhost:8052")
 
-    result = await mcp.call_tool("bernstein_stop", {"workdir": str(tmp_path)})
+    result = await mcp.call_tool("bernstein_shutdown_orchestrator", {"workdir": str(tmp_path)})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     assert "stop" in text.lower() or "shutdown" in text.lower()
     assert (tmp_path / ".sdd" / "runtime" / "signals" / "SHUTDOWN").is_file()
 
@@ -347,7 +361,7 @@ def _approve_client(read_status: str, post_payload: dict) -> AsyncMock:
 
 def _unwrap_tool_json(result: object) -> dict:
     """Parse a tool result, stripping the MCP cost-meter envelope."""
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed and "result" in parsed:
         parsed = parsed["result"]
@@ -432,7 +446,7 @@ async def test_bernstein_approve_refuses_non_approval_states(status: str) -> Non
     assert status in parsed["message"]
     assert sorted(parsed["approvable_statuses"]) == sorted(s.value for s in APPROVABLE_TASK_STATUSES)
     # The refusal has to name a different action, or the caller can only retry.
-    assert "bernstein_update" in parsed["hint"] or "plan" in parsed["hint"].lower()
+    assert "bernstein_post_message" in parsed["hint"] or "plan" in parsed["hint"].lower()
     mock_client.post.assert_not_awaited()
 
 
@@ -597,11 +611,15 @@ async def test_bernstein_health_always_succeeds() -> None:
 
     mcp = create_mcp_server(server_url="http://localhost:8052")
     result = await mcp.call_tool("bernstein_health", {})
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
-    assert parsed == {"status": "ok"}
+    # bernstein_health is a deprecated alias now (#3087): the liveness body
+    # survives under ``result`` and the payload names the replacement.
+    assert parsed["result"] == {"status": "ok"}
+    assert parsed["deprecated"] is True
+    assert parsed["replacement"] == "bernstein_status"
 
 
 # ---------------------------------------------------------------------------
@@ -648,7 +666,7 @@ async def test_crash_protection_bernstein_run() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_run", {"goal": "test"})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
@@ -671,7 +689,7 @@ async def test_crash_protection_bernstein_status() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_status", {})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
@@ -694,12 +712,13 @@ async def test_crash_protection_bernstein_tasks() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_tasks", {})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
-    assert "error" in parsed
-    assert "hint" in parsed
+    # The alias keeps the historical error body under ``result`` (#3087).
+    assert "error" in parsed["result"]
+    assert "hint" in parsed["result"]
 
 
 @pytest.mark.asyncio
@@ -717,12 +736,13 @@ async def test_crash_protection_bernstein_cost() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_cost", {})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
-    assert "error" in parsed
-    assert "hint" in parsed
+    # The alias keeps the historical error body under ``result`` (#3087).
+    assert "error" in parsed["result"]
+    assert "hint" in parsed["result"]
 
 
 @pytest.mark.asyncio
@@ -741,7 +761,7 @@ async def test_crash_protection_bernstein_approve() -> None:
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_approve", {"task_id": "fake"})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
@@ -764,9 +784,9 @@ async def test_crash_protection_bernstein_stop(tmp_path: Path) -> None:
     mcp = create_mcp_server(server_url="http://localhost:8052")
 
     with patch.object(pathlib.Path, "mkdir", side_effect=PermissionError("not allowed")):
-        result = await mcp.call_tool("bernstein_stop", {"workdir": str(tmp_path)})
+        result = await mcp.call_tool("bernstein_shutdown_orchestrator", {"workdir": str(tmp_path)})
 
-    text = result[0][0].text  # type: ignore[index]
+    text = _result_text(result)
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
@@ -896,7 +916,7 @@ async def test_bernstein_run_sends_auth_header_when_set(
 
 
 # ---------------------------------------------------------------------------
-# bernstein_run -> bernstein_task_handle round trip
+# bernstein_run -> bernstein_run_status round trip
 #
 # The polling loop is the load-bearing interaction of this surface: a run
 # takes minutes to hours, so the caller starts it, gets a response body, and
@@ -912,6 +932,8 @@ def _run_tool_fn(mcp, name):
 
 async def _call_unwrapped(mcp, name, **kwargs):
     raw = await _run_tool_fn(mcp, name)(**kwargs)
+    if hasattr(raw, "content"):
+        raw = raw.content[0].text
     data = json.loads(raw)
     # Tools are wrapped in the cost-meter envelope by default; unwrap it.
     if isinstance(data, dict) and "_meter" in data and "result" in data:
@@ -973,7 +995,7 @@ async def test_run_then_poll_with_task_id_from_response(tmp_path, monkeypatch) -
     mcp = create_mcp_server(server_url="http://localhost:8052", tier="all")
     body = await _start_run(mcp, _make_task_payload(task_id="abc123"))
 
-    handle = await _call_unwrapped(mcp, "bernstein_task_handle", run_id=body["task_id"])
+    handle = await _call_unwrapped(mcp, "bernstein_run_status", run_id=body["task_id"])
     assert handle["status"] == "completed"
     assert handle["journalHead"] == journal.head()
 
@@ -992,8 +1014,8 @@ async def test_task_handle_both_id_forms_project_the_same_handle(tmp_path, monke
     mcp = create_mcp_server(server_url="http://localhost:8052", tier="all")
     body = await _start_run(mcp, _make_task_payload(task_id="abc123"))
 
-    by_task_id = await _call_unwrapped(mcp, "bernstein_task_handle", run_id=body["task_id"])
-    by_run_id = await _call_unwrapped(mcp, "bernstein_task_handle", run_id=body["run_id"])
+    by_task_id = await _call_unwrapped(mcp, "bernstein_run_status", run_id=body["task_id"])
+    by_run_id = await _call_unwrapped(mcp, "bernstein_run_status", run_id=body["run_id"])
     assert by_task_id == by_run_id
     assert by_task_id["journalHead"] == journal.head()
     assert by_task_id["receiptHash"] == by_run_id["receiptHash"]
@@ -1019,7 +1041,7 @@ async def test_task_handle_prefixed_id_resolves_to_exactly_one_journal(tmp_path,
     assert direct.head() != derived.head()
 
     mcp = create_mcp_server(server_url="http://localhost:8052", tier="all")
-    handle = await _call_unwrapped(mcp, "bernstein_task_handle", run_id="task-abc")
+    handle = await _call_unwrapped(mcp, "bernstein_run_status", run_id="task-abc")
 
     # Journal run id first: the collision resolves to the direct journal only.
     assert handle["journalHead"] == direct.head()
@@ -1035,10 +1057,10 @@ async def test_task_handle_unresolvable_ids_keep_existing_shapes(tmp_path, monke
     monkeypatch.chdir(tmp_path)
     mcp = create_mcp_server(server_url="http://localhost:8052", tier="all")
 
-    rejected = await _call_unwrapped(mcp, "bernstein_task_handle", run_id="../../etc")
+    rejected = await _call_unwrapped(mcp, "bernstein_run_status", run_id="../../etc")
     assert "error" in rejected
 
-    unknown = await _call_unwrapped(mcp, "bernstein_task_handle", run_id="nope")
+    unknown = await _call_unwrapped(mcp, "bernstein_run_status", run_id="nope")
     assert unknown["runId"] == "nope"
     assert unknown["status"] == "working"
 
@@ -1092,7 +1114,7 @@ def test_server_instructions_state_the_control_loop_in_order() -> None:
     lowered = text.lower()
 
     run_at = text.index("bernstein_run")
-    handle_at = text.index("bernstein_task_handle")
+    handle_at = text.index("bernstein_run_status")
     skill_at = text.index("load_skill")
 
     # Identity comes first, before any tool is named.
@@ -1124,3 +1146,192 @@ def test_module_docstring_lists_every_registered_tool(tmp_path: Path) -> None:
 
     docstring = server_module.__doc__ or ""
     assert _tool_names_in(docstring) == _registered_tool_names(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# bernstein_cancel (#3078): one run, not the whole orchestrator
+# ---------------------------------------------------------------------------
+
+
+def _cancel_client(
+    read_status: str | None,
+    cancel_status_code: int = 200,
+    cancel_payload: dict | None = None,
+    listing: list | None = None,
+    reread_status: str | None = None,
+) -> AsyncMock:
+    """Mock httpx client for the read-then-cancel flow.
+
+    ``read_status`` is the status GET /tasks/{id} reports (``None`` means
+    404 unknown task); ``reread_status`` is what a post-409 re-read reports.
+    """
+    read_response = MagicMock()
+    read_response.status_code = 404 if read_status is None else 200
+    read_response.is_success = read_status is not None
+    read_response.raise_for_status = MagicMock()
+    read_response.json = MagicMock(return_value={"status": read_status} if read_status else {})
+
+    reread_response = MagicMock()
+    reread_response.status_code = 200
+    reread_response.is_success = True
+    reread_response.raise_for_status = MagicMock()
+    reread_response.json = MagicMock(return_value={"status": reread_status or read_status})
+
+    cancel_response = MagicMock()
+    cancel_response.status_code = cancel_status_code
+    cancel_response.raise_for_status = MagicMock()
+    cancel_response.json = MagicMock(return_value=cancel_payload or {})
+
+    listing_response = MagicMock()
+    listing_response.raise_for_status = MagicMock()
+    listing_response.json = MagicMock(return_value=listing or [])
+
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = AsyncMock(return_value=cancel_response)
+
+    reads = {"count": 0}
+
+    def _route_get(url: str, **_kwargs: object) -> MagicMock:
+        if url.endswith("/tasks"):
+            return listing_response
+        reads["count"] += 1
+        return read_response if reads["count"] == 1 else reread_response
+
+    client.get = AsyncMock(side_effect=_route_get)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_bernstein_cancel_posts_to_the_cancel_route() -> None:
+    """Cancelling a running task hits /tasks/{id}/cancel with the reason."""
+    from bernstein.mcp.server import create_mcp_server
+
+    client = _cancel_client("in_progress", 200, {"id": "task-cx-01", "status": "cancelled"})
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
+        result = await mcp.call_tool("bernstein_cancel", {"task_id": "task-cx-01", "reason": "superseded"})
+
+    parsed = _unwrap_tool_json(result)
+    assert parsed == {
+        "task_id": "task-cx-01",
+        "status": "cancelled",
+        "cancelled": True,
+        "cancelled_descendants": 0,
+    }
+    call_url = client.post.call_args[0][0]
+    assert call_url.endswith("/tasks/task-cx-01/cancel")
+    assert client.post.call_args.kwargs["json"] == {"reason": "superseded"}
+
+
+@pytest.mark.asyncio
+async def test_bernstein_cancel_counts_cascaded_descendants() -> None:
+    """The result reports what the cascade actually cancelled, from the
+    post-cancel listing rather than from the request."""
+    from bernstein.mcp.server import create_mcp_server
+
+    listing = [
+        {"id": "task-cx-01", "parent_task_id": None, "status": "cancelled"},
+        {"id": "sub-1", "parent_task_id": "task-cx-01", "status": "cancelled"},
+        {"id": "sub-2", "parent_task_id": "sub-1", "status": "cancelled"},
+        {"id": "unrelated", "parent_task_id": None, "status": "cancelled"},
+    ]
+    client = _cancel_client("open", 200, {"id": "task-cx-01", "status": "cancelled"}, listing=listing)
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
+        result = await mcp.call_tool("bernstein_cancel", {"task_id": "task-cx-01"})
+
+    parsed = _unwrap_tool_json(result)
+    assert parsed["cancelled"] is True
+    assert parsed["cancelled_descendants"] == 2
+
+
+@pytest.mark.asyncio
+async def test_bernstein_cancel_reports_a_terminal_task_instead_of_erroring() -> None:
+    """A 409 for an already-terminal task reports the state, not an error."""
+    from bernstein.mcp.server import create_mcp_server
+
+    client = _cancel_client("done")
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
+        result = await mcp.call_tool("bernstein_cancel", {"task_id": "task-cx-01"})
+
+    parsed = _unwrap_tool_json(result)
+    assert "error" not in parsed
+    assert parsed["cancelled"] is False
+    assert parsed["status"] == "done"
+    assert parsed["task_id"] == "task-cx-01"
+    # Read-before-act: no state-changing request was sent at all.
+    client.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bernstein_cancel_refuses_an_unknown_task_id() -> None:
+    """An unknown run id is refused by name; nothing is cancelled."""
+    from bernstein.mcp.server import create_mcp_server
+
+    client = _cancel_client(None)
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
+        result = await mcp.call_tool("bernstein_cancel", {"task_id": "nope"})
+
+    parsed = _unwrap_tool_json(result)
+    assert parsed["error"] == "unknown_task"
+    assert parsed["task_id"] == "nope"
+    client.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bernstein_cancel_reports_a_race_the_server_refused() -> None:
+    """A task that moved terminal between the read and the cancel is
+    reported with the state the server now holds, not as an error."""
+    from bernstein.mcp.server import create_mcp_server
+
+    client = _cancel_client("in_progress", 409, {"detail": "cannot cancel"}, reread_status="done")
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
+        result = await mcp.call_tool("bernstein_cancel", {"task_id": "task-cx-01"})
+
+    parsed = _unwrap_tool_json(result)
+    assert "error" not in parsed
+    assert parsed["cancelled"] is False
+    assert parsed["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_bernstein_cancel_cannot_reach_the_shutdown_signal(tmp_path: Path) -> None:
+    """Cancel is scoped to one task tree: it must not be able to write the
+    orchestrator-wide SHUTDOWN signal, whatever the server answers."""
+    from bernstein.mcp.server import create_mcp_server
+
+    (tmp_path / ".sdd").mkdir()
+    client = _cancel_client("open", 200, {"id": "task-cx-01", "status": "cancelled"})
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
+        await mcp.call_tool("bernstein_cancel", {"task_id": "task-cx-01"})
+
+    assert not (tmp_path / ".sdd" / "runtime" / "signals" / "SHUTDOWN").exists()
+    # And it never touches the filesystem signal path at all: the only side
+    # effects are HTTP calls to the task server.
+    assert client.post.await_count == 1
+
+
+def test_shutdown_tool_description_opens_with_its_blast_radius() -> None:
+    """The whole-orchestrator stop names its blast radius first and points
+    at bernstein_cancel for the single-run case (#3078)."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    tool = next(t for t in mcp._tool_manager.list_tools() if t.name == "bernstein_shutdown_orchestrator")
+    description = tool.description or ""
+    first_sentence = description.split(". ")[0].lower()
+    assert "entire" in first_sentence
+    assert "orchestrator" in first_sentence
+    assert "bernstein_cancel" in description
+
+
+def test_cancel_has_an_explicit_standard_tier_entry() -> None:
+    from bernstein.core.protocols.mcp.tool_tiers import TOOL_TIERS
+
+    assert TOOL_TIERS["bernstein_cancel"] == "standard"

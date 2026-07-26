@@ -35,9 +35,9 @@ The MCP server exposes three tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `bernstein_scenarios()` | List scenarios known to the local library. |
-| `bernstein_scenario(scenario_id, context, pr_number, branch)` | Spawn one task per scenario template. |
-| `bernstein_scenario_status(orchestration_id)` | Aggregate status of a running scenario. |
+| `bernstein_scenario(action="list")` | List scenarios known to the local library. |
+| `bernstein_scenario(action="run", scenario_id, context, pr_number, branch)` | Spawn one task per scenario template; returns the same pollable handle shape as `bernstein_run`. |
+| `bernstein_scenario(action="status", orchestration_id=...)` | Aggregate status of a running scenario. |
 
 Each spawned task carries `metadata.scenario_id` and
 `metadata.orchestration_id` so the status tool can group them.

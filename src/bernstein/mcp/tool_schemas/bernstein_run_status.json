@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_run_status",
+  "description": "Poll a verifiable handle for a run started with bernstein_run. Accepts either identifier that call returned: the task_id or the run_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id"],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "The run to project. Either the task_id or the run_id returned by bernstein_run. Resolved journal run id first, then the task id slugified into a journal run id, so both forms reach one journal."
+    },
+    "workdir": {"type": "string", "minLength": 1, "maxLength": 4096}
+  }
+}

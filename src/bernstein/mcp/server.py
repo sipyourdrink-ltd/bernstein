@@ -15,29 +15,42 @@ line fails that test. Tiers are declared in
 :data:`bernstein.core.protocols.mcp.tool_tiers.TOOL_TIERS`; the widest tier
 plus lineage exposes all of them.
 
-    bernstein_health        - liveness check (always succeeds)
-    bernstein_run           - start an orchestration run with a goal
-    bernstein_status        - get task counts summary
-    bernstein_tasks         - list tasks with optional status filter
-    bernstein_task_handle   - verifiable run handle, polled by run id
-    bernstein_cost          - get cost summary across all roles
-    bernstein_context       - signed spawn capsule for a worker (#2545)
+    bernstein_run           - start an orchestration run (optionally as a
+                              subtask via ``parent_task_id``)
+    bernstein_status        - liveness, task counts, cost, and an optional
+                              status-filtered task list
+    bernstein_run_status    - verifiable run handle, polled by run id
+    bernstein_task_capsule  - signed spawn capsule for a worker (#2545)
     bernstein_claim         - claim the next dependency-gated task
-    bernstein_update        - post progress on a claimed task
+    bernstein_post_message  - post progress on a claimed task
     bernstein_post_artifact - attach an artefact to a task
-    bernstein_stop          - graceful shutdown (writes SHUTDOWN signal)
+    bernstein_cancel        - cancel one task and its subtask tree (#3078)
+    bernstein_shutdown_orchestrator - whole-orchestrator shutdown signal
     bernstein_approve       - approve a pending/blocked task
     bernstein_complete      - complete a task the caller is executing
-    bernstein_create_subtask - split a claimed task into a child task
     load_skill              - load a skill pack body / reference / script
 
 Registered from sibling modules by the same ``create_mcp_server`` call:
 
-    bernstein_scenarios       - list scenario definitions (routine_tools)
-    bernstein_scenario        - start a scenario run (routine_tools)
-    bernstein_scenario_status - poll a scenario run (routine_tools)
-    verify_chain              - verify an artefact against the audit chain
+    bernstein_scenario        - list / run / poll scenarios via an ``action``
+                                selector (routine_tools)
+    bernstein_verify_lineage  - verify an artefact against the audit chain
                                 (resources.lineage, lineage builds only)
+
+Deprecated aliases (#3087), callable but never advertised, removed in
+:data:`bernstein.core.protocols.mcp.tool_tiers.ALIAS_REMOVAL_RELEASE`:
+
+    bernstein_health          -> bernstein_status
+    bernstein_tasks           -> bernstein_status
+    bernstein_cost            -> bernstein_status
+    bernstein_create_subtask  -> bernstein_run
+    bernstein_task_handle     -> bernstein_run_status
+    bernstein_update          -> bernstein_post_message
+    bernstein_context         -> bernstein_task_capsule
+    bernstein_stop            -> bernstein_shutdown_orchestrator
+    bernstein_scenarios       -> bernstein_scenario
+    bernstein_scenario_status -> bernstein_scenario
+    verify_chain              -> bernstein_verify_lineage
 """
 
 from __future__ import annotations
@@ -49,6 +62,7 @@ import json
 import logging
 import os
 from datetime import UTC
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -99,7 +113,7 @@ _orig_convert_result = FuncMetadata.convert_result
 
 
 def _patched_convert_result(self, result: Any) -> Any:
-    if isinstance(result, CreateTaskResult):
+    if isinstance(result, CreateTaskResult | CallToolResult):
         return result
     return _orig_convert_result(self, result)
 
@@ -107,6 +121,15 @@ def _patched_convert_result(self, result: Any) -> Any:
 FuncMetadata.convert_result = _patched_convert_result
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
+
+
+def _package_version() -> str:
+    """Return the installed Bernstein distribution version."""
+    try:
+        return version("bernstein")
+    except PackageNotFoundError:
+        return "0+unknown"
+
 
 # Advertised to MCP clients on connect and therefore the only Bernstein text
 # guaranteed to sit in the connected model's context for the whole session.
@@ -120,7 +143,7 @@ _SERVER_INSTRUCTIONS = (
     "Driving a run:\n"
     "1. bernstein_run starts a run and returns immediately with a task_id, "
     "which is the run id. It does not wait for the run to finish.\n"
-    "2. Poll bernstein_task_handle with run_id set to that value. The handle "
+    "2. Poll bernstein_run_status with run_id set to that value. The handle "
     "is reprojected from the run journal, so it is safe to poll from anywhere.\n"
     "3. Runs take minutes to hours. Poll on a slow cadence, tens of seconds "
     "apart. A handle still reading working is normal progress, not a stall, "
@@ -196,20 +219,37 @@ def _validate_or_error(tool_name: str, params: dict[str, Any]) -> ValidationErro
     return validate_or_error(tool_name, params)
 
 
-def _register_health_tool(mcp: FastMCP[None]) -> None:
-    """Register the ``bernstein_health`` liveness-check tool."""
+def _deprecated_alias_payload(old_name: str, payload: str) -> str:
+    """Wrap an alias result so it names its replacement and removal release.
 
-    @mcp.tool()
-    async def bernstein_health(  # pyright: ignore[reportUnusedFunction]
-    ) -> str:
-        """Liveness check - always succeeds if the MCP server is running.
+    The alias keeps the historical result shape under ``result`` while the
+    envelope states, in the payload itself, that the name is deprecated,
+    what replaces it, and the release the alias disappears in (#3087).
+    """
+    from bernstein.core.protocols.mcp.tool_tiers import (
+        ALIAS_REMOVAL_RELEASE,
+        DEPRECATED_TOOL_ALIASES,
+    )
 
-        Use this to verify the Bernstein MCP connection is still alive.
-
-        Returns:
-            JSON with status "ok".
-        """
-        return json.dumps({"status": "ok"})
+    replacement = DEPRECATED_TOOL_ALIASES[old_name]
+    try:
+        parsed: Any = json.loads(payload)
+    except (json.JSONDecodeError, TypeError):
+        parsed = payload
+    return json.dumps(
+        {
+            "deprecated": True,
+            "tool": old_name,
+            "replacement": replacement,
+            "removal_release": ALIAS_REMOVAL_RELEASE,
+            "notice": (
+                f"{old_name} is deprecated; call {replacement} instead. "
+                f"This alias is removed in {ALIAS_REMOVAL_RELEASE}."
+            ),
+            "result": parsed,
+        },
+        indent=2,
+    )
 
 
 def _get_journal_head(task_id: str) -> str:
@@ -377,8 +417,191 @@ def _project_task_helper(data: dict[str, Any]) -> Any:
     )
 
 
+async def _run_impl(
+    server_url: str,
+    *,
+    goal: str,
+    role: str,
+    priority: int,
+    scope: str,
+    complexity: str,
+    estimated_minutes: int,
+    parent_task_id: str | None = None,
+    ctx: Context | None = None,
+) -> str | CreateTaskResult:
+    """Start a run (or a subtask run) and return the pollable handle body.
+
+    Shared by ``bernstein_run`` and the deprecated ``bernstein_create_subtask``
+    alias so both names queue work through one code path.
+    """
+    try:
+        payload: dict[str, Any] = {
+            "title": goal[:120],
+            "description": goal,
+            "role": role,
+            "priority": priority,
+            "scope": scope,
+            "complexity": complexity,
+            "estimated_minutes": estimated_minutes,
+        }
+        endpoint = "/tasks"
+        if parent_task_id is not None:
+            payload["parent_task_id"] = parent_task_id
+            endpoint = "/tasks/self-create"
+
+        # Whether THIS call carried task metadata, not whether the client
+        # is capable of tasks. A tasks-capable client still sends plain
+        # tools/call requests, and those require a CallToolResult; only a
+        # task-augmented call may be answered with a CreateTaskResult.
+        is_task_call = False
+        traceparent = None
+        tracestate = None
+        baggage = None
+
+        if ctx is not None:
+            try:
+                rc = ctx.request_context
+                if rc is not None:
+                    if rc.experimental is not None:
+                        is_task_call = bool(getattr(rc.experimental, "is_task", False))
+                    if rc.meta is not None:
+                        extra = rc.meta.model_extra or {}
+                        traceparent = extra.get("traceparent")
+                        tracestate = extra.get("tracestate")
+                        baggage = extra.get("baggage")
+            except Exception:
+                pass
+
+        headers = _auth_headers()
+        if traceparent:
+            headers["traceparent"] = traceparent
+        if tracestate:
+            headers["tracestate"] = tracestate
+        if baggage:
+            headers["baggage"] = baggage
+
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.post(f"{server_url}{endpoint}", json=payload, headers=headers)
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+
+        if is_task_call:
+            task_obj = _project_task_helper(data)
+            return CreateTaskResult(task=task_obj)
+
+        from bernstein.core.tasks.checkpoint_retry import task_run_id
+
+        body: dict[str, Any] = {
+            "task_id": data["id"],
+            "title": data["title"],
+            "status": data["status"],
+            "run_id": task_run_id(data["id"]),
+            "poll_after_ms": _POLL_AFTER_MS,
+        }
+        if parent_task_id is not None:
+            body["parent_task_id"] = data.get("parent_task_id", parent_task_id)
+        return json.dumps(body, indent=2)
+    except Exception as exc:
+        return _error_response(exc)
+
+
+#: Compact task-row fields ``bernstein_status`` reports for a status filter
+#: when ``detail`` is off. The full server rows need ``detail=true``.
+_COMPACT_TASK_FIELDS = ("id", "title", "role", "status")
+
+
+async def _status_impl(server_url: str, *, status: str | None = None, detail: bool = False) -> str:
+    """Liveness, counts, cost, and an optional status-filtered task list.
+
+    The folded read surface (#3087): the tool answering at all is the MCP
+    liveness signal, the ``/status`` payload supplies counts and cost, and a
+    ``status`` filter pulls the matching tasks in one call. A task-server
+    outage is reported with ``live: true`` plus the error, because the MCP
+    server itself answered.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.get(f"{server_url}/status", headers=_auth_headers())
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+            tasks: list[dict[str, Any]] | None = None
+            if status:
+                tasks_resp = await client.get(
+                    f"{server_url}/tasks",
+                    params={"status": status},
+                    headers=_auth_headers(),
+                )
+                tasks_resp.raise_for_status()
+                tasks = tasks_resp.json()
+
+        per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
+        body: dict[str, Any] = {
+            "live": True,
+            "counts": {
+                "total": data.get("total", 0),
+                "open": data.get("open", 0),
+                "claimed": data.get("claimed", 0),
+                "done": data.get("done", 0),
+                "failed": data.get("failed", 0),
+            },
+            "cost": {
+                "total_cost_usd": data.get("total_cost_usd", 0.0),
+                "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
+            },
+        }
+        if detail:
+            body["per_role"] = per_role_raw
+        if tasks is not None:
+            body["status_filter"] = status
+            if detail:
+                body["tasks"] = tasks
+            else:
+                body["tasks"] = [{k: t.get(k) for k in _COMPACT_TASK_FIELDS} for t in tasks]
+        return json.dumps(body, indent=2)
+    except Exception as exc:
+        # The MCP server answered, so liveness is true even though the task
+        # server is not reachable; the folded health signal must say so.
+        logger.warning("MCP tool error: %s", exc)
+        return json.dumps(
+            {"live": True, "error": str(exc), "hint": "Task server may be restarting"},
+            indent=2,
+        )
+
+
+async def _tasks_alias_impl(server_url: str, status: str | None = None) -> str:
+    """Historical ``bernstein_tasks`` body: the raw task list."""
+    try:
+        params: dict[str, str] = {}
+        if status:
+            params["status"] = status
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.get(f"{server_url}/tasks", params=params, headers=_auth_headers())
+            resp.raise_for_status()
+            data: list[dict[str, Any]] = resp.json()
+        return json.dumps(data, indent=2)
+    except Exception as exc:
+        return _error_response(exc)
+
+
+async def _cost_alias_impl(server_url: str) -> str:
+    """Historical ``bernstein_cost`` body: the cost projection of /status."""
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.get(f"{server_url}/status", headers=_auth_headers())
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+        per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
+        cost_summary: dict[str, Any] = {
+            "total_cost_usd": data.get("total_cost_usd", 0.0),
+            "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
+        }
+        return json.dumps(cost_summary, indent=2)
+    except Exception as exc:
+        return _error_response(exc)
+
+
 def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
-    """Register read-only query tools: run, status, tasks, cost."""
+    """Register the read surface: run and the folded status tool."""
 
     @mcp.tool()
     async def bernstein_run(  # pyright: ignore[reportUnusedFunction]
@@ -388,6 +611,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
         scope: str = "medium",
         complexity: str = "medium",
         estimated_minutes: int = 30,
+        parent_task_id: str | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Start an orchestration run by posting a task to the Bernstein server.
@@ -395,7 +619,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
         A run executes real work and takes minutes to hours. This call
         returns as soon as the run is queued, not when it finishes. Do not
         re-issue it while waiting: that starts a second run. To follow the
-        run, wait ``poll_after_ms`` and then call ``bernstein_task_handle``,
+        run, wait ``poll_after_ms`` and then call ``bernstein_run_status``,
         passing either the returned ``task_id`` or the returned ``run_id``.
         Poll it until ``status`` is terminal (``completed``, ``failed`` or
         ``cancelled``).
@@ -407,6 +631,8 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             scope: Task scope - small, medium, or large.
             complexity: Task complexity - low, medium, or high.
             estimated_minutes: Rough time estimate in minutes.
+            parent_task_id: When set, the run is created as a subtask of this
+                task, and the parent transitions to ``waiting_for_subtasks``.
 
         Returns:
             JSON with the created task ID, title and status, plus the
@@ -416,152 +642,63 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             params), a Tasks-extension ``CreateTaskResult`` is returned
             instead so the client can poll the run.
         """
-        err = _validate_or_error(
-            "bernstein_run",
-            {
-                "goal": goal,
-                "role": role,
-                "priority": priority,
-                "scope": scope,
-                "complexity": complexity,
-                "estimated_minutes": estimated_minutes,
-            },
-        )
+        args: dict[str, Any] = {
+            "goal": goal,
+            "role": role,
+            "priority": priority,
+            "scope": scope,
+            "complexity": complexity,
+            "estimated_minutes": estimated_minutes,
+        }
+        if parent_task_id is not None:
+            args["parent_task_id"] = parent_task_id
+        err = _validate_or_error("bernstein_run", args)
         if err is not None:
             return _validation_error_response(err)
-        try:
-            payload: dict[str, Any] = {
-                "title": goal[:120],
-                "description": goal,
-                "role": role,
-                "priority": priority,
-                "scope": scope,
-                "complexity": complexity,
-                "estimated_minutes": estimated_minutes,
-            }
-
-            # Whether THIS call carried task metadata, not whether the client
-            # is capable of tasks. A tasks-capable client still sends plain
-            # tools/call requests, and those require a CallToolResult; only a
-            # task-augmented call may be answered with a CreateTaskResult.
-            is_task_call = False
-            traceparent = None
-            tracestate = None
-            baggage = None
-
-            if ctx is not None:
-                try:
-                    rc = ctx.request_context
-                    if rc is not None:
-                        if rc.experimental is not None:
-                            is_task_call = bool(getattr(rc.experimental, "is_task", False))
-                        if rc.meta is not None:
-                            extra = rc.meta.model_extra or {}
-                            traceparent = extra.get("traceparent")
-                            tracestate = extra.get("tracestate")
-                            baggage = extra.get("baggage")
-                except Exception:
-                    pass
-
-            headers = _auth_headers()
-            if traceparent:
-                headers["traceparent"] = traceparent
-            if tracestate:
-                headers["tracestate"] = tracestate
-            if baggage:
-                headers["baggage"] = baggage
-
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.post(f"{server_url}/tasks", json=payload, headers=headers)
-                resp.raise_for_status()
-                data: dict[str, Any] = resp.json()
-
-            if is_task_call:
-                task_obj = _project_task_helper(data)
-                return CreateTaskResult(task=task_obj)
-
-            from bernstein.core.tasks.checkpoint_retry import task_run_id
-
-            return json.dumps(
-                {
-                    "task_id": data["id"],
-                    "title": data["title"],
-                    "status": data["status"],
-                    "run_id": task_run_id(data["id"]),
-                    "poll_after_ms": _POLL_AFTER_MS,
-                },
-                indent=2,
-            )
-        except Exception as exc:
-            return _error_response(exc)
+        return await _run_impl(
+            server_url,
+            goal=goal,
+            role=role,
+            priority=priority,
+            scope=scope,
+            complexity=complexity,
+            estimated_minutes=estimated_minutes,
+            parent_task_id=parent_task_id,
+            ctx=ctx,
+        )
 
     @mcp.tool()
     async def bernstein_status(  # pyright: ignore[reportUnusedFunction]
-    ) -> str:
-        """Return a summary of all task counts from the Bernstein server.
-
-        Returns:
-            JSON with total, open, claimed, done, failed counts plus
-            a per-role breakdown.
-        """
-        try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{server_url}/status", headers=_auth_headers())
-                resp.raise_for_status()
-                data: dict[str, Any] = resp.json()
-            return json.dumps(data, indent=2)
-        except Exception as exc:
-            return _error_response(exc)
-
-    @mcp.tool()
-    async def bernstein_tasks(  # pyright: ignore[reportUnusedFunction]
         status: str | None = None,
+        detail: bool = False,
     ) -> str:
-        """List tasks from the Bernstein server.
+        """Liveness, task counts, cost, and an optional filtered task list.
+
+        One read answers the whole "how is the server doing" question: the
+        tool responding at all is the MCP liveness check, ``counts`` carries
+        the task totals, ``cost`` the USD spend, and passing ``status``
+        appends the matching tasks. ``detail`` switches the per-role and
+        per-task rows from compact to full.
 
         Args:
-            status: Optional filter - open, claimed, in_progress, done,
-                failed, blocked, or cancelled.
+            status: Optional task filter - open, claimed, in_progress, done,
+                failed, blocked, or cancelled. When set, the matching tasks
+                are included under ``tasks``.
+            detail: Include the full per-role breakdown and, with ``status``,
+                the full task rows instead of compact ones.
 
         Returns:
-            JSON array of task objects.
+            JSON with ``live``, ``counts``, ``cost``, and optionally
+            ``per_role`` / ``status_filter`` / ``tasks``. A task-server
+            outage still answers with ``live: true`` plus an ``error``.
         """
-        err = _validate_or_error("bernstein_tasks", {"status": status})
+        args: dict[str, Any] = {"detail": detail}
+        if status is not None:
+            args["status"] = status
+        err = _validate_or_error("bernstein_status", args)
         if err is not None:
             return _validation_error_response(err)
-        try:
-            params: dict[str, str] = {}
-            if status:
-                params["status"] = status
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{server_url}/tasks", params=params, headers=_auth_headers())
-                resp.raise_for_status()
-                data: list[dict[str, Any]] = resp.json()
-            return json.dumps(data, indent=2)
-        except Exception as exc:
-            return _error_response(exc)
-
-    @mcp.tool()
-    async def bernstein_cost(  # pyright: ignore[reportUnusedFunction]
-    ) -> str:
-        """Return cost summary (total USD spent and per-role breakdown).
-
-        Returns:
-            JSON with total_cost_usd and per-role cost breakdown.
-        """
-        try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{server_url}/status", headers=_auth_headers())
-                resp.raise_for_status()
-                data: dict[str, Any] = resp.json()
-            per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
-            cost_summary: dict[str, Any] = {
-                "total_cost_usd": data.get("total_cost_usd", 0.0),
-                "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
-            }
-            return json.dumps(cost_summary, indent=2)
-        except Exception as exc:
-            return _error_response(exc)
+        return await _status_impl(server_url, status=status, detail=detail)
 
 
 def _read_audit_chain_head(audit_dir: Path) -> str:
@@ -586,8 +723,128 @@ def _read_audit_chain_head(audit_dir: Path) -> str:
     return _chain_tail_from_bytes(raw) or ""
 
 
-def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
-    """Register the ``bernstein_task_handle`` Tasks-extension polling tool.
+#: Last progress vector emitted per run id, used only to suppress ticks that
+#: do not strictly advance (#3085). Process-local: each server instance emits
+#: its own monotone sequence, and the sequence values themselves are pure
+#: folds of the journal, so two instances never disagree on a tick's content.
+_PROGRESS_TICKS: dict[str, Any] = {}
+
+
+def _progress_notification_payload(vector: Any) -> dict[str, Any]:
+    """Build the ``notifications/progress`` payload from a progress vector.
+
+    Every field is journal-derived: ``progress`` is the fold's earned-steps
+    scalar, ``total`` the declared evidence producers (omitted when none are
+    declared), and ``message`` a rendering of fold counters only. No wall
+    clock and no model-produced value enters the payload, so two folds over
+    the same journal produce byte-identical payloads.
+    """
+    payload: dict[str, Any] = {
+        "progress": vector.earned_steps,
+        "total": vector.evidence_declared if vector.evidence_declared > 0 else None,
+        "message": (
+            f"phase={vector.ledger_phase or 'unknown'}"
+            f" checkpoints={vector.checkpoints}"
+            f" diffs={vector.diffs_captured}"
+            f" gates={vector.gate_attempts}"
+            f" evidence={vector.evidence_passed}/{vector.evidence_declared}"
+        ),
+    }
+    return payload
+
+
+def _should_emit_progress(previous: Any, current: Any) -> bool:
+    """Whether ``current`` may be notified after ``previous`` was.
+
+    The first tick for a run always emits. After that, only a vector that
+    :meth:`ProgressVector.strictly_advances` the previous tick emits: an
+    unchanged or regressed fold is suppressed, so the notified sequence is
+    strictly monotone by construction rather than by client-side filtering.
+    """
+    if previous is None:
+        return True
+    return bool(current.strictly_advances(previous))
+
+
+async def _maybe_emit_progress(ctx: Context | None, sdd_dir: Path, run_id: str) -> None:
+    """Emit a journal-fold progress tick for ``run_id``, when asked and due.
+
+    Emits only when the request carried a ``progressToken`` (the SDK's
+    ``report_progress`` is a no-op otherwise, and the token is checked here
+    too so no fold work happens for callers that did not ask). Any failure -
+    fold or emission - is swallowed: a progress tick must never raise into
+    the tool result (#3085).
+    """
+    if ctx is None:
+        return
+    try:
+        rc = ctx.request_context
+        token = rc.meta.progressToken if rc is not None and rc.meta is not None else None
+        if token is None:
+            return
+        from bernstein.core.replay.progress import project_task_progress
+
+        vector = project_task_progress(sdd_dir, run_id, run_id=run_id)
+        previous = _PROGRESS_TICKS.get(run_id)
+        if not _should_emit_progress(previous, vector):
+            return
+        payload = _progress_notification_payload(vector)
+        await ctx.report_progress(
+            progress=float(payload["progress"]),
+            total=float(payload["total"]) if payload["total"] is not None else None,
+            message=str(payload["message"]),
+        )
+        _PROGRESS_TICKS[run_id] = vector
+    except Exception:
+        # Best-effort by contract: a progress signal is advisory and must
+        # never break the poll that carried it.
+        logger.debug("progress notification failed for %s", run_id, exc_info=True)
+
+
+async def _run_status_impl(run_id: str, workdir: str = ".", ctx: Context | None = None) -> str:
+    """Project the verifiable run handle for ``run_id`` (shared by the alias).
+
+    When the request carried a ``progressToken``, a ``notifications/progress``
+    tick is emitted from the chain-computed progress fold before the handle is
+    returned (#3085). Emission is best-effort: a failure to notify never
+    reaches the tool result.
+    """
+    try:
+        from bernstein.core.protocols.mcp.tasks_extension import RunHandle
+        from bernstein.core.replay.journal import (
+            JournalPathError,
+            load_events,
+        )
+
+        base = Path(workdir).resolve()
+        # Shared barrier rather than a local containment check, so this
+        # surface cannot drift from the rest of the run-journal readers.
+        # _resolve_run_journal applies it to every candidate id.
+        try:
+            resolved_id, journal_path = _resolve_run_journal(base / ".sdd", run_id)
+        except JournalPathError as exc:
+            return _error_response(
+                exc,
+                hint="run_id must be a plain run identifier",
+            )
+        events = load_events(journal_path)
+        chain_head = _read_audit_chain_head(base / ".sdd" / "audit")
+        # Both id forms project the identical handle: the handle is a
+        # projection of the journal, not of how the caller addressed it.
+        handle = RunHandle.from_journal(
+            task_id=resolved_id,
+            run_id=resolved_id,
+            events=events,
+            chain_head=chain_head,
+        )
+        await _maybe_emit_progress(ctx, base / ".sdd", resolved_id)
+        return json.dumps(handle.to_wire(), indent=2)
+    except Exception as exc:
+        return _error_response(exc, hint="Run journal not found")
+
+
+def _register_run_status_tool(mcp: FastMCP[None]) -> None:
+    """Register the ``bernstein_run_status`` Tasks-extension polling tool.
 
     The tool reprojects a verifiable run handle from the on-disk run journal
     and the audit-chain head, so a stateless MCP client can poll a run it
@@ -595,9 +852,10 @@ def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
     """
 
     @mcp.tool()
-    async def bernstein_task_handle(  # pyright: ignore[reportUnusedFunction]
+    async def bernstein_run_status(  # pyright: ignore[reportUnusedFunction]
         run_id: str,
         workdir: str = ".",
+        ctx: Context | None = None,
     ) -> str:
         """Return a verifiable Tasks-extension handle for a run, by run id.
 
@@ -605,7 +863,10 @@ def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
         embeds the run's audit-chain head so the client can later verify the
         task it watched corresponds to the audited run (``bernstein audit
         verify`` or the offline verifier). Polling is stateless: any server
-        instance reprojects the same handle from the on-disk journal.
+        instance reprojects the same handle from the on-disk journal. A poll
+        that carries a ``progressToken`` also receives a
+        ``notifications/progress`` tick derived from the journal fold, and
+        only when the fold strictly advanced since the previous tick.
 
         Args:
             run_id: The run to project. Either identifier ``bernstein_run``
@@ -621,44 +882,47 @@ def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
             ``runId``, ``status``, ``journalHead``, ``chainHead``,
             ``receiptHash``, ``pollToken``, ...).
         """
-        err = _validate_or_error("bernstein_task_handle", {"run_id": run_id, "workdir": workdir})
+        err = _validate_or_error("bernstein_run_status", {"run_id": run_id, "workdir": workdir})
         if err is not None:
             return _validation_error_response(err)
-        try:
-            from bernstein.core.protocols.mcp.tasks_extension import RunHandle
-            from bernstein.core.replay.journal import (
-                JournalPathError,
-                load_events,
-            )
-
-            base = Path(workdir).resolve()
-            # Shared barrier rather than a local containment check, so this
-            # surface cannot drift from the rest of the run-journal readers.
-            # _resolve_run_journal applies it to every candidate id.
-            try:
-                resolved_id, journal_path = _resolve_run_journal(base / ".sdd", run_id)
-            except JournalPathError as exc:
-                return _error_response(
-                    exc,
-                    hint="run_id must be a plain run identifier",
-                )
-            events = load_events(journal_path)
-            chain_head = _read_audit_chain_head(base / ".sdd" / "audit")
-            # Both id forms project the identical handle: the handle is a
-            # projection of the journal, not of how the caller addressed it.
-            handle = RunHandle.from_journal(
-                task_id=resolved_id,
-                run_id=resolved_id,
-                events=events,
-                chain_head=chain_head,
-            )
-            return json.dumps(handle.to_wire(), indent=2)
-        except Exception as exc:
-            return _error_response(exc, hint="Run journal not found")
+        return await _run_status_impl(run_id, workdir, ctx)
 
 
-def _register_context_tool(mcp: FastMCP[None]) -> None:
-    """Register the ``bernstein_context`` capsule tool (#2545).
+async def _task_capsule_impl(task_id: str, workdir: str = ".", verify: bool = False) -> str:
+    """Read (and optionally verify) a worker's signed context capsule."""
+    try:
+        from bernstein.core.agents.context_capsule import (
+            project_capsule,
+            read_capsule_record,
+            verify_context_capsule,
+        )
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        base = Path(workdir).resolve()
+        sdd_dir = base / ".sdd"
+        signed = read_capsule_record(sdd_dir, task_id)
+        if signed is None:
+            return _error_response(ValueError(f"no context capsule for task {task_id}"), hint="Capsule not found")
+        body: dict[str, Any] = {"capsule": project_capsule(signed)}
+        if verify:
+            chain = AuditChainStore(sdd_dir / "audit", key=load_or_create_audit_key())
+            result = verify_context_capsule(sdd_dir=sdd_dir, chain=chain, task_id=task_id)
+            body["verify"] = {
+                "ok": result.ok,
+                "reason": result.reason,
+                "is_mock": result.is_mock,
+                "signature_ok": result.signature_ok,
+                "chain_ok": result.chain_ok,
+                "journal_ok": result.journal_ok,
+            }
+        return json.dumps(body, indent=2)
+    except Exception as exc:
+        return _error_response(exc, hint="Context capsule not found")
+
+
+def _register_task_capsule_tool(mcp: FastMCP[None]) -> None:
+    """Register the ``bernstein_task_capsule`` capsule tool (#2545).
 
     A spawned worker reads one signed, chain-anchored answer to "what was I
     given" -- task id, run id, params hash, worktree, role, budget envelope
@@ -668,7 +932,7 @@ def _register_context_tool(mcp: FastMCP[None]) -> None:
     """
 
     @mcp.tool()
-    async def bernstein_context(  # pyright: ignore[reportUnusedFunction]
+    async def bernstein_task_capsule(  # pyright: ignore[reportUnusedFunction]
         task_id: str,
         workdir: str = ".",
         verify: bool = False,
@@ -687,42 +951,99 @@ def _register_context_tool(mcp: FastMCP[None]) -> None:
             offline verification result). A mock-layer fixture is reported as
             such and never verifies as real.
         """
-        err = _validate_or_error("bernstein_context", {"task_id": task_id, "workdir": workdir, "verify": verify})
+        err = _validate_or_error("bernstein_task_capsule", {"task_id": task_id, "workdir": workdir, "verify": verify})
         if err is not None:
             return _validation_error_response(err)
-        try:
-            from bernstein.core.agents.context_capsule import (
-                project_capsule,
-                read_capsule_record,
-                verify_context_capsule,
-            )
-            from bernstein.core.security.audit import load_or_create_audit_key
-            from bernstein.core.security.audit_chain import AuditChainStore
+        return await _task_capsule_impl(task_id, workdir, verify)
 
-            base = Path(workdir).resolve()
-            sdd_dir = base / ".sdd"
-            signed = read_capsule_record(sdd_dir, task_id)
-            if signed is None:
-                return _error_response(ValueError(f"no context capsule for task {task_id}"), hint="Capsule not found")
-            body: dict[str, Any] = {"capsule": project_capsule(signed)}
-            if verify:
-                chain = AuditChainStore(sdd_dir / "audit", key=load_or_create_audit_key())
-                result = verify_context_capsule(sdd_dir=sdd_dir, chain=chain, task_id=task_id)
-                body["verify"] = {
-                    "ok": result.ok,
-                    "reason": result.reason,
-                    "is_mock": result.is_mock,
-                    "signature_ok": result.signature_ok,
-                    "chain_ok": result.chain_ok,
-                    "journal_ok": result.journal_ok,
-                }
-            return json.dumps(body, indent=2)
-        except Exception as exc:
-            return _error_response(exc, hint="Context capsule not found")
+
+async def _post_message_impl(
+    server_url: str,
+    *,
+    task_id: str,
+    body: str,
+    sender: str,
+    kind: str = "finding",
+    sender_card_fingerprint: str | None = None,
+) -> str:
+    """Append a signed mailbox entry (shared by the ``bernstein_update`` alias)."""
+    try:
+        payload: dict[str, Any] = {"sender": sender, "kind": kind, "body": body}
+        if sender_card_fingerprint is not None:
+            payload["sender_card_fingerprint"] = sender_card_fingerprint
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.post(
+                f"{server_url}/tasks/{task_id}/messages",
+                json=payload,
+                headers=_auth_headers(),
+            )
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+        return json.dumps(data, indent=2)
+    except Exception as exc:
+        return _error_response(exc)
+
+
+#: Statuses ``POST /tasks/{id}/cancel`` accepts, mirrored from the route
+#: (``src/bernstein/core/routes/task_crud.py`` ``cancel_task``). The tool
+#: reads the task first and refuses non-cancellable states without sending a
+#: state-changing request, the same read-before-act gate ``bernstein_approve``
+#: and ``bernstein_complete`` apply; the server remains the authority and a
+#: race that slips past the read is answered by its 409.
+_CANCELLABLE_STATUSES: frozenset[str] = frozenset(
+    {"open", "claimed", "in_progress", "blocked", "waiting_for_subtasks", "planned"}
+)
+
+
+def _count_descendants(rows: list[dict[str, Any]], *, root_id: str) -> int:
+    """Count rows whose ``parent_task_id`` chain reaches ``root_id``.
+
+    Walks the parent references client-side over one task listing, so the
+    count reflects the post-cancel reality the server reports rather than a
+    number invented from the request.
+    """
+    parent_by_id = {str(r.get("id")): r.get("parent_task_id") for r in rows if r.get("id")}
+    count = 0
+    for row_id in parent_by_id:
+        if row_id == root_id:
+            continue
+        seen: set[str] = set()
+        cursor = parent_by_id.get(row_id)
+        while isinstance(cursor, str) and cursor not in seen:
+            if cursor == root_id:
+                count += 1
+                break
+            seen.add(cursor)
+            cursor = parent_by_id.get(cursor)
+    return count
+
+
+def _shutdown_impl(workdir: str) -> str:
+    """Write the SHUTDOWN signal (shared by the ``bernstein_stop`` alias)."""
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    # Shared barrier rather than a local containment check, so this
+    # surface cannot drift from the other workdir-derived writers. The
+    # path is resolved and proven contained before any directory is
+    # created, so a refused call leaves nothing behind.
+    try:
+        shutdown_file = shutdown_signal_path(workdir)
+    except ShutdownSignalPathError as exc:
+        return _error_response(
+            exc,
+            hint="workdir must be an existing Bernstein project root",
+        )
+    try:
+        shutdown_file.parent.mkdir(parents=True, exist_ok=True)
+        shutdown_file.write_text("mcp-stop\n", encoding="utf-8")
+        return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
+    except Exception as exc:
+        return _error_response(exc, hint="Could not write shutdown signal")
 
 
 def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
-    """Register mutation tools: stop, approve, complete, create_subtask, claim, update."""
+    """Register mutation tools: claim, post_message, post_artifact, cancel,
+    shutdown_orchestrator, approve, complete."""
 
     @mcp.tool()
     async def bernstein_claim(  # pyright: ignore[reportUnusedFunction]
@@ -800,25 +1121,26 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             return _error_response(exc)
 
     @mcp.tool()
-    async def bernstein_update(  # pyright: ignore[reportUnusedFunction]
+    async def bernstein_post_message(  # pyright: ignore[reportUnusedFunction]
         task_id: str,
         body: str,
         sender: str,
         kind: str = "finding",
         sender_card_fingerprint: str | None = None,
     ) -> str:
-        """Post an incremental progress update as a signed journal entry.
+        """Post a message to a task's mailbox as a signed journal entry.
 
-        Wraps the worker mailbox: the update is DLP-redacted, HMAC-chained
+        Wraps the worker mailbox: the message is DLP-redacted, HMAC-chained
         onto the mailbox journal, Ed25519-signed, and mirrored to the audit
         chain (``task.mailbox_message``) before returning. The result IS the
         signed journal entry - a worker holds a progress record it can verify
         offline against the same chain ``bernstein audit verify`` walks, not a
-        bare status string.
+        bare status string. This tool never changes a task's fields; it
+        appends to the task's mailbox.
 
         Args:
-            task_id: The task the update is addressed to.
-            body: The progress message body (<= 4096 bytes).
+            task_id: The task the message is addressed to.
+            body: The message body (<= 4096 bytes).
             sender: The posting worker's identity.
             kind: Typed message kind - one of ``finding`` / ``artefact_ref``
                 / ``question``.
@@ -831,7 +1153,7 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             ``signer_public_key_pem``, ``body_hash``, ...).
         """
         err = _validate_or_error(
-            "bernstein_update",
+            "bernstein_post_message",
             {
                 "task_id": task_id,
                 "body": body,
@@ -842,21 +1164,14 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         )
         if err is not None:
             return _validation_error_response(err)
-        try:
-            payload: dict[str, Any] = {"sender": sender, "kind": kind, "body": body}
-            if sender_card_fingerprint is not None:
-                payload["sender_card_fingerprint"] = sender_card_fingerprint
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.post(
-                    f"{server_url}/tasks/{task_id}/messages",
-                    json=payload,
-                    headers=_auth_headers(),
-                )
-                resp.raise_for_status()
-                data: dict[str, Any] = resp.json()
-            return json.dumps(data, indent=2)
-        except Exception as exc:
-            return _error_response(exc)
+        return await _post_message_impl(
+            server_url,
+            task_id=task_id,
+            body=body,
+            sender=sender,
+            kind=kind,
+            sender_card_fingerprint=sender_card_fingerprint,
+        )
 
     @mcp.tool()
     async def bernstein_post_artifact(  # pyright: ignore[reportUnusedFunction]
@@ -943,10 +1258,119 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             return _error_response(exc)
 
     @mcp.tool()
-    async def bernstein_stop(  # pyright: ignore[reportUnusedFunction]
+    async def bernstein_cancel(  # pyright: ignore[reportUnusedFunction]
+        task_id: str,
+        reason: str = "",
+    ) -> str:
+        """Cancel one task and its subtask tree; the orchestrator keeps running.
+
+        Posts to ``/tasks/{task_id}/cancel``, which cascades through the
+        subtask tree (``parent_task_id`` references) so children are not left
+        running after the parent is aborted. Cancellable statuses are
+        ``open``, ``claimed``, ``in_progress``, ``blocked``,
+        ``waiting_for_subtasks`` and ``planned``. A task already in a
+        terminal state is reported with its current state rather than
+        cancelled again, and an unknown task id is refused. To stop the
+        whole orchestrator instead, use ``bernstein_shutdown_orchestrator``.
+
+        Args:
+            task_id: The root task to cancel. Its descendants are cancelled
+                with it.
+            reason: Optional reason recorded on the cancellation.
+
+        Returns:
+            JSON with the cancelled root task, its status, and the count of
+            cascaded descendants - or the task's current state when it was
+            already terminal.
+        """
+        args: dict[str, Any] = {"task_id": task_id}
+        if reason:
+            args["reason"] = reason
+        err = _validate_or_error("bernstein_cancel", args)
+        if err is not None:
+            return _validation_error_response(err)
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                # Read before act, like every other terminal-route verb: an
+                # unknown id or a non-cancellable state is refused without a
+                # state-changing request being sent at all.
+                read = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
+                if read.status_code == 404:
+                    return json.dumps(
+                        {
+                            "error": "unknown_task",
+                            "task_id": task_id,
+                            "message": f"No task with id {task_id!r}; nothing was cancelled.",
+                        },
+                        indent=2,
+                    )
+                read.raise_for_status()
+                current = str(read.json().get("status") or "unknown")
+                if current not in _CANCELLABLE_STATUSES:
+                    return json.dumps(
+                        {
+                            "task_id": task_id,
+                            "status": current,
+                            "cancelled": False,
+                            "message": f"Task {task_id} is already in a terminal or non-cancellable state ({current}).",
+                        },
+                        indent=2,
+                    )
+                resp = await client.post(
+                    f"{server_url}/tasks/{task_id}/cancel",
+                    json={"reason": reason},
+                    headers=_auth_headers(),
+                )
+                if resp.status_code == 409:
+                    # The task moved between the read and the cancel: the
+                    # server's answer is the reality, reported as a state.
+                    reread = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
+                    moved = str(reread.json().get("status") or "unknown") if reread.is_success else "unknown"
+                    return json.dumps(
+                        {
+                            "task_id": task_id,
+                            "status": moved,
+                            "cancelled": False,
+                            "message": f"Task {task_id} is already in a terminal or non-cancellable state ({moved}).",
+                        },
+                        indent=2,
+                    )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+                # The route returns the root task only; count the cascaded
+                # descendants from the post-cancel task list so the result
+                # reports what actually happened, not what was requested.
+                descendants = 0
+                try:
+                    listing = await client.get(
+                        f"{server_url}/tasks",
+                        params={"status": "cancelled"},
+                        headers=_auth_headers(),
+                    )
+                    listing.raise_for_status()
+                    cancelled_rows: list[dict[str, Any]] = listing.json()
+                    descendants = _count_descendants(cancelled_rows, root_id=task_id)
+                except Exception:  # pragma: no cover - counting is best-effort
+                    logger.debug("descendant count failed for %s", task_id, exc_info=True)
+            return json.dumps(
+                {
+                    "task_id": data["id"],
+                    "status": data["status"],
+                    "cancelled": True,
+                    "cancelled_descendants": descendants,
+                },
+                indent=2,
+            )
+        except Exception as exc:
+            return _error_response(exc)
+
+    @mcp.tool()
+    async def bernstein_shutdown_orchestrator(  # pyright: ignore[reportUnusedFunction]
         workdir: str = ".",
     ) -> str:
-        """Request a graceful Bernstein shutdown by writing a SHUTDOWN signal.
+        """Shut down the ENTIRE Bernstein orchestrator for this project - every
+        run, every worker - not one task; to stop a single run and keep the
+        orchestrator alive, use ``bernstein_cancel`` instead.
 
         Writes ``.sdd/runtime/signals/SHUTDOWN`` in the project directory,
         which the orchestrator detects and shuts down gracefully.
@@ -957,28 +1381,10 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         Returns:
             Confirmation message.
         """
-        err = _validate_or_error("bernstein_stop", {"workdir": workdir})
+        err = _validate_or_error("bernstein_shutdown_orchestrator", {"workdir": workdir})
         if err is not None:
             return _validation_error_response(err)
-        from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
-
-        # Shared barrier rather than a local containment check, so this
-        # surface cannot drift from the other workdir-derived writers. The
-        # path is resolved and proven contained before any directory is
-        # created, so a refused call leaves nothing behind.
-        try:
-            shutdown_file = shutdown_signal_path(workdir)
-        except ShutdownSignalPathError as exc:
-            return _error_response(
-                exc,
-                hint="workdir must be an existing Bernstein project root",
-            )
-        try:
-            shutdown_file.parent.mkdir(parents=True, exist_ok=True)
-            shutdown_file.write_text("mcp-stop\n", encoding="utf-8")
-            return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
-        except Exception as exc:
-            return _error_response(exc, hint="Could not write shutdown signal")
+        return _shutdown_impl(workdir)
 
     @mcp.tool()
     async def bernstein_approve(  # pyright: ignore[reportUnusedFunction]
@@ -1098,80 +1504,6 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         except Exception as exc:
             return _error_response(exc)
 
-    @mcp.tool()
-    async def bernstein_create_subtask(  # pyright: ignore[reportUnusedFunction]
-        parent_task_id: str,
-        goal: str,
-        role: str = "auto",
-        priority: int = 2,
-        scope: str = "medium",
-        complexity: str = "medium",
-        estimated_minutes: int | None = None,
-    ) -> str:
-        """Create a subtask linked to a parent task.
-
-        Agents call this to decompose their current work into subtasks
-        during execution.  The parent task is automatically transitioned
-        to WAITING_FOR_SUBTASKS status.
-
-        Args:
-            parent_task_id: ID of the parent task that this subtask belongs to.
-            goal: Description of what the subtask should accomplish.
-            role: Specialist role to assign (backend, frontend, qa, …).
-            priority: 1=critical, 2=normal, 3=nice-to-have.
-            scope: Task scope - small, medium, or large.
-            complexity: Task complexity - low, medium, or high.
-            estimated_minutes: Rough time estimate in minutes.
-
-        Returns:
-            JSON with the created subtask ID, parent_task_id, title, and status.
-        """
-        err = _validate_or_error(
-            "bernstein_create_subtask",
-            {
-                "parent_task_id": parent_task_id,
-                "goal": goal,
-                "role": role,
-                "priority": priority,
-                "scope": scope,
-                "complexity": complexity,
-                "estimated_minutes": estimated_minutes,
-            },
-        )
-        if err is not None:
-            return _validation_error_response(err)
-        try:
-            payload: dict[str, Any] = {
-                "parent_task_id": parent_task_id,
-                "title": goal[:120],
-                "description": goal,
-                "role": role,
-                "priority": priority,
-                "scope": scope,
-                "complexity": complexity,
-            }
-            if estimated_minutes is not None:
-                payload["estimated_minutes"] = estimated_minutes
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.post(
-                    f"{server_url}/tasks/self-create",
-                    json=payload,
-                    headers=_auth_headers(),
-                )
-                resp.raise_for_status()
-                data: dict[str, Any] = resp.json()
-            return json.dumps(
-                {
-                    "task_id": data["id"],
-                    "parent_task_id": data.get("parent_task_id", parent_task_id),
-                    "title": data["title"],
-                    "status": data["status"],
-                },
-                indent=2,
-            )
-        except Exception as exc:
-            return _error_response(exc)
-
 
 def _register_skill_tools(mcp: FastMCP[None]) -> None:
     """Register the ``load_skill`` progressive-disclosure tool (oai-004).
@@ -1180,22 +1512,47 @@ def _register_skill_tools(mcp: FastMCP[None]) -> None:
         mcp: FastMCP instance to register the tool on.
     """
 
+    def _skill_loader():  # type: ignore[no-untyped-def]
+        # Local imports keep the MCP module cheap to import when the skills
+        # tree is missing (for example, a dev CLI without templates).
+        from pathlib import Path as _Path
+
+        from bernstein import get_templates_dir
+        from bernstein.core.skills.loader import default_loader_from_templates
+
+        templates_root = get_templates_dir(_Path.cwd())
+        return default_loader_from_templates(templates_root / "roles")
+
+    def _skill_index_json() -> str:
+        from bernstein.core.skills.index_builder import serialize_skill_discovery_index
+
+        return serialize_skill_discovery_index(_skill_loader())
+
+    from bernstein.core.skills.index_builder import SKILL_INDEX_RESOURCE_URI
+
+    @mcp.resource(
+        SKILL_INDEX_RESOURCE_URI,
+        name="skill_index",
+        description="Compact index of loadable Bernstein skills and their content hashes.",
+        mime_type="application/json",
+    )
+    def skill_index() -> str:  # pyright: ignore[reportUnusedFunction]
+        return _skill_index_json()
+
     @mcp.tool()
     async def load_skill(  # pyright: ignore[reportUnusedFunction]
-        name: str,
+        name: str | None = None,
         reference: str | None = None,
         script: str | None = None,
     ) -> str:
-        """Load a skill pack body (and optionally a reference or script).
+        """Discover skills, or load a named skill body, reference, or script.
 
-        Agents receive only a compact skill index in their system prompt.
-        Call this tool to fetch the full ``SKILL.md`` body for a skill
-        when you decide it's relevant to the current task. Pass
-        ``reference`` to get a deeper-context file or ``script`` to read
-        the content of an executable helper.
+        Omit ``name`` to receive the compact skill index. Pass a skill name
+        to fetch its full ``SKILL.md`` body. ``reference`` and ``script``
+        are valid only with a named skill.
 
         Args:
-            name: Skill name (matches the index entry, e.g. ``"backend"``).
+            name: Optional skill name (for example ``"backend"``).
             reference: Optional filename under ``references/`` - for
                 example ``"python-conventions.md"``.
             script: Optional filename under ``scripts/`` - for example
@@ -1203,21 +1560,28 @@ def _register_skill_tools(mcp: FastMCP[None]) -> None:
                 MCP harness does not execute it.
 
         Returns:
-            JSON with ``name``, ``body``, ``available_references``,
-            ``available_scripts``, and the optional fetched content.
+            The compact index when ``name`` is omitted; otherwise JSON with
+            ``name``, ``body``, available files, and optional fetched content.
         """
+        payload = {
+            key: value
+            for key, value in {
+                "name": name,
+                "reference": reference,
+                "script": script,
+            }.items()
+            if value is not None
+        }
         err = _validate_or_error(
             "load_skill",
-            {"name": name, "reference": reference, "script": script},
+            payload,
         )
         if err is not None:
             return _validation_error_response(err)
         try:
-            # Local import so the MCP module stays cheap to import even when
-            # the skills tree is missing (e.g. dev CLI without templates).
-            from pathlib import Path as _Path
+            if name is None:
+                return _skill_index_json()
 
-            from bernstein import get_templates_dir
             from bernstein.core.skills.load_skill_tool import (
                 load_skill as _load_skill_impl,
             )
@@ -1225,13 +1589,11 @@ def _register_skill_tools(mcp: FastMCP[None]) -> None:
                 result_as_dict,
             )
 
-            templates_root = get_templates_dir(_Path.cwd())
-            templates_roles_dir = templates_root / "roles"
             result = _load_skill_impl(
                 name=name,
                 reference=reference,
                 script=script,
-                templates_roles_dir=templates_roles_dir,
+                loader=_skill_loader(),
             )
             return json.dumps(result_as_dict(result), indent=2)
         except Exception as exc:
@@ -1251,6 +1613,134 @@ def _lineage_mcp_default(*, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off", ""}
 
 
+#: Result shape shared by every failure path a Bernstein tool renders:
+#: :func:`_error_response` emits ``{"error", "hint"}`` and the input firewall
+#: emits ``{"error", "jsonrpc_error"}``. ``additionalProperties`` stays open
+#: so the two variants share one branch of the advertised ``anyOf``.
+_TOOL_ERROR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["error"],
+    "properties": {
+        "error": {"type": "string"},
+        "hint": {"type": "string"},
+    },
+    "additionalProperties": True,
+}
+
+
+def _run_success_schema() -> dict[str, Any]:
+    """Schema of the ``bernstein_run`` handle body for a plain (non-task) call."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["task_id", "title", "status", "run_id", "poll_after_ms"],
+        "properties": {
+            "task_id": {"type": "string"},
+            "title": {"type": "string"},
+            "status": {"type": "string"},
+            "run_id": {"type": "string"},
+            "poll_after_ms": {"type": "integer"},
+            "parent_task_id": {"type": "string"},
+        },
+    }
+
+
+def _status_success_schema() -> dict[str, Any]:
+    """Schema of the folded ``bernstein_status`` body."""
+    count_field = {"type": "integer"}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["live", "counts", "cost"],
+        "properties": {
+            "live": {"type": "boolean"},
+            "counts": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["total", "open", "claimed", "done", "failed"],
+                "properties": {
+                    "total": dict(count_field),
+                    "open": dict(count_field),
+                    "claimed": dict(count_field),
+                    "done": dict(count_field),
+                    "failed": dict(count_field),
+                },
+            },
+            "cost": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["total_cost_usd", "per_role"],
+                "properties": {
+                    "total_cost_usd": {"type": "number"},
+                    "per_role": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["role", "cost_usd"],
+                            "properties": {
+                                "role": {"type": "string"},
+                                "cost_usd": {"type": "number"},
+                            },
+                        },
+                    },
+                },
+            },
+            "per_role": {"type": "array", "items": {"type": "object"}},
+            "status_filter": {"type": "string"},
+            "tasks": {"type": "array", "items": {"type": "object"}},
+        },
+    }
+
+
+def _status_outage_schema() -> dict[str, Any]:
+    """Schema of the ``bernstein_status`` body when the task server is down."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["live", "error", "hint"],
+        "properties": {
+            "live": {"type": "boolean"},
+            "error": {"type": "string"},
+            "hint": {"type": "string"},
+        },
+    }
+
+
+def _structured_payload_schemas() -> dict[str, dict[str, Any]]:
+    """Payload (pre-envelope) output schemas for the structured tools (#3086).
+
+    The three most-polled tools declare an ``outputSchema`` and return
+    ``structuredContent``. The run-handle schema is generated from
+    :meth:`RunHandle.wire_schema` rather than written by hand, so the
+    advertised fields are the fields ``to_wire`` emits.
+    """
+    from bernstein.core.protocols.mcp.tasks_extension import RunHandle
+
+    return {
+        "bernstein_run": {"anyOf": [_run_success_schema(), _TOOL_ERROR_SCHEMA]},
+        "bernstein_status": {"anyOf": [_status_success_schema(), _status_outage_schema(), _TOOL_ERROR_SCHEMA]},
+        "bernstein_run_status": {"anyOf": [RunHandle.wire_schema(), _TOOL_ERROR_SCHEMA]},
+    }
+
+
+def _output_schema_for(tool_name: str) -> dict[str, Any] | None:
+    """Return the ``outputSchema`` to advertise for ``tool_name``, if any.
+
+    Describes the result exactly as emitted for the current meter state:
+    the meter envelope (``result`` + ``_meter``) when the cost meter is
+    enabled, the bare payload otherwise (#3086).
+    """
+    from bernstein.mcp.cost_meter import cost_meter_enabled, envelope_schema
+
+    payload_schema = _structured_payload_schemas().get(tool_name)
+    if payload_schema is None:
+        return None
+    if cost_meter_enabled():
+        return envelope_schema(payload_schema)
+    return payload_schema
+
+
 def _apply_cost_meter(mcp: FastMCP[None]) -> None:
     """Wrap every registered tool so its response carries a meter envelope.
 
@@ -1261,10 +1751,18 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
     here keeps every tool handler free of envelope plumbing and guarantees a
     uniform shape across the stdio, SSE, and skill/scenario tools.
 
+    Tools listed in :func:`_structured_payload_schemas` additionally return
+    a ``CallToolResult`` whose ``structuredContent`` is the parsed envelope,
+    while the text content block carries the identical string it always did
+    (#3086): a structured client validates typed fields, a text client sees
+    no change.
+
     Args:
         mcp: The FastMCP server whose tools should be metered.
     """
     import functools
+
+    structured = frozenset(_structured_payload_schemas())
 
     # FastMCP exposes no public per-tool rewrap hook, so wrap each tool's
     # callable directly via the tool manager's registry (same access pattern
@@ -1272,14 +1770,32 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
     for tool in mcp._tool_manager._tools.values():  # pyright: ignore[reportPrivateUsage]
         original = tool.fn
         tool_name = tool.name
+        is_structured = tool_name in structured
 
         @functools.wraps(original)
-        async def metered(*args: Any, __orig: Any = original, __name: str = tool_name, **kwargs: Any) -> Any:
+        async def metered(
+            *args: Any,
+            __orig: Any = original,
+            __name: str = tool_name,
+            __structured: bool = is_structured,
+            **kwargs: Any,
+        ) -> Any:
             with measure_call(__name) as meter:
                 payload = await __orig(*args, **kwargs)
             if not isinstance(payload, str):
                 return payload
-            return wrap_envelope(payload, meter)
+            wrapped = wrap_envelope(payload, meter)
+            if __structured:
+                try:
+                    parsed: Any = json.loads(wrapped)
+                except (json.JSONDecodeError, TypeError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=wrapped)],
+                        structuredContent=parsed,
+                    )
+            return wrapped
 
         tool.fn = metered
 
@@ -1319,6 +1835,204 @@ def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
         tool.parameters = copy.deepcopy(schema)
 
 
+def _register_deprecated_aliases(mcp: FastMCP[None], server_url: str) -> None:
+    """Register the deprecated tool-name aliases (#3087).
+
+    Called after the tier filter, so an alias is registered only when its
+    replacement survived the filter: an alias never widens the surface. Each
+    alias keeps its historical argument shape and schema file, answers with
+    its historical payload under ``result``, and names its replacement and
+    the removal release in the payload itself. Aliases are hidden from the
+    ``tools/list`` response by :func:`_shape_tools_list` and the whole set is
+    gated by ``BERNSTEIN_MCP_DEPRECATED_ALIASES``.
+
+    The ``verify_chain`` alias is registered by the lineage registrar, since
+    it needs the lineage store; every other alias lands here.
+    """
+    from bernstein.core.protocols.mcp.tool_tiers import (
+        DEPRECATED_TOOL_ALIASES,
+        deprecated_aliases_enabled,
+    )
+
+    if not deprecated_aliases_enabled():
+        return
+
+    registered = set(mcp._tool_manager._tools)  # pyright: ignore[reportPrivateUsage]
+
+    def _wants(old_name: str) -> bool:
+        return DEPRECATED_TOOL_ALIASES[old_name] in registered
+
+    if _wants("bernstein_health"):
+
+        async def bernstein_health() -> str:
+            """Deprecated: call bernstein_status, whose response is the liveness signal."""
+            return _deprecated_alias_payload("bernstein_health", json.dumps({"status": "ok"}))
+
+        mcp.tool(name="bernstein_health")(bernstein_health)
+
+    if _wants("bernstein_tasks"):
+
+        async def bernstein_tasks(status: str | None = None) -> str:
+            """Deprecated: call bernstein_status with the status filter instead."""
+            err = _validate_or_error("bernstein_tasks", {"status": status})
+            if err is not None:
+                return _validation_error_response(err)
+            return _deprecated_alias_payload("bernstein_tasks", await _tasks_alias_impl(server_url, status))
+
+        mcp.tool(name="bernstein_tasks")(bernstein_tasks)
+
+    if _wants("bernstein_cost"):
+
+        async def bernstein_cost() -> str:
+            """Deprecated: call bernstein_status, whose response carries the cost fields."""
+            return _deprecated_alias_payload("bernstein_cost", await _cost_alias_impl(server_url))
+
+        mcp.tool(name="bernstein_cost")(bernstein_cost)
+
+    if _wants("bernstein_create_subtask"):
+
+        async def bernstein_create_subtask(
+            parent_task_id: str,
+            goal: str,
+            role: str = "auto",
+            priority: int = 2,
+            scope: str = "medium",
+            complexity: str = "medium",
+            estimated_minutes: int | None = None,
+        ) -> str:
+            """Deprecated: call bernstein_run with parent_task_id instead."""
+            err = _validate_or_error(
+                "bernstein_create_subtask",
+                {
+                    "parent_task_id": parent_task_id,
+                    "goal": goal,
+                    "role": role,
+                    "priority": priority,
+                    "scope": scope,
+                    "complexity": complexity,
+                    "estimated_minutes": estimated_minutes,
+                },
+            )
+            if err is not None:
+                return _validation_error_response(err)
+            payload = await _run_impl(
+                server_url,
+                goal=goal,
+                role=role,
+                priority=priority,
+                scope=scope,
+                complexity=complexity,
+                estimated_minutes=estimated_minutes if estimated_minutes is not None else 30,
+                parent_task_id=parent_task_id,
+            )
+            assert isinstance(payload, str)  # no ctx, so never a CreateTaskResult
+            return _deprecated_alias_payload("bernstein_create_subtask", payload)
+
+        mcp.tool(name="bernstein_create_subtask")(bernstein_create_subtask)
+
+    if _wants("bernstein_task_handle"):
+
+        async def bernstein_task_handle(run_id: str, workdir: str = ".") -> str:
+            """Deprecated: call bernstein_run_status instead (same arguments)."""
+            err = _validate_or_error("bernstein_task_handle", {"run_id": run_id, "workdir": workdir})
+            if err is not None:
+                return _validation_error_response(err)
+            return _deprecated_alias_payload("bernstein_task_handle", await _run_status_impl(run_id, workdir))
+
+        mcp.tool(name="bernstein_task_handle")(bernstein_task_handle)
+
+    if _wants("bernstein_update"):
+
+        async def bernstein_update(
+            task_id: str,
+            body: str,
+            sender: str,
+            kind: str = "finding",
+            sender_card_fingerprint: str | None = None,
+        ) -> str:
+            """Deprecated: call bernstein_post_message instead (same arguments)."""
+            err = _validate_or_error(
+                "bernstein_update",
+                {
+                    "task_id": task_id,
+                    "body": body,
+                    "sender": sender,
+                    "kind": kind,
+                    "sender_card_fingerprint": sender_card_fingerprint,
+                },
+            )
+            if err is not None:
+                return _validation_error_response(err)
+            return _deprecated_alias_payload(
+                "bernstein_update",
+                await _post_message_impl(
+                    server_url,
+                    task_id=task_id,
+                    body=body,
+                    sender=sender,
+                    kind=kind,
+                    sender_card_fingerprint=sender_card_fingerprint,
+                ),
+            )
+
+        mcp.tool(name="bernstein_update")(bernstein_update)
+
+    if _wants("bernstein_context"):
+
+        async def bernstein_context(task_id: str, workdir: str = ".", verify: bool = False) -> str:
+            """Deprecated: call bernstein_task_capsule instead (same arguments)."""
+            err = _validate_or_error("bernstein_context", {"task_id": task_id, "workdir": workdir, "verify": verify})
+            if err is not None:
+                return _validation_error_response(err)
+            return _deprecated_alias_payload("bernstein_context", await _task_capsule_impl(task_id, workdir, verify))
+
+        mcp.tool(name="bernstein_context")(bernstein_context)
+
+    if _wants("bernstein_stop"):
+
+        async def bernstein_stop(workdir: str = ".") -> str:
+            """Deprecated: call bernstein_shutdown_orchestrator (whole-orchestrator
+            shutdown) or bernstein_cancel (one run) instead."""
+            err = _validate_or_error("bernstein_stop", {"workdir": workdir})
+            if err is not None:
+                return _validation_error_response(err)
+            return _deprecated_alias_payload("bernstein_stop", _shutdown_impl(workdir))
+
+        mcp.tool(name="bernstein_stop")(bernstein_stop)
+
+    if _wants("bernstein_scenarios"):
+
+        async def bernstein_scenarios() -> str:
+            """Deprecated: call bernstein_scenario with action="list" instead."""
+            from bernstein.mcp.routine_tools import list_scenarios
+
+            try:
+                payload = json.dumps(list_scenarios(), indent=2)
+            except Exception as exc:
+                payload = _error_response(exc)
+            return _deprecated_alias_payload("bernstein_scenarios", payload)
+
+        mcp.tool(name="bernstein_scenarios")(bernstein_scenarios)
+
+    if _wants("bernstein_scenario_status"):
+
+        async def bernstein_scenario_status(orchestration_id: str) -> str:
+            """Deprecated: call bernstein_scenario with action="status" instead."""
+            from bernstein.mcp.routine_tools import fetch_scenario_status
+
+            err = _validate_or_error("bernstein_scenario_status", {"orchestration_id": orchestration_id})
+            if err is not None:
+                return _validation_error_response(err)
+            try:
+                result = await fetch_scenario_status(orchestration_id, server_url=server_url)
+                payload = json.dumps(result, indent=2)
+            except Exception as exc:
+                payload = _error_response(exc)
+            return _deprecated_alias_payload("bernstein_scenario_status", payload)
+
+        mcp.tool(name="bernstein_scenario_status")(bernstein_scenario_status)
+
+
 def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
     """Drop every registered tool that is outside ``active_tier``.
 
@@ -1344,50 +2058,57 @@ def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
 #: A tool that is absent from this map advertises nothing, which the Tasks
 #: extension reads as ``forbidden``. Only ``bernstein_run`` answers a
 #: task-augmented call with a ``CreateTaskResult``, so it is the only entry
-#: declared ``optional``. ``bernstein_task_handle`` is the stateless polling
+#: declared ``optional``. ``bernstein_run_status`` is the stateless polling
 #: fallback: it always answers immediately and never returns a task handle,
 #: so it declares ``forbidden`` explicitly rather than leaving a caller to
 #: infer the default.
 _TOOL_TASK_SUPPORT: dict[str, TaskExecutionMode] = {
     "bernstein_run": "optional",
-    "bernstein_task_handle": "forbidden",
+    "bernstein_run_status": "forbidden",
 }
 
 
-def _declare_task_support(mcp: FastMCP[None]) -> None:
-    """Advertise ``execution.taskSupport`` on the tools that declare a mode.
+def _shape_tools_list(mcp: FastMCP[None]) -> None:
+    """Re-register the ``tools/list`` handler with the advertised shape.
 
-    The MCP Tasks extension defaults a tool with no ``execution`` hint to
-    ``forbidden``, so without this declaration no client ever sends a
-    task-augmented ``tools/call`` and the extension's request handlers are
-    unreachable.
+    Three concerns share the one wrapper because they all act on the entries
+    FastMCP already built:
 
-    FastMCP 1.28.1 carries no ``execution`` field: ``@mcp.tool()`` takes no
-    such argument and ``FastMCP.list_tools`` builds each ``mcp.types.Tool``
-    without it. The hint therefore cannot be attached at registration time,
-    so the low-level ``tools/list`` handler is re-registered here with a
-    wrapper that stamps the field onto the entries FastMCP already built.
+    * deprecated aliases are dropped - they stay callable for one release
+      but are never advertised (#3087);
+    * ``execution.taskSupport`` is stamped from :data:`_TOOL_TASK_SUPPORT` -
+      the MCP Tasks extension defaults a tool with no ``execution`` hint to
+      ``forbidden``, so without it no client ever sends a task-augmented
+      call;
+    * ``outputSchema`` is stamped for the tools that return structured
+      content, describing the envelope exactly as it is emitted for the
+      current cost-meter state (#3086).
 
-    Every ``taskSupport`` declaration in this server goes through this one
-    function, so when an SDK release adds first-class support the migration
-    is deleting this function and moving :data:`_TOOL_TASK_SUPPORT` into the
+    FastMCP 1.28.1 carries none of these fields at registration time
+    (``@mcp.tool()`` takes no such arguments), so the low-level handler is
+    wrapped here. When an SDK release adds first-class support the migration
+    is deleting this function and moving the declarations into the
     registrations.
 
     Args:
-        mcp: The FastMCP server whose ``tools/list`` response should carry
-            the declarations.
+        mcp: The FastMCP server whose ``tools/list`` response is shaped.
     """
+    from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES
+
     fastmcp_list_tools = mcp.list_tools
 
-    async def list_tools_with_task_support() -> list[MCPTool]:
-        tools = await fastmcp_list_tools()
+    async def shaped_list_tools() -> list[MCPTool]:
+        tools = [tool for tool in await fastmcp_list_tools() if tool.name not in DEPRECATED_TOOL_ALIASES]
         for tool in tools:
             mode = _TOOL_TASK_SUPPORT.get(tool.name)
             if mode is not None:
                 tool.execution = ToolExecution(taskSupport=mode)
+            output_schema = _output_schema_for(tool.name)
+            if output_schema is not None:
+                tool.outputSchema = output_schema
         return tools
 
-    mcp._mcp_server.list_tools()(list_tools_with_task_support)
+    mcp._mcp_server.list_tools()(shaped_list_tools)
 
 
 # MCP ``tasks/list`` is a paginated request whose only client-supplied knob is
@@ -1547,16 +2268,16 @@ def create_mcp_server(
 
     active_tier = resolve_active_tier(tier)
     mcp: FastMCP[None] = FastMCP(name, instructions=_SERVER_INSTRUCTIONS)
+    mcp._mcp_server.version = _package_version()
     register_capability_resource(mcp)
     register_prompt_resources(mcp)
-    _register_health_tool(mcp)
     _register_query_tools(mcp, server_url)
     _register_action_tools(mcp, server_url)
-    _register_task_handle_tool(mcp)
-    _register_context_tool(mcp)
+    _register_run_status_tool(mcp)
+    _register_task_capsule_tool(mcp)
     _register_skill_tools(mcp)
     _register_tasks_extension(mcp, server_url)
-    # rt-003: scenario <-> Routine bridge tools.
+    # rt-003: scenario <-> Routine bridge tool.
     from bernstein.mcp.routine_tools import register_scenario_tools
 
     register_scenario_tools(mcp, server_url)
@@ -1568,8 +2289,12 @@ def create_mcp_server(
         register_lineage_resources(mcp, lineage_root=root, enabled=True)
 
     _apply_tool_tier(mcp, active_tier)
+    # Aliases are registered after the tier filter so one is registered only
+    # when its replacement is in tier, and before the schema/list shaping so
+    # they validate and meter like any tool while staying unadvertised.
+    _register_deprecated_aliases(mcp, server_url)
     _apply_advertised_schemas(mcp)
-    _declare_task_support(mcp)
+    _shape_tools_list(mcp)
     _apply_cost_meter(mcp)
     return mcp
 

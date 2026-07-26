@@ -11,10 +11,14 @@ for the role.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bernstein.core.skills.loader import LoadedSkill, SkillLoader
+
+SKILL_INDEX_RESOURCE_URI = "bernstein://skills/index"
 
 
 def build_skill_index(
@@ -70,3 +74,21 @@ def _fmt_entry(skill: LoadedSkill) -> str:
     body.
     """
     return skill.description.strip().replace("\n", " ")
+
+
+def serialize_skill_discovery_index(loader: SkillLoader) -> str:
+    """Return the deterministic JSON index exposed to MCP clients.
+
+    Skill bodies stay behind ``load_skill(name=...)``. Their hashes let a
+    client invalidate a cached body without putting that body in discovery
+    output.
+    """
+    skills = [
+        {
+            "content_hash": hashlib.sha256(skill.body.encode("utf-8")).hexdigest(),
+            "description": _fmt_entry(skill),
+            "name": skill.name,
+        }
+        for skill in loader.list_all()
+    ]
+    return json.dumps({"skills": skills}, ensure_ascii=False, separators=(",", ":"), sort_keys=True)

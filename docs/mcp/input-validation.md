@@ -61,12 +61,13 @@ load time via `jsonschema.Draft7Validator.check_schema`, not on the first
 matching request.
 
 The bundled server ships schemas for the core tool set:
-`bernstein_health`, `bernstein_run`, `bernstein_status`, `bernstein_tasks`,
-`bernstein_task_handle`, `bernstein_cost`, `bernstein_stop`,
-`bernstein_approve`, `bernstein_create_subtask`, `bernstein_claim`,
-`bernstein_update`, `load_skill`, `bernstein_context`,
-`bernstein_post_artifact`, `verify_chain`, and the scenario-bridge tools
-`bernstein_scenario`, `bernstein_scenario_status`, `bernstein_scenarios`.
+`bernstein_run`, `bernstein_status`, `bernstein_run_status`,
+`bernstein_approve`, `bernstein_complete`, `bernstein_cancel`,
+`bernstein_claim`, `bernstein_post_message`, `bernstein_post_artifact`,
+`bernstein_task_capsule`, `bernstein_shutdown_orchestrator`, `load_skill`,
+`bernstein_scenario`, `bernstein_verify_lineage`, and every deprecated
+alias kept callable for the transition release (each alias validates
+against its own historical schema file).
 Adding a new MCP tool means adding its schema file alongside these; a tool
 with no schema file is unreachable (unknown-tool rejection), which is the
 point of deny-by-default.
@@ -134,5 +135,5 @@ registry, the shared `validate_or_error` / `validation_error_response`
 handler helpers); `src/bernstein/mcp/tool_schemas/*.json` (per-tool
 schemas); wired into request handling in `src/bernstein/mcp/server.py`
 (`_validate_or_error`) and advertised from the same files by
-`_apply_advertised_schemas`. `verify_chain` validates in
+`_apply_advertised_schemas`. `bernstein_verify_lineage` validates in
 `src/bernstein/mcp/resources/lineage.py`.

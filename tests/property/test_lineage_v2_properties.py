@@ -4,13 +4,15 @@ Properties:
 
 1. HMAC chain unforgeability       - flipping any byte of any record on disk
                                      produces at least one verify() failure.
+                                     ``verify`` is total: it reports, it never
+                                     raises and never passes silently.
 2. Replay determinism              - replay() is a pure function of disk state.
 3. Append commutativity per task   - sequences of appends targeting distinct
                                      tasks can be interleaved without changing
                                      the per-task replay output.
 4. Verify-after-truncate invariants - truncating bytes never produces a
-                                     "silent ok" result; verify either raises
-                                     or returns ok=False.
+                                     "silent ok" result; verify returns
+                                     ok=False.
 5. Roundtrip                       - any well-formed (parent, child) pair
                                      written and read back equals the input
                                      (modulo the prev_hmac/hmac stamps).
@@ -125,12 +127,11 @@ def test_property_parent_byte_flip_breaks_verify(
         # XOR with 0x01 keeps it valid UTF-8 in our ASCII payloads.
         mutated[idx] ^= 0x01
         store.parent_log.write_bytes(bytes(mutated))
-        # Either verify raises (torn JSON) or reports failures - never silent ok.
-        try:
-            r = store.verify()
-        except (json.JSONDecodeError, ValueError, UnicodeDecodeError, KeyError):
-            return
-        assert not r.ok or len(r.failures) > 0
+        # verify() is total: every mutation is reported, none raises and
+        # none passes silently.
+        r = store.verify()
+        assert not r.ok
+        assert r.failures
 
 
 @given(payload=_payload(), flip_offset=st.integers(min_value=0, max_value=2048))
@@ -153,11 +154,9 @@ def test_property_child_byte_flip_breaks_verify(payload: dict[str, object], flip
         mutated = bytearray(raw)
         mutated[idx] ^= 0x01
         cpath.write_bytes(bytes(mutated))
-        try:
-            r = store.verify()
-        except (json.JSONDecodeError, ValueError, UnicodeDecodeError, KeyError):
-            return
-        assert not r.ok or len(r.failures) > 0
+        r = store.verify()
+        assert not r.ok
+        assert r.failures
 
 
 # ---------------------------------------------------------------------------
@@ -267,10 +266,7 @@ def test_property_truncate_parent_never_silent_ok(n: int, drop_last_k: int) -> N
         lines = raw.rstrip(b"\n").split(b"\n")
         kept = lines[: len(lines) - drop_last_k]
         store.parent_log.write_bytes(b"\n".join(kept) + b"\n")
-        try:
-            r = store.verify()
-        except (json.JSONDecodeError, ValueError, UnicodeDecodeError, KeyError):
-            return
+        r = store.verify()
         assert not r.ok
 
 

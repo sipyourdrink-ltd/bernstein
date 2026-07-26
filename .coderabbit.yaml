@@ -186,6 +186,7 @@ reviews:
     - "!.worktrees/**"
     - "!**/_default_templates/**"
     - "!docs/api/**"
+    - "!docs/reference/openapi.json"
     - "!**/*.lock"
     - "!**/*.snap"
     - "!**/*.min.js"

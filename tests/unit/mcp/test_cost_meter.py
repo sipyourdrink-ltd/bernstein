@@ -137,22 +137,29 @@ def _call(tool: str, args: dict | None = None) -> str:
 
     mcp = create_mcp_server(tier="standard")
     result = asyncio.run(mcp.call_tool(tool, args or {}))
+    if hasattr(result, "content"):
+        # Structured tools (#3086) answer with a CallToolResult.
+        return result.content[0].text
     # FastMCP returns a (content, structured) tuple in recent versions, or a
     # content list in older ones; normalise to the text payload.
     content = result[0] if isinstance(result, tuple) else result
     return content[0].text
 
 
-def test_server_health_response_is_enveloped(_meter_on: None) -> None:
+def test_server_health_alias_response_is_enveloped(_meter_on: None) -> None:
+    # The health alias (#3087) is metered like any tool: the deprecation
+    # wrapper sits inside the meter envelope, and the liveness body inside it.
     parsed = json.loads(_call("bernstein_health"))
-    assert parsed["result"]["status"] == "ok"
+    assert parsed["result"]["result"] == {"status": "ok"}
+    assert parsed["result"]["replacement"] == "bernstein_status"
     assert parsed["_meter"]["tool"] == "bernstein_health"
     assert parsed["_meter"]["ok"] is True
 
 
 def test_server_response_bare_when_disabled(_meter_off: None) -> None:
     parsed = json.loads(_call("bernstein_health"))
-    assert parsed == {"status": "ok"}
+    assert parsed["result"] == {"status": "ok"}
+    assert parsed["deprecated"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -180,5 +187,8 @@ def test_http_transport_health_enveloped(_meter_on: None) -> None:
     assert status == 200
     text = json.loads(resp_body)["result"]["content"][0]["text"]
     parsed = json.loads(text)
-    assert parsed["result"]["status"] == "ok"
+    # bernstein_health is a deprecated alias (#3087): the liveness body sits
+    # under the deprecation wrapper, which sits under the meter envelope.
+    assert parsed["result"]["result"]["status"] == "ok"
+    assert parsed["result"]["replacement"] == "bernstein_status"
     assert parsed["_meter"]["tool"] == "bernstein_health"

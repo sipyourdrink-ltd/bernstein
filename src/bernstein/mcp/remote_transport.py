@@ -22,6 +22,7 @@ import logging
 import os
 from contextlib import suppress
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -55,12 +56,76 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 _HTTP_TIMEOUT = 5.0
 
+
+def _package_version() -> str:
+    """Return the installed Bernstein distribution version."""
+    try:
+        return version("bernstein")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
 # JSON-RPC error codes per spec.
 _PARSE_ERROR = -32700
 _INVALID_REQUEST = -32600
 _METHOD_NOT_FOUND = -32601
 _INTERNAL_ERROR = -32603
+# MCP resource-not-found (spec reserved range).
+_RESOURCE_NOT_FOUND = -32002
 _CONTENT_TYPE_JSON = "application/json"
+
+# The protocol-revision request header (MCP streamable HTTP transport spec).
+_PROTOCOL_VERSION_HEADER = "mcp-protocol-version"
+
+# Revision assumed when a client sends no version header, per spec.
+_DEFAULT_PROTOCOL_VERSION = "2025-03-26"
+
+# One-release opt-out for the Origin and MCP-Protocol-Version enforcement
+# (#3084): both refuse requests that succeeded before, so an operator whose
+# proxy strips or rewrites headers can disable the checks for one release
+# while fixing the proxy. Named in the release notes; removed with them.
+_HEADER_CHECKS_ENV = "BERNSTEIN_MCP_REMOTE_HEADER_CHECKS"
+
+
+def _header_checks_enabled() -> bool:
+    """Whether Origin and protocol-version enforcement are active."""
+    raw = os.environ.get(_HEADER_CHECKS_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _supported_protocol_versions() -> tuple[str, ...]:
+    """The protocol revisions this deployment serves, from the pinned SDK."""
+    from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
+
+    return tuple(SUPPORTED_PROTOCOL_VERSIONS)
+
+
+def _origin_allowed(origin: str, allowed: list[str]) -> bool:
+    """Whether a browser ``Origin`` value is in the configured allow list.
+
+    Matching is the enforcement half of ``cors_origins`` (#3084): the same
+    list that used to only build the ``access-control-allow-origin`` response
+    header now refuses the request outright, which is what actually stops a
+    DNS-rebound page from reaching a loopback-bound server. Entries match
+    exactly (case-insensitive), or by ``:*`` port glob, or ``*``.
+    """
+    origin_norm = origin.strip().lower().rstrip("/")
+    for entry in allowed:
+        entry_norm = entry.strip().lower().rstrip("/")
+        if entry_norm == "*" or entry_norm == origin_norm:
+            return True
+        if entry_norm.endswith(":*"):
+            base = entry_norm[:-2]
+            if origin_norm == base:
+                # Default-port origins carry no explicit port.
+                return True
+            rest = origin_norm.removeprefix(base + ":")
+            if rest != origin_norm and rest.isdigit():
+                return True
+    return False
+
 
 # Hostnames considered safe for listening without a configured auth token.
 _LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -277,13 +342,12 @@ def _jsonrpc_result(
 
 _TOOL_DEFS: list[dict[str, Any]] = [
     {
-        "name": "bernstein_health",
-        "description": "Liveness check - always succeeds if the MCP server is running.",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
         "name": "bernstein_run",
-        "description": "Start an orchestration run by posting a task.",
+        "description": (
+            "Start an orchestration run by posting a task. Pass "
+            "parent_task_id to create the run as a subtask of an existing "
+            "task."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -293,33 +357,48 @@ _TOOL_DEFS: list[dict[str, Any]] = [
                 "scope": {"type": "string", "default": "medium"},
                 "complexity": {"type": "string", "default": "medium"},
                 "estimated_minutes": {"type": "integer", "default": 30},
+                "parent_task_id": {"type": "string"},
             },
             "required": ["goal"],
         },
     },
     {
         "name": "bernstein_status",
-        "description": "Return a summary of all task counts.",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "bernstein_tasks",
-        "description": "List tasks with optional status filter.",
+        "description": (
+            "Liveness, task counts, and cost in one read. Pass status to "
+            "include the matching tasks; pass detail=true for full rows."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "status": {"type": "string"},
+                "detail": {"type": "boolean", "default": False},
             },
         },
     },
     {
-        "name": "bernstein_cost",
-        "description": "Return cost summary (total USD and per-role breakdown).",
-        "inputSchema": {"type": "object", "properties": {}},
+        "name": "bernstein_cancel",
+        "description": (
+            "Cancel one task and its subtask tree; the orchestrator keeps "
+            "running. An already-terminal task is reported with its state, "
+            "and an unknown task id is refused."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "reason": {"type": "string", "default": ""},
+            },
+            "required": ["task_id"],
+        },
     },
     {
-        "name": "bernstein_stop",
-        "description": "Graceful shutdown via SHUTDOWN signal.",
+        "name": "bernstein_shutdown_orchestrator",
+        "description": (
+            "Shut down the ENTIRE Bernstein orchestrator for the project - "
+            "every run, every worker - by writing the SHUTDOWN signal. To "
+            "stop a single run, use bernstein_cancel instead."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -362,24 +441,19 @@ _TOOL_DEFS: list[dict[str, Any]] = [
             "required": ["task_id", "result_summary"],
         },
     },
-    {
-        "name": "bernstein_create_subtask",
-        "description": "Create a subtask linked to a parent task.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "parent_task_id": {"type": "string"},
-                "goal": {"type": "string"},
-                "role": {"type": "string", "default": "auto"},
-                "priority": {"type": "integer", "default": 2},
-                "scope": {"type": "string", "default": "medium"},
-                "complexity": {"type": "string", "default": "medium"},
-                "estimated_minutes": {"type": "integer"},
-            },
-            "required": ["parent_task_id", "goal"],
-        },
-    },
 ]
+
+#: Deprecated remote tool names (#3087): callable for one minor release,
+#: never advertised in ``tools/list``, answering with a payload that names
+#: the replacement. The mapping mirrors the stdio alias table for the subset
+#: of tools this transport serves.
+_REMOTE_DEPRECATED_TOOLS: dict[str, str] = {
+    "bernstein_health": "bernstein_status",
+    "bernstein_tasks": "bernstein_status",
+    "bernstein_cost": "bernstein_status",
+    "bernstein_stop": "bernstein_shutdown_orchestrator",
+    "bernstein_create_subtask": "bernstein_run",
+}
 
 
 def validation_scope_notice() -> str:
@@ -410,13 +484,16 @@ def validation_scope_notice() -> str:
 
 _SERVER_INFO: dict[str, Any] = {
     "name": "bernstein",
-    "version": "1.0.0",
+    "version": _package_version(),
 }
 
 _CAPABILITIES: dict[str, Any] = {
     "tools": {"listChanged": False},
     # Server-side prompt templates surfaced via prompts/list and prompts/get.
     "prompts": {"listChanged": False},
+    # The capability card, the skill index, and (when enabled) the lineage
+    # records, served via resources/list and resources/read (#3084).
+    "resources": {"listChanged": False, "subscribe": False},
     # The server honours notifications/cancelled for in-flight tool calls and
     # preserves partial output on cancel.
     "experimental": {"cancellation": {"partialResults": True}},
@@ -482,6 +559,7 @@ class StreamableHTTPTransport:
         journal: EventJournal | None = None,
         audit_chain: AuditChainStore | None = None,
         today: Callable[[], date] | None = None,
+        lineage_root: Any = None,
     ) -> None:
         # An audit chain with no journal to anchor against would silently
         # disable the auditing the caller asked for: every served call would
@@ -495,6 +573,7 @@ class StreamableHTTPTransport:
         self._journal = journal
         self._audit_chain = audit_chain
         self._today = today
+        self._lineage_root = lineage_root
         self._inflight = InFlightRegistry()
 
     def _legacy_session_shim_active(self) -> bool:
@@ -533,6 +612,36 @@ class StreamableHTTPTransport:
         if not path.rstrip("/").endswith(self._config.path.rstrip("/")):
             return (404, {"content-type": _CONTENT_TYPE_JSON}, b'{"error":"not found"}')
 
+        # Origin and protocol-version enforcement (#3084). Both run before
+        # auth: a DNS-rebound page must be refused whether or not it guessed
+        # a token, and a version mismatch is answerable without credentials
+        # so the client can downgrade and retry.
+        if _header_checks_enabled():
+            origin = headers.get("origin")
+            if origin is not None and not _origin_allowed(origin, self._config.cors_origins):
+                return (
+                    403,
+                    {"content-type": _CONTENT_TYPE_JSON},
+                    json.dumps({"error": "origin not allowed"}).encode(),
+                )
+            version = headers.get(_PROTOCOL_VERSION_HEADER)
+            if version is not None and version not in _supported_protocol_versions():
+                message = (
+                    f"Unsupported MCP-Protocol-Version {version!r}; "
+                    f"supported: {', '.join(_supported_protocol_versions())}"
+                )
+                return (
+                    400,
+                    {"content-type": _CONTENT_TYPE_JSON},
+                    json.dumps({"error": message}).encode(),
+                )
+
+        # The revision this request is served under: the header when the
+        # client sent one, the spec default otherwise. Threaded through the
+        # dispatch so the capability card reports the live connection's
+        # revision rather than a constant.
+        negotiated_version = headers.get(_PROTOCOL_VERSION_HEADER) or _DEFAULT_PROTOCOL_VERSION
+
         # Auth check.
         if not self._authenticate(headers):
             return self._unauthorized_response(headers)
@@ -551,7 +660,7 @@ class StreamableHTTPTransport:
             )
 
         if method == "POST":
-            return await self._handle_post(body)
+            return await self._handle_post(body, negotiated_version=negotiated_version)
         if method == "GET":
             return self._handle_get()
         if method == "DELETE":
@@ -568,6 +677,8 @@ class StreamableHTTPTransport:
     async def _handle_post(
         self,
         body: bytes,
+        *,
+        negotiated_version: str = _DEFAULT_PROTOCOL_VERSION,
     ) -> tuple[int, dict[str, str], bytes]:
         """Handle POST: JSON-RPC request/notification.
 
@@ -582,26 +693,21 @@ class StreamableHTTPTransport:
 
         resp_headers: dict[str, str] = {"content-type": _CONTENT_TYPE_JSON}
 
-        # Batch support.
+        # JSON-RPC batching was removed from the MCP schema two revisions
+        # ago; a JSON array body is dead surface and is refused (#3084).
         if isinstance(message, list):
-            results: list[dict[str, Any]] = []
-            for msg in cast("list[object]", message):
-                if not isinstance(msg, dict):
-                    result = _jsonrpc_error(_INVALID_REQUEST, "Invalid request")
-                else:
-                    result = await self._handle_jsonrpc(cast("dict[str, Any]", msg))
-                if result is not None:
-                    results.append(result)
-            if not results:
-                return (204, resp_headers, b"")
-            return (200, resp_headers, json.dumps(results).encode())
+            err = _jsonrpc_error(
+                _INVALID_REQUEST,
+                "JSON-RPC batching was removed from the MCP specification; send one request per POST",
+            )
+            return (400, resp_headers, json.dumps(err).encode())
 
         if not isinstance(message, dict):
             err = _jsonrpc_error(_INVALID_REQUEST, "Invalid request")
             return (200, resp_headers, json.dumps(err).encode())
 
         message_dict = cast("dict[str, Any]", message)
-        result = await self._handle_jsonrpc(message_dict)
+        result = await self._handle_jsonrpc(message_dict, negotiated_version=negotiated_version)
         if result is None:
             # Notification - no response.
             return (204, resp_headers, b"")
@@ -642,11 +748,15 @@ class StreamableHTTPTransport:
     async def _handle_jsonrpc(
         self,
         message: dict[str, Any],
+        *,
+        negotiated_version: str = _DEFAULT_PROTOCOL_VERSION,
     ) -> dict[str, Any] | None:
         """Process a single JSON-RPC message from its body alone.
 
         Args:
             message: Parsed JSON-RPC message.
+            negotiated_version: The protocol revision this request is served
+                under (from the version header, or the spec default).
 
         Returns:
             JSON-RPC response dict, or None for notifications.
@@ -669,9 +779,20 @@ class StreamableHTTPTransport:
 
         try:
             # tools/call needs its JSON-RPC id so the call can be tracked for
-            # cancellation; other handlers take only (params).
+            # cancellation; initialize and resources/read need the request's
+            # negotiated revision; other handlers take only (params).
             if method == "tools/call":
                 result = await self._method_tools_call(params, req_id)
+            elif method == "initialize":
+                result = await self._method_initialize(params, negotiated_version=negotiated_version)
+            elif method == "resources/read":
+                resolved = await self._method_resources_read(params, negotiated_version=negotiated_version)
+                if resolved is None:
+                    if is_notification:
+                        return None
+                    uri = params.get("uri", "") if isinstance(params, dict) else ""
+                    return _jsonrpc_error(_RESOURCE_NOT_FOUND, f"Resource not found: {uri}", req_id)
+                result = resolved
             else:
                 result = await handler(params)
         except Exception as exc:
@@ -713,6 +834,9 @@ class StreamableHTTPTransport:
             "tools/call": self._method_tools_call,
             "prompts/list": self._method_prompts_list,
             "prompts/get": self._method_prompts_get,
+            "resources/list": self._method_resources_list,
+            "resources/templates/list": self._method_resources_templates_list,
+            "resources/read": self._method_resources_read,
             "ping": self._method_ping,
             "notifications/initialized": self._method_noop,
             "notifications/cancelled": self._method_cancelled,
@@ -724,24 +848,34 @@ class StreamableHTTPTransport:
     async def _method_initialize(
         self,
         params: dict[str, Any],
+        *,
+        negotiated_version: str = _DEFAULT_PROTOCOL_VERSION,
     ) -> dict[str, Any]:
         """Handle 'initialize' - return server info and capabilities.
 
         Retained for clients that still send the legacy handshake; the
-        result carries no session identity. Alongside the static spec
-        ``capabilities`` object, the result carries a runtime
-        ``capabilityCard`` describing the live transports, auth modes,
-        active tool tier, and cost-meter state so a client can decide how to
-        connect without trial and error.
+        result carries no session identity. The revision is negotiated, not
+        constant (#3084): a supported ``protocolVersion`` in the params is
+        echoed back, an unknown one answers with the spec default so the
+        client can downgrade. Alongside the static spec ``capabilities``
+        object, the result carries a runtime ``capabilityCard`` describing
+        the live transports, auth modes, active tool tier, cost-meter state,
+        and the revision actually negotiated for this connection.
         """
         from bernstein.mcp.capability import build_capability_card
 
-        _ = params
+        requested = params.get("protocolVersion") if isinstance(params, dict) else None
+        if isinstance(requested, str) and requested in _supported_protocol_versions():
+            negotiated = requested
+        elif requested is not None:
+            negotiated = _DEFAULT_PROTOCOL_VERSION
+        else:
+            negotiated = negotiated_version
         return {
-            "protocolVersion": "2025-03-26",
+            "protocolVersion": negotiated,
             "serverInfo": _SERVER_INFO,
             "capabilities": _CAPABILITIES,
-            "capabilityCard": build_capability_card(),
+            "capabilityCard": build_capability_card(spec_revision=negotiated),
         }
 
     async def _method_tools_list(
@@ -914,6 +1048,156 @@ class StreamableHTTPTransport:
             ],
         }
 
+    # -- Resources (#3084) ---------------------------------------------------
+
+    def _lineage_enabled(self) -> bool:
+        """Whether the lineage resources are exposed on this remote surface.
+
+        Default OFF for remote deployments (ADR-009 7.3), opt-in via
+        ``BERNSTEIN_LINEAGE_MCP_ENABLED=1`` - the same gate the SSE server
+        applies, so a resource read is tier-checked exactly like the stdio
+        registrar decides registration.
+        """
+        from bernstein.mcp.server import _lineage_mcp_default  # pyright: ignore[reportPrivateUsage]
+
+        return _lineage_mcp_default(default=False)
+
+    def _lineage_root_path(self) -> Any:
+        from pathlib import Path
+
+        if self._lineage_root is not None:
+            return self._lineage_root
+        return Path.cwd() / ".sdd" / "lineage"
+
+    @staticmethod
+    def _skill_index_body() -> str:
+        """Serialize the skill discovery index (same body stdio serves)."""
+        from pathlib import Path
+
+        from bernstein import get_templates_dir
+        from bernstein.core.skills.index_builder import serialize_skill_discovery_index
+        from bernstein.core.skills.loader import default_loader_from_templates
+
+        templates_root = get_templates_dir(Path.cwd())
+        return serialize_skill_discovery_index(default_loader_from_templates(templates_root / "roles"))
+
+    async def _method_resources_list(
+        self,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Handle 'resources/list' - the same resources stdio exposes.
+
+        The capability card and the skill index are always served; the
+        lineage resources appear only when the lineage exposure is enabled
+        for remote transports, mirroring the stdio registrar's gate.
+        """
+        from bernstein.core.skills.index_builder import SKILL_INDEX_RESOURCE_URI
+
+        _ = params
+        resources: list[dict[str, Any]] = [
+            {
+                "uri": "bernstein://capability",
+                "name": "bernstein_capability",
+                "description": "Runtime capability card: transports, auth, tiers, meter, spec rev.",
+                "mimeType": _CONTENT_TYPE_JSON,
+            },
+            {
+                "uri": SKILL_INDEX_RESOURCE_URI,
+                "name": "skill_index",
+                "description": "Compact index of loadable Bernstein skills and their content hashes.",
+                "mimeType": _CONTENT_TYPE_JSON,
+            },
+        ]
+        if self._lineage_enabled():
+            resources.append(
+                {
+                    "uri": "lineage://stats",
+                    "name": "lineage_stats",
+                    "description": "Summary counts over the entire lineage log.",
+                    "mimeType": _CONTENT_TYPE_JSON,
+                }
+            )
+        return {"resources": resources}
+
+    async def _method_resources_templates_list(
+        self,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Handle 'resources/templates/list' - lineage artefact template."""
+        _ = params
+        templates: list[dict[str, Any]] = []
+        if self._lineage_enabled():
+            templates.append(
+                {
+                    "uriTemplate": "lineage://artefact/{artefact_path}",
+                    "name": "lineage_artefact",
+                    "description": "JSONL chain of lineage entries for a single artefact.",
+                    "mimeType": "application/x-ndjson",
+                }
+            )
+        return {"resourceTemplates": templates}
+
+    async def _method_resources_read(
+        self,
+        params: dict[str, Any],
+        *,
+        negotiated_version: str = _DEFAULT_PROTOCOL_VERSION,
+    ) -> dict[str, Any] | None:
+        """Handle 'resources/read' - serve one resource body by URI.
+
+        Runs after the same auth (and header) checks as every tool call:
+        this method is only reachable through :meth:`handle_request`. A
+        lineage URI is refused while the lineage exposure is disabled, so a
+        caller below that gate cannot read lineage remotely. Returns
+        ``None`` for an unknown or refused URI; the dispatcher renders that
+        as a resource-not-found error.
+        """
+        from bernstein.core.skills.index_builder import SKILL_INDEX_RESOURCE_URI
+
+        uri = params.get("uri", "") if isinstance(params, dict) else ""
+        if not isinstance(uri, str) or not uri:
+            return None
+
+        if uri == "bernstein://capability":
+            from bernstein.mcp.capability import build_capability_card
+
+            text = json.dumps(build_capability_card(spec_revision=negotiated_version), sort_keys=True)
+            return {"contents": [{"uri": uri, "mimeType": _CONTENT_TYPE_JSON, "text": text}]}
+
+        if uri == SKILL_INDEX_RESOURCE_URI:
+            return {"contents": [{"uri": uri, "mimeType": _CONTENT_TYPE_JSON, "text": self._skill_index_body()}]}
+
+        if uri.startswith("lineage://"):
+            if not self._lineage_enabled():
+                return None
+            from bernstein.mcp.resources.lineage import lineage_artefact_body, lineage_stats_body
+
+            if uri == "lineage://stats":
+                return {
+                    "contents": [
+                        {
+                            "uri": uri,
+                            "mimeType": _CONTENT_TYPE_JSON,
+                            "text": lineage_stats_body(self._lineage_root_path()),
+                        }
+                    ]
+                }
+            artefact_prefix = "lineage://artefact/"
+            if uri.startswith(artefact_prefix):
+                artefact_path = uri[len(artefact_prefix) :]
+                return {
+                    "contents": [
+                        {
+                            "uri": uri,
+                            "mimeType": "application/x-ndjson",
+                            "text": lineage_artefact_body(self._lineage_root_path(), artefact_path),
+                        }
+                    ]
+                }
+            return None
+
+        return None
+
     async def _method_cancelled(
         self,
         params: dict[str, Any],
@@ -962,53 +1246,27 @@ class StreamableHTTPTransport:
         Raises:
             ValueError: If the tool name is unknown.
         """
-        if name == "bernstein_health":
-            return json.dumps({"status": "ok"})
+        if name in _REMOTE_DEPRECATED_TOOLS:
+            from bernstein.core.protocols.mcp.tool_tiers import deprecated_aliases_enabled
+
+            if not deprecated_aliases_enabled():
+                msg = f"Unknown tool: {name}"
+                raise ValueError(msg)
+            from bernstein.mcp.server import _deprecated_alias_payload  # pyright: ignore[reportPrivateUsage]
+
+            return _deprecated_alias_payload(name, await self._execute_deprecated_tool(name, arguments))
 
         if name == "bernstein_status":
-            return await self._proxy_get("/status")
-
-        if name == "bernstein_tasks":
-            params: dict[str, str] = {}
-            if arguments.get("status"):
-                params["status"] = arguments["status"]
-            return await self._proxy_get("/tasks", params=params)
-
-        if name == "bernstein_cost":
-            raw = await self._proxy_get("/status")
-            data = json.loads(raw)
-            per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
-            return json.dumps(
-                {
-                    "total_cost_usd": data.get("total_cost_usd", 0.0),
-                    "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
-                }
-            )
+            return await self._folded_status(arguments)
 
         if name == "bernstein_run":
-            goal = arguments.get("goal", "")
-            payload: dict[str, Any] = {
-                "title": goal[:120],
-                "description": goal,
-                "role": arguments.get("role", "backend"),
-                "priority": arguments.get("priority", 2),
-                "scope": arguments.get("scope", "medium"),
-                "complexity": arguments.get("complexity", "medium"),
-                "estimated_minutes": arguments.get("estimated_minutes", 30),
-            }
-            return await self._proxy_post("/tasks", payload)
+            return await self._run_tool(arguments)
 
-        if name == "bernstein_stop":
-            from bernstein.mcp.signal_paths import shutdown_signal_path
+        if name == "bernstein_cancel":
+            return await self._cancel_tool(arguments)
 
-            # Same barrier as the stdio surface: the workdir must name an
-            # existing project root and the signal path must stay inside it.
-            # A refusal raises and is rendered as the structured tool error,
-            # before any directory is created.
-            shutdown_file = shutdown_signal_path(arguments.get("workdir", "."))
-            shutdown_file.parent.mkdir(parents=True, exist_ok=True)
-            shutdown_file.write_text("mcp-remote-stop\n", encoding="utf-8")
-            return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
+        if name == "bernstein_shutdown_orchestrator":
+            return self._shutdown_tool(arguments)
 
         if name == "bernstein_approve":
             task_id = arguments["task_id"]
@@ -1041,22 +1299,170 @@ class StreamableHTTPTransport:
                 {"result_summary": arguments["result_summary"]},
             )
 
-        if name == "bernstein_create_subtask":
-            payload_sub: dict[str, Any] = {
-                "parent_task_id": arguments["parent_task_id"],
-                "title": arguments["goal"][:120],
-                "description": arguments["goal"],
-                "role": arguments.get("role", "auto"),
-                "priority": arguments.get("priority", 2),
-                "scope": arguments.get("scope", "medium"),
-                "complexity": arguments.get("complexity", "medium"),
-            }
-            if arguments.get("estimated_minutes") is not None:
-                payload_sub["estimated_minutes"] = arguments["estimated_minutes"]
-            return await self._proxy_post("/tasks/self-create", payload_sub)
-
         msg = f"Unknown tool: {name}"
         raise ValueError(msg)
+
+    async def _execute_deprecated_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        """Serve a deprecated tool name with its historical result body."""
+        if name == "bernstein_health":
+            return json.dumps({"status": "ok"})
+
+        if name == "bernstein_tasks":
+            params: dict[str, str] = {}
+            if arguments.get("status"):
+                params["status"] = arguments["status"]
+            return await self._proxy_get("/tasks", params=params)
+
+        if name == "bernstein_cost":
+            raw = await self._proxy_get("/status")
+            data = json.loads(raw)
+            per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
+            return json.dumps(
+                {
+                    "total_cost_usd": data.get("total_cost_usd", 0.0),
+                    "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
+                }
+            )
+
+        if name == "bernstein_stop":
+            return self._shutdown_tool(arguments)
+
+        # bernstein_create_subtask
+        payload_sub: dict[str, Any] = {
+            "parent_task_id": arguments["parent_task_id"],
+            "title": arguments["goal"][:120],
+            "description": arguments["goal"],
+            "role": arguments.get("role", "auto"),
+            "priority": arguments.get("priority", 2),
+            "scope": arguments.get("scope", "medium"),
+            "complexity": arguments.get("complexity", "medium"),
+        }
+        if arguments.get("estimated_minutes") is not None:
+            payload_sub["estimated_minutes"] = arguments["estimated_minutes"]
+        return await self._proxy_post("/tasks/self-create", payload_sub)
+
+    async def _folded_status(self, arguments: dict[str, Any]) -> str:
+        """The folded status body (#3087): liveness + counts + cost (+ tasks)."""
+        status_filter = arguments.get("status") or None
+        detail = bool(arguments.get("detail", False))
+        data = json.loads(await self._proxy_get("/status"))
+        tasks: list[dict[str, Any]] | None = None
+        if status_filter:
+            tasks = json.loads(await self._proxy_get("/tasks", params={"status": str(status_filter)}))
+        per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
+        body: dict[str, Any] = {
+            "live": True,
+            "counts": {
+                "total": data.get("total", 0),
+                "open": data.get("open", 0),
+                "claimed": data.get("claimed", 0),
+                "done": data.get("done", 0),
+                "failed": data.get("failed", 0),
+            },
+            "cost": {
+                "total_cost_usd": data.get("total_cost_usd", 0.0),
+                "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
+            },
+        }
+        if detail:
+            body["per_role"] = per_role_raw
+        if tasks is not None:
+            body["status_filter"] = status_filter
+            if detail:
+                body["tasks"] = tasks
+            else:
+                body["tasks"] = [{k: t.get(k) for k in ("id", "title", "role", "status")} for t in tasks]
+        return json.dumps(body)
+
+    async def _run_tool(self, arguments: dict[str, Any]) -> str:
+        """Start a run, optionally as a subtask via ``parent_task_id``."""
+        goal = arguments.get("goal", "")
+        payload: dict[str, Any] = {
+            "title": goal[:120],
+            "description": goal,
+            "role": arguments.get("role", "backend"),
+            "priority": arguments.get("priority", 2),
+            "scope": arguments.get("scope", "medium"),
+            "complexity": arguments.get("complexity", "medium"),
+            "estimated_minutes": arguments.get("estimated_minutes", 30),
+        }
+        endpoint = "/tasks"
+        parent = arguments.get("parent_task_id")
+        if parent:
+            payload["parent_task_id"] = parent
+            endpoint = "/tasks/self-create"
+        return await self._proxy_post(endpoint, payload)
+
+    async def _cancel_tool(self, arguments: dict[str, Any]) -> str:
+        """Cancel one task tree; report terminal state instead of erroring (#3078).
+
+        Read-before-act, like the approve and complete gates: an unknown id
+        or a non-cancellable state is refused without a state-changing
+        request being sent.
+        """
+        from bernstein.mcp.server import _CANCELLABLE_STATUSES  # pyright: ignore[reportPrivateUsage]
+
+        task_id = str(arguments.get("task_id", ""))
+        reason = str(arguments.get("reason", ""))
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            read = await client.get(
+                f"{self._server_url}/tasks/{task_id}",
+                headers=_task_server_auth_headers(),
+            )
+            if read.status_code == 404:
+                return json.dumps(
+                    {
+                        "error": "unknown_task",
+                        "task_id": task_id,
+                        "message": f"No task with id {task_id!r}; nothing was cancelled.",
+                    }
+                )
+            read.raise_for_status()
+            current = str(read.json().get("status") or "unknown")
+            if current not in _CANCELLABLE_STATUSES:
+                return json.dumps(
+                    {
+                        "task_id": task_id,
+                        "status": current,
+                        "cancelled": False,
+                        "message": (f"Task {task_id} is already in a terminal or non-cancellable state ({current})."),
+                    }
+                )
+            resp = await client.post(
+                f"{self._server_url}/tasks/{task_id}/cancel",
+                json={"reason": reason},
+                headers=_task_server_auth_headers(),
+            )
+            if resp.status_code == 409:
+                reread = await client.get(
+                    f"{self._server_url}/tasks/{task_id}",
+                    headers=_task_server_auth_headers(),
+                )
+                moved = str(reread.json().get("status") or "unknown") if reread.is_success else "unknown"
+                return json.dumps(
+                    {
+                        "task_id": task_id,
+                        "status": moved,
+                        "cancelled": False,
+                        "message": (f"Task {task_id} is already in a terminal or non-cancellable state ({moved})."),
+                    }
+                )
+            resp.raise_for_status()
+            data = resp.json()
+        return json.dumps({"task_id": data["id"], "status": data["status"], "cancelled": True})
+
+    def _shutdown_tool(self, arguments: dict[str, Any]) -> str:
+        """Write the SHUTDOWN signal for the whole orchestrator."""
+        from bernstein.mcp.signal_paths import shutdown_signal_path
+
+        # Same barrier as the stdio surface: the workdir must name an
+        # existing project root and the signal path must stay inside it.
+        # A refusal raises and is rendered as the structured tool error,
+        # before any directory is created.
+        shutdown_file = shutdown_signal_path(arguments.get("workdir", "."))
+        shutdown_file.parent.mkdir(parents=True, exist_ok=True)
+        shutdown_file.write_text("mcp-remote-stop\n", encoding="utf-8")
+        return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
 
     async def _proxy_get(
         self,
@@ -1221,6 +1627,7 @@ def create_asgi_app(
     *,
     journal: EventJournal | None = None,
     audit_chain: AuditChainStore | None = None,
+    lineage_root: Any = None,
 ) -> Any:
     """Create ASGI application wrapping Bernstein MCP server with streamable HTTP transport.
 
@@ -1230,6 +1637,9 @@ def create_asgi_app(
         journal: Optional run journal; served ``tools/call`` requests become
             ordered ``mcp.stateless_call`` journal entries.
         audit_chain: Optional audit chain store anchoring every served call.
+        lineage_root: Lineage store root for the lineage resources (served
+            only when ``BERNSTEIN_LINEAGE_MCP_ENABLED`` opts in); defaults
+            to ``<cwd>/.sdd/lineage``.
 
     Returns:
         ASGI application callable.
@@ -1244,6 +1654,7 @@ def create_asgi_app(
         server_url=server_url,
         journal=journal,
         audit_chain=audit_chain,
+        lineage_root=lineage_root,
     )
 
     async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:

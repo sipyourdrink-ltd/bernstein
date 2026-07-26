@@ -42,11 +42,20 @@ _SERVER_URL = "http://localhost:8052"
 #: Reaching one of these decides work, so it may only happen behind a gate.
 _TERMINAL_ROUTES: tuple[str, ...] = ("/complete", "/force-claim", "/fail", "/cancel")
 
+
 #: (tool, status) pairs allowed to reach a terminal route, derived from the
 #: state machine so the allowance cannot drift from what the gates enforce.
-_ALLOWED: set[tuple[str, str]] = {("bernstein_approve", s.value) for s in APPROVABLE_TASK_STATUSES} | {
-    ("bernstein_complete", s.value) for s in WORKER_COMPLETABLE_TASK_STATUSES
-}
+def _cancellable_statuses() -> frozenset[str]:
+    from bernstein.mcp.server import _CANCELLABLE_STATUSES
+
+    return _CANCELLABLE_STATUSES
+
+
+_ALLOWED: set[tuple[str, str]] = (
+    {("bernstein_approve", s.value) for s in APPROVABLE_TASK_STATUSES}
+    | {("bernstein_complete", s.value) for s in WORKER_COMPLETABLE_TASK_STATUSES}
+    | {("bernstein_cancel", s) for s in _cancellable_statuses()}
+)
 
 #: The same allowance written out, so the sweep is not measured against the
 #: constant it is supposed to police. Deriving ``_ALLOWED`` keeps a newly
@@ -57,6 +66,14 @@ _ALLOWED_LITERAL: set[tuple[str, str]] = {
     ("bernstein_complete", "open"),
     ("bernstein_complete", "claimed"),
     ("bernstein_complete", "in_progress"),
+    # bernstein_cancel (#3078) reaches /cancel only from the states the
+    # route itself accepts, gated by the same read-before-act pattern.
+    ("bernstein_cancel", "open"),
+    ("bernstein_cancel", "claimed"),
+    ("bernstein_cancel", "in_progress"),
+    ("bernstein_cancel", "blocked"),
+    ("bernstein_cancel", "waiting_for_subtasks"),
+    ("bernstein_cancel", "planned"),
 }
 
 
@@ -79,13 +96,12 @@ def test_the_swept_allowance_is_the_policy_and_not_whatever_the_code_says() -> N
 def _stdio_args(tmp_path: Path) -> dict[str, dict[str, Any]]:
     """Minimal valid arguments for every tool the stdio server advertises."""
     return {
-        "bernstein_health": {},
+        # The consolidated surface (#3087).
         "bernstein_status": {},
-        "bernstein_cost": {},
-        "bernstein_tasks": {"status": "open"},
         "bernstein_run": {"goal": "ship the parser"},
+        "bernstein_run_status": {"run_id": "run-1", "workdir": str(tmp_path)},
         "bernstein_claim": {"claimer_id": "worker-1"},
-        "bernstein_update": {"task_id": _TASK_ID, "body": "still working", "sender": "worker-1"},
+        "bernstein_post_message": {"task_id": _TASK_ID, "body": "still working", "sender": "worker-1"},
         "bernstein_post_artifact": {
             "task_id": _TASK_ID,
             "key": "report",
@@ -93,28 +109,34 @@ def _stdio_args(tmp_path: Path) -> dict[str, dict[str, Any]]:
             "poster": "worker-1",
             "body": "findings",
         },
-        "bernstein_stop": {"workdir": str(tmp_path)},
+        "bernstein_cancel": {"task_id": _TASK_ID},
+        "bernstein_shutdown_orchestrator": {"workdir": str(tmp_path)},
         "bernstein_approve": {"task_id": _TASK_ID, "note": "unstick it"},
         "bernstein_complete": {"task_id": _TASK_ID, "result_summary": "looked done to me"},
+        "bernstein_task_capsule": {"task_id": _TASK_ID, "workdir": str(tmp_path)},
+        "load_skill": {"name": "backend"},
+        # Deprecated aliases, callable for one release (#3087): swept with
+        # the same terminal-route policy as their replacements.
+        "bernstein_health": {},
+        "bernstein_cost": {},
+        "bernstein_tasks": {"status": "open"},
+        "bernstein_update": {"task_id": _TASK_ID, "body": "still working", "sender": "worker-1"},
+        "bernstein_stop": {"workdir": str(tmp_path)},
         "bernstein_create_subtask": {"parent_task_id": _TASK_ID, "goal": "split the work"},
         "bernstein_task_handle": {"run_id": "run-1", "workdir": str(tmp_path)},
         "bernstein_context": {"task_id": _TASK_ID, "workdir": str(tmp_path)},
-        "load_skill": {"name": "backend"},
     }
 
 
 def _remote_args() -> dict[str, dict[str, Any]]:
     """Minimal valid arguments for every tool the HTTP transport advertises."""
     return {
-        "bernstein_health": {},
         "bernstein_status": {},
-        "bernstein_cost": {},
-        "bernstein_tasks": {"status": "open"},
         "bernstein_run": {"goal": "ship the parser"},
-        "bernstein_stop": {"workdir": ""},
+        "bernstein_cancel": {"task_id": _TASK_ID},
+        "bernstein_shutdown_orchestrator": {"workdir": ""},
         "bernstein_approve": {"task_id": _TASK_ID, "note": "unstick it"},
         "bernstein_complete": {"task_id": _TASK_ID, "result_summary": "looked done to me"},
-        "bernstein_create_subtask": {"parent_task_id": _TASK_ID, "goal": "split the work"},
     }
 
 
@@ -211,8 +233,9 @@ async def test_the_stdio_gates_do_act_in_the_states_they_allow(status: str, tmp_
         client = _mock_http_client(status, posts)
         with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
             await mcp.call_tool(tool, dict(args))
-        assert any(url.endswith("/complete") for url in posts), (
-            f"{tool} is defined for {status!r} but issued no completion: {posts}"
+        expected_route = "/cancel" if tool == "bernstein_cancel" else "/complete"
+        assert any(url.endswith(expected_route) for url in posts), (
+            f"{tool} is defined for {status!r} but issued no {expected_route} write: {posts}"
         )
 
 

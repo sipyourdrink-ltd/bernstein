@@ -2,25 +2,28 @@
 
 Bernstein exposes a task-server HTTP API on `http://127.0.0.1:8052` by default. The full OpenAPI 3.1 specification is available at `/openapi.json` when the server is running.
 
-This page is the canonical hand-maintained reference. It covers ~216 HTTP/WebSocket endpoints across the FastAPI route modules under `src/bernstein/core/routes/`, plus 13 MCP tools. Endpoints requiring authentication are marked with `Y` in the **Auth** column.
+This page is a hand-maintained tour of the FastAPI route modules under `src/bernstein/core/routes/`, plus 13 MCP tools. Endpoints requiring authentication are marked with `Y` in the **Auth** column. `docs/reference/openapi.json` is the complete machine-readable list; where the two disagree, the JSON wins.
 
 ## Generating the spec
 
-Use the included script to regenerate `docs/openapi.json` from the FastAPI app definition without starting the server:
+Use the included script to regenerate `docs/reference/openapi.json` from the FastAPI app definition without starting the server:
 
 ```bash
 uv run python scripts/generate_openapi.py
-# Written docs/reference/openapi.json  (216 paths, 72 schemas)
+# Written docs/reference/openapi.json  (459 paths, 121 schemas)
 ```
 
 Run this after adding or modifying any API route, Pydantic model, or response schema, then commit the updated JSON. The hosted Redoc page reads the spec at load time, so the rendered reference updates automatically once the JSON is committed.
 
-**Alternative -- fetch from a running server:**
+Forgetting the step is a CI failure, not a silent rot: `tests/unit/test_openapi_snapshot_drift.py` rebuilds the app, diffs its paths and component schemas against the committed snapshot, and names whatever moved.
+
+**Alternative -- inspect the spec from a running server:**
 
 ```bash
-bernstein run &
-curl -s http://127.0.0.1:8052/openapi.json > docs/reference/openapi.json
+curl -s http://127.0.0.1:8052/openapi.json | python -m json.tool
 ```
+
+Read-only. Redirecting `curl` into the snapshot writes minified JSON and rewrites every line of the committed file, so refresh it with the script above instead.
 
 > The OpenAPI JSON declares each route at both its bare path (e.g. `/tasks`) and an `/api/v1/`-prefixed alias (e.g. `/api/v1/tasks`). Both are live; pick one prefix per client.
 

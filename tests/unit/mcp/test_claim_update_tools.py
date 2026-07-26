@@ -1,6 +1,6 @@
 """Native MCP claim/update tools (#2555).
 
-``bernstein_claim`` and ``bernstein_update`` put the worker-inbound verbs on
+``bernstein_claim`` and ``bernstein_post_message`` put the worker-inbound verbs on
 the native MCP surface: a claim returns a verifiable claim receipt and a
 progress update returns a signed journal entry. Both call the task server
 over HTTP via the existing stateless action-handler pattern. These tests
@@ -43,18 +43,18 @@ def _tool_names(tier: str) -> set[str]:
 
 def test_claim_and_update_are_standard_tier() -> None:
     assert tool_in_tier("bernstein_claim", "standard")
-    assert tool_in_tier("bernstein_update", "standard")
+    assert tool_in_tier("bernstein_post_message", "standard")
     # Not advertised in the core budget.
     assert not tool_in_tier("bernstein_claim", "core")
-    assert not tool_in_tier("bernstein_update", "core")
+    assert not tool_in_tier("bernstein_post_message", "core")
 
 
 def test_tools_registered_in_standard_not_core() -> None:
     standard = _tool_names("standard")
-    assert {"bernstein_claim", "bernstein_update"} <= standard
+    assert {"bernstein_claim", "bernstein_post_message"} <= standard
     core = _tool_names("core")
     assert "bernstein_claim" not in core
-    assert "bernstein_update" not in core
+    assert "bernstein_post_message" not in core
 
 
 # ---------------------------------------------------------------------------
@@ -100,12 +100,12 @@ async def test_bernstein_claim_rejects_bad_task_id_pattern() -> None:
 
 
 # ---------------------------------------------------------------------------
-# bernstein_update
+# bernstein_post_message
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_bernstein_update_posts_to_mailbox_route() -> None:
+async def test_bernstein_post_message_posts_to_mailbox_route() -> None:
     from bernstein.mcp.server import create_mcp_server
 
     entry = {"seq": 0, "task_id": "t1", "entry_hash": "hmac-sha256:x", "signature": "sig"}
@@ -114,7 +114,7 @@ async def test_bernstein_update_posts_to_mailbox_route() -> None:
 
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
         result = await mcp.call_tool(
-            "bernstein_update",
+            "bernstein_post_message",
             {"task_id": "t1", "body": "halfway done", "sender": "worker-1"},
         )
 
@@ -129,12 +129,12 @@ async def test_bernstein_update_posts_to_mailbox_route() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bernstein_update_rejects_unknown_kind() -> None:
+async def test_bernstein_post_message_rejects_unknown_kind() -> None:
     from bernstein.mcp.server import create_mcp_server
 
     mcp = create_mcp_server(server_url="http://localhost:8052")
     result = await mcp.call_tool(
-        "bernstein_update",
+        "bernstein_post_message",
         {"task_id": "t1", "body": "x", "sender": "w", "kind": "chit_chat"},
     )
     text = result[0][0].text  # type: ignore[index]

@@ -1,7 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_status",
+  "description": "Liveness, task counts, and cost in one read. Pass status to include the matching tasks; pass detail=true for full per-role and per-task rows.",
   "type": "object",
   "additionalProperties": false,
-  "properties": {}
+  "properties": {
+    "status": {
+      "type": ["string", "null"],
+      "enum": [null, "open", "claimed", "in_progress", "done", "failed", "blocked", "cancelled"]
+    },
+    "detail": {"type": ["boolean", "null"]}
+  }
 }

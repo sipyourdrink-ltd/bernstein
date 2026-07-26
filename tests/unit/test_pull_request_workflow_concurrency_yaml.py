@@ -6,17 +6,23 @@ previous push's runs alive, so a PR that is pushed three times holds
 three generations of runners on a pool whose free-tier ceiling is 20
 concurrent jobs.
 
-Cancelling is not universally correct, though. Branch protection folds
-*every* check-run of a required name into its verdict, so one
-``cancelled`` instance holds a PR at BLOCKED even after a later run of
-the same workflow concludes success (#3154, #3042). Workflows that
-publish a required context therefore keep ``cancel-in-progress: false``
-and let a duplicate report a real conclusion instead of leaving a
-cancelled tombstone.
+Cancelling used to look unsafe for workflows publishing a required
+context. Branch protection folds *every* check-run of a required name
+into its verdict, so one ``cancelled`` instance holds a PR at BLOCKED
+even after a later run concludes success (#3154, #3042).
 
-This module pins both halves: the rule, and the closed list of
-exceptions. Adding a `pull_request` workflow without a group fails here,
-and so does turning cancellation off on a workflow not on the list.
+Suppressing cancellation does not fix that. A concurrency group with
+``cancel-in-progress: false`` is a one-deep queue: when a run is
+executing and a second is pending, a third arriving in the same group
+cancels the pending one. The tombstone lands either way. What fixes it
+is not naming a job after the required context, so no job state can
+write it - see ``tests/unit/test_review_bot_ack_workflow_yaml.py``.
+
+Every ``pull_request`` workflow therefore cancels superseded runs, and
+``NO_CANCEL_EXCEPTIONS`` is empty. This module pins both halves: the
+rule, and the closed list of exceptions. Adding a `pull_request`
+workflow without a group fails here, and so does turning cancellation
+off on a workflow not on the list.
 """
 
 from __future__ import annotations
@@ -35,11 +41,19 @@ _WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 
 # Workflows that do NOT cancel a superseded run on a pull_request event.
 # Documented in docs/operations/ci.md under "Gating vs advisory workflows".
-NO_CANCEL_EXCEPTIONS = {
-    # Publishes the required `review-bot-ack` context. A cancelled instance
-    # of a required check-run holds the PR at BLOCKED (#3154, #3042).
-    "review-bot-ack.yml",
-}
+#
+# Empty on purpose. `review-bot-ack.yml` used to sit here, on the theory
+# that turning cancellation off keeps a required context from being
+# poisoned. It does not: with `cancel-in-progress: false` a group is a
+# one-deep queue, so a third run in the same group cancels the pending one
+# and the tombstone lands anyway. The durable fix was to stop naming a job
+# after the required context - see
+# `tests/unit/test_review_bot_ack_workflow_yaml.py` - which makes
+# cancellation harmless and lets that workflow follow the ordinary rule.
+#
+# Before adding an entry here, check that suppressing cancellation
+# actually prevents the failure you have in mind. It usually does not.
+NO_CANCEL_EXCEPTIONS: set[str] = set()
 
 # `cancel-in-progress` may be an expression rather than a literal. This one
 # cancels on pull_request and preserves the per-SHA push-to-main signal, so

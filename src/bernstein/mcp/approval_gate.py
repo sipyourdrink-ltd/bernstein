@@ -59,7 +59,7 @@ _PLAN_GATE_HINT: str = (
 
 _GENERIC_HINT: str = (
     "To finish work you are executing, use bernstein_complete. "
-    "To report that the task is stuck, post to the task mailbox with bernstein_update. "
+    "To report that the task is stuck, post to the task mailbox with bernstein_post_message. "
     "To abandon the work, cancel the task (bernstein task cancel <task_id>)."
 )
 
@@ -156,6 +156,6 @@ def completion_refusal_payload(task_id: str, current_status: str) -> dict[str, A
             "A parent in 'waiting_for_subtasks' completes when its subtasks do. "
             "An 'orphaned' task belongs to crash recovery. "
             "To report what you found without claiming the work is finished, post to the "
-            "task mailbox with bernstein_update."
+            "task mailbox with bernstein_post_message."
         ),
     }

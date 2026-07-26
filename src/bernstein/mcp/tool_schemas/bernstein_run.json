@@ -1,16 +1,57 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_run",
-  "description": "Start an orchestration run. A run does real work and takes minutes to hours; the call returns once the run is queued, not when it finishes. Do not re-issue it while waiting, that starts a second run. Follow the run with bernstein_task_handle, passing either the returned task_id or the returned run_id, after waiting the returned poll_after_ms.",
+  "description": "Start an orchestration run. A run does real work and takes minutes to hours; the call returns once the run is queued, not when it finishes. Do not re-issue it while waiting, that starts a second run. Follow the run with bernstein_run_status, passing either the returned task_id or the returned run_id, after waiting the returned poll_after_ms. Pass parent_task_id to create the run as a subtask of an existing task.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["goal"],
+  "required": [
+    "goal"
+  ],
   "properties": {
-    "goal": {"type": "string", "minLength": 1, "maxLength": 8192},
-    "role": {"type": "string", "minLength": 1, "maxLength": 64},
-    "priority": {"type": "integer", "minimum": 1, "maximum": 3},
-    "scope": {"type": "string", "enum": ["small", "medium", "large"]},
-    "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
-    "estimated_minutes": {"type": "integer", "minimum": 0, "maximum": 100000}
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "small",
+        "medium",
+        "large"
+      ]
+    },
+    "complexity": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "estimated_minutes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "parent_task_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    }
   }
 }

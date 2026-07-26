@@ -100,21 +100,28 @@ def _transports() -> list[dict[str, Any]]:
     ]
 
 
-def build_capability_card() -> dict[str, Any]:
+def build_capability_card(spec_revision: str | None = None) -> dict[str, Any]:
     """Build the runtime capability card from live process state.
 
     The card is intentionally self-describing and stable in shape so a client
     can consume it without a Bernstein-specific schema.
 
+    Args:
+        spec_revision: The revision actually negotiated for the transport
+            serving the card. The remote transport passes the per-request
+            negotiated value so the card describes the live connection
+            rather than a constant (#3084); ``None`` falls back to the
+            targeted :data:`SPEC_REVISION`.
+
     Returns:
         A JSON-serialisable dict describing transports, auth, tool tiers, the
-        cost-meter state, and the targeted spec revision.
+        cost-meter state, and the negotiated spec revision.
     """
     active_tier = resolve_active_tier()
     return {
         "name": "bernstein",
         "version": SERVER_VERSION,
-        "specRevision": SPEC_REVISION,
+        "specRevision": spec_revision or SPEC_REVISION,
         "transports": _transports(),
         "auth": _auth_modes(),
         "tools": {

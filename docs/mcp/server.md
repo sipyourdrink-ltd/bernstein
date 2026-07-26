@@ -20,7 +20,7 @@ at startup.
 
 The streamable HTTP transport is served by a separate implementation
 (`bernstein.mcp.remote_transport`) from the stdio and SSE transports
-(`bernstein.mcp.server`). It exposes 8 tools rather than the full tier
+(`bernstein.mcp.server`). It exposes a subset of the tier
 catalogue, and it enforces weaker argument validation than stdio; see
 [Validation scope](input-validation.md#validation-scope) and
 [Available tools](../cloudflare/cloudflare-mcp.md#available-tools). Unifying
@@ -153,9 +153,9 @@ consistent across transports:
 
 ```json
 {
-  "result": { "status": "ok" },
+  "result": { "live": true, "counts": { "total": 5, "open": 2, "claimed": 1, "done": 2, "failed": 0 }, "cost": { "total_cost_usd": 0.12, "per_role": [] } },
   "_meter": {
-    "tool": "bernstein_health",
+    "tool": "bernstein_status",
     "call_id": "b1c2...",
     "latency_ms": 12.4,
     "cost_usd": 0.0,
@@ -174,6 +174,77 @@ To get the bare tool payload (the historical shape), disable the meter:
 ```bash
 export BERNSTEIN_MCP_COST_METER=0
 ```
+
+## Consolidated tool surface and deprecated aliases
+
+The advertised surface answers each operator question once:
+
+- `bernstein_status` folds the former `bernstein_health`, `bernstein_tasks`
+  and `bernstein_cost` into one read: the tool answering at all is the
+  liveness signal, `counts` carries the task totals, `cost` the spend, an
+  optional `status` filter appends the matching tasks, and `detail=true`
+  switches per-role and per-task rows from compact to full.
+- `bernstein_run` absorbs `bernstein_create_subtask`: pass
+  `parent_task_id` to queue the run as a subtask.
+- `bernstein_scenario` absorbs the three scenario tools behind an `action`
+  selector (`list` / `run` / `status`); a scenario run returns the same
+  handle shape as `bernstein_run`, so `bernstein_run_status` polls it.
+- Misleading names were renamed: `bernstein_task_handle` is now
+  `bernstein_run_status`, `bernstein_update` (which never updated a task's
+  fields) is `bernstein_post_message`, `bernstein_context` is
+  `bernstein_task_capsule`, `bernstein_stop` is
+  `bernstein_shutdown_orchestrator`, and `verify_chain` is
+  `bernstein_verify_lineage`.
+
+Every removed name stays callable for one minor release as a deprecated
+alias. Aliases are never advertised in `tools/list`; an alias result keeps
+the historical payload under `result` and names its replacement and the
+removal release (`v3.12.0`) in the payload itself. Set
+`BERNSTEIN_MCP_DEPRECATED_ALIASES=0` to drop the aliases now and surface any
+stale caller immediately.
+
+## Structured results and declared output schemas
+
+The three most-polled tools - `bernstein_run`, `bernstein_status`,
+`bernstein_run_status` - declare an `outputSchema` in `tools/list` and
+return `structuredContent`: the parsed envelope, with the run-handle fields
+(`taskId`, `runId`, `status`, `journalHead`, `chainHead`, `receiptHash`,
+`pollToken`) as first-class typed fields rather than strings inside a text
+blob. The text content block is unchanged, so text-only consumers see the
+exact bytes they always did.
+
+The declared schema describes the result as it is actually emitted: with the
+cost meter enabled (the default) it is the envelope (`result` plus
+`_meter`); with `BERNSTEIN_MCP_COST_METER=0` it is the bare payload. The
+run-handle portion of the schema is generated from the handle's wire body,
+so the advertised fields cannot drift from the emitted ones. Nothing inside
+`structuredContent.result` carries a wall-clock value: two polls of an
+unchanged journal produce byte-identical structured output.
+
+## Progress notifications on the poll
+
+A `bernstein_run_status` call that carries a `progressToken` receives a
+`notifications/progress` tick before its result. Every value in the tick is
+a pure fold of the run's journals: `progress` is the chain-computed
+earned-steps scalar, `total` is the declared evidence-producer count, and
+`message` renders fold counters only. Nothing is self-reported and nothing
+is wall-clock, so two folds of the same journal produce byte-identical
+ticks, and a tick that does not strictly advance the previous one for that
+run is suppressed - the notified sequence is monotone by construction.
+Clients that send no progress token see no change, and a failed emission
+never reaches the tool result.
+
+## Cancelling one run: `bernstein_cancel`
+
+`bernstein_cancel` cancels one task and its subtask tree through
+`POST /tasks/{task_id}/cancel`, and the orchestrator keeps running - it is
+the single-run counterpart to `bernstein_shutdown_orchestrator`. The tool
+reads the task first and refuses without side effects when the id is unknown
+or the state is not cancellable (`open`, `claimed`, `in_progress`,
+`blocked`, `waiting_for_subtasks`, `planned` are); an already-terminal task
+is reported with its current state rather than treated as an error. The
+result names the cancelled root and the count of cascaded descendants
+observed after the cancel.
 
 ## Streaming cancel with partial-result preservation
 
@@ -204,7 +275,7 @@ the system:
 
 1. One clause of identity.
 2. The start-then-poll loop: `bernstein_run` returns a `task_id` which is the
-   run id, `bernstein_task_handle` is polled with that value as `run_id`,
+   run id, `bernstein_run_status` is polled with that value as `run_id`,
    runs take minutes to hours, poll tens of seconds apart, and stop at a
    terminal status (`completed`, `failed`, `cancelled`).
 3. One pointer to `load_skill` for anything deeper.
@@ -247,7 +318,7 @@ the task it watched corresponds to the audited run.
    advisory delay before the first poll. A run takes minutes to hours, so a
    host waits and polls rather than re-issuing `bernstein_run`.
 
-2. Poll `bernstein_task_handle` with **either** identifier from that body.
+2. Poll `bernstein_run_status` with **either** identifier from that body.
    The tool resolves the journal run id first and the slugified task id
    second, so both forms reach one journal and project an identical handle.
    It reprojects the handle from the on-disk run journal and the audit-chain
@@ -292,7 +363,7 @@ ask for a native task row instead.
   drives with `tasks/get`, `tasks/result`, `tasks/list`, and `tasks/cancel`.
   The response shape follows the call, not the host's declared capability: a
   tasks-capable host that sends a plain call still gets a `CallToolResult`.
-- `bernstein_task_handle` advertises `execution.taskSupport: "forbidden"`. It
+- `bernstein_run_status` advertises `execution.taskSupport: "forbidden"`. It
   is the stateless polling fallback and always answers immediately, so it must
   not be invoked as a task.
 - Every task row carries a finite `ttl` (24h) rather than the `null` that
@@ -301,7 +372,7 @@ ask for a native task row instead.
   explicitly. It under-claims: nothing evicts the run.
 
 Hosts with no Tasks support are unaffected and keep using
-`bernstein_task_handle`.
+`bernstein_run_status`.
 
 ### Connecting a host trace to the run's artefacts
 
@@ -312,9 +383,12 @@ The ingested `traceparent` is carried as the lineage entry's `step_id`
 cross-link; a verifier holding the lineage spine reads the host trace off the
 artefact's provenance row.
 
-## Stopping a run: which project `bernstein_stop` can reach
+## Stopping the orchestrator: which project `bernstein_shutdown_orchestrator` can reach
 
-`bernstein_stop` takes a `workdir` and writes
+`bernstein_shutdown_orchestrator` stops the **entire orchestrator** for a
+project - every run, every worker. To cancel one run and keep the
+orchestrator alive, use `bernstein_cancel` (below). The tool takes a
+`workdir` and writes
 `<workdir>/.sdd/runtime/signals/SHUTDOWN`, which the orchestrator picks up
 and drains on. The `workdir` arrives from the caller, so the tool applies the
 same containment barrier the run-journal readers use before it touches the
@@ -388,7 +462,7 @@ loop loses its meaning, not merely its log.
    backlog snapshot, claimer, and filter produces a byte-identical
    `receiptHash`.
 
-2. **Report progress** with `bernstein_update`, as many times as needed. Each
+2. **Report progress** with `bernstein_post_message`, as many times as needed. Each
    update is DLP-redacted, HMAC-chained onto the worker mailbox journal,
    Ed25519-signed, and mirrored to the audit chain (`task.mailbox_message`)
    before returning. The result IS the signed journal entry (`seq`,
@@ -440,13 +514,13 @@ and no state-changing request is sent:
   "current_status": "in_progress",
   "approvable_statuses": ["pending_approval"],
   "message": "Task t-42 is in status 'in_progress'. bernstein_approve only acts on a task holding a finished result for sign-off (pending_approval), and never forces another state forward.",
-  "hint": "To finish work you are executing, use bernstein_complete. To report that the task is stuck, post to the task mailbox with bernstein_update. To abandon the work, cancel the task (bernstein task cancel <task_id>)."
+  "hint": "To finish work you are executing, use bernstein_complete. To report that the task is stuck, post to the task mailbox with bernstein_post_message. To abandon the work, cancel the task (bernstein task cancel <task_id>)."
 }
 ```
 
 A task that is stuck, blocked, or unfinished has no approval to grant. Finish
 work you are executing with `bernstein_complete`, report a blocker with
-`bernstein_update`, or abandon the work with `bernstein task cancel <task_id>`.
+`bernstein_post_message`, or abandon the work with `bernstein task cancel <task_id>`.
 
 ### `planned` is decided on the plan, not on the task
 

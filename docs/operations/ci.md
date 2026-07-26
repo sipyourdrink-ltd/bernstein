@@ -265,6 +265,10 @@ is jobs, not runs. Measured on one head SHA of a workflow-touching PR
 | Gating (`review-bot-ack`) | 4 | 4 | 9% |
 | Advisory (all of it) | 13 | 9 | 19% |
 
+The `review-bot-ack` row predates its concurrency change: those four runs
+are the duplicate storm a non-cancelling group produced on one head SHA.
+It now cancels superseded runs like everything else, so expect one or two.
+
 Counting runs instead of jobs inverts that picture and makes advisory
 work look dominant. It is not: an advisory workflow is one job, `ci.yml`
 is 34. Moving every advisory lane off the PR path would return under a
@@ -283,11 +287,7 @@ vulture / refurb / perflint jobs run weekly rather than per PR.
 
 Every workflow triggering on `pull_request` declares a `concurrency`
 group keyed on the PR, and every one of them cancels a superseded
-pull-request run. There is one exception:
-
-| Workflow | Why it must not cancel |
-|----------|------------------------|
-| `review-bot-ack.yml` | Publishes a required context. Branch protection folds every check-run of a required name into its verdict, so one `cancelled` instance holds the PR at BLOCKED even after a later run succeeds (#3154, #3042). The group also carries `github.event_name` so a `pull_request` run and a `pull_request_review` run for the same commit cannot cancel each other. |
+pull-request run. There are no exceptions.
 
 `ci.yml` and `codeql.yml` express cancellation as
 `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`: they
@@ -298,6 +298,54 @@ a release commit's CI is never cancelled by the next merge.
 the rule and the exception list, so a new `pull_request` workflow
 cannot land without a concurrency group and an exception cannot be
 added silently.
+
+#### Why suppressing cancellation is not a fix
+
+`review-bot-ack.yml` used to be an exception, on the theory that a
+required context must never be cancelled. That reasoning was sound and
+the remedy was not.
+
+Branch protection folds every check-run of a required name into its
+verdict, and a later success does not clear an earlier non-success. A
+job publishes a check-run named after itself, so a job named after a
+required context turns two ordinary job states into permanent blocks on
+that commit:
+
+| Job state | Resulting check-run | Effect on the gate |
+|---|---|---|
+| cancelled | `cancelled` | commit stays BLOCKED for its whole life |
+| skipped | `skipped` | counts as **passing** - the gate is satisfied without running |
+
+`cancel-in-progress: false` does not prevent the first row. A
+concurrency group is a one-deep queue: when a run is executing and a
+second is pending, a third arriving in the same group cancels the
+pending one. Both event lanes reach three events on one head SHA
+routinely - `synchronize` plus two body edits on `pull_request`, and two
+review bots plus a human on `pull_request_review` - so both lanes
+produced cancelled instances. Adding `github.event_name` to the group
+key only separated the lanes; it did nothing inside either one.
+
+The durable fix is to stop letting a job's fate write the context.
+`scripts/publish_required_check.py` upserts a single terminal check-run
+per head SHA:
+
+- existing instances are patched to the current verdict, so a commit
+  never accumulates two contradictory verdicts, and a SHA already
+  poisoned by the old mechanism is healed on the next run
+- the conclusion set is closed to `success` and `failure` - `cancelled`
+  is unrecoverable and `skipped`/`neutral` read as passing, so none of
+  them are writable
+- the publish step is guarded by `if: ${{ !cancelled() }}`, so a
+  cancelled job writes nothing and the context stays absent, which reads
+  as BLOCKED until a run reports for real
+
+Cancellation is harmless once the context is published this way, which
+is why the workflow now follows the ordinary rule. Two invariants keep
+it that way: no job in `review-bot-ack.yml` may be named after the
+context, and every job in it must publish through the script. Both are
+pinned in `tests/unit/test_review_bot_ack_workflow_yaml.py`, with the
+publisher's own logic covered in
+`tests/unit/test_publish_required_check.py`.
 
 ## Required check
 

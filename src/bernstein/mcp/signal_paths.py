@@ -1,6 +1,6 @@
 """Containment barrier for the MCP shutdown-signal path.
 
-``bernstein_stop`` takes a ``workdir`` from the caller and turns it into a
+``bernstein_shutdown_orchestrator`` takes a ``workdir`` from the caller and turns it into a
 ``.sdd/runtime/signals/SHUTDOWN`` write. With no barrier that is an
 arbitrary directory-creation and file-write primitive reachable over MCP: a
 crafted workdir addresses any directory on the machine, ``mkdir(parents=True)``

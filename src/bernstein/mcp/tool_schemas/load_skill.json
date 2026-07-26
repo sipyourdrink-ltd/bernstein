@@ -1,11 +1,15 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "load_skill",
+  "description": "List available skills when name is omitted, or load a named skill body, reference, or script.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["name"],
+  "dependencies": {
+    "reference": ["name"],
+    "script": ["name"]
+  },
   "properties": {
-    "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.-]+$"},
+    "name": {"type": "string", "description": "Skill to load. Omit to return the compact skill index.", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.-]+$"},
     "reference": {"type": ["string", "null"], "maxLength": 256, "pattern": "^[A-Za-z0-9_./-]+$"},
     "script": {"type": ["string", "null"], "maxLength": 256, "pattern": "^[A-Za-z0-9_./-]+$"}
   }

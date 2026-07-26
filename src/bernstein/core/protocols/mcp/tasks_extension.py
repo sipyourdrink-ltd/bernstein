@@ -53,7 +53,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from bernstein.core.protocols.mcp.stateless_core import (
     decode_request_state,
@@ -302,6 +302,41 @@ class RunHandle:
                 "spec_revision": self.spec_revision,
             }
         )
+
+    #: JSON-schema fragment per wire field, keyed by the exact key
+    #: :meth:`to_wire` emits. :meth:`wire_schema` is generated from this
+    #: table rather than written by hand, and a parity test asserts the
+    #: table's keys equal a live ``to_wire`` body's keys, so the advertised
+    #: output schema cannot drift from the emitted handle (#3086).
+    _WIRE_FIELD_SCHEMAS: ClassVar[dict[str, dict[str, Any]]] = {
+        "taskId": {"type": "string"},
+        "runId": {"type": "string"},
+        "status": {"type": "string", "enum": sorted(TASK_STATUSES)},
+        "journalHead": {"type": "string"},
+        "chainHead": {"type": "string"},
+        "specRevision": {"type": "string"},
+        "traceId": {"type": "string"},
+        "receiptHash": {"type": "string"},
+        "pollToken": {"type": "string"},
+        "progress": {"type": ["object", "null"]},
+        "progressHash": {"type": "string"},
+    }
+
+    @classmethod
+    def wire_schema(cls) -> dict[str, Any]:
+        """Return the JSON schema of :meth:`to_wire`, generated field-for-field.
+
+        Every field is required and no extra field is permitted: the handle
+        is a deterministic projection, so its wire shape is exact. The
+        schema is built from :data:`_WIRE_FIELD_SCHEMAS` so a new wire field
+        is advertised the moment it exists.
+        """
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": sorted(cls._WIRE_FIELD_SCHEMAS),
+            "properties": {key: dict(value) for key, value in cls._WIRE_FIELD_SCHEMAS.items()},
+        }
 
     def to_wire(self) -> dict[str, Any]:
         """Return the Tasks-extension task-handle body for a client."""

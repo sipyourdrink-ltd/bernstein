@@ -538,6 +538,30 @@ def _on(doc: dict[str, object]) -> dict[str, object]:
     return on
 
 
+# A job publishes a check-run named after itself, but that is not the only
+# way to publish a context, and for a required one it is the worse way: the
+# check-run inherits the job's fate, so cancelling the job blocks the commit
+# permanently and skipping it satisfies the gate without running it
+# (#3042, #3154). A job may instead write the context explicitly through the
+# Checks API, which is what `scripts/publish_required_check.py` does. Both
+# mechanisms count as an emitter here.
+_API_PUBLISHER = "publish_required_check.py"
+_PUBLISHED_NAME_RE = re.compile(r"--name\s+(?P<name>[\w.-]+)")
+
+
+def _api_published_contexts(job: dict) -> set[str]:
+    """Context names a job writes via the Checks API publisher."""
+    names: set[str] = set()
+    for step in job.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        run = str(step.get("run") or "")
+        if _API_PUBLISHER not in run:
+            continue
+        names.update(m.group("name") for m in _PUBLISHED_NAME_RE.finditer(run))
+    return names
+
+
 def _merge_group_context_emitters() -> dict[str, list[str]]:
     """Map check-run name -> ``file::job`` for jobs reachable on merge_group."""
     emitters: dict[str, list[str]] = {}
@@ -554,14 +578,16 @@ def _merge_group_context_emitters() -> dict[str, list[str]]:
         for key, body in jobs.items():
             if not isinstance(body, dict):
                 continue
-            name = body.get("name")
-            if not isinstance(name, str):
-                continue
             # A job gated to some *other* event cannot report on the queue.
             guard = str(body.get("if") or "")
             if "github.event_name != 'merge_group'" in guard:
                 continue
-            emitters.setdefault(name, []).append(f"{wf_path.name}::{key}")
+            published = _api_published_contexts(body)
+            name = body.get("name")
+            if isinstance(name, str):
+                published.add(name)
+            for context in published:
+                emitters.setdefault(context, []).append(f"{wf_path.name}::{key}")
     return emitters
 
 
@@ -573,7 +599,8 @@ def test_required_context_has_a_merge_group_emitter(context: str) -> None:
         f"No workflow publishes the required context {context!r} on a "
         "`merge_group` event. Enabling the merge queue would wedge every merge: "
         "the queue blocks forever on a required check that never reports. Add a "
-        "`merge_group:` trigger and a job whose `name:` is exactly this context. "
+        "`merge_group:` trigger and either a job whose `name:` is exactly this "
+        "context, or a job that publishes it via scripts/publish_required_check.py. "
         f"Contexts currently reachable on merge_group: {sorted(emitters)}"
     )
 
@@ -603,9 +630,14 @@ def test_review_bot_ack_has_merge_group_passthrough() -> None:
     """The queue-side emitter for `review-bot-ack` must stay wired.
 
     The real gate evaluates PR review threads and has nothing to evaluate on
-    the queue's ephemeral ref, so a dedicated pass-through job republishes the
+    the queue's ephemeral ref, so a dedicated queue-side job publishes the
     identical context name there. Without it the context cannot be required on
     the ruleset, and the two gates (PR entry vs queue merge) drift apart.
+
+    The job must not be *named* after the context - a job's check-run inherits
+    the job's fate, and for a required name both `cancelled` and `skipped` are
+    unrecoverable states (#3042, #3154). It writes the context explicitly
+    instead, on the merge group's own head SHA.
     """
     doc = yaml.safe_load(REVIEW_BOT_ACK_WF.read_text(encoding="utf-8"))
     assert isinstance(doc, dict)
@@ -613,19 +645,30 @@ def test_review_bot_ack_has_merge_group_passthrough() -> None:
 
     jobs = doc.get("jobs")
     assert isinstance(jobs, dict)
-    passthrough = [
+    queue_side = [
         key
         for key, body in jobs.items()
         if isinstance(body, dict)
-        and body.get("name") == REVIEW_BOT_ACK_CONTEXT
+        and REVIEW_BOT_ACK_CONTEXT in _api_published_contexts(body)
         and "merge_group" in str(body.get("if") or "")
         and "!=" not in str(body.get("if") or "")
     ]
-    assert passthrough, (
-        f"review-bot-ack.yml must keep a job named {REVIEW_BOT_ACK_CONTEXT!r} "
-        "gated to `github.event_name == 'merge_group'` so the context reports "
-        "on queued groups."
+    assert queue_side, (
+        f"review-bot-ack.yml must keep a job gated to `github.event_name == 'merge_group'` that publishes "
+        f"{REVIEW_BOT_ACK_CONTEXT!r} via scripts/publish_required_check.py, so the context reports on queued groups."
     )
+    for key in queue_side:
+        job = jobs[key]
+        assert isinstance(job, dict)
+        assert job.get("name") != REVIEW_BOT_ACK_CONTEXT, (
+            f"job {key!r} must not be named after the required context; a cancelled or skipped job would then "
+            "write the context itself"
+        )
+        env = "\n".join(str(s.get("env") or {}) for s in job.get("steps") or [] if isinstance(s, dict))
+        assert "merge_group.head_sha" in env, (
+            f"job {key!r} must publish the context on the merge group's own head SHA, which is the ref the queue "
+            "evaluates required checks against"
+        )
 
 
 # ---------------------------------------------------------------------------

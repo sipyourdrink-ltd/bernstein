@@ -198,6 +198,24 @@ def compute_child_sha(child_body: ChildBody) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _iter_raw_lines(path: Path) -> Iterator[bytes]:
+    """Yield the raw bytes of each non-empty JSONL line in ``path``.
+
+    Verification works on these bytes rather than on re-serialised
+    records: the line on disk *is* the record, so anything the JSON
+    parser normalises away has to stay visible to ``verify``.
+    """
+    if not path.exists():
+        return
+    raw = path.read_bytes()
+    if not raw:
+        return
+    for line in raw.rstrip(b"\n").split(b"\n"):
+        if not line:
+            continue
+        yield line
+
+
 @contextmanager
 def _exclusive_lock(path: Path) -> Iterator[int]:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +239,12 @@ def _exclusive_lock(path: Path) -> Iterator[int]:
 
 def _empty_failures() -> list[str]:
     return []
+
+
+# Exceptions a hostile or corrupt line can raise while being decoded into a
+# record. ``verify`` turns every one of them into a reported failure: an
+# auditor needs a verdict, not a traceback.
+_DECODE_ERRORS = (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError, ValueError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,16 +519,40 @@ class LineageV2Store:
            content-address that equals the parent ref's ``child_sha``.
         6. No orphan child files (i.e., a child file with no parent ref
            pointing at it).
+        7. Every line's bytes are exactly the canonical serialisation of
+           the record it decodes to.
+
+        Check 7 is what makes the byte coverage total. Checks 1-6 run on
+        a record *parsed out of* the line, and that parse is not
+        injective: unknown keys are dropped and a missing ``payload``
+        reads back as ``{}``. A mutation that lands in a region the
+        parser normalises away therefore reconstructs the very bytes
+        that were signed, and checks 1-6 all pass on it. Comparing the
+        line against the canonical form of what it decoded to closes
+        that class: every writer in this module emits canonical bytes,
+        so a line that is not its own canonical form was not written
+        here.
+
+        ``verify`` is total - a malformed, truncated or undecodable line
+        is reported as a failure rather than raised. Callers get a
+        verdict on every input.
         """
         failures: list[str] = []
         parent_count = 0
         child_count = 0
         referenced_shas: set[str] = set()
 
-        # 1+2: parent chain
+        # 1+2+7: parent chain
         prev = ""
-        for idx, ref in enumerate(self.iter_parent_refs()):
+        for idx, raw_line in enumerate(_iter_raw_lines(self.parent_log)):
             parent_count += 1
+            try:
+                ref = _parent_ref_from_dict(json.loads(raw_line))
+            except _DECODE_ERRORS as exc:
+                failures.append(f"parent[{idx}] undecodable record ({type(exc).__name__})")
+                continue
+            if _canonicalise(asdict(ref)) != raw_line:
+                failures.append(f"parent[{idx}] non-canonical bytes (task={ref.task_id})")
             expected = _compute_hmac(self._hmac_key, _parent_body_for_hmac(ref))
             if ref.hmac != expected:
                 failures.append(f"parent[{idx}] hmac mismatch (task={ref.task_id})")
@@ -513,15 +561,22 @@ class LineageV2Store:
             prev = ref.hmac
             referenced_shas.add(ref.child_sha)
 
-            # 3+4+5: child chain for this ref
+            # 3+4+5+7: child chain for this ref
             child_path = self.child_log(ref.child_sha)
             if not child_path.exists():
                 failures.append(f"parent[{idx}] missing child file {ref.child_sha}")
                 continue
 
             child_prev = ""
-            bodies_in_file = list(self.iter_child_bodies(ref.child_sha))
-            for bidx, body in enumerate(bodies_in_file):
+            for bidx, child_raw in enumerate(_iter_raw_lines(child_path)):
+                child_count += 1
+                try:
+                    body = _child_body_from_dict(json.loads(child_raw))
+                except _DECODE_ERRORS as exc:
+                    failures.append(f"child[{ref.child_sha[:16]}..][{bidx}] undecodable record ({type(exc).__name__})")
+                    continue
+                if _canonicalise(asdict(body)) != child_raw:
+                    failures.append(f"child[{ref.child_sha[:16]}..][{bidx}] non-canonical bytes")
                 if bidx == 0:
                     # Content-address check: the first body's
                     # sha-of-canonical-body must equal child_sha.
@@ -546,7 +601,6 @@ class LineageV2Store:
                 if body.prev_hmac != child_prev:
                     failures.append(f"child[{ref.child_sha[:16]}..][{bidx}] prev_hmac break")
                 child_prev = body.hmac
-                child_count += 1
 
         # 6: orphan child files
         children_dir = self.root / _CHILDREN_DIR

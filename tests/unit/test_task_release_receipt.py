@@ -770,3 +770,130 @@ def test_the_release_guard_covers_the_known_surrender_paths() -> None:
     # Delivery must be exempt by name, not by having drifted out of the walk.
     assert {"DONE", "CLOSED"} <= _EXEMPT_TARGETS
     assert "SUSPENDED" not in _EXEMPT_TARGETS, "SUSPENDED has no transitions in the task FSM"
+
+
+# ---------------------------------------------------------------------------
+# MCP-path claims and pre-fix chains (#3072)
+# ---------------------------------------------------------------------------
+
+
+def _seed_mcp_claim(chain: AuditChainStore, task_id: str) -> None:
+    from bernstein.core.security.audit_chain import record_task_claim_receipt
+
+    record_task_claim_receipt(
+        chain=chain,
+        task_id=task_id,
+        role="backend",
+        claimed_by="mcp-worker",
+        depends_on=[],
+        task_version=1,
+        claim_path="mcp_claim",
+    )
+
+
+def test_mcp_claim_receipts_leak_as_permanent_holders(tmp_path: Path) -> None:
+    """The leak this issue is about, pinned before the fix.
+
+    ``POST /tasks/claim-receipt`` mints ``task.claim_receipt`` rows with
+    ``claim_path="mcp_claim"`` against ``task-backlog.json``, a store the
+    release receipts of #3045 never touch. Nothing ever mints the matching
+    ``task.release_receipt``, so the plain fold reports these rows as held
+    forever, indistinguishable from a genuine outstanding claim.
+    """
+    chain = AuditChainStore(tmp_path / "audit", key=_KEY)
+    for task_id in ("BL-0", "BL-1", "BL-2"):
+        _seed_mcp_claim(chain, task_id)
+    # The leak: with no filter, the fold reports every mcp_claim row as an
+    # outstanding hold, and nothing in the answer marks them as unreleasable.
+    assert reconstruct_claim_holders(chain.query()) == {
+        "BL-0": "mcp-worker",
+        "BL-1": "mcp-worker",
+        "BL-2": "mcp-worker",
+    }
+
+
+def test_claim_paths_filter_separates_unreleasable_mcp_rows(tmp_path: Path) -> None:
+    """A verifier can scope the fold to the claim paths that have a release half.
+
+    ``mcp_claim`` rows have no surrender path, so the honest answer for the
+    release-capable ledger excludes them, and the honest answer for the MCP
+    ledger reports exactly them.
+    """
+    from bernstein.core.security.audit_chain import UNRELEASED_CLAIM_PATHS
+
+    chain = AuditChainStore(tmp_path / "audit", key=_KEY)
+    _seed_claim(chain, "T-1", _HOLDER)
+    _seed_mcp_claim(chain, "BL-0")
+    _seed_mcp_claim(chain, "BL-1")
+
+    assert "mcp_claim" in UNRELEASED_CLAIM_PATHS
+
+    releasable = reconstruct_claim_holders(
+        chain.query(),
+        claim_paths=frozenset({"next", "by_id", "batch"}),
+    )
+    assert releasable == {"T-1": _HOLDER}
+
+    mcp_only = reconstruct_claim_holders(chain.query(), claim_paths=frozenset({"mcp_claim"}))
+    assert mcp_only == {"BL-0": "mcp-worker", "BL-1": "mcp-worker"}
+
+    # No filter keeps the historical answer: everything folds.
+    assert set(reconstruct_claim_holders(chain.query())) == {"T-1", "BL-0", "BL-1"}
+
+
+def test_claim_paths_filter_still_applies_releases_in_scope(tmp_path: Path) -> None:
+    """A release receipt drops a filtered-in claim exactly as it does unfiltered."""
+    from bernstein.core.security.audit_chain import record_task_release_receipt
+
+    chain = AuditChainStore(tmp_path / "audit", key=_KEY)
+    _seed_claim(chain, "T-1", _HOLDER)
+    record_task_release_receipt(
+        chain=chain,
+        task_id="T-1",
+        role="backend",
+        released_by=_HOLDER,
+        task_version=2,
+        release_path="release",
+        reason="test",
+        from_status="claimed",
+        to_status="open",
+    )
+    assert reconstruct_claim_holders(chain.query(), claim_paths=frozenset({"by_id"})) == {}
+
+
+def test_release_ledger_boundary_marks_where_releases_begin(tmp_path: Path) -> None:
+    """A verifier can bound the pre-fix region of a chain from the chain alone.
+
+    Chains written before #3045 carry acquisitions only. Before the first
+    ``task.release_receipt``, the absence of a release is not evidence of a
+    held claim; the boundary lets an offline verifier answer "unknown" there
+    instead of answering confidently and wrongly.
+    """
+    from bernstein.core.security.audit_chain import (
+        record_task_release_receipt,
+        release_ledger_boundary,
+    )
+
+    chain = AuditChainStore(tmp_path / "audit", key=_KEY)
+    # A chain with no release receipts at all has no boundary.
+    _seed_claim(chain, "T-1", _HOLDER)
+    _seed_claim(chain, "T-2", _HOLDER)
+    assert release_ledger_boundary(chain.query()) is None
+
+    record_task_release_receipt(
+        chain=chain,
+        task_id="T-1",
+        role="backend",
+        released_by=_HOLDER,
+        task_version=2,
+        release_path="release",
+        reason="test",
+        from_status="claimed",
+        to_status="open",
+    )
+    events = chain.query()
+    boundary = release_ledger_boundary(events)
+    assert boundary == 2
+    # Everything before the boundary is acquisition-only territory.
+    assert all(e.event_type != EVENT_TASK_RELEASE_RECEIPT for e in events[:boundary])
+    assert events[boundary].event_type == EVENT_TASK_RELEASE_RECEIPT

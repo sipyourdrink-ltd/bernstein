@@ -6,12 +6,13 @@ name: Review-bot acknowledgement gate
 # correctness and security issues; this gate keeps the merge queue
 # honest by blocking merge until those findings are processed.
 #
-# The check name emitted by this workflow is `review-bot-ack`. The
-# operator should add this context to the branch protection rule on
-# `main` alongside `CI gate`. The required-check canary in
-# `tests/unit/test_required_check_canary_workflow_yaml.py` allow-lists
-# only `CI gate` emitters; `review-bot-ack` is a distinct check name
-# so the canary does not need updating.
+# The check name emitted by this workflow is `review-bot-ack`, and branch
+# protection on `main` requires it alongside `CI gate`. It is published
+# through the Checks API rather than by naming a job after it - see the
+# concurrency comment below for why. `tests/unit/test_required_check_canary_workflow_yaml.py`
+# asserts the context stays publishable on a `merge_group` ref; its
+# `CI gate` emitter allow-list is a separate invariant this workflow does
+# not participate in.
 
 on:
   pull_request:
@@ -21,38 +22,47 @@ on:
   # The merge queue evaluates required checks on a synthetic merge_group
   # ref that has no pull_request payload. Without a merge_group trigger the
   # `review-bot-ack` context is never published on the queued group, so the
-  # queue waits forever for a check that cannot report. The pass-through job
-  # below republishes the same context name on this event.
+  # queue waits forever for a check that cannot report. The queue-side job
+  # below publishes the same context name on this event.
   merge_group: {}
 
-# This workflow emits a required status check, and that changes what a
-# cancellation costs. A cancelled run leaves a check-run named
-# `review-bot-ack` with conclusion `cancelled` on the head SHA, and branch
-# protection folds EVERY check-run of a required name into its verdict, so
-# one cancelled instance holds the PR at BLOCKED even after a newer run of
-# the same workflow concludes success (#3154, #3042). The previous design
-# keyed the group on (PR, SHA) without the event, so a pull_request run and
-# a pull_request_review run for the same commit cancelled each other and
-# poisoned the context they were both trying to satisfy.
+# No job in this workflow is named `review-bot-ack`.
 #
-# Two changes close that:
-#   * the event name is part of the group, so runs born from different
-#     events never contend with each other, and
-#   * cancel-in-progress is off, so a same-event duplicate waits its turn
-#     and reports a real conclusion instead of leaving a cancelled tombstone.
-# The job is minutes-bounded and cheap; an occasional redundant run costs a
-# runner slot, a cancelled required check costs a manual one-at-a-time
-# rerun cycle per PR.
+# That is the whole fix, and it is deliberate. A job publishes a check-run
+# named after itself, and that check-run inherits the job's fate. Branch
+# protection folds every check-run of a required name into its verdict and
+# a later success does not clear an earlier non-success, so a job named
+# after a required context turns two ordinary job states into permanent
+# blocks on the commit:
+#
+#   * cancelled -> a `cancelled` instance holds the PR at BLOCKED for the
+#     life of that SHA (#3042, #3154), and
+#   * skipped -> GitHub counts `skipped` as passing, so a job gated off by
+#     an `if:` can satisfy a gate it never ran.
+#
+# Keying the concurrency group on the event name did not close this. With
+# `cancel-in-progress: false` a group is a one-deep queue: when a run is
+# executing and a second is pending, a third arriving in the same group
+# cancels the pending one. Both lanes reach three events on one head SHA
+# routinely - `synchronize` plus two body edits on the `pull_request` side,
+# and two review bots plus a human on the `pull_request_review` side - so
+# both lanes produced cancelled instances.
+#
+# The jobs below publish the context through `scripts/publish_required_check.py`
+# instead, which upserts a single terminal check-run per head SHA. Job
+# states can no longer write the context, so cancellation is safe again and
+# this workflow cancels superseded runs like every other `pull_request`
+# workflow. See docs/operations/ci.md :: "Gating vs advisory workflows".
 concurrency:
-  group: review-bot-ack-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: false
+  group: review-bot-ack-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions: {}
 
 jobs:
   # Queue-side emitter. The merge queue evaluates required checks on a
   # synthetic merge_group ref with no pull_request payload, so the real gate
-  # below cannot run there. This job republishes the `review-bot-ack` context
+  # below cannot run there. This job publishes the `review-bot-ack` context
   # on the queued group, but it is NOT an unconditional pass (#3114): it
   # resolves the pull request the queue entry was built from and requires
   # that a `review-bot-ack` check-run already concluded `success` on that
@@ -60,16 +70,32 @@ jobs:
   # gate really ran and really passed", and it fails closed on anything it
   # cannot resolve: an unparseable queue ref, a missing PR, or a head commit
   # whose gate never reported success.
-  merge-group-pass:
-    name: review-bot-ack
+  merge-group-verify:
+    name: review-bot-ack-queue-verify
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      checks: read
+      checks: write
+      contents: read
       pull-requests: read
     steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
       - name: Require a passed PR-stage gate for the queued entry
+        id: verify
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -97,12 +123,56 @@ jobs:
           fi
           echo "PR-stage gate passed on the queued entry's head commit ($ok successful instance(s))"
 
-  review-bot-ack:
-    name: review-bot-ack
+      - name: Resolve verdict
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOME: ${{ steps.verify.outcome }}
+        run: |
+          set -euo pipefail
+          # Fail closed. Only a clean success publishes success; every other
+          # outcome, including a crash, blocks the queue entry.
+          verdict=failure
+          if [ "$OUTCOME" = "success" ]; then
+            verdict=success
+          fi
+          echo "VERDICT=$verdict" >> "$GITHUB_ENV"
+
+      - name: Publish the review-bot-ack context on the queued group
+        # Never publish while being cancelled: a cancelled job has no verdict,
+        # and an absent required context correctly reads as blocked.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/publish_required_check.py \
+            --repo "$REPO" \
+            --sha "$HEAD_SHA" \
+            --name review-bot-ack \
+            --conclusion "$VERDICT" \
+            --title "Queued entry inherits its PR-stage gate verdict" \
+            --summary "Resolved the queue entry's pull request and required a successful PR-stage review-bot-ack check-run on its head commit." \
+            --details-url "$RUN_URL"
+
+      - name: Reflect the verdict in this job
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if [ "$VERDICT" != "success" ]; then
+            echo "::error::queued entry did not inherit a passing PR-stage gate"
+            exit 1
+          fi
+
+  pr-gate:
+    name: review-bot-ack-runner
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: github.event.pull_request != null && github.event_name != 'merge_group'
     permissions:
+      checks: write
       contents: read
       issues: write
       pull-requests: write
@@ -122,6 +192,8 @@ jobs:
           python-version: "3.13"
 
       - name: Run review-bot acknowledgement gate
+        id: gate
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
@@ -132,3 +204,47 @@ jobs:
             --owner "$OWNER" \
             --repo "$REPO_NAME" \
             --pr "$PR_NUMBER"
+
+      - name: Resolve verdict
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+        run: |
+          set -euo pipefail
+          # Fail closed. The gate exits 1 on an unresolved must-address
+          # finding and 2 on an internal error; both must block the merge, so
+          # only a clean success publishes success.
+          verdict=failure
+          if [ "$OUTCOME" = "success" ]; then
+            verdict=success
+          fi
+          echo "VERDICT=$verdict" >> "$GITHUB_ENV"
+
+      - name: Publish the review-bot-ack context on the head commit
+        # Never publish while being cancelled: a cancelled job has no verdict,
+        # and an absent required context correctly reads as blocked.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/publish_required_check.py \
+            --repo "$REPO" \
+            --sha "$HEAD_SHA" \
+            --name review-bot-ack \
+            --conclusion "$VERDICT" \
+            --title "Review-bot acknowledgement gate" \
+            --summary "Every must-address CodeRabbit and Sourcery finding must be fixed in a later commit or acknowledged in the PR body. See the sticky summary comment on the pull request for the per-finding breakdown." \
+            --details-url "$RUN_URL"
+
+      - name: Reflect the verdict in this job
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if [ "$VERDICT" != "success" ]; then
+            echo "::error::unresolved must-address review-bot findings; see the sticky summary comment on the PR"
+            exit 1
+          fi

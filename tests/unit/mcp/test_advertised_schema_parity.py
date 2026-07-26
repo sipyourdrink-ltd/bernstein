@@ -102,11 +102,18 @@ _SEEDS: dict[str, list[dict[str, Any]]] = {
     "bernstein_status": [{}],
     "bernstein_cost": [{}],
     "bernstein_scenarios": [{}],
-    "bernstein_run": [{"goal": "ship the thing", "scope": "medium", "complexity": "medium"}],
+    "bernstein_run": [
+        {"goal": "ship the thing", "scope": "medium", "complexity": "medium"},
+        {"goal": "split work", "parent_task_id": "t-parent"},
+    ],
     "bernstein_tasks": [{"status": "open"}],
     "bernstein_task_handle": [{"run_id": "run-1", "workdir": "."}],
+    "bernstein_run_status": [{"run_id": "run-1", "workdir": "."}],
     "bernstein_context": [{"task_id": "t-1", "workdir": ".", "verify": True}],
+    "bernstein_task_capsule": [{"task_id": "t-1", "workdir": ".", "verify": True}],
     "bernstein_stop": [{"workdir": "."}],
+    "bernstein_shutdown_orchestrator": [{"workdir": "."}],
+    "bernstein_cancel": [{"task_id": "t-1", "reason": "superseded"}],
     "bernstein_approve": [{"task_id": "t-1", "note": "ok"}],
     "bernstein_complete": [{"task_id": "t-1", "result_summary": "done"}],
     "bernstein_create_subtask": [
@@ -114,6 +121,7 @@ _SEEDS: dict[str, list[dict[str, Any]]] = {
     ],
     "bernstein_claim": [{"claimer_id": "worker-1", "completed_ids": []}],
     "bernstein_update": [{"task_id": "t-1", "body": "progress", "sender": "worker-1", "kind": "finding"}],
+    "bernstein_post_message": [{"task_id": "t-1", "body": "progress", "sender": "worker-1", "kind": "finding"}],
     "bernstein_post_artifact": [
         {"task_id": "t-1", "key": "k1", "artifact_type": "report", "poster": "w", "body": "# hi"},
         {
@@ -134,9 +142,15 @@ _SEEDS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "load_skill": [{"name": "backend"}],
-    "bernstein_scenario": [{"scenario_id": "pr-review", "context": "ctx"}],
+    "bernstein_scenario": [
+        {"scenario_id": "pr-review", "context": "ctx"},
+        {"action": "list"},
+        {"action": "run", "scenario_id": "pr-review", "context": "ctx"},
+        {"action": "status", "orchestration_id": "orch-1"},
+    ],
     "bernstein_scenario_status": [{"orchestration_id": "orch-1"}],
     "verify_chain": [{"artefact_path": "src/bernstein/mcp/server.py"}],
+    "bernstein_verify_lineage": [{"artefact_path": "src/bernstein/mcp/server.py"}],
 }
 
 
@@ -145,6 +159,7 @@ _SEEDS: dict[str, list[dict[str, Any]]] = {
 #: of their enum values gets its own seed above instead.
 _DISCRIMINATOR_FIELDS: dict[str, frozenset[str]] = {
     "bernstein_post_artifact": frozenset({"artifact_type"}),
+    "bernstein_scenario": frozenset({"action"}),
 }
 
 

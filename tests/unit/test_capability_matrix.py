@@ -229,14 +229,17 @@ class TestBundledTemplates:
     def test_default_registry_covers_built_in_mcp_tools(self) -> None:
         reg = CapabilityRegistry.load_default()
         for tool in (
-            "mcp.bernstein_health",
             "mcp.bernstein_run",
             "mcp.bernstein_status",
+            "mcp.bernstein_shutdown_orchestrator",
+            "mcp.bernstein_cancel",
+            "mcp.bernstein_approve",
+            "mcp.load_skill",
+            # Deprecated aliases stay registered while they stay callable.
+            "mcp.bernstein_health",
             "mcp.bernstein_tasks",
             "mcp.bernstein_cost",
             "mcp.bernstein_stop",
-            "mcp.bernstein_approve",
             "mcp.bernstein_create_subtask",
-            "mcp.load_skill",
         ):
             assert tool in reg.tools, f"{tool} missing from bundled YAML"

@@ -292,8 +292,13 @@ class McpFakeLab:
         with patch("bernstein.mcp.server.httpx.AsyncClient", side_effect=_make_client):
             result = await mcp.call_tool(tool_name, args)
 
-        # FastMCP returns a list of lists of content objects
-        text: str = result[0][0].text  # type: ignore[index]
+        if hasattr(result, "content"):
+            # Structured tools (#3086) answer with a CallToolResult whose
+            # text block is unchanged.
+            text: str = result.content[0].text  # type: ignore[union-attr]
+        else:
+            # FastMCP returns a list of lists of content objects
+            text = result[0][0].text  # type: ignore[index]
         # Strip the MCP cost-meter envelope (#1696) so tests assert
         # the tool's inner contract, not the cross-cutting meter. The
         # envelope shape is {"result": <payload>, "_meter": {...}}.
@@ -304,11 +309,15 @@ class McpFakeLab:
         except (json.JSONDecodeError, TypeError):
             return text
         if isinstance(parsed, dict) and "_meter" in parsed and "result" in parsed:
-            inner = parsed["result"]
-            if isinstance(inner, str):
-                return inner
-            return json.dumps(inner)
-        return text
+            parsed = parsed["result"]
+        # Strip the deprecated-alias wrapper (#3087) the same way, so tests
+        # against an alias assert its historical payload; the wrapper itself
+        # is covered by the tool-surface consolidation suite.
+        if isinstance(parsed, dict) and parsed.get("deprecated") is True and "result" in parsed:
+            parsed = parsed["result"]
+        if isinstance(parsed, str):
+            return parsed
+        return json.dumps(parsed)
 
     # ------------------------------------------------------------------
     # Inspection helpers

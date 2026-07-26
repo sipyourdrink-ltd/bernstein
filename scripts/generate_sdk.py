@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate Python and TypeScript client SDKs from the Bernstein OpenAPI spec.
 
-Reads docs/openapi.json (produced by scripts/generate_openapi.py) and writes:
+Reads docs/reference/openapi.json (produced by scripts/generate_openapi.py)
+and writes:
   - docs/sdk/client.py       - Python SDK
   - docs/sdk/client.ts       - TypeScript SDK
 
@@ -9,7 +10,7 @@ Usage:
     uv run python scripts/generate_sdk.py [--spec PATH]
 
 Options:
-    --spec PATH   Path to openapi.json (default: docs/openapi.json)
+    --spec PATH   Path to openapi.json (default: docs/reference/openapi.json)
 """
 
 from __future__ import annotations
@@ -22,13 +23,17 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+# Kept in step with generate_openapi.SPEC_PATH by the drift guard in
+# tests/unit/test_openapi_snapshot_drift.py.
+DEFAULT_SPEC_PATH = ROOT / "docs" / "reference" / "openapi.json"
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--spec",
-        default=str(ROOT / "docs" / "openapi.json"),
-        help="Path to openapi.json (default: docs/openapi.json)",
+        default=str(DEFAULT_SPEC_PATH),
+        help="Path to openapi.json (default: docs/reference/openapi.json)",
     )
     args = parser.parse_args()
 

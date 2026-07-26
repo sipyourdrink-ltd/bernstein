@@ -2,8 +2,9 @@
 and the gate/sweeper scripts.
 
 These tests pin the contract that:
-    * the pre-merge gate emits a check named ``review-bot-ack`` on
-      every PR event,
+    * the ``review-bot-ack`` context is published through the Checks
+      API and never as a job-name side effect, so no job state can
+      write it,
     * the nightly sweeper runs at 06:00 UTC and falls back to
       ``GITHUB_TOKEN`` when ``LANDING_REPO_PAT`` is absent,
     * the classifier maps known bot severity tags into must-address
@@ -31,6 +32,11 @@ GATE_WF = Path(".github/workflows/review-bot-ack.yml")
 SWEEP_WF = Path(".github/workflows/review-bot-sweep.yml")
 GATE_SCRIPT = Path("scripts/review_bot_ack.py")
 SWEEP_SCRIPT = Path("scripts/review_bot_sweep.py")
+PUBLISH_SCRIPT = Path("scripts/publish_required_check.py")
+
+# The context branch protection requires on `main`.
+CONTEXT = "review-bot-ack"
+PUBLISHER = "scripts/publish_required_check.py"
 
 
 @pytest.fixture(scope="module")
@@ -53,6 +59,7 @@ def _on(doc: dict[str, object]) -> dict[str, object]:
 def test_gate_workflow_exists() -> None:
     assert GATE_WF.exists()
     assert GATE_SCRIPT.exists()
+    assert PUBLISH_SCRIPT.exists()
 
 
 def test_gate_triggers(gate_doc: dict[str, object]) -> None:
@@ -65,40 +72,117 @@ def test_gate_triggers(gate_doc: dict[str, object]) -> None:
     assert "pull_request_review" in on
 
 
-def test_gate_job_emits_review_bot_ack_check(
-    gate_doc: dict[str, object],
-) -> None:
+def _jobs(gate_doc: dict[str, object]) -> dict[str, dict]:
     jobs = gate_doc.get("jobs")
     assert isinstance(jobs, dict)
-    assert "review-bot-ack" in jobs, "gate workflow must define a job that produces the `review-bot-ack` check name"
-    job = jobs["review-bot-ack"]
-    assert isinstance(job, dict)
-    assert job.get("name") == "review-bot-ack", (
-        "job `name:` must equal the literal check name `review-bot-ack` (branch protection keys on the literal name)"
+    return {k: v for k, v in jobs.items() if isinstance(v, dict)}
+
+
+def _steps(job: dict) -> list[dict]:
+    return [s for s in (job.get("steps") or []) if isinstance(s, dict)]
+
+
+def _run_script(job: dict) -> str:
+    return "\n".join(str(s.get("run", "")) for s in _steps(job))
+
+
+def test_no_job_is_named_after_the_required_context(
+    gate_doc: dict[str, object],
+) -> None:
+    """INV-1. A job publishes a check-run named after itself, and that
+    check-run inherits the job's fate.
+
+    Branch protection folds every check-run of a required name into its
+    verdict, and a later success does not clear an earlier non-success. So
+    naming a job `review-bot-ack` turns two ordinary job states into
+    permanent blocks on the commit: a `cancelled` instance holds the PR at
+    BLOCKED for the life of that SHA (#3042, #3154), and a `skipped`
+    instance silently *satisfies* the gate, because GitHub counts skipped
+    as passing.
+
+    The context is published through the Checks API instead, so no job
+    state can write it.
+    """
+    named = [key for key, job in _jobs(gate_doc).items() if job.get("name") == CONTEXT]
+    assert not named, (
+        f"jobs {named} are named after the required context {CONTEXT!r}. A job's check-run inherits the job's "
+        "fate, so cancelling it blocks the SHA permanently and skipping it passes the gate without running it. "
+        "Publish via scripts/publish_required_check.py and give the job a different name."
     )
 
 
-def test_gate_concurrency_never_cancels_a_required_context(
+def test_every_job_publishes_the_context_through_the_api(
     gate_doc: dict[str, object],
 ) -> None:
-    """A cancelled run leaves a `cancelled` check-run that branch protection
-    folds into the required context's verdict, blocking the PR even after a
-    newer run concludes success (#3154, #3042). The group key must therefore
-    separate runs born from different events, and cancel-in-progress must be
-    off so a same-event duplicate reports a real conclusion instead of a
-    cancelled tombstone.
+    """INV-2. Each job must write the verdict explicitly, with `checks: write`."""
+    jobs = _jobs(gate_doc)
+    assert jobs, "workflow must define jobs"
+    for key, job in jobs.items():
+        script = _run_script(job)
+        assert PUBLISHER in script, f"job {key!r} does not publish the required context via {PUBLISHER}"
+        assert f"--name {CONTEXT}" in script, f"job {key!r} publishes some other context name"
+        perms = job.get("permissions")
+        assert isinstance(perms, dict) and perms.get("checks") == "write", (
+            f"job {key!r} needs checks:write to publish the required context"
+        )
+
+
+def test_publish_is_skipped_while_a_job_is_being_cancelled(
+    gate_doc: dict[str, object],
+) -> None:
+    """INV-3. A cancelled job has no verdict to publish.
+
+    Leaving the context absent is the correct outcome: absent reads as
+    BLOCKED, and the next run writes the real verdict. Publishing on the
+    way out would write whatever the verdict variable happened to hold.
+    """
+    for key, job in _jobs(gate_doc).items():
+        for step in _steps(job):
+            if PUBLISHER not in str(step.get("run", "")):
+                continue
+            guard = str(step.get("if", ""))
+            assert "!cancelled()" in guard, (
+                f"the publish step in job {key!r} must be guarded by `if: ${{{{ !cancelled() }}}}`; found {guard!r}"
+            )
+
+
+def test_verdict_defaults_to_failure(gate_doc: dict[str, object]) -> None:
+    """INV-4. The gate exits 1 on an open finding and 2 on an internal
+    error. Only a clean success may publish success, so the verdict
+    variable is initialised to failure and narrowed on an explicit match.
+    """
+    for key, job in _jobs(gate_doc).items():
+        script = _run_script(job)
+        assert "verdict=failure" in script, f"job {key!r} does not default its verdict to failure"
+        assert 'if [ "$OUTCOME" = "success" ]' in script, (
+            f"job {key!r} must publish success only on an explicit success outcome"
+        )
+
+
+def test_gate_concurrency_cancels_like_every_other_pr_workflow(
+    gate_doc: dict[str, object],
+) -> None:
+    """INV-6. Cancellation is safe once the context is API-published.
+
+    The event name must stay OUT of the group key. It never prevented a
+    cancellation - with `cancel-in-progress: false` a group is a one-deep
+    queue, so a third run in the same group cancels the pending one - and
+    splitting the lanes lets a `pull_request` run and a
+    `pull_request_review` run for the same commit publish concurrently and
+    race on the upsert.
     """
     conc = gate_doc.get("concurrency")
     assert isinstance(conc, dict), "workflow must declare a concurrency block"
-    assert conc.get("cancel-in-progress") is False, (
-        "cancel-in-progress must be false: a cancelled run of a required "
-        "context poisons the rollup for its head SHA (#3154)"
+    assert conc.get("cancel-in-progress") is True, (
+        "the required context no longer depends on a job's fate, so this workflow cancels superseded runs like "
+        "every other pull_request workflow"
     )
     group = str(conc.get("group", ""))
-    assert "github.event_name" in group, (
-        "the concurrency group must include the event name so runs born "
-        "from different events never contend with each other (#3154)"
+    assert "github.event_name" not in group, (
+        "splitting the group by event lets the pull_request and pull_request_review lanes run concurrently and "
+        "race on the check-run upsert"
     )
+    assert "github.event.pull_request.number" in group
 
 
 def test_merge_group_job_verifies_instead_of_echoing(
@@ -109,25 +193,26 @@ def test_merge_group_job_verifies_instead_of_echoing(
     request and require a successful PR-stage `review-bot-ack` check-run on
     that PR's head commit, failing closed on anything it cannot resolve.
     """
-    jobs = gate_doc.get("jobs")
-    assert isinstance(jobs, dict)
-    job = jobs.get("merge-group-pass")
+    job = _jobs(gate_doc).get("merge-group-verify")
     assert isinstance(job, dict), "queue-side emitter job must exist"
-    assert job.get("name") == "review-bot-ack"
-    perms = job.get("permissions")
-    assert isinstance(perms, dict) and perms.get("checks") == "read", (
-        "the queue-side job needs checks:read to verify the PR-stage gate"
-    )
-    steps = job.get("steps") or []
-    assert isinstance(steps, list) and steps, "job must have steps"
-    scripts = "\n".join(str(s.get("run", "")) for s in steps if isinstance(s, dict))
-    assert "check-runs" in scripts and "review-bot-ack" in scripts, (
+    assert job.get("name") != CONTEXT, "see test_no_job_is_named_after_the_required_context"
+    steps = _steps(job)
+    assert steps, "job must have steps"
+    scripts = _run_script(job)
+    assert "check-runs" in scripts and CONTEXT in scripts, (
         "the queue-side job must query check-runs for the PR-stage gate rather than passing unconditionally (#3114)"
     )
+    assert 'select(.status == "completed" and .conclusion == "success")' in scripts, (
+        "the queue-side job must require a genuinely successful PR-stage gate; a `skipped` instance counts as "
+        "passing for branch protection and must not satisfy this check (#3114)"
+    )
     assert "exit 1" in scripts, "the queue-side job must fail closed"
-    assert "merge_group.head_ref" in (
-        scripts + "\n".join(str(s.get("env") or {}) for s in steps if isinstance(s, dict))
-    ), "the queued entry's PR must be resolved from the merge_group ref"
+    assert "merge_group.head_ref" in (scripts + "\n".join(str(s.get("env") or {}) for s in steps)), (
+        "the queued entry's PR must be resolved from the merge_group ref"
+    )
+    assert "merge_group.head_sha" in "\n".join(str(s.get("env") or {}) for s in steps), (
+        "the queue-side context must be published on the merge group's own head SHA"
+    )
 
 
 def test_gate_actions_sha_pinned() -> None:
@@ -139,17 +224,10 @@ def test_gate_actions_sha_pinned() -> None:
 
 
 def test_gate_checkout_no_persist_credentials(gate_doc: dict[str, object]) -> None:
-    jobs = gate_doc.get("jobs")
-    assert isinstance(jobs, dict)
-    job = jobs["review-bot-ack"]
-    assert isinstance(job, dict)
-    steps = job.get("steps") or []
-    checkout = next(
-        (s for s in steps if isinstance(s, dict) and "checkout" in str(s.get("uses", ""))),
-        None,
-    )
-    assert checkout is not None
-    assert (checkout.get("with") or {}).get("persist-credentials") is False
+    for key, job in _jobs(gate_doc).items():
+        checkout = next((s for s in _steps(job) if "checkout" in str(s.get("uses", ""))), None)
+        assert checkout is not None, f"job {key!r} must check out the repo to run {PUBLISHER}"
+        assert (checkout.get("with") or {}).get("persist-credentials") is False
 
 
 def test_sweep_workflow_exists() -> None:

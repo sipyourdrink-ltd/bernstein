@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Generate docs/openapi.json from the Bernstein FastAPI server definition.
+"""Regenerate the committed OpenAPI snapshot from the Bernstein FastAPI app.
 
-Run this script after changing any API route, model, or schema to keep the
-hosted reference at docs/api-reference.html in sync.
+Run this after changing any API route, model, or schema. The snapshot is a
+build input, not a report: it renders the published REST reference and seeds
+``scripts/generate_sdk.py``, so a stale file ships a stale client.
+
+``tests/unit/test_openapi_snapshot_drift.py`` fails when the snapshot and the
+app disagree, which is the reminder to run this.
 
 Usage:
     uv run python scripts/generate_openapi.py
 
 Output:
-    docs/openapi.json  - full OpenAPI 3.1 spec; committed to repo and served
-                         by Redoc at docs/api-reference.html.
+    docs/reference/openapi.json  - full OpenAPI 3.1 spec; committed to the
+                                   repo and served by Redoc.
 """
 
 from __future__ import annotations
@@ -22,6 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+# The single source of truth for where the snapshot lives. The drift guard
+# reads this constant, so the two cannot point at different files.
+SPEC_PATH = ROOT / "docs" / "reference" / "openapi.json"
+
 
 def main() -> None:
     try:
@@ -32,12 +40,11 @@ def main() -> None:
     app = create_app()
     spec = app.openapi()
 
-    out = ROOT / "docs" / "openapi.json"
-    out.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
+    SPEC_PATH.write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     paths = len(spec.get("paths", {}))
     schemas = len(spec.get("components", {}).get("schemas", {}))
-    print(f"Written {out.relative_to(ROOT)}  ({paths} paths, {schemas} schemas)")
+    print(f"Written {SPEC_PATH.relative_to(ROOT)}  ({paths} paths, {schemas} schemas)")
 
 
 if __name__ == "__main__":

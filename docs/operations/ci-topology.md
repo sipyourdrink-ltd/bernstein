@@ -60,7 +60,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | merge_group, pull_request, pull_request_review | {"cancel-in-progress": "false", "group": "review-bot-ack-${{ github.event_name }}-${{ github.event.pull_request.number \|\| github.ref }}-${{ github.event.pull_request.head.sha \|\| github.sha }}"} | 2 |
+| .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | merge_group, pull_request, pull_request_review | {"cancel-in-progress": "true", "group": "review-bot-ack-${{ github.event.pull_request.number \|\| github.ref }}"} | 2 |
 | .github/workflows/review-bot-sweep.yml | Review-bot post-merge sweep | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
@@ -126,7 +126,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs PyPI |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
-| .github/workflows/review-bot-ack.yml | merge-group-pass: review-bot-ack<br>review-bot-ack: review-bot-ack |
+| .github/workflows/review-bot-ack.yml | merge-group-verify: review-bot-ack-queue-verify<br>pr-gate: review-bot-ack-runner |
 | .github/workflows/review-bot-sweep.yml | sweep: Sweep recently merged PRs for unprocessed bot findings |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
@@ -192,7 +192,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"attestations": "write", "contents": "write", "id-token": "write"} | GITHUB_TOKEN |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
-| .github/workflows/review-bot-ack.yml | merge-group-pass: {"checks": "read", "pull-requests": "read"}<br>review-bot-ack: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
+| .github/workflows/review-bot-ack.yml | merge-group-verify: {"checks": "write", "contents": "read", "pull-requests": "read"}<br>pr-gate: {"checks": "write", "contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, LANDING_REPO_PAT |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |

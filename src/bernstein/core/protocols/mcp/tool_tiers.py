@@ -54,30 +54,66 @@ TIER_ENV_VAR: Final[str] = "BERNSTEIN_MCP_TOOL_TIER"
 #: (``tests/unit/test_mcp_server.py``) compares the registered tools against
 #: this mapping so an omission fails instead of silently hiding a tool.
 TOOL_TIERS: Final[dict[str, ToolTier]] = {
-    # core - always on: liveness plus the read-only surface needed to start
-    # and observe a run.
-    "bernstein_health": "core",
+    # core - always on: the run loop. Start a run, check the server (with
+    # liveness and cost folded in), poll a run to a terminal state.
     "bernstein_run": "core",
     "bernstein_status": "core",
-    "bernstein_tasks": "core",
-    "bernstein_task_handle": "core",
-    # standard - the typical session: cost, mutation, and skill tools.
-    "bernstein_cost": "standard",
-    "bernstein_stop": "standard",
+    "bernstein_run_status": "core",
+    # standard - the typical session: mutation, worker-loop, and skill tools.
     "bernstein_approve": "standard",
     "bernstein_complete": "standard",
-    "bernstein_create_subtask": "standard",
+    "bernstein_cancel": "standard",
     "bernstein_claim": "standard",
-    "bernstein_update": "standard",
+    "bernstein_post_message": "standard",
     "bernstein_post_artifact": "standard",
-    "bernstein_context": "standard",
+    "bernstein_task_capsule": "standard",
+    "bernstein_shutdown_orchestrator": "standard",
     "load_skill": "standard",
     # all - power-user surface: the scenario bridge and lineage verifier.
-    "bernstein_scenarios": "all",
     "bernstein_scenario": "all",
-    "bernstein_scenario_status": "all",
-    "verify_chain": "all",
+    "bernstein_verify_lineage": "all",
 }
+
+#: Removed tool names kept callable for one minor release, mapped to their
+#: replacement (#3087). An alias is registered only when its replacement is
+#: in the active tier, is never advertised in ``tools/list``, and answers
+#: with a payload that names its replacement and the removal release. The
+#: whole set is gated by :data:`ALIAS_ENV_VAR` and is removed in
+#: :data:`ALIAS_REMOVAL_RELEASE`.
+DEPRECATED_TOOL_ALIASES: Final[dict[str, str]] = {
+    "bernstein_health": "bernstein_status",
+    "bernstein_tasks": "bernstein_status",
+    "bernstein_cost": "bernstein_status",
+    "bernstein_create_subtask": "bernstein_run",
+    "bernstein_task_handle": "bernstein_run_status",
+    "bernstein_update": "bernstein_post_message",
+    "bernstein_context": "bernstein_task_capsule",
+    "bernstein_stop": "bernstein_shutdown_orchestrator",
+    "bernstein_scenarios": "bernstein_scenario",
+    "bernstein_scenario_status": "bernstein_scenario",
+    "verify_chain": "bernstein_verify_lineage",
+}
+
+#: Env var gating the deprecated aliases. Enabled by default for one minor
+#: release; set to ``0`` / ``false`` / ``no`` / ``off`` to drop the aliases
+#: now and surface any stale caller immediately.
+ALIAS_ENV_VAR: Final[str] = "BERNSTEIN_MCP_DEPRECATED_ALIASES"
+
+#: The release in which the deprecated aliases are deleted.
+ALIAS_REMOVAL_RELEASE: Final[str] = "v3.12.0"
+
+
+def deprecated_aliases_enabled() -> bool:
+    """Whether the deprecated tool aliases are registered.
+
+    Reads :data:`ALIAS_ENV_VAR` at call time. Unset or empty means enabled:
+    the aliases exist precisely so an unprepared client keeps working for
+    one release.
+    """
+    raw = os.environ.get(ALIAS_ENV_VAR)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def tier_rank(tier: ToolTier) -> int:

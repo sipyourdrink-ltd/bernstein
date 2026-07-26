@@ -22,6 +22,7 @@ ignore:
   - tests/fixtures/
   - benchmarks/data/
   - docs/api/
+  - docs/reference/openapi.json
   - "**/*.snap"
   - "**/*.lock"
   - "**/*.min.js"
