@@ -436,6 +436,7 @@ nav:
           - Capability matrix: security/capability-matrix.md
           - Manager auth: security/manager-auth.md
           - Agent-card keystore: security/keystore.md
+          - JCS canonicalization: security/jcs-canonicalization.md
           - MCP signing: security/mcp-signing.md
           - OWASP ASI detectors: security/owasp-asi.md
           - Promptware: security/promptware.md

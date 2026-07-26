@@ -1,6 +1,6 @@
 {
   "schema": "showback-canonical-vectors-v1",
-  "notes": "Cross-language vectors for the tenant showback canonical core. money_parse/money_render cover the operator-facing decimal-string format (nano-USD fixed scale, 9 fractional digits); float_bridge covers the one-time conversion from the float spend ledger (shortest round-trip decimal of the IEEE 754 double, then ROUND_HALF_EVEN to 1e-9); nfc covers the reject-don't-repair text policy; statements bind validated payload trees to RFC 8785 canonical bytes via sha256. The statement vectors below the seed set are anchored: their canonical bytes were generated with rfc8785 0.1.4 (Python) and independently reproduced by erdtman canonicalize 3.0.0 (Node) in the agent-passport-system cross-impl suite. Note that nano_usd values are JSON numbers and the boundary cases deliberately exceed the IEEE 754 double-exact integer range, so a reader must parse them with a bigint-aware JSON parser to reproduce these vectors.",
+  "notes": "Cross-language vectors for the tenant showback canonical core. money_parse/money_render cover the operator-facing decimal-string format (nano-USD fixed scale, 9 fractional digits); float_bridge covers the one-time conversion from the float spend ledger (shortest round-trip decimal of the IEEE 754 double, then ROUND_HALF_EVEN to 1e-9); nfc covers the reject-don't-repair text policy; statements bind validated payload trees to RFC 8785 canonical bytes via sha256. The statement vectors below the seed set are anchored: their canonical bytes were generated with rfc8785 0.1.4 (Python) and independently reproduced by erdtman canonicalize 3.0.0 (Node) in the agent-passport-system cross-impl suite. Note that nano_usd values are JSON numbers and the boundary cases deliberately exceed the IEEE 754 double-exact integer range, so a reader must parse them with a bigint-aware JSON parser to reproduce these vectors. The final statement vector (supplementary-plane name against U+E000..U+FFFF) is the one case where RFC 8785 3.2.3 UTF-16 code-unit ordering and Unicode code-point ordering disagree; its canonical bytes were derived from the RFC rule itself (names sorted by their UTF-16BE encoding) rather than from any implementation, so it pins the spec rather than a tool.",
   "money_parse": [
     {
       "desc": "integer dollars",
@@ -405,6 +405,16 @@
         "😁": 4
       },
       "sha256": "5d93bf574c9410e623e62518df36b19b04c5bf2a8024adfa93598ed015d6dea0"
+    },
+    {
+      "desc": "supplementary-plane property name against a name in U+E000..U+FFFF, where code point and utf-16 order differ",
+      "payload": {
+        "a": 1,
+        "": 2,
+        "😀": 3,
+        "�": 4
+      },
+      "sha256": "343e081ac53dae4eec03f409a3b2f47dcba8e5bd492b34bdc964d642d48c72fa"
     }
   ]
 }
