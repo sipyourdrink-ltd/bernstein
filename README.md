@@ -117,11 +117,23 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
 
+### mentioned in
+
+Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, cited by [awesome-agentic-patterns](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) as the production implementation of deterministic zero-LLM orchestration, and featured in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026).
+
+<details>
+<summary>All coverage: 20+ awesome lists, directories, newsletters, and peer citations</summary>
+<br>
+
+The full tracked list, including every awesome-list entry, catalog listing, prior-art citation, and newsletter mention, lives in [docs/mentions.md](docs/mentions.md). Entries are added as they appear; corrections welcome by issue or PR.
+
+</details>
+
 ### contributing, support, license
 
 PRs welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has setup and code style. Security reports go through [SECURITY.md](SECURITY.md). If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry). Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
 
-Citation metadata lives in [CITATION.cff](CITATION.cff). External coverage and list entries: [mentions](docs/mentions.md). License: [Apache-2.0](LICENSE).
+Citation metadata lives in [CITATION.cff](CITATION.cff). License: [Apache-2.0](LICENSE).
 
 ---
 
