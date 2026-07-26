@@ -2,20 +2,27 @@
 
 Spins up an in-process fake OpenAI-compatible HTTP server.
 No external service needed.
+
+The product modules are imported at module scope on purpose. `_run_certify`
+and `_run_verify` used to catch `ImportError` and fall back to
+reimplementations defined in this file, so blocking
+`bernstein.core.endpoints.certify` and `.verify` still left 22 of 30 tests
+passing - against the test file's own shims, with the product unimportable.
+An ImportError here now fails collection, which is the honest signal.
 """
 
 from __future__ import annotations
 
 import json
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from typing import Any
 
 import pytest
 
+from bernstein.core.endpoints.certify import certify_endpoint
 from bernstein.core.endpoints.conformance import PATCH_REFERENCE_DIFF
+from bernstein.core.endpoints.verify import verify_cert
 
 # ---------------------------------------------------------------------------
 # Fake OpenAI-compatible server
@@ -163,153 +170,13 @@ def fake_oai_server():
 
 
 def _run_certify(base_url, model, out_dir, token="", strict=False, timeout=5):
-    try:
-        from bernstein.core.endpoints.certify import certify_endpoint
-
-        return certify_endpoint(
-            base_url=base_url, token=token, model=model, out_dir=out_dir, strict=strict, timeout=timeout
-        )
-    except ImportError:
-        return _shim_certify(base_url, model, out_dir, token, strict, timeout)
-
-
-def _shim_certify(base_url, model, out_dir, token, strict, timeout):
-    import hashlib
-    import urllib.error
-    import urllib.request
-
-    probes = []
-
-    def _get(path):
-        req = urllib.request.Request(base_url.rstrip("/") + path)
-        if token:
-            req.add_header("Authorization", f"Bearer {token}")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, r.read()
-        except Exception:
-            return 0, b""
-
-    def _post(path, payload):
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            base_url.rstrip("/") + path,
-            data=data,
-            headers={"Content-Type": "application/json"},
-        )
-        if token:
-            req.add_header("Authorization", f"Bearer {token}")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, r.read()
-        except urllib.error.HTTPError as e:
-            return e.code, b""
-        except Exception:
-            return 0, b""
-
-    # Probe 1: GET /v1/models
-    status, _ = _get("/models")
-    probes.append({"id": "models_list", "required": True, "passed": status == 200})
-
-    # Probe 2: POST chat completions (non-streaming)
-    status, body = _post("/chat/completions", {"model": model, "messages": [{"role": "user", "content": "ping"}]})
-    parsed = json.loads(body) if status == 200 and body else {}
-    probes.append({"id": "chat_completions", "required": True, "passed": status == 200})
-
-    # Probe 3: streaming — check status and that response contains SSE data
-    status_s, body_s = _post(
-        "/chat/completions", {"model": model, "messages": [{"role": "user", "content": "ping"}], "stream": True}
+    return certify_endpoint(
+        base_url=base_url, token=token, model=model, out_dir=out_dir, strict=strict, timeout=timeout
     )
-    streaming_ok = status_s == 200 and b"data:" in body_s
-    probes.append({"id": "chat_streaming", "required": True, "passed": streaming_ok})
-
-    # Probe 4: tool_calls (optional)
-    status_t, body_t = _post(
-        "/chat/completions",
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": "read foo.py"}],
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "description": "read",
-                        "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
-                    },
-                }
-            ],
-        },
-    )
-    tool_ok = False
-    if status_t == 200 and body_t:
-        resp = json.loads(body_t)
-        choices = resp.get("choices", [])
-        tool_ok = bool(choices and choices[0].get("message", {}).get("tool_calls"))
-    probes.append({"id": "tool_calls", "required": False, "passed": tool_ok})
-
-    # Probe 5: finish_reason present
-    finish_ok = False
-    if parsed:
-        choices = parsed.get("choices", [])
-        finish_ok = bool(choices and choices[0].get("finish_reason"))
-    probes.append({"id": "finish_reason", "required": True, "passed": finish_ok})
-
-    # Probe 6: role=assistant present
-    role_ok = False
-    if parsed:
-        choices = parsed.get("choices", [])
-        role_ok = bool(choices and choices[0].get("message", {}).get("role") == "assistant")
-    probes.append({"id": "assistant_role", "required": True, "passed": role_ok})
-
-    required_failed = [p for p in probes if p["required"] and not p["passed"]]
-    optional_failed = [p for p in probes if not p["required"] and not p["passed"]]
-    passed = len(required_failed) == 0 and (not strict or len(optional_failed) == 0)
-
-    certified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    fingerprint = hashlib.sha256(f"{base_url}|{model}|{certified_at}".encode()).hexdigest()[:16]
-
-    record = {
-        "schema": "bernstein.endpoint.certification.v1",
-        "base_url": base_url,
-        "model": model,
-        "certified_at": certified_at,
-        "probes": probes,
-        "passed": passed,
-        "install_key_fp": "ed25519/shim-test-key",
-        "signature": f"shim-sig-{fingerprint}",
-    }
-
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / f"{fingerprint}.json").write_text(json.dumps(record, indent=2))
-    return record
 
 
-def _run_verify(cert_path, *, skip_signature=True):
-    try:
-        from bernstein.core.endpoints.verify import verify_cert
-
-        return verify_cert(cert_path=cert_path)
-    except ImportError:
-        return _shim_verify(cert_path)
-
-
-def _shim_verify(cert_path):
-    record = json.loads(Path(cert_path).read_text())
-    assert record.get("schema") == "bernstein.endpoint.certification.v1"
-    assert "base_url" in record
-    assert "model" in record
-    assert "certified_at" in record
-    assert isinstance(record.get("probes"), list)
-    assert "passed" in record
-    assert "install_key_fp" in record
-    assert "signature" in record
-    for probe in record["probes"]:
-        assert "id" in probe
-        assert "required" in probe
-        assert "passed" in probe
-    return {"valid": True, "record": record}
+def _run_verify(cert_path):
+    return verify_cert(cert_path=cert_path)
 
 
 # ---------------------------------------------------------------------------
@@ -406,11 +273,10 @@ class TestVerifyLoop:
         record = json.loads(cert_path.read_text())
         record["base_url"] = "http://evil.example.com/v1"
         cert_path.write_text(json.dumps(record))
-        try:
-            result = _run_verify(cert_path, skip_signature=False)
-            assert result.get("valid") is False
-        except Exception:
-            pass  # tampered cert raising is also acceptable
+        # Editing a signed field breaks the Ed25519 signature over the
+        # canonical binding, so verification fails closed and deterministically.
+        result = _run_verify(cert_path)
+        assert result["valid"] is False
 
     def test_verify_cert_preserves_base_url(self, fake_oai_server, tmp_path):
         out_dir = tmp_path / "certs"
@@ -512,10 +378,10 @@ class TestCertifyDifferentModels:
 
 class TestIntegrationsListEntry:
     def test_use_case_entry_exists(self):
-        try:
-            from bernstein.adapters.use_cases import USE_CASES
-        except ImportError:
-            pytest.skip("use_cases module not importable")
+        # Imported here rather than guarded by a skip: a use-case catalogue
+        # that stopped importing is a product regression, not a reason for
+        # this test to report itself green without checking anything.
+        from bernstein.adapters.use_cases import USE_CASES
 
         if isinstance(USE_CASES, dict):
             assert "self-hosted-endpoints" in USE_CASES, "USE_CASES missing 'self-hosted-endpoints' key"

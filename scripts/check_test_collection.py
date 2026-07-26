@@ -78,24 +78,6 @@ ALLOWLIST: dict[str, str] = {
         "Wall-clock performance smoke; thresholds are not meaningful on shared "
         "runners. Run on demand (ADR-009 section 12.5)."
     ),
-    # --- Not collected today; relocation tracked separately ---------------
-    "tests/test_server.py": ("Sits at the tests/ root, so no shard collects it. Pending relocation into tests/unit/."),
-    "tests/test_evolution_e2e.py": (
-        "Sits at the tests/ root, so no shard collects it. Pending relocation into tests/integration/."
-    ),
-    "tests/endpoints/test_certify_verify.py": (
-        "tests/endpoints/ is outside every shard directory. Binds a loopback HTTP "
-        "server, so relocation into tests/integration/ is pending."
-    ),
-    "tests/observability/test_gate.py": (
-        "tests/observability/ is outside every shard directory. Pending relocation into tests/unit/observability/."
-    ),
-    "tests/plugins/test_background_hooks.py": (
-        "tests/plugins/ is outside every shard directory. Pending relocation into tests/unit/plugins/."
-    ),
-    "tests/security/test_lineage_adversarial.py": (
-        "tests/security/ is outside every shard directory. Pending relocation into tests/unit/security/."
-    ),
 }
 
 

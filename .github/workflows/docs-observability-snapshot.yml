@@ -51,9 +51,17 @@ jobs:
           set -euo pipefail
           mkdir -p docs/_internal/observability/snapshots
           DATE=$(date -u +%Y-%m-%d)
-          uv run bernstein doctor observe --json --no-persist \
-            > "docs/_internal/observability/snapshots/${DATE}.json"
-          echo "snapshot=docs/_internal/observability/snapshots/${DATE}.json" >> "$GITHUB_OUTPUT"
+          SNAPSHOT="docs/_internal/observability/snapshots/${DATE}.json"
+          # Record the path before running observe: a WARN exit (rc 1) must
+          # not leave the later commit-verification step without a target.
+          echo "snapshot=${SNAPSHOT}" >> "$GITHUB_OUTPUT"
+          uv run bernstein doctor observe --json --no-persist > "${SNAPSHOT}"
+
+      - name: Validate snapshot JSON
+        run: |
+          set -euo pipefail
+          python3 -m json.tool "${{ steps.capture.outputs.snapshot }}" > /dev/null
+          echo "snapshot ${{ steps.capture.outputs.snapshot }} is valid JSON"
 
       - name: Render 30-day trends
         run: |
@@ -64,10 +72,10 @@ jobs:
 
       - name: Detect metric regressions
         # Non-blocking: the snapshot PR still opens on a regression. The gate
-        # diffs the new snapshot against the previous one and records any
-        # regression (a metric that crossed its fail threshold, a new or
-        # increased security finding, or a backend that lost its credentials)
-        # in the run summary.
+        # diffs the new snapshot against the previous one and names one of
+        # three outcomes in the run summary and regressions.json: regressions
+        # found, baseline compared and clean, or no baseline to compare
+        # against (comparison not performed).
         if: always()
         run: |
           set -uo pipefail
@@ -77,13 +85,8 @@ jobs:
             --out .ci/observability/regressions.json \
             --summary-out "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
 
-          if [ ! -s .ci/observability/regressions.json ]; then
-            echo "No regressions recorded."
-          else
-            echo "Regressions recorded in the run summary."
-          fi
-
       - name: Open PR with snapshot + trends
+        id: snapshot-pr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -104,3 +107,33 @@ jobs:
           labels: |
             chore
             observability
+
+      - name: Verify snapshot landed in the PR commit
+        # The corpus silently stopped growing once before: git add skips
+        # gitignored paths without -f, so the commit-back step dropped the
+        # snapshot while still reporting success. Fail loudly if the file
+        # this run produced is not in the tree the PR points at.
+        env:
+          SNAPSHOT_PATH: ${{ steps.capture.outputs.snapshot }}
+          HEAD_SHA: ${{ steps.snapshot-pr.outputs.pull-request-head-sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$HEAD_SHA" ]; then
+            # No commit was created. Acceptable only if the snapshot is
+            # already tracked with identical content (same-day re-run).
+            if git ls-files --error-unmatch "$SNAPSHOT_PATH" > /dev/null 2>&1 \
+                && git diff --quiet -- "$SNAPSHOT_PATH"; then
+              echo "no new commit needed: $SNAPSHOT_PATH already tracked and unchanged"
+              exit 0
+            fi
+            echo "::error::no PR commit was created and $SNAPSHOT_PATH is not tracked; the baseline did not advance"
+            exit 1
+          fi
+          git cat-file -e "${HEAD_SHA}^{commit}" 2> /dev/null \
+            || git fetch --no-tags origin chore/observability-snapshot
+          if git ls-tree -r "$HEAD_SHA" --name-only | grep -Fxq "$SNAPSHOT_PATH"; then
+            echo "verified: $SNAPSHOT_PATH is present in PR commit $HEAD_SHA"
+          else
+            echo "::error::$SNAPSHOT_PATH is missing from PR commit $HEAD_SHA; the baseline did not advance"
+            exit 1
+          fi

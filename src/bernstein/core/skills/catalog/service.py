@@ -381,7 +381,10 @@ class SkillCatalogService:
             )
 
         install_id = fresh_install_id()
-        prev_chain_digest = prior.hmac if prior is not None else _GENESIS_HEAD
+        # The previous install event *for this entry*, not this record's chain
+        # predecessor: unrelated records land in between. Recorded under a name
+        # that says so (#3062).
+        prior_install_chain_head = prior.hmac if prior is not None else _GENESIS_HEAD
 
         audit_event = self._auditor.install(
             entry_id=entry_id,
@@ -389,7 +392,7 @@ class SkillCatalogService:
             manifest_sha256=manifest_sha,
             manifest_signer_pubkey=catalog.signer_pubkey if outcome.verified else None,
             install_id=install_id,
-            prev_chain_digest=prev_chain_digest,
+            prior_install_chain_head=prior_install_chain_head,
         )
         chain_head = audit_event.hmac if audit_event is not None else _GENESIS_HEAD
 
@@ -408,7 +411,7 @@ class SkillCatalogService:
             self.lockfile_path,
             lock_entry,
             workdir=self._config.workdir,
-            from_chain_head=prev_chain_digest,
+            from_chain_head=prior_install_chain_head,
         )
 
         # Record the verified transparency head so the *next* install can prove
@@ -674,7 +677,7 @@ class SkillCatalogService:
             manifest_url=manifest_url,
             manifest_sha256=upstream_sha,
             install_id=outcome.install_id,
-            prev_chain_digest=prior.chain_head,
+            prior_install_chain_head=prior.chain_head,
         )
         return UpgradeOutcome(
             entry_id=entry_id,

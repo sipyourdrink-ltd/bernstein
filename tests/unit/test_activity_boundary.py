@@ -1,11 +1,16 @@
 """Tests for the typed activity boundary (issue #2311).
 
-Bernstein's deterministic scheduler is validated for coding agents, but the same
-control plane generalizes to research, browser, data, and ops agents. The
-``ActivityResult`` boundary is the uniform contract that lets any modality
-participate as a replayable step: every activity returns an artifact plus the
-hashes needed to replay it, so the scheduler stays deterministic and the agent
-stays an opaque stochastic activity behind a hash-in / hash-out contract.
+Bernstein's deterministic scheduler is validated for coding agents. The
+``ActivityResult`` boundary is the typed contract a non-coding modality --
+research, browser, data, ops -- would participate through as a replayable step:
+every activity returns an artifact plus the hashes needed to replay it, so the
+scheduler stays deterministic and the agent stays an opaque stochastic activity
+behind a hash-in / hash-out contract. ``bernstein activity browser run`` is the
+one non-coding entry point an operator can drive; research, data and ops stay
+Python-API only, and dispatching a non-coding modality from a seed, plan, or
+backlog file is not wired yet. See the scope note in
+:mod:`bernstein.core.orchestration.activity`, "Reachability today" in
+``docs/operations/activity-boundary.md``, and issues #2996 and #3110.
 
 These tests pin the modality-agnostic substrate:
 

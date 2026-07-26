@@ -2294,6 +2294,10 @@ class TaskStore:
             # the task de-indexed. Only in-flight tasks can be released.
             if task.status not in (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
                 raise IllegalTransitionError("task", task.id, task.status.value, TaskStatus.OPEN.value)
+            # Read the claim off the task before the transition clears it: this
+            # path returns the task to the pool, so it is a surrender and needs
+            # the matching task.release_receipt (#3037).
+            snapshot = self._claim_snapshot(task)
             self._index_remove(task)
             transition_task(
                 task,
@@ -2307,6 +2311,12 @@ class TaskStore:
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+            self._record_release_receipt(
+                task,
+                snapshot,
+                release_path="release",
+                reason=reason or "released_to_pool",
+            )
             logger.info(
                 "task.release: task_id=%s reason=%s",
                 sanitize_log(task_id),

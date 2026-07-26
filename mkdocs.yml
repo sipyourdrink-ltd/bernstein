@@ -2,8 +2,9 @@ site_name: Bernstein
 site_url: https://bernstein.readthedocs.io/
 site_author: Alex Chernysh
 site_description: >-
-  Deterministic, verifiable orchestration for CLI coding agents - reproducible
-  parallel runs, signed audit trail, air-gap friendly.
+  Deterministic orchestrator for CLI coding agents. No model in the coordination
+  loop, so parallel runs in per-task git worktrees replay byte-identically.
+  Signed lineage and an opt-in HMAC audit chain, air-gap friendly.
 repo_url: https://github.com/sipyourdrink-ltd/bernstein
 repo_name: sipyourdrink-ltd/bernstein
 edit_uri: edit/main/docs/
@@ -150,6 +151,7 @@ nav:
       - index.md
       - Use cases: use-cases.md
       - What's new: whats-new.md
+      - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md
       - Blog:
           - Ten agents one release: blog/ten-agents-one-release.md
@@ -421,6 +423,7 @@ nav:
           - Calibration: operations/calibration.md
           - Criterion profiles: operations/criterion-profiles.md
           - Golden benchmark harness: eval/golden-harness.md
+          - Reproducible bench bundles: eval/bench.md
       - Security & identity:
           - Security & identity stack: operations/security-and-identity.md
           - Security operations: operations/security.md
@@ -433,6 +436,7 @@ nav:
           - Capability matrix: security/capability-matrix.md
           - Manager auth: security/manager-auth.md
           - Agent-card keystore: security/keystore.md
+          - JCS canonicalization: security/jcs-canonicalization.md
           - MCP signing: security/mcp-signing.md
           - OWASP ASI detectors: security/owasp-asi.md
           - Promptware: security/promptware.md
@@ -504,12 +508,14 @@ nav:
           - MCP catalog: reference/mcp-catalog.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:
+          - Capabilities: reference/capabilities.md
           - Feature matrix: reference/FEATURE_MATRIX.md
           - Adapter compatibility: adapters/compatibility.md
           - Known limitations: reference/KNOWN_LIMITATIONS.md
           - Glossary: reference/GLOSSARY.md
       - Release notes:
           - Changelog: CHANGELOG.md
+          - v3.10.0: release-notes/v3.10.0.md
           - v3.9.0: release-notes/v3.9.0.md
           - v3.8.4: release-notes/v3.8.4.md
           - v3.8.3: release-notes/v3.8.3.md

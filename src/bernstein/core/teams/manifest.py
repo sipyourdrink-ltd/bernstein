@@ -121,12 +121,17 @@ class TeamRoleSpec:
             seed parser, which the expansion feeds into.
         response_profile: Optional response-style profile name; expands to
             the ``response_style`` role policy key (issue #2243).
-        agent_kind: The agent modality this role runs as behind the typed
-            activity boundary (issue #2311). Defaults to
+        agent_kind: The agent modality this role is declared to run as behind
+            the typed activity boundary (issue #2311). Defaults to
             :attr:`~bernstein.core.orchestration.activity.ActivityKind.CODING`,
-            the modality the deterministic scheduler is already validated for;
-            a research / browser / data / ops role declares its modality here so
-            the scheduler dispatches and journals it under the same boundary.
+            the modality the deterministic scheduler is already validated for.
+
+            The key is parsed, validated against the known modalities, and
+            round-tripped into the canonical manifest. It is **not read on the
+            execution path**: a role declaring ``research`` runs exactly as it
+            would without the key. Dispatching on it is tracked in #2996 and
+            #3110; see "Reachability today" in
+            ``docs/operations/activity-boundary.md``.
     """
 
     role: str

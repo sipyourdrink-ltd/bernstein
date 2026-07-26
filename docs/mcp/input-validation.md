@@ -36,6 +36,21 @@ A clean payload becomes a `ValidatedPayload(tool_name, payload)`; a failure
 becomes a `ValidationError(tool_name, code, message, errors)`, which the MCP
 server renders as a JSON-RPC 2.0 error object via `to_jsonrpc_error()`.
 
+## Validation scope
+
+This validator runs on the tools registered in `bernstein.mcp.server`, which
+serves the stdio and SSE transports.
+
+The streamable HTTP transport in `bernstein.mcp.remote_transport` is a
+separate implementation and does **not** call `validate_tool_call`. Over that
+transport the size cap, recursion cap, control-character filter and JSON
+Schema checks are all absent, and the 8 tools it exposes carry schemas
+restated inside that module rather than loaded from the schema files below.
+Starting that transport logs a warning saying so. Do not read this page as a
+statement about what an internet-reachable streamable HTTP deployment
+enforces. Bringing both transports onto one registry and one validation path
+is tracked in issue #3083; this note goes away with that change.
+
 ## Schemas
 
 Each tool's schema is a plain JSON Schema (Draft 7) file at
@@ -50,11 +65,41 @@ The bundled server ships schemas for the core tool set:
 `bernstein_task_handle`, `bernstein_cost`, `bernstein_stop`,
 `bernstein_approve`, `bernstein_create_subtask`, `bernstein_claim`,
 `bernstein_update`, `load_skill`, `bernstein_context`,
-`bernstein_post_artifact`, and the scenario-bridge tools
+`bernstein_post_artifact`, `verify_chain`, and the scenario-bridge tools
 `bernstein_scenario`, `bernstein_scenario_status`, `bernstein_scenarios`.
 Adding a new MCP tool means adding its schema file alongside these; a tool
 with no schema file is unreachable (unknown-tool rejection), which is the
 point of deny-by-default.
+
+## One schema per tool, not two
+
+The schema file is also the schema advertised to clients. After tool
+registration, `_apply_advertised_schemas()` in
+`src/bernstein/mcp/server.py` replaces each tool's `inputSchema` with the
+schema `validate_tool_call` enforces, so a caller sees
+`scope: enum [small, medium, large]` rather than the bare `scope: string`
+FastMCP derives from the Python signature. Without this, every constrained
+argument is a guaranteed first-call failure: the caller sends a plausible
+value and gets a rejection it had no way to predict.
+
+Consequences worth knowing:
+
+- `bernstein_post_artifact` advertises its `allOf` conditional, so a client
+  can see that a `report` needs `body`, a `table` needs `columns` and
+  `rows`, and a `link` needs `url` and `link_kind`. A handler argument left
+  at its empty-string default counts as "not supplied" and is not validated
+  as if the caller had sent it.
+- Only the advertised copy is replaced. Argument coercion still runs through
+  FastMCP's signature-derived model, and enforcement still runs through
+  `validate_tool_call` inside each handler.
+- The advertised schema is a deep copy, so a client-side mutation cannot
+  reach the process-wide registry the validator reads.
+
+`tests/unit/mcp/test_advertised_schema_parity.py` is the drift guard. It
+asserts, per tool, that the advertised and enforced schemas agree on every
+constrained field, and that the set of schema file stems equals the set of
+registered tool names in both directions. Tightening enforcement without
+updating what is advertised fails the build.
 
 ## Permissive mode (migration aid)
 
@@ -85,6 +130,9 @@ rejection is enforced.
 ## Source
 
 `src/bernstein/mcp/input_validation.py` (validator, deny rules, schema
-registry); `src/bernstein/mcp/tool_schemas/*.json` (per-tool schemas); wired
-into request handling in `src/bernstein/mcp/server.py`
-(`_validate_or_error`).
+registry, the shared `validate_or_error` / `validation_error_response`
+handler helpers); `src/bernstein/mcp/tool_schemas/*.json` (per-tool
+schemas); wired into request handling in `src/bernstein/mcp/server.py`
+(`_validate_or_error`) and advertised from the same files by
+`_apply_advertised_schemas`. `verify_chain` validates in
+`src/bernstein/mcp/resources/lineage.py`.

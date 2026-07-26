@@ -15,6 +15,7 @@ still round-trips unchanged.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -837,3 +838,342 @@ def test_sweeps_skip_a_symlinked_run_directory_with_an_innocent_name(tmp_path: P
     replay_dirs = {d.name for d in _replay_find_run_dirs(runs_root)}
     assert "run-ok" not in replay_dirs
     assert "run-honest" in replay_dirs
+
+
+# ---------------------------------------------------------------------------
+# MCP shutdown signal: workdir names a root, it does not reach past one
+# ---------------------------------------------------------------------------
+#
+# ``bernstein_stop`` turns a caller-supplied ``workdir`` into a
+# ``.sdd/runtime/signals/SHUTDOWN`` write preceded by
+# ``mkdir(parents=True)``. Unbarriered that is arbitrary directory creation
+# and an arbitrary file write reachable over MCP, and it stops an unrelated
+# Bernstein project. Naming a root stays legal; reaching outside the named
+# root does not.
+
+
+def _make_project(root: Path) -> Path:
+    """Create a minimal Bernstein project root and return it."""
+    (root / ".sdd").mkdir(parents=True)
+    return root
+
+
+def _case_insensitive_fs(probe_dir: Path) -> bool:
+    """Report whether *probe_dir* lives on a case-insensitive filesystem."""
+    probe = probe_dir / "CaseProbe"
+    probe.mkdir()
+    insensitive = (probe_dir / "caseprobe").is_dir()
+    probe.rmdir()
+    return insensitive
+
+
+def test_shutdown_signal_path_round_trips(tmp_path: Path) -> None:
+    """An ordinary project root yields the documented signal path."""
+    from bernstein.mcp.signal_paths import shutdown_signal_path
+
+    project = _make_project(tmp_path / "project")
+
+    assert shutdown_signal_path(project) == project.resolve() / ".sdd" / "runtime" / "signals" / "SHUTDOWN"
+
+
+def test_shutdown_signal_path_allows_a_second_project_by_absolute_path(tmp_path: Path) -> None:
+    """Naming another project on the same machine is legal, not an escape.
+
+    The barrier is against a workdir that reaches outside the root it names.
+    Stopping a different Bernstein project by absolute path is the tool
+    working as documented.
+    """
+    from bernstein.mcp.signal_paths import shutdown_signal_path
+
+    other = _make_project(tmp_path / "other-project")
+
+    resolved = shutdown_signal_path(str(other.resolve()))
+
+    assert resolved.is_relative_to(other.resolve())
+
+
+def test_shutdown_signal_path_refuses_a_root_without_sdd(tmp_path: Path) -> None:
+    """A directory that is not a Bernstein project cannot be stopped."""
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    plain = tmp_path / "not-a-project"
+    plain.mkdir()
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(plain)
+
+
+def test_shutdown_signal_path_refuses_traversal_out_of_the_project(tmp_path: Path) -> None:
+    """``../`` out of a real project lands on a non-project and is refused."""
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    project = _make_project(tmp_path / "project")
+    (tmp_path / "victim").mkdir()
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(str(project / ".." / "victim"))
+
+
+def test_shutdown_signal_path_refuses_an_absolute_path_outside_any_project(tmp_path: Path) -> None:
+    """An absolute path to an arbitrary directory is refused."""
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(str(tmp_path))
+
+
+def test_shutdown_signal_path_refuses_a_symlinked_sdd(tmp_path: Path) -> None:
+    """A ``.sdd`` that points out of the project cannot redirect the write.
+
+    This is the case the ``.sdd``-exists check cannot catch on its own: the
+    entry is present and is a directory, but following it leaves the root.
+    """
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    project = tmp_path / "project"
+    project.mkdir()
+    victim = _make_project(tmp_path / "victim")
+    _symlink_or_skip(project / ".sdd", victim / ".sdd")
+
+    assert (project / ".sdd").is_dir(), "the planted .sdd should look ordinary"
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(project)
+
+
+def test_shutdown_signal_path_refuses_a_symlinked_signals_dir(tmp_path: Path) -> None:
+    """A symlink further down the fixed segments is refused too."""
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    project = _make_project(tmp_path / "project")
+    (project / ".sdd" / "runtime").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _symlink_or_skip(project / ".sdd" / "runtime" / "signals", outside)
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(project)
+
+
+def test_shutdown_signal_path_refuses_a_symlinked_sdd_named_by_case_variant(tmp_path: Path) -> None:
+    """A case variant of the root does not slip past the symlink barrier.
+
+    ``resolve()`` follows symlinks but does not fold case, so on a
+    case-insensitive filesystem a case variant of a root is a different
+    string for the same directory and a resolve-only check would compare
+    the wrong pair. Containment is evaluated against the root as resolved
+    from this same call, so the variant is measured against itself and the
+    symlinked ``.sdd`` is still caught. On a case-sensitive filesystem the
+    variant simply names nothing and is refused by the project-root check.
+    Either way the answer is refusal.
+    """
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    project = tmp_path / "project"
+    project.mkdir()
+    victim = _make_project(tmp_path / "victim")
+    _symlink_or_skip(project / ".sdd", victim / ".sdd")
+
+    variant = project.parent / project.name.upper()
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(variant)
+
+
+def test_shutdown_signal_path_case_variant_of_a_real_root_stays_inside_it(tmp_path: Path) -> None:
+    """A case variant of a legitimate root never addresses a different tree.
+
+    On a case-insensitive filesystem the variant is the same project, so it
+    is accepted and the resolved path is the real project's signal file. On
+    a case-sensitive filesystem it names nothing and is refused. Neither
+    branch may reach a directory outside the root the caller named.
+    """
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    project = _make_project(tmp_path / "project")
+    variant = project.parent / project.name.upper()
+
+    if not _case_insensitive_fs(tmp_path):
+        with pytest.raises(ShutdownSignalPathError):
+            shutdown_signal_path(variant)
+        return
+
+    resolved = shutdown_signal_path(variant)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text("probe\n", encoding="utf-8")
+
+    assert (project / ".sdd" / "runtime" / "signals" / "SHUTDOWN").is_file()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["project"]
+
+
+def test_shutdown_signal_path_error_is_a_containment_error_and_value_error(tmp_path: Path) -> None:
+    """Callers guarding on ``ValueError`` keep working unchanged."""
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError
+
+    assert issubclass(ShutdownSignalPathError, PathContainmentError)
+    assert issubclass(ShutdownSignalPathError, ValueError)
+
+
+# ---------------------------------------------------------------------------
+# Routing: both MCP surfaces must go through the barrier
+# ---------------------------------------------------------------------------
+
+
+async def _call_stop_tool(workdir: str) -> dict[str, Any]:
+    """Invoke the stdio ``bernstein_stop`` tool and return its JSON body.
+
+    Tool responses may be wrapped in the per-call cost-meter envelope, so the
+    inner result is unwrapped before the assertion reads it.
+    """
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    result = await mcp.call_tool("bernstein_stop", {"workdir": workdir})
+    parsed: dict[str, Any] = json.loads(result[0][0].text)  # type: ignore[index, union-attr]
+    inner = parsed.get("result") if "_meter" in parsed else parsed
+    assert isinstance(inner, dict)
+    return inner
+
+
+@pytest.mark.asyncio
+async def test_bernstein_stop_writes_the_signal_for_a_real_project(tmp_path: Path) -> None:
+    """The legitimate path still works end to end through the MCP tool."""
+    project = _make_project(tmp_path / "project")
+
+    payload = await _call_stop_tool(str(project))
+
+    assert payload["status"] == "shutdown signal sent"
+    assert (project / ".sdd" / "runtime" / "signals" / "SHUTDOWN").is_file()
+
+
+@pytest.mark.asyncio
+async def test_bernstein_stop_refuses_an_uncontained_workdir_and_creates_nothing(tmp_path: Path) -> None:
+    """A refused stop returns the structured error and leaves the disk alone.
+
+    ``mkdir(parents=True)`` ran before any barrier, so the pre-fix handler
+    built ``.sdd/runtime/signals`` under whatever directory it was handed.
+    A refusal must create nothing.
+    """
+    victim = tmp_path / "victim"
+    victim.mkdir()
+
+    payload = await _call_stop_tool(str(victim))
+
+    assert "error" in payload
+    assert "status" not in payload
+    assert list(victim.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_bernstein_stop_refuses_traversal_and_creates_nothing(tmp_path: Path) -> None:
+    """``../`` from a real project cannot reach a sibling directory."""
+    project = _make_project(tmp_path / "project")
+    victim = tmp_path / "victim"
+    victim.mkdir()
+
+    payload = await _call_stop_tool(str(project / ".." / "victim"))
+
+    assert "error" in payload
+    assert list(victim.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_bernstein_stop_refuses_a_symlinked_sdd_and_leaves_the_target_alone(tmp_path: Path) -> None:
+    """A symlinked ``.sdd`` does not let the stop reach another project."""
+    project = tmp_path / "project"
+    project.mkdir()
+    victim = _make_project(tmp_path / "victim")
+    _symlink_or_skip(project / ".sdd", victim / ".sdd")
+
+    payload = await _call_stop_tool(str(project))
+
+    assert "error" in payload
+    assert not (victim / ".sdd" / "runtime").exists()
+
+
+# ---------------------------------------------------------------------------
+# The barrier must refuse before it walks the filesystem
+# ---------------------------------------------------------------------------
+#
+# ``workdir`` reaches the barrier unbounded on the remote HTTP surface: that
+# transport serves the tool straight from the JSON-RPC arguments and applies
+# no tool schema, so the caller picks the length. Resolving a path stats one
+# entry per component, so an over-long workdir turns a single request into
+# an unbounded run of blocking syscalls on the serving event loop. The length
+# a path may occupy is already decided by ``MAX_PATH_BYTES``, so a workdir
+# past it can never address a directory and there is nothing to learn from
+# walking it.
+
+
+def _counting_lstat(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Count ``os.lstat`` calls made while resolving a path."""
+    import os
+
+    seen = {"calls": 0}
+    real = os.lstat
+
+    def counted(path: Any, *args: Any, **kwargs: Any) -> Any:
+        seen["calls"] += 1
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", counted)
+    return seen
+
+
+def test_shutdown_signal_path_refuses_an_over_long_workdir_without_walking_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A workdir past the path limit is refused before any filesystem call.
+
+    Deliberately not a timing assertion: the property is that the barrier
+    consults no filesystem entry at all for an input that cannot name one.
+    """
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    over_long = "/" + "/".join(["a"] * MAX_PATH_BYTES)
+    seen = _counting_lstat(monkeypatch)
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(over_long)
+
+    assert seen["calls"] == 0, f"resolved {seen['calls']} components of a workdir that cannot name a directory"
+
+
+def test_shutdown_signal_path_still_accepts_a_workdir_at_the_addressable_limit(tmp_path: Path) -> None:
+    """The bound refuses only what cannot exist, not ordinary deep projects."""
+    from bernstein.mcp.signal_paths import shutdown_signal_path
+
+    project = _make_project(tmp_path / ("d" * 200) / ("e" * 200))
+
+    resolved = shutdown_signal_path(str(project))
+
+    assert resolved.is_relative_to(project.resolve())
+
+
+def test_shutdown_signal_path_refuses_a_workdir_the_filesystem_cannot_address(tmp_path: Path) -> None:
+    """A workdir carrying a NUL is refused as a containment error.
+
+    The barrier documents one refusal type. A raw ``ValueError`` from the
+    resolve escapes the ``except ShutdownSignalPathError`` both handlers
+    guard with, so the caller sees an unhandled failure instead of the
+    structured tool error.
+    """
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    with pytest.raises(ShutdownSignalPathError):
+        shutdown_signal_path(f"{tmp_path}/pro\x00ject")
+
+
+def test_shutdown_signal_path_refuses_a_workdir_that_is_not_textual() -> None:
+    """A non-textual workdir is refused as a containment error too.
+
+    The remote HTTP surface serves this tool from untyped JSON-RPC
+    arguments, so the value need not be a string at all. Each of these
+    reaches the barrier as-is and must come back as the one documented
+    refusal type rather than as a bare ``TypeError``.
+    """
+    from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+    for hostile in (123, ["/tmp"], {"workdir": "/tmp"}, None, b"/tmp"):
+        with pytest.raises(ShutdownSignalPathError):
+            shutdown_signal_path(hostile)  # type: ignore[arg-type]

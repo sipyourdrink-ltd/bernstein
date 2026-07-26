@@ -1,6 +1,6 @@
 {
   "name": "bernstein",
-  "description": "Orchestrate parallel AI coding agents from Cursor. Monitor tasks, agents, costs, approve plans - all without leaving your editor.",
+  "description": "Drive Bernstein, a deterministic orchestrator for CLI coding agents, from Cursor. Monitor tasks, agents, costs, approve plans - all without leaving your editor.",
   "version": "0.1.0",
   "author": {
     "name": "Alex Chernysh",

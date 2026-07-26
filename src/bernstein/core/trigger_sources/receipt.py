@@ -660,43 +660,53 @@ def admit_trigger(
 
     outcome = TRIGGER_OUTCOME_REFUSED if reason else TRIGGER_OUTCOME_ADMITTED
     chain = _chain_store(audit_dir, hmac_key)
-    unsigned = TriggerReceipt(
-        trigger_id=trigger_id,
-        platform=platform,
-        request_path=request_path,
-        payload_digest=payload_digest,
-        graph_digest=graph_digest,
-        scope="" if reason else scope,
-        outcome=outcome,
-        refusal_reason=reason,
-        # The head read before appending: the chain position the trigger was
-        # adjudicated at, and part of the signed binding.
-        admission_chain_head=chain.prev_chain_digest,
-        replay_protected=enforce_replay,
-        timestamp=timestamp,
-        task_ids=() if reason else task_ids,
-    )
 
+    # Loading the bridge identity may create and persist a keypair; it does not
+    # depend on the chain head, so it stays outside the section below rather
+    # than holding the chain against every other writer while it runs.
     private_pem, public_pem = load_or_create_bridge_identity(root)
+    from bernstein.core.security.audit_chain import record_trigger_receipt
     from bernstein.core.skills.catalog.signature import sign_payload
 
-    signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
+    # Reading the head, signing it, and appending the record that sits on it are
+    # one atomic section. Split apart, a writer appending during the signature
+    # leaves the receipt naming a chain position its own record does not occupy,
+    # and the head is opaque payload to the signature so nothing downstream can
+    # tell. The head is read from disk here, not from the store's cache, so
+    # another process's appends are seen too.
+    with chain.chain_transaction():
+        unsigned = TriggerReceipt(
+            trigger_id=trigger_id,
+            platform=platform,
+            request_path=request_path,
+            payload_digest=payload_digest,
+            graph_digest=graph_digest,
+            scope="" if reason else scope,
+            outcome=outcome,
+            refusal_reason=reason,
+            # The head this trigger was adjudicated at, and part of the signed
+            # binding: the record appended below chains onto exactly it.
+            admission_chain_head=chain.resync_head(),
+            replay_protected=enforce_replay,
+            timestamp=timestamp,
+            task_ids=() if reason else task_ids,
+        )
 
-    from bernstein.core.security.audit_chain import record_trigger_receipt
+        signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
 
-    event = record_trigger_receipt(
-        chain=chain,
-        trigger_id=trigger_id,
-        platform=platform,
-        request_path=request_path,
-        payload_digest=payload_digest,
-        graph_digest=graph_digest,
-        scope=unsigned.scope,
-        outcome=outcome,
-        receipt_digest=unsigned.binding_digest(),
-        refusal_reason=reason,
-        suppressed_refusals=suppressed,
-    )
+        event = record_trigger_receipt(
+            chain=chain,
+            trigger_id=trigger_id,
+            platform=platform,
+            request_path=request_path,
+            payload_digest=payload_digest,
+            graph_digest=graph_digest,
+            scope=unsigned.scope,
+            outcome=outcome,
+            receipt_digest=unsigned.binding_digest(),
+            refusal_reason=reason,
+            suppressed_refusals=suppressed,
+        )
 
     receipt = TriggerReceipt(
         trigger_id=unsigned.trigger_id,
@@ -875,30 +885,37 @@ def emit_status_proof(
     effective_status = status or derive_status(payload)
     run_id = str(payload.get("run_id", "") or "")
     chain = _chain_store(audit_dir, hmac_key)
-    unsigned = StatusProof(
-        event_id=event_id,
-        run_id=run_id,
-        status=effective_status,
-        producing_event_digest=compute_document_digest(payload),
-        chain_head=chain.prev_chain_digest,
-        timestamp=timestamp,
-    )
 
+    # Outside the section below: no dependency on the chain head, and creating
+    # the keypair should not hold the chain against other writers.
     private_pem, public_pem = load_or_create_bridge_identity(root)
+    from bernstein.core.security.audit_chain import record_status_proof
     from bernstein.core.skills.catalog.signature import sign_payload
 
-    signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
+    # One atomic section for the same reason as the trigger path: the head is
+    # signed into the proof, so it has to be the head the proof's own record
+    # ends up chained onto, and it is read from disk rather than from the
+    # store's per-instance cache.
+    with chain.chain_transaction():
+        unsigned = StatusProof(
+            event_id=event_id,
+            run_id=run_id,
+            status=effective_status,
+            producing_event_digest=compute_document_digest(payload),
+            chain_head=chain.resync_head(),
+            timestamp=timestamp,
+        )
 
-    from bernstein.core.security.audit_chain import record_status_proof
+        signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
 
-    event = record_status_proof(
-        chain=chain,
-        event_id=event_id,
-        run_id=run_id,
-        status=effective_status,
-        producing_event_digest=unsigned.producing_event_digest,
-        proof_digest=unsigned.binding_digest(),
-    )
+        event = record_status_proof(
+            chain=chain,
+            event_id=event_id,
+            run_id=run_id,
+            status=effective_status,
+            producing_event_digest=unsigned.producing_event_digest,
+            proof_digest=unsigned.binding_digest(),
+        )
 
     proof = StatusProof(
         event_id=unsigned.event_id,

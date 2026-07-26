@@ -23,8 +23,15 @@ import::
         --snapshots docs/_internal/observability/snapshots \\
         --out .ci/observability/regressions.json
 
-Exit code is ``1`` when at least one ``fail``-severity regression is found,
-``0`` otherwise (including when fewer than two snapshots exist).
+The gate distinguishes three outcomes and names the active one in its
+output and in the ``--out`` JSON payload:
+
+* ``fail`` (exit 1): at least one ``fail``-severity regression.
+* ``warn`` / ``clean`` (exit 0): a baseline was compared; only warnings,
+  or nothing at all, came out of the comparison.
+* ``no-baseline`` (exit 2): fewer than two readable snapshots exist, so
+  no day-over-day comparison ran. This is an unknown state, never
+  reported as "no regressions".
 """
 
 from __future__ import annotations
@@ -56,6 +63,11 @@ _WARN_ON_INCREASE: frozenset[tuple[str, str]] = frozenset(
 _ACTIVE_STATUSES: frozenset[str] = frozenset({"ok", "warn", "fail"})
 
 _SENTINEL_METRIC = "__backend__"
+
+#: Exit codes for the three gate outcomes.
+EXIT_OK = 0
+EXIT_REGRESSIONS = 1
+EXIT_NO_BASELINE = 2
 
 
 @dataclass(frozen=True)
@@ -211,6 +223,22 @@ def _load(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def dated_snapshots(snapshots_dir: Path) -> list[tuple[dt.date, Path]]:
+    """Return the ISO-date-named snapshot files, oldest first."""
+
+    if not snapshots_dir.exists():
+        return []
+    dated: list[tuple[dt.date, Path]] = []
+    for path in snapshots_dir.glob("*.json"):
+        try:
+            day = dt.date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        dated.append((day, path))
+    dated.sort(key=lambda item: item[0])
+    return dated
+
+
 def load_two_latest(
     snapshots_dir: Path,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -220,16 +248,7 @@ def load_two_latest(
     snapshots exist, the missing slot(s) are ``None``.
     """
 
-    if not snapshots_dir.exists():
-        return (None, None)
-    dated: list[tuple[dt.date, Path]] = []
-    for path in snapshots_dir.glob("*.json"):
-        try:
-            day = dt.date.fromisoformat(path.stem)
-        except ValueError:
-            continue
-        dated.append((day, path))
-    dated.sort(key=lambda item: item[0])
+    dated = dated_snapshots(snapshots_dir)
     if not dated:
         return (None, None)
     curr = _load(dated[-1][1])
@@ -237,18 +256,56 @@ def load_two_latest(
     return (prev, curr)
 
 
-def _one_line(regressions: list[Regression]) -> str:
+def resolve_outcome(baseline_present: bool, regressions: list[Regression]) -> str:
+    """Name the gate outcome: ``fail`` / ``no-baseline`` / ``warn`` / ``clean``.
+
+    A ``fail``-severity finding wins even without a baseline: absolute
+    threshold failures in the newest snapshot are real regardless of the
+    missing comparison. Otherwise a missing baseline is an unknown state
+    that must not be reported as clean.
+    """
+
+    if any(r.severity == "fail" for r in regressions):
+        return "fail"
+    if not baseline_present:
+        return "no-baseline"
+    return "warn" if regressions else "clean"
+
+
+def _one_line(outcome: str, regressions: list[Regression], snapshots_found: int) -> str:
+    if outcome == "no-baseline":
+        return (
+            f"observability gate: no baseline to compare against "
+            f"({snapshots_found} snapshot(s), need 2); comparison not performed"
+        )
     if not regressions:
-        return "observability gate: no regressions"
+        return "observability gate: no regressions (baseline compared)"
     fails = sum(1 for r in regressions if r.severity == "fail")
     warns = len(regressions) - fails
     return f"observability gate: {fails} fail, {warns} warn regression(s)"
 
 
-def _render_summary(regressions: list[Regression]) -> str:
+_NO_BASELINE_NOTE = "note: no baseline snapshot; day-over-day comparison not performed"
+
+
+def _render_summary(
+    outcome: str,
+    regressions: list[Regression],
+    snapshots_found: int,
+    *,
+    baseline_present: bool,
+) -> str:
     """Render a Markdown summary block for the CI step summary."""
 
-    lines = ["## Observability regression gate", "", _one_line(regressions), ""]
+    lines = ["## Observability regression gate", "", _one_line(outcome, regressions, snapshots_found), ""]
+    if outcome == "no-baseline":
+        lines += [
+            "The snapshot corpus holds fewer than two readable dated files, "
+            "so no comparison ran. This is an unknown state, not a clean result.",
+            "",
+        ]
+    elif not baseline_present:
+        lines += [_NO_BASELINE_NOTE + "; only absolute threshold failures are reported.", ""]
     if regressions:
         lines += ["| severity | backend | metric | prev | curr | reason |", "| --- | --- | --- | ---: | ---: | --- |"]
         for r in sorted(regressions, key=lambda x: (x.severity != "fail", x.backend, x.metric)):
@@ -282,23 +339,37 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    snapshots_found = len(dated_snapshots(args.snapshots))
     prev, curr = load_two_latest(args.snapshots)
     regressions = detect_regressions(prev, curr)
+    baseline_present = prev is not None and curr is not None
+    outcome = resolve_outcome(baseline_present, regressions)
 
-    payload = [asdict(r) for r in regressions]
+    payload = {
+        "outcome": outcome,
+        "baseline_present": baseline_present,
+        "snapshots_found": snapshots_found,
+        "regressions": [asdict(r) for r in regressions],
+    }
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if args.summary_out is not None:
         with args.summary_out.open("a", encoding="utf-8") as handle:
-            handle.write(_render_summary(regressions))
+            handle.write(_render_summary(outcome, regressions, snapshots_found, baseline_present=baseline_present))
 
-    print(_one_line(regressions))
+    print(_one_line(outcome, regressions, snapshots_found))
+    if not baseline_present and outcome != "no-baseline":
+        print(f"  {_NO_BASELINE_NOTE}")
     for r in regressions:
         metric = "" if r.metric == _SENTINEL_METRIC else f".{r.metric}"
         print(f"  [{r.severity}] {r.backend}{metric}: {r.reason}")
 
-    return 1 if any(r.severity == "fail" for r in regressions) else 0
+    if outcome == "fail":
+        return EXIT_REGRESSIONS
+    if outcome == "no-baseline":
+        return EXIT_NO_BASELINE
+    return EXIT_OK
 
 
 if __name__ == "__main__":

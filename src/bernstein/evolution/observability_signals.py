@@ -7,12 +7,15 @@ turns the two most recent snapshots into signals the self-improvement loop can
 consume:
 
 * :func:`detect_regressions` - security regressions worth an
-  ``ImprovementOpportunity``.
+  ``ImprovementOpportunity``, wrapped in an :class:`ObservabilityScan`
+  that says whether a baseline comparison actually ran.
 
 Everything is best-effort and guarded: a missing directory, fewer than two
-snapshots, or malformed JSON yields an empty / zero result rather than an
-error. The self-improvement loop otherwise sees only internal cost and task
-metrics; these functions feed it external repo-health signals.
+snapshots, or malformed JSON never raises. A scan without a baseline is
+reported as ``baseline_present=False`` so callers can tell "nothing was
+compared" apart from "compared and found nothing". The self-improvement
+loop otherwise sees only internal cost and task metrics; these functions
+feed it external repo-health signals.
 """
 
 from __future__ import annotations
@@ -46,6 +49,18 @@ class ObservabilityRegression:
     delta: float
     kind: str  # "security"
     severity: str  # "high" | "medium" | "low"
+
+
+@dataclass(frozen=True)
+class ObservabilityScan:
+    """Result of a snapshot scan, explicit about whether a comparison ran.
+
+    ``baseline_present=False`` with empty ``regressions`` means no
+    day-over-day comparison was performed; it is not a clean result.
+    """
+
+    baseline_present: bool
+    regressions: list[ObservabilityRegression]
 
 
 def _load(path: Path) -> dict[str, Any] | None:
@@ -97,17 +112,19 @@ def _metric_numeric(payload: dict[str, Any] | None, backend: str, metric: str) -
     return None
 
 
-def detect_regressions(snapshots_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> list[ObservabilityRegression]:
-    """Return security regressions from the two latest snapshots.
+def detect_regressions(snapshots_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> ObservabilityScan:
+    """Scan the two latest snapshots for security regressions.
 
     A regression requires a real day-over-day baseline: a metric present only
     in the newer snapshot (for example a backend that just gained credentials)
-    is a first observation, not a regression, and is skipped.
+    is a first observation, not a regression, and is skipped. When fewer than
+    two readable snapshots exist the scan reports ``baseline_present=False``
+    instead of pretending a comparison found nothing.
     """
 
     prev, curr = latest_two_snapshots(snapshots_dir)
     if prev is None or curr is None:
-        return []
+        return ObservabilityScan(baseline_present=False, regressions=[])
 
     regressions: list[ObservabilityRegression] = []
 
@@ -130,4 +147,4 @@ def detect_regressions(snapshots_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> list[Obse
                 )
             )
 
-    return regressions
+    return ObservabilityScan(baseline_present=True, regressions=regressions)

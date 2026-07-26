@@ -80,10 +80,12 @@ HTTP_SIG_DIRECTORY_PATH = "/.well-known/http-message-signatures-directory"
 
 _AGENT_NAME = "bernstein"
 _AGENT_DESCRIPTION = (
-    "Bernstein orchestrates short-lived CLI coding agents (Claude Code, "
-    "Codex, Gemini CLI, Aider, ...) against a file-based task store.  "
-    "Clients submit tasks, query status, and post cross-agent bulletins "
-    "via the documented endpoints below."
+    "Bernstein is a deterministic orchestrator for short-lived CLI coding "
+    "agents (Claude Code, Codex, Gemini CLI, Aider, ...) over a file-based "
+    "task store.  No model sits in its coordination loop, so parallel runs "
+    "in per-task git worktrees replay byte-identically.  Clients submit "
+    "tasks, query status, and post cross-agent bulletins via the documented "
+    "endpoints below."
 )
 _PROTOCOL_VERSION = "1.0"
 _DEFAULT_BASE_URL = "http://127.0.0.1:8052"

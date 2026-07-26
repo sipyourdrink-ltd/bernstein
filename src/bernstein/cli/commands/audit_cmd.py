@@ -11,7 +11,8 @@ Commands:
   bernstein audit show               Show recent audit log events.
   bernstein audit seal               Compute and store a Merkle root.
   bernstein audit seal --anchor-git  Also create a git tag.
-  bernstein audit verify             Verify HMAC chain and Merkle tree.
+  bernstein audit ack-tear           Acknowledge recorded tear evidence.
+  bernstein audit verify             Verify HMAC chain, Merkle tree, checkpoint.
   bernstein audit verify --hmac-only Verify HMAC chain only.
   bernstein audit verify --merkle-only  Verify Merkle tree only.
   bernstein audit verify --receipt   Verify one automation trigger receipt or
@@ -117,12 +118,23 @@ def show_cmd(limit: int) -> None:
 def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
     """Compute a Merkle root across all audit log files and store the seal.
 
-    By default the HMAC chain is verified first and a broken chain aborts
-    the seal, so re-sealing cannot launder a pre-existing tamper into a
-    fresh root. Pass --allow-broken-chain to seal a known-corrupted log on
-    purpose (forensic evidence capture during the recovery procedure).
+    Two prechecks gate the seal. The chain must verify (a broken chain or
+    unacknowledged tear evidence aborts), and the tree must be a consistent
+    extension of the last signed checkpoint - so a history that shrank since
+    the last seal cannot obtain a fresh accepted seal, even when the
+    remaining chain is HMAC-intact. On success the checkpoint advances.
+
+    Pass --allow-broken-chain to seal a known-corrupted log on purpose
+    (forensic evidence capture during the recovery procedure); a forensic
+    seal skips both prechecks and never advances the checkpoint.
     """
     from bernstein.core.merkle import ChainBrokenError, anchor_to_git, compute_seal, save_seal
+    from bernstein.core.persistence.chain_checkpoint import (
+        CheckpointConsistencyError,
+        CheckpointFileError,
+        record_checkpoint,
+    )
+    from bernstein.core.security.audit import OutstandingTearError, load_or_create_audit_key
 
     if not AUDIT_DIR.is_dir():
         console.print(f"[red]Audit directory not found:[/red] {AUDIT_DIR}")
@@ -130,7 +142,11 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
         raise SystemExit(1)
 
     try:
-        _tree, seal = compute_seal(AUDIT_DIR, verify_chain=not allow_broken_chain)
+        _tree, seal = compute_seal(
+            AUDIT_DIR,
+            verify_chain=not allow_broken_chain,
+            checkpoint_gate=not allow_broken_chain,
+        )
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from None
@@ -141,8 +157,34 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
             "To seal a known-corrupted log for forensics, re-run with --allow-broken-chain.[/dim]"
         )
         raise SystemExit(1) from None
+    except OutstandingTearError as exc:
+        console.print("[red]Refusing to seal: unacknowledged tear evidence is outstanding.[/red]")
+        for tear in exc.tears:
+            console.print(f"  [red]![/red] {tear.describe()}")
+            console.print(
+                f"  [dim]bernstein audit ack-tear --segment {tear.segment} "
+                f'--offset {tear.byte_offset} --reason "..."[/dim]'
+            )
+        raise SystemExit(1) from None
+    except CheckpointConsistencyError as exc:
+        _print_checkpoint_conflict(exc)
+        raise SystemExit(1) from None
+    except CheckpointFileError as exc:
+        console.print(f"[red]Refusing to seal: {exc}[/red]")
+        raise SystemExit(1) from None
 
     seal_path = save_seal(seal, MERKLE_DIR)
+
+    checkpoint = None
+    if not allow_broken_chain:
+        try:
+            checkpoint = record_checkpoint(AUDIT_DIR, seal, key=load_or_create_audit_key())
+        except CheckpointConsistencyError as exc:
+            _print_checkpoint_conflict(exc)
+            raise SystemExit(1) from None
+        except (CheckpointFileError, OSError) as exc:
+            console.print(f"[red]Seal written but the checkpoint could not be recorded: {exc}[/red]")
+            raise SystemExit(1) from None
 
     # Display result
     console.print()
@@ -161,10 +203,16 @@ def seal_cmd(anchor_git: bool, allow_broken_chain: bool) -> None:
     table.add_row("Leaves", str(seal["leaf_count"]))
     table.add_row("Algorithm", str(seal["algorithm"]))
     table.add_row("Scheme", str(seal.get("scheme", 1)))
+    table.add_row("Entries", str(seal.get("entry_count", "-")))
     table.add_row("Sealed at", str(seal["sealed_at_iso"]))
     table.add_row("Seal file", str(seal_path))
+    if checkpoint is not None:
+        extended = "extends previous" if checkpoint.get("extends_prev", True) else "acknowledged divergence"
+        table.add_row("Checkpoint", f"pinned at {checkpoint.get('entry_count', '-')} entries ({extended})")
     if allow_broken_chain:
-        console.print("[yellow]Sealed WITHOUT chain verification (--allow-broken-chain).[/yellow]")
+        console.print(
+            "[yellow]Sealed WITHOUT chain verification (--allow-broken-chain); checkpoint not advanced.[/yellow]"
+        )
     console.print(table)
 
     if anchor_git:
@@ -231,6 +279,14 @@ def verify_cmd(merkle_only: bool, hmac_only: bool, receipt_path: str | None, pay
 
     if not hmac_only:
         all_passed = _verify_merkle_tree() and all_passed
+
+    # Checkpoint extension is the pillar that makes a shrink sticky: a
+    # truncation that leaves the HMAC chain intact still conflicts with the
+    # last signed checkpoint, is reported here as tear evidence, and keeps
+    # failing until an operator acknowledges it. Like the evidence-bundle
+    # pillar, it runs regardless of --hmac-only / --merkle-only: a cron job
+    # invoking either narrow form must still go red when history shrinks.
+    all_passed = _verify_checkpoints() and all_passed
 
     # Evidence bundles are a third integrity pillar: a tampered evidence file
     # must fail verify exactly like a tampered chain entry (#2362). This runs
@@ -488,21 +544,257 @@ def _verify_grant_chains() -> bool:
 
 
 def _verify_hmac_chain() -> bool:
-    """Verify HMAC chain and print results. Returns True if valid."""
-    from bernstein.core.audit import AuditLog
+    """Verify HMAC chain and print results. Returns True if valid.
 
-    hmac_valid, hmac_errors = AuditLog(AUDIT_DIR).verify()
+    Tear evidence is a verdict distinct from chain corruption: crash-shaped
+    damage at the chain tail (or its sealed remains) is reported with the byte
+    offset of the last verifiable record and an acknowledgement command, and
+    it keeps failing verification - on every run, indefinitely - until an
+    operator acknowledges it. In particular, re-sealing does not clear it.
+    """
+    from bernstein.core.audit import AuditLog
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
 
     console.print()
-    if hmac_valid:
+
+    # Verification is read-only and must never mint key material: a freshly
+    # generated key cannot authenticate an existing chain, so it would report
+    # a fabricated tamper alarm and leave stray key bytes behind. An empty
+    # chain needs no key at all.
+    has_segments = any(AUDIT_DIR.glob("*.jsonl")) or any((AUDIT_DIR / "archive").glob("*.jsonl.gz"))
+    if not has_segments:
         console.print(
             Panel("[bold green]HMAC Chain Verification Passed[/bold green]", border_style="green", expand=False)
         )
         return True
-    console.print(Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False))
-    for err in hmac_errors:
-        console.print(f"  [red]![/red] {err}")
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError as exc:
+        console.print(Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False))
+        console.print(f"  [red]![/red] {exc}")
+        return False
+
+    report = AuditLog(AUDIT_DIR, key=key).verify_detailed()
+
+    if report.hard_errors:
+        console.print(Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False))
+        for err in report.hard_errors:
+            console.print(f"  [red]![/red] {err}")
+    else:
+        console.print(
+            Panel("[bold green]HMAC Chain Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+
+    outstanding = report.unacknowledged_tears
+    if outstanding:
+        console.print()
+        console.print(
+            Panel("[bold red]Chain Tear Evidence UNACKNOWLEDGED[/bold red]", border_style="red", expand=False)
+        )
+        for tear in outstanding:
+            console.print(f"  [red]![/red] {tear.describe()}")
+        console.print(
+            "  [dim]A crash (or a truncation) left a non-verifying tail. The evidence is durable\n"
+            "  and does not clear itself. Investigate, then acknowledge with:[/dim]\n"
+            f"  [dim]bernstein audit ack-tear --segment {outstanding[0].segment} "
+            f'--offset {outstanding[0].byte_offset} --reason "..."[/dim]'
+        )
+    acknowledged = [tear for tear in report.tears if tear.acknowledged]
+    if acknowledged:
+        console.print(f"  [dim]{len(acknowledged)} acknowledged tear(s) remain recorded in the chain.[/dim]")
+
+    return not report.hard_errors and not outstanding
+
+
+def _print_checkpoint_conflict(exc: object) -> None:
+    """Print a checkpoint-consistency conflict with its acknowledgement path."""
+    checkpoint = getattr(exc, "checkpoint", {}) or {}
+    conflicts = getattr(exc, "conflicts", []) or []
+    console.print(Panel("[bold red]Checkpoint Divergence (tear evidence)[/bold red]", border_style="red", expand=False))
+    console.print(
+        f"  [red]![/red] history conflicts with checkpoint root "
+        f"{str(checkpoint.get('root_hash', ''))[:16]}… "
+        f"(pinned {checkpoint.get('entry_count', '?')} entries)"
+    )
+    ackable = False
+    for conflict in conflicts:
+        console.print(f"  [red]![/red] {conflict.segment or conflict.kind}: {conflict.detail}")
+        if conflict.kind in type(conflict).ACKABLE_KINDS:
+            ackable = True
+    console.print(
+        "  [dim]The audit history shrank or was rewritten since the last accepted seal.\n"
+        "  A fresh seal will not be produced and this conflict will not clear itself.[/dim]"
+    )
+    if ackable:
+        first = next(c for c in conflicts if c.kind in type(c).ACKABLE_KINDS)
+        console.print(
+            f"  [dim]After investigating: bernstein audit ack-tear --segment {first.segment} "
+            f'--offset {first.offset} --reason "..."[/dim]'
+        )
+
+
+def _verify_checkpoints() -> bool:
+    """Verify the current tree against the last signed checkpoint.
+
+    Returns True when no checkpoint exists yet (nothing is pinned), when the
+    tree consistently extends the pin, or when a divergence has been
+    explicitly acknowledged; False otherwise. A divergence is reported as
+    tear evidence: the seal job refuses to advance over it and this check
+    keeps failing until an operator acknowledges.
+    """
+    from bernstein.core.persistence.chain_checkpoint import (
+        CheckpointConsistencyError,
+        CheckpointFileError,
+        authorize_divergence,
+        check_extension,
+        find_divergence_acks,
+        load_checkpoints,
+    )
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
+
+    console.print()
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError:
+        # Checkpoints are HMAC-signed with the audit key. A verifier without
+        # the key cannot check them - the same limit the HMAC pillar has - so
+        # this is a named degradation, not a failure verdict.
+        console.print(
+            "[yellow]Checkpoint verification skipped: no audit HMAC key available "
+            "(checkpoints are signed with it).[/yellow]"
+        )
+        return True
+
+    try:
+        state = load_checkpoints(AUDIT_DIR, key)
+    except CheckpointFileError as exc:
+        console.print(Panel("[bold red]Checkpoint Verification FAILED[/bold red]", border_style="red", expand=False))
+        for err in exc.errors:
+            console.print(f"  [red]![/red] {err}")
+        return False
+
+    last = state.last
+    if last is None:
+        console.print("[dim]No chain checkpoint recorded yet. Run 'bernstein audit seal' to pin the history.[/dim]")
+        return True
+
+    conflicts = check_extension(AUDIT_DIR, last)
+    if not conflicts:
+        console.print(
+            Panel("[bold green]Checkpoint Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Pinned root", str(last.get("root_hash", "")))
+        table.add_row("Pinned entries", str(last.get("entry_count", "-")))
+        if state.torn_tail:
+            table.add_row("Note", "checkpoints file ends in a torn append (previous pin in force)")
+        console.print(table)
+        return True
+
+    acks = find_divergence_acks(AUDIT_DIR, key, str(last.get("root_hash", "")))
+    if authorize_divergence(conflicts, acks) is not None:
+        console.print(
+            Panel("[bold yellow]Checkpoint Divergence acknowledged[/bold yellow]", border_style="yellow", expand=False)
+        )
+        console.print(
+            "  [dim]An operator acknowledged the divergence; the next 'bernstein audit seal' records a new pin.[/dim]"
+        )
+        return True
+
+    _print_checkpoint_conflict(CheckpointConsistencyError(last, conflicts))
     return False
+
+
+def _os_user() -> str:
+    """Best-effort OS user name, for acknowledgement records."""
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except (OSError, KeyError):  # pragma: no cover - no passwd entry
+        return "unknown"
+
+
+@audit_group.command("ack-tear")
+@click.option("--segment", required=True, help="Segment file name as verify printed it, e.g. 2026-07-25.jsonl.")
+@click.option("--offset", required=True, type=int, help="Byte offset as verify printed it.")
+@click.option("--reason", required=True, help="What was investigated and what was concluded.")
+@click.option("--actor", default=None, help="Who is acknowledging (defaults to the OS user).")
+def ack_tear_cmd(segment: str, offset: int, reason: str, actor: str | None) -> None:
+    """Acknowledge tear evidence so verification and sealing can proceed.
+
+    The acknowledgement is appended to the chain, not written beside it:
+    nothing about clearing the alert is editable after the fact, and the
+    reason travels with the record. Acknowledging repairs nothing - torn or
+    truncated records are still gone - it records that an operator looked.
+    When the tear is a checkpoint divergence (the history shrank relative to
+    the last accepted seal), the acknowledgement also names the conflicting
+    checkpoint root, which is what authorises the next seal to record a new
+    pin. The superseded checkpoint stays in the checkpoints file permanently.
+    """
+    from bernstein.core.persistence.chain_checkpoint import (
+        ACK_CHECKPOINT_ROOT_KEY,
+        CheckpointFileError,
+        check_extension,
+        load_checkpoints,
+    )
+    from bernstein.core.security.audit import (
+        EVENT_CHAIN_TEAR_ACKNOWLEDGED,
+        AuditLog,
+        load_or_create_audit_key,
+    )
+
+    if not AUDIT_DIR.is_dir():
+        raise click.ClickException(f"audit directory not found: {AUDIT_DIR}")
+
+    key = load_or_create_audit_key()
+    log = AuditLog(AUDIT_DIR, key=key)
+    with log.append_transaction():
+        # The target must be real: either recorded/live tear evidence at
+        # exactly this (segment, offset), or a checkpoint conflict for this
+        # segment. Refusing otherwise keeps acknowledgements bound to
+        # something verify actually printed.
+        details: dict[str, object] = {"segment": segment, "byte_offset": offset, "reason": reason}
+        report = log.verify_detailed()
+        matched = any(t.segment == segment and t.byte_offset == offset for t in report.tears)
+
+        # A tear at the tail and a checkpoint divergence commonly describe the
+        # same damage (a truncation is both, at the same offset). When the
+        # named (segment, offset) matches a checkpoint conflict exactly, the
+        # record carries the conflicting root, which is what authorises the
+        # next seal to record a new pin. The root is attached only on an
+        # exact match: an acknowledgement stays bound to precisely what
+        # verify printed, and a divergence whose conflict offset differs
+        # needs its own acknowledgement at that offset.
+        try:
+            state = load_checkpoints(AUDIT_DIR, key)
+        except CheckpointFileError as exc:
+            raise click.ClickException(str(exc)) from None
+        last = state.last
+        if last is not None:
+            for conflict in check_extension(AUDIT_DIR, last):
+                if conflict.segment != segment or conflict.offset != offset:
+                    continue
+                details[ACK_CHECKPOINT_ROOT_KEY] = str(last.get("root_hash", ""))
+                matched = True
+                break
+
+        if not matched:
+            raise click.ClickException(
+                f"no recorded tear or checkpoint conflict for segment {segment!r} at byte {offset}. "
+                "Use the segment and offset exactly as 'bernstein audit verify' printed them."
+            )
+
+        log.log(
+            EVENT_CHAIN_TEAR_ACKNOWLEDGED,
+            actor or _os_user(),
+            "audit_segment",
+            segment,
+            details,
+        )
+    console.print(f"[green]Acknowledged[/green] tear in {segment} at byte {offset}.")
 
 
 def _verify_merkle_tree() -> bool:

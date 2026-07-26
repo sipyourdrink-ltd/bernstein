@@ -11,7 +11,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Bernstein multi-agent orchestrator - agent throughput, cost rate, error rate, queue depth, success rate.",
+  "description": "Bernstein, deterministic orchestrator for CLI coding agents - agent throughput, cost rate, error rate, queue depth, success rate.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,

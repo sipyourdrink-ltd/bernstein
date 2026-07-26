@@ -1,6 +1,6 @@
 # Copilot Instructions
 
-Bernstein is a multi-agent orchestration system for CLI coding agents (Python 3.12+). The orchestrator is deterministic Python - NOT an LLM.
+Bernstein is a deterministic orchestrator for CLI coding agents (Python 3.12+), one git worktree per task. There is no model in the coordination loop - the orchestrator is deterministic Python, NOT an LLM - so the same plan replays to a byte-identical task graph.
 
 ## Architecture
 

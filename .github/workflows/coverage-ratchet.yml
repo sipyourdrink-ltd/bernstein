@@ -23,6 +23,20 @@ name: Coverage ratchet (total)
 # makes every baseline movement a reviewable, auditable artifact - the
 # ratchet click is a PR, not a silent rewrite.
 #
+# Why the PR is opened with BERNSTEIN_AUTOSYNC_TOKEN and not GITHUB_TOKEN:
+# a pull request created with GITHUB_TOKEN does not trigger workflows, so
+# neither required context (`CI gate`, `review-bot-ack`) ever reports on
+# it. The PR then reads MERGEABLE with a SUCCESS rollup while branch
+# protection holds it at BLOCKED forever, and the only way out is for an
+# operator to close it by hand. Closing it is what produced the apparent
+# "one new PR per fire": the branch below is stable and the action does
+# update the open PR in place, but a closed PR cannot be reopened by a
+# force-push, so the next fire has to open a fresh one. Creating the PR
+# under a token that triggers workflows lets it merge on its own and the
+# churn stops at the source. The fallback to GITHUB_TOKEN keeps forks and
+# secret-less environments working; there the PR still needs a manual
+# close-and-reopen to collect its checks.
+#
 # Trigger: push to main, then resolve the freshest CI run that actually
 # uploaded a coverage-report artifact. Under the rapid-merge cadence
 # ci.yml's cancel-in-progress concurrency cancels
@@ -123,14 +137,71 @@ jobs:
             --coverage-xml coverage.xml \
             --baseline .coverage-baseline.json
 
-      - name: Open PR with the bumped baseline
-        # Only when the ratchet actually clicked (coverage rose). The check
-        # step rewrote .coverage-baseline.json in place; open a PR with that
-        # change (main is protected, so a direct push would be rejected).
+      - name: Guard the open ratchet PR against a downward move
+        id: guard
         if: steps.ratchet.outputs.baseline_bumped == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MEASURED: ${{ steps.ratchet.outputs.measured }}
+          REPO: ${{ github.repository }}
+          RATCHET_BRANCH: coverage-ratchet/baseline
+        run: |
+          set -euo pipefail
+          # scripts/coverage_ratchet.py compares the measurement against the
+          # baseline committed on main, NOT against the one the open ratchet
+          # PR already carries. Those two diverge as soon as a ratchet PR is
+          # open: main still holds the old mark while the PR branch holds a
+          # higher one. A later push whose measurement lands between them
+          # still counts as a bump against main, and force-pushing it would
+          # rewrite the open PR with a LOWER high-water mark - the exact
+          # inverse of a monotonic ratchet, and invisible in review because
+          # the PR title changes with it.
+          #
+          # So: read the baseline on the ratchet branch and only proceed when
+          # the new measurement is strictly greater.
+          open_json=$(gh api "repos/${REPO}/contents/.coverage-baseline.json?ref=${RATCHET_BRANCH}" \
+              -H "Accept: application/vnd.github.raw" 2>/dev/null || true)
+          if [ -z "${open_json}" ]; then
+            echo "::notice::no ${RATCHET_BRANCH} branch yet; opening a fresh ratchet PR."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "${open_json}" > open-baseline.json
+          verdict=$(OPEN_BASELINE=open-baseline.json python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["OPEN_BASELINE"], encoding="utf-8") as fh:
+              open_pct = float(json.load(fh)["total_coverage_percent"])
+          measured = float(os.environ["MEASURED"])
+          print(f"{'true' if measured > open_pct else 'false'} {open_pct}")
+          PY
+          )
+          proceed=${verdict%% *}
+          open_pct=${verdict##* }
+          rm -f open-baseline.json
+          if [ "${proceed}" = "true" ]; then
+            echo "::notice::measured ${MEASURED}% > open ratchet PR ${open_pct}%; updating it."
+          else
+            echo "::notice::measured ${MEASURED}% is not above the open ratchet PR's ${open_pct}%; leaving it alone."
+          fi
+          echo "proceed=${proceed}" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR with the bumped baseline
+        # Only when the ratchet actually clicked (coverage rose) AND the new
+        # mark is above whatever the currently-open ratchet PR carries.
+        # The check step rewrote .coverage-baseline.json in place; open a PR
+        # with that change (main is protected, so a direct push would be
+        # rejected).
+        if: >-
+          steps.ratchet.outputs.baseline_bumped == 'true' &&
+          steps.guard.outputs.proceed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # A PR opened with GITHUB_TOKEN never triggers the workflows that
+          # publish `CI gate` and `review-bot-ack`, so it can never satisfy
+          # branch protection. See the header block.
+          token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           # Stable branch so create-pull-request UPDATES the single open
           # ratchet PR in place instead of opening a fresh PR every push.
           branch: coverage-ratchet/baseline

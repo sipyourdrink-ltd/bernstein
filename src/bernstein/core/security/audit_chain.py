@@ -25,12 +25,13 @@ is treated as the stable surface. Helpers MUST:
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
 from bernstein.core.security.audit import (
@@ -922,13 +923,50 @@ class AuditChainStore:
         # lock, keeping the on-disk chain order consistent with the
         # ``prev_chain_digest`` each event embedded.
         # (bot-ack: 3284182792 -- CodeRabbit major.)
-        self._append_lock = threading.Lock()
+        # Re-entrant so :meth:`chain_transaction` can hold it across a
+        # read-then-append section whose append re-takes it.
+        self._append_lock = threading.RLock()
 
     # -- public surface -----------------------------------------------------
 
+    @contextlib.contextmanager
+    def chain_transaction(self) -> Iterator[None]:
+        """Hold the chain against other writers for a read-then-append section.
+
+        A caller that embeds the chain head into a payload it signs cannot read
+        the head and append its record as two independent steps: the work in
+        between (an Ed25519 signature, say) is a window in which another thread
+        or another process appends, and the record then chains onto a different
+        predecessor than the one the signature names. Because the head is opaque
+        bytes inside the signature, no verifier can notice.
+
+        Inside this section :meth:`resync_head` reads the true head and the
+        append that follows lands on exactly it. The section is re-entrant for
+        the calling thread and exclusive against every other thread and process.
+        """
+        with self._append_lock, self._log.append_transaction():
+            yield
+
+    def resync_head(self) -> str:
+        """Return the chain head re-read from disk, not from this instance's cache.
+
+        Use inside :meth:`chain_transaction` when the head is about to be signed
+        into a payload; see :attr:`prev_chain_digest` for why the cached read is
+        not sufficient there.
+        """
+        return self._log.resync_head()
+
     @property
     def prev_chain_digest(self) -> str:
-        """Return the HMAC of the most recent event (the chain head)."""
+        """Return the HMAC of the most recent event (the chain head).
+
+        This is a per-instance cached value: it does not see another process's
+        appends, and it is read without holding the append lock. It is therefore
+        safe only for callers that just want to observe the head. A caller that
+        *signs* the head into a payload must instead open a
+        :meth:`chain_transaction` and read through :meth:`resync_head`, so the
+        value it signs is the one its own record ends up chained onto.
+        """
         # AuditLog tracks _prev_hmac internally; exposing it here gives
         # callers the value to embed inside the next event's payload
         # without breaking the chain (the embedded value is part of the
@@ -950,10 +988,18 @@ class AuditChainStore:
         two concurrent calls always see distinct ``prev_chain_digest``
         values and the underlying chain stays linear.
         (bot-ack: 3284182792 -- CodeRabbit major.)
+
+        The digest is re-read from disk inside the append section rather than
+        taken from this instance's cache. A cached read sees only our own
+        appends, while the append itself re-syncs, so another process's record
+        landing in between made the event's embedded ``prev_chain_digest``
+        disagree with the ``prev_hmac`` the record was actually written with --
+        an event asserting a chain position it does not occupy, in the one field
+        a reader consults to check that very linkage.
         """
-        with self._append_lock:
+        with self._append_lock, self._log.append_transaction():
             merged: dict[str, Any] = details.copy()
-            merged["prev_chain_digest"] = self.prev_chain_digest
+            merged["prev_chain_digest"] = self._log.resync_head()
             return self._log.log(
                 event_type=event_type,
                 actor=actor,

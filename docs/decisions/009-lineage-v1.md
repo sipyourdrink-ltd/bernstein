@@ -480,7 +480,7 @@ Threshold: ≥75% mutation kill rate on these critical modules.
 
 ### 12.6 Adversarial test (the "skeptical" part)
 
-`tests/security/test_lineage_adversarial.py`:
+`tests/unit/security/test_lineage_adversarial.py`:
 
 1. **Replay attack**: replay an old entry into a new run → must be rejected (entry has run-id binding via span_id).
 2. **Substitution attack**: swap two entries' signatures → verify fails.

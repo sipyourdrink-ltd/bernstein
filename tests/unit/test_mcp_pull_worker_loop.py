@@ -2,7 +2,7 @@
 
 An MCP-only agent runs the whole worker loop over MCP alone:
 ``bernstein_claim`` (signed claim receipt) -> N x ``bernstein_update``
-(signed journal entries) -> ``bernstein_approve`` (completion). Every step
+(signed journal entries) -> ``bernstein_complete`` (completion). Every step
 returns an object that verifies offline against the audit chain the
 ``audit verify`` path walks. This test drives the real MCP tool handlers with
 their HTTP client bridged to the in-process ASGI app, so it exercises the
@@ -37,7 +37,7 @@ def _unwrap(text: str) -> dict:
     return parsed
 
 
-async def test_full_claim_update_approve_loop_verifies_offline(tmp_path: Path) -> None:
+async def test_full_claim_update_complete_loop_verifies_offline(tmp_path: Path) -> None:
     from bernstein.mcp.server import create_mcp_server
 
     app = create_app(jsonl_path=tmp_path / "runtime" / "tasks.jsonl")
@@ -78,10 +78,20 @@ async def test_full_claim_update_approve_loop_verifies_offline(tmp_path: Path) -
             upd_wire = _unwrap(upd[0][0].text)  # type: ignore[index]
             assert upd_wire["entry_hash"].startswith("hmac-sha256:")
 
-        # 3. APPROVE -> existing completion.
-        appr = await mcp.call_tool("bernstein_approve", {"task_id": task_id, "note": "looks good"})
-        appr_wire = _unwrap(appr[0][0].text)  # type: ignore[index]
-        assert appr_wire["task_id"] == task_id
+        # 3. COMPLETE -> the worker reports what it produced. The approval
+        # verb is not a completion path: a task the worker is executing is
+        # not in an approval state, so bernstein_approve refuses it.
+        refused = await mcp.call_tool("bernstein_approve", {"task_id": task_id, "note": "looks good"})
+        refused_wire = _unwrap(refused[0][0].text)  # type: ignore[index]
+        assert refused_wire["error"] == "task_not_awaiting_approval"
+
+        done = await mcp.call_tool(
+            "bernstein_complete",
+            {"task_id": task_id, "result_summary": "shipped it"},
+        )
+        done_wire = _unwrap(done[0][0].text)  # type: ignore[index]
+        assert done_wire["task_id"] == task_id
+        assert done_wire["status"] == "done"
 
     # Every step verifies offline against the audit chain (AC5, AC6).
     receipt = ClaimReceipt.from_wire(claim_wire)

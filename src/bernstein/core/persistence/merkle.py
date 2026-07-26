@@ -254,6 +254,7 @@ def compute_seal(
     verify_chain: bool = True,
     key: bytes | None = None,
     key_path: Path | None = None,
+    checkpoint_gate: bool = True,
 ) -> tuple[MerkleTree, dict[str, object]]:
     """Compute a Merkle seal across all ``*.jsonl`` files in *audit_dir*.
 
@@ -261,15 +262,32 @@ def compute_seal(
     current scheme, so the seal is independent tamper coverage over the
     entire file rather than a restatement of its last stored ``hmac``.
 
-    Before computing the seal the underlying HMAC chain is verified (unless
-    *verify_chain* is ``False``). A broken chain raises
-    :class:`ChainBrokenError` rather than sealing over tampered content -
-    re-sealing must never silently launder a pre-existing tamper into a new
-    root. The chain is verified with the same key the log was written with
-    (*key*/*key_path*, or the canonical resolver when both are omitted).
+    Two prechecks gate the seal, and both exist because a fresh seal is
+    computed from whatever is on disk *now*:
+
+    1. **Checkpoint extension** (unless *checkpoint_gate* is ``False``): the
+       current tree must be a consistent extension of the last signed
+       checkpoint - entry count monotonically non-decreasing, every
+       checkpointed leaf reproducible as a byte prefix of the segment's
+       current content. A chain-intact truncation (a crash that cut the
+       newest segment back to a record boundary) passes an HMAC walk, so
+       without this gate the next scheduled seal would adopt the shrunk
+       history and verification would go green with no operator involved.
+       A conflict raises :class:`~bernstein.core.persistence.chain_checkpoint.CheckpointConsistencyError`
+       naming the checkpoint, permanently, until acknowledged via
+       ``bernstein audit ack-tear``.
+    2. **Chain verification** (unless *verify_chain* is ``False``): a broken
+       chain raises :class:`ChainBrokenError`, and unacknowledged tear
+       evidence raises :class:`~bernstein.core.security.audit.OutstandingTearError`,
+       rather than sealing over damage. The chain is verified with the same
+       key the log was written with (*key*/*key_path*, or the canonical
+       resolver when both are omitted).
 
     Returns ``(tree, seal_dict)`` where *seal_dict* is JSON-serializable
-    metadata ready to be written to disk.
+    metadata ready to be written to disk. The seal additionally carries
+    ``origin``, ``entry_count``, and per-leaf ``byte_len`` captured at hash
+    time, which :func:`~bernstein.core.persistence.chain_checkpoint.record_checkpoint`
+    pins after the seal is saved.
 
     Args:
         audit_dir: Directory holding the daily ``*.jsonl`` log files.
@@ -278,12 +296,21 @@ def compute_seal(
         key: Raw HMAC key used to verify the chain. Defaults to the
             canonical resolver (the same default the writer uses).
         key_path: Optional explicit key-file path for chain verification.
+        checkpoint_gate: When ``True`` (default) the seal refuses unless the
+            tree consistently extends the last checkpoint.
 
     Raises:
         FileNotFoundError: If the audit directory does not exist.
         ValueError: If no log files are found.
         ChainBrokenError: If *verify_chain* is set and the HMAC chain does
             not verify.
+        bernstein.core.security.audit.OutstandingTearError: If *verify_chain*
+            is set and unacknowledged tear evidence is outstanding.
+        bernstein.core.persistence.chain_checkpoint.CheckpointFileError: If
+            *checkpoint_gate* is set and the checkpoints file fails validation.
+        bernstein.core.persistence.chain_checkpoint.CheckpointConsistencyError:
+            If *checkpoint_gate* is set and the tree does not extend the last
+            checkpoint (and no chain-resident acknowledgement authorises it).
     """
     if not audit_dir.is_dir():
         msg = f"Audit directory does not exist: {audit_dir}"
@@ -294,40 +321,90 @@ def compute_seal(
         msg = f"No audit log files (*.jsonl) found in {audit_dir}"
         raise ValueError(msg)
 
-    if verify_chain:
-        chain_ok, chain_errors = _verify_hmac_chain(audit_dir, key=key, key_path=key_path)
-        if not chain_ok:
-            raise ChainBrokenError(chain_errors)
+    if checkpoint_gate:
+        _enforce_checkpoint_extension(audit_dir, _resolve_key(key, key_path))
 
-    leaf_hashes = [(f.name, file_leaf_hash(f)) for f in log_files]
+    if verify_chain:
+        _enforce_chain_verifies(audit_dir, key=key, key_path=key_path)
+
+    # Read each file exactly once and record its byte length alongside the
+    # leaf hash: the checkpoint pins (file, byte_len, hash) and the
+    # prefix-consistency gate later recomputes the leaf over the first
+    # ``byte_len`` bytes, so length and hash must describe the same bytes.
+    leaf_entries: list[tuple[str, int, str]] = []
+    for f in log_files:
+        content = f.read_bytes()
+        leaf_entries.append((f.name, len(content), _leaf_digest(content)))
+    leaf_hashes = [(name, digest) for name, _length, digest in leaf_entries]
     tree = build_merkle_tree(leaf_hashes)
 
+    from bernstein.core.persistence.chain_checkpoint import chain_snapshot, compute_origin, count_entries
+
+    snapshot = chain_snapshot(audit_dir)
     seal: dict[str, object] = {
         "root_hash": tree.root.hash,
         "algorithm": _HASH_ALGO,
         "scheme": SEAL_SCHEME_VERSION,
         "leaf_count": tree.leaf_count,
-        "leaves": [{"file": name, "hash": h} for name, h in leaf_hashes],
+        "leaves": [{"file": name, "hash": digest, "byte_len": length} for name, length, digest in leaf_entries],
+        "origin": compute_origin(audit_dir, segments=snapshot) or "",
+        "entry_count": count_entries(audit_dir, segments=snapshot),
         "sealed_at": time.time(),
         "sealed_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     return tree, seal
 
 
-def _verify_hmac_chain(
+def _resolve_key(key: bytes | None, key_path: Path | None) -> bytes:
+    """Resolve the audit key exactly as the writer does."""
+    if key is not None:
+        return key
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    return load_or_create_audit_key(key_path)
+
+
+def _enforce_checkpoint_extension(audit_dir: Path, key: bytes) -> None:
+    """Refuse unless the current tree consistently extends the last checkpoint."""
+    from bernstein.core.persistence.chain_checkpoint import (
+        CheckpointConsistencyError,
+        authorize_divergence,
+        check_extension,
+        find_divergence_acks,
+        load_checkpoints,
+    )
+
+    state = load_checkpoints(audit_dir, key)
+    prev = state.last
+    if prev is None:
+        return
+    conflicts = check_extension(audit_dir, prev)
+    if not conflicts:
+        return
+    acks = find_divergence_acks(audit_dir, key, str(prev.get("root_hash", "")))
+    if authorize_divergence(conflicts, acks) is None:
+        raise CheckpointConsistencyError(prev, conflicts)
+
+
+def _enforce_chain_verifies(
     audit_dir: Path,
     *,
     key: bytes | None = None,
     key_path: Path | None = None,
-) -> tuple[bool, list[str]]:
-    """Verify the HMAC chain under *audit_dir*; return ``(ok, errors)``.
+) -> None:
+    """Raise unless the chain verifies and carries no unacknowledged tears.
 
     Imported lazily so the Merkle module stays importable without the full
     audit subsystem (and to avoid a circular import at module load).
     """
-    from bernstein.core.security.audit import AuditLog
+    from bernstein.core.security.audit import AuditLog, OutstandingTearError
 
-    return AuditLog(audit_dir, key=key, key_path=key_path).verify()
+    report = AuditLog(audit_dir, key=key, key_path=key_path).verify_detailed()
+    if report.hard_errors:
+        raise ChainBrokenError(report.hard_errors)
+    outstanding = report.unacknowledged_tears
+    if outstanding:
+        raise OutstandingTearError(outstanding)
 
 
 def save_seal(seal: dict[str, object], merkle_dir: Path) -> Path:

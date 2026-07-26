@@ -121,19 +121,20 @@ def test_enable_payload_matches_tunables_table(
 
 
 def test_batch_size_is_pinned_to_one(enable_payload: dict[str, Any]) -> None:
-    """`max_entries_to_merge` > 1 breaks the release path and the diff planner.
+    """`max_entries_to_merge` > 1 breaks the release path.
 
     With N entries merged per push, the base branch advances N commits in one
     push event that reports only the last SHA. auto-release keys on that SHA,
-    so a version bump anywhere but last is skipped with no error. Separately,
-    `determine-changes` in ci.yml classifies a non-pull_request diff as
-    `HEAD~1...HEAD`, which on a multi-entry group sees only the last entry.
+    so a version bump anywhere but last is skipped with no error.
+
+    The diff planner is no longer part of this: `determine-changes` classifies
+    a merge group against `github.event.merge_group.base_sha`, so it already
+    sees every entry in a multi-entry group.
     """
     params = _rule(enable_payload, "merge_queue")
     assert params["max_entries_to_merge"] == 1, (
-        "max_entries_to_merge must stay 1 until determine-changes diffs against "
-        "github.event.merge_group.base_sha and the release gate stops keying on "
-        "the push head SHA. See merge-queue.md :: Auto-release through the queue."
+        "max_entries_to_merge must stay 1 until the release gate stops keying "
+        "on the push head SHA. See merge-queue.md :: Auto-release through the queue."
     )
 
 

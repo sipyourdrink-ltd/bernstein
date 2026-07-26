@@ -39,7 +39,10 @@ def _orchestrate_goal_template(
         1. Use `bernstein_run` to post the task with the suggested role and scope.
         2. Poll `bernstein_status` until the task settles, or call `bernstein_tasks`
            filtered by status to inspect progress.
-        3. If a subtask appears blocked, call `bernstein_approve` with the task id.
+        3. If a subtask appears blocked, report it to the user with the task id
+           and the status you observed. Do not approve or complete it: an
+           approval is only for a task waiting on an approval decision, and a
+           completion summary must describe work that actually ran.
 
         Stop when the goal is done or when a tool returns an error you cannot
         recover from. Report the final task ids and statuses to the user.

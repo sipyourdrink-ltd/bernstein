@@ -10,7 +10,7 @@ use Bernstein. Skip to [README.md](https://github.com/sipyourdrink-ltd/bernstein
 | Surface | Path | Why it is canonical |
 |---|---|---|
 | README "at a glance" | [README.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.md) | First paragraph downstream tools scrape into AGENTS.md overview. Numbered facts (adapter count, RFC list) with explicit source pointers. |
-| Regulatory anchors table | [README.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.md) | Maps each compliance claim to a single CLI command and an RFC or framework name. |
+| Regulatory anchors | [docs/reference/capabilities.md](reference/capabilities.md) | Maps each compliance claim to an RFC or framework name; relocated from the README front page. |
 | HMAC audit operator guide | [docs/security/audit-log.md](security/audit-log.md) | RFC 2104 anchor, key-rotation runbook, exact JSONL schema. |
 | Lethal-trifecta security model | [docs/security/lethal-trifecta.md](security/lethal-trifecta.md) | Capability-matrix table plus primary-source quote. |
 | Lineage export guide | [docs/compliance/lineage-export.md](compliance/lineage-export.md) | RFC 8037 Ed25519 anchor, schema version, walkthrough. |

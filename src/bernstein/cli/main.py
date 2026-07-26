@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- deterministic, verifiable orchestration for CLI coding agents.
+"""CLI entry point for Bernstein -- deterministic orchestrator for CLI coding agents.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -150,6 +150,7 @@ from bernstein.cli.workspace_cmd import config_group, workspace_group
 from bernstein.cli.worktrees_cmd import worktrees_group
 from bernstein.cli.wrap_up_cmd import wrap_up
 from bernstein.core.json_logging import setup_json_logging
+from bernstein.eval.bench.bench_cli import bench_group
 
 # ---------------------------------------------------------------------------
 # Re-export shared state so existing imports like
@@ -387,8 +388,9 @@ def print_rich_help() -> None:
     c.print()
     c.print(
         Panel(
-            "[bold]bernstein[/bold]  deterministic Python scheduler for CLI coding agents.\n"
-            "  40+ adapters, parallel git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
+            "[bold]bernstein[/bold]  deterministic orchestrator for CLI coding agents.\n"
+            "  No model in the coordination loop, so runs replay byte-identically.\n"
+            "  40+ adapters, per-task git worktrees, opt-in HMAC-SHA256 audit chain (RFC 2104).",
             border_style="blue",
             padding=(0, 2),
             expand=False,
@@ -737,7 +739,12 @@ def cli(
     refine_spec: str | None,
     unsafe_allow_unicode_tags: bool,
 ) -> None:
-    """Deterministic, verifiable orchestration for CLI coding agents."""
+    """Deterministic orchestrator for CLI coding agents.
+
+    Parallel runs in per-task git worktrees, byte-identical replay, signed
+    lineage that checks offline from the artefacts. Replaying the HMAC audit
+    chain additionally needs the install audit key.
+    """
     # The skill-pack invisible-Unicode sanitizer reads its opt-out from this
     # env var; set it as early as possible so any later import that triggers a
     # SkillLoader sees the operator's choice. Default is OFF (sanitize on).
@@ -954,6 +961,7 @@ cli.add_command(plan)
 cli.add_command(plan, "tasks")
 cli.add_command(spec_group)
 cli.add_command(backlog_group, "backlog")
+cli.add_command(bench_group)
 cli.add_command(logs_group, "logs")
 cli.add_command(decisions_group, "decisions")
 cli.add_command(consensus_group, "consensus")

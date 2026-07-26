@@ -7,7 +7,10 @@
 > Every task runs in its own git worktree behind lint/type/test gates. An
 > always-on lineage spine and replay journal record what happened; an opt-in
 > HMAC-chained audit log and signed receipts make results independently
-> verifiable, offline if needed. Air-gap install profile included. Apache-2.0.
+> checkable after the fact. `bernstein artifact verify` and `bernstein audit
+> verify --merkle-only` check from the on-disk artefacts alone; replaying the
+> HMAC chain needs the install's audit key. Air-gap install profile included.
+> Apache-2.0.
 
 This document is the long-form `llms-full.txt` variant per the llms.txt spec
 (<https://llmstxt.org/>). It expands on the short `llms.txt` with more context

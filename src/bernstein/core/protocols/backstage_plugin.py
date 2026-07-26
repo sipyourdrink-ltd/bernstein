@@ -134,7 +134,7 @@ class BackstageExporter:
             kind="Component",
             name="bernstein",
             namespace=config.namespace,
-            description="Multi-agent orchestration system for CLI coding agents",
+            description="Deterministic orchestrator for CLI coding agents, one git worktree per task",
             labels={
                 "app.bernstein.io/tier": "orchestrator",
             },
@@ -378,7 +378,7 @@ def _task_api_openapi_stub(server_url: str) -> str:
         "info": {
             "title": "Bernstein Task Server",
             "version": "1.0.0",
-            "description": "Multi-agent orchestration task server API",
+            "description": "Bernstein task server API - deterministic orchestration of CLI coding agents",
         },
         "servers": [{"url": server_url}],
         "paths": {

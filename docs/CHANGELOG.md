@@ -4,6 +4,28 @@ All notable project changes are tracked here (code + docs).
 
 ## [Unreleased]
 
+### Security
+
+- `bernstein_stop` now contains the `workdir` it is given. The MCP shutdown
+  signal path is resolved and proven to stay inside the named project root,
+  and the root must already hold a `.sdd` directory. **Behaviour change:** a
+  `workdir` that was previously accepted without containment is now refused,
+  including a directory that is not a Bernstein project, a path that traverses
+  out of one, and a root whose `.sdd` is a symlink pointing elsewhere. A
+  refused call creates no directory and writes no file, and returns the
+  structured tool error instead of a `status`. Both the stdio server and the
+  remote HTTP transport route through the same barrier. See
+  [`docs/mcp/server.md`](mcp/server.md). Refs #3080.
+- `bernstein_stop` screens the `workdir` for shape before it reads the
+  filesystem. Resolving a path stats one entry per component, and the remote
+  HTTP transport applies no tool schema, so the caller previously chose how
+  many components the barrier walked. **Behaviour change:** a `workdir` that
+  is not text, or is longer than a path may be on this filesystem, is now
+  refused on its byte count with the same structured tool error, before any
+  resolve. An input the filesystem cannot represent, such as an embedded NUL,
+  is reported as that error too rather than as a raw filesystem message.
+  Refs #3080.
+
 ### Added
 
 - A2A JSON-RPC server surface: one instance can be called into as a

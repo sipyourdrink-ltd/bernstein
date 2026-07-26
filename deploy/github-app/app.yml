@@ -8,7 +8,7 @@
 
 name: bernstein-orchestrator
 description: >-
-  Declarative agent orchestration for engineering teams.
+  Deterministic orchestrator for CLI coding agents.
   Converts GitHub issues, PRs, and pushes into Bernstein tasks.
 url: https://github.com/sipyourdrink-ltd/bernstein
 

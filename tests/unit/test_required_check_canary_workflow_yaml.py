@@ -23,12 +23,18 @@ Invariants exercised here:
    ``pull_request``/``schedule``/``workflow_dispatch`` triggers, with
    every action SHA-pinned and the verify step asserting the same set
    of invariants.
+5. Every context branch protection requires on a PR is also reportable on
+   a ``merge_group`` ref, and the diff planner that decides which jobs may
+   skip classifies a queued group from the group's own base SHA - so a
+   green ``CI gate`` on the queue means the whole combination was built.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -620,3 +626,228 @@ def test_review_bot_ack_has_merge_group_passthrough() -> None:
         "gated to `github.event_name == 'merge_group'` so the context reports "
         "on queued groups."
     )
+
+
+# ---------------------------------------------------------------------------
+# Diff-planner correctness on a merge group (#2966)
+#
+# `determine-changes` decides which downstream jobs may legitimately skip, and
+# the `ci-gate` roll-up trusts that decision. On a merge group the ref stacks
+# every queued entry on top of `main`, so classifying it with the push
+# heuristic (`HEAD~1...HEAD`) reads only the tail commit. A docs-only tail
+# would mark the whole group docs-only, skip every Python test job, and let
+# `CI gate` report green for a combination that was never built - the exact
+# untested-combination hole the queue is meant to close.
+#
+# These tests execute the shipped classifier, not a copy of it.
+# ---------------------------------------------------------------------------
+
+MERGE_GROUP_BASE_SHA_EXPR = "github.event.merge_group.base_sha"
+
+_SHELL_TOOLS_PRESENT = shutil.which("bash") is not None and shutil.which("git") is not None
+requires_shell_tools = pytest.mark.skipif(
+    not _SHELL_TOOLS_PRESENT,
+    reason="needs bash and git to execute the shipped classify script",
+)
+
+
+def _classify_script(ci_doc: dict[str, object]) -> str:
+    """Extract the `run:` body of the `classify` step in `determine-changes`."""
+    jobs = ci_doc["jobs"]
+    assert isinstance(jobs, dict)
+    planner = jobs["determine-changes"]
+    assert isinstance(planner, dict)
+    steps = planner["steps"]
+    assert isinstance(steps, list)
+    for step in steps:
+        if isinstance(step, dict) and step.get("id") == "classify":
+            run = step.get("run")
+            assert isinstance(run, str)
+            return run
+    raise AssertionError("ci.yml `determine-changes` no longer has a `classify` step")
+
+
+def _classify_env(ci_doc: dict[str, object]) -> dict[str, str]:
+    """The `env:` mapping of the `classify` step."""
+    jobs = ci_doc["jobs"]
+    assert isinstance(jobs, dict)
+    planner = jobs["determine-changes"]
+    assert isinstance(planner, dict)
+    steps = planner["steps"]
+    assert isinstance(steps, list)
+    for step in steps:
+        if isinstance(step, dict) and step.get("id") == "classify":
+            env = step.get("env")
+            assert isinstance(env, dict)
+            return {str(k): str(v) for k, v in env.items()}
+    raise AssertionError("ci.yml `determine-changes` no longer has a `classify` step")
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=ci@example.invalid",
+            "-c",
+            "user.name=ci",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _commit_file(repo: Path, relpath: str, body: str, message: str) -> str:
+    target = repo / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+    _git(repo, "add", relpath)
+    _git(repo, "commit", "-m", message)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return head.stdout.strip()
+
+
+def _synthetic_merge_group(tmp_path: Path) -> tuple[Path, str]:
+    """Build a two-entry merge group whose tail entry is docs-only.
+
+    Returns the repo path and the group's `base_sha`. Entry 1 touches a
+    macOS-sensitive Python module; entry 2 touches only docs. A planner that
+    reads the tail alone sees a docs-only group.
+    """
+    repo = tmp_path / "queue-ref"
+    repo.mkdir()
+    _git(repo, "init", "--initial-branch=main")
+    base_sha = _commit_file(repo, "README.md", "base\n", "base commit")
+    _commit_file(repo, "src/bernstein/core/tunnels/ssh.py", "x = 1\n", "entry 1: tunnels")
+    _commit_file(repo, "docs/notes.md", "notes\n", "entry 2: docs only")
+    return repo, base_sha
+
+
+def _run_classify(
+    repo: Path,
+    script: str,
+    *,
+    event: str,
+    extra_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Run the shipped classify script and return its `GITHUB_OUTPUT` pairs."""
+    output_path = repo / "github_output.txt"
+    output_path.write_text("", encoding="utf-8")
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(repo),
+        "EVENT_NAME": event,
+        "BASE_REF": "",
+        "MERGE_GROUP_BASE_SHA": "",
+        "PUSH_BEFORE_SHA": "",
+        "GITHUB_OUTPUT": str(output_path),
+    }
+    env.update(extra_env or {})
+    proc = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, (
+        f"the classify step must never fail the planner job.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+    parsed: dict[str, str] = {}
+    for line in output_path.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            parsed[key.strip()] = value.strip()
+    return parsed
+
+
+def test_classify_step_reads_the_merge_group_base_sha(ci_doc: dict[str, object]) -> None:
+    """The group's base SHA must reach the script through `env:`.
+
+    Interpolating it straight into the `run:` body would be a template
+    injection surface; reading it from the environment keeps the script
+    auditable and testable.
+    """
+    env = _classify_env(ci_doc)
+    assert any(MERGE_GROUP_BASE_SHA_EXPR in value for value in env.values()), (
+        "the `classify` step must expose `github.event.merge_group.base_sha` via "
+        f"`env:`; found {env!r}. Without it the planner classifies a queued group "
+        "from its tail commit only."
+    )
+
+
+@requires_shell_tools
+def test_planner_classifies_the_whole_merge_group(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """A group whose tail commit is docs-only is still not a docs-only group.
+
+    Entry 1 changes a macOS-sensitive Python module and entry 2 changes only
+    docs. The planner must report the union, otherwise every Python test job
+    skips and `CI gate` certifies an untested combination.
+    """
+    repo, base_sha = _synthetic_merge_group(tmp_path)
+    outputs = _run_classify(
+        repo,
+        _classify_script(ci_doc),
+        event="merge_group",
+        extra_env={"MERGE_GROUP_BASE_SHA": base_sha},
+    )
+    assert outputs["docs_only"] == "false", (
+        "planner reported docs_only=true for a merge group that changes "
+        f"src/**.py in an earlier entry; outputs={outputs!r}. Every job in "
+        "DOCS_ONLY_SKIPPABLE would skip and the gate would pass regardless."
+    )
+    assert outputs["python_changed"] == "true", (
+        f"planner missed the Python change in the group's first entry; outputs={outputs!r}"
+    )
+    assert outputs["macos_sensitive"] == "true", (
+        "planner missed the macOS-sensitive path in the group's first entry, so "
+        f"the queue would not run the macOS cells for it; outputs={outputs!r}"
+    )
+
+
+@requires_shell_tools
+def test_tail_only_classification_would_have_missed_it(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """Pin down why the base SHA is needed rather than `HEAD~1`.
+
+    The same tree classified from the tail commit alone reads as docs-only.
+    This is correct for a single-commit push to `main` and wrong for a merge
+    group; the test exists so a future simplification back to one shared
+    heuristic fails loudly instead of silently skipping the test suite.
+    """
+    repo, _ = _synthetic_merge_group(tmp_path)
+    outputs = _run_classify(repo, _classify_script(ci_doc), event="push")
+    assert outputs["docs_only"] == "true", (
+        "expected the tail-only (push) heuristic to see just the docs commit; "
+        f"outputs={outputs!r}. If this changed, revisit the merge_group branch."
+    )
+
+
+@requires_shell_tools
+def test_planner_fails_safe_when_the_group_base_is_missing(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """No base SHA must widen the classification, never narrow it.
+
+    A missing or unresolvable base is an infrastructure problem. Skipping test
+    jobs because of one would let the queue merge an unvalidated combination,
+    so the planner has to fall back to "everything changed".
+    """
+    repo, _ = _synthetic_merge_group(tmp_path)
+    outputs = _run_classify(repo, _classify_script(ci_doc), event="merge_group")
+    assert outputs["docs_only"] == "false", (
+        f"planner must not report docs_only on an unresolvable base; outputs={outputs!r}"
+    )
+    for key in ("python_changed", "tests_changed", "gha_workflows_changed", "macos_sensitive"):
+        assert outputs[key] == "true", (
+            f"fail-safe classification must set {key}=true so no job skips; outputs={outputs!r}"
+        )

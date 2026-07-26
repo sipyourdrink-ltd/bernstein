@@ -3,8 +3,9 @@
 Covers ``src/bernstein/evolution/observability_signals.py`` and the
 ``OpportunityDetector.identify_observability_opportunities`` wiring:
 
-- ``detect_regressions`` flags a security increase but stays quiet on a
-  flat / improved / single-snapshot corpus,
+- ``detect_regressions`` flags a security increase, stays quiet on a
+  flat / improved corpus, and reports a missing baseline as an explicit
+  ``baseline_present=False`` scan rather than a clean empty result,
 - ``OpportunityDetector`` only emits observability opportunities when a
   snapshots directory is configured (opt-in; default stays a no-op).
 """
@@ -42,20 +43,24 @@ def test_detect_regressions_flags_security_increase(tmp_path: Path) -> None:
     _write(tmp_path, "2026-07-10", _backend("code-scanning", "ok", [_metric("high_alerts", 0.0, "ok")]))
     _write(tmp_path, "2026-07-11", _backend("code-scanning", "warn", [_metric("high_alerts", 2.0, "warn")]))
 
-    regs = sig.detect_regressions(tmp_path)
+    scan = sig.detect_regressions(tmp_path)
 
-    assert len(regs) == 1
-    assert regs[0].kind == "security"
-    assert regs[0].backend == "code-scanning"
-    assert regs[0].severity == "high"
-    assert regs[0].delta == 2.0
+    assert scan.baseline_present is True
+    assert len(scan.regressions) == 1
+    assert scan.regressions[0].kind == "security"
+    assert scan.regressions[0].backend == "code-scanning"
+    assert scan.regressions[0].severity == "high"
+    assert scan.regressions[0].delta == 2.0
 
 
 def test_detect_regressions_quiet_on_flat_and_improved(tmp_path: Path) -> None:
     _write(tmp_path, "2026-07-10", _backend("code-scanning", "warn", [_metric("high_alerts", 3.0, "warn")]))
     _write(tmp_path, "2026-07-11", _backend("code-scanning", "ok", [_metric("high_alerts", 1.0, "warn")]))
 
-    assert sig.detect_regressions(tmp_path) == []
+    scan = sig.detect_regressions(tmp_path)
+
+    assert scan.baseline_present is True
+    assert scan.regressions == []
 
 
 def test_detect_regressions_skips_first_observation(tmp_path: Path) -> None:
@@ -63,13 +68,28 @@ def test_detect_regressions_skips_first_observation(tmp_path: Path) -> None:
     _write(tmp_path, "2026-07-10", _backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]))
     _write(tmp_path, "2026-07-11", _backend("code-scanning", "warn", [_metric("high_alerts", 3.0, "warn")]))
 
-    assert sig.detect_regressions(tmp_path) == []
+    scan = sig.detect_regressions(tmp_path)
+
+    assert scan.baseline_present is True
+    assert scan.regressions == []
 
 
-def test_detect_regressions_empty_without_two_snapshots(tmp_path: Path) -> None:
+def test_detect_regressions_reports_missing_baseline(tmp_path: Path) -> None:
+    """A single snapshot is an absent baseline, not a clean comparison."""
+
     _write(tmp_path, "2026-07-11", _backend("code-scanning", "fail", [_metric("critical_alerts", 5.0, "fail")]))
 
-    assert sig.detect_regressions(tmp_path) == []
+    scan = sig.detect_regressions(tmp_path)
+
+    assert scan.baseline_present is False
+    assert scan.regressions == []
+
+
+def test_detect_regressions_reports_empty_corpus(tmp_path: Path) -> None:
+    scan = sig.detect_regressions(tmp_path / "missing")
+
+    assert scan.baseline_present is False
+    assert scan.regressions == []
 
 
 # --------------------------------------------------------------------------

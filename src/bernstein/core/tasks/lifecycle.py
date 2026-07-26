@@ -223,11 +223,68 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.OPEN, TaskStatus.REFUSED): _always,
     (TaskStatus.CLAIMED, TaskStatus.REFUSED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.REFUSED): _always,
+    # Post-execution sign-off (#3081) - work that finished is held in
+    # PENDING_APPROVAL until a decision is recorded, and the decision that
+    # accepts it completes the task. Without this edge the state has no way
+    # out and the sign-off is rejected by ``transition_task``.
+    (TaskStatus.PENDING_APPROVAL, TaskStatus.DONE): _always,
 }
 
 # Precompute terminal statuses (no outbound transitions).
 TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
     s for s in TaskStatus if s not in {frm for (frm, _to), _guard in TASK_TRANSITIONS.items()}
+)
+
+
+# ---------------------------------------------------------------------------
+# Approval gates
+# ---------------------------------------------------------------------------
+
+# The task states where the next transition is a decision, mapped to what a
+# per-task approval verb does with that decision.
+#
+#   PENDING_APPROVAL  - post-execution. The work is finished and the result is
+#                       held until the decision is recorded, so accepting it
+#                       completes the task (-> DONE) with the approver's note
+#                       as the result summary. The decision belongs to the
+#                       task, so a per-task verb may grant it.
+#
+# Every other status is running, blocked on something other than a decision,
+# or terminal: there is no approval to grant, so an approval verb must refuse
+# rather than force the task forward.
+TASK_APPROVAL_TARGETS: dict[TaskStatus, TaskStatus] = {
+    TaskStatus.PENDING_APPROVAL: TaskStatus.DONE,
+}
+
+# The statuses an approval verb may act on, derived from the table above so
+# callers cannot drift from the state machine.
+APPROVABLE_TASK_STATUSES: frozenset[TaskStatus] = frozenset(TASK_APPROVAL_TARGETS)
+
+# States whose decision is NOT the task's to grant. PLANNED is the plan gate:
+# plan mode holds every task of a plan in PLANNED until an operator decides
+# the plan as a whole, and ``POST /plans/{plan_id}/approve`` records that
+# decision and promotes the tasks it covers. Promoting a single task instead
+# releases the work while the plan stays undecided, so the operator's later
+# rejection finds nothing left to cancel. A per-task approval verb refuses
+# these and points at the route that owns the decision.
+PLAN_GATED_TASK_STATUSES: frozenset[TaskStatus] = frozenset({TaskStatus.PLANNED})
+
+# The states a worker may report its own completion from. A worker holds a
+# task it claimed (CLAIMED / IN_PROGRESS), or one that reverted to OPEN under
+# reconciliation, which ``POST /tasks/{id}/complete`` re-claims before
+# applying the payload.
+#
+# The remaining states with a legal edge to DONE are deliberately excluded:
+# WAITING_FOR_SUBTASKS is completed by its last subtask finishing, ORPHANED
+# belongs to crash recovery because its worker is gone, and PENDING_APPROVAL
+# is a decision, not a report of work. Completing any of those on request
+# marks work done that the caller did not do.
+WORKER_COMPLETABLE_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.OPEN,
+        TaskStatus.CLAIMED,
+        TaskStatus.IN_PROGRESS,
+    }
 )
 
 

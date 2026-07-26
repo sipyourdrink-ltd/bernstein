@@ -1,9 +1,11 @@
 # bernstein-orchestrator
 
-Declarative agent orchestration for engineering teams.
+Deterministic orchestrator for CLI coding agents.
 
-Orchestrate multiple AI coding agents (Claude Code, Codex, Gemini CLI, Cursor)
-in parallel. One YAML config, deterministic scheduling, verified output.
+Orchestrate multiple CLI coding agents (Claude Code, Codex, Gemini CLI, Cursor)
+in parallel. One YAML config, no model in the coordination loop, so parallel
+runs in per-task git worktrees replay byte-identically. Signed lineage plus an
+opt-in HMAC audit chain.
 
 ## Install
 

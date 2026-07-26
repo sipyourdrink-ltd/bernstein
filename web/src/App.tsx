@@ -10,7 +10,7 @@ import {
   Route,
   Navigate,
   useLocation,
-} from 'react-router-dom';
+} from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AppShell from './components/AppShell';
 import { ThemeProvider } from './components/ThemeProvider';

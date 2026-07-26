@@ -30,7 +30,7 @@ additionally holds the CLI's server calls to the registered route table.
 | Plan mode (human approval) | Full | `--plan-only`, `--from-plan`, approval routes |
 | Headless mode | Full | `--headless` for CI/overnight |
 | Dry-run mode | Full | `--dry-run` previews the plan without spawning |
-| Typed activity boundary | Full | One hash-in/hash-out contract for coding, research, browser, and ops agents (`core/orchestration/activity.py`) |
+| [Typed activity boundary](../operations/activity-boundary.md) | Full | One hash-in/hash-out contract for coding, research, browser, data, and ops activities, verified by `bernstein activity verify <run>` (`core/orchestration/activity.py`). Browser is the one non-coding modality with a CLI dispatch verb (`bernstein activity browser run`), the rest are Python-API only; dispatching a non-coding modality from a seed, plan, or backlog file is not wired yet, see "Reachability today" |
 | Missions (multi-phase goals) | Full | Phases run under isolated budget envelopes; a halted phase seals a halt receipt and leaves runnable siblings active (`core/orchestration/missions.py`) |
 | Durable task suspend/resume | Full | A waiting task parks with an attested receipt that frees its seat, sandbox, and budget; resume reconstructs byte-identically (`core/tasks/suspension.py`) |
 | [Tournament runs](../operations/tournament-runs.md) | Full | Parallel attempts selected by deterministic evaluators; the winner carries a signed selection receipt (`core/tournament/`) |
@@ -153,7 +153,7 @@ additionally holds the CLI's server calls to the registered route table.
 | [MCP server mode](../mcp/server.md) | Full | `bernstein mcp`, MCP server in `mcp/server.py` |
 | [MCP tool registry](../integrations/mcp-server-injection.md) | Full | Auto-discovery and per-task config |
 | [MCP catalog client](mcp-catalog.md) | Full | `bernstein mcp catalog browse/search/install` installable server catalog (`core/protocols/mcp_catalog/`) |
-| [MCP input contracts](../mcp/input-validation.md) | Full | Schema-validated, deny-by-default MCP tool-call input firewall (`mcp/input_validation.py`) |
+| [MCP input contracts](../mcp/input-validation.md) | Full | Schema-validated, deny-by-default MCP tool-call input firewall (`mcp/input_validation.py`); the enforced schema is also the advertised `inputSchema` |
 | [Stateless MCP anchoring](../mcp/server.md) | Full | A stateless MCP client can poll a run and verify it offline; calls anchor as `mcp.stateless_call` journal entries (`core/protocols/mcp/stateless_core.py`) |
 | [Runtime capability cards (MCP)](../mcp/server.md) | Full | Per-server capability cards for the MCP server (`mcp/capability.py`) |
 | ACP native bridge | Full | `bernstein acp serve --stdio\|--http :PORT` IDE-native bridge (`core/protocols/acp/`); see `reference/acp-bridge.md` |

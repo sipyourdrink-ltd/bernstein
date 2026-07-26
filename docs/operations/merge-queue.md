@@ -15,6 +15,7 @@ shipped ruleset is currently out of sync with it; see
 | Queue state today | Ruleset exists, `enforcement: disabled` | ruleset `main-merge-queue` |
 | What it solves | Tests the A+B *combination* before merge | this doc |
 | Required checks on the queue | `CI gate` **and** `review-bot-ack` | `ci.yml`, `review-bot-ack.yml` |
+| What the group's CI is planned against | The group's `base_sha`, never `HEAD~1` | [What the group's CI actually tests](#what-the-groups-ci-actually-tests) |
 | Merge method | Squash | ruleset `merge_queue` rule |
 | Grouping | `ALLGREEN` (all entries in a group must pass) | ruleset |
 | Batch size | **1** — one PR lands per push to `main` | [Tunables](#tunables-source-of-truth) |
@@ -93,16 +94,46 @@ queue for every diff the filter excludes. It is locked by
 > leaving it out would leave two divergent definitions of "required" -
 > the PR gate enforcing two contexts and the queue enforcing one.
 
+### What the group's CI actually tests
+
+Reporting `CI gate` on the group is necessary but not sufficient: the gate
+has to be green for the *right* reason. `ci.yml` classifies the diff first
+(`determine-changes` emits `docs_only` / `macos_sensitive`) and the roll-up
+tolerates a skipped job only when that classification says the skip was
+intentional. So the classification is what decides how much of the suite a
+queued group really runs.
+
+On a `merge_group` event the ref is
+`gh-readonly-queue/main/pr-<n>-<base_sha>`, which stacks every entry in the
+group on top of `main`. The planner therefore diffs against
+`github.event.merge_group.base_sha` - the group's own base - and sees the
+whole combined change.
+
+The push heuristic (`HEAD~1...HEAD`) must not be reused here. It reads only
+the tail commit, so a group whose last commit happens to be docs-only would
+classify as `docs_only=true`, every job in the roll-up's `DOCS_ONLY_SKIPPABLE`
+set would skip, and `CI gate` would go green for a combination nothing built -
+reintroducing the untested-combination hole the queue exists to close. If the
+base SHA is absent or unresolvable the planner falls back to the over-broad
+"everything changed" classification, so an infrastructure problem costs runner
+minutes rather than coverage.
+
+Locked by `tests/unit/test_required_check_canary_workflow_yaml.py`, which runs
+the shipped classifier against a synthetic two-entry group whose tail entry is
+docs-only.
+
 ## macOS coverage under the queue
 
 The macOS matrix (`test-macos`, `adapter-integration-macos`) is **gated**:
 it runs on `push` to `main`, on macOS-sensitive diffs, and on the
-`macos-needed` label - not on a plain `merge_group` event. The `CI gate`
-roll-up tolerates that skip on `merge_group` (see `MACOS_SKIP_EVENTS` in
-`ci.yml`). Coverage is preserved because the **post-merge `push` to
-`main`** runs the full macOS suite un-gated, and `ci-macos-nightly.yml` is
-the daily safety net. The queue validates the integrated combination; the
-merged commit validates macOS.
+`macos-needed` label. On a queued group the label and `push` branches cannot
+fire, so `macos_sensitive` - computed from the group's combined diff - is what
+decides: a group touching a macOS-sensitive path runs the macOS cells in the
+queue, and a group that does not skips them. The `CI gate` roll-up tolerates
+exactly that skip (see `MACOS_SKIP_EVENTS` in `ci.yml`). Coverage is preserved
+because the **post-merge `push` to `main`** runs the full macOS suite
+un-gated, and `ci-macos-nightly.yml` is the daily safety net. The queue
+validates the integrated combination; the merged commit validates macOS.
 
 ## Auto-release through the queue
 
@@ -164,7 +195,7 @@ the queue is enabled.
 | `grouping_strategy` | `ALLGREEN` | `ALLGREEN` | A group merges only if every entry is green |
 | `max_entries_to_build` | 1 | **5** | Build concurrency: the number of `merge_group` webhooks in flight. At `1` the queue tests one entry at a time, so a burst of N PRs costs N sequential full CI cycles - strictly worse latency than today with no load benefit the per-SHA policy does not already provide. `5` caps concurrent queue CI at 5 instead of the unbounded N a burst produces today. |
 | `min_entries_to_merge` | 1 | **1** | Never wait for a second entry before merging |
-| `max_entries_to_merge` | 1 | **1** | One PR lands per push to `main`. Raising this breaks two things: (a) the auto-release gate keys on the push head SHA, so a bump that is not last in the batch is silently skipped; (b) `determine-changes` in `ci.yml` classifies a non-`pull_request` diff as `HEAD~1...HEAD`, which on a multi-entry group sees only the last entry - a docs-only last entry would let the whole batch skip the Python test jobs. Lifting this requires teaching `determine-changes` to diff against `github.event.merge_group.base_sha`; tracked as a follow-up. |
+| `max_entries_to_merge` | 1 | **1** | One PR lands per push to `main`. The auto-release gate keys on the push head SHA, so merging N entries in a single push silently skips a version bump that is not last in the batch - green CI, no tag, no publish, no error. Lifting this requires the release gate to stop keying on the push head SHA; tracked as a follow-up. The second former blocker is closed: `determine-changes` now classifies a queued group against `github.event.merge_group.base_sha`, so a multi-entry group is planned from its combined diff instead of its last commit. |
 | `min_entries_to_merge_wait_minutes` | 0 | **0** | With `max_entries_to_merge = 1` there is no batch to fill, so any wait is pure added latency |
 | `check_response_timeout_minutes` | 30 | **120** | Measured over the last 30 successful `CI` runs on `main`: p50 38 min, p90 58 min, max 105 min. At `30` **every** entry would be ejected as timed out; at `60` roughly one in ten would be. `120` clears the observed maximum and the `test` job's own 90-minute budget. |
 
@@ -308,6 +339,7 @@ checks. Any PRs sitting in the queue are released back to normal merge.
 |---------|--------------|--------|
 | Nothing merges; entries sit in queue | A required check does not run on `merge_group` | Compare the ruleset's `required_status_checks` against the coverage table above; every context there must have a `merge_group` emitter |
 | `CI gate` red on `merge_group` but green on the PR | A real combination failure, or a job skipped that the roll-up does not tolerate | Read the `merge_group` run log; if a legitimately-skipped job is flagged, extend the roll-up tolerance in `ci.yml` |
+| `CI gate` green on `merge_group` but the test jobs did not run | The planner classified the group too narrowly | Open the `Determine changes` job log and check the `git diagnostic` group: the merge_group base must be the group's `base_sha`, and the changed-file list must cover every entry in the group |
 | Entries ejected as timed out | `check_response_timeout_minutes` below the real CI wall time | Raise it; see the measured distribution in Tunables |
 | Merges land but no release is tagged | The post-merge `push` CI run did not reach the dispatcher | Confirm a `push` run on `main` exists at the merged SHA, then that `post-ci-dispatcher.yml` ran off it; check `pyproject.toml` is still absent from `ci.yml`'s `push.paths-ignore` |
 | Queue throughput too low | Build concurrency, not batching | Raise `max_entries_to_build`. Do **not** raise `max_entries_to_merge` - see Tunables |

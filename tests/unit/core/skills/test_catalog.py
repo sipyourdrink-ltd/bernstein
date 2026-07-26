@@ -748,7 +748,12 @@ def test_install_appends_chain_entry_with_required_fields(
 ) -> None:
     """The install path appends a `skill.catalog.install` event with the
     required (manifest_url, manifest_sha256, manifest_signer_pubkey,
-    install_id, prev_chain_digest) tuple."""
+    install_id, prior_install_chain_head) tuple.
+
+    The per-entry link is deliberately not called ``prev_chain_digest``:
+    that key means "this record's own chain predecessor", which the
+    previous install of the same entry is not (#3062).
+    """
     priv, pub = generate_signer_keypair()
 
     expected_digest = _compute_fixture_digest(tmp_path)
@@ -776,7 +781,8 @@ def test_install_appends_chain_entry_with_required_fields(
     assert details["manifest_sha256"]
     assert details["manifest_signer_pubkey"] == pub
     assert details["install_id"]
-    assert details["prev_chain_digest"]
+    assert details["prior_install_chain_head"]
+    assert "prev_chain_digest" not in details
 
 
 def test_replay_refuses_when_upstream_sha_drifted(

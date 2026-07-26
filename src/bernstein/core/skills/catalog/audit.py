@@ -178,7 +178,7 @@ class SkillCatalogAuditor:
         manifest_sha256: str,
         manifest_signer_pubkey: str | None,
         install_id: str,
-        prev_chain_digest: str,
+        prior_install_chain_head: str,
     ) -> AuditEvent | None:
         """Record a catalog install.
 
@@ -190,10 +190,14 @@ class SkillCatalogAuditor:
                 when the install was performed with ``--allow-unverified``.
             install_id: Per-install unique identifier; ties the audit
                 event to the lockfile receipt.
-            prev_chain_digest: The chain head visible to this install
-                before the new event was appended (a chain-head pin so a
-                future replay can detect that the chain advanced
-                identically).
+            prior_install_chain_head: HMAC of the previous install event for
+                this entry, so a replay can detect that the per-entry install
+                history advanced identically. Arbitrarily many unrelated
+                records sit between that event and this one, so it is *not*
+                this record's chain predecessor and must not be recorded under
+                the ``prev_chain_digest`` key, which
+                :func:`bernstein.core.security.audit._stated_predecessor`
+                reads as exactly that claim and the verifier now checks.
         """
         return self._emit(
             EVENT_INSTALL,
@@ -203,7 +207,7 @@ class SkillCatalogAuditor:
                 "manifest_sha256": manifest_sha256,
                 "manifest_signer_pubkey": manifest_signer_pubkey,
                 "install_id": install_id,
-                "prev_chain_digest": prev_chain_digest,
+                "prior_install_chain_head": prior_install_chain_head,
             },
         )
 
@@ -216,9 +220,13 @@ class SkillCatalogAuditor:
         manifest_url: str,
         manifest_sha256: str,
         install_id: str,
-        prev_chain_digest: str,
+        prior_install_chain_head: str,
     ) -> AuditEvent | None:
-        """Record a catalog upgrade."""
+        """Record a catalog upgrade.
+
+        ``prior_install_chain_head`` carries the same per-entry link as
+        :meth:`install`; see there for why it is not the chain predecessor.
+        """
         return self._emit(
             EVENT_UPGRADE,
             entry_id,
@@ -228,7 +236,7 @@ class SkillCatalogAuditor:
                 "manifest_url": manifest_url,
                 "manifest_sha256": manifest_sha256,
                 "install_id": install_id,
-                "prev_chain_digest": prev_chain_digest,
+                "prior_install_chain_head": prior_install_chain_head,
             },
         )
 

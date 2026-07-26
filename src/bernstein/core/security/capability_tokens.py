@@ -69,6 +69,7 @@ format. The projection refuses an unverified chain.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import posixpath
@@ -96,6 +97,8 @@ from bernstein.core.security.agent_card_signer import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from bernstein.core.security.audit import AuditEvent
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -536,10 +539,27 @@ def _anchor_and_head(
     audit_chain: AuditChainStore | None,
     default_head: str,
 ) -> str:
-    """Return the audit head to bind into a mint (the chain tip, or default)."""
+    """Return the audit head to bind into a mint (the chain tip, or default).
+
+    Read from disk, not from the store's cache, and only meaningful inside the
+    :meth:`AuditChainStore.chain_transaction` that also records the mint: the
+    head is signed into the token and ``_audit_head_matches`` compares it back
+    against the mint record, so a head that moves in between turns a valid token
+    into one that fails its own anchor check.
+    """
     if audit_chain is None:
         return default_head
-    return audit_chain.prev_chain_digest
+    return audit_chain.resync_head()
+
+
+@contextlib.contextmanager
+def _mint_section(audit_chain: AuditChainStore | None) -> Iterator[None]:
+    """Hold the chain across capture-head -> sign -> record, when one is wired."""
+    if audit_chain is None:
+        yield
+        return
+    with audit_chain.chain_transaction():
+        yield
 
 
 def _record_mint(audit_chain: AuditChainStore | None, token: CapabilityToken) -> AuditEvent | None:
@@ -580,19 +600,20 @@ def mint_root(
     audit event is emitted whose ``token_hash`` and ``prev_chain_digest``
     cross-reference this token.
     """
-    head = _anchor_and_head(audit_chain, audit_head)
-    token = sign_token(
-        token_id=token_id or uuid.uuid4().hex,
-        issuer_identity_id=issuer_identity_id,
-        issuer_private_key=issuer_private_key,
-        subject_identity_id=subject_identity_id,
-        subject_pubkey=subject_pubkey,
-        caveats=caveats,
-        parent_token_hash=GENESIS_PARENT,
-        audit_head=head,
-        granted_at=granted_at if granted_at is not None else time.time(),
-    )
-    _record_mint(audit_chain, token)
+    with _mint_section(audit_chain):
+        head = _anchor_and_head(audit_chain, audit_head)
+        token = sign_token(
+            token_id=token_id or uuid.uuid4().hex,
+            issuer_identity_id=issuer_identity_id,
+            issuer_private_key=issuer_private_key,
+            subject_identity_id=subject_identity_id,
+            subject_pubkey=subject_pubkey,
+            caveats=caveats,
+            parent_token_hash=GENESIS_PARENT,
+            audit_head=head,
+            granted_at=granted_at if granted_at is not None else time.time(),
+        )
+        _record_mint(audit_chain, token)
     return token
 
 
@@ -626,19 +647,20 @@ def attenuate(
             "child caveats widen the parent (permissions, task_ids, path_prefixes, "
             "expiry, max_uses, or remaining_depth); tokens may only narrow"
         )
-    head = _anchor_and_head(audit_chain, audit_head if audit_head is not None else parent.audit_head)
-    token = sign_token(
-        token_id=token_id or uuid.uuid4().hex,
-        issuer_identity_id=parent.subject_identity_id,
-        issuer_private_key=issuer_private_key,
-        subject_identity_id=subject_identity_id,
-        subject_pubkey=subject_pubkey,
-        caveats=caveats,
-        parent_token_hash=parent.token_hash(),
-        audit_head=head,
-        granted_at=granted_at if granted_at is not None else time.time(),
-    )
-    _record_mint(audit_chain, token)
+    with _mint_section(audit_chain):
+        head = _anchor_and_head(audit_chain, audit_head if audit_head is not None else parent.audit_head)
+        token = sign_token(
+            token_id=token_id or uuid.uuid4().hex,
+            issuer_identity_id=parent.subject_identity_id,
+            issuer_private_key=issuer_private_key,
+            subject_identity_id=subject_identity_id,
+            subject_pubkey=subject_pubkey,
+            caveats=caveats,
+            parent_token_hash=parent.token_hash(),
+            audit_head=head,
+            granted_at=granted_at if granted_at is not None else time.time(),
+        )
+        _record_mint(audit_chain, token)
     return token
 
 

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import StreamingResponse
 
+from bernstein.core.routes._sse import SSE_RESPONSES
 from bernstein.core.server import AgentKillResponse, AgentLogsResponse, read_log_tail
 
 if TYPE_CHECKING:
@@ -333,7 +334,7 @@ def agent_kill(request: Request, session_id: str) -> AgentKillResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/agents/{session_id}/stream")
+@router.get("/agents/{session_id}/stream", response_class=StreamingResponse, responses=SSE_RESPONSES)
 def agent_stream(request: Request, session_id: str) -> StreamingResponse:
     """Server-Sent Events stream of agent output for the given session.
 

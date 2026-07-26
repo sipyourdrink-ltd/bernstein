@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
+from bernstein.core.routes._sse import SSE_RESPONSES
 from bernstein.core.server import TaskResponse, TaskStore, read_log_tail, task_to_response
 
 if TYPE_CHECKING:
@@ -163,7 +164,11 @@ def _try_read_session_log(
     return read_fn(log_path, last_size)
 
 
-@router.get("/dashboard/tasks/{task_id}/logs/stream", responses={404: {"description": "Task not found"}})
+@router.get(
+    "/dashboard/tasks/{task_id}/logs/stream",
+    response_class=StreamingResponse,
+    responses={**SSE_RESPONSES, 404: {"description": "Task not found"}},
+)
 async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
     """Stream agent logs for a task via Server-Sent Events.
 

@@ -1,7 +1,7 @@
 {
   "name": "bernstein",
-  "displayName": "Bernstein - Multi-Agent Orchestration",
-  "description": "Orchestrate parallel AI coding agents from your editor. Monitor tasks, agents, costs in real-time.",
+  "displayName": "Bernstein - Orchestrator for CLI Coding Agents",
+  "description": "Deterministic orchestrator for CLI coding agents, driven from your editor. Monitor tasks, agents, costs in real-time.",
   "version": "0.2.1",
   "publisher": "alex-chernysh",
   "engines": { "vscode": "^1.100.0" },

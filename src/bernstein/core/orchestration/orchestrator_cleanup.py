@@ -183,12 +183,25 @@ def cleanup(orch: Any) -> None:
     if orch._audit_mode and orch._audit_log is not None:
         try:
             from bernstein.core.merkle import compute_seal, save_seal
+            from bernstein.core.persistence.chain_checkpoint import record_checkpoint
+            from bernstein.core.security.audit import load_or_create_audit_key
 
             audit_dir = orch._workdir / ".sdd" / "audit"
             merkle_dir = audit_dir / "merkle"
             _tree, seal = compute_seal(audit_dir)
             seal_path = save_seal(seal, merkle_dir)
             logger.info("Merkle audit seal written: %s (root=%s)", seal_path, seal["root_hash"])
+            try:
+                record_checkpoint(audit_dir, seal, key=load_or_create_audit_key())
+            except Exception:
+                # The seal above is written and valid; only the pin did not
+                # advance. Point the operator at the conflict, not the seal.
+                logger.warning(
+                    "Audit checkpoint not advanced on shutdown (seal written to %s); "
+                    "run 'bernstein audit verify' to see the conflict",
+                    seal_path,
+                    exc_info=True,
+                )
         except Exception:
             logger.warning("Merkle seal generation on shutdown failed", exc_info=True)
 

@@ -25,35 +25,77 @@ on:
   # below republishes the same context name on this event.
   merge_group: {}
 
-# This workflow emits a required status check. The concurrency group is
-# keyed per-PR AND per-head-sha, so cancel-in-progress only ever cancels a
-# duplicate evaluation of the SAME commit (e.g. a synchronize event that
-# lands while an equal-SHA pull_request_review run is still going). A new
-# push produces a new head SHA and therefore a new group, so an in-flight
-# run for the previous commit is never cancelled and still reports its own
-# conclusion. Cancelling the redundant same-SHA run reclaims a runner and
-# avoids two runs racing to publish the required check for one commit.
+# This workflow emits a required status check, and that changes what a
+# cancellation costs. A cancelled run leaves a check-run named
+# `review-bot-ack` with conclusion `cancelled` on the head SHA, and branch
+# protection folds EVERY check-run of a required name into its verdict, so
+# one cancelled instance holds the PR at BLOCKED even after a newer run of
+# the same workflow concludes success (#3154, #3042). The previous design
+# keyed the group on (PR, SHA) without the event, so a pull_request run and
+# a pull_request_review run for the same commit cancelled each other and
+# poisoned the context they were both trying to satisfy.
+#
+# Two changes close that:
+#   * the event name is part of the group, so runs born from different
+#     events never contend with each other, and
+#   * cancel-in-progress is off, so a same-event duplicate waits its turn
+#     and reports a real conclusion instead of leaving a cancelled tombstone.
+# The job is minutes-bounded and cheap; an occasional redundant run costs a
+# runner slot, a cancelled required check costs a manual one-at-a-time
+# rerun cycle per PR.
 concurrency:
-  group: review-bot-ack-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: true
+  group: review-bot-ack-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
 
 permissions: {}
 
 jobs:
-  # Pass-through emitter for the merge queue. The queue runs required checks
-  # on a merge_group ref with no pull_request payload, where the acknowledgement
-  # gate has nothing to evaluate. This job reports the identical `review-bot-ack`
-  # context name (job-level `name:` controls the reported context) so the queued
-  # group can satisfy branch protection instead of stalling. It runs only on
-  # merge_group; the real gate below runs on every other event.
+  # Queue-side emitter. The merge queue evaluates required checks on a
+  # synthetic merge_group ref with no pull_request payload, so the real gate
+  # below cannot run there. This job republishes the `review-bot-ack` context
+  # on the queued group, but it is NOT an unconditional pass (#3114): it
+  # resolves the pull request the queue entry was built from and requires
+  # that a `review-bot-ack` check-run already concluded `success` on that
+  # PR's own head commit. The queue context therefore attests "the PR-stage
+  # gate really ran and really passed", and it fails closed on anything it
+  # cannot resolve: an unparseable queue ref, a missing PR, or a head commit
+  # whose gate never reported success.
   merge-group-pass:
     name: review-bot-ack
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions: {}
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      pull-requests: read
     steps:
-      - run: echo "review-bot-ack is PR-scoped; on the queue's ephemeral branch it passes through"
+      - name: Require a passed PR-stage gate for the queued entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # refs/heads/gh-readonly-queue/<base>/pr-<number>-<base sha>
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          echo "queue ref: $QUEUE_REF"
+          pr="$(printf '%s' "$QUEUE_REF" | sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p')"
+          if [ -z "$pr" ]; then
+            echo "::error::cannot resolve a pull request number from the merge_group ref; refusing to satisfy a required context blind"
+            exit 1
+          fi
+          head_sha="$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha)"
+          if [ -z "$head_sha" ]; then
+            echo "::error::pull request #$pr resolved from the queue ref does not exist"
+            exit 1
+          fi
+          echo "pr #$pr head $head_sha"
+          ok="$(gh api "repos/$REPO/commits/$head_sha/check-runs?check_name=review-bot-ack&per_page=100" \
+                --jq '[.check_runs[] | select(.status == "completed" and .conclusion == "success")] | length')"
+          if [ "${ok:-0}" -lt 1 ]; then
+            echo "::error::no successful review-bot-ack check-run exists on pr #$pr head $head_sha; the PR-stage gate has not passed"
+            exit 1
+          fi
+          echo "PR-stage gate passed on the queued entry's head commit ($ok successful instance(s))"
 
   review-bot-ack:
     name: review-bot-ack

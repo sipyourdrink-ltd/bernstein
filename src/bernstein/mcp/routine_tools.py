@@ -27,10 +27,9 @@ from bernstein.core.planning.scenario_library import (
     load_scenario_library,
 )
 from bernstein.mcp.input_validation import (
-    ValidatedPayload,
     ValidationError,
-    to_jsonrpc_error,
-    validate_tool_call,
+    validate_or_error,
+    validation_error_response,
 )
 
 if TYPE_CHECKING:
@@ -240,16 +239,12 @@ def _error_response(exc: Exception) -> str:
 
 def _validation_error_response(err: ValidationError) -> str:
     """Render a validation failure as the JSON string FastMCP tools return."""
-    return json.dumps({"error": err.message, "jsonrpc_error": to_jsonrpc_error(err)})
+    return validation_error_response(err)
 
 
 def _validate_or_error(tool_name: str, params: dict[str, Any]) -> ValidationError | None:
     """Run schema validation, returning the failure or ``None``."""
-    cleaned = {k: v for k, v in params.items() if v is not None}
-    result = validate_tool_call(tool_name, cleaned)
-    if isinstance(result, ValidatedPayload):
-        return None
-    return result
+    return validate_or_error(tool_name, params)
 
 
 def register_scenario_tools(mcp: FastMCP[None], server_url: str) -> None:

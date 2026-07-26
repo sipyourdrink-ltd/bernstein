@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AGENT_CARD_V1_TYP",
+    "JCS_CANONICALIZATION_VERSION",
     "AgentCardSignature",
     "canonicalize_jcs",
     "ed25519_pem_from_jwk",
@@ -52,10 +53,62 @@ __all__ = [
 #: entry, and the v1.0 conformance suite rejects any other value.
 AGENT_CARD_V1_TYP: str = "agent-card+jws"
 
+#: Canonical-bytes revision produced by :func:`canonicalize_jcs`.
+#:
+#: ``1`` sorted object property names by Unicode code point. ``2`` sorts them
+#: as arrays of UTF-16 code units, which is what RFC 8785 §3.2.3 requires.
+#: The two revisions produce identical bytes for every property name below
+#: U+D800, so every payload whose names are ASCII or BMP is unaffected. They
+#: differ only for an object carrying a supplementary-plane name (above
+#: U+FFFF) alongside a name in U+E000..U+FFFF.
+#:
+#: See ``docs/security/jcs-canonicalization.md`` for what to re-sign.
+JCS_CANONICALIZATION_VERSION: int = 2
+
 
 # ---------------------------------------------------------------------------
 # JCS (RFC 8785) canonicalization
 # ---------------------------------------------------------------------------
+
+
+def _property_name(key: Any) -> str:
+    """Return the JSON property name ``json.dumps`` would emit for ``key``.
+
+    RFC 8785 sorts *property names*, which are always strings, so a non-string
+    mapping key is coerced first and then sorted as the string it becomes.
+    """
+    if isinstance(key, str):
+        return key
+    if isinstance(key, bool):
+        return "true" if key else "false"
+    if key is None:
+        return "null"
+    if isinstance(key, (int, float)):
+        return json.dumps(key, allow_nan=False)
+    raise TypeError(f"keys must be str, int, float, bool or None, not {type(key).__name__}")
+
+
+def _utf16_code_units(name: str) -> bytes:
+    """Return ``name`` as UTF-16BE bytes.
+
+    Comparing these bytes lexicographically is equivalent to comparing the
+    UTF-16 code-unit arrays RFC 8785 §3.2.3 specifies, because UTF-16BE is a
+    big-endian serialisation of exactly those code units. ``surrogatepass``
+    keeps the ordering total for a lone surrogate; such a value still fails
+    the UTF-8 encode below, exactly as it did before.
+    """
+    return name.encode("utf-16-be", errors="surrogatepass")
+
+
+def _sorted_by_code_units(value: Any) -> Any:
+    """Rebuild ``value`` with every object's names in RFC 8785 order."""
+    if isinstance(value, dict):
+        named = [(_property_name(key), item) for key, item in value.items()]
+        named.sort(key=lambda pair: _utf16_code_units(pair[0]))
+        return {name: _sorted_by_code_units(item) for name, item in named}
+    if isinstance(value, (list, tuple)):
+        return [_sorted_by_code_units(item) for item in value]
+    return value
 
 
 def canonicalize_jcs(value: Any) -> bytes:
@@ -65,7 +118,11 @@ def canonicalize_jcs(value: Any) -> bytes:
     AgentIdentityCard surface (strings, ints, floats from ``time.time()``,
     booleans, lists, and dicts):
 
-    - Object keys sorted lexicographically by code-point.
+    - Object property names sorted as arrays of UTF-16 code units
+      (RFC 8785 §3.2.3), not by code point. The two orders agree for every
+      name below U+D800 and disagree only when a supplementary-plane name
+      meets a name in U+E000..U+FFFF, because the supplementary name starts
+      with a high surrogate in U+D800..U+DBFF.
     - No insignificant whitespace; ``,`` and ``:`` separators only.
     - Strings emitted with UTF-8, escaping ``"``, ``\\``, and control chars.
     - Numbers via Python's ``json.dumps`` (which matches IEEE 754 double
@@ -78,8 +135,8 @@ def canonicalize_jcs(value: Any) -> bytes:
         The cards we sign do not produce those values today.
     """
     return json.dumps(
-        value,
-        sort_keys=True,
+        _sorted_by_code_units(value),
+        sort_keys=False,
         separators=(",", ":"),
         ensure_ascii=False,
         allow_nan=False,

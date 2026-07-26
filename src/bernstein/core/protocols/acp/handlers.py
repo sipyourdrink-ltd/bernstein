@@ -286,7 +286,7 @@ class ACPHandlerRegistry:
             "clientRequestedVersion": requested,
             "serverInfo": {
                 "name": "bernstein",
-                "description": "Multi-agent orchestration system for CLI coding agents",
+                "description": "Deterministic orchestrator for CLI coding agents, one git worktree per task",
             },
             "capabilities": {
                 "prompts": True,

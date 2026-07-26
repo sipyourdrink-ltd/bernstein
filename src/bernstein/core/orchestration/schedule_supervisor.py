@@ -27,6 +27,7 @@ Lifecycle: this class is callable from either a long-running
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -37,7 +38,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 from bernstein.core.orchestration.collision import (
@@ -265,13 +266,73 @@ class _AuditChainAdapter:
     Tests inject an in-memory chain; production wires the existing
     ``bernstein.core.security.audit.AuditLog`` whose HMAC chain primitives
     we re-use (do NOT invent a parallel chain - see AC and ticket Notes).
+
+    Capturing the head and appending the entry that sits on it is one
+    operation, not two. ``AuditLog.log`` re-syncs the tail from disk under a
+    cross-process lock before it writes, while :attr:`chain_tail` reads the
+    writer's per-instance cache, which never sees another process's appends. A
+    fire that captured the head first therefore recorded a chain position its
+    own record does not occupy, in both the entry payload and the receipt --
+    and because both were built from the same stale read they agreed with each
+    other, so nothing downstream noticed (#3131).
+
+    The writer is duck-typed, so the section is probed for rather than assumed.
+    :attr:`supports_transaction` says which of the two regimes is in force, so
+    a caller (and a test) can see the degradation instead of guessing.
     """
 
     def __init__(self, writer: Any) -> None:
         self._writer = writer
+        self._supports_transaction = callable(getattr(writer, "append_transaction", None)) and callable(
+            getattr(writer, "resync_head", None)
+        )
+        if not self._supports_transaction:
+            logger.debug(
+                "Audit writer %s has no append_transaction/resync_head; schedule fires will "
+                "capture the chain head from its cache, which is correct only while this "
+                "process is the sole writer.",
+                type(writer).__name__,
+            )
+
+    @property
+    def supports_transaction(self) -> bool:
+        """Whether the writer can hold the chain across capture-head and append."""
+        return self._supports_transaction
+
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Hold the chain across a capture-head-then-append section.
+
+        Degrades to a plain pass-through for a writer that cannot hold one
+        (an injected in-memory stub). That is sound for a stub, which is not
+        shared with any other process; the constructor records the degradation
+        and :attr:`supports_transaction` exposes it.
+        """
+        if not self._supports_transaction:
+            yield
+            return
+        with self._writer.append_transaction():
+            yield
+
+    def head(self) -> str:
+        """Return the chain head to record, read from disk where possible.
+
+        Must be called inside :meth:`transaction`: the value is only the head
+        the following append lands on for as long as the section is held.
+        """
+        if self._supports_transaction:
+            resynced = self._writer.resync_head()
+            if isinstance(resynced, str):
+                return resynced
+        return self.chain_tail
 
     @property
     def chain_tail(self) -> str:
+        """The writer's cached head. Safe to observe, not safe to record.
+
+        Recording this value is what #3131 was: use :meth:`head` inside
+        :meth:`transaction` for anything that ends up in an entry or a receipt.
+        """
         tail_attr = getattr(self._writer, "_prev_hmac", None)
         if isinstance(tail_attr, str):
             return tail_attr
@@ -714,8 +775,14 @@ class ScheduleSupervisor:
             # fire's own audit entry already records it).
             return self._fire(schedule, fire_epoch, counterfactual=False)
 
-        prev_chain = self._chain.chain_tail if self._chain is not None else ""
-        chain_digest = self._append_collision(schedule, fire_epoch, decision, running)
+        # Capture-head and append are one section: see _AuditChainAdapter.
+        if self._chain is None:
+            prev_chain = ""
+            chain_digest = self._append_collision(schedule, fire_epoch, decision, running)
+        else:
+            with self._chain.transaction():
+                prev_chain = self._chain.head()
+                chain_digest = self._append_collision(schedule, fire_epoch, decision, running)
         if decision.dispatch:
             # SUPERSEDE_WITH_HANDOFF: the stale run is checkpointed elsewhere;
             # the new fire proceeds, resuming from the recorded checkpoint.
@@ -843,8 +910,20 @@ class ScheduleSupervisor:
             params_hash=params_hash,
         )
 
-        prev_chain = self._chain.chain_tail if self._chain is not None else ""
-        chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
+        # Capture-head and append are one section: see _AuditChainAdapter. A
+        # counterfactual appends nothing, so there is no record for the head to
+        # be wrong about and no reason to hold the chain against every other
+        # writer while a fire that did not happen is recorded.
+        if self._chain is None:
+            prev_chain = ""
+            chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
+        elif counterfactual:
+            prev_chain = self._chain.chain_tail
+            chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
+        else:
+            with self._chain.transaction():
+                prev_chain = self._chain.head()
+                chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
 
         if not counterfactual:
             # #2302: seal the fire projection (with the schedule's recurrence

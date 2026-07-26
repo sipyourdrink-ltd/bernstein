@@ -127,6 +127,25 @@ class TestEveryUnclaimPathMintsAReceipt:
         assert events[0].details["released_by"] == _HOLDER
         assert events[0].details["to_status"] == "open"
 
+    async def test_release(self, tmp_path: Path) -> None:
+        """A worker handing an unstartable task back to the pool (#3018)."""
+        store, chain = _store(tmp_path)
+        _held(store)
+        await store.release("T-1", "workspace is not a usable checkout")
+        events = _releases(chain)
+        assert len(events) == 1
+        assert events[0].details["release_path"] == "release"
+        assert events[0].details["released_by"] == _HOLDER
+        assert events[0].details["from_status"] == "in_progress"
+        assert events[0].details["to_status"] == "open"
+
+    async def test_release_of_a_never_claimed_task_mints_nothing(self, tmp_path: Path) -> None:
+        """release() requires CLAIMED/IN_PROGRESS, but claim evidence still decides."""
+        store, chain = _store(tmp_path)
+        _held(store, status=TaskStatus.CLAIMED, claimed_at=None, claimed_by_session="")
+        await store.release("T-1", "spawn failed")
+        assert _releases(chain) == []
+
     async def test_cancel(self, tmp_path: Path) -> None:
         store, chain = _store(tmp_path)
         _held(store)
@@ -459,6 +478,7 @@ def _create_and_claim(client: TestClient, title: str = "release me") -> str:
         ("force-claim", None, "force_claim"),
         ("cancel", {"reason": "operator cancelled"}, "cancel_cascade"),
         ("fail", {"reason": "tests red"}, "fail"),
+        ("release", {"reason": "workspace unusable"}, "release"),
     ],
 )
 def test_plain_serve_node_mints_the_receipt(
@@ -493,6 +513,31 @@ def test_plain_serve_node_reconstructs_the_holder_over_http(plain_serve_app: Any
         assert reconstruct_claim_holders(chain.query()).get(task_id) == _HOLDER
 
         assert client.post(f"/tasks/{task_id}/force-claim").status_code == 200
+        assert task_id not in reconstruct_claim_holders(chain.query())
+
+        reclaimed = client.post(f"/tasks/{task_id}/claim", params={"claimed_by_session": "node-b"})
+        assert reclaimed.status_code == 200, reclaimed.text
+        assert reconstruct_claim_holders(chain.query()).get(task_id) == "node-b"
+
+    ok, errors = chain.verify()
+    assert ok, errors
+
+
+def test_plain_serve_node_does_not_strand_a_released_task(plain_serve_app: Any) -> None:
+    """A task handed back by /release is in the pool, so the fold must not hold it.
+
+    The window that matters is between the release and the next claim: a
+    verifier replaying the chain there must not name a node that has already
+    surrendered the task (#3018).
+    """
+    chain = plain_serve_app.state.audit_chain
+    with TestClient(plain_serve_app) as client:
+        task_id = _create_and_claim(client, "released back to the pool")
+        assert reconstruct_claim_holders(chain.query()).get(task_id) == _HOLDER
+
+        released = client.post(f"/tasks/{task_id}/release", json={"reason": "workspace unusable"})
+        assert released.status_code == 200, released.text
+        assert released.json()["status"] == "open"
         assert task_id not in reconstruct_claim_holders(chain.query())
 
         reclaimed = client.post(f"/tasks/{task_id}/claim", params={"claimed_by_session": "node-b"})
@@ -702,6 +747,7 @@ def test_the_release_guard_covers_the_known_surrender_paths() -> None:
     expected = {
         "force_claim": "force_claim",
         "reopen": "reopen",
+        "release": "release",
         "cancel": "cancel",
         "cancel_cascade": "cancel_cascade",
         "fail": "fail",

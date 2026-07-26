@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import logging
 import textwrap
 from importlib.metadata import version
 from unittest.mock import AsyncMock, patch
@@ -502,6 +503,9 @@ class TestToolExecution:
         from pathlib import Path
 
         workdir = Path(str(tmp_path))
+        # The workdir must already be a Bernstein project root: the tool stops
+        # a project that exists, it does not create a tree where it is pointed.
+        (workdir / ".sdd").mkdir()
         body = _jsonrpc_request(
             "tools/call",
             {"name": "bernstein_stop", "arguments": {"workdir": str(workdir)}},
@@ -513,6 +517,60 @@ class TestToolExecution:
         assert text["status"] == "shutdown signal sent"
         signal_file = workdir / ".sdd" / "runtime" / "signals" / "SHUTDOWN"
         assert signal_file.exists()
+
+    @pytest.mark.anyio
+    async def test_stop_tool_refuses_a_workdir_that_is_not_a_project(
+        self, transport: StreamableHTTPTransport, tmp_path: object
+    ) -> None:
+        """The remote surface serves the same tool and needs the same barrier.
+
+        Before the barrier this transport ran ``mkdir(parents=True)`` on any
+        path the caller named, so a stop against an unrelated directory both
+        created a ``.sdd`` tree there and dropped a SHUTDOWN file in it.
+        """
+        from pathlib import Path
+
+        victim = Path(str(tmp_path)) / "victim"
+        victim.mkdir()
+        body = _jsonrpc_request(
+            "tools/call",
+            {"name": "bernstein_stop", "arguments": {"workdir": str(victim)}},
+        )
+        status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)
+        assert status == 200
+        data = json.loads(resp_body)
+        text = _tool_result(data["result"]["content"][0]["text"])
+        assert "error" in text
+        assert "status" not in text
+        assert list(victim.iterdir()) == []
+
+    @pytest.mark.anyio
+    async def test_stop_tool_refuses_a_workdir_the_filesystem_cannot_address(
+        self, transport: StreamableHTTPTransport, tmp_path: object
+    ) -> None:
+        """This surface applies no tool schema, so the barrier owns the refusal.
+
+        The stdio server bounds ``workdir`` in its tool schema before the
+        handler runs. This transport serves the tool straight from the
+        JSON-RPC arguments, so a workdir that cannot name a directory reaches
+        the barrier unfiltered and must come back as the barrier's own
+        refusal rather than a raw filesystem message.
+        """
+        from pathlib import Path
+
+        unaddressable = f"{Path(str(tmp_path))}/pro\x00ject"
+        body = _jsonrpc_request(
+            "tools/call",
+            {"name": "bernstein_stop", "arguments": {"workdir": unaddressable}},
+        )
+        status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)
+        assert status == 200
+        data = json.loads(resp_body)
+        text = _tool_result(data["result"]["content"][0]["text"])
+        assert "error" in text
+        assert "status" not in text
+        assert "workdir" in text["error"]
+        assert "lstat" not in text["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +791,194 @@ class TestProxyAuthHeader:
 
         headers = mock_client.post.call_args.kwargs.get("headers") or {}
         assert headers.get("Authorization") == "Bearer post-tok"
+
+
+# ---------------------------------------------------------------------------
+# Approval gate over the remote transport (#3081)
+# ---------------------------------------------------------------------------
+
+
+class TestRemoteApprovalGate:
+    """The remote transport enforces the same approval gate as the local server.
+
+    The gate would be worthless if a caller could reach the unconditional
+    completion path simply by connecting over HTTP instead of stdio.
+    """
+
+    @pytest.mark.anyio
+    async def test_approve_refuses_a_task_that_is_not_awaiting_approval(
+        self,
+        transport: StreamableHTTPTransport,
+    ) -> None:
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-1", "status": "in_progress"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            raw = await transport._execute_tool("bernstein_approve", {"task_id": "t-1"})
+
+        payload = json.loads(raw)
+        assert payload["error"] == "task_not_awaiting_approval"
+        assert payload["current_status"] == "in_progress"
+        proxy_post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_approve_signs_off_a_pending_approval_task(
+        self,
+        transport: StreamableHTTPTransport,
+    ) -> None:
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-2", "status": "pending_approval"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            await transport._execute_tool("bernstein_approve", {"task_id": "t-2", "note": "LGTM"})
+
+        path, body = proxy_post.call_args[0]
+        assert path == "/tasks/t-2/complete"
+        assert body["result_summary"] == "LGTM"
+
+    @pytest.mark.anyio
+    async def test_approve_refuses_a_planned_task(self, transport: StreamableHTTPTransport) -> None:
+        """Plan mode's decision is not granted per task, on this transport either."""
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-3", "status": "planned"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            raw = await transport._execute_tool("bernstein_approve", {"task_id": "t-3"})
+
+        payload = json.loads(raw)
+        assert payload["error"] == "task_not_awaiting_approval"
+        assert payload["current_status"] == "planned"
+        assert "plan" in payload["hint"].lower()
+        proxy_post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_complete_posts_the_worker_summary(self, transport: StreamableHTTPTransport) -> None:
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-4", "status": "in_progress"}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            await transport._execute_tool(
+                "bernstein_complete",
+                {"task_id": "t-4", "result_summary": "shipped"},
+            )
+
+        path, body = proxy_post.call_args[0]
+        assert path == "/tasks/t-4/complete"
+        assert body["result_summary"] == "shipped"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("status", ["waiting_for_subtasks", "orphaned", "pending_approval", ""])
+    async def test_complete_refuses_a_task_the_caller_is_not_executing(
+        self,
+        transport: StreamableHTTPTransport,
+        status: str,
+    ) -> None:
+        """The completion gate is enforced here too, or HTTP is the way around it."""
+        proxy_get = AsyncMock(return_value=json.dumps({"id": "t-5", "status": status}))
+        proxy_post = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
+            patch.object(StreamableHTTPTransport, "_proxy_post", proxy_post),
+        ):
+            raw = await transport._execute_tool(
+                "bernstein_complete",
+                {"task_id": "t-5", "result_summary": "looked done to me"},
+            )
+
+        payload = json.loads(raw)
+        assert payload["error"] == "task_not_completable"
+        assert payload["current_status"] == (status or "unknown")
+        proxy_post.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_advertised_descriptions_match_the_enforced_sets(
+        self,
+        transport: StreamableHTTPTransport,
+    ) -> None:
+        """A model picks a tool from its description, so the two must not drift."""
+        from bernstein.core.tasks.lifecycle import (
+            APPROVABLE_TASK_STATUSES,
+            WORKER_COMPLETABLE_TASK_STATUSES,
+        )
+        from bernstein.mcp.remote_transport import _TOOL_DEFS
+
+        by_name = {d["name"]: d["description"] for d in _TOOL_DEFS}
+        for state in APPROVABLE_TASK_STATUSES:
+            assert state.value in by_name["bernstein_approve"]
+        for state in WORKER_COMPLETABLE_TASK_STATUSES:
+            assert state.value in by_name["bernstein_complete"]
+
+
+# ---------------------------------------------------------------------------
+# Interim validation-scope notice (issue #3088)
+# ---------------------------------------------------------------------------
+
+
+class TestValidationScopeNotice:
+    """The transport must announce that it validates arguments more weakly than stdio.
+
+    Remove this class in the same change that closes issue #3083. Until then
+    it keeps the notice from being dropped while the limitation remains.
+    """
+
+    def test_starting_the_transport_warns_about_weaker_validation(
+        self,
+        _clear_token_env: None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="bernstein.mcp.remote_transport")
+
+        create_asgi_app()
+
+        records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert records, "starting the streamable HTTP transport emitted no warning"
+        message = "\n".join(r.getMessage() for r in records)
+        assert "validation" in message.lower()
+        assert "stdio" in message.lower()
+        assert "#3083" in message
+
+    def test_notice_is_at_warning_level_not_debug(
+        self,
+        _clear_token_env: None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A debug-only notice is invisible in ordinary startup output."""
+        caplog.set_level(logging.INFO, logger="bernstein.mcp.remote_transport")
+
+        create_asgi_app()
+
+        assert any(r.levelno >= logging.WARNING and "#3083" in r.getMessage() for r in caplog.records), (
+            "the notice must be emitted at WARNING or above"
+        )
+
+    def test_notice_names_every_tool_the_transport_exposes(
+        self,
+        _clear_token_env: None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The list is derived from _TOOL_DEFS so it cannot drift from reality."""
+        caplog.set_level(logging.WARNING, logger="bernstein.mcp.remote_transport")
+
+        create_asgi_app()
+
+        message = "\n".join(r.getMessage() for r in caplog.records)
+        exposed = [str(defn["name"]) for defn in remote_transport_module._TOOL_DEFS]
+        assert str(len(exposed)) in message
+        for name in exposed:
+            assert name in message, f"notice does not name exposed tool {name}"
 
 
 # ---------------------------------------------------------------------------

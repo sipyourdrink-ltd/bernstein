@@ -29,6 +29,7 @@ from bernstein.core.eu_ai_act import (
 from bernstein.core.lifecycle import IllegalTransitionError
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
+from bernstein.core.routes._sse import SSE_RESPONSES
 from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
 from bernstein.core.security.sanitize import sanitize_log
 
@@ -2303,7 +2304,7 @@ def agent_kill(session_id: str, request: Request) -> AgentKillResponse:
     return AgentKillResponse(session_id=session_id, kill_requested=True)
 
 
-@router.get("/agents/{session_id}/stream")
+@router.get("/agents/{session_id}/stream", response_class=StreamingResponse, responses=SSE_RESPONSES)
 def agent_stream(session_id: str, request: Request) -> StreamingResponse:
     """SSE stream of live log output for a session."""
     runtime_dir = _get_runtime_dir(request)

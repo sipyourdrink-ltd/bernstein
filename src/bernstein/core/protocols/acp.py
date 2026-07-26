@@ -158,7 +158,7 @@ class ACPHandler:
             "agents": [
                 {
                     "name": "bernstein",
-                    "description": "Multi-agent orchestration system for CLI coding agents",
+                    "description": "Deterministic orchestrator for CLI coding agents, one git worktree per task",
                     "endpoint": f"{self._server_url}/acp/v0",
                 }
             ],
@@ -173,9 +173,11 @@ class ACPHandler:
         """
         return {
             "name": "bernstein",
-            "description": "Multi-agent orchestration system for CLI coding agents. "
+            "description": "Deterministic orchestrator for CLI coding agents. "
             "Bernstein hires a team of specialised sub-agents (backend, qa, security) "
-            "to implement goals end-to-end with cost governance and verification.",
+            "to implement goals end-to-end with cost governance and verification. "
+            "No model sits in its coordination loop, so parallel runs in per-task "
+            "git worktrees replay byte-identically.",
             "protocol_version": "v0",
             "capabilities": _BERNSTEIN_CAPABILITIES,
             "endpoint": f"{self._server_url}/acp/v0",

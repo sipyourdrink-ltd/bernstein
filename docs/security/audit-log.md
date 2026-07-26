@@ -248,6 +248,51 @@ filename, line number, expected vs stored prefix:
   ! 2026-05-07.jsonl:43: prev_hmac mismatch (expected a1b2c3d4… got deadbeef…)
 ```
 
+### The chain position a record states about itself
+
+many records carry `details.prev_chain_digest`: the chain head the
+writer says the record was appended onto. downstream consumers read
+it as the record's anchor - payment receipts lift it verbatim,
+capability tokens check their own `audit_head` against it, admission
+and SLA receipts link through it.
+
+the `hmac` covers the *bytes* of that statement, not its truth. a
+record naming a predecessor it never had signs exactly as cleanly as
+one naming its real predecessor, so a false anchor used to verify
+green. `verify` now compares the stated value against the record's own
+`prev_hmac` and reports the disagreement in its own words:
+
+```
+  ! 2026-05-07.jsonl:42: stated chain predecessor dededededededede… is not
+    the record's own predecessor 113651ab625159dc…
+```
+
+this is deliberately *not* worded as an HMAC or `prev_hmac` mismatch.
+those two mean the bytes or the linkage were altered. this one means
+the bytes are intact and authentic while the claim inside them is
+wrong - a writer defect, not tampering - and it is reported as a hard
+error, never as acknowledgeable tear evidence.
+
+an absent or empty `prev_chain_digest` is not a claim and is not
+checked: a writer with no chain wired records `""`, which asserts
+nothing.
+
+`bernstein audit seal` refuses over a false anchor for the same reason
+it refuses over a broken chain: a fresh root would pin a history that
+contains a claim known to be untrue. an operator who needs a seal over
+a chain carrying one - a record written by a pre-v3.11 writer, say -
+takes the documented forensic path, `--allow-broken-chain`, which
+never advances the checkpoint.
+
+one legacy exemption exists. before v3.11 the skill catalogue used the
+same key for "the previous install event *for this entry*", which is a
+real record but never the immediate predecessor. current catalogue
+writers record `prior_install_chain_head` instead, and
+`skill.catalog.install` / `skill.catalog.upgrade` records are exempt
+from the anchor check so segments written by older versions do not
+report a defect that has been removed. those records are still fully
+covered by the MAC and by `prev_hmac` linkage.
+
 run from cron (every 15 min is fine - the verify is read-only and a
 day's worth of events checks in milliseconds):
 
@@ -297,10 +342,29 @@ what the seal binds:
   itself, so a leaf set with its last entry duplicated cannot collide
   with the un-duplicated set.
 - **chain precheck** - `audit seal` verifies the HMAC chain before
-  writing the root. a broken chain raises and **no seal is written**,
-  so re-sealing can never launder a pre-existing tamper into a fresh
-  root. seal a known-broken chain on purpose only via the recovery
-  procedure below.
+  writing the root. a broken chain aborts and **no seal is written**;
+  unacknowledged tear evidence (see below) aborts the same way. this
+  precheck alone does *not* stop laundering: a crash that truncates
+  the newest segment back to a record boundary leaves the HMAC chain
+  intact, so a chain-only precheck waves the shrunk history through.
+  that is what the checkpoint gate exists for. seal a known-broken
+  chain on purpose only via the recovery procedure below.
+- **checkpoint gate** - after every successful seal, a signed
+  checkpoint pins the chain origin, the total record count, and each
+  sealed segment's exact byte length and content hash into
+  `.sdd/audit/checkpoints/checkpoints.jsonl` (append-only, HMAC-signed
+  with the audit key, each checkpoint chained to its predecessor's
+  hash; kept outside `merkle/`, which the seal job writes). the next
+  `audit seal` refuses unless the current tree is a **consistent
+  extension** of the last checkpoint: the record count has not
+  decreased, and every pinned segment reproduces its checkpointed
+  hash from its current byte prefix (live or archived). a shrunk or
+  rewritten history therefore cannot obtain a fresh accepted seal:
+  the seal job exits non-zero naming the checkpoint it conflicts
+  with, on every run, until an operator acknowledges the divergence
+  with `bernstein audit ack-tear`. the superseded checkpoint is never
+  deleted, so the evidence of what was pinned stays on disk
+  permanently.
 
 scheme versioning: seals carry a `"scheme"` field. verification
 dispatches on it, so seals written before this hardening (`scheme` 1,
@@ -308,6 +372,45 @@ or absent) still verify under their original rule. roots produced
 before and after the upgrade are **not comparable** - re-seal once
 after upgrading, and keep any pinned pre-upgrade root labelled as the
 old scheme. this is a scheme upgrade, not a tamper alert.
+
+### Tears: crash damage at the chain tail
+
+a crashed append is not a clean truncation. file size can be
+persisted before data blocks, so the tail of the newest segment can
+hold a partial line, bytes that parse as JSON but fail their MAC, or
+bytes that are not UTF-8 at all. every such non-verifying suffix is
+classified as a **tear**, with the byte offset of the last verifiable
+record, and reported by `bernstein audit verify` as a verdict
+distinct from chain corruption.
+
+what happens around a tear:
+
+- **the next append seals it.** the writer terminates the damaged
+  tail and appends a `chain.torn_record` event - terminator and
+  evidence in one write, fsynced - so the record being written can
+  never fuse onto the fragment, and the evidence that a record was
+  damaged is itself HMAC-chained. nothing is ever truncated or
+  repaired in place.
+- **the evidence is durable.** `audit verify` keeps failing and
+  `audit seal` keeps refusing, on every run, until an operator
+  acknowledges the tear. sealing does not clear it, appending does
+  not clear it, and re-sealing does not clear it.
+- **acknowledgement is explicit and chain-resident.**
+  `bernstein audit ack-tear --segment <file> --offset <byte> --reason
+  "..."` appends a `chain.tear_acknowledged` record naming the tear
+  exactly as verify printed it. after that, verification passes again
+  and the next seal records a new checkpoint - while the torn bytes,
+  the tear record, the acknowledgement, and the superseded checkpoint
+  all stay in the history permanently.
+
+scope, stated honestly: the checkpoint gate makes a shrink
+non-launderable by the seal job and detectable by every verify run
+against the local directory. an actor with write access to **both**
+the chain segments and the checkpoints file can still rewind both to
+a mutually consistent earlier state; catching that requires retention
+outside the writer's filesystem (an independent co-signer over
+checkpoints), which is planned as a follow-up and tracked on the
+issue tracker.
 
 ## Replaying a log
 
@@ -357,6 +460,15 @@ old files are gzipped into `.sdd/audit/archive/` by
 `AuditLog.archive(RetentionPolicy(retention_days=…))`, default 90
 days. invoke it from a maintenance job or a periodic timer.
 
+each segment's compress and unlink run inside one cross-process append
+section, taken per segment rather than once for the whole pass. the
+pair is not separable: the `.gz` holds the segment as the compress read
+it, so an append landing between the copy and the unlink would exist
+only in the file about to be removed. readers are tolerant of the same
+window from the other side - a segment that disappears between listing
+and reading is followed into its archived copy rather than raising, so
+a retention cycle can no longer take down an unrelated process.
+
 a minimal `logrotate` snippet, if you'd rather not run the python
 archiver:
 
@@ -380,6 +492,19 @@ that disagrees with itself across a process restart.
 archive format guarantees: gzipped JSONL, the chain still verifies
 end-to-end across uncompressed + archived files as long as you feed
 both into the verifier.
+
+### The checkpoints file is exempt from rotation
+
+`.sdd/audit/checkpoints/checkpoints.jsonl` is load-bearing for shrink
+detection and **must not** be rotated, truncated, or edited: each
+checkpoint is hash-linked to its predecessor back to the first line,
+so removing early lines fails validation and blocks sealing. growth
+is modest - one small line per accepted seal that actually changed
+the tree (re-sealing an unchanged log appends nothing), each line
+pinning only the currently live segments - and it stays several
+orders of magnitude smaller than the chain it pins. if you snapshot
+audit history off-host, copy this file whole alongside the segments;
+the pinned prefixes verify against archived segments too.
 
 ## Shipping to a SIEM
 
@@ -447,9 +572,11 @@ a real tamper looks like one or both of:
 
 rare benign causes:
 
-- partial write at process kill (last line truncated). expected to be
-  unparseable JSON, not an hmac mismatch - both verifier paths log
-  this distinctly.
+- partial write at process kill (last line truncated, or garbage bytes
+  in the tail). reported as **tear evidence** with the byte offset of
+  the last verifiable record - a verdict distinct from an hmac
+  mismatch - and cleared only by `bernstein audit ack-tear` after you
+  have looked (see the tears section above).
 - key rotation done without archive-then-clear (see above).
 - legacy log written under the old `.hmac_key` filename, now read
   with the XDG-default key.
@@ -468,9 +595,12 @@ rare benign causes:
    webhook / splunk export was healthy, the SIEM has the original
    payload and you can identify exactly which fields were edited.
 4. seal the broken chain so the corruption is itself tamper-evident
-   forensically. a plain `audit seal` refuses a broken chain (so
-   re-sealing can't hide a tamper) - pass `--allow-broken-chain` to
-   capture the corrupted state on purpose:
+   forensically. a plain `audit seal` refuses a broken chain, refuses
+   unacknowledged tear evidence, and refuses a history that conflicts
+   with the last checkpoint - pass `--allow-broken-chain` to capture
+   the corrupted state on purpose. a forensic seal skips those gates
+   and **does not advance the checkpoint**, so the pinned history
+   stays exactly what the last accepted seal pinned:
 
    ```bash
    bernstein audit seal --allow-broken-chain

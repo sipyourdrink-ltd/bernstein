@@ -1,6 +1,6 @@
 # Bernstein Helm Chart
 
-This Helm chart deploys a complete Bernstein multi-agent orchestration system on Kubernetes.
+This Helm chart deploys Bernstein, a deterministic orchestrator for CLI coding agents, on Kubernetes.
 
 ## Chart Contents
 

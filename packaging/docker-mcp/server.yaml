@@ -18,14 +18,17 @@ meta:
 about:
   title: Bernstein
   description: >-
-    Deterministic orchestration for CLI coding agents. Submit a goal and
-    Bernstein decomposes it into tasks, runs agents in parallel git worktrees,
+    Deterministic orchestrator for CLI coding agents. Submit a goal and
+    Bernstein decomposes it into tasks, runs agents in per-task git worktrees,
     and records every run in a replay journal with lineage tracking and an
-    opt-in HMAC-chained audit log that verifies offline. Adapters ship for
-    Claude Code, Codex, Gemini CLI, Aider, OpenHands and 40+ other agent CLIs.
-    The MCP server exposes 13 tools covering run control, task listing and
-    claiming, progress updates, artifact posting, approvals, subtasks, cost
-    reporting, and skill loading.
+    opt-in HMAC-chained audit log. No model sits in the coordination loop, so
+    the same plan replays byte-identically. The signature and Merkle legs of
+    verification check from the on-disk artefacts alone; replaying the HMAC
+    chain needs the install's audit key. Adapters ship for Claude Code, Codex,
+    Gemini CLI, Aider, OpenHands and 40+ other agent CLIs. The MCP server
+    exposes 14 tools covering run control, task listing and claiming, progress
+    updates, artifact posting, approvals, subtasks, cost reporting, and skill
+    loading.
   icon: https://avatars.githubusercontent.com/u/271707709?v=4
 source:
   project: https://github.com/sipyourdrink-ltd/bernstein

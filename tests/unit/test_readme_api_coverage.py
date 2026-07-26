@@ -100,6 +100,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Advanced / power-user
         "evolve",
         "benchmark",
+        # Reproducibility-gated evaluation harness (issue #2932)
+        "bench",
         "eval",
         "estimate",
         "checkpoint",

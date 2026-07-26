@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
+from bernstein.core.routes._sse import SSE_RESPONSES
 from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
 
 if TYPE_CHECKING:
@@ -100,7 +101,7 @@ def _extract_cost_event(message: str) -> str | None:
     return None
 
 
-@router.get("/events/cost")
+@router.get("/events/cost", response_class=StreamingResponse, responses=SSE_RESPONSES)
 def cost_events(request: Request) -> StreamingResponse:
     """SSE endpoint for real-time cost updates.
 

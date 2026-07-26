@@ -335,8 +335,10 @@ class OpportunityDetector:
         cost and task metrics.
 
         Guarded: returns an empty list when no snapshots directory is
-        configured, the directory is missing, or fewer than two snapshots
-        exist. Never raises.
+        configured or the scan cannot run. A missing baseline (absent
+        directory or fewer than two snapshots) is logged as an explicit
+        skipped comparison rather than treated as a clean scan. Never
+        raises.
         """
 
         if self._observability_snapshots_dir is None:
@@ -344,11 +346,17 @@ class OpportunityDetector:
         try:
             from bernstein.evolution.observability_signals import detect_regressions
 
-            regressions = detect_regressions(self._observability_snapshots_dir)
+            scan = detect_regressions(self._observability_snapshots_dir)
         except Exception:
             logger.exception("observability regression scan failed")
             return []
-        return [_regression_to_opportunity(reg) for reg in regressions]
+        if not scan.baseline_present:
+            logger.info(
+                "observability snapshots in %s lack a baseline; regression comparison not performed",
+                self._observability_snapshots_dir,
+            )
+            return []
+        return [_regression_to_opportunity(reg) for reg in scan.regressions]
 
     def _write_opportunities(self, opportunities: list[ImprovementOpportunity]) -> None:
         """Write detected opportunities to .sdd/analysis/opportunities.json."""

@@ -14,6 +14,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
+from bernstein.core.routes._sse import SSE_RESPONSES
+
 _SDD_NOT_CONFIGURED = "sdd_dir not configured"
 
 if TYPE_CHECKING:
@@ -49,7 +51,7 @@ def _get_workdir(request: Request) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/events")
+@router.get("/events", response_class=StreamingResponse, responses=SSE_RESPONSES)
 def sse_events(request: Request) -> StreamingResponse:
     """Server-Sent Events stream for real-time dashboard updates.
 

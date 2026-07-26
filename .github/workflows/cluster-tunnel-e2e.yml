@@ -19,10 +19,12 @@ name: cluster-tunnel-e2e
 
 on:
   schedule:
-    # 04:23 UTC nightly. Offset from cluster-e2e (03:17) and other
-    # nightly maintenance jobs so they don't compete for the same
-    # GitHub-hosted runner pool.
-    - cron: "23 4 * * *"
+    # 04:23 UTC weekly on Sunday. Offset from cluster-e2e (03:17) and
+    # other scheduled maintenance jobs so they don't compete for the
+    # same GitHub-hosted runner pool. Moved off a daily cadence because
+    # the lane has 0 failures in 81 runs and consumes the same 20-slot
+    # pool that PR verdicts queue behind.
+    - cron: "23 4 * * 0"
   workflow_dispatch:
     inputs:
       ref:

@@ -265,22 +265,81 @@ def test_shipped_compose_commands_resolve_to_real_cli_subcommands(compose_file: 
         )
 
 
+# The bernstein-CLI services each shipped compose file is expected to expose.
+# Every entry of `SHIPPED_COMPOSE_FILES` must appear here (asserted below), so
+# the anti-vacuity guard cannot cover a strict subset of what the parametrized
+# tests iterate. An empty set records a file whose services all override
+# `entrypoint:` to something other than the `bernstein` binary (uvicorn, a
+# Python module, a shell wrapper), so the CLI-tree walk has nothing to check
+# there. Those files are still listed, so a `_resolved_argv` regression that
+# started claiming a uvicorn service execs the bernstein CLI is caught too.
+_EXPECTED_SERVICES_BY_FILE: dict[Path, set[str]] = {
+    REPO_ROOT / "docker-compose.yaml": set(),
+    REPO_ROOT / "docker" / "demo" / "docker-compose.yaml": set(),
+    REPO_ROOT / "docker" / "sandbox" / "docker-compose.yaml": {"bernstein-server"},
+    REPO_ROOT / "docker" / "sandbox" / "docker-compose.researcher.yaml": {"bernstein-server"},
+    REPO_ROOT / "examples" / "cluster" / "tailscale" / "docker-compose.yml": {"bernstein-central"},
+    REPO_ROOT / "examples" / "cluster" / "cloudflared" / "docker-compose.yml": {"bernstein-central"},
+}
+
+
+def test_anti_vacuity_guard_covers_every_discovered_compose_file() -> None:
+    """The guard's expectations cover exactly the files the main test iterates.
+
+    The guard below exists to stop a broken `_resolved_argv` /
+    `_builds_bernstein_image` from making the main regression test pass
+    vacuously, but it enumerated 4 of the 6 discovered compose files. A helper
+    regression affecting only the two omitted files would have gone unseen, so
+    the guard itself was partly vacuous. Pinning the two lists as equal means
+    a compose file added later cannot slip past the guard either.
+    """
+    assert set(_EXPECTED_SERVICES_BY_FILE) == set(SHIPPED_COMPOSE_FILES), (
+        "the anti-vacuity guard's expectations and the discovered compose files "
+        "have diverged; add the new file to _EXPECTED_SERVICES_BY_FILE (mapping "
+        "to an empty set if every service overrides entrypoint: away from the "
+        "bernstein binary)"
+    )
+
+
 def test_guard_actually_inspects_the_known_bernstein_services() -> None:
     """Sanity-check the extraction logic itself finds the services this
     guard exists to protect, so a bug in `_resolved_argv`/
     `_builds_bernstein_image` (e.g. a broken path) can't make every check
     above pass vacuously by finding zero services anywhere.
     """
-    expected_services_by_file = {
-        REPO_ROOT / "docker" / "sandbox" / "docker-compose.yaml": {"bernstein-server"},
-        REPO_ROOT / "docker" / "sandbox" / "docker-compose.researcher.yaml": {"bernstein-server"},
-        REPO_ROOT / "examples" / "cluster" / "tailscale" / "docker-compose.yml": {"bernstein-central"},
-        REPO_ROOT / "examples" / "cluster" / "cloudflared" / "docker-compose.yml": {"bernstein-central"},
-    }
-    for compose_file, expected_services in expected_services_by_file.items():
+    for compose_file, expected_services in _EXPECTED_SERVICES_BY_FILE.items():
         found_services = {name for name, _ in _bernstein_invocations(compose_file)}
         assert found_services == expected_services, (
             f"{compose_file.relative_to(REPO_ROOT)}: expected to find bernstein-CLI "
             f"services {sorted(expected_services)}, found {sorted(found_services)} - "
             "the extraction logic in this test may have regressed"
         )
+
+
+def test_files_expected_to_yield_nothing_still_declare_services() -> None:
+    """An empty expectation means "excluded", never "nothing was parsed".
+
+    Without this, a `_load_yaml` regression that returned an empty mapping
+    would satisfy the empty expectations above and look like a pass.
+    """
+    for compose_file, expected_services in _EXPECTED_SERVICES_BY_FILE.items():
+        if expected_services:
+            continue
+        services = _load_yaml(compose_file).get("services", {})
+        assert isinstance(services, dict) and services, (
+            f"{compose_file.relative_to(REPO_ROOT)}: expected the file to declare "
+            "services that the extraction deliberately excludes, found none"
+        )
+
+
+def test_guard_asserts_a_real_service_set_for_the_cli_driven_files() -> None:
+    """The expectation map is not all-empty.
+
+    An all-empty map would satisfy every check above while asserting nothing
+    about the CLI-tree walk the main regression test performs.
+    """
+    non_empty = [f for f, services in _EXPECTED_SERVICES_BY_FILE.items() if services]
+    assert len(non_empty) >= 4, (
+        "the anti-vacuity guard must assert a real service set for every shipped "
+        f"compose file whose services exec the bernstein CLI, found only {len(non_empty)}"
+    )

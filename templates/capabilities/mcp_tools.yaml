@@ -17,6 +17,8 @@ tools:
     capabilities: []
   - name: mcp.bernstein_approve
     capabilities: []
+  - name: mcp.bernstein_complete
+    capabilities: []
   - name: mcp.bernstein_create_subtask
     capabilities: [private_data]
   - name: mcp.load_skill

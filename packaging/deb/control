@@ -12,7 +12,7 @@ Build-Depends:
  python3-hatchling,
 Standards-Version: 4.6.2
 Homepage: https://pypi.org/project/bernstein/
-Vcs-Git: https://github.com/alexchernysh/bernstein.git
+Vcs-Git: https://github.com/sipyourdrink-ltd/bernstein.git
 Rules-Requires-Root: no
 
 Package: bernstein
@@ -29,11 +29,11 @@ Depends:
  python3-click,
  python3-pydantic,
  python3-dotenv,
-Description: Declarative agent orchestration for engineering teams
- Bernstein is a multi-agent orchestration system that spawns
- short-lived CLI coding agents, coordinates them via a file-based
- state directory, and works with any CLI agent (Claude Code,
- Codex, Gemini CLI, etc.).
+Description: Deterministic orchestrator for CLI coding agents
+ Bernstein spawns short-lived CLI coding agents, coordinates them
+ via a file-based state directory, and works with any CLI agent
+ (Claude Code, Codex, Gemini CLI, and 40+ more).
  .
- The orchestrator is deterministic code, not an LLM. Model and
- effort are chosen per-task based on complexity.
+ There is no model in the coordination loop, so parallel runs in
+ per-task git worktrees replay byte-identically. Model and effort
+ are chosen per-task based on complexity.

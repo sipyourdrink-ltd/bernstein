@@ -23,6 +23,7 @@ disk tree; the default provider reads the on-disk substrate.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -381,10 +382,9 @@ class SLAMonitor:
         """
         emitted: list[SLAViolationReceipt] = []
         audit_entries = read_audit_window(self._store.sdd_dir, window=self._audit_window)
-        prev = self._chain.prev_chain_digest if self._chain is not None else ""
         for contract in self._store.list():
             try:
-                receipt = self._evaluate_one(contract, now, audit_entries, prev)
+                receipt = self._evaluate_one(contract, now, audit_entries)
             except Exception:  # pragma: no cover - defensive: one bad contract must not wedge the tick
                 logger.exception("SLA evaluation failed for contract %s", contract.id)
                 continue
@@ -397,24 +397,48 @@ class SLAMonitor:
         contract: SLAContract,
         now: int,
         audit_entries: list[dict[str, Any]],
-        prev: str,
     ) -> SLAViolationReceipt | None:
+        # Evidence gathering reads the substrate and does not depend on the chain
+        # head, so it stays outside the section that holds the chain.
         evidence = self._evidence_provider(contract, now)
-        receipt = build_receipt(
-            contract=contract,
-            evidence=evidence,
-            now=now,
-            caps=self._caps,
-            audit_entries=audit_entries,
-            identity=self._identity,
-            public_key=self._public_key,
-            prev_chain_digest=prev,
-        )
-        if receipt is None:
-            return None
-        signed = sign_receipt(receipt, signing_key=self._signing_key)
-        write_receipt(self._store.sdd_dir, signed)
-        self._record_chain_event(signed)
+
+        # The head is read per receipt, and inside the same section that appends
+        # that receipt's chain event. A tick appends once per breach, so a head
+        # captured once for the whole tick is already stale for the second
+        # receipt: the receipt signs ``prev_chain_digest`` and the verifier
+        # compares it against the chain entry, so a stale value turns a genuine
+        # breach receipt into one that fails its own anchor check.
+        with contextlib.ExitStack() as stack:
+            if self._chain is not None:
+                stack.enter_context(self._chain.chain_transaction())
+                prev = self._chain.resync_head()
+            else:
+                prev = ""
+            receipt = build_receipt(
+                contract=contract,
+                evidence=evidence,
+                now=now,
+                caps=self._caps,
+                audit_entries=audit_entries,
+                identity=self._identity,
+                public_key=self._public_key,
+                prev_chain_digest=prev,
+            )
+            if receipt is None:
+                return None
+            signed = sign_receipt(receipt, signing_key=self._signing_key)
+            # ``write_receipt`` does not need the chain held, but it stays inside
+            # and ahead of the append on purpose: the receipt file is the only
+            # copy of the signed payload, while the chain event carries just its
+            # digest. Persisting first means a crash between the two leaves a
+            # receipt whose anchor is missing -- recoverable -- rather than an
+            # anchor whose receipt never existed. It is one small local write on
+            # a per-breach path, so the widened section is cheap next to that.
+            write_receipt(self._store.sdd_dir, signed)
+            self._record_chain_event(signed)
+
+        # The sink is caller-supplied and may be slow or may itself touch the
+        # chain, so it runs after the section is released.
         if self._trigger_sink is not None:
             self._trigger_sink(normalize_sla_violation(signed))
         return signed

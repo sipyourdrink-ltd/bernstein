@@ -30,6 +30,7 @@ from mcp.server.fastmcp.resources.templates import ResourceTemplate
 
 from bernstein.core.lineage.entry import canonicalise, entry_hash
 from bernstein.core.lineage.store import LineageStore
+from bernstein.mcp.input_validation import validate_or_error, validation_error_response
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -141,6 +142,9 @@ def register_lineage_resources(
         description="Verify the lineage chain of a single artefact path.",
     )
     def verify_chain(artefact_path: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        err = validate_or_error("verify_chain", {"artefact_path": artefact_path})
+        if err is not None:
+            return validation_error_response(err)
         store = LineageStore(root)
         ok, reason = _verify_chain(store, artefact_path)
         return json.dumps({"ok": ok, "reason": reason})

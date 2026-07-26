@@ -27,6 +27,7 @@ plus lineage exposes all of them.
     bernstein_post_artifact - attach an artefact to a task
     bernstein_stop          - graceful shutdown (writes SHUTDOWN signal)
     bernstein_approve       - approve a pending/blocked task
+    bernstein_complete      - complete a task the caller is executing
     bernstein_create_subtask - split a claimed task into a child task
     load_skill              - load a skill pack body / reference / script
 
@@ -43,6 +44,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import json
 import logging
 import os
@@ -67,7 +69,12 @@ from mcp.types import (
     ListTasksRequest,
     ListTasksResult,
     Task,
+    TaskExecutionMode,
     TextContent,
+    ToolExecution,
+)
+from mcp.types import (
+    Tool as MCPTool,
 )
 
 from bernstein.core.protocols.mcp.tool_tiers import (
@@ -75,12 +82,18 @@ from bernstein.core.protocols.mcp.tool_tiers import (
     resolve_active_tier,
     tool_in_tier,
 )
+from bernstein.mcp.approval_gate import (
+    completion_refusal_payload,
+    is_approvable,
+    is_worker_completable,
+    refusal_payload,
+)
 from bernstein.mcp.cost_meter import measure_call, wrap_envelope
 from bernstein.mcp.input_validation import (
-    ValidatedPayload,
     ValidationError,
-    to_jsonrpc_error,
-    validate_tool_call,
+    get_registry,
+    validate_or_error,
+    validation_error_response,
 )
 
 _orig_convert_result = FuncMetadata.convert_result
@@ -111,8 +124,9 @@ def _package_version() -> str:
 # a client that starts a run and then polls wrongly pays for a second run.
 # Budget and tool-name accuracy are asserted in tests/unit/test_mcp_server.py.
 _SERVER_INSTRUCTIONS = (
-    "Bernstein runs CLI coding agents deterministically, one git worktree per "
-    "task, against an offline-verifiable audit chain.\n"
+    "Bernstein is a deterministic orchestrator for CLI coding agents, one git "
+    "worktree per task, so runs replay byte-identically. Verifying the audit "
+    "chain offline needs the install audit key.\n"
     "Driving a run:\n"
     "1. bernstein_run starts a run and returns immediately with a task_id, "
     "which is the run id. It does not wait for the run to finish.\n"
@@ -172,30 +186,24 @@ def _error_response(exc: Exception, *, hint: str = "Task server may be restartin
     return json.dumps({"error": str(exc), "hint": hint})
 
 
-def _validation_error_response(err: ValidationError) -> str:
-    """Render a validation failure as the JSON string FastMCP tools return.
+def _approval_refusal_response(task_id: str, current_status: str) -> str:
+    """Render the shared approval refusal as the JSON string MCP tools return."""
+    return json.dumps(refusal_payload(task_id, current_status), indent=2)
 
-    Carries the full structured error so MCP clients can show users which
-    field failed and why, without leaking server internals.
-    """
-    payload = {"error": err.message, "jsonrpc_error": to_jsonrpc_error(err)}
-    return json.dumps(payload)
+
+def _completion_refusal_response(task_id: str, current_status: str) -> str:
+    """Render the shared completion refusal as the JSON string MCP tools return."""
+    return json.dumps(completion_refusal_payload(task_id, current_status), indent=2)
+
+
+def _validation_error_response(err: ValidationError) -> str:
+    """Render a validation failure as the JSON string FastMCP tools return."""
+    return validation_error_response(err)
 
 
 def _validate_or_error(tool_name: str, params: dict[str, Any]) -> ValidationError | None:
-    """Validate ``params`` against ``tool_name``'s schema.
-
-    Returns ``None`` when the call is allowed, or a ``ValidationError`` the
-    caller should render via :func:`_validation_error_response`. Stripping
-    ``None`` values from the params dict keeps every tool's optional-arg
-    convention working; the schema can still mark them as nullable when
-    that's the intended contract.
-    """
-    cleaned = {k: v for k, v in params.items() if v is not None}
-    result = validate_tool_call(tool_name, cleaned)
-    if isinstance(result, ValidatedPayload):
-        return None
-    return result
+    """Validate ``params`` against ``tool_name``'s schema."""
+    return validate_or_error(tool_name, params)
 
 
 def _register_health_tool(mcp: FastMCP[None]) -> None:
@@ -230,6 +238,21 @@ def _get_journal_head(task_id: str) -> str:
     except Exception:
         pass
     return ""
+
+
+#: Retention window advertised on every Tasks-extension task row, in
+#: milliseconds.
+#:
+#: The task server evicts nothing, so ``null`` (the extension's spelling of
+#: "unlimited") would be the literal answer. It is not sendable: ``Task.ttl``
+#: is a required field, and the SDK serialises every response with
+#: ``exclude_none=True``, so a ``None`` ttl is dropped from the wire payload
+#: and the client rejects the row as malformed. A finite window is therefore
+#: advertised instead. It under-claims retention, which is the safe
+#: direction: a client that forgets the handle after this window stops
+#: polling, and the run itself is unaffected. 24h covers the minutes-to-hours
+#: span a Bernstein run occupies.
+_TASK_TTL_MS = 86_400_000
 
 
 def _resolve_run_journal(sdd_dir: Path, run_id: str) -> tuple[str, Path]:
@@ -359,7 +382,7 @@ def _project_task_helper(data: dict[str, Any]) -> Any:
         statusMessage=status_message,
         createdAt=created_at,
         lastUpdatedAt=last_updated,
-        ttl=None,
+        ttl=_TASK_TTL_MS,
         pollInterval=5000,
     )
 
@@ -398,7 +421,10 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
         Returns:
             JSON with the created task ID, title and status, plus the
             ``run_id`` naming the run journal and the advisory
-            ``poll_after_ms`` delay before the first poll.
+            ``poll_after_ms`` delay before the first poll. When the call
+            itself is task-augmented (the client sent ``task`` in the request
+            params), a Tasks-extension ``CreateTaskResult`` is returned
+            instead so the client can poll the run.
         """
         err = _validate_or_error(
             "bernstein_run",
@@ -424,7 +450,11 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
                 "estimated_minutes": estimated_minutes,
             }
 
-            client_supports_tasks = False
+            # Whether THIS call carried task metadata, not whether the client
+            # is capable of tasks. A tasks-capable client still sends plain
+            # tools/call requests, and those require a CallToolResult; only a
+            # task-augmented call may be answered with a CreateTaskResult.
+            is_task_call = False
             traceparent = None
             tracestate = None
             baggage = None
@@ -434,7 +464,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
                     rc = ctx.request_context
                     if rc is not None:
                         if rc.experimental is not None:
-                            client_supports_tasks = bool(getattr(rc.experimental, "client_supports_tasks", False))
+                            is_task_call = bool(getattr(rc.experimental, "is_task", False))
                         if rc.meta is not None:
                             extra = rc.meta.model_extra or {}
                             traceparent = extra.get("traceparent")
@@ -456,7 +486,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
                 resp.raise_for_status()
                 data: dict[str, Any] = resp.json()
 
-            if client_supports_tasks:
+            if is_task_call:
                 task_obj = _project_task_helper(data)
                 return CreateTaskResult(task=task_obj)
 
@@ -702,7 +732,7 @@ def _register_context_tool(mcp: FastMCP[None]) -> None:
 
 
 def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
-    """Register mutation tools: stop, approve, create_subtask, claim, update."""
+    """Register mutation tools: stop, approve, complete, create_subtask, claim, update."""
 
     @mcp.tool()
     async def bernstein_claim(  # pyright: ignore[reportUnusedFunction]
@@ -879,38 +909,33 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             JSON of the chain-anchored artifact record (``key``, ``version``,
             ``content_hash``, ``spine_entry_hash``, ``journal_index``, ...).
         """
-        err = _validate_or_error(
-            "bernstein_post_artifact",
-            {
-                "task_id": task_id,
-                "key": key,
-                "artifact_type": artifact_type,
-                "poster": poster,
-                "body": body,
-                "columns": columns,
-                "rows": rows,
-                "url": url,
-                "link_kind": link_kind,
-            },
-        )
+        # An argument left at its empty-string default means "not supplied for
+        # this artifact type", so it must not reach the validator: the schema
+        # constrains ``body`` / ``url`` / ``link_kind`` to the values a caller
+        # that actually supplies them would send. Validate exactly the fields
+        # that get posted, so the conditional shape advertised to the caller is
+        # the shape the call is judged against.
+        args: dict[str, Any] = {
+            "task_id": task_id,
+            "key": key,
+            "artifact_type": artifact_type,
+            "poster": poster,
+        }
+        if body:
+            args["body"] = body
+        if columns is not None:
+            args["columns"] = columns
+        if rows is not None:
+            args["rows"] = rows
+        if url:
+            args["url"] = url
+        if link_kind:
+            args["link_kind"] = link_kind
+        err = _validate_or_error("bernstein_post_artifact", args)
         if err is not None:
             return _validation_error_response(err)
         try:
-            payload: dict[str, Any] = {
-                "key": key,
-                "artifact_type": artifact_type,
-                "poster": poster,
-            }
-            if body:
-                payload["body"] = body
-            if columns is not None:
-                payload["columns"] = columns
-            if rows is not None:
-                payload["rows"] = rows
-            if url:
-                payload["url"] = url
-            if link_kind:
-                payload["link_kind"] = link_kind
+            payload: dict[str, Any] = {k: v for k, v in args.items() if k != "task_id"}
             # Carry the caller identity in the request header (the server's
             # authorization principal), not only in the body. The server refuses
             # posts against a task this identity does not hold the claim for.
@@ -945,10 +970,21 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         err = _validate_or_error("bernstein_stop", {"workdir": workdir})
         if err is not None:
             return _validation_error_response(err)
+        from bernstein.mcp.signal_paths import ShutdownSignalPathError, shutdown_signal_path
+
+        # Shared barrier rather than a local containment check, so this
+        # surface cannot drift from the other workdir-derived writers. The
+        # path is resolved and proven contained before any directory is
+        # created, so a refused call leaves nothing behind.
         try:
-            signals_dir = Path(workdir) / ".sdd" / "runtime" / "signals"
-            signals_dir.mkdir(parents=True, exist_ok=True)
-            shutdown_file = signals_dir / "SHUTDOWN"
+            shutdown_file = shutdown_signal_path(workdir)
+        except ShutdownSignalPathError as exc:
+            return _error_response(
+                exc,
+                hint="workdir must be an existing Bernstein project root",
+            )
+        try:
+            shutdown_file.parent.mkdir(parents=True, exist_ok=True)
             shutdown_file.write_text("mcp-stop\n", encoding="utf-8")
             return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
         except Exception as exc:
@@ -959,27 +995,108 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         task_id: str,
         note: str = "Approved via MCP",
     ) -> str:
-        """Approve a pending or blocked task, marking it complete.
+        """Sign off a finished result that is waiting on a decision.
 
-        This is used for approval gates - when a task is awaiting human
-        sign-off before proceeding.
+        The tool reads the task first and acts only on ``pending_approval``:
+        the work has run, the result is held for a decision, and accepting it
+        completes the task with ``note`` as the result summary.
+
+        Every other status is refused with a structured error naming the
+        current status, and no state-changing request is sent:
+
+        * ``planned`` - the task is held by plan mode. That decision is
+          recorded on the plan, not on the task, so approve the plan
+          (``bernstein plan approve <plan_id>``). Releasing one task would
+          start the work while the plan is still undecided.
+        * ``open``, ``claimed``, ``in_progress``, ``blocked``, ``failed``,
+          terminal states, ... - there is no approval to grant. Use
+          ``bernstein_complete`` to report work you are executing,
+          ``bernstein_update`` to report a blocker on the task mailbox, or
+          cancel the task to abandon it.
 
         Args:
             task_id: ID of the task to approve.
-            note: Optional approval note recorded as the result summary.
+            note: Approval note recorded as the result summary.
 
         Returns:
-            JSON with the updated task status.
+            JSON with the task id, its new status, and which approval was
+            granted - or a structured refusal naming the current status.
         """
         err = _validate_or_error("bernstein_approve", {"task_id": task_id, "note": note})
         if err is not None:
             return _validation_error_response(err)
         try:
-            payload: dict[str, Any] = {"result_summary": note}
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                read = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
+                read.raise_for_status()
+                current_status = str(read.json().get("status") or "")
+                if not is_approvable(current_status):
+                    return _approval_refusal_response(task_id, current_status)
                 resp = await client.post(
                     f"{server_url}/tasks/{task_id}/complete",
-                    json=payload,
+                    json={"result_summary": note},
+                    headers=_auth_headers(),
+                )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(
+                {
+                    "task_id": data["id"],
+                    "status": data["status"],
+                    "approval": "completion_signed_off",
+                    "approved_from": current_status,
+                    "result_summary": data.get("result_summary"),
+                },
+                indent=2,
+            )
+        except Exception as exc:
+            return _error_response(exc)
+
+    @mcp.tool()
+    async def bernstein_complete(  # pyright: ignore[reportUnusedFunction]
+        task_id: str,
+        result_summary: str,
+    ) -> str:
+        """Report the result of work you are executing.
+
+        This is the completion verb of the MCP worker loop (claim with
+        ``bernstein_claim``, report with ``bernstein_update``, finish here).
+        The tool reads the task first and completes it only from a state a
+        worker holds it in (``open``, ``claimed``, ``in_progress``).
+
+        It is not a way to clear a task out of the way. A parent in
+        ``waiting_for_subtasks`` is completed by its subtasks finishing, an
+        ``orphaned`` task belongs to crash recovery, and a result already
+        awaiting a decision is signed off with ``bernstein_approve``; all
+        three are refused with a structured error naming the current status.
+        Report only work that actually ran, and use ``bernstein_update``
+        when the task is unfinished or stuck.
+
+        Args:
+            task_id: ID of the task to complete.
+            result_summary: What the work produced. The task server rejects
+                an empty summary and fails the task instead.
+
+        Returns:
+            JSON with the task id, its new status, and the recorded summary -
+            or a structured refusal naming the current status.
+        """
+        err = _validate_or_error(
+            "bernstein_complete",
+            {"task_id": task_id, "result_summary": result_summary},
+        )
+        if err is not None:
+            return _validation_error_response(err)
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                read = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
+                read.raise_for_status()
+                current_status = str(read.json().get("status") or "")
+                if not is_worker_completable(current_status):
+                    return _completion_refusal_response(task_id, current_status)
+                resp = await client.post(
+                    f"{server_url}/tasks/{task_id}/complete",
+                    json={"result_summary": result_summary},
                     headers=_auth_headers(),
                 )
                 resp.raise_for_status()
@@ -1177,6 +1294,41 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
         tool.fn = metered
 
 
+def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
+    """Advertise each tool's enforced schema as its ``inputSchema``.
+
+    FastMCP derives the advertised schema from the Python signature, which
+    carries none of the constraints the input firewall enforces: a caller is
+    shown ``scope: string`` while ``validate_tool_call`` requires one of
+    ``small`` / ``medium`` / ``large``. The caller sends a plausible value and
+    gets a rejection it had no way to predict. Replacing the derived schema
+    with the schema from ``tool_schemas/<tool>.json`` gives a tool one schema
+    instead of two, so a constrained argument can be filled correctly on the
+    first call.
+
+    Only the advertised copy is replaced. Argument coercion still runs through
+    FastMCP's signature-derived model, and enforcement still runs through
+    ``validate_tool_call`` inside each handler.
+
+    Args:
+        mcp: The FastMCP server whose tools should advertise their schemas.
+    """
+    registry = get_registry()
+    # FastMCP exposes no public per-tool schema override, so patch the tool
+    # manager's registry after registration (same access pattern as
+    # _apply_tool_tier).
+    for name, tool in mcp._tool_manager._tools.items():  # pyright: ignore[reportPrivateUsage]
+        schema = registry.get(name)
+        if schema is None:
+            # Deny-by-default means such a tool is registered but not callable.
+            # Leave the derived schema alone and make the mismatch visible.
+            logger.warning("MCP tool %s has no schema file; advertising the derived schema", name)
+            continue
+        # Deep-copy so a client-side mutation of the advertised schema cannot
+        # reach the process-wide registry the validator reads.
+        tool.parameters = copy.deepcopy(schema)
+
+
 def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
     """Drop every registered tool that is outside ``active_tier``.
 
@@ -1195,6 +1347,57 @@ def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
     out_of_tier = [name for name in list(mcp._tool_manager._tools) if not tool_in_tier(name, active_tier)]
     for name in out_of_tier:
         mcp._tool_manager._tools.pop(name, None)
+
+
+#: The ``execution.taskSupport`` mode each tool advertises in ``tools/list``.
+#:
+#: A tool that is absent from this map advertises nothing, which the Tasks
+#: extension reads as ``forbidden``. Only ``bernstein_run`` answers a
+#: task-augmented call with a ``CreateTaskResult``, so it is the only entry
+#: declared ``optional``. ``bernstein_task_handle`` is the stateless polling
+#: fallback: it always answers immediately and never returns a task handle,
+#: so it declares ``forbidden`` explicitly rather than leaving a caller to
+#: infer the default.
+_TOOL_TASK_SUPPORT: dict[str, TaskExecutionMode] = {
+    "bernstein_run": "optional",
+    "bernstein_task_handle": "forbidden",
+}
+
+
+def _declare_task_support(mcp: FastMCP[None]) -> None:
+    """Advertise ``execution.taskSupport`` on the tools that declare a mode.
+
+    The MCP Tasks extension defaults a tool with no ``execution`` hint to
+    ``forbidden``, so without this declaration no client ever sends a
+    task-augmented ``tools/call`` and the extension's request handlers are
+    unreachable.
+
+    FastMCP 1.28.1 carries no ``execution`` field: ``@mcp.tool()`` takes no
+    such argument and ``FastMCP.list_tools`` builds each ``mcp.types.Tool``
+    without it. The hint therefore cannot be attached at registration time,
+    so the low-level ``tools/list`` handler is re-registered here with a
+    wrapper that stamps the field onto the entries FastMCP already built.
+
+    Every ``taskSupport`` declaration in this server goes through this one
+    function, so when an SDK release adds first-class support the migration
+    is deleting this function and moving :data:`_TOOL_TASK_SUPPORT` into the
+    registrations.
+
+    Args:
+        mcp: The FastMCP server whose ``tools/list`` response should carry
+            the declarations.
+    """
+    fastmcp_list_tools = mcp.list_tools
+
+    async def list_tools_with_task_support() -> list[MCPTool]:
+        tools = await fastmcp_list_tools()
+        for tool in tools:
+            mode = _TOOL_TASK_SUPPORT.get(tool.name)
+            if mode is not None:
+                tool.execution = ToolExecution(taskSupport=mode)
+        return tools
+
+    mcp._mcp_server.list_tools()(list_tools_with_task_support)
 
 
 # MCP ``tasks/list`` is a paginated request whose only client-supplied knob is
@@ -1247,7 +1450,7 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             statusMessage=task_obj.statusMessage,
             createdAt=task_obj.createdAt,
             lastUpdatedAt=task_obj.lastUpdatedAt,
-            ttl=None,
+            ttl=_TASK_TTL_MS,
             pollInterval=5000,
         )
 
@@ -1318,7 +1521,7 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             statusMessage=task_obj.statusMessage,
             createdAt=task_obj.createdAt,
             lastUpdatedAt=task_obj.lastUpdatedAt,
-            ttl=None,
+            ttl=_TASK_TTL_MS,
             pollInterval=5000,
         )
 
@@ -1376,6 +1579,8 @@ def create_mcp_server(
         register_lineage_resources(mcp, lineage_root=root, enabled=True)
 
     _apply_tool_tier(mcp, active_tier)
+    _apply_advertised_schemas(mcp)
+    _declare_task_support(mcp)
     _apply_cost_meter(mcp)
     return mcp
 

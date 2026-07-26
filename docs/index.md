@@ -1,10 +1,11 @@
 ---
-title: Bernstein - Deterministic, Verifiable Orchestration for CLI Coding Agents
+title: Bernstein - Deterministic Orchestrator for CLI Coding Agents
 description: >-
-  Deterministic, verifiable orchestration for CLI coding agents - reproducible
-  parallel runs, signed audit trail, air-gap friendly. Run Claude Code, Codex,
-  Gemini CLI, and 40+ more behind one orchestration surface, with plain-Python
-  scheduling, per-task git worktrees, and zero vendor lock-in.
+  Deterministic orchestrator for CLI coding agents. No model in the coordination
+  loop, so parallel runs in per-task git worktrees replay byte-identically.
+  Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline,
+  without rerunning it. Run Claude Code, Codex, Gemini CLI, and 40+ more behind
+  one orchestration surface, with zero vendor lock-in.
 tags:
   - orchestration
   - multi-agent
@@ -29,6 +30,8 @@ Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents r
 No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 
 Results stay checkable after the run ends: an always-on lineage spine and replay journal record what happened, and an opt-in HMAC-chained audit log (`--audit`) adds receipts you can verify offline.
+
+What "offline" means, precisely. `bernstein artifact verify` and `bernstein audit verify --merkle-only` need only the on-disk artefacts: the Ed25519 signature on every lineage entry, the parent-hash chain, the re-derived content hash, and the Merkle seal over the daily audit files all check without any secret. Replaying the per-line HMAC chain is different: `bernstein audit verify`, `--hmac-only`, `audit verify-hmac` and `audit verify --receipt` all need the install's audit key, which by design lives outside the audit volume. To hand a reviewer who does not hold that key something they can still authenticate, export a pack with `bernstein audit export --signature-kind hmac-chain+pubkey`; it signs the chain head with the lineage Ed25519 key, so the bundle verifies against a public key alone.
 
 ## Install
 

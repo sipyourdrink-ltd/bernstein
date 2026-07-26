@@ -183,8 +183,10 @@ def test_login_valid_provider_passes_validation(client: TestClient, provider: st
     """Valid providers must pass parameter validation (never 422).
 
     In this auth-disabled harness no auth service is configured, so the
-    handler returns 503 - the point is that a supported provider reaches
-    the handler rather than being rejected at the validation layer.
+    handler returns the unconfigured-SSO 404 pinned by
+    tests/unit/test_issue_3166_unconfigured_subsystem_status.py - the
+    point here is that a supported provider reaches the handler rather
+    than being rejected at the validation layer.
     """
     resp = client.get("/auth/login", params={"provider": provider})
     assert resp.status_code != 422, resp.text

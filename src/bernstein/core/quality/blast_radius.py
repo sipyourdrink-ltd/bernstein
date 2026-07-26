@@ -506,7 +506,9 @@ def evaluate_gate(report: BlastRadiusReport, *, max_score: float | None) -> Gate
         raise ValueError(f"max_score must be in [0, 1], got {max_score}")
     if report.exceeds(max_score):
         if report.hard_one_way:
-            reason = f"refused: hard one-way detector fired and ceiling {max_score:.2f} < 1.0"
+            reason = (
+                f"refused: hard one-way detector fired, blast-radius score {report.score:.2f} > ceiling {max_score:.2f}"
+            )
         else:
             reason = f"refused: blast-radius score {report.score:.2f} > ceiling {max_score:.2f}"
         return GateDecision(allowed=False, threshold=max_score, report=report, reason=reason)

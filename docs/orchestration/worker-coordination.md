@@ -46,6 +46,7 @@ Every transition that surrenders a held claim appends the matching
 | --- | --- |
 | `POST /tasks/{id}/force-claim` | `force_claim` |
 | `POST /tasks/{id}/reopen` | `reopen` |
+| `POST /tasks/{id}/release` | `release` |
 | `POST /tasks/{id}/cancel` | `cancel_cascade` (root and descendants) |
 | `TaskStore.cancel` | `cancel` |
 | `POST /tasks/{id}/fail` | `fail` / `fail_contract_violation` |

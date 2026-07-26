@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-
 from bernstein.core.security.audit import AuditLog, RetentionPolicy
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.workflows.recipe_registry import RecipePins, RecipeRegistry
@@ -95,12 +93,17 @@ class TestLineageSurvivesRetention:
         assert ok is True, errors
 
 
-class TestInvalidUtf8StaysLoud:
+class TestInvalidUtf8IsSkippedNeverLaundered:
     """Invalid bytes are evidence, and ``verify`` hashes the raw bytes.
 
     Substituting replacement characters would make ``query`` return a
     clean-looking record that does not match what is on disk - the projection
-    and the verifier would then disagree about what the log says.
+    and the verifier would then disagree about what the log says. So an
+    undecodable line is dropped whole, never returned in smoothed form, and
+    ``verify`` keeps naming it. ``query`` itself stays total: torn bytes are
+    permanent (the log is append-only and a tear seal never truncates), so a
+    raising read path would turn one acknowledged crash into a forever-broken
+    query surface for every consumer of the chain.
     """
 
     @staticmethod
@@ -111,17 +114,22 @@ class TestInvalidUtf8StaysLoud:
         assert corrupted != raw, "fixture did not corrupt anything"
         segment.write_bytes(corrupted)
 
-    def test_live_segment_with_invalid_utf8_raises(self, tmp_path: Path) -> None:
+    def test_live_segment_with_invalid_utf8_is_skipped_and_stays_loud(self, tmp_path: Path) -> None:
         sdd = tmp_path / ".sdd"
         sdd.mkdir(parents=True)
         _registry(sdd).register(spec=load_recipe_spec_from_text(_V1), pins=RecipePins(git_commit="c1"))
         self._corrupt_a_string_value(sdd / "audit")
 
         log = AuditLog(audit_dir=sdd / "audit", key=_KEY)
-        with pytest.raises(UnicodeDecodeError):
-            log.query(event_type="recipe.register")
+        events = log.query(event_type="recipe.register")
+        # The damaged record is omitted, not returned with replacement
+        # characters; nothing query yields differs from the on-disk bytes.
+        assert events == []
+        ok, errors = log.verify()
+        assert ok is False
+        assert any("undecodable" in error for error in errors)
 
-    def test_archived_segment_with_invalid_utf8_raises(self, tmp_path: Path) -> None:
+    def test_archived_segment_with_invalid_utf8_is_skipped_and_stays_loud(self, tmp_path: Path) -> None:
         sdd = tmp_path / ".sdd"
         sdd.mkdir(parents=True)
         audit = sdd / "audit"
@@ -133,6 +141,8 @@ class TestInvalidUtf8StaysLoud:
         log = AuditLog(audit_dir=audit, key=_KEY)
         # Live-only read sees nothing and must not raise...
         assert log.query(event_type="recipe.register") == []
-        # ...but reading the archive applies the same strict rule.
-        with pytest.raises(UnicodeDecodeError):
-            log.query(event_type="recipe.register", include_archived=True)
+        # ...and the archived read applies the same skip-not-launder rule.
+        assert log.query(event_type="recipe.register", include_archived=True) == []
+        ok, errors = log.verify()
+        assert ok is False
+        assert any("undecodable" in error for error in errors)

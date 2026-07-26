@@ -56,6 +56,29 @@ def _current_branch(root: Path) -> str:
     return _run_git(["rev-parse", "--abbrev-ref", "HEAD"], root)
 
 
+def _verify_merge_result(root: Path, merge_msg: str, switched: bool, original_branch: str) -> None:
+    """Verify merge succeeded or handle conflicts."""
+    _run_git(["rev-parse", "HEAD"], root)
+    merge_log = _run_git(["log", "-1", "--oneline"], root)
+
+    is_merge_success = merge_msg[:20] in merge_log or "Merge" in merge_log
+    if is_merge_success:
+        console.print(f"[green]Merged successfully:[/green] {merge_log}")
+        return
+
+    status = _run_git(["status", "--porcelain"], root)
+    has_conflicts = any(line[:2] in ("UU", "AA", "DD") for line in status.splitlines() if len(line) >= 2)
+    if has_conflicts:
+        console.print("[red]Merge conflicts detected![/red]")
+        console.print("[dim]Resolve conflicts manually, then commit.[/dim]")
+        _run_git(["merge", "--abort"], root)
+        if switched:
+            _run_git(["checkout", original_branch], root)
+        raise SystemExit(1)
+
+    console.print(f"[green]Merge completed:[/green] {merge_log}")
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -87,29 +110,6 @@ def _current_branch(root: Path) -> str:
     metavar="AGENT",
     help="Also delete branches of rejected agents (repeatable).",
 )
-def _verify_merge_result(root: Path, merge_msg: str, switched: bool, original_branch: str) -> None:
-    """Verify merge succeeded or handle conflicts."""
-    _run_git(["rev-parse", "HEAD"], root)
-    merge_log = _run_git(["log", "-1", "--oneline"], root)
-
-    is_merge_success = merge_msg[:20] in merge_log or "Merge" in merge_log
-    if is_merge_success:
-        console.print(f"[green]Merged successfully:[/green] {merge_log}")
-        return
-
-    status = _run_git(["status", "--porcelain"], root)
-    has_conflicts = any(line[:2] in ("UU", "AA", "DD") for line in status.splitlines() if len(line) >= 2)
-    if has_conflicts:
-        console.print("[red]Merge conflicts detected![/red]")
-        console.print("[dim]Resolve conflicts manually, then commit.[/dim]")
-        _run_git(["merge", "--abort"], root)
-        if switched:
-            _run_git(["checkout", original_branch], root)
-        raise SystemExit(1)
-
-    console.print(f"[green]Merge completed:[/green] {merge_log}")
-
-
 def merge_cmd(
     pick: str,
     base: str,

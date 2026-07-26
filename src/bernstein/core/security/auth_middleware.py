@@ -78,6 +78,8 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from bernstein.core.security.sanitize import sanitize_log
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
@@ -736,7 +738,7 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "SSO token rejected: resource indicator mismatch (path=%s, expected=%s)",
-                path,
+                sanitize_log(path),
                 self._expected_resource,
             )
             return resource_error
@@ -780,8 +782,8 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             if resource_error is not None:
                 logger.warning(
                     "Agent %s denied: resource indicator mismatch (path=%s, expected=%s)",
-                    agent_identity.id,
-                    path,
+                    sanitize_log(agent_identity.id),
+                    sanitize_log(path),
                     self._expected_resource,
                 )
                 return resource_error
@@ -802,8 +804,8 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         if request.method not in _READ_METHODS and _get_required_permission(path, request.method) == _PERM_ADMIN_MANAGE:
             logger.warning(
                 "Agent %s denied operator-only path %s (admin:manage required)",
-                agent_identity.id,
-                path,
+                sanitize_log(agent_identity.id),
+                sanitize_log(path),
             )
             return JSONResponse(
                 status_code=403,
@@ -829,9 +831,9 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             if task_scope_error is not None:
                 logger.warning(
                     "Agent %s denied task-scope access to %s: %s",
-                    agent_identity.id,
-                    path,
-                    task_scope_error,
+                    sanitize_log(agent_identity.id),
+                    sanitize_log(path),
+                    sanitize_log(task_scope_error),
                 )
                 return JSONResponse(
                     status_code=403,
@@ -1172,8 +1174,6 @@ def enforce_agent_task_scope_for_ids(request: Request, requested_task_ids: Itera
     if error is None:
         return
     from fastapi import HTTPException
-
-    from bernstein.core.security.sanitize import sanitize_log
 
     logger.warning(
         "Agent %s denied task-scope access to %s: %s",

@@ -181,10 +181,17 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
           EVENT_NAME: ${{ github.event_name }}
+          # The merge queue builds a synthetic ref that stacks every entry in
+          # the group on top of `main`. `github.event.before` does not exist on
+          # this event and the group can carry many commits, so the planner
+          # needs the group's own base SHA to see the whole combined diff.
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
-          # On pull_request, diff against the base branch. On push to main
-          # (or any other push event), diff against the previous commit so
-          # the planner stays useful for filter-skipped downstream jobs.
+          # On pull_request, diff against the base branch. On merge_group,
+          # diff against the group's base SHA. On push to main (or any other
+          # push event), diff against the previous commit so the planner stays
+          # useful for filter-skipped downstream jobs.
           #
           # NOTE: checkout above uses fetch-depth: 0, so HEAD has full history.
           # However, origin/${BASE_REF} is NOT fetched by default in the PR
@@ -213,9 +220,40 @@ jobs:
               echo "diff stderr: $CHANGED"
               diff_failed=true
             fi
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            # The queue's ephemeral ref (gh-readonly-queue/main/pr-N-<base>)
+            # stacks every entry in the group on top of main, so `HEAD~1...HEAD`
+            # sees only the tail commit. Classifying the group on that commit
+            # alone is unsafe in both directions: a docs-only tail commit sets
+            # docs_only=true and every Python test job skips, and the roll-up
+            # then reports `CI gate` green for a combination nothing ever ran.
+            # That is precisely the untested-combination hole the queue exists
+            # to close, so the planner must diff against the group's own base.
+            #
+            # `github.event.merge_group.base_sha` is the commit the group was
+            # built on, and checkout above uses fetch-depth: 0, so the range
+            # `<base_sha>...HEAD` is the exact combined diff the queue is
+            # asking CI to validate.
+            if [ -n "$MERGE_GROUP_BASE_SHA" ] && ! git cat-file -e "${MERGE_GROUP_BASE_SHA}^{commit}" 2>/dev/null; then
+              # Normally already present; fetch defensively rather than
+              # silently classifying against a commit git cannot resolve.
+              git fetch --no-tags origin "$MERGE_GROUP_BASE_SHA" || true
+            fi
+            echo "::group::git diagnostic"
+            echo "merge_group base -> ${MERGE_GROUP_BASE_SHA:-UNSET}"
+            echo "HEAD             -> $(git rev-parse HEAD 2>&1 || echo UNRESOLVED)"
+            echo "::endgroup::"
+            if [ -z "$MERGE_GROUP_BASE_SHA" ]; then
+              echo "::warning::merge_group payload carried no base_sha; falling back to safe over-broad result"
+              diff_failed=true
+            elif ! CHANGED=$(git diff --name-only "${MERGE_GROUP_BASE_SHA}...HEAD" 2>&1); then
+              echo "::warning::git diff failed against the merge_group base; falling back to safe over-broad result"
+              echo "diff stderr: $CHANGED"
+              diff_failed=true
+            fi
           else
             # `before` may be 000... on first push of a branch; fall back to HEAD~1.
-            BEFORE="${{ github.event.before }}"
+            BEFORE="$PUSH_BEFORE_SHA"
             if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               CHANGED=$(git diff --name-only "HEAD~1...HEAD" 2>/dev/null || git ls-files)
             else
@@ -1568,6 +1606,55 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
+  integration-tests:
+    # `tests/integration/**` (126 files) reached CI only through the
+    # `--affected` slice the `test` job runs on pull_request, which selects
+    # the subset the impact map ties to the changed sources. Nothing selected
+    # the directory on push to `main`, so a break that arrives through a path
+    # the map does not model - a changed default, a role template, a
+    # transitive import - landed with the gate green.
+    #
+    # This job runs on every event, pull_request included. Restricting it to
+    # push and merge_group was considered and rejected: `merge_group` never
+    # fires while the merge-queue ruleset is disabled, so a push-only job
+    # reports on `main` after the merge rather than gating it, and the
+    # required `CI gate` context would still pass on a PR having never run
+    # the directory. The impact map's blind spots are the same on a PR as on
+    # a push, so the lane that decides the merge is the one that needs it.
+    #
+    # Cost: 126 files, 264s wall at `--parallel 4`, 456 MB peak RSS. The
+    # runner runs each file in its own subprocess (same OOM-avoidance model
+    # as the unit shards), so memory is bounded by the widest single file.
+    # This runs concurrently with the `test` shards (90-minute timeout), so
+    # it does not extend the critical path.
+    name: Integration tests
+    needs: [lint]  # fast-fail: don't burn a runner if lint fails
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # The integration files are slower than unit files (real subprocesses,
+      # loopback servers, git repos); the default 300s per-file cap is too
+      # tight for the widest of them.
+      BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+      - name: Run integration suite
+        run: |
+          uv run python scripts/run_tests.py \
+            --test-dir tests/integration \
+            --parallel 4
+
   coverage-report:
     name: Coverage report
     needs: [test]
@@ -1879,6 +1966,7 @@ jobs:
       - adapter-integration-macos
       - adapter-conformance-windows
       - test
+      - integration-tests
       - coverage-report
       - test-macos
     timeout-minutes: 3
@@ -1937,11 +2025,15 @@ jobs:
           # label. merge_group must be included too: a merge queue runs CI
           # on a synthetic merge_group ref where `github.event.pull_request`
           # is null, so the `macos-needed` label and `push`-only branches of
-          # the job `if:` can never be true and these jobs always skip. The
-          # merged commit still triggers a native `push` to main that runs
-          # the full macOS suite un-gated, and ci-macos-nightly.yml covers
-          # regression -- so tolerating the skip here is what keeps the queue
-          # from wedging without losing macOS coverage on what actually lands.
+          # the job `if:` can never be true there. The remaining branch,
+          # `macos_sensitive`, is computed by `determine-changes` from the
+          # group's combined diff, so a macOS-sensitive group still runs the
+          # macOS jobs in the queue and this tolerance does not apply. A group
+          # that touches nothing macOS-sensitive skips them: the merged commit
+          # still triggers a native `push` to main that runs the full macOS
+          # suite un-gated, and ci-macos-nightly.yml covers regression -- so
+          # tolerating that skip is what keeps the queue from wedging without
+          # losing macOS coverage on what actually lands.
           MACOS_SKIP_EVENTS = ("pull_request", "workflow_dispatch", "merge_group")
 
           docs_only = plan.get("docs_only") == "true"

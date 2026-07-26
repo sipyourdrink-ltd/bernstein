@@ -7,6 +7,11 @@ informational (nit/style/note), and verifies every must-address finding is
 either acknowledged in the PR body via a `<!-- bot-ack: <id> ... -->` marker
 or addressed in a subsequent commit.
 
+It also tracks, per configured review bot, whether that bot actually produced
+a review for the current head commit. Zero findings from a bot that was rate
+limited is not the same result as zero findings from a bot that reviewed the
+diff and found nothing, and the summary reports the two differently.
+
 The gate posts a sticky summary comment on the PR (replacing any prior
 summary it posted) and exits 1 if any must-address finding is unresolved.
 
@@ -19,7 +24,8 @@ Required environment:
 
 Exit codes:
     0  Every must-address finding is fixed or acknowledged.
-    1  At least one must-address finding is open.
+    1  At least one must-address finding is open, or `--require-review` was
+       passed and some configured bot produced no review for the head commit.
     2  Internal error (HTTP failure, malformed JSON, etc.).
 """
 
@@ -65,6 +71,34 @@ INFORMATIONAL_PATTERNS = (
     r"\*\*note\*\*",
 )
 
+# Per-bot review coverage for the current head commit. Only BOT_REVIEWED is a
+# clean result: the other three each mean the finding count for that bot is
+# "not measured", which is not the same as "measured, and it was zero".
+BOT_REVIEWED = "reviewed"
+BOT_DECLINED = "declined"
+BOT_STALE = "stale"
+BOT_ABSENT = "absent"
+
+_BOT_STATUS_TEXT = {
+    BOT_REVIEWED: "reviewed this head commit",
+    BOT_DECLINED: "did not run (rate limited or otherwise declined)",
+    BOT_STALE: "reviewed an earlier head commit only",
+    BOT_ABSENT: "produced no review on this pull request",
+}
+
+# Bodies a review bot posts *instead of* a review. Matched case-insensitively.
+# Verbatim shapes: CodeRabbit's "Review limit reached" warning carries the
+# `rate limited by coderabbit.ai` marker comment; Sourcery replies with its
+# weekly diff-character limit as a submitted review.
+DID_NOT_RUN_PATTERNS = (
+    r"rate limited by coderabbit\.ai",
+    r"review limit reached",
+    r"you have reached your weekly rate limit",
+    r"reached your (?:daily|monthly) rate limit",
+)
+
+_SHA_RE = re.compile(r"\b[0-9a-f]{40}\b", re.IGNORECASE)
+
 STICKY_HEADER = "<!-- review-bot-ack-summary: managed -->"
 ACK_MARKER_RE = re.compile(
     r"<!--\s*bot-ack:\s*(?P<id>[\w./-]+)\s*(?:reason=(?P<reason>[^>]+?))?\s*-->",
@@ -90,11 +124,47 @@ class Finding:
 
 
 @dataclass
+class BotArtifact:
+    """One thing a review bot left on the PR.
+
+    ``commit_id`` is populated for submitted reviews and review comments and
+    is ``None`` for top-level issue comments, which is how CodeRabbit posts
+    its review; that shape is anchored via the head SHA in ``body`` instead.
+    """
+
+    author: str
+    body: str
+    commit_id: str | None = None
+    kind: str = "review"  # "review" | "review-comment" | "issue-comment"
+
+
+@dataclass
+class BotStatus:
+    """Whether one configured review bot reviewed the current head commit."""
+
+    login: str
+    status: str
+    detail: str = ""
+
+    @property
+    def clean(self) -> bool:
+        """True only when this bot actually produced a review for the head."""
+        return self.status == BOT_REVIEWED
+
+
+@dataclass
 class GateOutcome:
     findings: list[Finding] = field(default_factory=list)
     must_unresolved: list[Finding] = field(default_factory=list)
     must_acked: list[Finding] = field(default_factory=list)
     informational: list[Finding] = field(default_factory=list)
+    head_sha: str = ""
+    bot_statuses: list[BotStatus] = field(default_factory=list)
+
+    @property
+    def unreviewed_bots(self) -> list[BotStatus]:
+        """Configured bots whose finding count is not a measured zero."""
+        return [status for status in self.bot_statuses if not status.clean]
 
 
 def gh_request(
@@ -150,11 +220,85 @@ def classify(body: str) -> str:
     return "informational"
 
 
-def fetch_findings(owner: str, repo: str, pr: int, token: str) -> list[Finding]:
-    findings: list[Finding] = []
+def looks_like_a_declined_review(body: str) -> bool:
+    """True when a bot posted a rate-limit notice instead of a review."""
+    low = body.lower()
+    return any(re.search(pattern, low) for pattern in DID_NOT_RUN_PATTERNS)
+
+
+def covers_head(artifact: BotArtifact, head_sha: str) -> bool:
+    """True when this artefact is anchored to ``head_sha``.
+
+    Reviews and review comments carry ``commit_id``. Top-level comments do
+    not, so the head SHA is looked for among the 40-hex commit ids the body
+    names - CodeRabbit's summary states the range it reviewed.
+    """
+    if not head_sha:
+        return False
+    if artifact.commit_id and artifact.commit_id.lower() == head_sha.lower():
+        return True
+    return any(match.group(0).lower() == head_sha.lower() for match in _SHA_RE.finditer(artifact.body))
+
+
+def classify_bot_run(login: str, artifacts: list[BotArtifact], head_sha: str) -> BotStatus:
+    """Determine whether ``login`` produced a review for ``head_sha``."""
+    own = [artifact for artifact in artifacts if artifact.author == login]
+    if not own:
+        return BotStatus(login=login, status=BOT_ABSENT, detail=_BOT_STATUS_TEXT[BOT_ABSENT])
+
+    reviews_for_head = [a for a in own if covers_head(a, head_sha) and not looks_like_a_declined_review(a.body)]
+    if reviews_for_head:
+        return BotStatus(login=login, status=BOT_REVIEWED, detail=_BOT_STATUS_TEXT[BOT_REVIEWED])
+
+    if any(looks_like_a_declined_review(a.body) for a in own):
+        return BotStatus(login=login, status=BOT_DECLINED, detail=_BOT_STATUS_TEXT[BOT_DECLINED])
+
+    return BotStatus(login=login, status=BOT_STALE, detail=_BOT_STATUS_TEXT[BOT_STALE])
+
+
+def classify_review_coverage(artifacts: list[BotArtifact], head_sha: str) -> list[BotStatus]:
+    """Classify every configured review bot, seen on this PR or not."""
+    return [classify_bot_run(login, artifacts, head_sha) for login in sorted(REVIEW_BOT_LOGINS)]
+
+
+def bot_artifacts_from(sources: dict[str, list[Any]]) -> list[BotArtifact]:
+    """Collect every artefact the configured review bots left on the PR."""
+    artifacts: list[BotArtifact] = []
+    for kind, items in sources.items():
+        for item in items:
+            login = (item.get("user") or {}).get("login", "")
+            if login not in REVIEW_BOT_LOGINS:
+                continue
+            artifacts.append(
+                BotArtifact(
+                    author=login,
+                    body=item.get("body") or "",
+                    commit_id=item.get("commit_id"),
+                    kind=kind,
+                )
+            )
+    return artifacts
+
+
+def fetch_comment_sources(owner: str, repo: str, pr: int, token: str) -> dict[str, list[Any]]:
+    """Paginate each bot-comment endpoint once, keyed by artefact kind.
+
+    Findings and review coverage are both derived from these three lists, so
+    they are fetched here rather than in each consumer: ``paginate`` walks up
+    to 30 pages per endpoint and this gate runs on every pull request.
+    """
     base = f"https://api.github.com/repos/{owner}/{repo}"
-    review = paginate(f"{base}/pulls/{pr}/comments", token)
-    for c in review:
+    return {
+        "review": paginate(f"{base}/pulls/{pr}/reviews", token),
+        "review-comment": paginate(f"{base}/pulls/{pr}/comments", token),
+        "issue-comment": paginate(f"{base}/issues/{pr}/comments", token),
+    }
+
+
+def findings_from(sources: dict[str, list[Any]]) -> list[Finding]:
+    """Extract must-address / informational findings from fetched comments."""
+    findings: list[Finding] = []
+    for c in sources.get("review-comment", []):
         login = (c.get("user") or {}).get("login", "")
         if login not in REVIEW_BOT_LOGINS:
             continue
@@ -170,8 +314,7 @@ def fetch_findings(owner: str, repo: str, pr: int, token: str) -> list[Finding]:
                 html_url=c.get("html_url") or "",
             )
         )
-    issues = paginate(f"{base}/issues/{pr}/comments", token)
-    for c in issues:
+    for c in sources.get("issue-comment", []):
         login = (c.get("user") or {}).get("login", "")
         if login not in REVIEW_BOT_LOGINS:
             continue
@@ -202,9 +345,11 @@ def fetch_findings(owner: str, repo: str, pr: int, token: str) -> list[Finding]:
     return findings
 
 
-def pr_body(owner: str, repo: str, pr: int, token: str) -> str:
-    data = gh_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr}", token)
-    return (data or {}).get("body") or ""
+def pr_body_and_head(owner: str, repo: str, pr: int, token: str) -> tuple[str, str]:
+    """Return the PR body and its current head SHA in one request."""
+    data = gh_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr}", token) or {}
+    head_sha = ((data.get("head") or {}).get("sha")) or ""
+    return data.get("body") or "", head_sha
 
 
 def ack_ids(body: str) -> tuple[set[str], bool]:
@@ -231,11 +376,16 @@ def fixup_addresses(owner: str, repo: str, pr: int, token: str) -> set[str]:
 
 
 def evaluate(owner: str, repo: str, pr: int, token: str) -> GateOutcome:
-    findings = fetch_findings(owner, repo, pr, token)
-    body = pr_body(owner, repo, pr, token)
+    sources = fetch_comment_sources(owner, repo, pr, token)
+    findings = findings_from(sources)
+    body, head_sha = pr_body_and_head(owner, repo, pr, token)
     acked, nit_batch = ack_ids(body)
     commit_acks = fixup_addresses(owner, repo, pr, token)
-    out = GateOutcome(findings=findings)
+    out = GateOutcome(
+        findings=findings,
+        head_sha=head_sha,
+        bot_statuses=classify_review_coverage(bot_artifacts_from(sources), head_sha),
+    )
     for f in findings:
         if f.severity == "informational":
             out.informational.append(f)
@@ -251,6 +401,29 @@ def evaluate(owner: str, repo: str, pr: int, token: str) -> GateOutcome:
     return out
 
 
+def _render_review_coverage(outcome: GateOutcome) -> list[str]:
+    """Render the per-bot coverage block that qualifies the counts above."""
+    if not outcome.bot_statuses:
+        return []
+    head = f" for head `{outcome.head_sha[:8]}`" if outcome.head_sha else ""
+    lines = [f"### Review coverage{head}", ""]
+    for status in outcome.bot_statuses:
+        mark = "reviewed" if status.clean else "**not counted**"
+        lines.append(f"- `{status.login}`: {mark} - {status.detail}")
+    lines.append("")
+    unreviewed = outcome.unreviewed_bots
+    if unreviewed:
+        names = ", ".join(f"`{status.login}`" for status in unreviewed)
+        lines.append(
+            f"{len(unreviewed)} of {len(outcome.bot_statuses)} configured review bots "
+            f"({names}) produced no review for this head commit, so the finding counts "
+            "above are not a clean result: they are the counts from the bots that did "
+            "run. Re-request a review, or record why the gap is acceptable."
+        )
+        lines.append("")
+    return lines
+
+
 def render_summary(outcome: GateOutcome) -> str:
     lines = [STICKY_HEADER, "## Review-bot acknowledgement summary", ""]
     total_must = len(outcome.must_unresolved) + len(outcome.must_acked)
@@ -261,6 +434,7 @@ def render_summary(outcome: GateOutcome) -> str:
     )
     lines.append(f"- Informational findings: {len(outcome.informational)}")
     lines.append("")
+    lines.extend(_render_review_coverage(outcome))
     if outcome.must_unresolved:
         lines.append("### Open must-address findings")
         lines.append("")
@@ -276,6 +450,21 @@ def render_summary(outcome: GateOutcome) -> str:
     else:
         lines.append("All must-address findings are resolved or acknowledged.")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def exit_code(outcome: GateOutcome, *, require_review: bool = False) -> int:
+    """Map an outcome to the process exit status.
+
+    An unreviewed bot fails only under ``--require-review``. `review-bot-ack`
+    is a required context on `main`, so an upstream rate limit turning into a
+    hard failure would wedge every open pull request; by default the gap is
+    reported in the summary and the gate keeps failing only on open findings.
+    """
+    if outcome.must_unresolved:
+        return 1
+    if require_review and outcome.unreviewed_bots:
+        return 1
+    return 0
 
 
 def upsert_sticky(owner: str, repo: str, pr: int, token: str, body: str) -> None:
@@ -317,6 +506,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Reserved; gate already fails on unresolved must-address.",
     )
+    p.add_argument(
+        "--require-review",
+        action="store_true",
+        help=(
+            "Also fail when a configured review bot produced no review for the "
+            "head commit, instead of only reporting the gap in the summary."
+        ),
+    )
     args = p.parse_args(argv)
 
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
@@ -338,7 +535,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"warning: could not post sticky summary: {exc}", file=sys.stderr)
 
-    return 1 if outcome.must_unresolved else 0
+    for status in outcome.unreviewed_bots:
+        print(f"warning: {status.login} {status.detail}", file=sys.stderr)
+
+    return exit_code(outcome, require_review=args.require_review)
 
 
 if __name__ == "__main__":

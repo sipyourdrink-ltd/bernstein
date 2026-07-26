@@ -4,8 +4,12 @@ How Bernstein detects, quarantines, and recovers from flaky tests.
 
 ## TL;DR
 
-- Two pieces of CI machinery: ctrf-io test reporter (per-PR markdown
-  summary) and pytest-xflaky (nightly auto-quarantine PRs).
+- One piece of CI machinery: the ctrf-io test reporter (per-PR
+  markdown summary). Quarantine itself is a manual operator action.
+- There is no automated flake detector. The scheduled `pytest-xflaky`
+  hunter was removed after 67 fires produced 0 completed runs and 0
+  quarantine decisions; see "Detecting a flake" for the manual
+  procedure that replaces it.
 - A "flaky" test is one that fails at least twice AND passes at least
   twice across five consecutive runs of the unit suite under
   randomised ordering.
@@ -32,42 +36,48 @@ mikepenz/action-junit-report already publishes and:
 The reporter highlights failed tests, slowest tests, and previously-
 flaky tests when present.
 
-### 2. Nightly flake detection (pytest-xflaky)
+### 2. Flake detection (manual, pytest-xflaky)
 
-`.github/workflows/flake-quarantine.yml` runs at 04:00 UTC every day
-and on `workflow_dispatch`. It:
+There is no scheduled flake hunter. A workflow previously ran this on
+a nightly cron, but it never completed a single run in 67 fires and
+so never made a quarantine decision. It was removed rather than left
+in place, because a detector that appears to exist and does nothing
+suppresses the question of whether flakes are being caught at all.
 
-1. Installs the `dev` group plus `pytest-randomly` (the latter only
-   in this ephemeral runner - it is intentionally not a global dev
-   dep because it auto-activates on import and would shuffle every
-   other CI job's test order).
-2. Runs `pytest tests/unit --xflaky-collect --json-report` five
-   times: once with `-p no:randomly` for a deterministic baseline,
-   then four times with `--randomly-seed=last` to chain seeds.
-3. Generates the xflaky reports
-   (`--xflaky-report --xflaky-github-report`) with the threshold
-   `--xflaky-min-failures 2 --xflaky-min-successes 2`.
-4. If any test was flagged, runs `pytest --xflaky-fix` to rewrite
-   the offending test files with `@pytest.mark.xfail(strict=False)`.
-5. Opens a PR via `peter-evans/create-pull-request` against `main`
-   with the label set `ci, tests, flaky, bot`.
+Run the same detection locally when a test looks unstable. Do not run
+the whole suite in one invocation; it is memory-hungry. Point it at
+the directory or file under suspicion:
 
-The PR body explains the threshold, links to the artifacts, and gives
-operators an explicit checklist for investigation and unquarantining.
+1. Install the `dev` group plus `pytest-randomly`. Keep the latter out
+   of the global dev deps - it auto-activates on import and would
+   shuffle every other CI job's test order.
+2. Run `pytest <path> --xflaky-collect --json-report` five times: once
+   with `-p no:randomly` for a deterministic baseline, then four times
+   with `--randomly-seed=last` to chain seeds.
+3. Generate the reports with `--xflaky-report --xflaky-github-report`
+   and the threshold `--xflaky-min-failures 2 --xflaky-min-successes 2`.
+4. If any test is flagged, run `pytest --xflaky-fix` to rewrite the
+   offending test files with `@pytest.mark.xfail(strict=False)`.
+5. Open a quarantine PR against `main` with the label set
+   `ci, tests, flaky, bot`, and record the threshold and the seeds you
+   used in the PR body.
+
+Restoring an automated hunter is reasonable, but it needs an owner who
+will confirm it runs to completion; that is the failure the removed
+workflow never surfaced.
 
 ## Operator workflow
 
 ### Reviewing a quarantine PR
 
-1. Open the PR from branch `bot/flake-quarantine`.
+1. Open the quarantine PR.
 2. Read the affected test names. If they cluster around a single
    subsystem (network, async event loops, filesystem races), that is
    strong evidence of a shared root cause - file a bug to track the
    underlying defect.
-3. Pull the `xflaky-reports` artifact for per-run details.
+3. Read the seeds and per-run detail recorded in the PR body.
 4. Land the PR if the markers look reasonable. Close it if the run
-   was infra noise - the next nightly run will redetect any real
-   flake.
+   was infra noise - a real flake will resurface.
 
 ### Investigating a quarantined test
 
@@ -110,13 +120,11 @@ The current thresholds (5 runs, min 2 failures, min 2 successes)
 trade off detection latency for false-positive rate:
 
 - Lower `--xflaky-min-failures` would catch slower-flaking tests
-  faster but file false-positive PRs more often.
-- More runs per night would tighten the signal at the cost of hosted-
-  runner minutes - the current five-run budget is ~25 minutes per
-  unit suite on a `ubuntu-latest` hosted runner.
+  faster but produce false-positive quarantines more often.
+- More runs would tighten the signal at the cost of wall-clock time -
+  the five-run budget is roughly 25 minutes for the unit suite.
 
-Both knobs live in `.github/workflows/flake-quarantine.yml`. Tune in
-that file rather than per-PR.
+Both knobs are flags on the commands above. Pass them per invocation.
 
 ## Out of scope
 

@@ -463,6 +463,33 @@ def _maybe_demote(
     return ValidatedPayload(tool_name=err.tool_name, payload={})
 
 
+def validate_or_error(tool_name: str, params: dict[str, Any]) -> ValidationError | None:
+    """Validate ``params`` against ``tool_name``'s schema, for tool handlers.
+
+    Returns ``None`` when the call is allowed, or a ``ValidationError`` the
+    caller should render via :func:`validation_error_response`. ``None``
+    values are stripped first, which keeps every tool's optional-argument
+    convention working: a Python default of ``None`` means "argument not
+    supplied", not "argument supplied as null". A schema can still mark a
+    property nullable when accepting an explicit null is the contract.
+    """
+    cleaned = {k: v for k, v in params.items() if v is not None}
+    result = validate_tool_call(tool_name, cleaned)
+    if isinstance(result, ValidatedPayload):
+        return None
+    return result
+
+
+def validation_error_response(err: ValidationError) -> str:
+    """Render a validation failure as the JSON string an MCP tool returns.
+
+    Carries the full structured error so MCP clients can show users which
+    field failed and why, without leaking server internals.
+    """
+    payload = {"error": err.message, "jsonrpc_error": to_jsonrpc_error(err)}
+    return json.dumps(payload)
+
+
 def to_jsonrpc_error(err: ValidationError) -> dict[str, Any]:
     """Render a ``ValidationError`` as a JSON-RPC 2.0 ``error`` object.
 

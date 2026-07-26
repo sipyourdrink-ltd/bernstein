@@ -14,9 +14,81 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 | macOS safety net | Nightly + push-on-sensitive | `.github/workflows/ci-macos-nightly.yml` |
 | Required check | Single `CI gate` job | `.github/workflows/ci.yml` |
 | Concurrency | PR-scoped cancel, push-scoped non-cancel | `.github/workflows/ci.yml` |
+| Integration suite | Whole directory, every event, via `integration-tests` | `.github/workflows/ci.yml` |
 | Collection completeness | Guard test, fails on an uncollected test file | `scripts/check_test_collection.py` |
 | Required-context presence | Operator command + advisory PR step | `scripts/check_required_contexts.py` |
 | Type-check scope | Blocking vs advisory scopes | `docs/operations/type-check-scope.md` |
+
+## Test directory coverage
+
+Every test file must be reachable from a CI lane. The mapping:
+
+| Directory | Lane | Events | Selection |
+|---|---|---|---|
+| `tests/unit/**` | `test` (4 shards x os x python) | pull_request | impacted slice only (`--affected`) |
+| `tests/unit/**` | `test` (4 shards x os x python) | push, merge_group, workflow_dispatch | whole directory |
+| `tests/integration/**` | `test` (4 shards x os x python) | pull_request | impacted slice only (`--affected`) |
+| `tests/integration/**` | `integration-tests` | all | whole directory |
+| `tests/property/**` | `property-tests` | all | whole directory |
+| `tests/snapshot/**` | `snapshot-tests` | all | whole directory |
+| `tests/contract/**` | `schemathesis-smoke` | all | whole directory |
+| `tests/protocol/**` | `publish.yml` | release | whole directory |
+| `tests/pentest/**` | `pentest.yml` | scheduled / dispatch | whole directory |
+| `tests/stress/**` | `nightly-deep-tests.yml` | nightly | whole directory |
+| `tests/chaos/**` | none - on demand | operator | not run in CI |
+| `tests/perf/**` | none - wall-clock thresholds are not meaningful on shared runners | operator | not run in CI |
+
+Two things this table is deliberately explicit about:
+
+- On `pull_request` the `test` job runs `scripts/run_tests.py --affected`,
+  which selects only the files the impact map ties to the changed sources.
+  The whole `tests/unit/**` directory runs on push, in the merge queue and
+  on manual dispatch, not on a PR. A file that no lane other than the
+  affected slice covers is therefore not guaranteed to run before a merge.
+- `tests/chaos/**` (11 files), `tests/perf/**` (1 file) and
+  `tests/test_worktree.py` are collected by no lane at all. `tests/protocol`,
+  `tests/pentest` and `tests/stress` do run, but in workflows that do not
+  feed the required `CI gate` context, so they cannot block a merge either.
+
+A test file that lives outside all of these directories is collected by
+nothing. Add new test files under one of the directories above.
+
+### Why `integration-tests` runs on pull_request too
+
+The `--affected` slice selects only the integration files the impact map
+ties to the changed sources. A break that arrives through a path the map
+does not model - a changed default, a role template, a transitive import
+- was invisible to every lane that decides what reaches `main`. Only two
+integration files ran on push (`test_capability_matrix_spawn_refusal.py`
+and `test_adapter_e2e.py`, both pinned by name); the other 124 did not.
+
+Restricting the job to push and `merge_group` was considered and rejected.
+The `main-merge-queue` ruleset is currently disabled, so `merge_group`
+never fires; a push-only job reports on `main` after a merge instead of
+gating it, and the required `CI gate` context on a PR would still report
+success having never run the directory. The impact map's blind spots are
+the same on a PR as on a push, so the job runs on every event and a skip
+is tolerated on none of them.
+
+The measured cost of running the whole directory is 264s wall at
+`--parallel 4` (126 files, 456 MB peak RSS). It runs concurrently with the
+`test` shards, whose timeout is 90 minutes, so it does not extend the
+critical path.
+
+Note that a file-level pass is not the same as a directory-level pass.
+Around a dozen files under `tests/integration/` are gated behind
+credentials or SDKs a hosted runner does not have (`E2B_API_KEY`,
+`OPENAI_API_KEY`, `BERNSTEIN_TEST_API_KEY`, the object-store sinks, the
+opt-in `cluster_e2e` marker). Those files execute no assertions here.
+
+`scripts/run_tests.py` reports them as `NO TESTS` rather than `PASS`, and
+totals them separately (`Files: P passed, F failed, N ran no tests, T
+total`), so the passing count is a count of files that actually executed
+something. A file that ran nothing is not a failure - a credential-gated
+suite and an empty impact-based selection are both legitimate - but it is
+not evidence either. A file that exits 0 without a pytest terminal summary
+*is* a failure: pytest prints one on every completed run, so its absence
+means the subprocess stopped being pytest before it could report.
 
 ## macOS matrix policy (closes #1468)
 
@@ -161,6 +233,71 @@ the vulture / refurb / perflint jobs in
 `static-analysis-extended.yml` run on the weekly schedule only, and
 the refurb SARIF upload is filtered to error-level results so style
 findings stay out of the code-scanning alert feed.
+
+## Gating vs advisory workflows
+
+Two contexts gate a merge. Everything else is advisory and cannot
+block or unblock one.
+
+| Role | Workflow | Context published |
+|------|----------|-------------------|
+| Gating | `ci.yml` | `CI gate` |
+| Gating | `ci-gate-stub.yml` | `CI gate` (fully-ignored diffs only) |
+| Gating | `review-bot-ack.yml` | `review-bot-ack` |
+
+Everything else that triggers on `pull_request` is advisory:
+`a2a-federation-e2e`, `airgap-e2e`, `bernstein-pr-review`,
+`cluster-e2e`, `code-review-bots-ci`, `codeql`,
+`contract-drift-autofix`, `dependabot-auto-merge`,
+`dependency-review`, `docs-drift`, `license-compliance`, `pr-labels`,
+`pr-observability-summary`, `pr-policy`, `required-check-canary`,
+`spiffe-extra-e2e`, `trufflehog`, `typecheck-ts`, `zizmor`.
+
+### What the pool actually spends
+
+The free-tier public-repo ceiling is 20 concurrent jobs, so the budget
+is jobs, not runs. Measured on one head SHA of a workflow-touching PR
+(#3157), 18 workflow runs resolved to 47 runner jobs:
+
+| Role | Runs | Runner jobs | Share |
+|------|------|-------------|-------|
+| Gating (`ci.yml`) | 1 | 34 | 72% |
+| Gating (`review-bot-ack`) | 4 | 4 | 9% |
+| Advisory (all of it) | 13 | 9 | 19% |
+
+Counting runs instead of jobs inverts that picture and makes advisory
+work look dominant. It is not: an advisory workflow is one job, `ci.yml`
+is 34. Moving every advisory lane off the PR path would return under a
+fifth of the pool while deleting all pre-merge signal that is not the
+test matrix, so the advisory lanes stay where they are. The load that
+saturates the pool during a merge wave is concurrent `ci.yml` runs, and
+the durable fix for that is the merge queue (see *Concurrency policy*).
+
+Advisory lanes are kept cheap instead of removed:
+`pr-observability-summary` runs only on PRs labelled `deep-review`,
+`dependabot-auto-merge` gates its only job on the Dependabot user id,
+`pr-policy` and `pr-labels` are consolidated single-job lanes, and the
+vulture / refurb / perflint jobs run weekly rather than per PR.
+
+### Concurrency on `pull_request` workflows
+
+Every workflow triggering on `pull_request` declares a `concurrency`
+group keyed on the PR, and every one of them cancels a superseded
+pull-request run. There is one exception:
+
+| Workflow | Why it must not cancel |
+|----------|------------------------|
+| `review-bot-ack.yml` | Publishes a required context. Branch protection folds every check-run of a required name into its verdict, so one `cancelled` instance holds the PR at BLOCKED even after a later run succeeds (#3154, #3042). The group also carries `github.event_name` so a `pull_request` run and a `pull_request_review` run for the same commit cannot cancel each other. |
+
+`ci.yml` and `codeql.yml` express cancellation as
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`: they
+cancel on the PR lane and keep the per-SHA push-to-`main` lane alive, so
+a release commit's CI is never cancelled by the next merge.
+
+`tests/unit/test_pull_request_workflow_concurrency_yaml.py` pins both
+the rule and the exception list, so a new `pull_request` workflow
+cannot land without a concurrency group and an exception cannot be
+added silently.
 
 ## Required check
 

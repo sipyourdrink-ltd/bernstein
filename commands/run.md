@@ -2,7 +2,7 @@
 description: Start a Bernstein orchestration run with a goal
 ---
 
-Start a multi-agent orchestration run. Bernstein decomposes the goal into tasks, spawns CLI agents in parallel, verifies their output, and merges results.
+Start an orchestration run. Bernstein decomposes the goal into tasks, spawns CLI coding agents in parallel git worktrees, verifies their output, and merges results. No model sits in the coordination loop, so the run replays byte-identically.
 
 Usage: /bernstein:run $ARGUMENTS
 

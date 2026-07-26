@@ -1,10 +1,19 @@
 name: Nightly deep tests
 
 # Heavyweight verification that runs once per day at 03:00 UTC.
-# Every job is advisory (continue-on-error) so a flaky overnight
-# regression doesn't block the next day's PRs. Real failures are
-# tracked through GitHub Issues by the existing bernstein-ci-fix
-# workflow.
+#
+# Every job here reports into the run conclusion. That is deliberate:
+# the workflow has no `pull_request` trigger and is not a required
+# status check, so a red night blocks nothing, and the jobs carry no
+# `needs` edges, so a failing job does not skip its siblings. The only
+# thing a job-level `continue-on-error` bought was a run that reported
+# `success` while a job inside it reported `failure`, which is how a
+# real Schemathesis regression went unread for eight nights.
+#
+# Where a tool is genuinely advisory (its non-zero exit means "here is
+# something to look at", not "the probe broke"), that is expressed at
+# the step level with an explicit `|| true` on the command, so the
+# scope of what is tolerated is visible where it is decided.
 
 on:
   schedule:
@@ -25,7 +34,6 @@ jobs:
     name: Hypothesis (deep, 1000 examples)
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -46,7 +54,6 @@ jobs:
     name: Schemathesis (deep, full sweep)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -73,7 +80,6 @@ jobs:
     name: CrossHair (concolic, deep)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -99,7 +105,6 @@ jobs:
     name: Mutation (full repo, advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 240
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -130,7 +135,6 @@ jobs:
     name: Bandit (full -ll, advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -143,7 +147,11 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
       - name: Run Bandit at -ll (MEDIUM + HIGH)
-        run: uv run bandit -r src/ -ll | tee bandit-nightly.txt
+        # Advisory by design: bandit exits non-zero on any MEDIUM+ finding,
+        # and the value here is the uploaded report, not a pass/fail gate.
+        # `|| true` states that at the step, rather than leaning on the
+        # pipe swallowing the exit status by accident.
+        run: uv run bandit -r src/ -ll | tee bandit-nightly.txt || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nightly-bandit-results
@@ -155,7 +163,6 @@ jobs:
     name: pip-audit (full closure)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -196,7 +203,6 @@ jobs:
     name: Stress + resource-leak suite (TC-C)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     permissions:
       contents: read
     steps:

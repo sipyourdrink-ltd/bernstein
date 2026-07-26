@@ -196,3 +196,58 @@ def test_error_budget_report_is_byte_identical_across_checkouts(tmp_path: Path) 
     assert json.dumps(report_a, sort_keys=True) == json.dumps(report_b, sort_keys=True)
     assert report_a["error_budget"]["failed_events"] == 1  # type: ignore[index]
     assert report_a["error_budget"]["total_events"] == 2  # type: ignore[index]
+
+
+def test_every_violation_receipt_in_a_tick_carries_its_own_records_head(tmp_path: Path) -> None:
+    """Each receipt's ``prev_chain_digest`` is the head its own chain event sits on.
+
+    The receipt binds ``prev_chain_digest`` into the payload it signs, and the
+    verifier compares that value against the chain entry (see
+    ``sla_receipt._chain_link``). A tick that breaches more than one contract
+    appends once per breach, so a head captured once for the whole tick is stale
+    for every receipt after the first: the signed value names a chain position
+    the record does not sit on, and full-chain verification of the receipt's
+    anchor no longer agrees with the receipt.
+    """
+    sdd = tmp_path / ".sdd"
+    sdd.mkdir()
+    store = SLAStore(sdd)
+    # Two contracts over the same stale artifact: one tick, two breaches.
+    for subject_id in ("sched_nightly", "sched_weekly"):
+        store.add(
+            build_contract(
+                subject_type="schedule",
+                subject_id=subject_id,
+                artifact_freshness_s=90_000,
+                artifact_path=_ARTIFACT,
+            )
+        )
+    _seed_stale_artifact(sdd, age_s=200_000)
+
+    chain = AuditChainStore(sdd / "audit", key=load_or_create_audit_key())
+    monitor = build_monitor_from_sdd(sdd, chain=chain)
+
+    receipts = monitor.evaluate(_NOW)
+    assert len(receipts) == 2, "both contracts must breach for this to test anything"
+
+    events = chain.query(event_type="sla.violation")
+    assert len(events) == 2
+    by_receipt = {str(e.details["receipt_digest"]): e for e in events}
+
+    for receipt in receipts:
+        event = by_receipt.get(receipt.payload_digest)
+        assert event is not None, f"no chain event anchors receipt {receipt.receipt_id}"
+        # Against the record's own ``prev_hmac``, not against the head the event
+        # merely claims: both claims are written from the same read, so comparing
+        # them to each other would agree even if both diverged from the record.
+        assert receipt.prev_chain_digest == event.prev_hmac, (
+            f"receipt {receipt.receipt_id} signed head {receipt.prev_chain_digest!r} "
+            f"but its own chain event follows {event.prev_hmac!r}"
+        )
+        assert event.details["prev_chain_digest"] == event.prev_hmac, (
+            f"chain event for receipt {receipt.receipt_id} claims it follows "
+            f"{event.details['prev_chain_digest']!r} but actually follows {event.prev_hmac!r}"
+        )
+
+    ok, errors = chain.verify()
+    assert ok, errors

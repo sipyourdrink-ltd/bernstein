@@ -45,6 +45,34 @@ The remote transport exposes exactly these MCP tools:
 | `bernstein_approve` | Approve a pending task | `task_id` |
 | `bernstein_create_subtask` | Create a subtask | `parent_task_id`, `goal` |
 
+That is 8 tools, a subset of what the stdio server registers. Tools such as
+`bernstein_task_handle`, `bernstein_claim`, `bernstein_update`,
+`bernstein_post_artifact`, `bernstein_context`, `load_skill`, the scenario
+tools and `verify_chain` are not reachable over this transport.
+
+### Argument validation on this transport is weaker than on stdio
+
+The deny-by-default input firewall described in
+[MCP tool-call input validation](../mcp/input-validation.md) is applied by the
+stdio and SSE servers in `bernstein.mcp.server`. The streamable HTTP transport
+in `bernstein.mcp.remote_transport` does not call `validate_tool_call`. On this
+path:
+
+- the size cap, recursion cap and control-character filter are not applied;
+- arguments are not checked against the JSON Schemas in
+  `src/bernstein/mcp/tool_schemas/`; the schemas in the table above are
+  restated inside the transport module and are looser than the real ones;
+- a malformed argument object is rejected by the handler it reaches, if at
+  all, rather than by a uniform structured validation error.
+
+Treat every client of this transport as trusted, or terminate it behind a
+gateway that validates request bodies. Starting the transport logs a
+one-line warning saying the same thing.
+
+Sharing one registry and one validation path between the transports is
+tracked in issue #3083. This section is an interim notice and goes away with
+that change.
+
 ---
 
 ## Starting the server

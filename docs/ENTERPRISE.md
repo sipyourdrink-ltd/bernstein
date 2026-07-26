@@ -6,15 +6,28 @@ This page is the short path through Bernstein's enterprise surface. It does not 
 
 ## Executive summary
 
-Bernstein is a local-first orchestration layer for CLI coding agents. In the default deployment model:
+Bernstein is a local-first, deterministic orchestrator for CLI coding agents. No model sits in its coordination loop, so parallel runs in per-task git worktrees replay byte-identically. In the default deployment model:
 
 - orchestration state lives on disk under `.sdd/`
-- agents run as separate local processes, usually in isolated git worktrees
+- agents run as separate local processes, usually in per-task git worktrees
 - the API surface is local unless you explicitly expose it
 - audit events are written to an HMAC-chained append-only log
 - outbound network traffic depends on which adapters, model providers, and cloud features you enable
 
 There is no separate enterprise edition. Auth, RBAC, audit logging, compliance tooling, model policy, and identity controls ship in-tree.
+
+### What a reviewer can check, and what it costs them
+
+The claim is that a reviewer checks a run offline, without rerunning it. That splits by key material, so budget for it before you plan a review:
+
+| Verb | Needs | Checks |
+|---|---|---|
+| `bernstein artifact verify <task_id>` | on-disk artefacts only | re-derived content hash, Ed25519 signature on every lineage entry, parent-hash chain. The operator HMAC leg is skipped when no secret is supplied; the signature and chain legs still run. |
+| `bernstein audit verify --merkle-only` | on-disk artefacts only | the Merkle seal over the daily `.sdd/audit/*.jsonl` files: a deleted, inserted, reordered, or byte-tampered file. |
+| `bernstein audit verify`, `--hmac-only`, `bernstein audit verify-hmac` | the install's audit key | replays the per-line HMAC chain. The key sits outside the audit volume by design (`BERNSTEIN_AUDIT_KEY_PATH`, default `~/.local/state/bernstein/audit.key`), so it does not travel with the log. |
+| `bernstein audit verify --receipt <file>` | the install's audit key | one automation receipt or status callback against the local chain. |
+
+A third party who does not hold the audit key cannot replay the HMAC chain. Give them a pack exported with `bernstein audit export --signature-kind hmac-chain+pubkey` instead: it signs the chain head with the lineage Ed25519 key, so a key-less auditor authenticates the bundle against a public key.
 
 ## 1. Security model
 

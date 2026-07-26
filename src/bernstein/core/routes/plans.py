@@ -22,10 +22,19 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/plans", tags=["plans"])
 
 
+#: Answer for every plan route when plan mode is off on this deployment.
+#: Same reasoning as the SSO routes: a disabled feature is a permanent,
+#: client-knowable configuration state, not a server fault and not a
+#: transient one, so it belongs in the 4xx class. A 5xx would invite a
+#: retry loop against a condition that only an operator can clear.
+PLAN_MODE_DISABLED_STATUS = 404
+PLAN_MODE_DISABLED_DETAIL = "Plan mode is not enabled on this server"
+
+
 def _get_plan_store(request: Request) -> PlanStore:
     store: PlanStore | None = getattr(request.app.state, "plan_store", None)
     if store is None:
-        raise HTTPException(status_code=503, detail="Plan store not initialized (plan_mode may be disabled)")
+        raise HTTPException(status_code=PLAN_MODE_DISABLED_STATUS, detail=PLAN_MODE_DISABLED_DETAIL)
     return store
 
 
@@ -46,7 +55,11 @@ class PlanDecisionRequest(BaseModel):
 
 
 @router.get(
-    "", responses={400: {"description": "Invalid status filter"}, 503: {"description": "Plan store not initialized"}}
+    "",
+    responses={
+        400: {"description": "Invalid status filter"},
+        404: {"description": "Plan mode is not enabled on this server"},
+    },
 )
 def list_plans(request: Request, status: str | None = None) -> list[dict[str, Any]]:
     """List all plans, optionally filtered by status.
@@ -66,7 +79,8 @@ def list_plans(request: Request, status: str | None = None) -> list[dict[str, An
 
 
 @router.get(
-    "/{plan_id}", responses={404: {"description": "Plan not found"}, 503: {"description": "Plan store not initialized"}}
+    "/{plan_id}",
+    responses={404: {"description": "Plan not found, or plan mode is not enabled on this server"}},
 )
 def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
     """Get a single plan by ID."""
@@ -79,9 +93,8 @@ def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
 @router.post(
     "/{plan_id}/approve",
     responses={
-        404: {"description": "Plan not found"},
+        404: {"description": "Plan not found, or plan mode is not enabled on this server"},
         409: {"description": "Plan already decided"},
-        503: {"description": "Plan store not initialized"},
     },
 )
 def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
@@ -129,9 +142,8 @@ def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | Non
 @router.post(
     "/{plan_id}/reject",
     responses={
-        404: {"description": "Plan not found"},
+        404: {"description": "Plan not found, or plan mode is not enabled on this server"},
         409: {"description": "Plan already decided"},
-        503: {"description": "Plan store not initialized"},
     },
 )
 def reject_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:

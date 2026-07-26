@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.9.0"
-description = "Deterministic, verifiable orchestration for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more): reproducible parallel runs in git worktrees, always-on lineage and replay journal, opt-in HMAC-chained audit log, air-gap install profile."
+version = "3.10.0"
+description = "Deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). No model in the coordination loop, so parallel runs in per-task git worktrees replay byte-identically. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -316,6 +316,7 @@ observability = [
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"
 bernstein-worker = "bernstein.core.worker:main"
+bernstein-bench = "bernstein.eval.bench.bench_cli:bench_group"
 
 [project.entry-points."bernstein.plugins"]
 # Lifecycle/event plugins (hookimpl classes). Example:
