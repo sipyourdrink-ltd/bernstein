@@ -1623,8 +1623,25 @@ def exec_restart() -> None:
     image entirely - no orphan.  On Windows, ``os.execv`` does not truly
     replace the process (it spawns a child), so we use ``subprocess.Popen``
     and ``sys.exit`` instead.
+
+    Refuses to run inside a pytest process. A test that hands the dashboard a
+    bare ``MagicMock`` gets a truthy ``_restart_on_exit`` - every attribute of
+    a bare MagicMock is truthy - so the caller reaches this function and the
+    ``os.execv`` below replaces the running pytest process. The run then
+    prints no test results and exits 0, which is indistinguishable from a
+    pass, and the whole file silently stops protecting anything. Raising here
+    turns that into a loud failure in the offending test.
     """
     import subprocess
+
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError(
+            "exec_restart() refuses to re-exec inside a pytest process "
+            "(PYTEST_CURRENT_TEST is set): replacing the process would end the "
+            "test run with no results and a zero exit code. Patch "
+            "bernstein.cli.run_bootstrap.exec_restart, or give the dashboard "
+            "double an explicit falsy _restart_on_exit."
+        )
 
     argv = [sys.executable, "-m", "bernstein.cli.main", "run"]
     if sys.platform == "win32":

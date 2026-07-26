@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -65,6 +66,77 @@ DEFAULT_TEST_DIR = "tests/unit"
 # surfaces as this CPython error rather than a genuine test failure. A single
 # serial retry distinguishes the environmental flake from a real regression.
 _THREAD_EXHAUSTION_MARKER = "RuntimeError: can't start new thread"
+
+# Per-file outcomes. "Ran nothing" is a state of its own, not a flavour of
+# passing: a file whose tests all skipped, or that pytest collected nothing
+# from, executed no assertion and cannot be counted as evidence that the
+# suite ran. It stays non-fatal (a credential-gated integration file and an
+# empty impact-based selection are both legitimate), but it is reported and
+# totalled separately so "N files passed" means what a reviewer reads it as.
+OUTCOME_PASSED = "passed"
+OUTCOME_NO_TESTS = "no-tests"
+OUTCOME_FAILED = "failed"
+
+# pytest's terminal summary counts, e.g. "1 failed, 2 passed in 0.30s".
+_PYTEST_COUNT_RE = re.compile(
+    r"\b(?P<count>\d+)\s+(?P<outcome>passed|failed|error|errors|skipped|xfailed|xpassed|deselected)\b"
+)
+# The tail every completed pytest run prints, e.g. "in 0.30s" / "in 1.20 s".
+_PYTEST_DURATION_RE = re.compile(r"\bin\s+[\d.]+\s*s\b")
+_PYTEST_NO_TESTS_RE = re.compile(r"\bno tests ran\b", re.IGNORECASE)
+
+# Outcomes that mean a test body actually executed. ``skipped`` and
+# ``deselected`` are deliberately absent: neither ran anything.
+_EXECUTED_OUTCOMES = frozenset({"passed", "failed", "error", "errors", "xfailed", "xpassed"})
+
+
+def summarize_pytest_counts(output: str) -> dict[str, int] | None:
+    """Return pytest's terminal-summary counts, or ``None`` if there is none.
+
+    ``None`` is the load-bearing case: pytest prints a terminal summary on
+    every completed run, so its absence means the subprocess did not finish
+    as pytest. A test that reaches ``os.execv`` replaces the pytest process
+    with another program, which exits 0 having run nothing - the shape that
+    used to be indistinguishable from a pass.
+    """
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _PYTEST_NO_TESTS_RE.search(stripped):
+            return {}
+        if not _PYTEST_DURATION_RE.search(stripped):
+            continue
+        counts = {m.group("outcome"): int(m.group("count")) for m in _PYTEST_COUNT_RE.finditer(stripped)}
+        if counts:
+            return counts
+    return None
+
+
+def executed_test_count(counts: dict[str, int]) -> int:
+    """Number of tests whose body actually ran, per pytest's own counts."""
+    return sum(value for outcome, value in counts.items() if outcome in _EXECUTED_OUTCOMES)
+
+
+def classify_file_outcome(code: int, output: str) -> str:
+    """Classify one test file's subprocess result.
+
+    - ``OUTCOME_FAILED``: pytest reported a failure, *or* exited 0 without a
+      terminal summary (the process was replaced mid-run).
+    - ``OUTCOME_NO_TESTS``: pytest ran to completion and executed nothing
+      (exit code 5, or every test skipped).
+    - ``OUTCOME_PASSED``: pytest ran at least one test and none failed.
+    """
+    if code == 5:
+        return OUTCOME_NO_TESTS
+    if code != 0:
+        return OUTCOME_FAILED
+    counts = summarize_pytest_counts(output)
+    if counts is None:
+        return OUTCOME_FAILED
+    if executed_test_count(counts) == 0:
+        return OUTCOME_NO_TESTS
+    return OUTCOME_PASSED
 
 
 def test_file_timeout_seconds() -> int:
@@ -236,24 +308,46 @@ def _extract_failure_sections(lines: list[str]) -> list[str]:
     return result
 
 
-def _report_file_result(label: str, code: int, duration: float, output: str) -> bool:
-    """Report a single file result. Returns True if passed/skipped."""
+def _format_counts(counts: dict[str, int]) -> str:
+    """Render pytest's per-outcome counts for one line of the run log."""
+    if not counts:
+        return "nothing collected"
+    return ", ".join(f"{value} {outcome}" for outcome, value in sorted(counts.items()))
+
+
+def _report_file_result(label: str, code: int, duration: float, output: str) -> str:
+    """Report a single file result. Returns the ``OUTCOME_*`` classification."""
+    outcome = classify_file_outcome(code, output)
+    if outcome in (OUTCOME_PASSED, OUTCOME_NO_TESTS):
+        # Report pytest's own counts rather than whatever the subprocess
+        # happened to print last: with -s a test's stdout is not captured, so
+        # the last line is often unrelated to the result being reported.
+        counts = summarize_pytest_counts(output) or {}
+        detail = _format_counts(counts)
+        prefix = "PASS" if outcome == OUTCOME_PASSED else "NO TESTS"
+        print(f"  {prefix} {label} ({duration:.1f}s) {detail}")
+        return outcome
     if code == 0:
-        last_line = [ln for ln in output.strip().split("\n") if ln.strip()][-1] if output.strip() else ""
-        print(f"  PASS {label} ({duration:.1f}s) {last_line}")
-        return True
-    if code == 5:
-        print(f"  SKIP {label} (no tests)")
-        return True
+        # Exit 0 with no pytest terminal summary: the subprocess stopped being
+        # pytest before it could report. Nothing was verified.
+        print(f"  FAIL {label} ({duration:.1f}s) exited 0 without a pytest summary; the process was replaced mid-run")
+        _print_failure_summary(output)
+        return outcome
     print(f"  FAIL {label} ({duration:.1f}s)")
     _print_failure_summary(output)
-    return False
+    return outcome
+
+
+def _print_totals(passed: int, failed: int, no_tests: int, total: int) -> None:
+    """Print the per-file totals with ran-nothing broken out."""
+    print(f"Files: {passed} passed, {failed} failed, {no_tests} ran no tests, {total} total")
 
 
 def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, coverage: bool = False) -> int:
     """Run test files one by one."""
     passed = 0
     failed = 0
+    no_tests = 0
     total_duration = 0.0
 
     for i, path in enumerate(files, 1):
@@ -273,15 +367,18 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, co
             code, duration, output = retry
 
         total_duration += duration
-        if _report_file_result(label, code, duration, output):
+        outcome = _report_file_result(label, code, duration, output)
+        if outcome == OUTCOME_PASSED:
             passed += 1
+        elif outcome == OUTCOME_NO_TESTS:
+            no_tests += 1
         else:
             failed += 1
             if fail_fast:
                 break
 
     print(f"\n{'=' * 60}")
-    print(f"Files: {passed} passed, {failed} failed, {len(files)} total")
+    _print_totals(passed, failed, no_tests, len(files))
     print(f"Time:  {total_duration:.1f}s")
     return 1 if failed else 0
 
@@ -294,6 +391,7 @@ def run_parallel(
 
     passed = 0
     failed = 0
+    no_tests = 0
     done = 0
     total = len(files)
     abort = False
@@ -327,8 +425,11 @@ def run_parallel(
 
             done += 1
             label = f"[{done}/{total}] {fpath.name}"
-            if _report_file_result(label, code, duration, output):
+            outcome = _report_file_result(label, code, duration, output)
+            if outcome == OUTCOME_PASSED:
                 passed += 1
+            elif outcome == OUTCOME_NO_TESTS:
+                no_tests += 1
             else:
                 failed += 1
                 if fail_fast:
@@ -338,7 +439,7 @@ def run_parallel(
 
     wall_time = time.monotonic() - wall_start
     print(f"\n{'=' * 60}")
-    print(f"Files: {passed} passed, {failed} failed, {total} total")
+    _print_totals(passed, failed, no_tests, total)
     print(f"Wall:  {wall_time:.1f}s ({workers} workers)")
     return 1 if failed else 0
 
