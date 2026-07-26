@@ -59,6 +59,15 @@ Validates the HMAC chains across **both** layers. Exits `1` on
 failure; the failure list names the offending file plus the broken
 record.
 
+Verification is byte-exact and total:
+
+- Every line must equal the canonical serialisation of the record it
+  decodes to. Bytes the JSON reader would normalise away - an unknown
+  key, a renamed field - are reported as `non-canonical bytes`, even
+  when the decoded record still satisfies every hash and HMAC.
+- A malformed, truncated or undecodable line is reported as
+  `undecodable record`, never raised. Every store gets a verdict.
+
 ### export
 
 Emits the timeline for `TASK_ID` as:
@@ -77,6 +86,8 @@ Emits the timeline for `TASK_ID` as:
 Properties enforced by the store (and proved by 22 Hypothesis tests):
 
 - HMAC unforgeability across both layers
+- Byte coverage: flipping any single byte of any record on disk is
+  reported, in either layer
 - Replay determinism (same store + same task -> identical timeline)
 - Append commutativity per task across concurrent writers
 - Verify-after-truncate detects every truncation

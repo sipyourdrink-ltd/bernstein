@@ -638,14 +638,111 @@ def test_verify_wrong_key_fails_chain(tmp_path: Path) -> None:
 
 
 def test_verify_after_truncation(tmp_path: Path) -> None:
-    """Truncating bytes from the parent log produces an unverifiable chain."""
+    """Truncating bytes from the parent log produces an unverifiable chain.
+
+    ``verify`` reports the torn line rather than raising: an auditor
+    needs a verdict on the store, not a traceback from the JSON parser.
+    """
     store = LineageV2Store(tmp_path / "v2", hmac_key=_TEST_KEY)
     store.append(_make_parent(), _make_child())
     raw = store.parent_log.read_bytes()
-    # Lop off the last 5 bytes - the parser will reject torn JSON.
+    # Lop off the last 5 bytes - the line is now torn JSON.
     store.parent_log.write_bytes(raw[:-5])
-    with pytest.raises((json.JSONDecodeError, ValueError)):
-        store.verify()
+    r = store.verify()
+    assert not r.ok
+    assert any("undecodable" in f for f in r.failures)
+
+
+# ---------------------------------------------------------------------------
+# verify - byte coverage
+# ---------------------------------------------------------------------------
+
+
+def _flip_every_byte_and_verify(store: LineageV2Store, path: Path) -> list[tuple[int, str]]:
+    """Flip each non-newline byte of ``path`` in turn; return silent passes.
+
+    Returns ``(offset, character)`` for every byte whose mutation left
+    ``verify`` reporting a clean store. A correct verifier returns [].
+    """
+    original = path.read_bytes()
+    undetected: list[tuple[int, str]] = []
+    try:
+        for idx in range(len(original)):
+            if original[idx : idx + 1] == b"\n":
+                continue
+            mutated = bytearray(original)
+            mutated[idx] ^= 0x01
+            path.write_bytes(bytes(mutated))
+            # Must not raise - a tampered store still gets a verdict.
+            result = store.verify()
+            if result.ok or not result.failures:
+                undetected.append((idx, chr(original[idx])))
+    finally:
+        path.write_bytes(original)
+    return undetected
+
+
+def test_verify_detects_every_single_byte_flip_in_child_log(tmp_path: Path) -> None:
+    """Exhaustive: no byte of a child log can be flipped undetected.
+
+    The empty payload is the case that matters. The reader defaults a
+    missing ``payload`` key to ``{}``, so renaming that key - one bit in
+    any of its seven letters - used to rebuild a record identical to the
+    one that was signed. HMAC, chain and content address all matched and
+    ``verify`` reported ok.
+    """
+    store = LineageV2Store(tmp_path / "v2", hmac_key=_TEST_KEY)
+    child_sha, _ = store.append(_make_parent(), _make_child(payload={}))
+    assert store.verify().ok
+
+    undetected = _flip_every_byte_and_verify(store, store.child_log(child_sha))
+    assert undetected == []
+
+
+def test_verify_detects_every_single_byte_flip_in_parent_log(tmp_path: Path) -> None:
+    """Exhaustive: no byte of the parent log can be flipped undetected."""
+    store = LineageV2Store(tmp_path / "v2", hmac_key=_TEST_KEY)
+    store.append(_make_parent(), _make_child(payload={"k": "v"}))
+    assert store.verify().ok
+
+    undetected = _flip_every_byte_and_verify(store, store.parent_log)
+    assert undetected == []
+
+
+def test_verify_detects_renamed_payload_key(tmp_path: Path) -> None:
+    """Renaming ``payload`` on an empty-payload record must not verify.
+
+    Pins the exact regression: the mutated line still decodes, and every
+    hash and HMAC over the decoded record still matches, because the
+    dropped key reads back as the ``{}`` that was signed. Only the bytes
+    differ - so only a byte-level check catches it.
+    """
+    store = LineageV2Store(tmp_path / "v2", hmac_key=_TEST_KEY)
+    child_sha, _ = store.append(_make_parent(), _make_child(payload={}))
+    path = store.child_log(child_sha)
+
+    tampered = path.read_bytes().replace(b'"payload":', b'"payloae":')
+    assert tampered != path.read_bytes(), "fixture did not mutate the payload key"
+    path.write_bytes(tampered)
+
+    r = store.verify()
+    assert not r.ok
+    assert any("non-canonical bytes" in f for f in r.failures)
+
+
+def test_verify_rejects_unknown_key_appended_to_child_record(tmp_path: Path) -> None:
+    """A key the reader ignores still has to break verification."""
+    store = LineageV2Store(tmp_path / "v2", hmac_key=_TEST_KEY)
+    child_sha, _ = store.append(_make_parent(), _make_child())
+    path = store.child_log(child_sha)
+
+    obj = json.loads(path.read_bytes())
+    obj["injected"] = "ignored-by-the-reader"
+    path.write_bytes(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+
+    r = store.verify()
+    assert not r.ok
+    assert any("non-canonical bytes" in f for f in r.failures)
 
 
 # ---------------------------------------------------------------------------
