@@ -122,6 +122,22 @@ SANDBOX_SESSION_DESTROY = "sandbox.session_destroy"
 #: first-class decision instead of leaving it in a single log WARNING.
 SANDBOX_ISOLATION_DOWNGRADE = "sandbox.isolation_downgrade"
 
+#: Emitted when an append finds the newest segment ending in a non-verifying
+#: suffix (a crash-torn partial line, bytes that fail their HMAC, or garbage
+#: that is not valid UTF-8/JSON) and seals it: the terminator and this record
+#: land in one write, so the evidence that a record was damaged cannot be
+#: separated from the repair. Details carry ``segment``, ``byte_offset`` (the
+#: segment size at seal time), ``verified_prefix_offset`` (the end of the last
+#: verifiable record), ``torn_bytes_sha256``, and ``tear_class``.
+EVENT_CHAIN_TORN_RECORD = "chain.torn_record"
+
+#: Emitted by ``bernstein audit ack-tear`` when an operator signs off on tear
+#: evidence. Appended to the chain itself, so clearing an alert is exactly as
+#: tamper-evident as the damage was. Details carry ``segment`` and
+#: ``byte_offset`` matching the tear, plus ``checkpoint_root`` when the
+#: acknowledgement authorises sealing past a conflicting chain checkpoint.
+EVENT_CHAIN_TEAR_ACKNOWLEDGED = "chain.tear_acknowledged"
+
 
 class AuditKeyPermissionError(RuntimeError):
     """Raised when the audit key file has permissions looser than 0600."""
@@ -461,12 +477,55 @@ def _split_jsonl_bytes(raw_bytes: bytes) -> list[bytes]:
     return parts
 
 
+@dataclass(frozen=True)
+class _LineFinding:
+    """One non-verifying line, with enough position data to classify it later."""
+
+    display_name: str
+    line_no: int
+    offset: int
+    length: int
+    kind: str
+    messages: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ChainMarker:
+    """A verified tear-evidence record (``chain.torn_record`` / acknowledgement)."""
+
+    display_name: str
+    line_no: int
+    offset: int
+    event_type: str
+    details: dict[str, Any]
+    hmac: str
+
+
+@dataclass
+class _ChainWalkContext:
+    """Structured observations collected while :func:`_verify_log_bytes` walks.
+
+    Purely additive: when no context is passed the walker behaves exactly as
+    before. With one, tear-aware callers learn where each failure sits, where
+    the last verifying record of each segment ends, and which verified records
+    are tear evidence or acknowledgements - without a second pass.
+    """
+
+    failures: list[_LineFinding] = field(default_factory=list)
+    markers: list[_ChainMarker] = field(default_factory=list)
+    ok_end: dict[str, int] = field(default_factory=dict)
+    total: dict[str, int] = field(default_factory=dict)
+    missing_newline: dict[str, str] = field(default_factory=dict)
+    order: list[str] = field(default_factory=list)
+
+
 def _verify_log_bytes(
     raw_bytes: bytes,
     display_name: str,
     prev_hmac: str,
     key: bytes,
     errors: list[str],
+    ctx: _ChainWalkContext | None = None,
 ) -> str:
     """Verify the JSONL entries in ``raw_bytes``, appending errors.
 
@@ -477,13 +536,36 @@ def _verify_log_bytes(
     canonicalisation, ``prev_hmac`` linkage, and HMAC checks, so archived
     history stays exactly as tamper-evident as live history (issue #1835).
     """
+    if ctx is not None:
+        if display_name not in ctx.order:
+            ctx.order.append(display_name)
+        ctx.total[display_name] = ctx.total.get(display_name, 0) + len(raw_bytes)
+        ctx.ok_end.setdefault(display_name, 0)
+
     if raw_bytes and not raw_bytes.endswith(b"\n"):
         # The writer always terminates with ``\n``; absence is itself
         # tamper-evidence (e.g. ``\n`` flipped to ``\v`` at EOF). Continue
         # into the per-line loop so a truncated last record is still
         # surfaced as ``invalid JSON`` for callers that key on that
         # message (test_partial_last_line_flagged_as_invalid_json).
-        errors.append(f"{display_name}: missing trailing newline")
+        message = f"{display_name}: missing trailing newline"
+        errors.append(message)
+        if ctx is not None:
+            ctx.missing_newline[display_name] = message
+
+    def _fail(line_no: int, offset: int, length: int, kind: str, messages: tuple[str, ...]) -> None:
+        errors.extend(messages)
+        if ctx is not None:
+            ctx.failures.append(
+                _LineFinding(
+                    display_name=display_name,
+                    line_no=line_no,
+                    offset=offset,
+                    length=length,
+                    kind=kind,
+                    messages=messages,
+                )
+            )
 
     # ``_split_jsonl_bytes`` splits on ``b"\n"`` only, so the start offset of
     # each line inside the segment is the running sum of prior line lengths
@@ -506,13 +588,31 @@ def _verify_log_bytes(
             # taking the whole audit surface down. Undecodable bytes are
             # exactly what an operator runs ``verify`` to learn about, so this
             # is a loud failure, never a warning or a skipped segment.
-            errors.append(f"{display_name}:{line_no}: undecodable bytes at offset {line_offset + exc.start} - {exc}")
+            _fail(
+                line_no,
+                line_offset,
+                len(raw_line),
+                "undecodable",
+                (f"{display_name}:{line_no}: undecodable bytes at offset {line_offset + exc.start} - {exc}",),
+            )
             continue
         except json.JSONDecodeError as exc:
-            errors.append(f"{display_name}:{line_no}: invalid JSON - {exc}")
+            _fail(
+                line_no,
+                line_offset,
+                len(raw_line),
+                "invalid_json",
+                (f"{display_name}:{line_no}: invalid JSON - {exc}",),
+            )
             continue
         if not isinstance(parsed_entry, dict):
-            errors.append(f"{display_name}:{line_no}: entry is not a JSON object")
+            _fail(
+                line_no,
+                line_offset,
+                len(raw_line),
+                "not_object",
+                (f"{display_name}:{line_no}: entry is not a JSON object",),
+            )
             continue
         entry = cast("dict[str, Any]", parsed_entry)
 
@@ -524,25 +624,53 @@ def _verify_log_bytes(
         # surfaced as a verification failure.
         canonical = json.dumps(entry, sort_keys=True).encode()
         if canonical != raw_line:
-            errors.append(f"{display_name}:{line_no}: non-canonical line bytes")
+            _fail(
+                line_no,
+                line_offset,
+                len(raw_line),
+                "non_canonical",
+                (f"{display_name}:{line_no}: non-canonical line bytes",),
+            )
             continue
 
         stored_hmac = str(entry.pop("hmac", ""))
         entry_prev = str(entry.get("prev_hmac", ""))
+        line_messages: list[str] = []
         # Constant-time compare on the chain link - verification is offline
         # but a leaky compare in audit code is a CodeQL/Bandit smell and
         # masks regressions when the same helper is later reused on a
         # network surface.
         if not _hmac.compare_digest(entry_prev, prev_hmac):
-            errors.append(
+            line_messages.append(
                 f"{display_name}:{line_no}: prev_hmac mismatch (expected {prev_hmac[:16]}…, got {entry_prev[:16]}…)"
             )
 
         expected_hmac = _compute_hmac(key, prev_hmac, entry)
         if not _hmac.compare_digest(stored_hmac, expected_hmac):
-            errors.append(
+            line_messages.append(
                 f"{display_name}:{line_no}: HMAC mismatch (expected {expected_hmac[:16]}…, got {stored_hmac[:16]}…)"
             )
+
+        if line_messages:
+            _fail(line_no, line_offset, len(raw_line), "invalid_hmac", tuple(line_messages))
+        elif ctx is not None:
+            line_end = line_offset + len(raw_line)
+            if line_end < len(raw_bytes):
+                line_end += 1  # the terminator this line owns
+            ctx.ok_end[display_name] = ctx.total.get(display_name, 0) - len(raw_bytes) + line_end
+            event_type = str(entry.get("event_type", ""))
+            if event_type in (EVENT_CHAIN_TORN_RECORD, EVENT_CHAIN_TEAR_ACKNOWLEDGED):
+                details = entry.get("details")
+                ctx.markers.append(
+                    _ChainMarker(
+                        display_name=display_name,
+                        line_no=line_no,
+                        offset=line_offset,
+                        event_type=event_type,
+                        details=dict(details) if isinstance(details, dict) else {},
+                        hmac=stored_hmac,
+                    )
+                )
 
         prev_hmac = stored_hmac
     return prev_hmac
@@ -573,7 +701,22 @@ def _read_archived_segment(gz_path: Path, errors: list[str]) -> bytes | None:
         return None
 
 
-def _chain_tail_from_bytes(raw_bytes: bytes) -> str | None:
+def _record_is_locally_valid(key: bytes, entry: dict[str, Any]) -> bool:
+    """Whether *entry*'s stored ``hmac`` matches its own stated ``prev_hmac``.
+
+    A *local* check: it authenticates the record against the predecessor the
+    record itself names, without walking the chain. Crash garbage that happens
+    to parse as a canonical ``hmac``-bearing object still fails it, because
+    producing a matching MAC requires the audit key. It deliberately does not
+    prove the stated predecessor is the true chain head - that is ``verify``'s
+    job - only that the record was minted by a key holder.
+    """
+    body = {k: v for k, v in entry.items() if k != "hmac"}
+    expected = _compute_hmac(key, str(entry.get("prev_hmac", "")), body)
+    return _hmac.compare_digest(str(entry.get("hmac", "")), expected)
+
+
+def _chain_tail_from_bytes(raw_bytes: bytes, key: bytes | None = None) -> str | None:
     """Return the last ``hmac`` in ``raw_bytes`` (scanning in reverse), or None.
 
     Shared by live-file and archived-segment chain recovery so both resolve
@@ -599,6 +742,14 @@ def _chain_tail_from_bytes(raw_bytes: bytes) -> str | None:
     case working: a truncated final line (writer crash mid-write, no trailing
     ``\\n``) is skipped and recovery resumes from the last well-formed record,
     exactly as the legitimate truncation path does today.
+
+    When *key* is provided the candidate must additionally pass
+    :func:`_record_is_locally_valid`: crash-torn tails are arbitrary bytes, not
+    clean prefixes, and a garbage tail can parse as a canonical ``hmac``-bearing
+    object by accident. Without the MAC check recovery would adopt such a line
+    as the head and every later append would chain onto bytes no key holder
+    wrote. ``AuditLog`` always passes its key; the keyless form is kept for
+    read-only callers that only need a best-effort tip.
     """
     for raw_line in reversed(_split_jsonl_bytes(raw_bytes)):
         if raw_line == b"":
@@ -620,9 +771,308 @@ def _chain_tail_from_bytes(raw_bytes: bytes) -> str | None:
         # and is skipped rather than adopted as the tail.
         if json.dumps(entry, sort_keys=True).encode() != raw_line:
             continue
-        if "hmac" in entry:
-            return str(entry["hmac"])
+        if "hmac" not in entry:
+            continue
+        if key is not None and not _record_is_locally_valid(key, entry):
+            continue
+        return str(entry["hmac"])
     return None
+
+
+def _local_tail_state(raw: bytes, key: bytes) -> tuple[int, str | None]:
+    """Return ``(verified_prefix_end, head_hmac)`` for one segment's bytes.
+
+    Walks forward under the verifier's framing and keeps extending the prefix
+    while lines are canonical, ``hmac``-bearing, and locally MAC-valid (see
+    :func:`_record_is_locally_valid`). The returned offset is the byte after
+    the last such record (including its terminator when present), i.e. where
+    a non-verifying suffix begins; the head is that record's ``hmac``, or
+    ``None`` when the segment holds no locally valid record.
+    """
+    offset = 0
+    end_ok = 0
+    head: str | None = None
+    for raw_line in _split_jsonl_bytes(raw):
+        line_start = offset
+        offset += len(raw_line) + 1
+        if raw_line == b"":
+            continue
+        try:
+            parsed = json.loads(raw_line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        entry = cast("dict[str, Any]", parsed)
+        if json.dumps(entry, sort_keys=True).encode() != raw_line:
+            continue
+        if "hmac" not in entry or not _record_is_locally_valid(key, entry):
+            continue
+        line_end = line_start + len(raw_line)
+        if line_end < len(raw):
+            line_end += 1  # the terminator this line owns
+        end_ok = line_end
+        head = str(entry["hmac"])
+    return end_ok, head
+
+
+def _classify_torn_bytes(torn: bytes) -> str:
+    """Classify a non-verifying tail per the crash-tear model.
+
+    Crashed appends can leave arbitrary bytes, not just a clean prefix of the
+    record, so every shape is named rather than assumed:
+
+    * ``unterminated_record`` - the suffix is empty: the final record itself
+      is valid and only its terminator was lost.
+    * ``garbage_bytes`` - bytes that are not valid UTF-8, or damage spanning
+      several apparent lines.
+    * ``invalid_hmac`` - a single line that parses as a canonical
+      ``hmac``-bearing object but fails its MAC (crash garbage can look like
+      JSON; only a key holder can produce a matching MAC).
+    * ``non_canonical`` - parses as JSON but is not the writer's byte framing.
+    * ``partial_record`` - a single line that does not parse: the classic
+      crash-mid-write fragment.
+    """
+    if not torn:
+        return "unterminated_record"
+    try:
+        torn.decode("utf-8")
+    except UnicodeDecodeError:
+        return "garbage_bytes"
+    fragments = [line for line in torn.split(b"\n") if line != b""]
+    if len(fragments) != 1:
+        return "garbage_bytes"
+    try:
+        parsed = json.loads(fragments[0])
+    except json.JSONDecodeError:
+        return "partial_record"
+    if not isinstance(parsed, dict) or json.dumps(parsed, sort_keys=True).encode() != fragments[0]:
+        return "non_canonical"
+    return "invalid_hmac" if "hmac" in parsed else "non_canonical"
+
+
+@dataclass(frozen=True)
+class TearEvidence:
+    """Durable evidence that a segment carried a non-verifying suffix.
+
+    Reported by :meth:`AuditLog.verify_detailed` as a verdict distinct from
+    chain corruption: a tear is crash-shaped damage at the tail (or its sealed
+    remains), stays reported until an operator acknowledges it with
+    ``bernstein audit ack-tear``, and never clears itself.
+
+    Attributes:
+        segment: Live segment file name the tear sits in.
+        byte_offset: Segment size when the tear was observed or sealed; the
+            offset an acknowledgement must name.
+        verified_prefix_offset: End of the last verifiable record before the
+            damage.
+        tear_class: See :func:`_classify_torn_bytes`.
+        sealed: Whether an :data:`EVENT_CHAIN_TORN_RECORD` record already
+            anchors the evidence in the chain.
+        acknowledged: Whether a matching acknowledgement record exists.
+        raw_errors: The verifier messages this evidence subsumes.
+    """
+
+    segment: str
+    byte_offset: int
+    verified_prefix_offset: int
+    tear_class: str
+    sealed: bool
+    acknowledged: bool
+    raw_errors: tuple[str, ...] = ()
+
+    def describe(self) -> str:
+        state = "sealed" if self.sealed else "unsealed"
+        ack = "acknowledged" if self.acknowledged else "UNACKNOWLEDGED"
+        return (
+            f"{self.segment}: {self.tear_class} tear at byte {self.byte_offset} "
+            f"(verifiable prefix ends at {self.verified_prefix_offset}; {state}, {ack})"
+        )
+
+
+@dataclass
+class ChainVerifyReport:
+    """Outcome of :meth:`AuditLog.verify_detailed`.
+
+    ``hard_errors`` are chain damage that is *not* tear-shaped (mid-history
+    tampering, broken linkage with verified records after it); ``tears`` are
+    crash-shaped tail damage, each durable until acknowledged.
+    """
+
+    hard_errors: list[str] = field(default_factory=list)
+    tears: list[TearEvidence] = field(default_factory=list)
+
+    @property
+    def unacknowledged_tears(self) -> list[TearEvidence]:
+        return [tear for tear in self.tears if not tear.acknowledged]
+
+    @property
+    def ok(self) -> bool:
+        return not self.hard_errors and not self.unacknowledged_tears
+
+
+class OutstandingTearError(RuntimeError):
+    """Raised when an operation refuses to proceed over unacknowledged tears.
+
+    Sealing over unacknowledged tear evidence would fold the damage into a
+    fresh root and stop it being reportable; the seal refuses instead, until
+    an operator acknowledges via ``bernstein audit ack-tear``.
+    """
+
+    def __init__(self, tears: list[TearEvidence]) -> None:
+        self.tears = tears
+        head = "; ".join(t.describe() for t in tears[:3])
+        super().__init__(f"Audit chain carries unacknowledged tear evidence; refusing to proceed: {head}")
+
+
+def _live_segment_name(display_name: str) -> str:
+    """Map an archived display name back to the live segment name."""
+    return display_name[: -len(".gz")] if display_name.endswith(".gz") else display_name
+
+
+def _build_verify_report(errors: list[str], ctx: _ChainWalkContext) -> ChainVerifyReport:
+    """Fold walk observations into hard errors plus classified tear evidence."""
+    claimed: set[int] = set()
+    claimed_messages: set[str] = set()
+    tears: list[TearEvidence] = []
+    seen_tears: set[tuple[str, int]] = set()
+
+    # Sealed tears: a verified torn-record marker vouches for the exact
+    # non-verifying span it recorded, in its own segment only. Anything a
+    # marker does not cover stays a hard error.
+    for marker in ctx.markers:
+        if marker.event_type != EVENT_CHAIN_TORN_RECORD:
+            continue
+        segment = _live_segment_name(marker.display_name)
+        if str(marker.details.get("segment", "")) != segment:
+            continue
+        byte_offset = int(marker.details.get("byte_offset", 0) or 0)
+        prefix_end = int(marker.details.get("verified_prefix_offset", byte_offset) or 0)
+        if (segment, byte_offset) in seen_tears:
+            continue
+        seen_tears.add((segment, byte_offset))
+        run_messages: list[str] = []
+        for index, failure in enumerate(ctx.failures):
+            if index in claimed or failure.display_name != marker.display_name:
+                continue
+            if prefix_end <= failure.offset < byte_offset:
+                claimed.add(index)
+                run_messages.extend(failure.messages)
+        claimed_messages.update(run_messages)
+        tears.append(
+            TearEvidence(
+                segment=segment,
+                byte_offset=byte_offset,
+                verified_prefix_offset=prefix_end,
+                tear_class=str(marker.details.get("tear_class", "unknown")),
+                sealed=True,
+                acknowledged=False,
+                raw_errors=tuple(run_messages),
+            )
+        )
+
+    # Unsealed tail tear: every non-verifying line after the last verifying
+    # record of the chain's final segment, extending to end of file. Damage
+    # with verified records after it is not a tail and stays hard.
+    if ctx.order:
+        final = ctx.order[-1]
+        ok_end = ctx.ok_end.get(final, 0)
+        tail_indices = [
+            index
+            for index, failure in enumerate(ctx.failures)
+            if index not in claimed and failure.display_name == final and failure.offset >= ok_end
+        ]
+        newline_message = ctx.missing_newline.get(final)
+        if tail_indices:
+            run_messages = []
+            if newline_message is not None:
+                run_messages.append(newline_message)
+                claimed_messages.add(newline_message)
+            kinds: list[str] = []
+            for index in tail_indices:
+                claimed.add(index)
+                run_messages.extend(ctx.failures[index].messages)
+                kinds.append(ctx.failures[index].kind)
+            claimed_messages.update(run_messages)
+            segment = _live_segment_name(final)
+            key = (segment, ctx.total.get(final, 0))
+            if key not in seen_tears:
+                seen_tears.add(key)
+                tears.append(
+                    TearEvidence(
+                        segment=segment,
+                        byte_offset=ctx.total.get(final, 0),
+                        verified_prefix_offset=ok_end,
+                        tear_class=_tail_tear_class(kinds, unterminated=newline_message is not None),
+                        sealed=False,
+                        acknowledged=False,
+                        raw_errors=tuple(run_messages),
+                    )
+                )
+        elif newline_message is not None:
+            # The final fragment is a fully valid record that lost only its
+            # terminator: nothing failed, but the tail is still torn and the
+            # next append must seal it.
+            claimed_messages.add(newline_message)
+            segment = _live_segment_name(final)
+            total = ctx.total.get(final, 0)
+            if (segment, total) not in seen_tears:
+                tears.append(
+                    TearEvidence(
+                        segment=segment,
+                        byte_offset=total,
+                        verified_prefix_offset=total,
+                        tear_class="unterminated_record",
+                        sealed=False,
+                        acknowledged=False,
+                        raw_errors=(newline_message,),
+                    )
+                )
+
+    # Acknowledgements are verified chain records matched by exact
+    # (segment, byte_offset); an operator must name the tear as verify
+    # printed it.
+    acked: set[tuple[str, int]] = set()
+    for marker in ctx.markers:
+        if marker.event_type != EVENT_CHAIN_TEAR_ACKNOWLEDGED:
+            continue
+        acked.add(
+            (
+                str(marker.details.get("segment", "")),
+                int(marker.details.get("byte_offset", 0) or 0),
+            )
+        )
+    tears = [
+        TearEvidence(
+            segment=tear.segment,
+            byte_offset=tear.byte_offset,
+            verified_prefix_offset=tear.verified_prefix_offset,
+            tear_class=tear.tear_class,
+            sealed=tear.sealed,
+            acknowledged=(tear.segment, tear.byte_offset) in acked,
+            raw_errors=tear.raw_errors,
+        )
+        for tear in tears
+    ]
+
+    hard_errors = [message for message in errors if message not in claimed_messages]
+    return ChainVerifyReport(hard_errors=hard_errors, tears=tears)
+
+
+def _tail_tear_class(kinds: list[str], *, unterminated: bool) -> str:
+    """Name the damage class of an unsealed tail run from its failure kinds."""
+    if "undecodable" in kinds:
+        return "garbage_bytes"
+    if len(kinds) != 1:
+        return "garbage_bytes"
+    kind = kinds[0]
+    if kind == "invalid_json":
+        return "partial_record" if unterminated else "garbage_bytes"
+    if kind == "invalid_hmac":
+        return "invalid_hmac"
+    if kind in ("non_canonical", "not_object"):
+        return "non_canonical"
+    return "garbage_bytes"
 
 
 @dataclass
@@ -757,6 +1207,34 @@ def _row_to_event(row: dict[str, Any]) -> AuditEvent:
         prev_hmac=row.get("prev_hmac", ""),
         hmac=row.get("hmac", ""),
     )
+
+
+def _decode_segment_text(raw: bytes) -> str:
+    """Decode segment bytes for record projection, skipping undecodable lines.
+
+    Strict per-line decoding: a line that is not valid UTF-8 cannot be a
+    canonical record, is dropped whole, and is never smoothed over with
+    replacement characters - so a projected record is always byte-exact
+    against what the verifier hashed, and a tampered or crash-damaged line is
+    never *returned* in laundered form, only omitted. Loudness stays with
+    ``verify``/``verify_detailed``, which name the undecodable bytes and keep
+    failing until the damage is acknowledged.
+
+    This keeps every read surface total over a chain that legitimately
+    carries sealed tear evidence: torn bytes are permanent (the log is
+    append-only and a seal never truncates), so a whole-blob strict decode
+    would turn one acknowledged crash into a forever-raising query path.
+    """
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        decoded: list[str] = []
+        for line in raw.split(b"\n"):
+            try:
+                decoded.append(line.decode("utf-8"))
+            except UnicodeDecodeError:
+                continue
+        return "\n".join(decoded)
 
 
 def _events_from_text(
@@ -923,7 +1401,7 @@ class AuditLog:
         """
         live_files = sorted(self._audit_dir.glob(_JSONL_GLOB), reverse=True)
         for log_path in live_files:
-            tip = _chain_tail_from_bytes(log_path.read_bytes())
+            tip = _chain_tail_from_bytes(log_path.read_bytes(), self._key)
             if tip is not None:
                 return tip
 
@@ -937,7 +1415,7 @@ class AuditLog:
                 # A corrupt archived segment cannot yield a trustworthy tip;
                 # skip it and keep looking at older segments.
                 continue
-            tip = _chain_tail_from_bytes(raw)
+            tip = _chain_tail_from_bytes(raw, self._key)
             if tip is not None:
                 return tip
         return _GENESIS_HMAC
@@ -988,22 +1466,175 @@ class AuditLog:
                 "resync_head() must be called inside append_transaction(); "
                 "use AuditChainStore.prev_chain_digest to observe the head without appending"
             )
-        # Shares ``log``'s (path, size) fast path, in both directions. Reading it:
-        # when the day file is byte-length-identical to what our own last append
-        # or resync left it at, nothing has been appended since and the cached
-        # head still stands, so nesting two resyncs inside one section costs one
-        # scan rather than two. Writing it: an append later in the same section
-        # skips its own scan. The day file is re-derived rather than assumed, so a
-        # clock rollover between here and the append shows up as a path mismatch
-        # and re-syncs. An append only ever grows the file, so a changed tail
-        # cannot hide behind an unchanged size.
+        # Shares ``log``'s (path, size) fast path, in both directions (see
+        # ``_sync_for_append``). The day file is re-derived rather than
+        # assumed, so a clock rollover between here and the append shows up as
+        # a path mismatch and re-syncs. Any torn tail is sealed before the head
+        # is read, so the value returned is the head the next append actually
+        # chains onto rather than the one that preceded the seal - a caller
+        # that embeds this head into a signed payload must never publish a
+        # chain position its own record will not occupy.
         day_path = self._audit_dir / f"{datetime.now(tz=UTC).strftime('%Y-%m-%d')}.jsonl"
-        day_size = _path_size(day_path)
-        if day_path != self._synced_path or day_size != self._synced_size:
-            self._prev_hmac = self._recover_chain_tail()
-            self._synced_path = day_path
-            self._synced_size = day_size
+        self._sync_for_append(day_path)
         return self._prev_hmac
+
+    def _sync_for_append(self, log_path: Path) -> None:
+        """Bring the cached chain head in line with *log_path* before appending.
+
+        Order matters: a torn tail is sealed *first*, and only then is the
+        head read, because sealing appends its own evidence record and
+        therefore moves the head. Reading first would publish a head the next
+        append does not chain onto.
+
+        Fast path: when the day file is byte-length-identical to what this
+        instance's own last append left it at, no other writer has touched it,
+        our own append always ends in ``b"\\n"`` so the tail cannot be torn,
+        and both the tear probe and the full rescan are skipped. The probe
+        must stay behind this branch: unconditionally it is a stat + open +
+        seek + read on every append, which is a measurable fraction of append
+        throughput.
+
+        The slow path records what it synced, so a nested append inside the
+        same ``append_transaction`` section takes the fast path instead of
+        re-scanning the segment it just scanned. The caller must hold the
+        chain append lock.
+        """
+        size = _path_size(log_path)
+        if log_path == self._synced_path and size == self._synced_size:
+            return
+        if self._seal_torn_tail(log_path):
+            # Sealing appended its own record and left the head and the sync
+            # markers current; re-reading would only re-derive what it wrote.
+            return
+        self._prev_hmac = self._recover_chain_tail()
+        self._synced_path = log_path
+        self._synced_size = _path_size(log_path)
+
+    def _mint_record(
+        self,
+        *,
+        ts: str,
+        event_type: str,
+        actor: str,
+        resource_type: str,
+        resource_id: str,
+        details: dict[str, Any],
+    ) -> tuple[AuditEvent, str]:
+        """Build one record against the cached head; return it with its wire line.
+
+        Minting and writing are separate so the tear seal can put a record and
+        the terminator that precedes it into one ``write``. The returned line
+        is the canonical serialisation including its terminator, so every
+        writer emits byte-identical framing. Does not advance the head; the
+        caller does that once the bytes are on disk.
+        """
+        entry_dict: dict[str, Any] = {
+            "timestamp": ts,
+            "event_type": event_type,
+            "actor": actor,
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "details": details,
+            "prev_hmac": self._prev_hmac,
+        }
+        computed_hmac = _compute_hmac(self._key, self._prev_hmac, entry_dict)
+        entry_dict["hmac"] = computed_hmac
+        event = AuditEvent(
+            timestamp=ts,
+            event_type=event_type,
+            actor=actor,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details,
+            prev_hmac=self._prev_hmac,
+            hmac=computed_hmac,
+        )
+        return event, json.dumps(entry_dict, sort_keys=True) + "\n"
+
+    def _seal_torn_tail(self, log_path: Path) -> bool:
+        """Seal a non-verifying tail so the next record cannot fuse onto it.
+
+        A crashed append is not a clean prefix: file size can persist before
+        data blocks, so the tail may hold a partial line, bytes that parse as
+        JSON but fail their MAC, or garbage that is not UTF-8 at all. Without
+        the seal, the next append writes directly onto an unterminated tail
+        and the two fuse into one unparseable line - the record being written
+        is destroyed and recovery resumes from a stale predecessor (#3130).
+
+        Never repairs and never truncates: the log is append-only, so the torn
+        bytes stay exactly where they are. The terminator and the
+        :data:`EVENT_CHAIN_TORN_RECORD` evidence record land in **one write**:
+        writing the terminator first and the evidence second leaves a
+        reachable state (crash, SIGKILL, full volume) in which the segment is
+        healed and nothing says it was ever damaged. A torn write of the
+        combined buffer leaves a fresh unterminated fragment, which the next
+        append seals and reports in turn.
+
+        The evidence is fsynced before this returns: it is the only surviving
+        statement that a record was lost, written into the same
+        crash-truncatable tail it is evidence about. One fsync per tear is not
+        a hot path - tears are crashes.
+
+        Both the terminator and the record go into *this* segment, so a tear
+        found across a UTC midnight cannot land its evidence in the next
+        day's file. The caller must hold the chain append lock.
+
+        Returns:
+            Whether a tear was sealed (and therefore whether this appended).
+        """
+        try:
+            raw = log_path.read_bytes()
+        except OSError:
+            return False
+        if not raw or raw.endswith(b"\n"):
+            return False
+
+        verified_prefix, local_head = _local_tail_state(raw, self._key)
+        torn = raw[verified_prefix:]
+        tear_class = _classify_torn_bytes(torn)
+
+        # ``_recover_chain_tail`` applies the same local-validity rule that
+        # produced ``verified_prefix``, so the head it returns is the last
+        # record the sealed segment actually carries (falling back across
+        # segments when this one holds no valid record at all).
+        self._prev_hmac = local_head if local_head is not None else self._recover_chain_tail()
+        event, line = self._mint_record(
+            ts=datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            event_type=EVENT_CHAIN_TORN_RECORD,
+            actor="audit-log",
+            resource_type="audit_segment",
+            resource_id=log_path.name,
+            details={
+                "segment": log_path.name,
+                "byte_offset": len(raw),
+                "verified_prefix_offset": verified_prefix,
+                "torn_bytes_sha256": hashlib.sha256(torn).hexdigest(),
+                "tear_class": tear_class,
+            },
+        )
+        buffer = b"\n" + line.encode("utf-8")
+        with log_path.open("ab") as fh:
+            fh.write(buffer)
+            fh.flush()
+            os.fsync(fh.fileno())
+
+        # A short write leaves the segment ending in a fresh fragment.
+        # Returning normally would let the caller append straight onto it and
+        # fuse two records - the outcome sealing exists to prevent. Refusing
+        # leaves the damage exactly as it was, and therefore still reportable.
+        landed = _path_size(log_path)
+        if landed != len(raw) + len(buffer):
+            msg = (
+                f"could not seal the torn tail of {log_path.name}: "
+                f"{landed - len(raw)} of {len(buffer)} bytes were written; "
+                "the segment is still torn and 'bernstein audit verify' still reports it"
+            )
+            raise OSError(msg)
+
+        self._prev_hmac = event.hmac
+        self._synced_path = log_path
+        self._synced_size = landed
+        return True
 
     # -- write --------------------------------------------------------------
 
@@ -1040,36 +1671,21 @@ class AuditLog:
 
             # Re-sync the chain tail from disk under the cross-process lock so a
             # concurrent writer's appended head is chained onto rather than a
-            # stale tail captured at construction (issue #2791). Fast path: when
-            # the current day file is byte-length-identical to what our own last
-            # append left it at, no other process has appended and the cached
-            # head still stands, so the re-read (a full-file scan) is skipped.
-            if log_path != self._synced_path or _path_size(log_path) != self._synced_size:
-                self._prev_hmac = self._recover_chain_tail()
+            # stale tail captured at construction (issue #2791), sealing any
+            # crash-torn tail first so this record cannot fuse onto an
+            # unterminated fragment (#3130). Fast path inside: when the day
+            # file is byte-length-identical to what our own last append left
+            # it at, no other process has appended and the cached head stands.
+            self._sync_for_append(log_path)
 
-            entry_dict: dict[str, Any] = {
-                "timestamp": ts,
-                "event_type": event_type,
-                "actor": actor,
-                "resource_type": resource_type,
-                "resource_id": resource_id,
-                "details": details or {},
-                "prev_hmac": self._prev_hmac,
-            }
-            computed_hmac = _compute_hmac(self._key, self._prev_hmac, entry_dict)
-
-            event = AuditEvent(
-                timestamp=ts,
+            event, line = self._mint_record(
+                ts=ts,
                 event_type=event_type,
                 actor=actor,
                 resource_type=resource_type,
                 resource_id=resource_id,
                 details=details or {},
-                prev_hmac=self._prev_hmac,
-                hmac=computed_hmac,
             )
-
-            entry_dict["hmac"] = computed_hmac
 
             # ``newline=""`` disables Python's universal-newline translation so
             # the literal ``\n`` we append survives byte-for-byte on Windows
@@ -1078,7 +1694,8 @@ class AuditLog:
             # frames; without this the ``\r`` stays inside each split line and
             # the byte-equality tamper check trips.
             with log_path.open("a", encoding="utf-8", newline="") as fh:
-                fh.write(json.dumps(entry_dict, sort_keys=True) + "\n")
+                fh.write(line)
+            computed_hmac = event.hmac
 
             self._prev_hmac = computed_hmac
             self._synced_path = log_path
@@ -1221,14 +1838,14 @@ class AuditLog:
                     tail = handle.read()
 
             active.prev_hmac = _verify_log_bytes(tail, path.name, active.prev_hmac, self._key, errors)
-            # Strict decode on purpose, matching ``query``: an undecodable byte
-            # is evidence (truncation, corruption, tampering), not something to
-            # paper over with replacement characters. ``_verify_log_bytes`` above
-            # already hashes the raw bytes, so a segment that reaches here is the
-            # one it verified; decoding it leniently would only let this path
-            # diverge from ``query`` and hide the very bytes verify hashes.
+            # Per-line strict decode, matching ``query``: an undecodable line is
+            # dropped whole, never smoothed with replacement characters, so a
+            # projected row is always byte-exact against what
+            # ``_verify_log_bytes`` above hashed - and the damage itself is
+            # already recorded in ``errors`` rather than raised, keeping this
+            # path total over a chain that carries sealed tear evidence.
             segment_events = _events_from_text(
-                tail.decode("utf-8"),
+                _decode_segment_text(tail),
                 event_type=event_type,
                 actor=None,
                 since=None,
@@ -1280,15 +1897,57 @@ class AuditLog:
         ``.gz`` segment, or a deleted segment, surfaces as an HMAC/linkage
         error naming the segment rather than passing silently.
 
+        Tear evidence (crash-shaped damage at the chain tail, sealed or not -
+        see :meth:`verify_detailed`) is reported through the same error list
+        until an operator acknowledges it with ``bernstein audit ack-tear``;
+        acknowledged tears no longer fail verification, but the evidence
+        records stay in the chain permanently.
+
         Returns:
             ``(valid, errors)`` where *valid* is True when the entire chain
             is intact and *errors* lists any violations found.
         """
+        report = self.verify_detailed()
+        errors = list(report.hard_errors)
+        for tear in report.unacknowledged_tears:
+            if tear.raw_errors:
+                errors.extend(tear.raw_errors)
+            else:
+                errors.append(
+                    f"{tear.segment}: {tear.tear_class} tear sealed at byte {tear.byte_offset} "
+                    "awaiting acknowledgement (run 'bernstein audit ack-tear')"
+                )
+        return len(errors) == 0, errors
+
+    def verify_detailed(self) -> ChainVerifyReport:
+        """Verify the chain, separating tear evidence from hard corruption.
+
+        The tear model is garbage-tolerant: a crashed append can leave a
+        partial line, JSON-shaped bytes that fail their MAC, or bytes that are
+        not UTF-8 at all - file size can be persisted before data blocks, so
+        no clean-prefix assumption holds. Any non-verifying suffix of the
+        chain's final segment is classified as a tear with the byte offset of
+        the last verifiable record (``sealed=False`` until an append seals
+        it). A non-verifying run elsewhere is only tear evidence when a
+        verifying :data:`EVENT_CHAIN_TORN_RECORD` record anchors it (the run
+        sits exactly on the recorded ``verified_prefix_offset .. byte_offset``
+        span in the same segment); everything else stays a hard error, because
+        damage in the middle of verified history is tampering, not a crash.
+
+        Acknowledgements are chain records themselves
+        (:data:`EVENT_CHAIN_TEAR_ACKNOWLEDGED`), matched by
+        ``(segment, byte_offset)``; an unacknowledged tear is reported on
+        every run - it never clears itself, in particular not by re-sealing.
+
+        Returns:
+            A :class:`ChainVerifyReport`.
+        """
         errors: list[str] = []
+        ctx = _ChainWalkContext()
         archived = _archived_segment_paths(self._audit_dir)
         live_files = sorted(self._audit_dir.glob(_JSONL_GLOB))
         if not archived and not live_files:
-            return True, []
+            return ChainVerifyReport()
 
         prev_hmac = _GENESIS_HMAC
         for gz_path in archived:
@@ -1297,12 +1956,12 @@ class AuditLog:
                 # Cannot establish linkage past an unreadable segment; the
                 # error is already recorded, so stop rather than mis-seed the
                 # live files from a wrong (genesis) prev_hmac.
-                return False, errors
-            prev_hmac = _verify_log_bytes(raw, gz_path.name, prev_hmac, self._key, errors)
+                return ChainVerifyReport(hard_errors=errors)
+            prev_hmac = _verify_log_bytes(raw, gz_path.name, prev_hmac, self._key, errors, ctx)
         for log_path in live_files:
-            prev_hmac = _verify_log_file(log_path, prev_hmac, self._key, errors)
+            prev_hmac = _verify_log_bytes(log_path.read_bytes(), log_path.name, prev_hmac, self._key, errors, ctx)
 
-        return len(errors) == 0, errors
+        return _build_verify_report(errors, ctx)
 
     # -- retention & archive ------------------------------------------------
 
@@ -1407,13 +2066,9 @@ class AuditLog:
 
         Returns:
             List of matching AuditEvent instances (chronological order).
-
-        Raises:
-            UnicodeDecodeError: When a segment is not valid UTF-8. Invalid
-                bytes are evidence - of a truncated write, corruption, or
-                tampering - and ``verify`` hashes the raw bytes, so silently
-                substituting replacement characters here would return records
-                that do not match what is on disk.
+            Lines that are not valid UTF-8 cannot be canonical records and
+            are skipped whole (see :func:`_decode_segment_text`); they are
+            never returned in laundered form, and ``verify`` names them.
         """
         results: list[AuditEvent] = []
         sources: list[bytes | None] = []
@@ -1427,10 +2082,12 @@ class AuditLog:
                 # Unreadable archive segment (corrupt gzip). ``verify`` reports
                 # it with a named error; a query simply has nothing to yield.
                 continue
-            # ``decode`` is strict on purpose: undecodable bytes raise rather
-            # than becoming replacement characters, so a query never reports a
-            # record that differs from the bytes ``verify`` hashed.
-            text = blob.decode("utf-8")
+            # Per-line strict decode: an undecodable line is dropped whole
+            # rather than becoming replacement characters, so a query never
+            # reports a record that differs from the bytes ``verify`` hashed -
+            # and never raises forever over a chain carrying sealed tear
+            # evidence, whose torn bytes are permanent by design.
+            text = _decode_segment_text(blob)
             # Segment-level reject: a record can only carry ``resource_id`` as a
             # field value if that value appears verbatim in the segment's bytes.
             # A segment that never mentions the id holds no match, so skip it

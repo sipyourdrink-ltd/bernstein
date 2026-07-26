@@ -183,11 +183,14 @@ def cleanup(orch: Any) -> None:
     if orch._audit_mode and orch._audit_log is not None:
         try:
             from bernstein.core.merkle import compute_seal, save_seal
+            from bernstein.core.persistence.chain_checkpoint import record_checkpoint
+            from bernstein.core.security.audit import load_or_create_audit_key
 
             audit_dir = orch._workdir / ".sdd" / "audit"
             merkle_dir = audit_dir / "merkle"
             _tree, seal = compute_seal(audit_dir)
             seal_path = save_seal(seal, merkle_dir)
+            record_checkpoint(audit_dir, seal, key=load_or_create_audit_key())
             logger.info("Merkle audit seal written: %s (root=%s)", seal_path, seal["root_hash"])
         except Exception:
             logger.warning("Merkle seal generation on shutdown failed", exc_info=True)
