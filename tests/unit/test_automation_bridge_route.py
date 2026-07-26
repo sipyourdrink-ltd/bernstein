@@ -241,12 +241,17 @@ async def test_unconfigured_endpoint_mints_no_receipt(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing secret is a deployment fault, not a refused trigger."""
+    """A missing secret means this deployment does not serve the receiver.
+
+    The status says so without claiming a server fault: a 5xx would tell the
+    caller the request failed and a retry may succeed, and neither is true.
+    Nothing is minted either way, which is what this test is really about.
+    """
     monkeypatch.delenv("BERNSTEIN_WEBHOOK_SECRET", raising=False)
     body = _payload("n8n")
     resp = await client.post("/webhook", content=body, headers=_signed(body))
 
-    assert resp.status_code == 503
+    assert resp.status_code == 404
     assert "receipt" not in resp.json()
 
 
