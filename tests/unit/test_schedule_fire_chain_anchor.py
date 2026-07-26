@@ -29,7 +29,7 @@ from bernstein.core.orchestration.schedule_supervisor import (
 from bernstein.core.planning.schedule_store import ScheduleStore
 from bernstein.core.security.audit import AuditLog
 
-KEY = b"schedule-anchor-key-exactly-32by"
+KEY = b"s" * 32
 
 
 def _audit(tmp_path: Path) -> AuditLog:

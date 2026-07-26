@@ -29,7 +29,7 @@ import pytest
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.audit_chain import AuditChainStore
 
-KEY = b"anchor-test-key-exactly-32-bytes"
+KEY = b"a" * 32
 
 #: Substring the verifier must use for a false anchor and must not use for a
 #: MAC failure, so an operator can tell a mis-stated claim from tampering.

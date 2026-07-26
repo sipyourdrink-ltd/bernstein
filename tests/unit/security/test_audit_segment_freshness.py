@@ -20,7 +20,7 @@ import pytest
 
 from bernstein.core.security.audit import AuditLog, RetentionPolicy, _inside_append_section
 
-KEY = b"freshness-test-key-exactly-32byt"
+KEY = b"f" * 32
 
 
 def _segment(audit_dir: Path) -> Path:
