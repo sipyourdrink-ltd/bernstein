@@ -308,10 +308,12 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -381,8 +383,8 @@
           "400": {
             "description": "Authentication provider not enabled"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -417,8 +419,8 @@
           "400": {
             "description": "Missing or invalid authorization code or state"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -443,8 +445,8 @@
           "400": {
             "description": "Missing SAMLResponse"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -466,8 +468,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -501,8 +503,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -546,8 +548,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -595,8 +597,8 @@
           "401": {
             "description": "Authentication required"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -653,8 +655,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -678,8 +680,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       },
@@ -718,8 +720,8 @@
           "403": {
             "description": "Admin role required"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -757,8 +759,8 @@
           "403": {
             "description": "Admin role required"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -3782,10 +3784,12 @@
         "operationId": "sse_events_events_get",
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -4342,10 +4346,12 @@
         "operationId": "cost_events_events_cost_get",
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -6466,8 +6472,8 @@
           "400": {
             "description": "Invalid status filter"
           },
-          "503": {
-            "description": "Plan store not initialized"
+          "404": {
+            "description": "Plan mode is not enabled on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -6515,10 +6521,7 @@
             }
           },
           "404": {
-            "description": "Plan not found"
-          },
-          "503": {
-            "description": "Plan store not initialized"
+            "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -6583,13 +6586,10 @@
             }
           },
           "404": {
-            "description": "Plan not found"
+            "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
             "description": "Plan already decided"
-          },
-          "503": {
-            "description": "Plan store not initialized"
           },
           "422": {
             "description": "Validation Error",
@@ -6654,13 +6654,10 @@
             }
           },
           "404": {
-            "description": "Plan not found"
+            "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
             "description": "Plan already decided"
-          },
-          "503": {
-            "description": "Plan store not initialized"
           },
           "422": {
             "description": "Validation Error",
@@ -7256,10 +7253,12 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -9122,10 +9121,12 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -9195,8 +9196,8 @@
           "400": {
             "description": "Authentication provider not enabled"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -9231,8 +9232,8 @@
           "400": {
             "description": "Missing or invalid authorization code or state"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -9257,8 +9258,8 @@
           "400": {
             "description": "Missing SAMLResponse"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -9280,8 +9281,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -9315,8 +9316,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -9360,8 +9361,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -9409,8 +9410,8 @@
           "401": {
             "description": "Authentication required"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -9467,8 +9468,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -9492,8 +9493,8 @@
               }
             }
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       },
@@ -9532,8 +9533,8 @@
           "403": {
             "description": "Admin role required"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -9571,8 +9572,8 @@
           "403": {
             "description": "Admin role required"
           },
-          "503": {
-            "description": "SSO authentication not configured"
+          "404": {
+            "description": "SSO authentication is not configured on this server"
           }
         }
       }
@@ -12596,10 +12597,12 @@
         "operationId": "sse_events_api_v1_events_get",
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -13156,10 +13159,12 @@
         "operationId": "cost_events_api_v1_events_cost_get",
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -15280,8 +15285,8 @@
           "400": {
             "description": "Invalid status filter"
           },
-          "503": {
-            "description": "Plan store not initialized"
+          "404": {
+            "description": "Plan mode is not enabled on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -15329,10 +15334,7 @@
             }
           },
           "404": {
-            "description": "Plan not found"
-          },
-          "503": {
-            "description": "Plan store not initialized"
+            "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "422": {
             "description": "Validation Error",
@@ -15397,13 +15399,10 @@
             }
           },
           "404": {
-            "description": "Plan not found"
+            "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
             "description": "Plan already decided"
-          },
-          "503": {
-            "description": "Plan store not initialized"
           },
           "422": {
             "description": "Validation Error",
@@ -15468,13 +15467,10 @@
             }
           },
           "404": {
-            "description": "Plan not found"
+            "description": "Plan not found, or plan mode is not enabled on this server"
           },
           "409": {
             "description": "Plan already decided"
-          },
-          "503": {
-            "description": "Plan store not initialized"
           },
           "422": {
             "description": "Validation Error",
@@ -16070,10 +16066,12 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Server-Sent Events stream. The response body does not terminate.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },

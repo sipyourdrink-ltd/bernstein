@@ -11,6 +11,13 @@ regenerating the snapshot, and they name the offending paths so the fix is one
 command:
 
     uv run python scripts/generate_openapi.py
+
+Status codes are compared too. The first version of this guard checked only
+path and schema names, and #3168 changed the documented codes for ``/auth/*``
+and ``/plans*`` from 503 to 404 on the same day -- 30 operations went stale
+without a single test going red. Comparing the declared status codes closes
+that hole while still ignoring prose (summaries, descriptions, examples), so
+editing a docstring does not force a snapshot commit.
 """
 
 from __future__ import annotations
@@ -114,4 +121,38 @@ def test_snapshot_schema_names_match_live_app() -> None:
 
     assert live == committed, "docs/reference/openapi.json component schemas are stale.\n" + _format(
         "schema", live - committed, committed - live
+    )
+
+
+_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options", "trace"})
+
+
+def _responses(spec: dict[str, Any]) -> set[str]:
+    """Flatten the spec into ``METHOD /path -> code [media types]`` strings."""
+    return {
+        f"{method.upper()} {path} -> {code} {sorted((body or {}).get('content') or {})}"
+        for path, operations in spec.get("paths", {}).items()
+        for method, operation in operations.items()
+        if method in _METHODS and isinstance(operation, dict)
+        for code, body in (operation.get("responses") or {}).items()
+    }
+
+
+def test_snapshot_responses_match_live_app() -> None:
+    """Documented status codes and media types track the handlers.
+
+    Both halves come from the same incident. #3168 moved ``/auth/*`` and
+    ``/plans*`` from 503 to 404 and, in the same change, corrected eight SSE
+    routes from ``application/json`` to ``text/event-stream``. The media type
+    moved while the status code stayed 200, so comparing codes alone would
+    still have missed those eight.
+
+    Prose is deliberately not compared: no summaries, descriptions, or
+    examples, so rewording a docstring does not demand a snapshot commit.
+    """
+    live = _responses(_live_spec())
+    committed = _responses(_committed_spec())
+
+    assert live == committed, "docs/reference/openapi.json responses are stale.\n" + _format(
+        "response", live - committed, committed - live
     )
