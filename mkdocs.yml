@@ -151,6 +151,7 @@ nav:
       - index.md
       - Use cases: use-cases.md
       - What's new: whats-new.md
+      - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md
       - Blog:
           - Ten agents one release: blog/ten-agents-one-release.md
@@ -422,6 +423,7 @@ nav:
           - Calibration: operations/calibration.md
           - Criterion profiles: operations/criterion-profiles.md
           - Golden benchmark harness: eval/golden-harness.md
+          - Reproducible bench bundles: eval/bench.md
       - Security & identity:
           - Security & identity stack: operations/security-and-identity.md
           - Security operations: operations/security.md
@@ -505,6 +507,7 @@ nav:
           - MCP catalog: reference/mcp-catalog.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:
+          - Capabilities: reference/capabilities.md
           - Feature matrix: reference/FEATURE_MATRIX.md
           - Adapter compatibility: adapters/compatibility.md
           - Known limitations: reference/KNOWN_LIMITATIONS.md

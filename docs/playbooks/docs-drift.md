@@ -60,6 +60,8 @@ Drift remediation paths used by the rows below:
 | `docs/ENTERPRISE.md` | `src/bernstein/core/compliance/`, `src/bernstein/core/security/`, audit / lineage / air-gap surface | New regulator mapping, new compliance pack target, audit export schema change | `manual-prose` |
 | `docs/lineage.md` | `src/bernstein/core/lineage/`, `src/bernstein/core/persistence/lineage.py`, `src/bernstein/cli/commands/lineage_cmd.py` | Lineage record schema change, signature algorithm change, new verify CLI subcommand | `manual-prose` |
 | `docs/llm-citation-surface.md` | None (positioning note about how the project surfaces in LLM citations) | External citation pattern audited | `static` |
+| `docs/mentions.md` | None (hand-curated external coverage and list entries) | A listed link goes dead or moves | `static` |
+| `docs/reference/capabilities.md` | `src/bernstein/` capability surfaces; scoped claims guarded by `tests/unit/test_docs_capability_reachability.py` | Capability added / removed, scoped reachability note lands or goes stale | `manual-prose` |
 | `docs/routine-scenarios.md` | `src/bernstein/core/planning/routine_bridge.py`, `src/bernstein/cli/commands/routine_cmd.py`, `src/bernstein/mcp/routine_tools.py` | Routine <-> Scenario bridge surface change | `manual-prose` |
 | `docs/telemetry.md` | `src/bernstein/core/telemetry/`, `src/bernstein/cli/commands/telemetry_cmd.py` | New telemetry event, opt-out matrix change, retention policy change | `manual-prose` |
 | `docs/use-cases.md` | `src/bernstein/cli/main.py` (command list) plus operator workflow CLIs | New operator workflow command (`autofix`, `review-responder`, `dep-impact`, etc.) | `manual-prose` |

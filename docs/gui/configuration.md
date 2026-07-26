@@ -36,6 +36,10 @@ Set the browser side once per machine:
 localStorage.setItem("bernstein_token", "<value of BERNSTEIN_AUTH_TOKEN>")
 ```
 
+## Dashboard tokens
+
+The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; every grant and write authorization is a signed governance record (`bernstein governance verify dashboard-auth`).
+
 ## Theme
 
 - The SPA uses Tailwind 3 with shadcn/ui CSS variables. Light + dark are toggled by the `.dark` class on `<html>`.

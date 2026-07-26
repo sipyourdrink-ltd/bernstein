@@ -149,8 +149,15 @@ The base install stays small. Pull in provider SDKs only when you need them:
 | `bernstein[gcs]`    | Google Cloud Storage artifact sink |
 | `bernstein[azure]`  | Azure Blob artifact sink |
 | `bernstein[r2]`     | Cloudflare R2 artifact sink |
+| `bernstein[grpc]`   | gRPC bridge |
+| `bernstein[k8s]`    | Kubernetes integrations |
 
 Combine extras with brackets: `pip install 'bernstein[openai,docker,s3]'`.
+
+## Editor extensions
+
+- [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=alex-chernysh.bernstein)
+- [Open VSX](https://open-vsx.org/extension/alex-chernysh/bernstein)
 
 ---
 
@@ -160,7 +167,7 @@ Combine extras with brackets: `pip install 'bernstein[openai,docker,s3]'`.
 bernstein --version
 ```
 
-You should see a version number close to **2.16.1**. Then run the pre-flight check:
+You should see the current release version. Then run the pre-flight check:
 
 ```bash
 bernstein doctor

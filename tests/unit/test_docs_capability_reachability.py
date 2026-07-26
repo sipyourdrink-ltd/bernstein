@@ -1,4 +1,8 @@
-"""Docs guard: a README capability claim must match the symbol's use sites (#3127).
+"""Docs guard: a capability claim must match the symbol's use sites (#3127).
+
+The claim surface is the README plus the capabilities reference page
+(``docs/reference/capabilities.md``), which carries the full capability
+list the README front page links to.
 
 The defect this catches
 -----------------------
@@ -18,9 +22,9 @@ For every capability watched below:
 * count the **use sites** of its symbol - the files that mention it outside the
   file that defines it, or, for a config key, outside the operator-facing input
   surfaces it would have to reach;
-* when there are **no** use sites the capability is *inert*, and the README must
-  carry the scope marker that says so and must not carry the phrasing that
-  asserts runtime behaviour;
+* when there are **no** use sites the capability is *inert*, and the claim
+  surface must carry the scope marker that says so and must not carry the
+  phrasing that asserts runtime behaviour;
 * when a use site **appears** the capability became reachable, and the test
   fails the other way: the scope marker is now stale and must be removed
   together with the ``<!-- scope:... -->`` block it sits in.
@@ -51,6 +55,14 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SRC_ROOT = _REPO_ROOT / "src" / "bernstein"
 
+#: The files that carry capability claims. The README front page keeps a
+#: summary; the full capability list (and its scoped reachability notes)
+#: lives on the capabilities reference page.
+_CLAIM_SURFACES: tuple[Path, ...] = (
+    _REPO_ROOT / "README.md",
+    _REPO_ROOT / "docs" / "reference" / "capabilities.md",
+)
+
 
 @dataclass(frozen=True)
 class WatchedCapability:
@@ -70,7 +82,7 @@ class WatchedCapability:
     #: A repo-relative file that must contain ``symbol``, so a rename cannot
     #: quietly turn this guard into a check of nothing.
     anchor_path: str
-    #: Substring the README must carry while the capability is inert.
+    #: Substring the claim surface must carry while the capability is inert.
     scope_marker: str
     #: Phrasings that assert the capability works at runtime. Banned while it
     #: does not.
@@ -218,8 +230,8 @@ def check_capability(capability: WatchedCapability, readme_text: str, sites: lis
         if capability.scope_marker in readme_text:
             problems.append(
                 f"{capability.name}: `{capability.symbol}` now has use site(s) "
-                f"{sites}, so the capability is reachable, but the README still "
-                f"carries the scope text {capability.scope_marker!r}. Delete the "
+                f"{sites}, so the capability is reachable, but the claim surface "
+                f"still carries the scope text {capability.scope_marker!r}. Delete the "
                 f"surrounding <!-- scope:... --> block and restore the capability "
                 f"claim ({capability.tracking_issue})."
             )
@@ -229,7 +241,7 @@ def check_capability(capability: WatchedCapability, readme_text: str, sites: lis
     for phrase in capability.banned_phrases:
         if phrase in readme_text:
             problems.append(
-                f"{capability.name}: the README asserts {phrase!r}, but "
+                f"{capability.name}: the claim surface asserts {phrase!r}, but "
                 f"`{capability.symbol}` has no use site outside its own "
                 f"definition, so the claim is true of the schema and false of "
                 f"the behaviour. Scope the sentence to what ships "
@@ -238,15 +250,16 @@ def check_capability(capability: WatchedCapability, readme_text: str, sites: lis
     if capability.scope_marker not in readme_text:
         problems.append(
             f"{capability.name}: `{capability.symbol}` has no use site outside "
-            f"its own definition, so the README must state the limit. Expected "
-            f"to find {capability.scope_marker!r} in README.md "
-            f"({capability.tracking_issue})."
+            f"its own definition, so the claim surface must state the limit. "
+            f"Expected to find {capability.scope_marker!r} in README.md or "
+            f"docs/reference/capabilities.md ({capability.tracking_issue})."
         )
     return problems
 
 
-def _readme_text() -> str:
-    return (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+def _claim_text() -> str:
+    """Concatenated text of every claim surface (README + capabilities page)."""
+    return "\n".join(path.read_text(encoding="utf-8") for path in _CLAIM_SURFACES)
 
 
 # ---------------------------------------------------------------------------
@@ -256,8 +269,8 @@ def _readme_text() -> str:
 
 @pytest.mark.parametrize("capability", WATCHED, ids=lambda c: c.symbol)
 def test_readme_claim_matches_symbol_use_sites(capability: WatchedCapability) -> None:
-    """A capability the README names must be as reachable as the README implies."""
-    problems = check_capability(capability, _readme_text(), use_sites(capability))
+    """A capability the docs name must be as reachable as the docs imply."""
+    problems = check_capability(capability, _claim_text(), use_sites(capability))
     if problems:
         pytest.fail("\n\n".join(problems))
 
@@ -316,6 +329,7 @@ def test_scope_blocks_are_balanced() -> None:
     """
     docs = [
         _REPO_ROOT / "README.md",
+        _REPO_ROOT / "docs" / "reference" / "capabilities.md",
         _REPO_ROOT / "docs" / "operations" / "activity-boundary.md",
         _REPO_ROOT / "docs" / "operations" / "artifacts.md",
     ]

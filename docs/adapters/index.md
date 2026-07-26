@@ -114,3 +114,49 @@ for one is optional and does not change how it spawns.
 The contract for new adapters lives in
 [ADAPTER_GUIDE.md](./ADAPTER_GUIDE.md). The typed strategy axes are
 documented in [capability_contract.md](./capability_contract.md).
+
+
+## Install matrix
+
+Install commands for the wired-in agents. Bernstein auto-discovers
+installed CLI agents; mix them in the same run, and check what is
+available locally with `bernstein integrations list --installed`.
+
+| Agent | Install |
+|-------|---------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `npm install -g @anthropic-ai/claude-code` |
+| [Codex CLI](https://github.com/openai/codex) | `npm install -g @openai/codex` |
+| [OpenAI Agents SDK v2](https://openai.github.io/openai-agents-python/) | `pip install 'bernstein[openai]'` |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) | `npm install -g @github/copilot` |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `npm install -g @google/gemini-cli` |
+| [Antigravity CLI](agy.md) (`agy`) | Upstream installer, then `agy install` |
+| [Cursor](https://www.cursor.com) | [Cursor app](https://www.cursor.com) |
+| [Devin Terminal](https://devin.ai) (Cognition) | `curl -fsSL https://cli.devin.ai/install.sh \| bash` then `devin auth login` |
+| [Aider](https://aider.chat) | `pip install aider-chat` |
+| [Amp](https://ampcode.com) | `npm install -g @sourcegraph/amp` |
+| [CLM gateway](clm.md) (sovereign / on-prem LLM) | `pip install aider-chat`, then set `CLM_ENDPOINT` / `CLM_TOKEN` |
+| [Cody](https://sourcegraph.com/cody) | `npm install -g @sourcegraph/cody` |
+| [Continue](https://continue.dev) | `npm install -g @continuedev/cli` (binary: `cn`) |
+| [Goose](https://block.github.io/goose/) | See [Goose docs](https://block.github.io/goose/) |
+| [IaC](https://www.terraform.io/) (Terraform/Pulumi) | Built-in |
+| [Junie](https://junie.jetbrains.com) | `curl -fsSL https://junie.jetbrains.com/install.sh \| bash` |
+| [Kilo](https://kilocode.ai) | See [Kilo docs](https://kilocode.ai) |
+| [Kiro](https://kiro.dev) | See [Kiro docs](https://kiro.dev) |
+| [AWS Q Developer](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html) | `brew install --cask amazon-q` then `q login` |
+| [Ollama](https://ollama.ai) + Aider | `brew install ollama` |
+| [OpenCode](https://opencode.ai) | See [OpenCode docs](https://opencode.ai) |
+| [Qwen](https://github.com/QwenLM/qwen-code) | `npm install -g @qwen-code/qwen-code` |
+| [OpenHands](https://github.com/OpenHands/OpenHands) | `uv tool install openhands --python 3.12` |
+| [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter) | `pip install open-interpreter` |
+| [gptme](https://github.com/gptme/gptme) | `pipx install gptme` |
+| [Plandex](https://github.com/plandex-ai/plandex) | `curl -sL https://plandex.ai/install.sh \| bash` |
+| [AIChat](https://github.com/sigoden/aichat) | `cargo install aichat` |
+| [Letta Code](https://github.com/letta-ai/letta-code) | `npm install -g @letta-ai/letta-code` |
+| **Generic** | Built-in |
+
+Any adapter also works as the internal scheduler LLM
+(`internal_llm_provider` / `internal_llm_model` in `bernstein.yaml`; see
+[configuration](../operations/CONFIG.md)). Local runtimes (Ollama,
+LM Studio, MLX servers) plug in as a first-class worker tier via a
+`local_endpoints` profile certified with `bernstein doctor --endpoint <url>`;
+see [local endpoints](../reference/local-endpoints.md).

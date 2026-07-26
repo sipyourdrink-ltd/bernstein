@@ -10,14 +10,6 @@
 
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - Leonard Bernstein
 
-</div>
-
-### why the name?
-
-Bernstein is named after Leonard Bernstein, the American conductor and composer. The project orchestrates a crew of CLI coding agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result. He is the original orchestrator the project takes its name from.
-
-<div align="center">
-
 ### deterministic multi-agent CLI orchestration
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
@@ -42,63 +34,12 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 
 Four things set it apart; everything after is detail.
 
-- **No LLM in the coordination loop.** Scheduling is plain Python, so a run is reproducible end to end — replay yesterday's plan and get yesterday's task graph.
-- **Checkable after the fact.** An always-on lineage spine and replay journal record every run; an opt-in HMAC audit chain (`--audit`) adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run.
-- **Isolated by construction.** Every task runs in its own git worktree behind lint/type/test merge gates — no shared mutable state between agents.
-- **Broad and local.** 40+ CLI agent adapters plus a generic `--prompt` wrapper, an air-gap install profile, file-based state, Apache-2.0 — no SaaS hop, no third-party data plane.
+- **No LLM in the coordination loop.** Scheduling is plain Python, so a run is reproducible end to end. Replay yesterday's plan and get yesterday's task graph.
+- **Checkable after the fact.** The lineage spine and replay journal record every run; the opt-in audit chain adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run.
+- **Isolated by construction.** Each task gets its own git worktree behind merge gates. No shared mutable state between agents.
+- **Broad and local.** 40+ CLI agent adapters plus a generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
 
-The [feature matrix](docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
-
-### full capabilities
-
-- **Deterministic scheduler**: zero LLM in the coordination loop. Plain Python decides who runs, where, with what budget. Replay yesterday's plan, get yesterday's task graph.
-- **Per-artefact lineage** records every adapter file write, without per-adapter opt-in, as one Merkle-chained, HMAC-tagged entry in an always-on lineage spine (`.sdd/lineage/<run_id>/spine.jsonl`). The chain head hash is the run's artifact-provenance identity. CLI: `bernstein lineage verify <run_id>` (recompute the chain, distinct `NO ENTRIES` status for empty runs) and `bernstein lineage replay <run_id>`.
-- **Always-on replay journal**: every run records into one Merkle-chained event journal (`.sdd/runs/<run_id>/journal.jsonl`) whose head hash is the run identity; no on/off flag, `BERNSTEIN_REPLAY_RETENTION` caps disk. Non-determinism surfaces as a hash mismatch: `bernstein replay <run_id> --verify` recomputes the head and reports the exact first divergent step, and `bernstein replay <run_id> --from-step N` rebuilds deterministic state. The journal head is sealed into the lineage spine so replay identity and artefact provenance share one root. Provider-side context mutations (server-side compaction and similar opaque state) are recorded as content-addressed journal entries, so a change to what the model actually saw surfaces as divergence at the exact step instead of drifting silently; deterministic runs request suppression and fail loudly if a mutation arrives anyway.
-- **HMAC-SHA256 audit chain** per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104), one record per scheduling decision, tamper-evident. Enabled with `--audit`, `BERNSTEIN_AUDIT=1`, or a compliance preset; off by default. Operator guide: [docs/security/audit-log.md](docs/security/audit-log.md).
-- **40+ CLI agent adapters**, plus a generic `--prompt` wrapper for anything else. Source of truth: the [supported agents](#supported-agents) table below.
-- **Bearer-token task server** authenticates the manager and every worker. Per-session zero-trust JWT in `.sdd/runtime/agent_tokens/`, legacy `BERNSTEIN_AUTH_TOKEN` fallback, opt-out via `BERNSTEIN_AUTH_DISABLED=1`. Flow + diagnostics: [docs/security/manager-auth.md](docs/security/manager-auth.md).
-- **Signed agent cards** use detached JWS ([RFC 7515 §A.5](https://datatracker.ietf.org/doc/html/rfc7515#appendix-A.5)) over [RFC 8785 (JCS)](https://datatracker.ietf.org/doc/html/rfc8785) canonicalization, with [Ed25519 / EdDSA](https://datatracker.ietf.org/doc/html/rfc8037) keys. Code: [src/bernstein/core/security/agent_card_signer.py](src/bernstein/core/security/agent_card_signer.py).
-- **Content credentials**: a C2PA 2.2 manifest for any produced artifact is a deterministic projection of that artifact's lineage-spine subtree, signed with the install-identity key so one attestation root covers both who ran it and what was produced. Stripping the spine makes the manifest unproducible, not merely unsigned. Watermark/fingerprint soft-binding layers are pluggable. CLI: `bernstein credential emit <artifact> --run-id <run_id>` and `bernstein credential verify <artifact>`.
-- **Tamper-evident memory**: every cross-session memory write is an append-only, HMAC-tagged chained record attributing a claim to an actor at a time (`entry_hash = H(prev, source_hash, actor, claim, model, timestamp, ...)`), stored per identity scope (user / agent / run / app) under `.sdd/memory/chain/<scope>/<namespace>.jsonl` and anchored to the lineage spine that produced it. Forgetting appends a signed tombstone rather than deleting, so the original stays provable. CLI: `bernstein memory verify --scope <s> --namespace <ns>` (proves a fact was written by the claimed actor and never edited), `bernstein memory why <fact> ...` (returns the originating run and step), and `bernstein memory forget <entry_hash> ...`.
-- **Compaction receipts**: every context compaction of a long-running worker is validated mechanically (code blocks and error text must survive) and recorded as an HMAC-chained receipt. CLI: `bernstein compaction log --task <id>`. Operator guide: [docs/operations/context-compaction.md](docs/operations/context-compaction.md).
-- **Cost-aware scheduling (USD budgets, pools, batch and cache policies)**: USD ceilings per task / run / day are enforced before dispatch against a hash-pinned, config-overridable price table (no network lookup in the scheduling loop). Every budget decision is a pure function of `(price table, spend ledger, caps)`, so two operators with the same ledger reproduce byte-identical decisions; a halt is a sealed receipt naming the exact policy inputs (`price_table_hash`, `ledger_state_hash`, `policy_hash`) and the projected overrun, anchored in the lineage spine and mirrored into the audit chain (`cost.dispatch_receipt`). `bernstein cost policy verify <decision_hash>` recomputes the decision from the stored bytes and re-checks the spine anchor offline; a forged admit or zeroed overrun fails like a tampered chain entry. Usage is attributed to named pools (`api`, `subscription`) with independent caps, and `bernstein cost policy preflight` surfaces pool exhaustion before a run starts rather than mid-run. Batch dispatch and cache-window fan-out (one warm-up call primes a shared prompt prefix for M cache-hitting workers) are gated on a declared adapter capability map -- refused, never faked, on an adapter without the surface, and cache windows default off. `bernstein doctor` flags a stale price table.
-- **Signed OTel span projection**: the OpenTelemetry GenAI export is a deterministic projection of the run event journal rather than random-id telemetry. Every span id is derived from the journal entry hash it projects, each span carries `bernstein.journal.entry_hash`, and the whole span set is signed with the install identity. Two replays export a byte-identical trace, a tampered span breaks the entry-hash binding, and the local JSONL store emits even with no OTLP endpoint set. CLI: `bernstein trace project <run_id>` and `bernstein trace verify-projection <run_id>`.
-- **Live OTLP streaming of journal-anchored spans**: with `BERNSTEIN_OTEL_ENDPOINT` set, runs stream that same journal projection to any stock OpenTelemetry collector as journal entries append -- live spans carry the identical journal-derived ids and `bernstein.journal.entry_hash` / `bernstein.audit.anchor` attributes, so a live trace and a replayed projection are literally the same spans, and each run's export is bound to the audit chain via an `otel.projection` event. Off by default: no endpoint means no exporter initialisation and no network attempts. Backfill a completed run with `bernstein telemetry export-otel --run <run_id>`. Operator guide: [docs/observability/otlp-export.md](docs/observability/otlp-export.md).
-- **Verifiable spending mandates**: when an agent spends against an external service, the signed intent, the tool calls it authorized, and the settlement reference become one journal-anchored consent receipt binding `{mandate_hash, authorized_tool_calls_hash, settlement_ref, journal_entry_hash}`, so "this payment was authorized by this exact intent" is provable offline. AP2-style Intent and Cart mandates are signed and revocable; per-task spend caps are enforced by the cost ledger and a cap breach is refused; revocation appends a signed entry so subsequent actions are refused. The authorized action set is a deterministic projection of `(mandate, state, time)`, and the HTTP 402 pay-and-retry settlement (x402 / AP2 shapes) is bound into the receipt so decision-to-pay and settlement cross-verify. CLI: `bernstein mandate emit`, `bernstein mandate verify <mandate_hash>` (proves the action was authorized by the recorded intent), and `bernstein mandate revoke <mandate_hash>`.
-- **Signed payment mandates with chain-anchored receipts**: outbound value transfer sits between the LLM spend ledger and the merge-approval gate, so an agent-initiated charge previously had no signed, bounded, provable authorization. A `SpendMandate` is an Ed25519-signed, sha256-content-addressed authorization binding an amount cap, a currency, an opaque recipient, and an expiry, issued in one of two presence modes: `human_present` binds a concrete transaction envelope (exact amount + recipient) the operator signed off in the loop, while `delegated` binds a bounded envelope (caps + expiry, optional per-transaction cap and category set) an agent transacts under. Amounts are string-encoded integer nano-units rounded exactly once half-even and text fields must be NFC, so no float ever enters a signed payload. Every attempt is a `TransactionReceipt` appended to the lineage spine with a `.jws` sidecar and mirrored as a `payment.authorized` / `payment.refused` audit event carrying the chain digest captured at decision time; a refusal is a first-class receipt with a closed-enum reason (`over_max_amount`, `wrong_recipient`, `expired`, `cumulative_exceeded`, `bad_signature`, `wrong_presence_mode`) hash-bound to the mandate, so a denied attempt is as reconstructable as an approved one. Cumulative spend is aggregated on read under a file-lock so concurrent workers sharing one mandate can never together exceed the cap. `bernstein payment-mandate verify --receipt <hash>` recomputes the lineage signature and the audit-chain HMAC entirely offline and reports the bound scope; tampering with the receipt body, the mandate scope, or the chain digest fails verification. Interop is scheme-agnostic through a `MandateAdapter` protocol (bernstein-native + generic JWS pass-through); Bernstein authorizes and proves, it never moves money. CLI: `bernstein payment-mandate issue`, `bernstein payment-mandate show <hash>`, `bernstein payment-mandate spend`, `bernstein payment-mandate verify`.
-- **Journal-anchored native subagent delegation**: the deterministic scheduler keeps the coordination plan and delegates each leaf's mechanical execution to a native subagent (Claude Code, Codex) with per-agent model / effort / tools / background / batch settings. Each native structured result is schema-validated at the worker boundary (hallucinated keys and missing fields rejected) and anchored into the run event journal as a `subagent.delegation` entry carrying a replay-invariant node hash plus the result content hash. The outer DAG is a pure function of the plan, so it replays byte-identically even when inner execution is stochastic; non-interactive fan-out runs on the batch tier and its discount plus prompt-cache reads are attributed in the spend ledger.
-- **Stateless MCP core**: the open stateless MCP protocol drops the `initialize` handshake and `Mcp-Session-Id`, so any request can land on any server instance and the protocol no longer provides cross-call ordering. Bernstein carries client capabilities in a per-request `_meta` field, emits W3C Trace Context (`traceparent`/`tracestate`/`baggage`) whose span id is derived from the call's content hash and trace id from the run root hash (two replays emit byte-identical `_meta`), and resolves the deprecated Sampling in-orchestrator with no LLM callback into the client. An `InputRequiredResult` retry base64-encodes its `requestState` so a different server instance resumes with no shared session memory. Each call is an ordered entry in the run event journal with its content-derived span id and is anchored into the HMAC audit chain, so cross-call continuity is chain-anchored rather than session-anchored; a cache hit references the content hash of the run that produced it. Deprecated Roots/Sampling/Logging stay behind a 12-month compatibility shim.
-- **Attested PR review receipts**: a review run emits one signed receipt binding the issue body, the plan, the run journal head (every executed tool call), and the diff into `{issue_hash, plan_hash, journal_head, diff_hash, findings, verdict}`, signed with the install's Ed25519 identity and anchored in the review lineage spine, so "this PR was reviewed against this ticket without operator override" is provable offline. `bernstein review-receipt verify --pr <url>` recomputes `issue_hash` and `diff_hash` from the PR inputs and checks the signature and spine anchor; a tampered diff fails because `diff_hash` no longer matches. Autofix runs a reviewer finding's fix in an isolated git worktree, runs the gate, and emits a second receipt linking finding to fix-commit to test-result. The tracker comment is a projection of the receipt (short verdict + verify command), never the receipt body.
-- **Verifiable governance (RBAC, budgets, seats)**: for teams, every access check, budget check, and per-seat attribution is a deterministic projection over the signed lineage spine rather than mutable, separately-logged database state. Each decision is a signed, anchored record binding `{subject, action, verdict, inputs_hash, journal_entry_hash}`: a denied action writes a signed `deny` record and a budget breach a signed `refuse` that blocks the action. IDP groups map to roles via signed role bindings, and per-profile spend caps are enforced against per-subject spend recomputed from the cost ledger (never a stored counter). `bernstein governance verify <run>` re-resolves and re-projects every recorded access and budget decision from the presented bindings and ledger and confirms the recorded verdicts; a tampered verdict, a widened permission binding, or a diverged ledger fails the check. Two replays of a governance-gated run produce byte-identical decision records.
-- **Audited webhook node**: drop Bernstein into a no-code builder or event bus as the one node that leaves a verifiable record. An inbound webhook is verified per [Standard Webhooks](https://www.standardwebhooks.com/) (`webhook-id` / `webhook-timestamp` / `webhook-signature`), then writes a signed receipt binding `{event_hash, source, journal_root}` and seeds a run journal whose root references the event hash; on completion the outbound webhook carries a signed receipt binding `{result_hash, journal_head}`, so the returned result is provably the projection of the executed run. Retry/backoff replays the same inbound event idempotently without spawning a duplicate run, and an invalid inbound signature is rejected before anything is written. `bernstein webhook verify <event_id>` recomputes the inbound event hash and the outbound result hash against the journal, re-checks both Ed25519 signatures offline, and re-anchors both receipts against the webhook-node lineage spine; a tampered receipt, spine, or journal fails.
-- **Journal-anchored stall escalation receipts**: when a worker stalls, it leaves a signed receipt that fixes the exact failure window by binding the last N entries of the run's canonical event journal by their Merkle hash, references an f03 fork point for resume, and recommends a deterministic action (resume / escalate / park). `bernstein escalation verify <id>` reconstructs the same trailing window from the journal, walks the journal's Merkle chain, and confirms every bound entry hash matches; tamper one journal entry inside the window and the reconstruction diverges. The receipt reconstructs offline from the journal alone, so an operator can hand it to a postmortem and get cryptographic certainty about exactly what happened before the stall. The TUI/web supervisor surfaces the receipt as a projection (stall reason, recommended action, resume fork point, spine anchor), never the signature or raw window hashes.
-- **Intent capsules with deterministic drift escalation**: approving an unattended run approved a sentence, not a contract. At approval time the goal is compiled into an intent capsule (allowed action classes, file-scope globs, permitted adapters, egress classes, a cost-envelope reference, and an expiry) that is written to the HMAC audit chain as an `intent.capsule` event and bound into the run journal, so every step is attributable to one approved capsule (the goal is bound by digest, never stored verbatim). A deterministic drift monitor maps observed journal events to action classes and compares them against the capsule; the conformance verdict is a pure function of `(journal, capsule)`, so two verifiers recompute byte-identical verdicts offline and no model runs on the drift-decision path. On divergence it emits a signed escalation receipt reusing the stall escalation shape, binding the capsule hash and the divergent events, that passes `bernstein escalation verify`. `bernstein intent verify <task-id>` recomputes conformance offline: it checks the capsule hash against the audit chain, walks the run journal Merkle chain, and maps action classes against the capsule; a tampered capsule or a reordered journal fails with no live process required. Rollout defaults to warn-only.
-- **Input contracts: projection-hashed params, signed refusal receipts, and a chain-anchored context capsule**: the run boundary was contract enforced only on the worker's *output*. Now the input side is closed too. A recurring schedule declares a typed `params` block next to its cron and goal; at fire time the supervisor validates and coerces the values and folds the validated map's content hash into `build_projection`, so the params hash lands inside `projection_hash` and the task-id seed following the `trigger_input_hash` precedent -- two operators with equal schedule state and params provably fire the byte-identical task graph, and a changed param provably changes the graph hash (a params-less fire stays byte-identical to before). A value that fails its declared contract at any input boundary (schedule fire, `recipes run`, MCP `bernstein_run` / `bernstein_scenario`, task claim) produces a signed `InputRefusalReceipt` instead of a bare exit: the JSONPath of the offending field, the declared schema hash, and a digest of the rejected value (raw bytes never stored), Ed25519-signed with the install identity and anchored in the HMAC audit chain as an `input.refusal_receipt` event -- rejection completes before any adapter process or model invocation, so a refused fire costs zero spawns and zero tokens, and the receipt verifies offline while a tampered receipt or chain entry flips verification to fail. A spawned worker reads one signed, chain-anchored answer to "what was I given": a content-addressed context capsule of task id, run id, params hash, worktree, role, budget envelope remaining, dependency state, and the audit chain head at spawn (plus the intent capsule hash when one exists), whose hash is recorded in the spawn record, the run journal, and the audit chain as a `context.capsule` event. `bernstein context verify <task-id>` re-derives the capsule offline from the journal at the recorded chain position byte-identically, so a context divergence (different params, budget, or chain head than asserted) is caught as a hash mismatch; a sanctioned mock layer is domain-separated at signing so a fixture capsule can never verify as real. CLI: `bernstein context show|verify <task-id>`.
-- **Typed activity boundary**: the deterministic scheduler is validated for coding agents, and the typed activity boundary is the contract another modality has to satisfy to participate as a replayable step. Every activity that crosses it returns an `ActivityResult` -- `{artifact, artifact_hash, evidence_set_hash, terminal_state, reason_code}` -- so the scheduler keeps the agent an opaque stochastic activity behind a hash-in / hash-out contract. A research activity content-addresses every fetched page at fetch time; a browser activity records an observation hash (screenshot / DOM snapshot) per decision step; the scheduler pins the `evidence_set_hash` into the run event journal as one `activity.result` entry, so a replay reattaches byte-identical evidence and refuses on any tamper. A malformed result is rejected at the boundary with a typed refusal before anything is journaled, and the scheduler refuses to add a stage whose `evidence_set_hash` equals a prior stage's (no new exogenous signal), logging the refusal. Each crossing is mirrored into the HMAC audit chain carrying only hashes, never the artifact body. `bernstein activity verify <run>` walks the journal, recomputes each `evidence_set_hash`, and reattaches the content-addressed evidence. Data / ops modalities (deterministic-plan vs side-effecting split, signed input/output artifacts) build on the same substrate.
-
-  <!-- scope:activity-boundary-reachability start - delete this paragraph when #2996 and #3110 land -->
-  **Reachability today.** The boundary, its refusals, and `bernstein activity verify` ship and run on every crossing. The operator-facing route to a non-coding activity does not. Every bundled adapter declares `git-diff` output, worktree allocation does not branch on modality, and a research or browser activity is constructed through the Python API rather than declared in a seed, plan, or backlog file. `agent_kind` is accepted and validated by the team manifest but no scheduler code reads it yet, so setting it does not change how a run executes. `ResearchWorker` needs a fetcher and a synthesiser injected by its caller, and neither ships. The `browser` extra is empty in this release, so a default install gets the recorded-tape driver and asking for a live driver raises a typed refusal naming the package to install. Routing non-coding tasks off the git-only paths is tracked in #2996, and declaring a task's artifact output from a seed, plan, or backlog entry in #3110.
-  <!-- scope:activity-boundary-reachability end -->
-- **Callable, discoverable A2A node**: an operator could point a peer orchestrator at this instance, but the peer had to trust an unsigned endpoint and take the answer on faith. Now `/.well-known/agent.json` serves a JWS-signed capability card (advertised tools plus the cost, redaction, and sandbox policy delegated work runs under) that a peer verifies offline against the JWK set at `/.well-known/agent.json/keys` before sending anything, and every inbound `POST /a2a/tasks/send` response carries a lineage receipt `{entry_hash, content_hash, operator_hmac, head_signature, kid}` anchored in the audit chain. Identity evidence and execution evidence stay separate claims: `bernstein a2a verify --receipt <file> --response <file>` proves the returned answer is the one the node recorded without contacting the node, and rejects a single-byte tamper of the answer, a rewritten receipt field, or a stripped signature. A2A handler state persists, so an inbound task and its receipt survive a restart. `bernstein a2a publish --endpoint <url>` emits registry records (A2A Agent Card and MCP Registry surfaces) that each embed the signed card and an `ed25519/<fp>` publisher fingerprint, so a consumer verifies the claim against the node's own key and the registry is a transport rather than an authority.
-- **Signed A2A message receipts**: Bernstein already signs A2A capability cards, but the cross-agent task messages themselves were not attestable. Now every inbound/outbound [A2A v1.0](https://a2a-protocol.org/) message is a signed lineage receipt binding `{message_hash, peer_card_fingerprint, task_uuid, journal_entry_hash}`, signed with the install's Ed25519 identity and anchored in the message-receipt lineage spine, so a reviewer can prove a cross-agent call happened with the exact inputs claimed without trusting either agent's logs. The A2A task lifecycle (`submitted` / `working` / `input-required` / `completed` / `failed` / `canceled`) maps 1:1 to journal terminal states with reason codes, using `task_uuid` as the trace root. An inbound peer card is verified against its issuer domain and cross-checked against the operator's trusted-issuer set (an untrusted card is rejected), and each inbound peer task runs in its own git worktree so no two collaborations share mutable state. `bernstein interop a2a verify-thread --from-thread <task-uuid>` recomputes every receipt binding, re-checks each Ed25519 signature offline, verifies the spine, and re-anchors each receipt against it, proving the visible cross-agent thread equals the executed actions; a tampered receipt, spine, or journal fails.
-- **Verification evidence bundles**: "done" was a status plus logs; the artefacts that prove a task passed died with the worktree. Now a task declares evidence producers in its spec (`{name, kind, command, required}` -- test command, coverage, lint, an optional screenshot/recording for web-facing work) that run at gate time. Each output is stored content-addressed under a per-blob size cap with a `gc` that drops blobs no live bundle references, then bound into one signed `EvidenceBundle` whose canonical bytes are anchored in the evidence lineage spine and mirrored into the HMAC audit chain as an `evidence.bundle` event -- the bundle is the receipt, not a log beside it. Required producers gate completion; an advisory producer's failure attaches a failure record without blocking. Media evidence additionally flows through the C2PA content-credentials support, so a tampered screenshot fails its hard-binding check. Deterministic producers regenerate byte-identical bundle hashes, signatures, and spine anchors on replay. `bernstein evidence show <task>` renders a bundle and `bernstein evidence verify <task>` recomputes it offline; `bernstein audit verify` covers bundle integrity too, so a tampered evidence file is named and fails exactly like a tampered chain entry. PRs carry an evidence-summary block linking the bundle so review happens against sealed proof rather than rerun-and-hope.
-- **In-process verification gates**: verification used to happen only *after* a worker finished -- the scheduler inspected results and re-dispatched on failure, paying a full round-trip for every miss. Now a gate-capable adapter (Claude Code) enforces the same policy the moment a worker believes it is done, inside the session, before the turn ends. At spawn the task's `owned_files` become a write allowlist and its required `evidence_producers` a completion check, persisted to `.sdd/runtime/hook_gate/<session>.json`; the adapter injects two blocking hooks that shell out to `bernstein hook-gate check`. A `Stop` hook runs the required verification in-session and refuses to end the turn while it fails; a `PreToolUse` matcher refuses an out-of-scope write (realpath-contained, so a `..` traversal or an in-scope symlink resolving outside the worktree is refused). Every recordable outcome -- a blocked completion or a refused write -- is sealed as an `EvidenceBundle` and mirrored into the HMAC audit chain, reusing the verification-evidence schema verbatim: a verifier cannot tell from the schema whether the gate fired in-process or scheduler-side. The trust model stays explicit -- in-process hooks are defence in depth and a cost optimisation; the scheduler-side gate remains authoritative and runs regardless -- so an adapter with no blocking hook surface injects nothing and degrades to that gate with no policy weakening.
-- **Durable work ledger (crash-safe, machine-portable resume)**: run state used to die with the host -- a crash mid-run was recoverable on the same machine, but an in-flight goal could not move to another box, be handed to a colleague, or survive a reimage. Now every task-graph transition (`run.open`, `task.scheduled/started/completed/failed`, `run.resumed`) appends to a hash-chained JSONL ledger under `.sdd/runtime/ledger/<run-id>/`, using the same canonical-JSON hashing contract as the per-step replay journal: each entry links its predecessor's hash, `ts` stays metadata, and the redaction layer scrubs every payload string *before* the entry is hashed, so secrets never become portable. `bernstein ledger anchor <run>` verifies the chain and publishes it -- chunked, with a deterministic tree identity -- to a dedicated git ref (`refs/bernstein/work-ledger/<run-id>`) that travels with the repo and is mirrored into the HMAC audit chain as a `work_ledger.anchor` event. On any clone, `bernstein ledger fetch <run>` + `bernstein ledger resume <run>` verify the chain end to end, rebuild scheduler state by deterministic replay (byte-identical projection for the same chain), and hand the in-flight frontier to the resume watcher; a crash mid-write degrades to the last verified entry, a tampered entry fails with its exact position named, and two divergent resumes of the same ledger are detected at the fork entry and refused, never silently merged. `bernstein ledger gc <run>` squashes anchor history so long runs do not bloat the repo. The ledger is the shared resumable-state substrate: schedulers and long-horizon runners build on it instead of inventing new state files.
-- **Detached run service (submit, disconnect, reattach later)**: a run used to be tied to the invoking terminal and one machine's uptime -- closing the laptop or losing an SSH session killed the scheduler even though all run state was recoverable, so multi-hour goals needed tmux discipline. Now `bernstein run-service submit "<goal>" --task <id>...` opens a run on the durable work ledger and spawns a session-detached supervisor that owns execution and survives the terminal; the daemon is a projection of the ledger, not a separate state store. `bernstein run-service attach <run>` reattaches from any shell and, before rendering live progress, proves the current ledger head is a forward extension of the head last seen -- that continuity proof is the reattach artefact, so an operator can prove nothing happened off the record while they were away. Every lifecycle boundary (submit, detach, reattach, daemon restart, complete) appends a signed `run.lifecycle` receipt to the HMAC audit chain binding the ledger head; a supervisor killed mid-run recovers the ledger tip on restart and resumes with zero lost completed tasks (a hard-kill chaos test proves it in CI), and `bernstein run-service verify <run>` re-checks the audit chain, the ledger chain, and every continuity boundary offline. Off-host execution ships too: `bernstein run-service submit --backend ssh` runs each task on another host over ssh in its own isolated remote git worktree (one branch per task), appends a signed `run.ssh_task` receipt binding that worktree so an offline verifier can prove per-task isolation across the ssh boundary, resumes on the ssh backend from the ledger tip with zero lost completed tasks after a kill, and resolves any injected credentials from the credential vault only (`--ssh-secret ENV=PROVIDER`, never the ledger or the receipts); `bernstein worker` remains the cluster fan-out.
-
-- **SPIFFE-compatible workload identity**: operators standardizing on [SPIFFE](https://spiffe.io/) workload identity saw a Bernstein fleet as unidentified processes and had to keep a parallel identity system beside the one their platform already ran. Now the Ed25519 install identity and each agent card map onto a deterministic SPIFFE ID (`spiffe://<trust-domain>/bernstein/<install>/<agent>`, where `<install>` is a stable fingerprint of the install public key), so two operators derive the same id for the same install and agent, and a verifier re-derives it later. When a SPIRE agent is present (optional `bernstein[spiffe]` extra), the X.509-SVID it issues is bound to a card by a *receipt*: `bind_svid_to_card` re-derives the SPIFFE ID, refuses any SVID whose id disagrees, stamps the reference onto the card, and appends a `spiffe.svid_binding` event into the HMAC audit chain carrying the binding's content hash. The binding is the receipt, not a log beside it -- strip the chain and the mapping loses its meaning. `bernstein spiffe id` derives the id offline; `bernstein spiffe verify-binding <binding.json> --install-key <pem> --trust-domain <td> --audit-dir <dir>` re-derives the id from the install key and proves the card-to-SVID binding against its chained receipt, so a tampered binding fails with its content hash no longer matching. The same SVID material projects onto the existing cluster mTLS config, so the task server enforces mutual TLS through the path it already uses. Without the extra the self-contained Ed25519 path stays the default and every existing flow is unchanged.
-
-- **Tournament runs (parallel attempts, deterministic selection)**: for a hard task a single attempt often lands mediocre, and operators used to re-run the task by hand and eyeball diffs, leaving no trace of why one attempt won. Now a task can declare `attempts: N` with scripted evaluators (test pass rate, lint status, coverage delta, mutation score, an arbitrary command); the scheduler fans out N sibling attempts in isolated worktrees with byte-identical inputs, and the winner is a pure function of the evaluator outputs with a stable attempt-hash tie-break -- no model call in the decision path. The artefact the operator sees *is* the proof: a signed, spine-anchored `TournamentReceipt` that names every attempt hash, every evaluator output, every score, the winner, and the lineage edges (one `chosen`, the rest `sibling`). Each attempt is recorded as a lineage sibling, and the selection is mirrored into the HMAC audit chain as a `tournament.selection` event. `bernstein tournament show <task>` renders a receipt and `bernstein tournament verify <task>` recomputes it offline -- it replays the deterministic scorer over the recorded outputs, so a tampered score or a hand-picked winner diverges from the replay and fails; `bernstein audit verify` covers selection integrity too. Fan-out is gated on the task's existing per-ticket budget ceiling, so it aborts with a clear error before spawning when projected spend would breach the cap, never silently multiplying cost.
-
-- **Spec-to-task-graph pipeline with requirement-hash lineage**: teams that write specs first had no supported path from a requirements document to a gated task graph -- operators pasted specs into the goal prompt and hoped decomposition landed, the decomposition was not reviewable before tokens were spent, and after the run nothing could answer "which requirement produced this artefact". `bernstein plan compile <spec>` closes that gap with a three-stage pipeline holding at most one model call: draft extracts EARS-shaped acceptance lines into a content-addressed requirement set, approve binds the requirement-set hash into the HMAC audit chain as a `spec.requirement_set` receipt (the plan-approval gate for the spec), and compile turns the *approved* set into a task graph as a pure, model-free transformation. Each task node is content-addressed over the requirement lines it implements and nothing else, so the same approved set always compiles to a byte-identical graph (`graph_hash` is reproducible), every node carries at least one requirement hash (so every artefact traces back to spec lines through lineage), and editing one requirement re-plans only that node while every unaffected node keeps its exact identity -- the diff is a plain set difference over content-addressed node ids. The receipt is the artefact: a verifier can prove offline that a graph was compiled from the requirement set the operator signed off on, and any post-approval edit to a requirement line breaks the chain.
-
-- **Chain-projected unified event feed**: incident review used to mean grepping several parallel event vocabularies (the SSE stream, trigger events, the audit chain, the run journal) and arbitrating by timestamp. Now one canonical grammar -- (resource id, dot-delimited label, related resource ids, payload digest) -- is a deterministic projection of the HMAC audit chain, so the same on-disk chain bytes project a byte-identical feed on every host. `bernstein events query --from <hmac> --to <hmac>` returns a window that embeds the from/to HMAC fence-posts of the underlying chain slice, and `bernstein events verify <window>` checks it offline for completeness and order: deleting or reordering any event breaks the prev-hmac linkage and fails, so "what happened, in what order" settles by chain position rather than timestamps. Composable rules fold over the feed (threshold counts, absence expectations with a negative proof, sequences keyed on lineage descent, any/all/count compounds), and a rule fire mints a fire receipt on the chain before its typed action (notify, pause/resume a schedule, cancel/suspend a task, clamp a budget envelope, drain the warm pool, pin an adapter, retry a checkpoint fork) executes -- an action with no matching receipt is rejected, and the executed action is itself a chain event, so an automated intervention is as explainable in a postmortem as a human one.
-
-### why this exists
-
-i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges.
-
-Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
+The full list is on the [capabilities page](docs/reference/capabilities.md); the [feature matrix](docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
 
 ### install in 30 seconds
 
@@ -108,9 +49,13 @@ bernstein init
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-See installed integrations: `bernstein integrations list --installed`.
+pip, uv, brew, dnf, npm, Docker, and the air-gapped wheelhouse are covered in the [install guide](docs/getting-started/install.md).
+
+<img alt="Bernstein in action: parallel AI agents orchestrated in real time" src="docs/assets/in-action-small.gif" width="700">
 
 ### prove a run
+
+Determinism here is something you check, not something you take on faith. Run once with audit enabled, then verify what was recorded:
 
 ```bash
 BERNSTEIN_AUDIT=1 bernstein -g "fix the failing test in tests/test_foo.py"
@@ -122,332 +67,61 @@ bernstein audit verify                # HMAC chain + Merkle seal (written becaus
 
 The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `--audit`, `BERNSTEIN_AUDIT=1`, or a compliance preset.
 
-## who this is for
+### how it works
 
-Specific shapes where the value lands:
-
-- engineering teams running >=3 CLI coding agents in parallel: each agent gets its own git worktree, the merge queue serialises landings, no race conditions
-- operators running compliance-sensitive workflows: every routing decision is plaintext, and with `--audit` the log is HMAC-signed and tamper-evident, no SaaS hop, no third-party data plane
-- platform teams that need an audit log of agent decisions: enable `--audit` and the orchestrator writes one row per scheduling decision, you can grep it
-- anyone burning more than $1k/mo on coding agents who wants determinism: you can replay yesterday's plan and get yesterday's task graph
-- forward-deployed engineers dropping into a client repo: credentials stay in your env, not the client's; agents you spawn are whichever CLI tool the client already trusts
-- teams whose pipeline also produces non-code deliverables (a report, a dataset, an ops result): a task can declare an artifact contract and complete on a signed lineage receipt instead of a git commit, verifiable offline with `bernstein artifact verify`. <!-- scope:artifact-spec-reachability start - delete this sentence when #3110 lands -->Declaring one means writing the task record directly today: `artifact_spec` is not a field in a seed, plan, or backlog file, and there is no CLI option for it (#3110).<!-- scope:artifact-spec-reachability end --> See [docs/operations/artifacts.md](docs/operations/artifacts.md).
-
-If you nodded at two of those bullets, this fits.
-
-## who this is NOT for
-
-- "I want one pair-programmer to chat with about my code": a single CLI agent is fine. Bernstein adds orchestration overhead you don't need.
-- prototypes where merge gates are overkill: the lint/types/tests/cross-model-review pipeline is value when the cost of a bad merge is real, friction when you're throwing the repo away on Friday.
-- anyone who wants a SaaS wrapper with a credit-card form: Bernstein is on-prem only by design.
-- teams that need a vendor with a support SLA and a contract: solo open-source project. GitHub issues are how support happens.
-- generic LLM chat workflows with no verifiable deliverable: a task has to produce something checkable - a commit, or an artifact whose canonical bytes a criterion can be evaluated against.
-- research-shape "let the agents collaborate emergently" use cases: the deterministic scheduler is a hard wall there.
-
-## how it compares
-
-What Bernstein does well is the verifiability surface: an always-on lineage spine and replay journal, an opt-in HMAC-chained audit log, signed agent cards, an air-gap deploy profile, plus broad CLI adapter coverage.
-
----
-
-### what is this, in one paragraph
-
-You tell Bernstein what you want built. It splits the work across several AI coding agents, runs them in parallel inside isolated git worktrees, records every handoff in the always-on lineage spine and replay journal, runs the tests, and merges the code that actually passes. File-based state (`.sdd/`), per-agent credential scoping, and an opt-in HMAC-SHA256-chained audit log (RFC 2104) when you start the run with `--audit`.
-
-### other install methods
-
-```bash
-curl -fsSL https://bernstein.run/install.sh | sh        # macOS / Linux one-liner
-irm https://bernstein.run/install.ps1 | iex             # Windows PowerShell
-pip install bernstein                                   # pip
-uv tool install bernstein                               # uv
-brew tap chernistry/tap && brew install bernstein       # Homebrew
-```
-
-See the full [install matrix](#install) for `dnf copr`, `npx`, optional extras, and the wheelhouse path for air-gapped sites.
-
-### why the scheduler is plain Python
-
-Most agent orchestrators use an LLM to decide who does what. That is non-deterministic and burns tokens on scheduling instead of code. Bernstein does one LLM call to break down your goal, then the rest (running agents in parallel, isolating their git branches, running tests, routing retries) is plain Python. Every run is reproducible. Every step is logged and replayable.
-
-No framework to learn. No vendor lock-in. Swap any agent, any model, any provider.
-
-<img alt="Bernstein in action: parallel AI agents orchestrated in real time" src="docs/assets/in-action-small.gif" width="700">
-
-What you see while it runs:
-
-```
-$ bernstein -g "Add JWT auth"
-[manager] decomposed into 4 tasks
-[agent-1] claude-sonnet: src/auth/middleware.py  (done, 2m 14s)
-[agent-2] codex:         tests/test_auth.py      (done, 1m 58s)
-[verify]  all gates pass. merging to main.
-```
-
-### YAML workflow manifests (optional)
-
-When `bernstein -g "<goal>"` is too coarse-grained, `bernstein workflow` runs a declarative DAG of agent / command / loop nodes. Manifests are plain YAML, validated up-front, dispatched through the same `AgentSpawner` the rest of Bernstein uses.
-
-```bash
-bernstein workflow list                          # bundled + user-installed
-bernstein workflow run idea-to-pr -g "Add JWT auth"
-bernstein workflow init my-flow                  # scaffold a starter manifest
-bernstein workflow validate path/to/flow.yaml
-```
-
-Stock workflows shipping in the wheel: `idea-to-pr`, `refactor-with-tests`, `security-review`, `doc-update`, `dependency-bump`, `hot-fix`. Loop nodes re-fire until a bash predicate exits 0. `fresh_context: true` mints a new agent session per iteration. Per-step CLI/model routing: [docs/workflows/per-step-routing.md](docs/workflows/per-step-routing.md).
-
-## use cases
-
-- forward-deployed engineering: drop the crew onto a client repo when you arrive, take it with you when you leave.
-- self-evolving projects: point Bernstein at its own repo and let it execute the backlog (this codebase is one).
-- CI fleets: run a crew of agents in parallel on PRs, with per-agent credential scoping and an opt-in signed audit trail.
-- air-gapped deployment: install from a signed wheelhouse, run with `--profile airgap` to deny outbound by default. See [Air-gap installation](docs/installation/air-gap.md).
-
-## supported agents
-
-Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
-
-40+ CLI agent adapters, plus a generic wrapper for anything with `--prompt`.
-
-| Agent | Models | Install |
-|-------|--------|---------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Opus 4, Sonnet 4.6, Haiku 4.5 | `npm install -g @anthropic-ai/claude-code` |
-| [Codex CLI](https://github.com/openai/codex) | GPT-5, GPT-5 mini | `npm install -g @openai/codex` |
-| [OpenAI Agents SDK v2](https://openai.github.io/openai-agents-python/) | GPT-5, GPT-5 mini, o4 | `pip install 'bernstein[openai]'` |
-| [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) | Copilot-managed (GPT-5, Sonnet 4.6) | `npm install -g @github/copilot` |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 2.5 Pro, Gemini Flash | `npm install -g @google/gemini-cli` |
-| [Antigravity CLI](docs/adapters/agy.md) (`agy`) | Service-managed (Gemini family) | Upstream installer, then `agy install` |
-| [Cursor](https://www.cursor.com) | Sonnet 4.6, Opus 4, GPT-5 | [Cursor app](https://www.cursor.com) |
-| [Devin Terminal](https://devin.ai) (Cognition) | Devin-managed | `curl -fsSL https://cli.devin.ai/install.sh \| bash` then `devin auth login` |
-| [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible | `pip install aider-chat` |
-| [Amp](https://ampcode.com) | Amp-managed | `npm install -g @sourcegraph/amp` |
-| [CLM gateway](docs/adapters/clm.md) (sovereign / on-prem LLM) | Any OpenAI-compatible CLM endpoint | `pip install aider-chat`, then set `CLM_ENDPOINT` / `CLM_TOKEN` |
-| [Cody](https://sourcegraph.com/cody) | Sourcegraph-hosted | `npm install -g @sourcegraph/cody` |
-| [Continue](https://continue.dev) | Any OpenAI/Anthropic-compatible | `npm install -g @continuedev/cli` (binary: `cn`) |
-| [Goose](https://block.github.io/goose/) | Any provider Goose supports | See [Goose docs](https://block.github.io/goose/) |
-| [IaC](https://www.terraform.io/) (Terraform/Pulumi) | Any provider the base agent uses | Built-in |
-| [Junie](https://junie.jetbrains.com) | BYOK (Anthropic, OpenAI, Google, xAI, OpenRouter, Copilot) | `curl -fsSL https://junie.jetbrains.com/install.sh \| bash` |
-| [Kilo](https://kilocode.ai) | Kilo-hosted | See [Kilo docs](https://kilocode.ai) |
-| [Kiro](https://kiro.dev) | Kiro-hosted | See [Kiro docs](https://kiro.dev) |
-| [AWS Q Developer](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html) | Amazon Q-managed (Claude-backed) | `brew install --cask amazon-q` then `q login` |
-| [Ollama](https://ollama.ai) + Aider | Local models (offline) | `brew install ollama` |
-| [OpenCode](https://opencode.ai) | Any provider OpenCode supports | See [OpenCode docs](https://opencode.ai) |
-| [Qwen](https://github.com/QwenLM/qwen-code) | Qwen Code models | `npm install -g @qwen-code/qwen-code` |
-| [OpenHands](https://github.com/OpenHands/OpenHands) | Any LiteLLM-supported (Anthropic, OpenAI, ...) | `uv tool install openhands --python 3.12` |
-| [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter) | Any (LiteLLM-backed) | `pip install open-interpreter` |
-| [gptme](https://github.com/gptme/gptme) | Anthropic, OpenAI, OpenRouter | `pipx install gptme` |
-| [Plandex](https://github.com/plandex-ai/plandex) | Plandex Cloud or self-hosted models | `curl -sL https://plandex.ai/install.sh \| bash` |
-| [AIChat](https://github.com/sigoden/aichat) | OpenAI, Anthropic, OpenRouter, Groq, Gemini | `cargo install aichat` |
-| [Letta Code](https://github.com/letta-ai/letta-code) | Letta-routed (Anthropic, OpenAI) | `npm install -g @letta-ai/letta-code` |
-| **Generic** | Any CLI with `--prompt` | Built-in |
-
-Any adapter also works as the internal scheduler LLM:
-
-```yaml
-internal_llm_provider: gemini            # or qwen, ollama, codex, goose, ...
-internal_llm_model: gemini-3.1-pro
-```
-
-Local runtimes (ollama, LM Studio, MLX servers) plug in as a first-class
-worker tier: declare a `local_endpoints` profile, route low-stakes roles
-(lint, test-writing, triage, doc sweeps) to it, and certify the endpoint
-with `bernstein doctor --endpoint <url>`. Certification is a signed,
-audit-chain-anchored receipt -- merge-critical roles refuse an uncertified
-endpoint at config validation. See
-[Local endpoints](docs/reference/local-endpoints.md) and
-[examples/local-fleet](examples/local-fleet).
-
-> [!TIP]
-> Run `bernstein --headless` for CI pipelines. No TUI, structured JSON output, non-zero exit on failure.
-
-## quick start
-
-```bash
-cd your-project
-bernstein init                    # creates .sdd/ workspace + bernstein.yaml
-bernstein -g "Add rate limiting"  # agents spawn, work in parallel, verify, exit
-bernstein live                    # watch progress in the TUI dashboard
-bernstein stop                    # graceful shutdown with drain
-```
-
-For multi-stage projects, define a YAML plan:
-
-```bash
-bernstein run plan.yaml           # skips LLM planning, goes straight to execution
-bernstein run --dry-run plan.yaml # preview tasks and estimated cost
-```
-
-## web UI
-
-`v2.0.0` ships a minimal web UI (operator-requested; UI is a side surface, core orchestrator is the priority).
-
-```bash
-bernstein gui serve               # http://127.0.0.1:8052/ui/
-bernstein gui serve --dev         # expects `npm run dev` on :5173
-bernstein gui serve --minimal     # skip the full /api/v1/* surface
-```
-
-The Vite bundle is committed under `src/bernstein/gui/static/`, so wheel installs work without a Node toolchain. Surface tour + per-task drawer: [docs/gui/screens.md](docs/gui/screens.md).
-
-The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; every grant and write authorization is a signed governance record (`bernstein governance verify dashboard-auth`).
-
-## how it works
-
-Bernstein runs a four-stage pipeline per goal:
+Each goal moves through four stages:
 
 1. **Decompose**. The manager breaks your goal into tasks with roles, owned files, and completion signals. One LLM call, then plain Python from there.
 2. **Spawn**. Agents start in isolated [git worktrees](https://git-scm.com/docs/git-worktree), one per task. Main branch stays clean.
 3. **Verify**. The janitor checks concrete signals: tests pass, files exist, lint clean, types correct.
 4. **Merge**. Verified work lands in main. Failed tasks get retried or routed to a different model.
 
-The orchestrator is a Python scheduler, not an LLM. Scheduling decisions are deterministic, auditable, and reproducible. Every step lands in the always-on replay journal; run with `--audit` and every step additionally writes a record to the HMAC-chained audit log (`.sdd/audit/YYYY-MM-DD.jsonl`) per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104).
+Why the scheduler is plain Python, and what that trades away: [why deterministic](docs/architecture/WHY_DETERMINISTIC.md).
 
-## cloud execution (Cloudflare)
-
-`bernstein cloud` runs agents on Cloudflare Workers with R2-backed workspace sync. See [docs/cloudflare/](docs/cloudflare/).
+### everyday commands
 
 ```bash
-bernstein cloud login                       # authenticate with Bernstein Cloud
-bernstein cloud init                        # scaffold a deployable worker
-bernstein cloud deploy                      # print the wrangler deploy command
-bernstein cloud run "add retry to the API"  # submit a free-text goal
+cd your-project
+bernstein init                    # creates .sdd/ workspace + bernstein.yaml
+bernstein -g "Add rate limiting"  # agents spawn, work in parallel, verify, exit
+bernstein live                    # watch progress in the TUI dashboard
+bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
+bernstein stop                    # graceful shutdown with drain
 ```
 
-`cloud run` takes a free-text goal, not a plan file. `cloud deploy`
-prints the `npx wrangler deploy` invocation for the scaffolded worker;
-it does not push anything itself.
+The full operator surface (PR automation, schedules, chat bridges, the autofix daemon) is in [operator commands](docs/operations/commands.md).
 
-## capabilities
+### supported agents
 
-Bernstein ships parallel execution + worktree isolation + a janitor that gates merges on tests/lint/types, signed lineage records, MCP server mode, an opt-in HMAC-SHA256 audit chain, and 40+ CLI adapters out of the box. Pluggable sandbox backends (worktree, Docker, [E2B](https://e2b.dev), [Modal](https://modal.com)), pluggable artifact sinks (local, S3, GCS, Azure Blob, R2), progressive-disclosure skill packs, and a [lethal-trifecta capability gate](docs/security/lethal-trifecta.md) round it out.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](docs/adapters/index.md) carries the full table with install commands; anything else with a `--prompt` flag works through the generic wrapper.
 
-Full feature matrix: [docs/reference/FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md). Recent features: [docs/whats-new.md](docs/whats-new.md).
+Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
-### regulatory anchors
+### beyond the front page
 
-Regulatory mappings (EU AI Act Article 12, SOC 2 CC4/CC7, DORA / NIS2, OWASP ASI06, RFC 2104/7515/8785/8037/7636/8707) live in [docs/compliance/](docs/compliance/). These are mappings, not certifications.
+Everything deep lives on the [docs site](https://bernstein.readthedocs.io/):
 
-## operator commands
+| | |
+|---|---|
+| [capabilities](docs/reference/capabilities.md) | the full capability list: MCP server mode, signed agent cards, sandbox backends, artifact sinks, regulatory mappings |
+| [who this is for](docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
+| [workflows](docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
+| [web UI](docs/gui/index.md) | browser dashboard on the same API the TUI uses |
+| [cloud execution](docs/cloudflare/cloudflare-overview.md) | run agents on Cloudflare Workers with R2 workspace sync |
+| [security](docs/operations/security.md) | scorecard, fuzzing, hardening |
+| [architecture](docs/architecture/ARCHITECTURE.md) | how it works under the hood |
 
-Highest-value commands; full list in [docs/operations/commands.md](docs/operations/commands.md).
+### why the name?
 
-| Command | What it does |
-|---------|--------------|
-| `bernstein pr` | Auto-creates a GitHub PR from a completed session; body carries the janitor's gate results and cost breakdown. |
-| `bernstein from-ticket <url>` | Imports a Linear / GitHub Issues / Jira ticket as a Bernstein task. |
-| `bernstein autofix` | Daemon that monitors open Bernstein PRs; spawns a fixer agent when CI fails. |
-| `bernstein hooks` | Lifecycle hooks (`pre_task`, `post_task`, `pre_merge`, etc.) as shell scripts or pluggy `@hookimpl`s. |
-| `bernstein backlog claim --role reviewer` | Atomically claims one eligible row from `.sdd/runtime/task-backlog.json` for external workers. |
-| `bernstein chat serve --platform=telegram\|discord\|slack` | Drive runs from chat with `/run`, `/status`, `/approve`, `/reject`. |
-| `bernstein serve` | Runs the task server in the foreground (blocks until SIGINT/SIGTERM) instead of detaching it, so a container's PID 1 stays alive and can host a long-lived central/coordinator node whose `/health` endpoint stays reachable. It is the published image's default `CMD`. Set `BERNSTEIN_BIND_HOST=0.0.0.0` and `BERNSTEIN_CLUSTER_ENABLED=1` to bind all interfaces and expose cluster endpoints. |
-| `bernstein workflow run <name>` | Run a YAML workflow manifest. |
-| `bernstein schedule add\|list\|run` | Manage operator-registered recurring schedules; `schedule audit` walks persisted fire receipts to prove the sequence is replayable. |
-| `bernstein schedule show <id> --at <time>\|schedule verify` | Treats a recurring fire as a pure projection of `(schedule, fire_time, state)` onto a canonical task graph: `show --at` prints the deterministic graph hash a fire would dispatch without firing (no journal, no receipt, no side effects), and `verify` replays a recorded fire and confirms the graph hash reproduces byte-identically. RFC-5545 `RRULE` and cron are both accepted; a webhook / file-change trigger binds its event as an input hash. |
-| `bernstein sla add\|list\|show\|verify\|report` | Attach a per-goal SLA contract (a content-addressed document) to a single recurring goal, task family, or spend envelope, declaring run-duration, start-lateness, fire-frequency, artifact-freshness, and spend-rate axes. The supervisor evaluates contracts against chain evidence on each tick (read-only, never dispatches); a breach becomes a signed violation receipt embedding the contract hash, the chain evidence of the miss, and a deterministic, budget-gated remediation. `sla verify <receipt.json>` re-derives the verdict from the embedded evidence and checks the Ed25519 signature offline (flip any byte and it fails); `sla report` projects a per-contract error budget over the work-ledger segment so two parties derive identical numbers from identical history. |
-| `bernstein templates compress <role>\|--all` | Operator-gated, one-time LLM compression of role prompt templates: mechanically validated (fenced blocks, headings, URLs, placeholders, completion contract stay byte-equal), originals backed up out of tree by content hash, receipt chained to the audit log. `bernstein templates restore <role>` reverses it byte-identically; savings appear in `bernstein cost --by role`. |
-| `bernstein identity keydir` | Prints the install-identity key directory (JWKS) - the Ed25519 public keys that verify the RFC 9421 HTTP Message Signatures Bernstein places on its outbound agent-facing requests (also served at `/.well-known/http-message-signatures-directory`). Set `BERNSTEIN_HTTP_SIGNING_REQUIRED=1` to refuse unsigned outbound paths. |
-| `bernstein security-review [<task>]` | Pattern-scans a unified diff for hardcoded secrets, unsafe `eval`/`exec`, shell injection, weak crypto, path traversal, and SQL injection without calling a model. Scans the working tree against `--base` by default, one agent's task diff when given a task id, or a piped diff with `--diff-file -`. Exits `1` on any critical/high finding so it can gate a pre-commit hook or a CI step, `2` when there is no diff to scan, and `--as-json` emits the findings for a pipeline. |
-| `bernstein delegation verify <run>` | Reconstructs the `principal -> orchestrator -> sub-agent` delegation chain for a run from HMAC-chained per-hop receipts and confirms it is intact offline; exits non-zero on any tamper or deleted hop. |
-| `bernstein artifacts list\|show <task> [<key>]` | Renders a task's agent-posted artifacts (markdown reports, tables, preview links) with per-version verification state. Each artifact is content-addressed, spine-anchored, and journal-chained; a version whose stored blob does not recompute renders as tampered rather than as content, and `bernstein audit verify` walks every artifact so a flipped byte fails naming the key and journal position. |
-| `bernstein skills package install\|update\|verify\|status\|conformance` | Installs the bundled cross-vendor `bernstein-run` agent skill into a host's skill directory (`--host claude\|codex\|copilot\|cursor\|gemini`, or `--dest`) and anchors a content-addressed install receipt in the lineage spine and audit chain; `verify` re-hashes the installed tree and proves it against the receipt; `update` supersedes a prior install with a receipt binding the prior content address to the new one; `status` verifies every host install at once; `conformance` installs into several hosts against one install, replays the skill's self-check contract per host, and seals the pass/fail table into a chain-anchored conformance receipt. `--record-only` anchors a plugin checkout the host installed itself. See [docs/integrations/agent-session.md](docs/integrations/agent-session.md). |
-| `bernstein self check-update\|update\|pin\|rollback` | Provenance-verified update lifecycle. `check-update` verifies a signed release feed against a configured trust root **before** naming a candidate (a feed with one flipped byte yields no candidate at all), then seals a chain-anchored `update.advisory` receipt that `check-update --verify <file>` recomputes offline. `update` refuses while a run is active or tasks are pending, re-hashes the downloaded wheel against the advisory before pip runs, and emits a `self.update` install receipt. `pin` writes a signed version pin the updater will not cross without `--override-pin`; `rollback` returns to the previous *receipted* version with its wheel re-verified against the cached signed feed. No network call happens without an explicit command or `BERNSTEIN_UPDATE_CHECK=1`, and the air-gap profile hard-disables the remote path at the egress layer. See [docs/operations/updates.md](docs/operations/updates.md). |
-| `bernstein datasource register\|query\|verify` | Read-only SQL datasources whose results become content-addressed query receipts: `query` canonicalises the exact result set an agent saw and binds its SHA-256 into a signed lineage entry (`.jws` sidecar); `verify` proves the signature, chain anchor and stored copy offline, and `verify --re-execute` re-runs the query to report `MATCH` or `DRIFT`. DML/DDL is refused with a typed error and connection secrets never reach a receipt. See [docs/operations/datasources.md](docs/operations/datasources.md). |
-| `bernstein bench run <suite>\|bench verify <bundle>` | Runs a content-addressed benchmark suite and emits a signed submission bundle in which every task carries the replay receipt its score was derived from. `bench verify` replays those receipts offline with no access to the submitter's machine, recomputes each score, and reports MATCH or names the exact task whose replay diverged. A flipped verdict or a corrupted receipt fails verification, so a published number is only worth the bundle a third party can re-verify. See [docs/eval/bench.md](docs/eval/bench.md). |
+Bernstein is named after Leonard Bernstein, the American conductor and composer. The project orchestrates a crew of CLI coding agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result. He is the original orchestrator the project takes its name from.
 
-### retrieval & caching: what's actually under the hood
+i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
 
-Bernstein deliberately uses **no neural embeddings, no vector databases, and no external embedding APIs**. There are two retrieval/caching layers, both keyword/lexical:
+### contributing, support, license
 
-- **Codebase RAG** (`core/knowledge/rag.py`): [SQLite FTS5](https://sqlite.org/fts5.html) with [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) ranking and AST-aware chunking for Python files.
-- **Semantic cache** (`core/knowledge/semantic_cache.py`): TF (term-frequency) cosine similarity over word counts, not learned embeddings.
+PRs welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has setup and code style. Security reports go through [SECURITY.md](SECURITY.md). If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry). Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
 
-If you need real semantic retrieval (vector DB, neural embeddings), wire it yourself via the retrieval role/skill in `templates/`; nothing in core performs vector search.
-
-## install
-
-| Method | Command |
-|--------|---------|
-| **One-liner (macOS / Linux)** | `curl -fsSL https://bernstein.run/install.sh \| sh` |
-| **One-liner (Windows)** | `irm https://bernstein.run/install.ps1 \| iex` |
-| **pip** | `pip install bernstein` |
-| **pipx** | `pipx install bernstein` |
-| **uv** | `uv tool install bernstein` |
-| **Homebrew** | `brew tap chernistry/tap && brew install bernstein` |
-| **Fedora / RHEL** | `sudo dnf copr enable alexchernysh/bernstein && sudo dnf install bernstein` |
-| **npm** (wrapper) | `npx bernstein-orchestrator` |
-| **Docker (GHCR)** | `docker run --rm -v "$PWD:/work" -w /work -e ANTHROPIC_API_KEY ghcr.io/sipyourdrink-ltd/bernstein:latest -g "fix tests/test_foo.py"` |
-
-The one-liner scripts check for Python 3.12+, bootstrap pipx when it's missing, fix PATH for the current session, and install (or upgrade) `bernstein`. Script sources: [install.sh](scripts/install.sh) &middot; [install.ps1](scripts/install.ps1).
-
-### optional extras
-
-Provider SDKs are optional so the base install stays lean.
-
-| Extra | Enables |
-|-------|---------|
-| `bernstein[openai]` | OpenAI Agents SDK v2 adapter (`openai_agents`) |
-| `bernstein[docker]` | Docker sandbox backend |
-| `bernstein[e2b]` | [E2B](https://e2b.dev) microVM sandbox backend (needs `E2B_API_KEY`) |
-| `bernstein[modal]` | [Modal](https://modal.com) sandbox backend, optional GPU (needs `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`) |
-| `bernstein[s3]` | S3 artifact sink (via `boto3`) |
-| `bernstein[gcs]` | Google Cloud Storage artifact sink |
-| `bernstein[azure]` | Azure Blob artifact sink |
-| `bernstein[r2]` | Cloudflare R2 artifact sink (S3-compatible `boto3`) |
-| `bernstein[grpc]` | gRPC bridge |
-| `bernstein[k8s]` | Kubernetes integrations |
-
-Combine extras with brackets, e.g. `pip install 'bernstein[openai,docker,s3]'`.
-
-Editor extensions: [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=alex-chernysh.bernstein) &middot; [Open VSX](https://open-vsx.org/extension/alex-chernysh/bernstein)
-
-## security
-
-- **OpenSSF Scorecard.** Weekly run via `.github/workflows/scorecard.yml`. Results uploaded to GitHub Code Scanning. Badge above.
-- **Fuzzing.** ClusterFuzzLite config at `.clusterfuzzlite/` plus a `cifuzz-pr` workflow (`.github/workflows/cifuzz-pr.yml`) provide an OSSF-recognized fuzzing harness on top of the existing Hypothesis property-test suite.
-- **Vulnerability disclosure.** See [SECURITY.md](SECURITY.md).
-
-## contributing
-
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and code style.
-
-## sponsor
-
-If Bernstein routed a model that saved you a Claude bill, $25 covers a month of my coffee.
-
-[github.com/sponsors/chernistry](https://github.com/sponsors/chernistry)
-
-## support
-
-If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry).
-
-Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
-
-## featured in
-
-- [**Augment Code - 9 Open-Source Agent Orchestrators for AI Coding (2026)**](https://www.augmentcode.com/tools/open-source-agent-orchestrators); editorial roundup.
-- [**nibzard/awesome-agentic-patterns**](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md); Bernstein cited as the production implementation of the "deterministic zero-LLM orchestration" pattern.
-- [**Python Weekly**](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026); newsletter mention.
-- [**Future Digest**](https://futuredigestnews.substack.com/p/your-claude-bill-just-hit-874-heres); cost-cutting playbook write-up.
-
-<details>
-<summary>More awesome-lists, MCP catalogs, and prior-art citations</summary>
-
-Awesome lists: [Jenqyang/Awesome-AI-Agents](https://github.com/Jenqyang/Awesome-AI-Agents), [jamesmurdza/awesome-ai-devtools](https://github.com/jamesmurdza/awesome-ai-devtools), [jim-schwoebel/awesome_ai_agents](https://github.com/jim-schwoebel/awesome_ai_agents), [Piebald-AI/awesome-gemini-cli](https://github.com/Piebald-AI/awesome-gemini-cli), [ComposioHQ/awesome-codex-skills](https://github.com/ComposioHQ/awesome-codex-skills), [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers), [jxzhangjhu/Awesome-LLM-RAG](https://github.com/jxzhangjhu/Awesome-LLM-RAG), [rohitg00/awesome-claude-code-toolkit](https://github.com/rohitg00/awesome-claude-code-toolkit), [numtide/llm-agents.nix](https://github.com/numtide/llm-agents.nix), [andyrewlee/awesome-agent-orchestrators](https://github.com/andyrewlee/awesome-agent-orchestrators), [bradAGI/awesome-cli-coding-agents](https://github.com/bradAGI/awesome-cli-coding-agents), [milisp/awesome-codex-cli](https://github.com/milisp/awesome-codex-cli), [yaolifeng0629/Awesome-independent-tools](https://github.com/yaolifeng0629/Awesome-independent-tools), [caramaschiHG/awesome-ai-agents-2026](https://github.com/caramaschiHG/awesome-ai-agents-2026), [ai-for-developers/awesome-vibe-coding](https://github.com/ai-for-developers/awesome-vibe-coding), [taishi-i/awesome-ChatGPT-repositories](https://github.com/taishi-i/awesome-ChatGPT-repositories), [eudk/awesome-ai-tools](https://github.com/eudk/awesome-ai-tools), [killop/anything_about_game](https://github.com/killop/anything_about_game), [vinta/awesome-python](https://github.com/vinta/awesome-python), [Zijian-Ni/awesome-ai-agents-2026](https://github.com/Zijian-Ni/awesome-ai-agents-2026), [rohitg00/awesome-devops-mcp-servers](https://github.com/rohitg00/awesome-devops-mcp-servers), [Glama MCP Catalog](https://glama.ai/mcp/servers/sipyourdrink-ltd/bernstein). Mirrors: [icopy-site/awesome](https://github.com/icopy-site/awesome), [icopy-site/awesome-cn](https://github.com/icopy-site/awesome-cn), [trackawesomelist/trackawesomelist](https://github.com/trackawesomelist/trackawesomelist).
-
-Prior-art citations by peer projects: [mkb23/overcode](https://github.com/mkb23/overcode/blob/main/docs/design/bakeoffs/overcode-vs-bernstein.md), [Vintersong/NOVA-Cognition-Framework](https://github.com/Vintersong/NOVA-Cognition-Framework), [AJV009/drupal-contrib-workbench](https://github.com/AJV009/drupal-contrib-workbench), [danielvaughan/codex-blog](https://github.com/danielvaughan/codex-blog/blob/main/_posts/2026-04-09-loki-mode-autonomous-execution.md).
-
-Directories: [AlternativeTo](https://alternativeto.net/software/bernstein/).
-
-</details>
-
-## cite
-
-Machine-readable metadata lives in [CITATION.cff](CITATION.cff) (CFF 1.2.0); GitHub renders the "Cite this repository" button automatically. A Zenodo DOI will be minted on the next release.
-
-## license
-
-[Apache License 2.0](LICENSE)
+Citation metadata lives in [CITATION.cff](CITATION.cff). External coverage and list entries: [mentions](docs/mentions.md). License: [Apache-2.0](LICENSE).
 
 ---
 
