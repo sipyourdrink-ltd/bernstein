@@ -247,60 +247,104 @@ def _validate_or_error(tool_name: str, params: dict[str, Any]) -> ValidationErro
     return validate_or_error(tool_name, params)
 
 
+def _scenario_run_handle(result: dict[str, Any]) -> dict[str, Any]:
+    """Reshape a scenario invocation into the ``bernstein_run`` handle shape.
+
+    A scenario run spawns ordinary tasks, so it is polled with the ordinary
+    poll tool: the response carries the same ``task_id`` / ``run_id`` /
+    ``poll_after_ms`` fields ``bernstein_run`` returns (for the first
+    spawned task) plus one ``{task_id, run_id}`` pair per spawned task, so
+    ``bernstein_run_status`` follows any of them with no scenario-specific
+    tooling (#3087).
+    """
+    if "error" in result:
+        return result
+    from bernstein.core.tasks.checkpoint_retry import task_run_id
+
+    # Deliberately a lazy import: bernstein.mcp.server imports this module's
+    # registrar inside create_mcp_server, so a module-level import back into
+    # it would be a cycle hazard.
+    from bernstein.mcp.server import _POLL_AFTER_MS  # pyright: ignore[reportPrivateUsage]
+
+    task_ids = [str(t) for t in result.get("task_ids", [])]
+    handle: dict[str, Any] = dict(result)
+    handle["tasks"] = [{"task_id": t, "run_id": task_run_id(t)} for t in task_ids]
+    if task_ids:
+        handle["task_id"] = task_ids[0]
+        handle["run_id"] = task_run_id(task_ids[0])
+    handle["poll_after_ms"] = _POLL_AFTER_MS
+    return handle
+
+
 def register_scenario_tools(mcp: FastMCP[None], server_url: str) -> None:
-    """Register the ``bernstein_scenario(s|_status)`` MCP tools.
+    """Register the consolidated ``bernstein_scenario`` MCP tool (#3087).
+
+    One tool with an ``action`` selector replaces the former three-tool
+    split (``bernstein_scenarios`` / ``bernstein_scenario`` /
+    ``bernstein_scenario_status``), whose old names remain as deprecated
+    aliases registered by the server module.
 
     Args:
-        mcp: FastMCP instance to attach tools to.
-        server_url: Bernstein task server base URL the tools will hit.
+        mcp: FastMCP instance to attach the tool to.
+        server_url: Bernstein task server base URL the tool will hit.
     """
 
     @mcp.tool()
-    async def bernstein_scenarios() -> str:  # pyright: ignore[reportUnusedFunction]
-        """List all Bernstein scenarios known to the local library.
-
-        Returns:
-            JSON array of scenario summaries (id, name, description, tags,
-            task_count, roles).
-        """
-        try:
-            return json.dumps(list_scenarios(), indent=2)
-        except Exception as exc:
-            return _error_response(exc)
-
-    @mcp.tool()
     async def bernstein_scenario(  # pyright: ignore[reportUnusedFunction]
-        scenario_id: str,
+        action: str = "run",
+        scenario_id: str | None = None,
         context: str = "",
         pr_number: int | None = None,
         branch: str | None = None,
+        orchestration_id: str | None = None,
     ) -> str:
-        """Invoke a Bernstein scenario by id, spawning one task per template.
+        """List, run, or poll Bernstein scenarios through one ``action`` selector.
 
         Args:
-            scenario_id: Identifier from the scenario library
-                (e.g. ``"pr-review-comprehensive"``).
+            action: ``list`` returns the scenario library; ``run`` (the
+                default) invokes ``scenario_id``, spawning one task per
+                template; ``status`` aggregates a run by
+                ``orchestration_id``.
+            scenario_id: Identifier from the scenario library (required for
+                ``run``), e.g. ``"pr-review-comprehensive"``.
             context: Free-form context (the trigger event summary, for
-                example) appended to each task's description.
-            pr_number: PR number to inject when triggered by GitHub.
-            branch: Branch override.
+                example) appended to each task's description (``run`` only).
+            pr_number: PR number to inject when triggered by GitHub
+                (``run`` only).
+            branch: Branch override (``run`` only).
+            orchestration_id: Value a ``run`` returned (required for
+                ``status``).
 
         Returns:
-            JSON with ``orchestration_id``, ``scenario_id``, ``task_count``,
-            ``estimated_minutes`` and ``task_ids``.
+            ``list``: JSON array of scenario summaries. ``run``: the same
+            handle shape ``bernstein_run`` returns (``task_id``, ``run_id``,
+            ``poll_after_ms``) plus ``orchestration_id`` and the per-task
+            ``tasks`` list, so the run is polled with
+            ``bernstein_run_status``. ``status``: per-status counts and task
+            details.
         """
-        err = _validate_or_error(
-            "bernstein_scenario",
-            {
-                "scenario_id": scenario_id,
-                "context": context,
-                "pr_number": pr_number,
-                "branch": branch,
-            },
-        )
+        args: dict[str, Any] = {"action": action}
+        if scenario_id is not None:
+            args["scenario_id"] = scenario_id
+        if context:
+            args["context"] = context
+        if pr_number is not None:
+            args["pr_number"] = pr_number
+        if branch is not None:
+            args["branch"] = branch
+        if orchestration_id is not None:
+            args["orchestration_id"] = orchestration_id
+        err = _validate_or_error("bernstein_scenario", args)
         if err is not None:
             return _validation_error_response(err)
         try:
+            if action == "list":
+                return json.dumps(list_scenarios(), indent=2)
+            if action == "status":
+                assert orchestration_id is not None  # enforced by the schema
+                result = await fetch_scenario_status(orchestration_id, server_url=server_url)
+                return json.dumps(result, indent=2)
+            assert scenario_id is not None  # enforced by the schema
             result = await invoke_scenario_via_server(
                 scenario_id,
                 server_url=server_url,
@@ -308,27 +352,6 @@ def register_scenario_tools(mcp: FastMCP[None], server_url: str) -> None:
                 pr_number=pr_number,
                 branch=branch,
             )
-            return json.dumps(result, indent=2)
-        except Exception as exc:
-            return _error_response(exc)
-
-    @mcp.tool()
-    async def bernstein_scenario_status(  # pyright: ignore[reportUnusedFunction]
-        orchestration_id: str,
-    ) -> str:
-        """Aggregate the status of all tasks of a running scenario.
-
-        Args:
-            orchestration_id: Value returned by ``bernstein_scenario``.
-
-        Returns:
-            JSON with status counts and per-task details.
-        """
-        err = _validate_or_error("bernstein_scenario_status", {"orchestration_id": orchestration_id})
-        if err is not None:
-            return _validation_error_response(err)
-        try:
-            result = await fetch_scenario_status(orchestration_id, server_url=server_url)
-            return json.dumps(result, indent=2)
+            return json.dumps(_scenario_run_handle(result), indent=2)
         except Exception as exc:
             return _error_response(exc)

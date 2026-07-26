@@ -1,13 +1,98 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_scenario",
+  "description": "List, run, or poll Bernstein scenarios. action=list needs nothing else; action=run needs scenario_id and returns the same pollable handle shape as bernstein_run; action=status needs orchestration_id.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["scenario_id"],
   "properties": {
-    "scenario_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]+$"},
-    "context": {"type": "string", "maxLength": 16384},
-    "pr_number": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000000},
-    "branch": {"type": ["string", "null"], "maxLength": 256}
-  }
+    "action": {
+      "type": "string",
+      "enum": [
+        "list",
+        "run",
+        "status"
+      ]
+    },
+    "scenario_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "context": {
+      "type": "string",
+      "maxLength": 16384
+    },
+    "pr_number": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "branch": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 256
+    },
+    "orchestration_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "run"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "required": [
+          "scenario_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "status"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "required": [
+          "orchestration_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "required": [
+            "action"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "scenario_id"
+        ]
+      }
+    }
+  ]
 }

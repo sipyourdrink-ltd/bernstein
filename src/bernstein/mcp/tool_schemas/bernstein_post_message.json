@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_post_message",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "body", "sender"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]+$"},
+    "body": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "sender": {"type": "string", "minLength": 1, "maxLength": 256},
+    "kind": {"type": "string", "enum": ["finding", "artefact_ref", "question"]},
+    "sender_card_fingerprint": {"type": ["string", "null"], "maxLength": 256}
+  }
+}

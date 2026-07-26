@@ -1,7 +1,7 @@
 """End-to-end MCP pull-worker loop (#2555, AC1 + AC6).
 
 An MCP-only agent runs the whole worker loop over MCP alone:
-``bernstein_claim`` (signed claim receipt) -> N x ``bernstein_update``
+``bernstein_claim`` (signed claim receipt) -> N x ``bernstein_post_message``
 (signed journal entries) -> ``bernstein_complete`` (completion). Every step
 returns an object that verifies offline against the audit chain the
 ``audit verify`` path walks. This test drives the real MCP tool handlers with
@@ -72,7 +72,7 @@ async def test_full_claim_update_complete_loop_verifies_offline(tmp_path: Path) 
         # 2. N x UPDATE -> signed journal entries.
         for note in ("25% done", "50% done", "90% done"):
             upd = await mcp.call_tool(
-                "bernstein_update",
+                "bernstein_post_message",
                 {"task_id": task_id, "body": note, "sender": "worker-1"},
             )
             upd_wire = _unwrap(upd[0][0].text)  # type: ignore[index]

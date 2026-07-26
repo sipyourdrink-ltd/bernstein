@@ -91,8 +91,8 @@ class TestBernsteinStatus:
         lab.seed_status(total=7, open=3, done=4)
         text = await lab.call_tool("bernstein_status", {})
         data = json.loads(text)
-        assert data["total"] == 7
-        assert data["open"] == 3
+        assert data["counts"]["total"] == 7
+        assert data["counts"]["open"] == 3
 
     @pytest.mark.asyncio
     async def test_status_queries_status_endpoint(self, lab: McpFakeLab) -> None:
@@ -105,8 +105,8 @@ class TestBernsteinStatus:
         """Without seeding, status has all-zero counts."""
         text = await lab.call_tool("bernstein_status", {})
         data = json.loads(text)
-        assert data["total"] == 0
-        assert data["total_cost_usd"] == pytest.approx(0.0)
+        assert data["counts"]["total"] == 0
+        assert data["cost"]["total_cost_usd"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

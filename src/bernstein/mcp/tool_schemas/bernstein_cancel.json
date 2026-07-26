@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_cancel",
+  "description": "Cancel one task and its subtask tree; the orchestrator keeps running. Cancellable statuses: open, claimed, in_progress, blocked, waiting_for_subtasks, planned. An already-terminal task is reported, not treated as an error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]+$"},
+    "reason": {"type": "string", "maxLength": 4096}
+  }
+}

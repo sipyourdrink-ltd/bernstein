@@ -30,7 +30,7 @@ def test_orchestrate_goal_template_includes_goal_role_scope() -> None:
     assert "small" in body
     # Mentions the right Bernstein tools so a host preview is useful.
     assert "bernstein_run" in body
-    assert "bernstein_status" in body
+    assert "bernstein_run_status" in body
 
 
 def test_triage_failed_tasks_template_uses_limit() -> None:
@@ -46,7 +46,7 @@ def test_cost_recap_template_uses_window() -> None:
 
     body = _cost_recap_template(window="last 7 days")
     assert "last 7 days" in body
-    assert "bernstein_cost" in body
+    assert "bernstein_status" in body
 
 
 # ---------------------------------------------------------------------------

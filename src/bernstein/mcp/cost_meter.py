@@ -138,6 +138,51 @@ def measure_call(tool: str) -> Iterator[CallMeter]:
         meter.finalise()
 
 
+def meter_schema() -> dict[str, Any]:
+    """JSON schema of the ``_meter`` record exactly as :meth:`CallMeter.to_dict` emits it."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["tool", "call_id", "latency_ms", "cost_usd", "ok", "ts"],
+        "properties": {
+            "tool": {"type": "string"},
+            "call_id": {"type": "string"},
+            "latency_ms": {"type": "number"},
+            "cost_usd": {"type": "number"},
+            "ok": {"type": "boolean"},
+            "ts": {"type": "string"},
+            "error": {"type": "string"},
+        },
+    }
+
+
+def envelope_schema(payload_schema: dict[str, Any]) -> dict[str, Any]:
+    """JSON schema of the meter envelope wrapping ``payload_schema``.
+
+    Describes :func:`wrap_envelope`'s output when the meter is enabled: the
+    tool's parsed payload under ``result`` plus the per-call ``_meter``
+    record. Callers advertising an ``outputSchema`` use this when
+    :func:`cost_meter_enabled` is true and the bare ``payload_schema``
+    otherwise, so the declared schema always describes the envelope as it is
+    actually emitted (#3086).
+
+    Args:
+        payload_schema: Schema of the tool's own JSON payload.
+
+    Returns:
+        The envelope schema.
+    """
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["result", "_meter"],
+        "properties": {
+            "result": payload_schema,
+            "_meter": meter_schema(),
+        },
+    }
+
+
 def wrap_envelope(payload: str, meter: CallMeter) -> str:
     """Wrap a tool's raw JSON payload in the cost-meter envelope.
 

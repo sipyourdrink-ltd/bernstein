@@ -1,4 +1,4 @@
-"""MCP server ``bernstein_task_handle`` polling tool (issue #2364).
+"""MCP server ``bernstein_run_status`` polling tool (issue #2364).
 
 The tool lets a stateless MCP client fetch a verifiable run handle for a
 run it started, reprojected from the on-disk journal and the audit chain
@@ -25,6 +25,9 @@ def _tool(mcp, name):
 
 async def _call(mcp, name, **kwargs):
     raw = await _tool(mcp, name)(**kwargs)
+    if hasattr(raw, "content"):
+        # Structured tools (#3086) answer with a CallToolResult.
+        raw = raw.content[0].text
     data = json.loads(raw)
     # Tools are wrapped in the cost-meter envelope by default; unwrap it.
     if isinstance(data, dict) and "_meter" in data and "result" in data:
@@ -32,7 +35,7 @@ async def _call(mcp, name, **kwargs):
     return data
 
 
-async def test_task_handle_tool_reprojects_from_journal(tmp_path, monkeypatch) -> None:
+async def test_run_status_tool_reprojects_from_journal(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     sdd = tmp_path / ".sdd"
     journal = EventJournal("run-2364", sdd)
@@ -43,7 +46,7 @@ async def test_task_handle_tool_reprojects_from_journal(tmp_path, monkeypatch) -
     )
 
     mcp = create_mcp_server(tier="all")
-    out = await _call(mcp, "bernstein_task_handle", run_id="run-2364")
+    out = await _call(mcp, "bernstein_run_status", run_id="run-2364")
     assert out["runId"] == "run-2364"
     assert out["status"] == "completed"
     assert out["journalHead"] == journal.head()
@@ -52,17 +55,17 @@ async def test_task_handle_tool_reprojects_from_journal(tmp_path, monkeypatch) -
     assert out["pollToken"]
 
 
-async def test_task_handle_tool_rejects_path_traversal(tmp_path, monkeypatch) -> None:
+async def test_run_status_tool_rejects_path_traversal(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     mcp = create_mcp_server(tier="all")
-    out = await _call(mcp, "bernstein_task_handle", run_id="../../etc")
+    out = await _call(mcp, "bernstein_run_status", run_id="../../etc")
     assert "error" in out
 
 
-async def test_task_handle_tool_unknown_run(tmp_path, monkeypatch) -> None:
+async def test_run_status_tool_unknown_run(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     mcp = create_mcp_server(tier="all")
-    out = await _call(mcp, "bernstein_task_handle", run_id="nope")
+    out = await _call(mcp, "bernstein_run_status", run_id="nope")
     # An unknown run has no journal: the handle is empty-but-valid working.
     assert out["runId"] == "nope"
     assert out["status"] == "working"

@@ -10,6 +10,13 @@ This module registers a small catalogue tailored to Bernstein's orchestration
 surface. Prompts are templates rendered server-side from parameters; they
 take no live process state and do not call the task server, so they are
 cheap and safe to expose unconditionally.
+
+Every tool name a prompt body mentions is resolved through :func:`_tool`,
+which refuses a name absent from the advertised registry
+(:data:`bernstein.core.protocols.mcp.tool_tiers.TOOL_TIERS`). A rename that
+lands without updating these bodies therefore fails at render time and in
+``tests/unit/mcp/test_tool_surface_consolidation.py``, instead of shipping
+prompt text that instructs clients to call tools that no longer exist.
 """
 
 from __future__ import annotations
@@ -17,8 +24,23 @@ from __future__ import annotations
 import textwrap
 from typing import TYPE_CHECKING
 
+from bernstein.core.protocols.mcp.tool_tiers import TOOL_TIERS
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+
+
+def _tool(name: str) -> str:
+    """Return ``name`` if it is an advertised tool; raise otherwise.
+
+    The prompt bodies are regenerated from the tool registry through this
+    single chokepoint, so a body cannot hard-code a name the registry no
+    longer advertises.
+    """
+    if name not in TOOL_TIERS:
+        msg = f"prompt template references unregistered MCP tool {name!r}"
+        raise ValueError(msg)
+    return name
 
 
 def _orchestrate_goal_template(
@@ -27,6 +49,10 @@ def _orchestrate_goal_template(
     scope: str = "medium",
 ) -> str:
     """Render the orchestration-kickoff prompt body."""
+    run = _tool("bernstein_run")
+    status = _tool("bernstein_status")
+    run_status = _tool("bernstein_run_status")
+    post_message = _tool("bernstein_post_message")
     return textwrap.dedent(
         f"""\
         You are about to drive a Bernstein orchestration run.
@@ -36,13 +62,15 @@ def _orchestrate_goal_template(
         Scope: {scope}
 
         Plan the smallest sequence of Bernstein tool calls that lands the goal:
-        1. Use `bernstein_run` to post the task with the suggested role and scope.
-        2. Poll `bernstein_status` until the task settles, or call `bernstein_tasks`
-           filtered by status to inspect progress.
+        1. Use `{run}` to post the task with the suggested role and scope.
+        2. Poll `{run_status}` with the returned run_id until the status is
+           terminal, or call `{status}` with a status filter to inspect the
+           wider task list.
         3. If a subtask appears blocked, report it to the user with the task id
            and the status you observed. Do not approve or complete it: an
            approval is only for a task waiting on an approval decision, and a
-           completion summary must describe work that actually ran.
+           completion summary must describe work that actually ran. Use
+           `{post_message}` to record a blocker on the task mailbox.
 
         Stop when the goal is done or when a tool returns an error you cannot
         recover from. Report the final task ids and statuses to the user.
@@ -52,12 +80,13 @@ def _orchestrate_goal_template(
 
 def _triage_failed_tasks_template(limit: int = 5) -> str:
     """Render the triage-failed-tasks prompt body."""
+    status = _tool("bernstein_status")
     return textwrap.dedent(
         f"""\
         Triage the latest failed Bernstein tasks.
 
         Steps:
-        1. Call `bernstein_tasks` with `status="failed"` to list candidates.
+        1. Call `{status}` with `status="failed"` to list candidates.
         2. For up to {limit} tasks, inspect the result summary and surface the
            shortest reproduction in the conversation.
         3. Group failures by likely cause (env, flaky test, real bug) and
@@ -70,12 +99,13 @@ def _triage_failed_tasks_template(limit: int = 5) -> str:
 
 def _cost_recap_template(window: str = "today") -> str:
     """Render the cost-recap prompt body."""
+    status = _tool("bernstein_status")
     return textwrap.dedent(
         f"""\
         Produce a cost recap for the {window} window.
 
         Steps:
-        1. Call `bernstein_cost` to fetch the per-role breakdown.
+        1. Call `{status}` and read the `cost` fields for the per-role breakdown.
         2. List roles in descending cost order; collapse rows under $0.01.
         3. Flag any role whose share exceeds 50% of the total as a concentration risk.
 

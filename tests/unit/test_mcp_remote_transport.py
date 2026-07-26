@@ -365,7 +365,8 @@ class TestJSONRPCDispatch:
         assert status == 204
 
     @pytest.mark.anyio
-    async def test_batch_request(self, transport: StreamableHTTPTransport) -> None:
+    async def test_batch_request_is_rejected(self, transport: StreamableHTTPTransport) -> None:
+        """JSON-RPC batching left the MCP schema two revisions ago (#3084)."""
         batch = json.dumps(
             [
                 {"jsonrpc": "2.0", "method": "ping", "id": 1},
@@ -373,10 +374,9 @@ class TestJSONRPCDispatch:
             ]
         ).encode()
         status, _, body = await transport.handle_request("POST", "/mcp", {}, batch)
-        assert status == 200
+        assert status == 400
         data = json.loads(body)
-        assert isinstance(data, list)
-        assert len(data) == 2
+        assert data["error"]["code"] == -32600
 
 
 # ---------------------------------------------------------------------------
@@ -423,9 +423,11 @@ class TestMCPMethods:
         data = json.loads(resp_body)
         tools = data["result"]["tools"]
         tool_names = [t["name"] for t in tools]
-        assert "bernstein_health" in tool_names
         assert "bernstein_run" in tool_names
         assert "bernstein_status" in tool_names
+        assert "bernstein_cancel" in tool_names
+        # Deprecated names are callable but never advertised (#3087).
+        assert "bernstein_health" not in tool_names
 
     @pytest.mark.anyio
     async def test_ping(self, transport: StreamableHTTPTransport) -> None:
@@ -460,14 +462,17 @@ class TestToolExecution:
         assert cancelled_handlers == []
 
     @pytest.mark.anyio
-    async def test_health_tool(self, transport: StreamableHTTPTransport) -> None:
+    async def test_health_tool_alias(self, transport: StreamableHTTPTransport) -> None:
         body = _jsonrpc_request("tools/call", {"name": "bernstein_health", "arguments": {}})
         status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)
         assert status == 200
         data = json.loads(resp_body)
         content = data["result"]["content"]
         assert len(content) == 1
-        assert _tool_result(content[0]["text"])["status"] == "ok"
+        # Deprecated alias (#3087): the historical body under ``result``.
+        payload = _tool_result(content[0]["text"])
+        assert payload["result"]["status"] == "ok"
+        assert payload["replacement"] == "bernstein_status"
 
     @pytest.mark.anyio
     async def test_unknown_tool_returns_error(self, transport: StreamableHTTPTransport) -> None:
@@ -496,7 +501,9 @@ class TestToolExecution:
         assert status == 200
         data = json.loads(resp_body)
         text = data["result"]["content"][0]["text"]
-        assert _tool_result(text)["total"] == 5
+        folded = _tool_result(text)
+        assert folded["live"] is True
+        assert folded["counts"]["total"] == 5
 
     @pytest.mark.anyio
     async def test_stop_tool_writes_signal(self, transport: StreamableHTTPTransport, tmp_path: object) -> None:
@@ -508,7 +515,7 @@ class TestToolExecution:
         (workdir / ".sdd").mkdir()
         body = _jsonrpc_request(
             "tools/call",
-            {"name": "bernstein_stop", "arguments": {"workdir": str(workdir)}},
+            {"name": "bernstein_shutdown_orchestrator", "arguments": {"workdir": str(workdir)}},
         )
         status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)
         assert status == 200
@@ -534,7 +541,7 @@ class TestToolExecution:
         victim.mkdir()
         body = _jsonrpc_request(
             "tools/call",
-            {"name": "bernstein_stop", "arguments": {"workdir": str(victim)}},
+            {"name": "bernstein_shutdown_orchestrator", "arguments": {"workdir": str(victim)}},
         )
         status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)
         assert status == 200
@@ -561,7 +568,7 @@ class TestToolExecution:
         unaddressable = f"{Path(str(tmp_path))}/pro\x00ject"
         body = _jsonrpc_request(
             "tools/call",
-            {"name": "bernstein_stop", "arguments": {"workdir": unaddressable}},
+            {"name": "bernstein_shutdown_orchestrator", "arguments": {"workdir": unaddressable}},
         )
         status, _, resp_body = await transport.handle_request("POST", "/mcp", {}, body)
         assert status == 200

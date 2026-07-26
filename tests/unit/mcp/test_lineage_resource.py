@@ -5,7 +5,8 @@ Per ADR-009 §7 the MCP exposure is:
   * Resource ``lineage://artefact/<repo-relative-path>`` → JSONL stream of
     the chain for that artefact.
   * Resource ``lineage://stats`` → JSON with entry counts.
-  * Tool ``verify_chain(path)`` → ``{"ok": bool, "reason": str|None}``.
+  * Tool ``bernstein_verify_lineage(path)`` → ``{"ok": bool, "reason":
+    str|None}`` (with ``verify_chain`` kept as a deprecated alias, #3087).
 
 Default off for remote MCP, on for local stdio - but registration itself
 is unconditional; the gate lives at the registrar boundary.
@@ -137,7 +138,7 @@ def test_verify_chain_ok(seeded_store: tuple[Path, LineageStore]) -> None:
     mcp: FastMCP[None] = FastMCP("test")
     register_lineage_resources(mcp, lineage_root=root)
 
-    result = _run(mcp.call_tool("verify_chain", {"artefact_path": "src/foo.py"}))
+    result = _run(mcp.call_tool("bernstein_verify_lineage", {"artefact_path": "src/foo.py"}))
     # FastMCP.call_tool returns (contents, structuredOutput) on newer versions.
     payload = _payload_from_tool_result(result)
     assert payload["ok"] is True
@@ -153,7 +154,7 @@ def test_verify_chain_unknown_path_returns_ok_empty(seeded_store: tuple[Path, Li
     root, _store = seeded_store
     mcp: FastMCP[None] = FastMCP("test")
     register_lineage_resources(mcp, lineage_root=root)
-    result = _run(mcp.call_tool("verify_chain", {"artefact_path": "src/never.py"}))
+    result = _run(mcp.call_tool("bernstein_verify_lineage", {"artefact_path": "src/never.py"}))
     payload = _payload_from_tool_result(result)
     assert payload["ok"] is True
 
@@ -171,7 +172,7 @@ def test_verify_chain_detects_tampered_log(seeded_store: tuple[Path, LineageStor
 
     mcp: FastMCP[None] = FastMCP("test")
     register_lineage_resources(mcp, lineage_root=root)
-    result = _run(mcp.call_tool("verify_chain", {"artefact_path": "src/foo.py"}))
+    result = _run(mcp.call_tool("bernstein_verify_lineage", {"artefact_path": "src/foo.py"}))
     payload = _payload_from_tool_result(result)
     assert payload["ok"] is False
     assert payload["reason"]
@@ -226,3 +227,15 @@ def _payload_from_contents(contents: object) -> dict[str, object]:
                 texts.append(text)
     joined = "\n".join(texts)
     return json.loads(joined)
+
+
+def test_verify_chain_alias_names_its_replacement(seeded_store: tuple[Path, LineageStore]) -> None:
+    """The old name stays callable and answers with the deprecation wrapper."""
+    root, _store = seeded_store
+    mcp: FastMCP[None] = FastMCP("test")
+    register_lineage_resources(mcp, lineage_root=root)
+    result = _run(mcp.call_tool("verify_chain", {"artefact_path": "src/foo.py"}))
+    payload = _payload_from_tool_result(result)
+    assert payload["deprecated"] is True
+    assert payload["replacement"] == "bernstein_verify_lineage"
+    assert payload["result"]["ok"] is True

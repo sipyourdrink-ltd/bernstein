@@ -701,13 +701,13 @@ async def test_tools_list_advertises_task_support() -> None:
     assert run_tool.execution is not None
     assert run_tool.execution.taskSupport == "optional"
 
-    handle_tool = by_name["bernstein_task_handle"]
+    handle_tool = by_name["bernstein_run_status"]
     assert handle_tool.execution is not None
     assert handle_tool.execution.taskSupport == "forbidden"
 
     # A tool with no declared mode advertises nothing, which the extension
     # reads as the "forbidden" default.
-    assert by_name["bernstein_health"].execution is None
+    assert by_name["bernstein_status"].execution is None
 
 
 @pytest.mark.asyncio
