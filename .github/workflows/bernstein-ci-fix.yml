@@ -42,6 +42,16 @@ on:
         required: true
         type: string
     secrets:
+      BERNSTEIN_AUTOSYNC_TOKEN:
+        description: >-
+          PAT used to push the auto-heal branch and open the auto-heal pull
+          request. A reusable workflow sees no secret it was not passed, so
+          this has to be declared here and forwarded by
+          post-ci-dispatcher.yml; without the declaration the reference
+          silently reads as empty and the lane falls back to the Actions
+          token, whose pull requests never trigger workflows. Optional - the
+          fallback is a working degraded mode, see docs/operations/ci.md.
+        required: false
       GEMINI_API_KEY:
         description: >-
           Gemini API key used by the bernstein-ci-fix triage agent.
@@ -221,12 +231,17 @@ jobs:
         with:
           egress-policy: audit
       # persist-credentials kept: this job pushes back to git (auto-heal branch).
+      #
+      # The persisted credential is the same token the PR step uses, so the
+      # branch push and the pull request carry one identity. A push made with
+      # GITHUB_TOKEN emits no `pull_request: synchronize`, so re-pushing an
+      # already-open auto-heal branch would leave its checks stale.
       - name: Checkout failing commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
         with:
           ref: ${{ needs.triage.outputs.head_sha }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Configure git identity
         run: |
@@ -320,7 +335,13 @@ jobs:
         id: open-pr
         if: steps.diff.outputs.has_changes == 'true' && steps.size-check.outputs.within_cap == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A PR created with GITHUB_TOKEN does not trigger workflows, so
+          # neither required context ever reports and branch protection holds
+          # it at BLOCKED while the rollup reads SUCCESS. The GITHUB_TOKEN
+          # fallback keeps forks and secret-less environments working; there
+          # the PR needs a manual close-and-reopen to collect its checks. See
+          # docs/operations/ci.md.
+          GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           AUTO_HEAL_BRANCH: ${{ needs.triage.outputs.auto_heal_branch }}
           SHORT_SHA: ${{ needs.triage.outputs.short_sha }}
           HEAD_SHA: ${{ needs.triage.outputs.head_sha }}

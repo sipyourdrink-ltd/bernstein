@@ -46,7 +46,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/main-sha-marker.yml | Main SHA marker | push | {"cancel-in-progress": "false", "group": "main-sha-marker-${{ github.sha }}"} | 1 |
 | .github/workflows/mutation-fixed.yml | Mutation (fixed critical paths) | merge_group, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "mutation-fixed-${{ github.workflow }}-${{ github.ref }}"} | 2 |
 | .github/workflows/nightly-canary.yml | Nightly real-run canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-canary"} | 1 |
-| .github/workflows/nightly-deep-tests.yml | Nightly deep tests | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "nightly-deep-tests"} | 7 |
+| .github/workflows/nightly-deep-tests.yml | Nightly deep tests | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "nightly-deep-tests"} | 8 |
 | .github/workflows/nightly-drift-sweep.yml | Nightly drift sweep | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "nightly-drift-sweep"} | 1 |
 | .github/workflows/pentest.yml | Adversarial Pen-Test Suite | workflow_dispatch | {"cancel-in-progress": "false", "group": "pentest-${{ github.ref }}"} | 1 |
 | .github/workflows/post-ci-dispatcher.yml | Post-CI dispatcher | workflow_run | {"cancel-in-progress": "false", "group": "post-ci-dispatcher-${{ github.event.workflow_run.head_sha }}"} | 5 |
@@ -112,7 +112,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/main-sha-marker.yml | marker: Main SHA marker |
 | .github/workflows/mutation-fixed.yml | mutate: ${{ matrix.module }}<br>summary: Summary + PR comment |
 | .github/workflows/nightly-canary.yml | canary: Real-run canary |
-| .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: Bandit (full -ll, advisory)<br>crosshair-pure-fns: CrossHair (concolic, deep)<br>hypothesis-deep: Hypothesis (deep, 1000 examples)<br>mutmut-full: Mutation (full repo, advisory)<br>pip-audit-deep: pip-audit (full closure)<br>schemathesis-deep: Schemathesis (deep, full sweep)<br>stress-leak-suite: Stress + resource-leak suite (TC-C) |
+| .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: Bandit (full -ll, advisory)<br>crosshair-pure-fns: CrossHair (concolic, deep)<br>hypothesis-deep: Hypothesis (deep, 1000 examples)<br>mutmut-full: Mutation (full repo, advisory)<br>pip-audit-deep: pip-audit (full closure)<br>schemathesis-deep: Schemathesis (deep, full sweep)<br>stress-leak-suite: Stress + resource-leak suite (TC-C)<br>unit-python-314: Unit tests (Python 3.14, shard ${{ matrix.shard }}) |
 | .github/workflows/nightly-drift-sweep.yml | sweep: Open drift-sweep PR if mirrors drifted |
 | .github/workflows/pentest.yml | pentest: Pen-test: ${{ github.event.inputs.suite \|\| 'all' }} |
 | .github/workflows/post-ci-dispatcher.yml | auto-heal: Auto-heal v2<br>auto-release: Auto-release<br>bernstein-ci-fix: Bernstein CI fix<br>bisect-on-red: Bisect on red<br>meta: Resolve upstream metadata |
@@ -144,13 +144,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | Workflow | Permissions | Secrets |
 | --- | --- | --- |
 | .github/workflows/a2a-federation-e2e.yml | workflow: {"contents": "read"} | - |
-| .github/workflows/adapter-conformance-canary.yml | workflow: {"contents": "read"}<br>canary: {"contents": "write", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
+| .github/workflows/adapter-conformance-canary.yml | workflow: {"contents": "read"}<br>canary: {"contents": "write", "issues": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/adapter-contract-drift.yml | workflow: {"contents": "read"}<br>aggregate: {"contents": "read", "issues": "write"}<br>check: {"contents": "read"} | ADAPTER_CONTRACT_ANTHROPIC_API_KEY, ADAPTER_CONTRACT_GEMINI_API_KEY, ADAPTER_CONTRACT_OPENAI_API_KEY, GITHUB_TOKEN |
 | .github/workflows/airgap-e2e.yml | workflow: {"contents": "read"} | - |
-| .github/workflows/auto-heal.yml | heal: {"attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>triage: {"actions": "read", "contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
+| .github/workflows/auto-heal.yml | heal: {"attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>triage: {"actions": "read", "contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/auto-release.yml | alert-on-stale-release-trigger: {"contents": "read", "issues": "write"}<br>detect-stale-alerts: {"contents": "read", "issues": "read"}<br>gate: {"contents": "read"}<br>release: {"actions": "write", "contents": "write"}<br>sweep-stale-alerts-on-success: {"contents": "read", "issues": "write"} | GITHUB_TOKEN |
-| .github/workflows/bernstein-ci-fix.yml | fallback-issue: {"contents": "read", "issues": "write"}<br>fix: {"contents": "write", "issues": "write", "pull-requests": "write"}<br>tier3-shadow: {"actions": "read", "contents": "read"}<br>triage: {"actions": "read", "contents": "read", "pull-requests": "read"} | GEMINI_API_KEY, GITHUB_TOKEN, OPENROUTER_API_KEY_FREE |
-| .github/workflows/bernstein-issues-decompose.yml | workflow: {"contents": "read"}<br>decompose: {"contents": "write", "issues": "write", "pull-requests": "write"}<br>plan: {"contents": "read"}<br>reject-untrusted-issue: {"issues": "write"}<br>scope_gate: {"issues": "write"} | ANTHROPIC_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY |
+| .github/workflows/bernstein-ci-fix.yml | fallback-issue: {"contents": "read", "issues": "write"}<br>fix: {"contents": "write", "issues": "write", "pull-requests": "write"}<br>tier3-shadow: {"actions": "read", "contents": "read"}<br>triage: {"actions": "read", "contents": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GEMINI_API_KEY, GITHUB_TOKEN, OPENROUTER_API_KEY_FREE |
+| .github/workflows/bernstein-issues-decompose.yml | workflow: {"contents": "read"}<br>decompose: {"contents": "write", "issues": "write", "pull-requests": "write"}<br>plan: {"contents": "read"}<br>reject-untrusted-issue: {"issues": "write"}<br>scope_gate: {"issues": "write"} | ANTHROPIC_API_KEY, BERNSTEIN_AUTOSYNC_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY |
 | .github/workflows/bernstein-pr-review.yml | workflow: {"contents": "read", "pull-requests": "write"} | ANTHROPIC_API_KEY |
 | .github/workflows/bisect-on-red.yml | bisect: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/branch-protection-audit.yml | audit: {"contents": "read"} | BRANCH_PROTECTION_AUDIT_TOKEN |
@@ -166,22 +166,22 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/code-review-bots-ci.yml | workflow: {"contents": "read"}<br>sourcery-cli: {"contents": "read"} | SOURCERY_API_KEY |
 | .github/workflows/codeql.yml | workflow: {"contents": "read"}<br>analyze: {"actions": "read", "contents": "read", "pull-requests": "write", "security-events": "write"} | - |
 | .github/workflows/contract-drift-autofix.yml | workflow: {"contents": "write", "issues": "write", "pull-requests": "write"}<br>autofix: {"contents": "write", "issues": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
-| .github/workflows/coverage-ratchet-weekly.yml | bump: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
+| .github/workflows/coverage-ratchet-weekly.yml | bump: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/coverage-ratchet.yml | ratchet: {"actions": "read", "contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
-| .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
+| .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/license-compliance.yml | workflow: {"contents": "read"}<br>license-check: {"contents": "read"} | - |
 | .github/workflows/main-sha-marker.yml | - | - |
 | .github/workflows/mutation-fixed.yml | workflow: {"contents": "read"}<br>mutate: {"contents": "read"}<br>summary: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/nightly-canary.yml | workflow: {"contents": "read"} | - |
-| .github/workflows/nightly-deep-tests.yml | workflow: {"contents": "read"}<br>bandit-medium-and-high: {"contents": "read"}<br>crosshair-pure-fns: {"contents": "read"}<br>hypothesis-deep: {"contents": "read"}<br>mutmut-full: {"contents": "read"}<br>pip-audit-deep: {"contents": "read"}<br>schemathesis-deep: {"contents": "read"}<br>stress-leak-suite: {"contents": "read"} | - |
+| .github/workflows/nightly-deep-tests.yml | workflow: {"contents": "read"}<br>bandit-medium-and-high: {"contents": "read"}<br>crosshair-pure-fns: {"contents": "read"}<br>hypothesis-deep: {"contents": "read"}<br>mutmut-full: {"contents": "read"}<br>pip-audit-deep: {"contents": "read"}<br>schemathesis-deep: {"contents": "read"}<br>stress-leak-suite: {"contents": "read"}<br>unit-python-314: {"contents": "read"} | - |
 | .github/workflows/nightly-drift-sweep.yml | workflow: {"contents": "read"}<br>sweep: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/pentest.yml | workflow: {"contents": "read"} | - |
-| .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bernstein-ci-fix: {"actions": "read", "contents": "write", "issues": "write", "pull-requests": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read"} | GEMINI_API_KEY, OPENROUTER_API_KEY_FREE |
+| .github/workflows/post-ci-dispatcher.yml | auto-heal: {"actions": "read", "attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>auto-release: {"actions": "write", "contents": "write", "issues": "write"}<br>bernstein-ci-fix: {"actions": "read", "contents": "write", "issues": "write", "pull-requests": "write"}<br>bisect-on-red: {"contents": "read", "issues": "write", "pull-requests": "write"}<br>meta: {"contents": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GEMINI_API_KEY, OPENROUTER_API_KEY_FREE |
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "write", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |

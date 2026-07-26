@@ -117,7 +117,14 @@ jobs:
         if: steps.gate.outputs.skip != 'true' && steps.detect.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # A PR created with GITHUB_TOKEN does not trigger workflows, so
+          # neither required context (`CI gate`, `review-bot-ack`) ever
+          # reports on it: branch protection holds it at BLOCKED while the
+          # rollup reads SUCCESS, and an operator has to close it by hand.
+          # The GITHUB_TOKEN fallback keeps forks and secret-less
+          # environments working; see docs/operations/ci.md for what
+          # degrades when the secret is absent.
+          token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           branch: coverage-ratchet/weekly-floor-${{ github.run_id }}
           delete-branch: true
           add-paths: |
