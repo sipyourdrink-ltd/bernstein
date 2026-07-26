@@ -40,17 +40,27 @@ checkable copy of what Bernstein actually did.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import os
+import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.sanitize import sanitize_log
 
+if sys.platform == "win32":
+    fcntl = None  # type: ignore[assignment]
+else:
+    import fcntl  # type: ignore[no-redef]
+
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
@@ -178,6 +188,100 @@ def _safe_name(value: str) -> str:
     if not value:
         raise ValueError("empty identifier")
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Per-identity decision exclusivity
+# ---------------------------------------------------------------------------
+
+#: Per-lock-file re-entrancy state for :func:`_decision_lock`.
+#:
+#: Mirrors the audit chain's append guard for the same reasons. ``flock``
+#: attaches to an *open file description*, so a second ``os.open`` +
+#: ``flock(LOCK_EX)`` from the thread that already holds the lock blocks on
+#: itself; the per-thread depth counter lets the outermost acquisition own the
+#: ``flock`` while inner ones pass through, and the per-file ``RLock`` keeps a
+#: different thread out for the whole nested section so re-entrancy never
+#: widens the window it exists to close.
+#:
+#: Guards are keyed by the lock file's ``(st_dev, st_ino)`` and never evicted.
+#: The identity is load-bearing: two spellings of one path must map to one
+#: guard, or a thread that entered under one and re-entered under the other
+#: sees depth 0 and re-takes a ``flock`` it already holds. The live set is one
+#: entry per identity this process actually adjudicates.
+_DECISION_GUARDS: dict[str, threading.RLock] = {}
+_DECISION_GUARDS_LOCK = threading.Lock()
+_DECISION_DEPTH = threading.local()
+
+
+def _decision_guard(lock_key: str) -> threading.RLock:
+    """Return the process-wide re-entrant guard for one lock file."""
+    with _DECISION_GUARDS_LOCK:
+        guard = _DECISION_GUARDS.get(lock_key)
+        if guard is None:
+            guard = threading.RLock()
+            _DECISION_GUARDS[lock_key] = guard
+        return guard
+
+
+@contextlib.contextmanager
+def _decision_lock(lock_path: Path) -> Iterator[None]:
+    """Hold one inbound identity exclusively across read-decide-record.
+
+    Both bridge paths decide from state they read (the replay ledger, the proof
+    cache) and record that decision afterwards. The audit chain's own section
+    serialises the appends in between, but its domain is the audit dir and its
+    subject is the chain head; it says nothing about whether two callers reached
+    the same decision from the same read. This lock's domain is the bridge root
+    and its subject is one ``trigger_id`` or one ``event_id``, so the read, the
+    decision, and the record of it are one section against every other thread
+    and every other process.
+
+    Scoped per identity rather than per root on purpose: two workers
+    adjudicating *different* triggers never contend, which is the same property
+    the one-file-per-id ledger layout was chosen for. One lock file accompanies
+    each ledger or cache entry, so the directory's file count keeps the order it
+    already had.
+
+    Blocking ``flock(LOCK_EX)``, matching the chain's append lock: a waiter
+    waits rather than polling, so a contended decision is delayed and never
+    dropped. Falls back to a no-op on platforms without ``fcntl`` (Windows),
+    where the in-process guard remains the only ordering, exactly as the chain
+    append lock degrades.
+
+    Args:
+        lock_path: The lock file standing for the identity being adjudicated.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        stat_result = os.fstat(fd)
+        lock_key = f"{stat_result.st_dev}:{stat_result.st_ino}"
+        depths: dict[str, int] | None = getattr(_DECISION_DEPTH, "depths", None)
+        if depths is None:
+            depths = {}
+            _DECISION_DEPTH.depths = depths
+        if depths.get(lock_key, 0):
+            # Already inside this thread's section: the outermost frame holds
+            # the flock, so re-taking it would block on ourselves.
+            yield
+            return
+        with _decision_guard(lock_key):
+            depths[lock_key] = 1
+            try:
+                if fcntl is None:  # pragma: no cover - Windows path
+                    yield
+                    return
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    with contextlib.suppress(OSError):
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                del depths[lock_key]
+    finally:
+        os.close(fd)
 
 
 # ---------------------------------------------------------------------------
@@ -468,8 +572,24 @@ class TriggerNonceLedger:
         """Return the ledger path recording ``trigger_id``."""
         return self._dir / f"{_safe_name(trigger_id)}.json"
 
+    def decision_lock(self, trigger_id: str) -> contextlib.AbstractContextManager[None]:
+        """Return the section that makes one id's admission decision exclusive.
+
+        :meth:`seen` and :meth:`remember` are a check and an act. Held apart,
+        two deliveries of one id both read "not admitted" and both take the
+        admitted branch, so the nonce stops being a nonce while the receipt
+        still claims ``replay_protected=True``. Callers hold this across both
+        halves; the lock's domain is the bridge root, which is a different
+        domain from the audit chain's.
+        """
+        return _decision_lock(self._dir / f"{_safe_name(trigger_id)}.lock")
+
     def seen(self, trigger_id: str) -> bool:
-        """Return whether ``trigger_id`` was already admitted."""
+        """Return whether ``trigger_id`` was already admitted.
+
+        Only meaningful as a decision inside :meth:`decision_lock`; outside it
+        the answer can be stale before the caller acts on it.
+        """
         return self.path_for(trigger_id).is_file()
 
     def remember(self, trigger_id: str, receipt: TriggerReceipt) -> None:
@@ -634,100 +754,115 @@ def admit_trigger(
     ledger = TriggerNonceLedger(root)
     payload_digest = compute_payload_digest(body)
 
-    reason = ""
-    if not authenticated:
-        reason = refusal_reason or REFUSAL_UNAUTHENTICATED
-    elif enforce_replay and ledger.seen(trigger_id):
-        reason = REFUSAL_REPLAYED_TRIGGER
+    # The replay decision and the ledger entry recording it are one section, so
+    # a doubly-delivered trigger id cannot be read as unseen twice. Only the
+    # regime that actually consults the ledger takes the section: an
+    # unauthenticated trigger is refused before the ledger is reached, and an
+    # unenforced replay regime never reads or writes it, so neither waits behind
+    # a decision it does not make.
+    adjudicating_nonce = enforce_replay and authenticated
+    nonce_section = ledger.decision_lock(trigger_id) if adjudicating_nonce else contextlib.nullcontext()
 
-    # Only the unauthenticated path is budgeted. Producing a replay refusal
-    # requires a valid signature, so that path is already gated by the secret.
-    suppressed = 0
-    if reason and not authenticated and budget is not None:
-        anchor, suppressed = budget.take(timestamp)
-        if not anchor:
-            logger.warning(
-                "automation bridge: refusal budget exhausted; refusing %s without anchoring a receipt",
-                sanitize_log(request_path),
+    with nonce_section:
+        reason = ""
+        if not authenticated:
+            reason = refusal_reason or REFUSAL_UNAUTHENTICATED
+        elif enforce_replay and ledger.seen(trigger_id):
+            reason = REFUSAL_REPLAYED_TRIGGER
+
+        # Only the unauthenticated path is budgeted. Producing a replay refusal
+        # requires a valid signature, so that path is already gated by the secret.
+        suppressed = 0
+        if reason and not authenticated and budget is not None:
+            anchor, suppressed = budget.take(timestamp)
+            if not anchor:
+                logger.warning(
+                    "automation bridge: refusal budget exhausted; refusing %s without anchoring a receipt",
+                    sanitize_log(request_path),
+                )
+                return TriggerAdmission(receipt=None, admitted=False, graph=None)
+
+        graph: TaskGraphProjection | None = None
+        graph_digest = ""
+        if not reason:
+            graph = project_task_graph(platform=platform, intent=intent if intent is not None else _decode_intent(body))
+            graph_digest = graph.graph_digest
+
+        outcome = TRIGGER_OUTCOME_REFUSED if reason else TRIGGER_OUTCOME_ADMITTED
+        chain = _chain_store(audit_dir, hmac_key)
+
+        # Loading the bridge identity may create and persist a keypair; it does
+        # not depend on the chain head, so it stays outside the chain section
+        # below rather than holding the chain against every other writer while
+        # it runs. It stays inside the nonce section, which is scoped to this
+        # trigger id alone and so blocks nobody else's admission.
+        private_pem, public_pem = load_or_create_bridge_identity(root)
+        from bernstein.core.security.audit_chain import record_trigger_receipt
+        from bernstein.core.skills.catalog.signature import sign_payload
+
+        # Reading the head, signing it, and appending the record that sits on it
+        # are one atomic section. Split apart, a writer appending during the
+        # signature leaves the receipt naming a chain position its own record
+        # does not occupy, and the head is opaque payload to the signature so
+        # nothing downstream can tell. The head is read from disk here, not from
+        # the store's cache, so another process's appends are seen too.
+        with chain.chain_transaction():
+            unsigned = TriggerReceipt(
+                trigger_id=trigger_id,
+                platform=platform,
+                request_path=request_path,
+                payload_digest=payload_digest,
+                graph_digest=graph_digest,
+                scope="" if reason else scope,
+                outcome=outcome,
+                refusal_reason=reason,
+                # The head this trigger was adjudicated at, and part of the
+                # signed binding: the record appended below chains onto it.
+                admission_chain_head=chain.resync_head(),
+                replay_protected=enforce_replay,
+                timestamp=timestamp,
+                task_ids=() if reason else task_ids,
             )
-            return TriggerAdmission(receipt=None, admitted=False, graph=None)
 
-    graph: TaskGraphProjection | None = None
-    graph_digest = ""
-    if not reason:
-        graph = project_task_graph(platform=platform, intent=intent if intent is not None else _decode_intent(body))
-        graph_digest = graph.graph_digest
+            signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
 
-    outcome = TRIGGER_OUTCOME_REFUSED if reason else TRIGGER_OUTCOME_ADMITTED
-    chain = _chain_store(audit_dir, hmac_key)
+            event = record_trigger_receipt(
+                chain=chain,
+                trigger_id=trigger_id,
+                platform=platform,
+                request_path=request_path,
+                payload_digest=payload_digest,
+                graph_digest=graph_digest,
+                scope=unsigned.scope,
+                outcome=outcome,
+                receipt_digest=unsigned.binding_digest(),
+                refusal_reason=reason,
+                suppressed_refusals=suppressed,
+            )
 
-    # Loading the bridge identity may create and persist a keypair; it does not
-    # depend on the chain head, so it stays outside the section below rather
-    # than holding the chain against every other writer while it runs.
-    private_pem, public_pem = load_or_create_bridge_identity(root)
-    from bernstein.core.security.audit_chain import record_trigger_receipt
-    from bernstein.core.skills.catalog.signature import sign_payload
-
-    # Reading the head, signing it, and appending the record that sits on it are
-    # one atomic section. Split apart, a writer appending during the signature
-    # leaves the receipt naming a chain position its own record does not occupy,
-    # and the head is opaque payload to the signature so nothing downstream can
-    # tell. The head is read from disk here, not from the store's cache, so
-    # another process's appends are seen too.
-    with chain.chain_transaction():
-        unsigned = TriggerReceipt(
-            trigger_id=trigger_id,
-            platform=platform,
-            request_path=request_path,
-            payload_digest=payload_digest,
-            graph_digest=graph_digest,
-            scope="" if reason else scope,
-            outcome=outcome,
-            refusal_reason=reason,
-            # The head this trigger was adjudicated at, and part of the signed
-            # binding: the record appended below chains onto exactly it.
-            admission_chain_head=chain.resync_head(),
-            replay_protected=enforce_replay,
-            timestamp=timestamp,
-            task_ids=() if reason else task_ids,
-        )
-
-        signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
-
-        event = record_trigger_receipt(
-            chain=chain,
-            trigger_id=trigger_id,
-            platform=platform,
-            request_path=request_path,
-            payload_digest=payload_digest,
-            graph_digest=graph_digest,
+        receipt = TriggerReceipt(
+            trigger_id=unsigned.trigger_id,
+            platform=unsigned.platform,
+            request_path=unsigned.request_path,
+            payload_digest=unsigned.payload_digest,
+            graph_digest=unsigned.graph_digest,
             scope=unsigned.scope,
-            outcome=outcome,
-            receipt_digest=unsigned.binding_digest(),
-            refusal_reason=reason,
-            suppressed_refusals=suppressed,
+            outcome=unsigned.outcome,
+            refusal_reason=unsigned.refusal_reason,
+            admission_chain_head=unsigned.admission_chain_head,
+            replay_protected=unsigned.replay_protected,
+            timestamp=unsigned.timestamp,
+            task_ids=unsigned.task_ids,
+            signer_public_key_pem=public_pem,
+            signature=signature,
+            chain_entry_hash=event.hmac,
         )
-
-    receipt = TriggerReceipt(
-        trigger_id=unsigned.trigger_id,
-        platform=unsigned.platform,
-        request_path=unsigned.request_path,
-        payload_digest=unsigned.payload_digest,
-        graph_digest=unsigned.graph_digest,
-        scope=unsigned.scope,
-        outcome=unsigned.outcome,
-        refusal_reason=unsigned.refusal_reason,
-        admission_chain_head=unsigned.admission_chain_head,
-        replay_protected=unsigned.replay_protected,
-        timestamp=unsigned.timestamp,
-        task_ids=unsigned.task_ids,
-        signer_public_key_pem=public_pem,
-        signature=signature,
-        chain_entry_hash=event.hmac,
-    )
-    if not reason and enforce_replay:
-        ledger.remember(trigger_id, receipt)
-    return TriggerAdmission(receipt=receipt, admitted=not reason, graph=graph)
+        # Inside the nonce section: the id becomes seen before the next
+        # delivery of it can read the ledger, which is what the check above
+        # then decides on.
+        if not reason and enforce_replay:
+            ledger.remember(trigger_id, receipt)
+        return TriggerAdmission(receipt=receipt, admitted=not reason, graph=graph)
 
 
 def _decode_intent(body: bytes) -> dict[str, Any]:
@@ -827,6 +962,29 @@ def status_proof_path(root: Path, event_id: str) -> Path:
     return root / _STATUS_SUBDIR / f"{_safe_name(event_id)}.json"
 
 
+def _status_proof_lock_path(root: Path, event_id: str) -> Path:
+    """Return the lock file guarding the mint of ``event_id``'s proof."""
+    return root / _STATUS_SUBDIR / f"{_safe_name(event_id)}.lock"
+
+
+def _cached_status_proof(path: Path, *, report_malformed: bool) -> StatusProof | None:
+    """Return the proof cached at ``path``, or ``None`` when there is none to use.
+
+    A cache file that cannot be parsed is treated as absent so the callback is
+    still answered, and is reported only once per emission: the probe outside
+    the mint section is best-effort, and re-reporting it inside would log the
+    same file twice for one call.
+    """
+    if not path.is_file():
+        return None
+    try:
+        return StatusProof.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (AutomationBridgeError, json.JSONDecodeError, OSError):
+        if report_malformed:
+            logger.warning("automation bridge: malformed status proof at %s", sanitize_log(str(path)))
+        return None
+
+
 def derive_status(payload: dict[str, Any]) -> str:
     """Return the status a notification payload reports.
 
@@ -857,6 +1015,14 @@ def emit_status_proof(
     delivery failure returns the recorded proof, so the retried envelope is
     byte-identical rather than a second, differently-anchored claim.
 
+    That holds under concurrency too. The cache probe, the mint, and the cache
+    write are one section per ``event_id``, so two callbacks in flight for one
+    event anchor one ``status.proof.emitted`` row between them and are handed
+    the same proof: the second waits for the first and then reads what the
+    first recorded, instead of minting a second anchor and overwriting the
+    proof its peer already holds. A cache hit is answered before the section is
+    entered, so the common re-send costs no lock and touches nothing.
+
     Args:
         root: Bridge state root.
         audit_dir: Audit-chain directory.
@@ -876,64 +1042,79 @@ def emit_status_proof(
         raise AutomationBridgeError("status payload has no event_id to anchor")
 
     cached_path = status_proof_path(root, event_id)
-    if cached_path.is_file():
-        try:
-            return StatusProof.from_dict(json.loads(cached_path.read_text(encoding="utf-8")))
-        except (AutomationBridgeError, json.JSONDecodeError, OSError):
-            logger.warning("automation bridge: malformed status proof at %s", sanitize_log(str(cached_path)))
+    # Answered before the section: a re-send of an already-proved event takes
+    # no lock, creates nothing, and so still works where the bridge root is
+    # mounted read-only.
+    already_proved = _cached_status_proof(cached_path, report_malformed=False)
+    if already_proved is not None:
+        return already_proved
 
     effective_status = status or derive_status(payload)
     run_id = str(payload.get("run_id", "") or "")
     chain = _chain_store(audit_dir, hmac_key)
 
-    # Outside the section below: no dependency on the chain head, and creating
-    # the keypair should not hold the chain against other writers.
-    private_pem, public_pem = load_or_create_bridge_identity(root)
-    from bernstein.core.security.audit_chain import record_status_proof
-    from bernstein.core.skills.catalog.signature import sign_payload
+    # The probe, the mint, and the cache write are one section per event id, so
+    # one event id yields one anchor. Held apart, two callbacks both miss the
+    # cache, both anchor a ``status.proof.emitted`` row, and the later write
+    # replaces the proof the earlier caller was already handed -- leaving a peer
+    # holding a proof that is not the proof on disk, with both rows honestly
+    # chained so nothing reads as tampering.
+    with _decision_lock(_status_proof_lock_path(root, event_id)):
+        # The waiter re-probes here: by the time it holds the section the first
+        # caller has recorded its proof, and returning that is what makes the
+        # two envelopes byte-identical.
+        recorded = _cached_status_proof(cached_path, report_malformed=True)
+        if recorded is not None:
+            return recorded
 
-    # One atomic section for the same reason as the trigger path: the head is
-    # signed into the proof, so it has to be the head the proof's own record
-    # ends up chained onto, and it is read from disk rather than from the
-    # store's per-instance cache.
-    with chain.chain_transaction():
-        unsigned = StatusProof(
-            event_id=event_id,
-            run_id=run_id,
-            status=effective_status,
-            producing_event_digest=compute_document_digest(payload),
-            chain_head=chain.resync_head(),
-            timestamp=timestamp,
-        )
+        # Outside the chain section below: no dependency on the chain head, and
+        # creating the keypair should not hold the chain against other writers.
+        private_pem, public_pem = load_or_create_bridge_identity(root)
+        from bernstein.core.security.audit_chain import record_status_proof
+        from bernstein.core.skills.catalog.signature import sign_payload
 
-        signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
+        # One atomic section for the same reason as the trigger path: the head
+        # is signed into the proof, so it has to be the head the proof's own
+        # record ends up chained onto, and it is read from disk rather than from
+        # the store's per-instance cache.
+        with chain.chain_transaction():
+            unsigned = StatusProof(
+                event_id=event_id,
+                run_id=run_id,
+                status=effective_status,
+                producing_event_digest=compute_document_digest(payload),
+                chain_head=chain.resync_head(),
+                timestamp=timestamp,
+            )
 
-        event = record_status_proof(
-            chain=chain,
-            event_id=event_id,
-            run_id=run_id,
-            status=effective_status,
+            signature = sign_payload(unsigned.to_canonical_bytes(), private_pem)
+
+            event = record_status_proof(
+                chain=chain,
+                event_id=event_id,
+                run_id=run_id,
+                status=effective_status,
+                producing_event_digest=unsigned.producing_event_digest,
+                proof_digest=unsigned.binding_digest(),
+            )
+
+        proof = StatusProof(
+            event_id=unsigned.event_id,
+            run_id=unsigned.run_id,
+            status=unsigned.status,
             producing_event_digest=unsigned.producing_event_digest,
-            proof_digest=unsigned.binding_digest(),
+            chain_head=unsigned.chain_head,
+            timestamp=unsigned.timestamp,
+            signer_public_key_pem=public_pem,
+            signature=signature,
+            chain_entry_hash=event.hmac,
         )
-
-    proof = StatusProof(
-        event_id=unsigned.event_id,
-        run_id=unsigned.run_id,
-        status=unsigned.status,
-        producing_event_digest=unsigned.producing_event_digest,
-        chain_head=unsigned.chain_head,
-        timestamp=unsigned.timestamp,
-        signer_public_key_pem=public_pem,
-        signature=signature,
-        chain_entry_hash=event.hmac,
-    )
-    cached_path.parent.mkdir(parents=True, exist_ok=True)
-    cached_path.write_text(
-        json.dumps(proof.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-        encoding="utf-8",
-    )
-    return proof
+        cached_path.parent.mkdir(parents=True, exist_ok=True)
+        cached_path.write_text(
+            json.dumps(proof.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+            encoding="utf-8",
+        )
+        return proof
 
 
 def wrap_status_payload(payload: dict[str, Any], proof: StatusProof) -> dict[str, Any]:
