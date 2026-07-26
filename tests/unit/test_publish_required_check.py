@@ -5,9 +5,9 @@ of a job's fate. Branch protection folds every check-run of a required
 name into its verdict and a later success does not clear an earlier
 non-success, so the two properties pinned here are load-bearing:
 
-    * one instance per head SHA - an existing instance is PATCHed, never
-      shadowed by a second POST, so a commit can never accumulate two
-      contradictory verdicts, and
+    * one instance per head SHA - an existing instance is patched in
+      place, never shadowed by a second POST, so a commit can never
+      accumulate two contradictory verdicts, and
     * a closed conclusion set - only `success` and `failure` are writable,
       because `cancelled` is unrecoverable and `skipped`/`neutral` count as
       passing.

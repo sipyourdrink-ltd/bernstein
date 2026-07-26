@@ -321,7 +321,7 @@ The durable fix is to stop letting a job's fate write the context.
 `scripts/publish_required_check.py` upserts a single terminal check-run
 per head SHA:
 
-- existing instances are PATCHed to the current verdict, so a commit
+- existing instances are patched to the current verdict, so a commit
   never accumulates two contradictory verdicts, and a SHA already
   poisoned by the old mechanism is healed on the next run
 - the conclusion set is closed to `success` and `failure` - `cancelled`
