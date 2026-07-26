@@ -226,6 +226,71 @@ the vulture / refurb / perflint jobs in
 the refurb SARIF upload is filtered to error-level results so style
 findings stay out of the code-scanning alert feed.
 
+## Gating vs advisory workflows
+
+Two contexts gate a merge. Everything else is advisory and cannot
+block or unblock one.
+
+| Role | Workflow | Context published |
+|------|----------|-------------------|
+| Gating | `ci.yml` | `CI gate` |
+| Gating | `ci-gate-stub.yml` | `CI gate` (fully-ignored diffs only) |
+| Gating | `review-bot-ack.yml` | `review-bot-ack` |
+
+Everything else that triggers on `pull_request` is advisory:
+`a2a-federation-e2e`, `airgap-e2e`, `bernstein-pr-review`,
+`cluster-e2e`, `code-review-bots-ci`, `codeql`,
+`contract-drift-autofix`, `dependabot-auto-merge`,
+`dependency-review`, `docs-drift`, `license-compliance`, `pr-labels`,
+`pr-observability-summary`, `pr-policy`, `required-check-canary`,
+`spiffe-extra-e2e`, `trufflehog`, `typecheck-ts`, `zizmor`.
+
+### What the pool actually spends
+
+The free-tier public-repo ceiling is 20 concurrent jobs, so the budget
+is jobs, not runs. Measured on one head SHA of a workflow-touching PR
+(#3157), 18 workflow runs resolved to 47 runner jobs:
+
+| Role | Runs | Runner jobs | Share |
+|------|------|-------------|-------|
+| Gating (`ci.yml`) | 1 | 34 | 72% |
+| Gating (`review-bot-ack`) | 4 | 4 | 9% |
+| Advisory (all of it) | 13 | 9 | 19% |
+
+Counting runs instead of jobs inverts that picture and makes advisory
+work look dominant. It is not: an advisory workflow is one job, `ci.yml`
+is 34. Moving every advisory lane off the PR path would return under a
+fifth of the pool while deleting all pre-merge signal that is not the
+test matrix, so the advisory lanes stay where they are. The load that
+saturates the pool during a merge wave is concurrent `ci.yml` runs, and
+the durable fix for that is the merge queue (see *Concurrency policy*).
+
+Advisory lanes are kept cheap instead of removed:
+`pr-observability-summary` runs only on PRs labelled `deep-review`,
+`dependabot-auto-merge` gates its only job on the Dependabot user id,
+`pr-policy` and `pr-labels` are consolidated single-job lanes, and the
+vulture / refurb / perflint jobs run weekly rather than per PR.
+
+### Concurrency on `pull_request` workflows
+
+Every workflow triggering on `pull_request` declares a `concurrency`
+group keyed on the PR, and every one of them cancels a superseded
+pull-request run. There is one exception:
+
+| Workflow | Why it must not cancel |
+|----------|------------------------|
+| `review-bot-ack.yml` | Publishes a required context. Branch protection folds every check-run of a required name into its verdict, so one `cancelled` instance holds the PR at BLOCKED even after a later run succeeds (#3154, #3042). The group also carries `github.event_name` so a `pull_request` run and a `pull_request_review` run for the same commit cannot cancel each other. |
+
+`ci.yml` and `codeql.yml` express cancellation as
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`: they
+cancel on the PR lane and keep the per-SHA push-to-`main` lane alive, so
+a release commit's CI is never cancelled by the next merge.
+
+`tests/unit/test_pull_request_workflow_concurrency_yaml.py` pins both
+the rule and the exception list, so a new `pull_request` workflow
+cannot land without a concurrency group and an exception cannot be
+added silently.
+
 ## Required check
 
 Branch protection points at a single status check, `CI gate`, which

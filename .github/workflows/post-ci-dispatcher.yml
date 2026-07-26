@@ -1,5 +1,19 @@
 name: Post-CI dispatcher
 
+# ---------------------------------------------------------------------------
+# DO NOT PRUNE THIS WORKFLOW FOR RUNNER CAPACITY.
+#
+# `.github/workflows/auto-release.yml` declares `on: workflow_call:` and
+# nothing else, and so do auto-heal.yml, bernstein-ci-fix.yml and
+# bisect-on-red.yml. This dispatcher is their ONLY invocation path. A
+# dispatcher run that is cancelled, disabled or filtered away takes the
+# release automation with it, and nothing anywhere reports a failing check
+# when that happens - the release simply does not occur.
+#
+# Any change to the routing below has to keep `conclusion == 'success'` on
+# `main` reaching the auto-release job.
+# ---------------------------------------------------------------------------
+#
 # Single workflow_run: CI completed listener that consolidates the fanout
 # previously paid out across sibling workflows (auto-release, auto-heal,
 # bernstein-ci-fix, bisect-on-red). Each child is now a reusable workflow
@@ -57,6 +71,28 @@ jobs:
     name: Resolve upstream metadata
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    # Do not boot a runner for an upstream conclusion no route can act on.
+    #
+    # Every job in auto-release.yml gates on `inputs.conclusion == 'success'`
+    # except its stale-trigger alert, which gates on the explicit list
+    # ["failure", "timed_out", "action_required"] and documents `cancelled`
+    # as deliberately excluded. auto-heal, bernstein-ci-fix and bisect-on-red
+    # each require exactly `failure`. So `cancelled` and `skipped` route
+    # nothing: today they boot this job, resolve metadata, and every child
+    # then skips.
+    #
+    # That is not a rare case. ci.yml keys push-to-main runs per SHA and
+    # never cancels them, so a merge wave leaves a long tail of main CI runs
+    # that an operator mass-cancels to reclaim the pool; `workflow_run` fires
+    # on `completed`, which includes `cancelled`, and each one paid a runner
+    # slot here for no routing decision.
+    #
+    # `success` is admitted unconditionally, so the release path is
+    # untouched. tests/unit/test_post_ci_dispatcher_workflow_yaml.py pins
+    # that: the inert set may not intersect any conclusion a child acts on.
+    if: >-
+      github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.conclusion != 'skipped'
     permissions:
       contents: read
     outputs:
