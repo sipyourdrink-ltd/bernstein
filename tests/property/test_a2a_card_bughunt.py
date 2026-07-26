@@ -19,13 +19,14 @@ surface. Findings:
     Verified against the official RFC 8785 reference test vectors -
     ``structures.json`` fails for exactly this reason (``56.0`` ≠ ``56``).
 
-#3 (xfail - RFC 8785 §3.2.3 key-sort order):
-    Object keys are sorted by Unicode code point (Python ``sort_keys``)
-    rather than UTF-16 code units (RFC 8785 §3.2.3). For BMP-only keys this
-    is identical; once a key crosses U+FFFF (surrogate pair) the bytes
-    diverge from spec. The reference ``weird.json`` test vector fails for
-    this reason - ``😂`` (U+1F602, UTF-16 high-surrogate 0xD83D) sorts
-    before ``שּ`` (U+FB33) under UTF-16 but after under codepoint order.
+#3 (FIXED in #3105 - RFC 8785 §3.2.3 key-sort order):
+    Object keys used to be sorted by Unicode code point (Python
+    ``sort_keys``) rather than by UTF-16 code units. For BMP-only keys the
+    two agree; once a key crosses U+FFFF (surrogate pair) the bytes diverged
+    from spec, because ``😂`` (U+1F602, UTF-16 high surrogate 0xD83D) sorts
+    before ``שּ`` (U+FB33) under UTF-16 and after it under code-point order.
+    ``canonicalize_jcs`` now sorts property names by UTF-16 code units, so
+    ``test_rfc_8785_utf16_keysort`` below is a positive assertion.
 
 #4 (operational, xfail - verifier accepts expired cards):
     ``verify_agent_card`` does not consult ``card.is_expired()`` -
@@ -74,7 +75,8 @@ RFC 8785 reference vector status (cyberphone/json-canonicalization):
     french.json    PASS
     values.json    PASS
     structures.json FAIL (#2 - integer-valued float ``56.0`` ≠ ``56``)
-    weird.json     FAIL (#3 - UTF-16 surrogate-pair sort)
+    weird.json     FAIL (U+007F escaping in a string value; its key order,
+                   the #3 surrogate-pair case, is correct since #3105)
 """
 
 from __future__ import annotations
@@ -271,22 +273,20 @@ def test_rfc_8785_negative_zero_normalised() -> None:
 
 
 # ---------------------------------------------------------------------------
-# #3: RFC 8785 §3.2.3 - UTF-16 code-unit key sort
+# #3: RFC 8785 §3.2.3 - UTF-16 code-unit key sort (FIXED in #3105)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "RFC 8785 §3.2.3 sorts object keys by UTF-16 code unit. Python "
-        "sort_keys=True sorts by Unicode code point. Identical for BMP-only "
-        "keys; diverges once a key contains a non-BMP character (codepoint "
-        "> U+FFFF). Today's card surface uses ASCII keys exclusively so this "
-        "is a future-proofing concern, but a strict third-party verifier with "
-        "SMP keys in custom extensions would compute different bytes."
-    ),
-    strict=True,
-)
 def test_rfc_8785_utf16_keysort() -> None:
+    """Property names sort by UTF-16 code unit, not by code point.
+
+    This was an ``xfail(strict=True)`` recording a known deviation: a
+    supplementary-plane name starts with a high surrogate in
+    U+D800..U+DBFF, which sorts below U+E000..U+FFFF in UTF-16 and above
+    it by code point. ``AgentIdentityCard.extensions`` is a free-form map
+    that reaches the signed body, so a card could carry such a name and a
+    conformant third-party verifier would compute different bytes.
+    """
     bmp = ""  # codepoint 0xE000 (BMP private use)
     smp = "\U0001f600"  # codepoint 0x1F600, UTF-16 surrogate pair starting 0xD83D
     # UTF-16 code-unit order: smp (0xD83D) < bmp (0xE000) → smp key first.
@@ -537,11 +537,13 @@ def test_rfc_8785_vector_structures() -> None:
 
 @pytest.mark.xfail(
     reason=(
-        "RFC 8785 reference vector ``weird.json`` exercises UTF-16 code-unit "
-        "key sort with mixed BMP and SMP characters (😂 U+1F602 high "
-        "surrogate 0xD83D vs שּ U+FB33). Python sort_keys=True uses "
-        "codepoint order which inverts the relative position. Same root "
-        "cause as #3."
+        "The key-sort half of this vector passes since #3105: 😂 (U+1F602, "
+        "UTF-16 high surrogate 0xD83D) now sorts before שּ (U+FB33), which is "
+        "the RFC 8785 §3.2.3 order. The remaining divergence is unrelated to "
+        "key order - it is the escaping of U+007F inside a string VALUE, "
+        "which belongs to §3.2.2.2 string serialization and is tracked "
+        "separately. Do not fold it into a key-ordering change: it moves "
+        "signed bytes for a different class of payload."
     ),
     strict=True,
 )
