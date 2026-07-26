@@ -49,9 +49,15 @@ def list_receipts(request: Request) -> JSONResponse:
 @router.get("/sla/receipts/{receipt_id}/verify")
 def verify_receipt_endpoint(request: Request, receipt_id: str) -> JSONResponse:
     """Verify a persisted violation receipt offline and return the verdict."""
-    from bernstein.core.orchestration.sla_receipt import read_receipt, verify_receipt
+    from bernstein.core.orchestration.sla_receipt import SLAReceiptError, read_receipt, verify_receipt
 
-    receipt = read_receipt(_sdd_dir(request), receipt_id)
+    try:
+        receipt = read_receipt(_sdd_dir(request), receipt_id)
+    except SLAReceiptError:
+        # Same rule as ``show_contract`` below: a malformed id addresses no
+        # receipt, so it reads as "not found" rather than escaping as an
+        # unhandled exception for the crash guard to turn into a 500.
+        receipt = None
     if receipt is None:
         return JSONResponse({"error": "receipt not found", "receipt_id": receipt_id}, status_code=404)
     result = verify_receipt(receipt)

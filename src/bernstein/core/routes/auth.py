@@ -22,6 +22,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -139,13 +141,9 @@ class LogoutRequest(BaseModel):
 
 
 #: Answer for every SSO route when no provider is configured on this
-#: deployment. Deliberately 4xx, not 5xx: nothing on the server failed,
-#: and the condition is permanent until an operator changes the config.
-#: A 5xx would tell the client to retry a request that can never start
-#: succeeding on its own, and this repo's own HTTP retry policy treats
-#: 503 as retryable. 404 says what is true: this deployment serves no
-#: such resource.
-SSO_NOT_CONFIGURED_STATUS = 404
+#: deployment. See ``bernstein.core.routes._unconfigured`` for why this
+#: is a 4xx and not a 5xx.
+SSO_NOT_CONFIGURED_STATUS = UNCONFIGURED_STATUS
 SSO_NOT_CONFIGURED_DETAIL = "SSO authentication is not configured on this server"
 
 

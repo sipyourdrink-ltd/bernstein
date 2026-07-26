@@ -11,6 +11,7 @@ import pytest
 from bernstein.core.webhook_signatures import sign_hmac_sha256
 from httpx import ASGITransport, AsyncClient
 
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.server import create_app
 
 
@@ -128,10 +129,15 @@ async def test_webhook_task_is_retrievable(client: AsyncClient) -> None:
 async def test_webhook_no_secret_configured_disables_endpoint(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When BERNSTEIN_WEBHOOK_SECRET is unset, the endpoint is disabled (audit-042)."""
+    """When BERNSTEIN_WEBHOOK_SECRET is unset, the endpoint is disabled (audit-042).
+
+    The refusal is a 404: an unconfigured receiver is a permanent property
+    of this deployment, not a transient fault, and senders that retry on
+    5xx would redeliver forever. See ``bernstein.core.routes._unconfigured``.
+    """
     monkeypatch.delenv("BERNSTEIN_WEBHOOK_SECRET", raising=False)
     resp = await client.post("/webhook", json=_WEBHOOK_PAYLOAD)
-    assert resp.status_code == 503
+    assert resp.status_code == UNCONFIGURED_STATUS
     assert "not configured" in resp.json()["detail"].lower()
 
 
@@ -262,7 +268,7 @@ async def test_webhook_with_correct_signature_creates_task(
 
 @pytest.mark.anyio
 async def test_webhook_endpoint_disabled_without_secret(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Endpoint returns 503 when no secret is configured, even for signed requests."""
+    """Endpoint refuses when no secret is configured, even for signed requests."""
     monkeypatch.delenv("BERNSTEIN_WEBHOOK_SECRET", raising=False)
     body = json.dumps(_WEBHOOK_PAYLOAD).encode()
     resp = await client.post(
@@ -270,7 +276,7 @@ async def test_webhook_endpoint_disabled_without_secret(client: AsyncClient, mon
         content=body,
         headers=_signed(body, secret="attacker-guess"),
     )
-    assert resp.status_code == 503
+    assert resp.status_code == UNCONFIGURED_STATUS
     assert "not configured" in resp.json()["detail"].lower()
 
 
@@ -283,7 +289,7 @@ async def test_webhook_endpoint_disabled_without_secret(client: AsyncClient, mon
 async def test_github_webhook_endpoint_disabled_without_secret(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """/webhooks/github returns 503 when GITHUB_WEBHOOK_SECRET is unset."""
+    """/webhooks/github refuses when GITHUB_WEBHOOK_SECRET is unset."""
     monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)
     body = b'{"action":"opened"}'
     resp = await client.post(
@@ -291,7 +297,7 @@ async def test_github_webhook_endpoint_disabled_without_secret(
         content=body,
         headers={"X-GitHub-Event": "issues", "Content-Type": "application/json"},
     )
-    assert resp.status_code == 503
+    assert resp.status_code == UNCONFIGURED_STATUS
     assert "not configured" in resp.json()["detail"].lower()
 
 
@@ -320,14 +326,14 @@ async def test_github_webhook_rejects_stale_timestamp_when_supplied(
 async def test_gitlab_webhook_endpoint_disabled_without_token(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """/webhooks/gitlab returns 503 when GITLAB_WEBHOOK_TOKEN is unset."""
+    """/webhooks/gitlab refuses when GITLAB_WEBHOOK_TOKEN is unset."""
     monkeypatch.delenv("GITLAB_WEBHOOK_TOKEN", raising=False)
     resp = await client.post(
         "/webhooks/gitlab",
         content=b'{"object_kind":"pipeline"}',
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status_code == 503
+    assert resp.status_code == UNCONFIGURED_STATUS
     assert "not configured" in resp.json()["detail"].lower()
 
 
@@ -408,7 +414,7 @@ async def test_unconfigured_webhook_refusal_log_interpolates_nothing(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The 503 refusal log is fully literal - no value flows into the call.
+    """The refusal log is fully literal - no value flows into the call.
 
     A logging call that interpolates a secret-shaped binding can leak it
     into persisted log sinks; keeping the refusal message literal makes
@@ -418,7 +424,7 @@ async def test_unconfigured_webhook_refusal_log_interpolates_nothing(
     body = json.dumps(_WEBHOOK_PAYLOAD).encode()
     with caplog.at_level(logging.ERROR, logger=_WEBHOOKS_LOGGER):
         resp = await client.post("/webhook", content=body, headers={"content-type": "application/json"})
-    assert resp.status_code == 503
+    assert resp.status_code == UNCONFIGURED_STATUS
     refusals = [r for r in caplog.records if r.name == _WEBHOOKS_LOGGER]
     assert refusals, "expected the unconfigured-endpoint refusal to be logged"
     for record in refusals:

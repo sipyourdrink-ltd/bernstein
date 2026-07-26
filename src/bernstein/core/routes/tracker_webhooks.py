@@ -29,6 +29,7 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.trackers.webhook_receiver import (
     ReceiveResult,
@@ -72,7 +73,9 @@ def _status_to_response(result: ReceiveResult) -> JSONResponse:
     if result.status == "unknown_adapter":
         return JSONResponse(status_code=404, content=body)
     if result.status in {"disabled", "not_configured"}:
-        return JSONResponse(status_code=503, content=body)
+        # Permanent by the rule stated above: an adapter this deployment did
+        # not configure will not start working because the tracker retried.
+        return JSONResponse(status_code=UNCONFIGURED_STATUS, content=body)
     if result.status in {"bad_signature", "bad_payload"}:
         return JSONResponse(status_code=401 if result.status == "bad_signature" else 400, content=body)
     # Default to 500 for unexpected statuses so monitoring catches them.

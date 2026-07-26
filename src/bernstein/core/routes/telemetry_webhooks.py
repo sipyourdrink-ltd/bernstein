@@ -41,6 +41,7 @@ from bernstein.core.autofix.telemetry_grounded import (
     parse_json_payload,
     verify_webhook_signature,
 )
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 
 if TYPE_CHECKING:
     from bernstein.core.autofix.telemetry_grounded import AuditEmitter
@@ -146,7 +147,7 @@ async def _handle_source(
     )
     if state is None:
         return JSONResponse(
-            status_code=503,
+            status_code=UNCONFIGURED_STATUS,
             content={
                 "detail": (
                     "telemetry-grounded autofix receiver is not configured; bootstrap must call configure_receiver()."
@@ -161,7 +162,7 @@ async def _handle_source(
         secret = os.environ.get(cfg.secret_env, "")
         if not secret:
             return JSONResponse(
-                status_code=503,
+                status_code=UNCONFIGURED_STATUS,
                 content={
                     "detail": (
                         f"telemetry source {source!r} requires secret_env {cfg.secret_env!r}; the env var is not set."

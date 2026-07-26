@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from bernstein.core.lifecycle import transition_task
 from bernstein.core.models import PlanStatus, TaskStatus
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
 
 if TYPE_CHECKING:
@@ -23,11 +24,8 @@ router = APIRouter(prefix="/plans", tags=["plans"])
 
 
 #: Answer for every plan route when plan mode is off on this deployment.
-#: Same reasoning as the SSO routes: a disabled feature is a permanent,
-#: client-knowable configuration state, not a server fault and not a
-#: transient one, so it belongs in the 4xx class. A 5xx would invite a
-#: retry loop against a condition that only an operator can clear.
-PLAN_MODE_DISABLED_STATUS = 404
+#: See ``bernstein.core.routes._unconfigured`` for why this is a 4xx.
+PLAN_MODE_DISABLED_STATUS = UNCONFIGURED_STATUS
 PLAN_MODE_DISABLED_DETAIL = "Plan mode is not enabled on this server"
 
 

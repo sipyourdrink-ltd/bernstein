@@ -13,6 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.server import (
     TaskCreate,
     TaskStore,
@@ -106,7 +107,7 @@ def _verify_generic_webhook_secret(request: Request, body: bytes) -> tuple[JSONR
         )
         return (
             JSONResponse(
-                status_code=503,
+                status_code=UNCONFIGURED_STATUS,
                 content={
                     "detail": (
                         "Webhook endpoint is not configured: set "
@@ -503,7 +504,7 @@ async def github_webhook(request: Request) -> JSONResponse:
             "unsigned webhooks are not accepted.",
         )
         return JSONResponse(
-            status_code=503,
+            status_code=UNCONFIGURED_STATUS,
             content={
                 "detail": (
                     "GitHub webhook endpoint is not configured: set "
@@ -672,7 +673,7 @@ def _verify_gitlab_token(request: Request) -> JSONResponse | None:
             "unauthenticated webhooks are not accepted.",
         )
         return JSONResponse(
-            status_code=503,
+            status_code=UNCONFIGURED_STATUS,
             content={
                 "detail": (
                     "GitLab webhook endpoint is not configured: set "
