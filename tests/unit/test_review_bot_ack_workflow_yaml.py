@@ -78,6 +78,58 @@ def test_gate_job_emits_review_bot_ack_check(
     )
 
 
+def test_gate_concurrency_never_cancels_a_required_context(
+    gate_doc: dict[str, object],
+) -> None:
+    """A cancelled run leaves a `cancelled` check-run that branch protection
+    folds into the required context's verdict, blocking the PR even after a
+    newer run concludes success (#3154, #3042). The group key must therefore
+    separate runs born from different events, and cancel-in-progress must be
+    off so a same-event duplicate reports a real conclusion instead of a
+    cancelled tombstone.
+    """
+    conc = gate_doc.get("concurrency")
+    assert isinstance(conc, dict), "workflow must declare a concurrency block"
+    assert conc.get("cancel-in-progress") is False, (
+        "cancel-in-progress must be false: a cancelled run of a required "
+        "context poisons the rollup for its head SHA (#3154)"
+    )
+    group = str(conc.get("group", ""))
+    assert "github.event_name" in group, (
+        "the concurrency group must include the event name so runs born "
+        "from different events never contend with each other (#3154)"
+    )
+
+
+def test_merge_group_job_verifies_instead_of_echoing(
+    gate_doc: dict[str, object],
+) -> None:
+    """The merge_group emitter must not satisfy the required context
+    unconditionally (#3114). It has to resolve the queued entry's pull
+    request and require a successful PR-stage `review-bot-ack` check-run on
+    that PR's head commit, failing closed on anything it cannot resolve.
+    """
+    jobs = gate_doc.get("jobs")
+    assert isinstance(jobs, dict)
+    job = jobs.get("merge-group-pass")
+    assert isinstance(job, dict), "queue-side emitter job must exist"
+    assert job.get("name") == "review-bot-ack"
+    perms = job.get("permissions")
+    assert isinstance(perms, dict) and perms.get("checks") == "read", (
+        "the queue-side job needs checks:read to verify the PR-stage gate"
+    )
+    steps = job.get("steps") or []
+    assert isinstance(steps, list) and steps, "job must have steps"
+    scripts = "\n".join(str(s.get("run", "")) for s in steps if isinstance(s, dict))
+    assert "check-runs" in scripts and "review-bot-ack" in scripts, (
+        "the queue-side job must query check-runs for the PR-stage gate rather than passing unconditionally (#3114)"
+    )
+    assert "exit 1" in scripts, "the queue-side job must fail closed"
+    assert "merge_group.head_ref" in (
+        scripts + "\n".join(str(s.get("env") or {}) for s in steps if isinstance(s, dict))
+    ), "the queued entry's PR must be resolved from the merge_group ref"
+
+
 def test_gate_actions_sha_pinned() -> None:
     text = GATE_WF.read_text(encoding="utf-8")
     uses = [m.group(0) for m in re.finditer(r"uses:\s*[^\s#]+", text)]
