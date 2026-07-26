@@ -133,6 +133,36 @@ def test_pr_3041_shape_reports_both_bots_as_not_run(ack: ModuleType) -> None:
     assert {s.login: s.clean for s in statuses} == {SOURCERY: False, CODERABBIT: False}
 
 
+def test_bot_artifacts_are_built_from_the_fetched_comment_sources(ack: ModuleType) -> None:
+    """Every fetched source contributes artefacts, tagged with its kind."""
+    sources = {
+        "review": [{"user": {"login": SOURCERY}, "body": SOURCERY_CLEAN_REVIEW, "commit_id": HEAD}],
+        "review-comment": [{"user": {"login": CODERABBIT}, "body": "nit: spacing", "commit_id": HEAD}],
+        "issue-comment": [
+            {"user": {"login": CODERABBIT}, "body": CODERABBIT_CLEAN_REVIEW},
+            {"user": {"login": "chernistry"}, "body": "a human comment"},
+        ],
+    }
+    artifacts = ack.bot_artifacts_from(sources)
+    assert [(a.author, a.kind) for a in artifacts] == [
+        (SOURCERY, "review"),
+        (CODERABBIT, "review-comment"),
+        (CODERABBIT, "issue-comment"),
+    ]
+
+
+def test_each_comment_endpoint_is_paginated_once(ack: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Findings and coverage share one fetch instead of walking twice.
+
+    ``paginate`` follows up to 30 pages per endpoint and this gate runs on
+    every pull request, so a second sweep of the same endpoints is real cost.
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(ack, "paginate", lambda url, token: calls.append(url) or [])
+    ack.fetch_comment_sources("owner", "repo", 1, "token")
+    assert len(calls) == len(set(calls)) == 3
+
+
 # --- summary rendering -----------------------------------------------------
 
 

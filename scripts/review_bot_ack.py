@@ -261,16 +261,11 @@ def classify_review_coverage(artifacts: list[BotArtifact], head_sha: str) -> lis
     return [classify_bot_run(login, artifacts, head_sha) for login in sorted(REVIEW_BOT_LOGINS)]
 
 
-def fetch_bot_artifacts(owner: str, repo: str, pr: int, token: str) -> list[BotArtifact]:
+def bot_artifacts_from(sources: dict[str, list[Any]]) -> list[BotArtifact]:
     """Collect every artefact the configured review bots left on the PR."""
-    base = f"https://api.github.com/repos/{owner}/{repo}"
     artifacts: list[BotArtifact] = []
-    for endpoint, kind in (
-        (f"{base}/pulls/{pr}/reviews", "review"),
-        (f"{base}/pulls/{pr}/comments", "review-comment"),
-        (f"{base}/issues/{pr}/comments", "issue-comment"),
-    ):
-        for item in paginate(endpoint, token):
+    for kind, items in sources.items():
+        for item in items:
             login = (item.get("user") or {}).get("login", "")
             if login not in REVIEW_BOT_LOGINS:
                 continue
@@ -285,11 +280,25 @@ def fetch_bot_artifacts(owner: str, repo: str, pr: int, token: str) -> list[BotA
     return artifacts
 
 
-def fetch_findings(owner: str, repo: str, pr: int, token: str) -> list[Finding]:
-    findings: list[Finding] = []
+def fetch_comment_sources(owner: str, repo: str, pr: int, token: str) -> dict[str, list[Any]]:
+    """Paginate each bot-comment endpoint once, keyed by artefact kind.
+
+    Findings and review coverage are both derived from these three lists, so
+    they are fetched here rather than in each consumer: ``paginate`` walks up
+    to 30 pages per endpoint and this gate runs on every pull request.
+    """
     base = f"https://api.github.com/repos/{owner}/{repo}"
-    review = paginate(f"{base}/pulls/{pr}/comments", token)
-    for c in review:
+    return {
+        "review": paginate(f"{base}/pulls/{pr}/reviews", token),
+        "review-comment": paginate(f"{base}/pulls/{pr}/comments", token),
+        "issue-comment": paginate(f"{base}/issues/{pr}/comments", token),
+    }
+
+
+def findings_from(sources: dict[str, list[Any]]) -> list[Finding]:
+    """Extract must-address / informational findings from fetched comments."""
+    findings: list[Finding] = []
+    for c in sources.get("review-comment", []):
         login = (c.get("user") or {}).get("login", "")
         if login not in REVIEW_BOT_LOGINS:
             continue
@@ -305,8 +314,7 @@ def fetch_findings(owner: str, repo: str, pr: int, token: str) -> list[Finding]:
                 html_url=c.get("html_url") or "",
             )
         )
-    issues = paginate(f"{base}/issues/{pr}/comments", token)
-    for c in issues:
+    for c in sources.get("issue-comment", []):
         login = (c.get("user") or {}).get("login", "")
         if login not in REVIEW_BOT_LOGINS:
             continue
@@ -368,15 +376,15 @@ def fixup_addresses(owner: str, repo: str, pr: int, token: str) -> set[str]:
 
 
 def evaluate(owner: str, repo: str, pr: int, token: str) -> GateOutcome:
-    findings = fetch_findings(owner, repo, pr, token)
+    sources = fetch_comment_sources(owner, repo, pr, token)
+    findings = findings_from(sources)
     body, head_sha = pr_body_and_head(owner, repo, pr, token)
     acked, nit_batch = ack_ids(body)
     commit_acks = fixup_addresses(owner, repo, pr, token)
-    artifacts = fetch_bot_artifacts(owner, repo, pr, token)
     out = GateOutcome(
         findings=findings,
         head_sha=head_sha,
-        bot_statuses=classify_review_coverage(artifacts, head_sha),
+        bot_statuses=classify_review_coverage(bot_artifacts_from(sources), head_sha),
     )
     for f in findings:
         if f.severity == "informational":
