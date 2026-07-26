@@ -53,6 +53,17 @@ _CLAIM_IDENTITY_PRIVATE = "claim_signing.pem"
 _CLAIM_IDENTITY_PUBLIC = "claim_signing.pub"
 
 #: The claim path used for the reused ``task.claim_receipt`` audit event.
+#:
+#: ``mcp_claim`` rows are minted against ``task-backlog.json``, a store
+#: :class:`~bernstein.core.tasks.task_store_core.TaskStore` never touches,
+#: and the backlog has no surrender transition, so no matching
+#: ``task.release_receipt`` is ever recorded for them (#3072). The path is
+#: therefore listed in
+#: :data:`bernstein.core.security.audit_chain.UNRELEASED_CLAIM_PATHS`, and
+#: verifiers folding the chain scope
+#: :func:`~bernstein.core.security.audit_chain.reconstruct_claim_holders`
+#: with ``claim_paths`` so these acquisition-only rows are not read as
+#: outstanding holds.
 _MCP_CLAIM_PATH = "mcp_claim"
 
 
