@@ -73,4 +73,4 @@ web/
 - **React 18** - matches Bernstein's broader frontend ecosystem; React 19 deferred until shadcn/Radix peer-dep alignment lands.
 - **Tailwind 3 + shadcn/ui** - operator can read raw classes without a brittle theme abstraction.
 - **TanStack Query 5** - handles cache + retries + SSE refetches uniformly.
-- **react-router 6** - `basename="/ui"` so the SPA works under FastAPI mount.
+- **react-router 8** - `basename="/ui"` so the SPA works under FastAPI mount; declarative `BrowserRouter` only, imported from `react-router` (the `react-router-dom` shim is gone in v8).

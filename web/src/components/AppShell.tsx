@@ -2,7 +2,7 @@
 // Source of truth: design_handoff_bernstein_phase1/design-source/chrome.jsx.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
