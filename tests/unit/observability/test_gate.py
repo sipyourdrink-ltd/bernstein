@@ -9,7 +9,10 @@ in-memory snapshot payloads (the same shape ``bernstein doctor observe
 - a new / increased security vulnerability,
 - a backend that silently lost its credentials,
 - a clean (green) diff that must stay quiet,
-- the ``load_two_latest`` file-ordering + exit-code plumbing.
+- the ``load_two_latest`` file-ordering + exit-code plumbing,
+- the three-outcome contract: regressions found (exit 1), baseline
+  compared and clean (exit 0), and no baseline to compare against
+  (exit 2, never worded as "no regressions").
 
 The script is import-only at module level so these tests drive its pure
 functions directly without spawning a subprocess.
@@ -251,11 +254,13 @@ def test_main_exit_code_and_output(tmp_path: Path) -> None:
 
     assert code == 1  # a fail-severity regression exits non-zero
     payload = json.loads(out.read_text(encoding="utf-8"))
-    assert len(payload) == 1
-    assert payload[0]["severity"] == "fail"
+    assert payload["outcome"] == "fail"
+    assert payload["baseline_present"] is True
+    assert len(payload["regressions"]) == 1
+    assert payload["regressions"][0]["severity"] == "fail"
 
 
-def test_main_green_exits_zero_and_writes_empty(tmp_path: Path) -> None:
+def test_main_green_exits_zero_and_writes_clean(tmp_path: Path, capsys: Any) -> None:
     (tmp_path / "2026-07-13.json").write_text(json.dumps(_snapshot()), encoding="utf-8")
     (tmp_path / "2026-07-14.json").write_text(json.dumps(_snapshot()), encoding="utf-8")
     out = tmp_path / "regressions.json"
@@ -263,4 +268,148 @@ def test_main_green_exits_zero_and_writes_empty(tmp_path: Path) -> None:
     code = gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
 
     assert code == 0
-    assert json.loads(out.read_text(encoding="utf-8")) == []
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "clean"
+    assert payload["baseline_present"] is True
+    assert payload["snapshots_found"] == 2
+    assert payload["regressions"] == []
+    assert "no regressions" in capsys.readouterr().out
+
+
+def test_main_warn_only_regressions_exit_zero(tmp_path: Path) -> None:
+    (tmp_path / "2026-07-13.json").write_text(
+        json.dumps(_snapshot(_backend("code-scanning", "ok", [_metric("open_alerts", 0.0, "ok")]))),
+        encoding="utf-8",
+    )
+    (tmp_path / "2026-07-14.json").write_text(
+        json.dumps(_snapshot(_backend("code-scanning", "warn", [_metric("open_alerts", 2.0, "warn")]))),
+        encoding="utf-8",
+    )
+    out = tmp_path / "regressions.json"
+
+    code = gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
+
+    assert code == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "warn"
+    assert len(payload["regressions"]) == 1
+
+
+# --------------------------------------------------------------------------
+# no-baseline outcome: absence of evidence is not evidence of absence
+# --------------------------------------------------------------------------
+
+
+def test_main_single_snapshot_refuses_success(tmp_path: Path, capsys: Any) -> None:
+    """One green snapshot means no comparison ran; the gate must say so."""
+
+    (tmp_path / "2026-07-14.json").write_text(
+        json.dumps(_snapshot(_backend("code-scanning", "ok", [_metric("critical_alerts", 0.0, "ok")]))),
+        encoding="utf-8",
+    )
+    out = tmp_path / "regressions.json"
+
+    code = gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
+    stdout = capsys.readouterr().out
+
+    assert code == 2  # distinct from both clean (0) and regressions found (1)
+    assert "no baseline" in stdout
+    assert "comparison not performed" in stdout
+    assert "no regressions" not in stdout
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "no-baseline"
+    assert payload["baseline_present"] is False
+    assert payload["snapshots_found"] == 1
+    assert payload["regressions"] == []
+
+
+def test_main_empty_corpus_refuses_success(tmp_path: Path, capsys: Any) -> None:
+    out = tmp_path / "regressions.json"
+
+    code = gate.main(["--snapshots", str(tmp_path / "missing"), "--out", str(out)])
+    stdout = capsys.readouterr().out
+
+    assert code == 2
+    assert "no regressions" not in stdout
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "no-baseline"
+    assert payload["snapshots_found"] == 0
+
+
+def test_main_regression_against_baseline_fails_loudly(tmp_path: Path, capsys: Any) -> None:
+    """Injected security regressions with a real baseline must exit 1."""
+
+    (tmp_path / "2026-07-13.json").write_text(
+        json.dumps(
+            _snapshot(
+                _backend(
+                    "code-scanning",
+                    "ok",
+                    [
+                        _metric("critical_alerts", 0.0, "ok"),
+                        _metric("high_alerts", 0.0, "ok"),
+                        _metric("open_alerts", 0.0, "ok"),
+                    ],
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "2026-07-14.json").write_text(
+        json.dumps(
+            _snapshot(
+                _backend(
+                    "code-scanning",
+                    "fail",
+                    [
+                        _metric("critical_alerts", 3.0, "fail"),
+                        _metric("high_alerts", 8.0, "fail"),
+                        _metric("open_alerts", 36.0, "warn"),
+                    ],
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "regressions.json"
+
+    code = gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
+    stdout = capsys.readouterr().out
+
+    assert code == 1
+    assert "fail" in stdout
+    assert "no regressions" not in stdout
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "fail"
+    assert len(payload["regressions"]) == 3
+
+
+def test_main_hard_fail_without_baseline_still_fails(tmp_path: Path, capsys: Any) -> None:
+    """Absolute threshold failures are real even when no comparison ran."""
+
+    (tmp_path / "2026-07-14.json").write_text(
+        json.dumps(_snapshot(_backend("code-scanning", "fail", [_metric("critical_alerts", 2.0, "fail")]))),
+        encoding="utf-8",
+    )
+    out = tmp_path / "regressions.json"
+
+    code = gate.main(["--snapshots", str(tmp_path), "--out", str(out)])
+    stdout = capsys.readouterr().out
+
+    assert code == 1  # fail-severity finding wins over the missing baseline
+    assert "comparison not performed" in stdout  # but the gap is still named
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "fail"
+    assert payload["baseline_present"] is False
+
+
+def test_summary_names_no_baseline_outcome(tmp_path: Path) -> None:
+    (tmp_path / "2026-07-14.json").write_text(json.dumps(_snapshot()), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+
+    code = gate.main(["--snapshots", str(tmp_path), "--summary-out", str(summary)])
+
+    assert code == 2
+    text = summary.read_text(encoding="utf-8")
+    assert "no baseline" in text
+    assert "no regressions" not in text

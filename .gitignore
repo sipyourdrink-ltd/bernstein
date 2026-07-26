@@ -86,7 +86,6 @@ dev/
 docs/internal/
 docs/strategy/
 docs/competitive/
-docs/_internal/
 
 # Release-notes drafts and outreach copy (live in /pr/, never the repo)
 .release-notes-*.draft.md
@@ -153,3 +152,14 @@ docs/**/RAG-*.md
 # mutmut 3 working tree (./mutants/) and mutation-test cache (.mutmut-cache)
 mutants/
 .mutmut-cache
+
+# The observability snapshot corpus is tracked on purpose: it is the
+# regression gate's baseline (scripts/observability/gate.py) and has to
+# accumulate one file per day. Re-include it from the docs internal
+# excludes above; git needs every parent directory unignored before it
+# will descend into the corpus.
+!docs/_internal/
+docs/_internal/*
+!docs/_internal/observability/
+docs/_internal/observability/*
+!docs/_internal/observability/snapshots/
