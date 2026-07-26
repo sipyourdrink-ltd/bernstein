@@ -82,6 +82,12 @@ captured replay apart from a legitimate re-fire of the same goal, so it does not
 refuse on that basis. The receipt records `"replay_protected": false` so the
 copy you store never implies a guarantee it does not carry. **Send the header.**
 
+The refusal holds when the two deliveries arrive at once. The ledger check and
+the ledger entry recording it are one section per trigger id, held against every
+other thread and every other worker process, so a trigger delivered twice in
+parallel is admitted exactly once and fires its task graph once. The second
+delivery gets the 409 and its own anchored refusal receipt, not a second run.
+
 ### Refusals
 
 A trigger that fails authentication (HTTP 401) or replays an admitted id (HTTP
@@ -172,7 +178,9 @@ parsing the body unchanged.
 
 Retries are byte-identical: the proof is minted once per `event_id` and cached,
 so a callback re-sent after a transient delivery failure repeats the same bytes
-rather than making a second, differently-anchored claim.
+rather than making a second, differently-anchored claim. Two callbacks in flight
+for one `event_id` get the same treatment: they share one `status.proof.emitted`
+chain event and are handed the same proof, which is also the proof left on disk.
 
 Set `status_proof: false` to opt out. If the install cannot reach its audit
 chain the sink logs a warning and delivers the plain payload rather than
@@ -220,8 +228,8 @@ That is the answer to "the workflow says the run passed but it did not".
 | Path | Contents |
 | --- | --- |
 | `.sdd/audit/` | The HMAC audit chain every receipt anchors into |
-| `.sdd/automation-bridge/triggers/` | The replay ledger, one file per admitted trigger id |
-| `.sdd/automation-bridge/status/` | Minted status proofs, cached so retries repeat |
+| `.sdd/automation-bridge/triggers/` | The replay ledger, one file per admitted trigger id, plus a `.lock` file per id the bridge adjudicated |
+| `.sdd/automation-bridge/status/` | Minted status proofs, cached so retries repeat, plus a `.lock` file per event id |
 | `.sdd/automation-bridge/automation-bridge-identity-key.pem` | The install's Ed25519 signing key, mode `0600` |
 
 Set `BERNSTEIN_AUTOMATION_BRIDGE_ROOT` to relocate the bridge state directory.
