@@ -321,10 +321,8 @@ def compute_seal(
         msg = f"No audit log files (*.jsonl) found in {audit_dir}"
         raise ValueError(msg)
 
-    resolved_key = _resolve_key(key, key_path) if (verify_chain or checkpoint_gate) else None
-
-    if checkpoint_gate and resolved_key is not None:
-        _enforce_checkpoint_extension(audit_dir, resolved_key)
+    if checkpoint_gate:
+        _enforce_checkpoint_extension(audit_dir, _resolve_key(key, key_path))
 
     if verify_chain:
         _enforce_chain_verifies(audit_dir, key=key, key_path=key_path)
@@ -340,16 +338,17 @@ def compute_seal(
     leaf_hashes = [(name, digest) for name, _length, digest in leaf_entries]
     tree = build_merkle_tree(leaf_hashes)
 
-    from bernstein.core.persistence.chain_checkpoint import compute_origin, count_entries
+    from bernstein.core.persistence.chain_checkpoint import chain_snapshot, compute_origin, count_entries
 
+    snapshot = chain_snapshot(audit_dir)
     seal: dict[str, object] = {
         "root_hash": tree.root.hash,
         "algorithm": _HASH_ALGO,
         "scheme": SEAL_SCHEME_VERSION,
         "leaf_count": tree.leaf_count,
         "leaves": [{"file": name, "hash": digest, "byte_len": length} for name, length, digest in leaf_entries],
-        "origin": compute_origin(audit_dir) or "",
-        "entry_count": count_entries(audit_dir),
+        "origin": compute_origin(audit_dir, segments=snapshot) or "",
+        "entry_count": count_entries(audit_dir, segments=snapshot),
         "sealed_at": time.time(),
         "sealed_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

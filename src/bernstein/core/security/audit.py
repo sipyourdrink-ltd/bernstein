@@ -782,19 +782,21 @@ def _chain_tail_from_bytes(raw_bytes: bytes, key: bytes | None = None) -> str | 
 def _local_tail_state(raw: bytes, key: bytes) -> tuple[int, str | None]:
     """Return ``(verified_prefix_end, head_hmac)`` for one segment's bytes.
 
-    Walks forward under the verifier's framing and keeps extending the prefix
-    while lines are canonical, ``hmac``-bearing, and locally MAC-valid (see
-    :func:`_record_is_locally_valid`). The returned offset is the byte after
-    the last such record (including its terminator when present), i.e. where
-    a non-verifying suffix begins; the head is that record's ``hmac``, or
-    ``None`` when the segment holds no locally valid record.
+    Finds the *last* line that is canonical, ``hmac``-bearing, and locally
+    MAC-valid (see :func:`_record_is_locally_valid`), scanning from the end so
+    the cost is proportional to the damaged suffix, not the segment. The
+    returned offset is the byte after that record (including its terminator
+    when present), i.e. where the non-verifying suffix begins; the head is
+    that record's ``hmac``, or ``None`` when the segment holds no locally
+    valid record at all.
     """
+    lines: list[tuple[int, bytes]] = []
     offset = 0
-    end_ok = 0
-    head: str | None = None
     for raw_line in _split_jsonl_bytes(raw):
-        line_start = offset
+        lines.append((offset, raw_line))
         offset += len(raw_line) + 1
+
+    for line_start, raw_line in reversed(lines):
         if raw_line == b"":
             continue
         try:
@@ -811,9 +813,8 @@ def _local_tail_state(raw: bytes, key: bytes) -> tuple[int, str | None]:
         line_end = line_start + len(raw_line)
         if line_end < len(raw):
             line_end += 1  # the terminator this line owns
-        end_ok = line_end
-        head = str(entry["hmac"])
-    return end_ok, head
+        return line_end, str(entry["hmac"])
+    return 0, None
 
 
 def _classify_torn_bytes(torn: bytes) -> str:
@@ -1507,10 +1508,23 @@ class AuditLog:
         size = _path_size(log_path)
         if log_path == self._synced_path and size == self._synced_size:
             return
-        if self._seal_torn_tail(log_path):
-            # Sealing appended its own record and left the head and the sync
-            # markers current; re-reading would only re-derive what it wrote.
-            return
+        # One read serves both the tear gate and head recovery, so the slow
+        # path costs a single pass over the day segment - the same order as
+        # the plain re-sync it replaces.
+        try:
+            raw = log_path.read_bytes()
+        except OSError:
+            raw = b""
+        if raw:
+            verified_prefix, local_head = _local_tail_state(raw, self._key)
+            if verified_prefix != len(raw) or not raw.endswith(b"\n"):
+                self._seal_torn_tail(log_path, raw, verified_prefix, local_head)
+                return
+            if local_head is not None:
+                self._prev_hmac = local_head
+                self._synced_path = log_path
+                self._synced_size = len(raw)
+                return
         self._prev_hmac = self._recover_chain_tail()
         self._synced_path = log_path
         self._synced_size = _path_size(log_path)
@@ -1556,7 +1570,7 @@ class AuditLog:
         )
         return event, json.dumps(entry_dict, sort_keys=True) + "\n"
 
-    def _seal_torn_tail(self, log_path: Path) -> bool:
+    def _seal_torn_tail(self, log_path: Path, raw: bytes, verified_prefix: int, local_head: str | None) -> bool:
         """Seal a non-verifying tail so the next record cannot fuse onto it.
 
         A crashed append is not a clean prefix: file size can persist before
@@ -1587,22 +1601,37 @@ class AuditLog:
         Returns:
             Whether a tear was sealed (and therefore whether this appended).
         """
-        try:
-            raw = log_path.read_bytes()
-        except OSError:
-            return False
-        if not raw or raw.endswith(b"\n"):
-            return False
-
-        verified_prefix, local_head = _local_tail_state(raw, self._key)
+        # The caller has already established that the tail does not verify:
+        # either the terminator is missing, or a *terminated* suffix fails
+        # locally (crash garbage can parse and still fail its MAC). Sealing
+        # both shapes matters - an unsealed terminated-invalid tail would let
+        # the next append chain past it, after which the damage sits between
+        # verified records and stops being classifiable as a tear.
         torn = raw[verified_prefix:]
         tear_class = _classify_torn_bytes(torn)
 
-        # ``_recover_chain_tail`` applies the same local-validity rule that
-        # produced ``verified_prefix``, so the head it returns is the last
-        # record the sealed segment actually carries (falling back across
-        # segments when this one holds no valid record at all).
-        self._prev_hmac = local_head if local_head is not None else self._recover_chain_tail()
+        # The evidence record must chain onto the value the *verifier's*
+        # running prev will hold when it reaches the seal point, or the
+        # record cannot verify and the evidence is unreadable. The verifier
+        # adopts the stored ``hmac`` of every canonical-but-failing line it
+        # walks through, so the seal mirrors that adoption over the torn
+        # suffix, starting from the last locally valid head (falling back
+        # across segments when this one holds no valid record at all).
+        seal_prev = local_head if local_head is not None else self._recover_chain_tail()
+        for torn_line in _split_jsonl_bytes(torn):
+            if torn_line == b"":
+                continue
+            try:
+                parsed = json.loads(torn_line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            entry = cast("dict[str, Any]", parsed)
+            if json.dumps(entry, sort_keys=True).encode() != torn_line:
+                continue
+            seal_prev = str(entry.get("hmac", ""))
+        self._prev_hmac = seal_prev
         event, line = self._mint_record(
             ts=datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             event_type=EVENT_CHAIN_TORN_RECORD,
@@ -1617,7 +1646,8 @@ class AuditLog:
                 "tear_class": tear_class,
             },
         )
-        buffer = b"\n" + line.encode("utf-8")
+        terminator = b"" if raw.endswith(b"\n") else b"\n"
+        buffer = terminator + line.encode("utf-8")
         with log_path.open("ab") as fh:
             fh.write(buffer)
             fh.flush()
@@ -1918,10 +1948,7 @@ class AuditLog:
             if tear.raw_errors:
                 errors.extend(tear.raw_errors)
             else:
-                errors.append(
-                    f"{tear.segment}: {tear.tear_class} tear sealed at byte {tear.byte_offset} "
-                    "awaiting acknowledgement (run 'bernstein audit ack-tear')"
-                )
+                errors.append(f"{tear.describe()} - run 'bernstein audit ack-tear' after investigating")
         return len(errors) == 0, errors
 
     def verify_detailed(self) -> ChainVerifyReport:

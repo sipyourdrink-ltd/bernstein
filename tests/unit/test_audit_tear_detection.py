@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.security.audit import (
     EVENT_CHAIN_TEAR_ACKNOWLEDGED,
@@ -34,8 +34,8 @@ def _seeded_log(tmp_path: Path, count: int = 4) -> tuple[AuditLog, Path]:
     return log, sorted(audit_dir.glob("*.jsonl"))[0]
 
 
-def _records(segment: Path) -> list[dict]:
-    out = []
+def _records(segment: Path) -> list[dict[str, Any] | None]:
+    out: list[dict[str, Any] | None] = []
     for line in segment.read_bytes().split(b"\n"):
         if not line:
             continue
@@ -159,6 +159,39 @@ class TestAppendSealsTheTear:
         # The new record chains onto the seal, not onto a stale predecessor.
         assert parsed[-1]["prev_hmac"] == torn["hmac"]
 
+    def test_terminated_invalid_tail_is_sealed_not_left_to_rot(self, tmp_path: Path) -> None:
+        """A terminated suffix that fails its MAC is sealed like any tear.
+
+        Without the seal, the next append would chain past the damaged line;
+        the damage would then sit between verified records, stop being
+        classifiable as a tear, and permanently fail verification with no
+        acknowledgement path.
+        """
+        _log, segment = _seeded_log(tmp_path, count=2)
+        fake = dict(json.loads(segment.read_bytes().split(b"\n")[0]))
+        fake["hmac"] = "0" * 64
+        with segment.open("ab") as fh:
+            fh.write(json.dumps(fake, sort_keys=True).encode() + b"\n")
+
+        log2 = AuditLog(tmp_path / "audit", key=_KEY)
+        log2.log("test.event", "tester", "task", "after-tear", {})
+
+        report = AuditLog(tmp_path / "audit", key=_KEY).verify_detailed()
+        assert not report.hard_errors, report.hard_errors
+        (tear,) = report.tears
+        assert tear.sealed is True
+        assert tear.tear_class == "invalid_hmac"
+
+        log2.log(
+            EVENT_CHAIN_TEAR_ACKNOWLEDGED,
+            "operator",
+            "audit_segment",
+            tear.segment,
+            {"segment": tear.segment, "byte_offset": tear.byte_offset, "reason": "investigated"},
+        )
+        ok, errors = AuditLog(tmp_path / "audit", key=_KEY).verify()
+        assert ok is True, errors
+
     def test_sealed_tear_is_reported_until_acknowledged(self, tmp_path: Path) -> None:
         _log, segment = _seeded_log(tmp_path, count=2)
         raw = segment.read_bytes()
@@ -204,8 +237,13 @@ class TestAppendSealsTheTear:
 
 
 class TestRecoveryRejectsForgedTails:
-    def test_recovered_head_ignores_a_json_shaped_forgery(self, tmp_path: Path) -> None:
-        """A canonical-looking tail without a valid MAC is never adopted."""
+    def test_json_shaped_forgery_is_sealed_evidence_never_a_clean_head(self, tmp_path: Path) -> None:
+        """A canonical-looking tail without a valid MAC is never adopted silently.
+
+        The next append seals it as recorded tear evidence and chains onto the
+        seal record, so the forgery can neither pose as the chain head nor
+        disappear between verified records.
+        """
         _log, segment = _seeded_log(tmp_path, count=2)
         real_last = json.loads(segment.read_bytes().split(b"\n")[-2])
 
@@ -216,4 +254,17 @@ class TestRecoveryRejectsForgedTails:
             fh.write(json.dumps(forged, sort_keys=True).encode() + b"\n")
 
         appended = AuditLog(tmp_path / "audit", key=_KEY).log("test.event", "tester", "task", "next", {})
-        assert appended.prev_hmac == real_last["hmac"], "the append must chain onto the last MAC-valid record"
+
+        records = [r for r in _records(segment) if r is not None]
+        torn = next(r for r in records if r["event_type"] == EVENT_CHAIN_TORN_RECORD)
+        assert torn["details"]["tear_class"] == "invalid_hmac"
+        assert torn["details"]["verified_prefix_offset"] == sum(
+            len(json.dumps(r, sort_keys=True).encode()) + 1 for r in records[:2]
+        )
+        assert appended.prev_hmac == torn["hmac"], "the append chains onto the seal, not onto the forgery"
+
+        report = AuditLog(tmp_path / "audit", key=_KEY).verify_detailed()
+        assert not report.hard_errors, report.hard_errors
+        (tear,) = report.tears
+        assert tear.sealed is True
+        assert tear.acknowledged is False, "the forgery stays reported until an operator looks"

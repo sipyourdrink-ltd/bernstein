@@ -190,8 +190,18 @@ def cleanup(orch: Any) -> None:
             merkle_dir = audit_dir / "merkle"
             _tree, seal = compute_seal(audit_dir)
             seal_path = save_seal(seal, merkle_dir)
-            record_checkpoint(audit_dir, seal, key=load_or_create_audit_key())
             logger.info("Merkle audit seal written: %s (root=%s)", seal_path, seal["root_hash"])
+            try:
+                record_checkpoint(audit_dir, seal, key=load_or_create_audit_key())
+            except Exception:
+                # The seal above is written and valid; only the pin did not
+                # advance. Point the operator at the conflict, not the seal.
+                logger.warning(
+                    "Audit checkpoint not advanced on shutdown (seal written to %s); "
+                    "run 'bernstein audit verify' to see the conflict",
+                    seal_path,
+                    exc_info=True,
+                )
         except Exception:
             logger.warning("Merkle seal generation on shutdown failed", exc_info=True)
 

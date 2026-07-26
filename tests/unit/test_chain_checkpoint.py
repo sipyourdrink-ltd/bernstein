@@ -9,7 +9,7 @@ pin be recorded over a divergence.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -45,7 +45,7 @@ def _seed(tmp_path: Path, count: int = 6) -> Path:
     return audit_dir
 
 
-def _seal_and_pin(audit_dir: Path) -> dict:
+def _seal_and_pin(audit_dir: Path) -> dict[str, Any]:
     _tree, seal = compute_seal(audit_dir, key=_KEY)
     return record_checkpoint(audit_dir, seal, key=_KEY)
 

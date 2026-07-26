@@ -277,8 +277,14 @@ def load_checkpoints(audit_dir: Path, key: bytes) -> CheckpointFileState:
 # ---------------------------------------------------------------------------
 
 
-def _iter_segment_bytes(audit_dir: Path) -> list[tuple[str, bytes]]:
-    """Return ``(file_name, bytes)`` for archived then live segments, in chain order."""
+def chain_snapshot(audit_dir: Path) -> list[tuple[str, bytes]]:
+    """Return ``(file_name, bytes)`` for archived then live segments, in chain order.
+
+    One snapshot serves :func:`compute_origin`, :func:`count_entries`, and
+    :func:`check_extension` through their ``segments`` parameter, so a seal
+    gate reads and decompresses the chain once instead of once per quantity.
+    Archived segments are keyed by their live name (the name checkpoints pin).
+    """
     from bernstein.core.security.audit import (
         _JSONL_GLOB,
         _archived_segment_paths,
@@ -318,21 +324,27 @@ def _canonical_records(raw: bytes) -> list[dict[str, Any]]:
     return records
 
 
-def compute_origin(audit_dir: Path) -> str | None:
+def compute_origin(audit_dir: Path, *, segments: list[tuple[str, bytes]] | None = None) -> str | None:
     """Return the chain origin: the HMAC of the first canonical record.
 
-    ``None`` when the chain holds no canonical record yet.
+    ``None`` when the chain holds no canonical record yet. Pass *segments*
+    (from :func:`chain_snapshot`) to reuse an already-read chain.
     """
-    for _name, raw in _iter_segment_bytes(audit_dir):
+    for _name, raw in segments if segments is not None else chain_snapshot(audit_dir):
         records = _canonical_records(raw)
         if records:
             return str(records[0]["hmac"])
     return None
 
 
-def count_entries(audit_dir: Path) -> int:
-    """Count canonical records across archived and live segments."""
-    return sum(len(_canonical_records(raw)) for _name, raw in _iter_segment_bytes(audit_dir))
+def count_entries(audit_dir: Path, *, segments: list[tuple[str, bytes]] | None = None) -> int:
+    """Count canonical records across archived and live segments.
+
+    Pass *segments* (from :func:`chain_snapshot`) to reuse an already-read
+    chain.
+    """
+    source = segments if segments is not None else chain_snapshot(audit_dir)
+    return sum(len(_canonical_records(raw)) for _name, raw in source)
 
 
 def _segment_bytes(audit_dir: Path, file_name: str) -> bytes | None:
@@ -359,17 +371,28 @@ def _segment_bytes(audit_dir: Path, file_name: str) -> bytes | None:
 # ---------------------------------------------------------------------------
 
 
-def check_extension(audit_dir: Path, checkpoint: dict[str, Any]) -> list[CheckpointConflict]:
+def check_extension(
+    audit_dir: Path,
+    checkpoint: dict[str, Any],
+    *,
+    segments: list[tuple[str, bytes]] | None = None,
+) -> list[CheckpointConflict]:
     """Check that the current on-disk chain is a consistent extension of *checkpoint*.
 
     The equivalent of an RFC 6962 consistency proof for the per-day-segment
     tree: the checkpointed root must be reproducible from byte prefixes of
     the current state, and the entry count must not have decreased. Returns
     an empty list when consistent.
+
+    One :func:`chain_snapshot` read serves the origin, the entry count, and
+    every per-leaf prefix comparison; pass *segments* to reuse a snapshot the
+    caller already holds.
     """
     conflicts: list[CheckpointConflict] = []
+    snapshot = segments if segments is not None else chain_snapshot(audit_dir)
+    by_name: dict[str, bytes] = dict(snapshot)
 
-    origin = compute_origin(audit_dir)
+    origin = compute_origin(audit_dir, segments=snapshot)
     pinned_origin = str(checkpoint.get("origin", ""))
     if origin != pinned_origin:
         conflicts.append(
@@ -384,7 +407,7 @@ def check_extension(audit_dir: Path, checkpoint: dict[str, Any]) -> list[Checkpo
             )
         )
 
-    current_count = count_entries(audit_dir)
+    current_count = count_entries(audit_dir, segments=snapshot)
     pinned_count = int(checkpoint.get("entry_count", 0) or 0)
     if current_count < pinned_count:
         conflicts.append(
@@ -401,7 +424,9 @@ def check_extension(audit_dir: Path, checkpoint: dict[str, Any]) -> list[Checkpo
         file_name = str(leaf.get("file", ""))
         byte_len = int(leaf.get("byte_len", 0) or 0)
         pinned_hash = str(leaf.get("hash", ""))
-        current = _segment_bytes(audit_dir, file_name)
+        current = by_name.get(file_name)
+        if current is None:
+            current = _segment_bytes(audit_dir, file_name)
         if current is None:
             conflicts.append(
                 CheckpointConflict(
@@ -540,6 +565,14 @@ def record_checkpoint(audit_dir: Path, seal: dict[str, Any], *, key: bytes) -> d
     writer between compute and record) still cannot advance the pin over a
     conflict without a chain-resident acknowledgement.
 
+    The whole read-validate-append section runs under the audit chain's
+    cross-process append lock. Two sealers are realistic (the hourly cron job
+    and the orchestrator's shutdown seal); unsynchronised, both would read
+    the same predecessor and append two checkpoints naming it, and the forked
+    linkage would fail :func:`load_checkpoints` forever after. The same lock
+    also orders this section against ``ack-tear``'s acknowledgement append,
+    which is written under it.
+
     Args:
         audit_dir: The audit directory.
         seal: The seal dict produced by ``compute_seal`` (must carry
@@ -563,6 +596,20 @@ def record_checkpoint(audit_dir: Path, seal: dict[str, Any], *, key: bytes) -> d
         msg = "seal leaves lack byte_len; compute them with compute_seal()"
         raise ValueError(msg)
 
+    from bernstein.core.security.audit import _chain_append_lock
+
+    with _chain_append_lock(audit_dir):
+        return _record_checkpoint_locked(audit_dir, seal, leaves_in, key=key)
+
+
+def _record_checkpoint_locked(
+    audit_dir: Path,
+    seal: dict[str, Any],
+    leaves_in: list[dict[str, Any]],
+    *,
+    key: bytes,
+) -> dict[str, Any]:
+    """Body of :func:`record_checkpoint`; caller holds the chain append lock."""
     state = load_checkpoints(audit_dir, key)
     prev = state.last
 
@@ -629,6 +676,7 @@ __all__ = [
     "CheckpointFileError",
     "CheckpointFileState",
     "authorize_divergence",
+    "chain_snapshot",
     "check_extension",
     "checkpoints_path",
     "compute_origin",

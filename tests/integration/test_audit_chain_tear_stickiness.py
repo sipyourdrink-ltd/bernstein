@@ -306,6 +306,11 @@ class TestConcurrencySanity:
             proc.start()
         for proc in procs:
             proc.join(timeout=120)
+        stuck = [proc for proc in procs if proc.is_alive()]
+        for proc in stuck:
+            proc.terminate()
+            proc.join(timeout=5)
+        assert not stuck, "worker process(es) did not exit within the timeout"
         assert all(proc.exitcode == 0 for proc in procs), "no append may be refused or crash"
 
         log = AuditLog(audit_dir, key=key)

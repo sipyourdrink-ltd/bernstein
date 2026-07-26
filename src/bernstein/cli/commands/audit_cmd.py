@@ -553,10 +553,29 @@ def _verify_hmac_chain() -> bool:
     operator acknowledges it. In particular, re-sealing does not clear it.
     """
     from bernstein.core.audit import AuditLog
-
-    report = AuditLog(AUDIT_DIR).verify_detailed()
+    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
 
     console.print()
+
+    # Verification is read-only and must never mint key material: a freshly
+    # generated key cannot authenticate an existing chain, so it would report
+    # a fabricated tamper alarm and leave stray key bytes behind. An empty
+    # chain needs no key at all.
+    has_segments = any(AUDIT_DIR.glob("*.jsonl")) or any((AUDIT_DIR / "archive").glob("*.jsonl.gz"))
+    if not has_segments:
+        console.print(
+            Panel("[bold green]HMAC Chain Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        return True
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError as exc:
+        console.print(Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False))
+        console.print(f"  [red]![/red] {exc}")
+        return False
+
+    report = AuditLog(AUDIT_DIR, key=key).verify_detailed()
+
     if report.hard_errors:
         console.print(Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False))
         for err in report.hard_errors:
@@ -742,10 +761,13 @@ def ack_tear_cmd(segment: str, offset: int, reason: str, actor: str | None) -> N
         matched = any(t.segment == segment and t.byte_offset == offset for t in report.tears)
 
         # A tear at the tail and a checkpoint divergence commonly describe the
-        # same damage (a truncation is both). One acknowledgement covers both:
-        # when the named segment also conflicts with the pinned checkpoint,
-        # the record carries the conflicting root, which is what authorises
-        # the next seal to record a new pin.
+        # same damage (a truncation is both, at the same offset). When the
+        # named (segment, offset) matches a checkpoint conflict exactly, the
+        # record carries the conflicting root, which is what authorises the
+        # next seal to record a new pin. The root is attached only on an
+        # exact match: an acknowledgement stays bound to precisely what
+        # verify printed, and a divergence whose conflict offset differs
+        # needs its own acknowledgement at that offset.
         try:
             state = load_checkpoints(AUDIT_DIR, key)
         except CheckpointFileError as exc:
@@ -753,11 +775,10 @@ def ack_tear_cmd(segment: str, offset: int, reason: str, actor: str | None) -> N
         last = state.last
         if last is not None:
             for conflict in check_extension(AUDIT_DIR, last):
-                if conflict.segment != segment:
+                if conflict.segment != segment or conflict.offset != offset:
                     continue
                 details[ACK_CHECKPOINT_ROOT_KEY] = str(last.get("root_hash", ""))
-                if conflict.offset == offset:
-                    matched = True
+                matched = True
                 break
 
         if not matched:

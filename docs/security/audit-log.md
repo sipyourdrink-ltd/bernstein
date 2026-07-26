@@ -439,6 +439,19 @@ archive format guarantees: gzipped JSONL, the chain still verifies
 end-to-end across uncompressed + archived files as long as you feed
 both into the verifier.
 
+### The checkpoints file is exempt from rotation
+
+`.sdd/audit/checkpoints/checkpoints.jsonl` is load-bearing for shrink
+detection and **must not** be rotated, truncated, or edited: each
+checkpoint is hash-linked to its predecessor back to the first line,
+so removing early lines fails validation and blocks sealing. growth
+is modest - one small line per accepted seal that actually changed
+the tree (re-sealing an unchanged log appends nothing), each line
+pinning only the currently live segments - and it stays several
+orders of magnitude smaller than the chain it pins. if you snapshot
+audit history off-host, copy this file whole alongside the segments;
+the pinned prefixes verify against archived segments too.
+
 ## Shipping to a SIEM
 
 bernstein ships in-process exporters for splunk HEC, elasticsearch,
