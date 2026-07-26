@@ -369,6 +369,28 @@ def test_cli_offline_stub_writes_empty_rollup(tmp_path: Path) -> None:
     assert "No candidates passed" in md
 
 
+def test_cli_without_fetcher_exits_naming_the_flag(tmp_path: Path) -> None:
+    runner = CliRunner()
+    rollup_dir = tmp_path / "rollup"
+    backlog_dir = tmp_path / "backlog"
+    backlog_dir.mkdir()
+    result = runner.invoke(
+        trend_scan_group,
+        [
+            "run",
+            "--tier",
+            "all",
+            "--rollup-dir",
+            str(rollup_dir),
+            "--backlog-dir",
+            str(backlog_dir),
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "--fetcher-cmd" in result.output
+    assert not list(rollup_dir.glob("rollup-*.md"))
+
+
 def test_cli_unknown_tier_returns_error(tmp_path: Path) -> None:
     runner = CliRunner()
     backlog_dir = tmp_path / "backlog"

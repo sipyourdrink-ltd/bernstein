@@ -180,7 +180,7 @@ def trend_scan_group() -> None:
     type=str,
     default=None,
     help="Executable that returns one JSON item per line on stdout. "
-    "Invoked as: <cmd> <source_name> <tier>. If unset, the offline stub is used.",
+    "Invoked as: <cmd> <source_name> <tier>. If unset, use --offline-stub.",
 )
 @click.option(
     "--fetcher-timeout",
@@ -228,8 +228,15 @@ def trend_scan_run(
         max_candidates_per_source=max_per_source,
     )
 
-    if offline_stub or os.environ.get("BERNSTEIN_TREND_SCAN_OFFLINE") == "1" or fetcher_cmd is None:
+    if offline_stub or os.environ.get("BERNSTEIN_TREND_SCAN_OFFLINE") == "1":
         fetcher = _stub_fetcher
+    elif fetcher_cmd is None:
+        click.echo(
+            "trend-scan: no fetcher configured. Pass --fetcher-cmd <executable>, "
+            "or --offline-stub to run the no-op stub fetcher.",
+            err=True,
+        )
+        sys.exit(2)
     else:
         fetcher = _make_subprocess_fetcher(fetcher_cmd, fetcher_timeout)
 

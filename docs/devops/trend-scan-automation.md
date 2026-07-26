@@ -34,7 +34,7 @@ Common flags:
 | `--tier` | Restrict to one tier (`all`, `1`, `2`, `3`). |
 | `--output` | Override the rollup file path. |
 | `--sources` | JSON file overriding the default source specs. |
-| `--fetcher-cmd` | External fetcher executable. |
+| `--fetcher-cmd` | External fetcher executable. Required unless `--offline-stub` is passed; without either, the command exits 2 rather than writing an empty rollup. |
 | `--offline-stub` | Force the no-op fetcher (no network). |
 | `--max-per-source` | Cap candidates surfaced per source (default 5). |
 
