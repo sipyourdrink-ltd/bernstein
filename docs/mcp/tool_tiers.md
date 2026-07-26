@@ -15,9 +15,9 @@ callable.
 
 | Tier | Budget | Tools advertised | Use when |
 |------|--------|------------------|----------|
-| `core` | smallest | `bernstein_health`, `bernstein_run`, `bernstein_status`, `bernstein_tasks`, `bernstein_task_handle` | Cost-sensitive runs or small-context adapters; you only need to start and observe a run. |
-| `standard` (default) | medium | core plus `bernstein_cost`, `bernstein_stop`, `bernstein_approve`, `bernstein_complete`, `bernstein_create_subtask`, `bernstein_claim`, `bernstein_update`, `bernstein_post_artifact`, `bernstein_context`, `load_skill` | The typical run: mutation, approval, the pull-worker claim/update/complete verbs, artifact posting, the signed context capsule, and skill loading. |
-| `all` | largest | standard plus the scenario bridge (`bernstein_scenarios`, `bernstein_scenario`, `bernstein_scenario_status`) and `verify_chain` | Power-user setups that drive scenario libraries or audit lineage. |
+| `core` | smallest | `bernstein_run`, `bernstein_status`, `bernstein_run_status` | Cost-sensitive runs or small-context adapters; you only need to start and observe a run. |
+| `standard` (default) | medium | core plus `bernstein_approve`, `bernstein_complete`, `bernstein_cancel`, `bernstein_claim`, `bernstein_post_message`, `bernstein_post_artifact`, `bernstein_task_capsule`, `bernstein_shutdown_orchestrator`, `load_skill` | The typical run: mutation, approval, per-run cancel, the pull-worker claim/post/complete verbs, artifact posting, the signed context capsule, and skill loading. |
+| `all` | largest | standard plus the scenario bridge (`bernstein_scenario`) and `bernstein_verify_lineage` | Power-user setups that drive scenario libraries or audit lineage. |
 
 The exact membership is declared once in
 `src/bernstein/core/protocols/mcp/tool_tiers.py` (`TOOL_TIERS`). Adding a new

@@ -515,6 +515,7 @@ nav:
           - Glossary: reference/GLOSSARY.md
       - Release notes:
           - Changelog: CHANGELOG.md
+          - v3.11.0: release-notes/v3.11.0.md
           - v3.10.0: release-notes/v3.10.0.md
           - v3.9.0: release-notes/v3.9.0.md
           - v3.8.4: release-notes/v3.8.4.md

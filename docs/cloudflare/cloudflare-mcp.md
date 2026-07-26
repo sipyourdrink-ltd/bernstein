@@ -36,19 +36,24 @@ The remote transport exposes exactly these MCP tools:
 
 | Tool | Description | Required args |
 |------|-------------|---------------|
-| `bernstein_health` | Liveness check | None |
-| `bernstein_run` | Start an orchestration run | `goal` |
-| `bernstein_status` | Task count summary | None |
-| `bernstein_tasks` | List tasks (optional `status` filter) | None |
-| `bernstein_cost` | Cost summary (total + per-role) | None |
-| `bernstein_stop` | Graceful shutdown | None |
+| `bernstein_run` | Start an orchestration run (optionally a subtask via `parent_task_id`) | `goal` |
+| `bernstein_status` | Liveness, task counts, cost; optional `status` filter and `detail` flag | None |
+| `bernstein_cancel` | Cancel one task and its subtask tree | `task_id` |
+| `bernstein_shutdown_orchestrator` | Whole-orchestrator shutdown signal | None |
 | `bernstein_approve` | Approve a pending task | `task_id` |
-| `bernstein_create_subtask` | Create a subtask | `parent_task_id`, `goal` |
+| `bernstein_complete` | Complete a task the caller is executing | `task_id`, `result_summary` |
 
-That is 8 tools, a subset of what the stdio server registers. Tools such as
-`bernstein_task_handle`, `bernstein_claim`, `bernstein_update`,
-`bernstein_post_artifact`, `bernstein_context`, `load_skill`, the scenario
-tools and `verify_chain` are not reachable over this transport.
+That is 6 advertised tools, a subset of what the stdio server registers. The
+removed names (`bernstein_health`, `bernstein_tasks`, `bernstein_cost`,
+`bernstein_stop`, `bernstein_create_subtask`) stay callable for one minor
+release as deprecated aliases that answer with their historical payload plus
+a notice naming the replacement; they are never advertised. Tools such as
+`bernstein_run_status`, `bernstein_claim`, `bernstein_post_message`,
+`bernstein_post_artifact`, `bernstein_task_capsule`, `load_skill`, the
+scenario tool and `bernstein_verify_lineage` are not reachable over this
+transport. The transport does serve `resources/list` and `resources/read`
+for the capability card and the skill index (and, when
+`BERNSTEIN_LINEAGE_MCP_ENABLED=1` opts in, the lineage records).
 
 ### Argument validation on this transport is weaker than on stdio
 
