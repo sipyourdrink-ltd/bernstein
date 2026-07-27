@@ -1,0 +1,128 @@
+name: Review-bot acknowledgement publisher
+
+# Publishes the required `review-bot-ack` context on behalf of
+# `review-bot-ack.yml`.
+#
+# Why this workflow exists at all: a `pull_request` event raised from a fork
+# receives a read-only GITHUB_TOKEN, and a job-level `permissions:` block
+# cannot raise it. That cap is GitHub's. The gate job therefore computes a
+# correct verdict and then fails with
+# `403 Resource not accessible by integration` when it tries to write the
+# check-run, leaving the required context ABSENT. An absent required context
+# reads as blocked with nothing on the page to point at, so every external
+# contribution was unmergeable no matter what its author did.
+#
+# `workflow_run` runs in the base repository's context with the base token,
+# so `checks: write` here is real for a fork pull request as well.
+#
+# Trust boundary. The gate job runs on the fork's head, so its artifact is
+# attacker-influenced input. Two rules keep that harmless:
+#
+#   1. The SHA is taken from `github.event.workflow_run.head_sha`, never from
+#      the artifact. Otherwise a fork could claim `success` for a commit on
+#      another pull request.
+#   2. The conclusion is accepted only if it is exactly `success`. Anything
+#      else, including a missing artifact, a malformed one, or a gate run
+#      that did not conclude successfully, publishes `failure`. Fail closed.
+#
+# Nothing from the artifact is ever executed, and no repository content from
+# the head is checked out here.
+
+on:  # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: ["Review-bot acknowledgement gate"]
+    types: [completed]
+
+concurrency:
+  group: review-bot-ack-publish-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: review-bot-ack-publisher
+    # merge_group runs of the gate publish their own context in-repo, where
+    # the token is already writable. Only pull-request runs need this hop.
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      # The base branch, never the head. The publisher script must be the
+      # one this repository ships, not one a fork supplied.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: Download the verdict artifact
+        id: fetch
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: review-bot-ack-verdict
+          path: verdict
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Resolve the conclusion, failing closed
+        env:
+          GATE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # Fail closed on every path that is not an explicit, matching
+          # success: a gate run that did not succeed, a missing or unreadable
+          # artifact, a conclusion that is not the literal string `success`,
+          # or a head SHA that disagrees with the event's own.
+          verdict=failure
+          reason="the gate run concluded ${GATE_CONCLUSION}"
+
+          if [ "$GATE_CONCLUSION" = "success" ] && [ -r verdict/conclusion ] && [ -r verdict/head_sha ]; then
+            claimed_sha="$(tr -d '[:space:]' < verdict/head_sha)"
+            claimed="$(tr -d '[:space:]' < verdict/conclusion)"
+            if [ "$claimed_sha" != "$EVENT_SHA" ]; then
+              reason="the artifact named ${claimed_sha:-an empty SHA}, the event names ${EVENT_SHA}"
+            elif [ "$claimed" != "success" ]; then
+              reason="the gate reported ${claimed:-an empty conclusion}"
+            else
+              verdict=success
+              reason="the gate passed on ${EVENT_SHA}"
+            fi
+          elif [ "$GATE_CONCLUSION" = "success" ]; then
+            reason="the gate run succeeded but published no readable verdict artifact"
+          fi
+
+          echo "VERDICT=$verdict" >> "$GITHUB_ENV"
+          echo "REASON=$reason" >> "$GITHUB_ENV"
+          echo "resolved $verdict: $reason"
+
+      - name: Publish the review-bot-ack context on the head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GATE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+          python3 scripts/publish_required_check.py \
+            --repo "$REPO" \
+            --sha "$HEAD_SHA" \
+            --name review-bot-ack \
+            --conclusion "$VERDICT" \
+            --title "Review-bot acknowledgement gate" \
+            --summary "Every must-address CodeRabbit and Sourcery finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}. See the sticky summary comment on the pull request for the per-finding breakdown." \
+            --details-url "$GATE_RUN_URL"

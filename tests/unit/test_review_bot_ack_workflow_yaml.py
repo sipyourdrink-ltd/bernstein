@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - dev env should have pyyaml
 
 
 GATE_WF = Path(".github/workflows/review-bot-ack.yml")
+PUBLISH_WF = Path(".github/workflows/review-bot-ack-publish.yml")
 SWEEP_WF = Path(".github/workflows/review-bot-sweep.yml")
 GATE_SCRIPT = Path("scripts/review_bot_ack.py")
 SWEEP_SCRIPT = Path("scripts/review_bot_sweep.py")
@@ -37,11 +38,17 @@ PUBLISH_SCRIPT = Path("scripts/publish_required_check.py")
 # The context branch protection requires on `main`.
 CONTEXT = "review-bot-ack"
 PUBLISHER = "scripts/publish_required_check.py"
+VERDICT_ARTIFACT = "review-bot-ack-verdict"
 
 
 @pytest.fixture(scope="module")
 def gate_doc() -> dict[str, object]:
     return yaml.safe_load(GATE_WF.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def publish_doc() -> dict[str, object]:
+    return yaml.safe_load(PUBLISH_WF.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -111,19 +118,103 @@ def test_no_job_is_named_after_the_required_context(
     )
 
 
-def test_every_job_publishes_the_context_through_the_api(
+def test_every_verdict_path_ends_in_an_api_publish(
     gate_doc: dict[str, object],
+    publish_doc: dict[str, object],
 ) -> None:
-    """INV-2. Each job must write the verdict explicitly, with `checks: write`."""
+    """INV-2. Every job that resolves a verdict must reach an explicit publish.
+
+    A job either publishes the context itself, which needs `checks: write`,
+    or hands the verdict to the companion `workflow_run` publisher, which
+    publishes on its behalf. Nothing may resolve a verdict and stop.
+
+    The handoff exists because a `pull_request` event raised from a fork
+    gets a read-only GITHUB_TOKEN that a `permissions:` block cannot raise,
+    so publishing in-job returned 403 for every external contribution and
+    left the required context absent.
+    """
     jobs = _jobs(gate_doc)
     assert jobs, "workflow must define jobs"
     for key, job in jobs.items():
         script = _run_script(job)
-        assert PUBLISHER in script, f"job {key!r} does not publish the required context via {PUBLISHER}"
-        assert f"--name {CONTEXT}" in script, f"job {key!r} publishes some other context name"
+        publishes = PUBLISHER in script
+        hands_off = any(VERDICT_ARTIFACT in str((step.get("with") or {}).get("name", "")) for step in _steps(job))
+        assert publishes or hands_off, (
+            f"job {key!r} resolves a verdict but neither publishes it via {PUBLISHER} nor uploads it as "
+            f"the {VERDICT_ARTIFACT!r} artifact for the companion publisher"
+        )
+        if publishes:
+            assert f"--name {CONTEXT}" in script, f"job {key!r} publishes some other context name"
+            perms = job.get("permissions")
+            assert isinstance(perms, dict) and perms.get("checks") == "write", (
+                f"job {key!r} needs checks:write to publish the required context"
+            )
+
+    pub_jobs = _jobs(publish_doc)
+    assert pub_jobs, "the companion publisher must define a job"
+    for key, job in pub_jobs.items():
+        script = _run_script(job)
+        assert PUBLISHER in script and f"--name {CONTEXT}" in script, (
+            f"publisher job {key!r} must publish {CONTEXT!r} via {PUBLISHER}"
+        )
         perms = job.get("permissions")
-        assert isinstance(perms, dict) and perms.get("checks") == "write", (
-            f"job {key!r} needs checks:write to publish the required context"
+        assert isinstance(perms, dict) and perms.get("checks") == "write", f"publisher job {key!r} needs checks:write"
+
+
+def test_publisher_runs_on_workflow_run_of_the_gate(
+    publish_doc: dict[str, object],
+) -> None:
+    """INV-2c. The publisher must run in the base context, not the head's.
+
+    `workflow_run` is what makes the token writable for a fork pull
+    request. Any other trigger reintroduces the 403.
+    """
+    on = _on(publish_doc)
+    run = on.get("workflow_run")
+    assert isinstance(run, dict), "publisher must be triggered by workflow_run"
+    assert "Review-bot acknowledgement gate" in (run.get("workflows") or []), (
+        "publisher must key off the gate workflow by name"
+    )
+
+
+def test_publisher_pins_the_sha_to_the_event_not_the_artifact(
+    publish_doc: dict[str, object],
+) -> None:
+    """INV-2d. The published SHA comes from the event, never from the fork.
+
+    The verdict artifact is written by a job running on the fork's head, so
+    it is attacker-influenced. If the publisher took the SHA from it, a fork
+    could publish `success` onto a commit belonging to a different pull
+    request. The event's own `head_sha` is not forgeable that way.
+    """
+    for key, job in _jobs(publish_doc).items():
+        for step in _steps(job):
+            if PUBLISHER not in str(step.get("run", "")):
+                continue
+            env = {k: str(v) for k, v in (step.get("env") or {}).items()}
+            sha_source = env.get("HEAD_SHA", "")
+            assert "workflow_run.head_sha" in sha_source, (
+                f"publisher job {key!r} takes the SHA from {sha_source!r}; it must come from "
+                "github.event.workflow_run.head_sha so a fork cannot name someone else's commit"
+            )
+
+
+def test_publisher_fails_closed(publish_doc: dict[str, object]) -> None:
+    """INV-2e. Anything short of an explicit match publishes failure.
+
+    A missing artifact, an unreadable one, a conclusion that is not the
+    literal `success`, a SHA that disagrees with the event, or a gate run
+    that did not itself succeed must all resolve to `failure`.
+    """
+    for key, job in _jobs(publish_doc).items():
+        script = _run_script(job)
+        if PUBLISHER not in script:
+            continue
+        assert "verdict=failure" in script, (
+            f"publisher job {key!r} must default the verdict to failure before any check succeeds"
+        )
+        assert "workflow_run.conclusion" in str(job), (
+            f"publisher job {key!r} must refuse to publish success when the gate run did not succeed"
         )
 
 

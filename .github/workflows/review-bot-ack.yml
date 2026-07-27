@@ -238,25 +238,36 @@ jobs:
           fi
           echo "VERDICT=$verdict" >> "$GITHUB_ENV"
 
-      - name: Publish the review-bot-ack context on the head commit
-        # Never publish while being cancelled: a cancelled job has no verdict,
-        # and an absent required context correctly reads as blocked.
+      # The verdict is handed to `review-bot-ack-publish.yml` rather than
+      # published here.
+      #
+      # A `pull_request` event raised from a fork gets a read-only
+      # GITHUB_TOKEN, and a `permissions:` block cannot raise it: that cap is
+      # GitHub's, not ours. Publishing from this job therefore failed with
+      # `403 Resource not accessible by integration` on every fork pull
+      # request, which left the required context absent and the contribution
+      # permanently unmergeable. Measured on one day: four fork pull requests
+      # got 403, the one same-repo pull request published fine.
+      #
+      # `workflow_run` runs in the base repository's context with the base
+      # token, so the publisher there can hold `checks: write` for a fork
+      # pull request exactly as it does for a branch one.
+      - name: Hand the verdict to the publisher
         if: ${{ !cancelled() }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          python3 scripts/publish_required_check.py \
-            --repo "$REPO" \
-            --sha "$HEAD_SHA" \
-            --name review-bot-ack \
-            --conclusion "$VERDICT" \
-            --title "Review-bot acknowledgement gate" \
-            --summary "Every must-address CodeRabbit and Sourcery finding must be fixed in a later commit or acknowledged in the PR body. See the sticky summary comment on the pull request for the per-finding breakdown." \
-            --details-url "$RUN_URL"
+          mkdir -p verdict
+          printf '%s\n' "$VERDICT" > verdict/conclusion
+          printf '%s\n' "$HEAD_SHA" > verdict/head_sha
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: review-bot-ack-verdict
+          path: verdict/
+          retention-days: 1
 
       - name: Reflect the verdict in this job
         if: ${{ !cancelled() }}
