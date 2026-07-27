@@ -35,10 +35,19 @@ CHILDREN = (
 # dispatcher can forward only those (zizmor `secrets-inherit`: blanket
 # `secrets: inherit` would otherwise leak every repository secret to every
 # called workflow). GITHUB_TOKEN is auto-provided and never appears here.
+#
+# BERNSTEIN_AUTOSYNC_TOKEN is not incidental and must not be tidied away. Both
+# heal lanes open a pull request, and a reusable workflow sees only the secrets
+# its caller passes: drop the forward and `secrets.BERNSTEIN_AUTOSYNC_TOKEN`
+# reads as empty inside the callee, the `|| secrets.GITHUB_TOKEN` fallback
+# takes over, and the resulting pull request triggers no workflows, so no
+# required context ever reports and branch protection holds it at BLOCKED.
+# `test_bot_pull_request_tokens_yaml.py` asserts the forward from the other
+# side; the two guards have to agree.
 EXPECTED_CHILD_SECRETS: dict[str, frozenset[str]] = {
     "auto-release": frozenset(),
-    "auto-heal": frozenset(),
-    "bernstein-ci-fix": frozenset({"GEMINI_API_KEY"}),
+    "auto-heal": frozenset({"BERNSTEIN_AUTOSYNC_TOKEN"}),
+    "bernstein-ci-fix": frozenset({"BERNSTEIN_AUTOSYNC_TOKEN", "GEMINI_API_KEY"}),
     "bisect-on-red": frozenset(),
 }
 
