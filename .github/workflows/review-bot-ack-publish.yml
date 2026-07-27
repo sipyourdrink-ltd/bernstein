@@ -22,11 +22,20 @@ name: Review-bot acknowledgement publisher
 #      the artifact. Otherwise a fork could claim `success` for a commit on
 #      another pull request.
 #   2. The conclusion is accepted only if it is exactly `success`. Anything
-#      else, including a missing artifact, a malformed one, or a gate run
-#      that did not conclude successfully, publishes `failure`. Fail closed.
+#      else, including a missing artifact, a malformed one, or a gate run that
+#      concluded `failure`, publishes `failure`. Fail closed.
 #
 # Nothing from the artifact is ever executed, and no repository content from
 # the head is checked out here.
+#
+# Failing closed has one exception, and it is not a weakening of the rule.
+# A `cancelled` gate run is not a gate that said no; it is a gate that was
+# superseded before it could say anything, and a run with no verdict must not
+# write one. The job condition drops those, and a currency check below drops
+# any other publisher that a newer gate run has already overtaken. Both are
+# necessary because publishers queue for runners, so the order they write in
+# is not the order the gates concluded in. See the job comment for the
+# incident that established this.
 
 on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
@@ -44,7 +53,24 @@ jobs:
     name: review-bot-ack-publisher
     # merge_group runs of the gate publish their own context in-repo, where
     # the token is already writable. Only pull-request runs need this hop.
-    if: github.event.workflow_run.event == 'pull_request'
+    #
+    # A cancelled gate run publishes nothing at all. It has no verdict: it was
+    # superseded before it could reach one, which is not the same as failing.
+    # `review-bot-ack.yml` already refuses to publish from a cancelled job for
+    # exactly this reason, and the publisher has to honour the same rule or it
+    # reintroduces the problem one hop later.
+    #
+    # It is not enough to rely on the newer run overwriting the older verdict.
+    # Publishers queue, so their execution order is not their trigger order.
+    # Observed on this repository: a gate run cancelled at 06:49 and its
+    # replacement succeeded at 07:02, but the cancelled run's publisher was
+    # still waiting for a runner and wrote last, turning a passing pull request
+    # red with the summary "the gate run concluded cancelled". Two pull
+    # requests were blocked this way at once, and the only visible cause was a
+    # failure on work that had already passed.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -77,7 +103,40 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
+      # Skipping a cancelled run closes the case that actually bit us, but not
+      # the general one: any two gate runs on a head can have their publishers
+      # execute in the opposite order to the gates themselves, because a
+      # publisher waits for a runner before it writes. Whoever writes last wins
+      # the check-run, and that need not be whoever is right.
+      #
+      # So the last writer is made to check whether it is still the current
+      # one. If a newer gate run exists for this head SHA, this publisher is
+      # stale by definition and stays quiet: the newer run has its own
+      # publisher and a better answer.
+      - name: Stand down if a newer gate run exists for this head
+        id: currency
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          THIS_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          newest="$(gh api \
+            "repos/$REPO/actions/runs?head_sha=$EVENT_SHA&per_page=100" \
+            --jq '[.workflow_runs[]
+                   | select(.name == "Review-bot acknowledgement gate")
+                   | .id] | max // 0')"
+          echo "this run: $THIS_RUN, newest gate run on $EVENT_SHA: $newest"
+          if [ "${newest:-0}" -gt "$THIS_RUN" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::a newer gate run ($newest) exists for this head; leaving the verdict to it"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve the conclusion, failing closed
+        if: steps.currency.outputs.stale != 'true'
         env:
           GATE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -111,6 +170,7 @@ jobs:
           echo "resolved $verdict: $reason"
 
       - name: Publish the review-bot-ack context on the head commit
+        if: steps.currency.outputs.stale != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

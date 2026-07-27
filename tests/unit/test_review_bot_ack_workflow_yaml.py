@@ -471,3 +471,72 @@ def test_classifier_must_address_vs_informational() -> None:
         assert classify(body) == "must-address", body
     for body in info_examples:
         assert classify(body) == "informational", body
+
+
+def test_publisher_never_speaks_for_a_cancelled_gate_run(
+    publish_doc: dict[str, object],
+) -> None:
+    """INV-2g. A run with no verdict must not write one.
+
+    A `cancelled` gate run did not decide against the pull request; it was
+    superseded before it could decide anything. `review-bot-ack.yml` already
+    refuses to publish from a cancelled job for that reason, and the publisher
+    has to hold the same line or the problem simply moves one hop later.
+
+    Treating `cancelled` as `failure` is not conservative here, it is wrong,
+    and it is wrong in the direction that blocks good work: it turns a passing
+    pull request red with a summary describing a run that never finished.
+    """
+    for key, job in _jobs(publish_doc).items():
+        condition = " ".join(str(job.get("if", "")).split())
+        assert "conclusion != 'cancelled'" in condition, (
+            f"publisher job {key!r} runs for a cancelled gate run; its condition is "
+            f"{condition!r}. A cancelled run has no verdict and must publish nothing."
+        )
+
+
+def test_publisher_stands_down_when_a_newer_gate_run_exists(
+    publish_doc: dict[str, object],
+) -> None:
+    """INV-2h. The last writer must check that it is still the current one.
+
+    Dropping cancelled runs closes the observed case but not the general one.
+    Publishers wait for runners, so the order they write the check-run in is
+    not the order the gate runs concluded in: a gate that finished first can
+    have its publisher scheduled last and overwrite a newer, better answer.
+    Since the check-run is upserted per head SHA, last writer wins outright.
+
+    So the publisher resolves the newest gate run for its own head SHA and
+    stays quiet if that is not itself, which makes the outcome independent of
+    scheduling order rather than merely less likely to be wrong.
+    """
+    for key, job in _jobs(publish_doc).items():
+        steps = _steps(job)
+        script = "\n".join(str(step.get("run", "")) for step in steps)
+        if PUBLISHER not in script:
+            continue
+
+        currency = [step for step in steps if step.get("id") == "currency"]
+        assert currency, (
+            f"publisher job {key!r} has no currency check; a stale publisher can "
+            "overwrite a newer verdict because it happened to be scheduled later"
+        )
+
+        probe = str(currency[0].get("run", ""))
+        assert "head_sha=" in probe and "workflow_runs" in probe, (
+            "the currency check must ask the API which gate runs exist for this head SHA"
+        )
+        assert "stale=true" in probe, "the currency check must be able to report staleness"
+
+        publishing = [
+            step
+            for step in steps
+            if PUBLISHER in str(step.get("run", "")) or "Resolve the conclusion" in str(step.get("name", ""))
+        ]
+        assert publishing, f"expected publishing steps in job {key!r}"
+        for step in publishing:
+            guard = " ".join(str(step.get("if", "")).split())
+            assert "currency.outputs.stale" in guard, (
+                f"step {step.get('name')!r} in job {key!r} writes the verdict without "
+                f"consulting the currency check; its condition is {guard!r}"
+            )
