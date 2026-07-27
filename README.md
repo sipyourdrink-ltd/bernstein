@@ -16,13 +16,13 @@
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
 [![GHCR](https://img.shields.io/badge/ghcr.io-bernstein-2496ed?logo=docker&logoColor=white)](https://ghcr.io/sipyourdrink-ltd/bernstein)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![License](https://img.shields.io/github/license/sipyourdrink-ltd/bernstein)](LICENSE)
+[![License](https://img.shields.io/github/license/sipyourdrink-ltd/bernstein)](https://github.com/sipyourdrink-ltd/bernstein/blob/main/LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sipyourdrink-ltd/bernstein/badge)](https://scorecard.dev/viewer/?uri=github.com/sipyourdrink-ltd/bernstein)
 [![CodeQL](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/codeql.yml)
 [![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](docs/getting-started/install.md) &middot; [first run](docs/getting-started/first-run.md) &middot; [glossary](docs/reference/GLOSSARY.md) &middot; [limitations](docs/reference/KNOWN_LIMITATIONS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/install.md) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 </div>
 
@@ -39,7 +39,7 @@ Four things set it apart; everything after is detail.
 - **Isolated by construction.** Each task gets its own git worktree behind merge gates. No shared mutable state between agents.
 - **Broad and local.** 40+ CLI agent adapters plus a generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
 
-The full list is on the [capabilities page](docs/reference/capabilities.md); the [feature matrix](docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
+The full list is on the [capabilities page](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); the [feature matrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
 
 ### install in 30 seconds
 
@@ -49,7 +49,7 @@ bernstein init
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pip, uv, brew, dnf, npm, Docker, and the air-gapped wheelhouse are covered in the [install guide](docs/getting-started/install.md).
+pip, uv, brew, dnf, npm, Docker, and the air-gapped wheelhouse are covered in the [install guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/install.md).
 
 <img alt="Bernstein in action: parallel AI agents orchestrated in real time" src="docs/assets/in-action-small.gif" width="700">
 
@@ -76,7 +76,7 @@ Each goal moves through four stages:
 3. **Verify**. The janitor checks concrete signals: tests pass, files exist, lint clean, types correct.
 4. **Merge**. Verified work lands in main. Failed tasks get retried or routed to a different model.
 
-Why the scheduler is plain Python, and what that trades away: [why deterministic](docs/architecture/WHY_DETERMINISTIC.md).
+Why the scheduler is plain Python, and what that trades away: [why deterministic](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### everyday commands
 
@@ -89,11 +89,11 @@ bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute
 bernstein stop                    # graceful shutdown with drain
 ```
 
-The full operator surface (PR automation, schedules, chat bridges, the autofix daemon) is in [operator commands](docs/operations/commands.md).
+The full operator surface (PR automation, schedules, chat bridges, the autofix daemon) is in [operator commands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md).
 
 ### supported agents
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](docs/adapters/index.md) carries the full table with install commands; anything else with a `--prompt` flag works through the generic wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries the full table with install commands; anything else with a `--prompt` flag works through the generic wrapper.
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
@@ -103,13 +103,13 @@ Everything deep lives on the [docs site](https://bernstein.readthedocs.io/):
 
 | | |
 |---|---|
-| [capabilities](docs/reference/capabilities.md) | the full capability list: MCP server mode, signed agent cards, sandbox backends, artifact sinks, regulatory mappings |
-| [who this is for](docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
-| [workflows](docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
-| [web UI](docs/gui/index.md) | browser dashboard on the same API the TUI uses |
-| [cloud execution](docs/cloudflare/cloudflare-overview.md) | run agents on Cloudflare Workers with R2 workspace sync |
-| [security](docs/operations/security.md) | scorecard, fuzzing, hardening |
-| [architecture](docs/architecture/ARCHITECTURE.md) | how it works under the hood |
+| [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | the full capability list: MCP server mode, signed agent cards, sandbox backends, artifact sinks, regulatory mappings |
+| [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
+| [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
+| [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browser dashboard on the same API the TUI uses |
+| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | run agents on Cloudflare Workers with R2 workspace sync |
+| [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, hardening |
+| [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | how it works under the hood |
 
 ### why the name?
 
@@ -125,15 +125,15 @@ Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), cover
 <summary>All coverage: 20+ awesome lists, directories, newsletters, and peer citations</summary>
 <br>
 
-The full tracked list, including every awesome-list entry, catalog listing, prior-art citation, and newsletter mention, lives in [docs/mentions.md](docs/mentions.md). Entries are added as they appear; corrections welcome by issue or PR.
+The full tracked list, including every awesome-list entry, catalog listing, prior-art citation, and newsletter mention, lives in [docs/mentions.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mentions.md). Entries are added as they appear; corrections welcome by issue or PR.
 
 </details>
 
 ### contributing, support, license
 
-PRs welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has setup and code style. Security reports go through [SECURITY.md](SECURITY.md). If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry). Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
+PRs welcome; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) has setup and code style. Security reports go through [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry). Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
 
-Citation metadata lives in [CITATION.cff](CITATION.cff). License: [Apache-2.0](LICENSE).
+Citation metadata lives in [CITATION.cff](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CITATION.cff). License: [Apache-2.0](https://github.com/sipyourdrink-ltd/bernstein/blob/main/LICENSE).
 
 ---
 
