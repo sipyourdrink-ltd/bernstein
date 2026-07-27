@@ -218,6 +218,38 @@ def test_publisher_fails_closed(publish_doc: dict[str, object]) -> None:
         )
 
 
+def test_direct_publish_never_fails_the_gate_job(
+    gate_doc: dict[str, object],
+) -> None:
+    """INV-2f. The in-job publish must be best effort, never load bearing.
+
+    It is kept for two reasons. `workflow_run` only fires for workflows
+    present on the default branch, so a pull request that introduces or
+    edits the companion publisher cannot be published by it and could not
+    satisfy its own required context. And a same-repo pull request gets the
+    context immediately rather than after a second workflow schedules.
+
+    On a fork the token is read-only and this step 403s. If that failure
+    propagated, the gate run would conclude `failure`, and the authoritative
+    `workflow_run` publisher would then publish `failure` for a pull request
+    that actually passed. So the step must carry `continue-on-error`.
+    """
+    for key, job in _jobs(gate_doc).items():
+        for step in _steps(job):
+            if PUBLISHER not in str(step.get("run", "")):
+                continue
+            hands_off = any(VERDICT_ARTIFACT in str((s.get("with") or {}).get("name", "")) for s in _steps(job))
+            if not hands_off:
+                # A job with no handoff has nothing else to publish for it,
+                # so its publish is load bearing and must not be swallowed.
+                continue
+            assert step.get("continue-on-error") is True, (
+                f"job {key!r} both hands the verdict off and publishes directly, so the direct publish must "
+                "carry continue-on-error: a fork's read-only token makes it 403, and letting that fail the "
+                "job would make the workflow_run publisher report failure for a passing pull request"
+            )
+
+
 def test_no_job_checks_out_the_pull_request_head(
     gate_doc: dict[str, object],
 ) -> None:
