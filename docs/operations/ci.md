@@ -175,6 +175,27 @@ The CI gate aggregation is unchanged: `ci-gate` still rolls up
 `needs.*.result` for every job (all remaining matrix cells included)
 and still reports on `pull_request` and `merge_group`.
 
+### Python 3.14
+
+`nightly-deep-tests.yml` carries the only lane that executes tests on
+3.14 (`unit-python-314`, the unit suite in 4 shards). Everywhere else a
+3.14 pin appears it installs the package without running a test: the
+`install-smoke-uv` cell in `ci.yml`, plus the auto-heal, reconcile-release
+and adapter-contract-drift workflows.
+
+It is deliberately not on the PR matrix. The `test` matrix fans out over
+os x python x shard, so a python row costs 8 more jobs on every pull
+request. Measured on one head SHA, `ci.yml` already puts 39 jobs on a
+pull request and 47 on a push to main, out of 67 check-runs on the head,
+against the 20-concurrent-job ceiling below. Buying 3.14 coverage on the
+PR path would lengthen every PR's queue for an interpreter nothing ships
+on yet; nightly costs 4 jobs a day and surfaces a 3.14-only regression
+within 24 hours.
+
+`tests/unit/test_nightly_deep_tests_workflow_yaml.py` pins the lane, so
+dropping 3.14 coverage has to be a deliberate edit rather than an
+omission.
+
 ## Concurrency policy
 
 | Event | Group key | `cancel-in-progress` |
@@ -252,6 +273,65 @@ Everything else that triggers on `pull_request` is advisory:
 `dependency-review`, `docs-drift`, `license-compliance`, `pr-labels`,
 `pr-observability-summary`, `pr-policy`, `required-check-canary`,
 `spiffe-extra-e2e`, `trufflehog`, `typecheck-ts`, `zizmor`.
+
+### Pull requests opened by automation
+
+A pull request created with the Actions token (`secrets.GITHUB_TOKEN`, or
+the identical `github.token`) does not trigger workflows. Neither gating
+context above ever reports on it, so branch protection holds it at
+`BLOCKED` while the status rollup reads `SUCCESS`. Nothing is red and
+nothing is pending; the only way out is an operator closing it, and a
+closed pull request cannot be revived by force-pushing its branch, so the
+next fire opens a fresh one.
+
+Every workflow that opens a pull request therefore prefers a configured
+PAT and falls back to the Actions token:
+
+```yaml
+token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
+```
+
+The same token is used for the branch push in those lanes, because a push
+made with the Actions token emits no `pull_request: synchronize` either,
+which would leave a re-pushed branch showing stale checks. A lane that
+opened correctly and then re-pushed with the Actions token would be worse
+off than the original bug: the rollup would read green against a
+superseded commit rather than reading empty. Two shapes carry the token
+to git, and both are accepted:
+
+| Shape | Lanes | How git gets the token |
+|-------|-------|------------------------|
+| Persisted checkout credential | `adapter-conformance-canary`, `bernstein-ci-fix`, `nightly-drift-sweep` | `actions/checkout` is given the same `token:` expression and leaves it in `.git/config` |
+| Explicit auth header | `auto-heal`, `bernstein-issues-decompose` | the step checks out with `persist-credentials: false`, then sets `http.https://github.com/.extraheader` from `$GH_TOKEN` and unsets it on exit |
+
+Passing `persist-credentials: false` without setting the header leaves the
+push with no credential at all, which fails loudly rather than silently,
+so it is treated as a failure by the same guard.
+
+**What degrades without the secret.** On a fork, or in any environment
+where `BERNSTEIN_AUTOSYNC_TOKEN` is unset, the expression falls through to
+the Actions token and the old behaviour returns: the pull request opens
+but collects no checks and cannot merge until an operator closes and
+reopens it, or pushes a commit under their own identity.
+`auto-heal.yml` is the exception - it detects the missing secret and
+dispatches `ci.yml` on the heal branch instead, so the head SHA still
+gets a `CI gate`; that dispatch is skipped when the secret is present, to
+avoid a duplicate full-matrix run.
+
+`tests/unit/test_bot_pull_request_tokens_yaml.py` discovers the
+pull-request-opening steps rather than reading them from a list, so a new
+automation lane cannot reintroduce the Actions token without failing the
+unit suite. It sweeps `.github/workflows/*.yml` **and** the composite
+actions under `.github/actions/*/action.yml`, and recognises four ways to
+open a pull request: `peter-evans/create-pull-request`, `gh pr create`,
+`gh api -X POST .../pulls`, and an `actions/github-script` step calling
+`pulls.create`. The last two match nothing today; they are covered because
+a lane that reaches for the API instead of the porcelain is the cheapest
+way to reintroduce the bug past a guard that only knows two spellings.
+The same module resolves the credential each lane pushes its branch with
+and holds it to the same standard, and asserts the discovered set of lanes
+exactly, so a widened matcher cannot quietly demand a PAT of a lane that
+only reads pull requests.
 
 ### What the pool actually spends
 

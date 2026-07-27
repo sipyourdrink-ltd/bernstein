@@ -85,9 +85,26 @@ jobs:
         with:
           egress-policy: audit
 
+      # Check out the merge group's BASE ref, never the queued entry.
+      #
+      # `actions/checkout` with no `ref:` takes the ref that triggered the
+      # run. On a `merge_group` event that is the ephemeral
+      # `gh-readonly-queue/<base>/pr-<n>-<base sha>` branch, which carries
+      # the candidate pull request's tree. This job holds `checks: write`,
+      # and `checks: write` is enough to forge a required context: it can
+      # post a completed check-run named `CI gate` with conclusion
+      # `success` on any commit in the repository. Running
+      # `scripts/publish_required_check.py` out of a candidate tree would
+      # hand that capability to whoever authored the queued pull request.
+      #
+      # This is the same reasoning that pins the `pr-gate` job below to
+      # the pull request's base ref. The job needs nothing from any
+      # candidate tree: it resolves the pull request and its check-runs
+      # over the API, and the publisher is API-only too.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.merge_group.base_ref }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -238,10 +255,59 @@ jobs:
           fi
           echo "VERDICT=$verdict" >> "$GITHUB_ENV"
 
-      - name: Publish the review-bot-ack context on the head commit
-        # Never publish while being cancelled: a cancelled job has no verdict,
-        # and an absent required context correctly reads as blocked.
+      # The verdict is handed to `review-bot-ack-publish.yml` rather than
+      # published here.
+      #
+      # A `pull_request` event raised from a fork gets a read-only
+      # GITHUB_TOKEN, and a `permissions:` block cannot raise it: that cap is
+      # GitHub's, not ours. Publishing from this job therefore failed with
+      # `403 Resource not accessible by integration` on every fork pull
+      # request, which left the required context absent and the contribution
+      # permanently unmergeable. Measured on one day: four fork pull requests
+      # got 403, the one same-repo pull request published fine.
+      #
+      # `workflow_run` runs in the base repository's context with the base
+      # token, so the publisher there can hold `checks: write` for a fork
+      # pull request exactly as it does for a branch one.
+      - name: Hand the verdict to the publisher
         if: ${{ !cancelled() }}
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p verdict
+          printf '%s\n' "$VERDICT" > verdict/conclusion
+          printf '%s\n' "$HEAD_SHA" > verdict/head_sha
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: review-bot-ack-verdict
+          path: verdict/
+          retention-days: 1
+
+      # Best-effort direct publish, kept alongside the handoff for two
+      # reasons.
+      #
+      # Bootstrap: `workflow_run` only fires for workflows that exist on the
+      # default branch, so a pull request that introduces or edits the
+      # companion publisher cannot be published by it and would be unable to
+      # satisfy its own required context.
+      #
+      # Latency: a same-repo pull request gets the context immediately here
+      # rather than after a second workflow schedules.
+      #
+      # `continue-on-error` is what makes this safe to keep. On a fork the
+      # token is read-only and this step 403s; swallowing that is correct,
+      # because the `workflow_run` publisher is the authoritative path and
+      # would otherwise see a failed gate run and publish `failure` for a
+      # pull request that actually passed. The publish script upserts a
+      # single terminal check-run per head SHA, so both paths running is
+      # idempotent rather than duplicative.
+      - name: Publish directly when the token allows it
+        id: direct_publish
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

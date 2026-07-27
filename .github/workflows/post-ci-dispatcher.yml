@@ -186,7 +186,15 @@ jobs:
       id-token: write
       actions: read
     uses: ./.github/workflows/auto-heal.yml
-    # GITHUB_TOKEN is auto-provided to the reusable workflow.
+    # GITHUB_TOKEN is auto-provided to the reusable workflow. Nothing else
+    # is: a reusable workflow sees only the secrets passed here, so the
+    # token the heal lane uses to open its pull request has to be forwarded
+    # explicitly or the reference reads as empty and the lane degrades to
+    # the Actions token, whose pull requests never trigger workflows. The
+    # callee declares it `required: false`, so an environment without the
+    # secret still boots.
+    secrets:
+      BERNSTEIN_AUTOSYNC_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
     with:
       head_sha: ${{ needs.meta.outputs.head_sha }}
       run_id: ${{ needs.meta.outputs.run_id }}
@@ -228,6 +236,9 @@ jobs:
     # `required: false` on the called workflow so jobs that need it gate
     # on a non-empty value rather than failing the whole reusable call.
     secrets:
+      # See the auto-heal call above: a reusable workflow sees only what it
+      # is passed, so the pull-request token has to be forwarded explicitly.
+      BERNSTEIN_AUTOSYNC_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
       # Re-enable the pass once OPENROUTER_API_KEY_FREE is defined on

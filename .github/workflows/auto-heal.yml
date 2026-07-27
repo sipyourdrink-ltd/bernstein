@@ -47,6 +47,17 @@ on:
         description: Display title of the upstream CI run (commit subject).
         required: true
         type: string
+    secrets:
+      BERNSTEIN_AUTOSYNC_TOKEN:
+        description: >-
+          PAT used to push the heal branch and open the heal pull request. A
+          reusable workflow sees no secret it was not passed, so this has to be
+          declared here and forwarded by post-ci-dispatcher.yml; without the
+          declaration the reference silently reads as empty and the lane falls
+          back to the Actions token, whose pull requests never trigger
+          workflows. Optional - the fallback is a working degraded mode, see
+          docs/operations/ci.md.
+        required: false
     outputs:
       heal_outcome:
         description: >-
@@ -280,6 +291,12 @@ jobs:
       pr_url: ${{ steps.open_pr.outputs.pr_url }}
       pr_number: ${{ steps.open_pr.outputs.pr_number }}
       outcome: ${{ steps.outcome.outputs.outcome }}
+    env:
+      # The `secrets` context is not readable from a step-level `if`, so the
+      # presence of the triggering token is lifted into an env flag here. It
+      # decides whether the heal PR can collect its own checks or whether the
+      # explicit ci.yml dispatch below has to stand in for them.
+      HAS_TRIGGERING_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN != '' }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -501,7 +518,11 @@ jobs:
         id: push_branch
         if: steps.cordon.outputs.noop != 'true' && steps.self_test.outputs.validation_failed != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Same token as the PR step below, so the branch push and the pull
+          # request carry one identity: a push made with GITHUB_TOKEN emits no
+          # `pull_request: synchronize`, which would leave a re-pushed heal
+          # branch with stale checks.
+          GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           SHORT_SHA: ${{ needs.triage.outputs.short_sha }}
           STRATEGY: ${{ needs.triage.outputs.strategy }}
         run: |
@@ -527,11 +548,13 @@ jobs:
 
       - name: Trigger CI on heal PR branch
         id: ci_dispatch
-        # PRs opened via secrets.GITHUB_TOKEN do not emit `pull_request`
-        # events for downstream workflows, so CI never auto-starts on the
-        # newly pushed heal branch. Dispatch ci.yml explicitly before the
-        # PR is opened so dispatch failure can block the PR path.
-        if: steps.push_branch.outputs.branch != ''
+        # Fallback only. A PR opened with secrets.GITHUB_TOKEN emits no
+        # `pull_request` event, so CI never auto-starts on the heal branch and
+        # this dispatch has to stand in for it. When
+        # BERNSTEIN_AUTOSYNC_TOKEN is configured the PR triggers its own
+        # workflows and dispatching here would only add a duplicate
+        # full-matrix run on the same head SHA.
+        if: steps.push_branch.outputs.branch != '' && env.HAS_TRIGGERING_TOKEN != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAL_BRANCH: ${{ steps.push_branch.outputs.branch }}
@@ -551,7 +574,13 @@ jobs:
           steps.self_test.outputs.validation_failed != 'true' &&
           steps.ci_dispatch.outputs.validation_failed != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A PR created with GITHUB_TOKEN does not trigger workflows, so
+          # neither required context ever reports and branch protection holds
+          # it at BLOCKED while the rollup reads SUCCESS. The GITHUB_TOKEN
+          # fallback keeps forks and secret-less environments working; there
+          # the dispatch step above supplies the CI signal instead. See
+          # docs/operations/ci.md.
+          GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           SHORT_SHA: ${{ needs.triage.outputs.short_sha }}
           STRATEGY: ${{ needs.triage.outputs.strategy }}
           HEAL_BRANCH: ${{ steps.push_branch.outputs.branch }}

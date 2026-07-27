@@ -15,6 +15,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from test_impact import (
+    CACHE_VERSION,
     _cache_is_fresh,
     _extract_bernstein_imports,
     build_dep_map,
@@ -145,7 +146,10 @@ class TestBuildDepMap:
             ti.SRC_ROOT = orig_src
             ti.ROOT = orig_root
 
-        assert dep_map["version"] == "2"
+        # Pin the constant, not a literal: the version exists to invalidate
+        # caches when the map's shape changes, so a bump is expected and must
+        # not be a test edit.
+        assert dep_map["version"] == CACHE_VERSION
         assert any("test_models.py" in k for k in dep_map["test_deps"])
 
     def test_nested_tests_are_discovered(self, tmp_path: Path) -> None:

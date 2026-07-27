@@ -30,6 +30,56 @@ permissions:
   contents: read
 
 jobs:
+  unit-python-314:
+    # The only lane that executes the unit suite on Python 3.14.
+    #
+    # `ci.yml` runs the unit matrix on 3.13 for pull requests and on
+    # 3.12 + 3.13 for pushes to main; ci-macos-nightly.yml is 3.13. The only
+    # 3.14 pins anywhere were the uv-tool install smoke and a handful of
+    # automation workflows, none of which execute a test. A 3.14-only
+    # regression was therefore invisible to every test lane.
+    #
+    # Why nightly and not the pull_request matrix. The `test` matrix fans out
+    # over os x python x shard, so adding a python row adds 8 jobs to every
+    # pull request (measured: `ci.yml` puts 39 jobs on a pull request head and
+    # 47 on a push to main, out of 67 check-runs total on the head SHA,
+    # against a 20-concurrent-job ceiling). Buying 3.14 coverage there would
+    # lengthen the queue on every pull request for an interpreter nothing
+    # ships on yet. Here it costs 4 jobs once a day, on a workflow with no
+    # pull_request trigger and no required context, and a 3.14-only
+    # regression surfaces within 24 hours instead of never.
+    #
+    # Sharded rather than a single job because a full unfiltered shard takes
+    # roughly half an hour; one unsharded job would run about two.
+    name: Unit tests (Python 3.14, shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.14"
+      - name: Run unit suite on 3.14
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          # Full discovery, no --affected: this lane exists to catch what the
+          # pull_request lane cannot see, so narrowing it to a diff would
+          # reintroduce the blind spot on a different axis.
+          uv run python scripts/run_tests.py --parallel 4 --shard "${SHARD}/4"
+
   hypothesis-deep:
     name: Hypothesis (deep, 1000 examples)
     runs-on: ubuntu-latest

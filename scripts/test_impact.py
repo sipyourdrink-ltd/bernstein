@@ -13,18 +13,23 @@ ROOT = Path(__file__).parent.parent
 CACHE_PATH = ROOT / ".sdd" / "test_deps.json"
 SRC_ROOT = ROOT / "src"
 TEST_DIRS = [ROOT / "tests" / "unit", ROOT / "tests" / "integration"]
-CACHE_VERSION = "2"
 
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from bernstein.core.test_impact import _path_to_module as _core_path_to_module  # noqa: E402
 from bernstein.core.test_impact import (  # noqa: E402
+    _COMPAT_CACHE_VERSION,
     build_compat_dep_map,
     compat_cache_is_fresh,
     compat_get_affected_tests,
     extract_project_imports,
 )
+from bernstein.core.test_impact import _path_to_module as _core_path_to_module  # noqa: E402
+
+# Re-exported so the CLI and the map builder cannot disagree about the version
+# stamped into .sdd/test_deps.json; two constants would let a stale cache pass
+# the freshness check after the map's shape changed.
+CACHE_VERSION = _COMPAT_CACHE_VERSION
 
 
 def _path_to_module(path: Path) -> str:

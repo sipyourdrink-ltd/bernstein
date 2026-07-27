@@ -60,7 +60,15 @@ jobs:
 
       # persist-credentials kept: this job pushes the last-green
       # regeneration branch when the projection changed.
+      #
+      # The persisted credential is the same token the PR step uses, so the
+      # branch push and the pull request carry one identity. A push made with
+      # GITHUB_TOKEN emits no `pull_request: synchronize`, so a later nightly
+      # force-push onto an already-open PR would leave its checks stale even
+      # if the PR itself had been opened under a triggering token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
+        with:
+          token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -194,7 +202,15 @@ jobs:
 
       - name: Propose last-green regeneration PR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A PR created with GITHUB_TOKEN does not trigger workflows: neither
+          # `CI gate` nor `review-bot-ack` ever reports, branch protection
+          # holds it at BLOCKED while the rollup reads SUCCESS, and an
+          # operator has to close it. This lane regenerates the packaged
+          # last-green projection, so a PR that can never merge means the
+          # shipped projection goes stale while the canary keeps reporting
+          # that it ran. The GITHUB_TOKEN fallback keeps forks and
+          # secret-less environments working; see docs/operations/ci.md.
+          GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if git diff --quiet -- src/bernstein/adapters/last_green.json docs/adapters/conformance-canary.md; then
