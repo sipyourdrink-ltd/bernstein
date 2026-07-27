@@ -213,6 +213,34 @@ queue merges -> push to main (same SHA) -> ci.yml (push) -> workflow_run
 list, so a version-bump commit always triggers the CI run the listener
 needs. That is asserted by `tests/unit/test_post_ci_dispatcher_yaml.py`.
 
+**Both halves of that chain were observed on the last live queue window
+(2026-05-21/22), not inferred.**
+
+*A queue merge does raise a `push` run on `main`.* PR #1842 merged out of
+the queue at `2026-05-22T02:23:09Z` (`merge_commit_sha ff07c5aa2`), and
+`ci.yml` fired on that commit three seconds later:
+
+```console
+$ gh api ".../actions/workflows/ci.yml/runs?head_sha=ff07c5aa2938..." \
+    --jq '.workflow_runs[] | "\(.created_at) event=\(.event) branch=\(.head_branch)"'
+2026-05-22T02:23:12Z  event=push  branch=main
+```
+
+*A queue build does not.* Every `merge_group` CI run in that window
+carried a `gh-readonly-queue/...` head branch, so none of them matches
+the dispatcher's `branches: [main]` filter:
+
+```console
+$ gh run list --event merge_group --limit 10 --json headBranch
+gh-readonly-queue/main/pr-1842-75aa8698...   (10 of 10 in this shape)
+```
+
+That is the property the release path needs: the queue's own CI cannot
+trigger a tag from an ephemeral ref, and the post-merge push still can.
+What has **not** been observed end to end is a version bump actually
+tagging and publishing through a live queue - no release happened during
+that window. Step 4 below is where that gets confirmed.
+
 **The invariant this depends on: one PR per push.** The release gate keys
 on the push's head SHA. If a merge group merged N > 1 entries at once, the
 base branch would advance by N commits in a single push, and the push
@@ -226,6 +254,14 @@ reason; see [Tunables](#tunables-source-of-truth).
 The values below are authoritative. **The shipped ruleset does not match
 them yet** - the "Shipped" column records the drift to be corrected when
 the queue is enabled.
+
+The machine-readable copy is
+[`merge-queue-ruleset.json`](merge-queue-ruleset.json). It is the exact
+body Step 1 PUTs, and `scripts/verify_merge_queue_ruleset.py` diffs the
+live ruleset against it, so "the shipped ruleset drifted from the
+runbook" is now one command rather than a careful read.
+`tests/unit/test_merge_queue_ruleset_spec.py` keeps the file, this table
+and the Step 1 payload from becoming three different answers.
 
 | Parameter | Shipped | Correct | Why |
 |-----------|---------|---------|-----|
@@ -246,8 +282,8 @@ safer.
 
 | # | Blocker | Evidence | Clears when |
 |---|---------|----------|-------------|
-| 1 | The shipped ruleset would eject **every** entry. `check_response_timeout_minutes` is `30`; the last 30 successful `CI` runs on `main` all took longer than that. | p50 49 min, p90 214 min, max 243 min, 30/30 over 30 min | Step 1 is applied (raises it to `240`) |
-| 2 | The shipped ruleset requires only `CI gate`. `review-bot-ack` is absent, so the queue would merge without the gate that branch protection requires at entry. | `gh api repos/$REPO/rulesets/16719298 --jq '.rules'` -> one context | Step 1 is applied |
+| 1 | The shipped ruleset would eject **every** entry. `check_response_timeout_minutes` is `30`; every measured `CI` run on `main` took longer than that. | p50 49 min, p90 214 min, max 243 min, 30/30 over 30 min. Re-checked 2026-07-27 over the last 40 concluded runs (`created_at` -> `updated_at`, which is what the queue timeout measures): p50 110, p90 224, max 243, **0 of 40** under 30 min | Step 1 is applied (raises it to `240`) and the verifier exits `0` |
+| 2 | The shipped ruleset requires only `CI gate`. `review-bot-ack` is absent, so the queue would merge without the gate that branch protection requires at entry. | `python scripts/verify_merge_queue_ruleset.py` -> `required_status_checks: missing 'review-bot-ack'` | Step 1 is applied and the verifier exits `0` |
 | 3 | CI wall time makes serialised merging impractical. `max_entries_to_build` is the number of groups built at once, but `max_entries_to_merge` is pinned to `1` for the release path, so a burst of N ready PRs costs N sequential merges. At p90 = 214 min that is most of a day for five PRs. | same distribution as #1 | CI wall time is bounded, or the release gate stops keying on the push head SHA so batches can merge |
 | 4 | The queue-side `review-bot-ack` emitter has never executed. `merge-group-verify` was written after the last live queue window (2026-05-22) and the queue has been disabled since. A required context whose emitter has never run is exactly the "waits forever on a check that cannot report" failure. | `gh run list --event merge_group` -> newest run 2026-05-22T02:04:46Z | The Step 4 smoke test observes it reporting on one real entry |
 
@@ -284,10 +320,40 @@ Expected: ruleset `main-merge-queue` at `enforcement: disabled`, and
 exactly two contexts - `CI gate` and `review-bot-ack`, both `app_id`
 `15368` (GitHub Actions).
 
+Then diff the live ruleset against the spec. This is the check that
+names the drift instead of asking you to spot it:
+
+```bash
+python scripts/verify_merge_queue_ruleset.py
+```
+
+Exit `0` means the ruleset is already correct and you can skip to Step 2.
+Exit `1` prints one line per drifted field; as of 2026-07-27 it prints:
+
+```console
+ruleset main-merge-queue (id 16719298)
+enforcement: disabled
+DRIFT: 3 field(s) disagree with the spec
+  - max_entries_to_build: max_entries_to_build: live 1, spec 5
+  - check_response_timeout_minutes: check_response_timeout_minutes: live 30, spec 240
+  - required_status_checks: missing 'review-bot-ack'
+```
+
 **Step 1 - correct the rules while still disabled.** This applies the
 tunables above and adds `review-bot-ack` to the queue's required checks.
 Keep `enforcement: disabled` in this payload: a mis-typed rule set then
 cannot enable the queue as a side effect.
+
+The spec file is the payload, so the whole step is one call:
+
+```bash
+gh api -X PUT "repos/$REPO/rulesets/$RULESET_ID" \
+  --input docs/operations/merge-queue-ruleset.json
+python scripts/verify_merge_queue_ruleset.py   # must now exit 0
+```
+
+The identical body is inlined below for operators reading this page
+without a checkout.
 
 ```bash
 REPO=sipyourdrink-ltd/bernstein
