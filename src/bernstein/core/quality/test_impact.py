@@ -19,21 +19,34 @@ from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
 
-_ANALYZER_CACHE_VERSION = "3"
-_COMPAT_CACHE_VERSION = "3"
+# Bumped whenever the shape or the derivation of a cached entry changes, so a
+# map built by an older rule is rebuilt rather than trusted. Cached "imports"
+# lists are alias-resolved at write time, so a change to alias discovery makes
+# every existing entry potentially short of edges even though its file hashes
+# still match.
+_ANALYZER_CACHE_VERSION = "4"
+_COMPAT_CACHE_VERSION = "4"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
 
-# Suffix of the module-level dict literals that declare a legacy import alias.
-#
 # A package can keep an old dotted import path alive without a physical shim
 # file by registering a ``sys.meta_path`` finder backed by a
 # ``{short_name: real_dotted_module}`` table. The import then resolves, but the
 # name the importer wrote never appears on disk, so an import graph keyed on
 # literal dotted names has no edge from the real module to the file that
-# imports it under the old name. Discovering the tables by shape (any
-# module-level ``*REDIRECT_MAP`` dict literal in a package ``__init__``) keeps
-# the resolution honest when a package adds a third table.
-_ALIAS_TABLE_SUFFIX = "REDIRECT_MAP"
+# imports it under the old name.
+#
+# Which module-level dict literals count as such a table is decided by their
+# content, not by what they are bound to. An earlier version required the name
+# to end in ``REDIRECT_MAP``, which made renaming the table -- a refactor no
+# importer can observe and no reviewer would question -- silently delete
+# selection edges. The two content filters in ``discover_module_aliases`` are
+# what actually discriminate, and they are strictly safer than a name check:
+# an entry is kept only when its target is a real module on disk and its
+# legacy key is not. A key that names no real module can be imported only if
+# some redirect resolves it, so an entry harvested from a dict that is not a
+# redirect table describes an import nobody can successfully write, and
+# contributes nothing. The failure mode of guessing wrong is therefore an
+# unused map entry, never a dropped edge.
 
 # Bound on alias chain following. Chains are one hop today; the bound stops a
 # hand-written cycle in an alias table from hanging the index build.
@@ -181,9 +194,8 @@ def _alias_tables_in_module(path: Path) -> dict[str, str]:
             continue
         if value is None:
             continue
-        for target in targets:
-            if isinstance(target, ast.Name) and target.id.endswith(_ALIAS_TABLE_SUFFIX):
-                tables.update(_string_dict_literal(value))
+        if any(isinstance(target, ast.Name) for target in targets):
+            tables.update(_string_dict_literal(value))
     return tables
 
 

@@ -341,3 +341,39 @@ single literal job name (branch-protection required-context); it runs a
 deterministic `--shard 1/4` subset on push and the affected slice on
 PRs, with `ci-macos-nightly.yml` running the full macOS matrix daily as
 the safety net.
+
+### Legacy import aliases and `--affected`
+
+`--affected` selects tests from an import graph keyed on the dotted
+names files literally write. Some of those names have no file behind
+them: `bernstein.core` and `bernstein.cli` keep old import paths alive
+with a `sys.meta_path` finder reading a `{short_name: real_module}`
+table, so `from bernstein.core.worktree import ...` resolves to
+`bernstein/core/git/worktree.py` with nothing on disk ever named
+`core/worktree.py`. Without alias resolution the graph has no edge from
+the real file to the suite that imports it under the old name, and a
+change confined to that file selects no tests for it.
+
+`discover_module_aliases` reads those tables statically, so selection
+works on a tree that was never installed. It identifies a table by what
+it contains, **not by what it is named**: any module-level `str -> str`
+dict literal in a package `__init__` counts, and an entry survives only
+if its target is a real module and its legacy key is not. Do not add a
+naming convention on top of this - keying on the name is what made a
+plain rename delete edges silently.
+
+Static reading can still drift from what the interpreter does: a table
+built by a call, or moved out of the `__init__` into its own module,
+resolves fine at runtime and is invisible to the reader.
+`test_every_live_redirect_edge_is_discovered` in
+`tests/unit/test_test_impact_alias_edges.py` is what catches that. It
+asks the finders actually installed on `sys.meta_path` which legacy
+names they serve and fails if the selector cannot see one of them. If
+it fires, the fix is to make the table readable again (keep it a
+literal in the package `__init__`) or to widen the reader - never to
+weaken the test.
+
+Alias resolution feeds the cached `imports` lists, so changing it means
+bumping `_ANALYZER_CACHE_VERSION` and `_COMPAT_CACHE_VERSION` in
+`src/bernstein/core/quality/test_impact.py`. File hashes alone will not
+invalidate a map whose edges were derived under the old rule.
