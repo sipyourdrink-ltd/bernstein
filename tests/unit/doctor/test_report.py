@@ -118,12 +118,20 @@ def test_run_all_handles_empty_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(network_mod, "run_network_checks", empty)
     monkeypatch.setattr(env_mod, "run_environment_checks", lambda: [])
 
+    # The audit-lock probe (#3064) is a fifth source. It always emits exactly
+    # one row, so it is pinned to a sentinel here: the property under test is
+    # that ``run_all`` merges its sources and adds nothing of its own.
+    import bernstein.cli.doctor.audit_lock_checks as audit_lock_mod
+
+    sentinel = _make("skip", category="environment")
+    monkeypatch.setattr(audit_lock_mod, "check_audit_lock_filesystem", lambda *_a, **_k: sentinel)
+
     from bernstein.cli import install_check
 
     monkeypatch.setattr(install_check, "check_installations", lambda: [])
 
     results = asyncio.run(run_all())
-    assert results == []
+    assert results == [sentinel]
 
 
 def test_render_report_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -533,8 +533,22 @@ and `--no-check-anchors` when the audit chain is not available alongside it.
 - **STAR is unaffected.** A STAR deployment never materialises a journal, never
   provisions a MESH signing identity, and answers `409` on the gossip route.
 - **Shared filesystem.** When peers share one filesystem, they can append to
-  one journal file directly; cross-process appends serialise under an exclusive
-  advisory lock, so the chain stays linear.
+  one journal file directly. Cross-process appends serialise under an exclusive
+  advisory `flock` taken on a single lock file per directory, so the chain stays
+  linear **only where that lock is honoured across the writers**. It is:
+  - **Reliable** on local filesystems (ext4, xfs, btrfs, APFS, ZFS) and on
+    NFSv4, where lock state is carried in the protocol.
+  - **Not reliable** on NFSv3 without a working `lockd`, on SMB/CIFS, on 9p and
+    virtiofs guest shares, and on FUSE passthrough mounts such as sshfs. On
+    those, `flock` typically succeeds and locks nothing outside the local
+    client, so two hosts both recover the same chain tail and fork it.
+  - **Absent on Windows.** `fcntl` does not exist there, so the append section
+    is a documented no-op and only in-process locks order writers.
+
+  `bernstein doctor` reports which of these applies to the audit directory it
+  finds (`audit:chain-lock-filesystem`). Where the lock is not reliable, give
+  each host its own audit directory and reconcile the chains offline instead of
+  sharing one.
 
 ---
 

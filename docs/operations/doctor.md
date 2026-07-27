@@ -53,6 +53,7 @@ note so the flag never crashes the diagnostic surface.
 | `adapter`       | `bernstein.cli.doctor.adapter_checks`                 | `bernstein.yaml`      |
 | `network`       | `bernstein.cli.doctor.network_checks`                 | `BERNSTEIN_OFFLINE=1` |
 | `environment`   | `bernstein.cli.doctor.environment_checks`             | env vars + file probes|
+| `environment`   | `bernstein.cli.doctor.audit_lock_checks`              | audit dir filesystem  |
 
 ### Installation checks
 
@@ -123,6 +124,30 @@ reporters can include the context automatically.
 Multiple markers can match simultaneously (for example, Docker inside
 GitHub Actions). The renderer suppresses the generic `CI` row when a
 more specific environment matched.
+
+### Audit-chain append lock
+
+`audit:chain-lock-filesystem` reports whether the audit directory sits where the
+chain's cross-process append lock actually works. Appends to
+`.sdd/audit/<day>.jsonl` serialise under `flock(LOCK_EX)` on one `.chain.lock`
+per directory; that is what stops two processes recovering the same chain tail
+and each appending a record carrying the same stale `prev_hmac`.
+
+| Result | When |
+|--------|------|
+| `ok`   | local filesystem (ext4, xfs, btrfs, APFS, ZFS) or any type not on the advisory list |
+| `warn` | NFS, SMB/CIFS, 9p, virtiofs, FUSE passthrough, or an overlay upper layer |
+| `warn` | no `fcntl` on this platform (Windows): the append section is a no-op |
+| `skip` | the filesystem type could not be determined |
+
+The type is read from `/proc/self/mountinfo` on Linux and from `mount` on
+macOS/BSD, taking the longest mount point that covers the directory. The check
+never returns `fail`: an operator running on a share has a working install and a
+deployment decision to make, and a red `doctor` would train them to ignore it.
+
+Remediation when it warns: keep the audit directory on a local filesystem, or
+give each host its own audit directory and reconcile the chains offline. See
+`docs/cluster/deployment-patterns.md`.
 
 ## Example output
 

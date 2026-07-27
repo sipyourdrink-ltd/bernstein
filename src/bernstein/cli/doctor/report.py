@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -127,20 +128,29 @@ async def run_all(
     *,
     adapter_names: Iterable[str] | None = None,
     provider_names: Iterable[str] | None = None,
+    audit_dir: Path | None = None,
 ) -> list[DoctorResult]:
     """Run every doctor category and return the merged result list.
 
     The four categories run in parallel where safe. Installation checks
     remain synchronous because they shell out trivially and complete
     instantly.
+
+    Args:
+        adapter_names: Restrict the adapter probes.
+        provider_names: Restrict the network probes.
+        audit_dir: Audit directory to check the append lock against. Defaults
+            to ``.sdd/audit`` under the working directory.
     """
     from bernstein.cli.doctor.adapter_checks import run_adapter_checks
+    from bernstein.cli.doctor.audit_lock_checks import check_audit_lock_filesystem
     from bernstein.cli.doctor.environment_checks import run_environment_checks
     from bernstein.cli.doctor.network_checks import run_network_checks
     from bernstein.cli.install_check import check_installations
 
     install_results = _installation_to_doctor(check_installations())
     env_results = run_environment_checks()
+    env_results.append(check_audit_lock_filesystem(audit_dir or Path.cwd() / ".sdd" / "audit"))
 
     adapter_task = asyncio.create_task(run_adapter_checks(adapter_names))
     network_task = asyncio.create_task(run_network_checks(provider_names))

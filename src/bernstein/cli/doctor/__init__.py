@@ -23,6 +23,11 @@ from bernstein.cli.doctor.adapter_checks import (
     check_adapter_binary,
     run_adapter_checks,
 )
+from bernstein.cli.doctor.audit_lock_checks import (
+    UNRELIABLE_FILESYSTEMS,
+    check_audit_lock_filesystem,
+    resolve_filesystem_type,
+)
 from bernstein.cli.doctor.environment_checks import (
     ENVIRONMENT_PROBES,
     detect_environments,
@@ -58,10 +63,12 @@ __all__ = [
     "ENVIRONMENT_PROBES",
     "PROVIDER_HOSTS",
     "STATUS_GLYPHS",
+    "UNRELIABLE_FILESYSTEMS",
     "DoctorResult",
     "DoctorStatus",
     "UnansweredTopic",
     "check_adapter_binary",
+    "check_audit_lock_filesystem",
     "check_provider_reachability",
     "detect_environments",
     "exit_code_for",
@@ -71,6 +78,7 @@ __all__ = [
     "load_unanswered_topics",
     "render_report",
     "render_suggestions",
+    "resolve_filesystem_type",
     "run_adapter_checks",
     "run_all",
     "run_environment_checks",
