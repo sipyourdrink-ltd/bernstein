@@ -7,6 +7,19 @@ from pathlib import Path
 import pytest
 from bernstein.core.test_impact import TestImpactAnalyzer as ImpactAnalyzer
 
+from bernstein.core.quality.test_impact import compat_get_affected_tests
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Guards in this repository that parse workflow YAML but are named after the
+# workflow they pin rather than after the word "workflow". Each one has to be
+# selected by a workflow-only change; a name-only predicate misses all three.
+_WORKFLOW_GUARDS_WITHOUT_WORKFLOW_IN_NAME = (
+    "tests/unit/test_bot_pull_request_tokens_yaml.py",
+    "tests/unit/test_merge_queue_gate_coverage_yaml.py",
+    "tests/unit/test_post_ci_dispatcher_yaml.py",
+)
+
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +133,79 @@ def test_workflow_change_selects_workflow_yaml_tests(tmp_path: Path) -> None:
         "tests/unit/test_autoheal_workflow_yaml.py",
         "tests/unit/test_ci_workflow_yaml.py",
     ]
+
+
+def test_workflow_change_selects_guards_that_read_workflow_yaml(tmp_path: Path) -> None:
+    """A guard that reads workflow YAML is selected whatever its file is called.
+
+    Selecting on the substring ``workflow`` in the test file name only finds
+    guards that happen to follow that naming convention. A guard named after
+    the workflow it pins rather than after the word ``workflow`` reads the same
+    YAML and breaks on the same edit, so it belongs in the same selection.
+    """
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / ".github" / "workflows" / "post-ci-dispatcher.yml", "name: Dispatcher\n")
+    _write(
+        tmp_path / "tests" / "unit" / "test_post_ci_dispatcher_yaml.py",
+        'from pathlib import Path\n\nWORKFLOW = Path(".github") / "workflows" / "post-ci-dispatcher.yml"\n',
+    )
+    _write(
+        tmp_path / "tests" / "unit" / "test_tokens_yaml.py",
+        'WORKFLOWS = ".github/workflows"\n\ndef test_tokens() -> None:\n    assert WORKFLOWS\n',
+    )
+    _write(tmp_path / "tests" / "unit" / "test_models.py", "def test_model() -> None:\n    assert True\n")
+
+    analyzer = ImpactAnalyzer(tmp_path, test_dirs=[tmp_path / "tests" / "unit"])
+    analysis = analyzer.analyze([".github/workflows/post-ci-dispatcher.yml"])
+
+    assert analysis.fallback_used is False
+    assert analysis.affected_tests == [
+        "tests/unit/test_post_ci_dispatcher_yaml.py",
+        "tests/unit/test_tokens_yaml.py",
+    ]
+
+
+def test_dispatcher_workflow_change_selects_the_real_dispatcher_guard() -> None:
+    """A change to post-ci-dispatcher.yml selects this repository's own guard.
+
+    The synthetic cases above pin the rule; this one pins the rule against the
+    files that actually ship. ``test_post_ci_dispatcher_yaml.py`` asserts the
+    secrets each dispatched child job receives, so an edit to that workflow is
+    exactly the edit it exists to catch, and the pull-request lane has to run
+    it before the merge rather than after.
+    """
+    dep_map = {
+        "test_deps": {guard: {"hash": "", "imports": []} for guard in _WORKFLOW_GUARDS_WITHOUT_WORKFLOW_IN_NAME},
+        "source_imports": {},
+    }
+
+    affected = compat_get_affected_tests(
+        [".github/workflows/post-ci-dispatcher.yml"],
+        dep_map,
+        root=REPO_ROOT,
+        src_root=REPO_ROOT / "src",
+    )
+
+    selected = [path.relative_to(REPO_ROOT).as_posix() for path in affected]
+    assert "tests/unit/test_post_ci_dispatcher_yaml.py" in selected
+    assert selected == sorted(_WORKFLOW_GUARDS_WITHOUT_WORKFLOW_IN_NAME)
+
+
+def test_workflow_change_leaves_tests_that_never_read_workflows(tmp_path: Path) -> None:
+    """Widening the predicate must not degrade into selecting the whole suite."""
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / ".github" / "workflows" / "ci.yml", "name: CI\n")
+    _write(tmp_path / "tests" / "unit" / "test_models.py", "def test_model() -> None:\n    assert True\n")
+    _write(
+        tmp_path / "tests" / "unit" / "test_yaml_loader.py",
+        'import yaml\n\ndef test_load() -> None:\n    assert yaml.safe_load("a: 1")\n',
+    )
+
+    analyzer = ImpactAnalyzer(tmp_path, test_dirs=[tmp_path / "tests" / "unit"])
+    analysis = analyzer.analyze([".github/workflows/ci.yml"])
+
+    assert analysis.fallback_used is False
+    assert analysis.affected_tests == []
 
 
 def test_version_bump_falls_back_to_all_tests(tmp_path: Path) -> None:

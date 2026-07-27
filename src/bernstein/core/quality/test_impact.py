@@ -28,6 +28,13 @@ _ANALYZER_CACHE_VERSION = "4"
 _COMPAT_CACHE_VERSION = "4"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
 
+# The two forms a test uses to reach a workflow file: the directory spelled out
+# as a posix path, or assembled from path segments (``Path(".github") /
+# "workflows" / name``). Matching both keys selection on what a test reads
+# rather than on what the test happens to be called.
+_WORKFLOW_DIR_LITERAL = _WORKFLOW_PATH_PREFIX.rstrip("/")
+_WORKFLOW_DIR_SEGMENTS = ('".github"', "'.github'")
+
 # A package can keep an old dotted import path alive without a physical shim
 # file by registering a ``sys.meta_path`` finder backed by a
 # ``{short_name: real_dotted_module}`` table. The import then resolves, but the
@@ -397,9 +404,37 @@ def _has_workflow_change(changed_files: list[str]) -> bool:
     return any(Path(path).as_posix().startswith(_WORKFLOW_PATH_PREFIX) for path in changed_files)
 
 
-def _workflow_test_files(test_files: list[str]) -> set[str]:
-    """Return tests that validate workflow YAML or workflow tooling."""
-    return {test_file for test_file in test_files if "workflow" in Path(test_file).name}
+def _reads_workflow_files(test_path: Path) -> bool:
+    """Return True when a test file reaches into ``.github/workflows``."""
+    try:
+        text = test_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if _WORKFLOW_DIR_LITERAL in text:
+        return True
+    return "workflows" in text and any(segment in text for segment in _WORKFLOW_DIR_SEGMENTS)
+
+
+def _workflow_test_files(test_files: list[str], root: Path) -> set[str]:
+    """Return tests that validate workflow YAML or workflow tooling.
+
+    Two rules, unioned, because neither one alone is honest.
+
+    Selecting on the substring ``workflow`` in the file name only finds guards
+    that follow that convention. A guard named after the workflow it pins reads
+    the same YAML and breaks on the same edit, so the name rule drops it and the
+    breakage surfaces only after the merge, when the full suite runs.
+
+    Reading the file instead of its name fixes that but cannot stand on its own:
+    a guard that reaches workflows through a script it shells out to spells no
+    workflow path of its own, and the checked-in CI topology report is guarded
+    exactly that way. Keeping the name rule keeps that guard selected.
+    """
+    return {
+        test_file
+        for test_file in test_files
+        if "workflow" in Path(test_file).name or _reads_workflow_files(root / test_file)
+    }
 
 
 def _collect_tests_for_modules(
@@ -487,7 +522,7 @@ def compat_get_affected_tests(
     all_affected = _expand_transitive_modules(changed_modules, source_imports)
     affected_tests = _collect_changed_test_files(changed_files, root, test_deps)
     if _has_workflow_change(changed_files):
-        affected_tests.update(_workflow_test_files(list(test_deps)))
+        affected_tests.update(_workflow_test_files(list(test_deps), root))
     affected_tests.update(_collect_tests_for_modules(all_affected, module_to_tests))
 
     return sorted(root / rel for rel in affected_tests)
@@ -649,7 +684,7 @@ class TestImpactAnalyzer:
 
         affected: set[str] = set()
         mappings: list[TestMapping] = []
-        workflow_tests = sorted(_workflow_test_files(all_tests)) if _has_workflow_change(normalized) else []
+        workflow_tests = sorted(_workflow_test_files(all_tests, self._root)) if _has_workflow_change(normalized) else []
         if workflow_tests:
             affected.update(workflow_tests)
             mappings.append(

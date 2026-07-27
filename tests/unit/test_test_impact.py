@@ -439,6 +439,36 @@ class TestGetAffectedTests:
             "tests/unit/test_ci_workflow_yaml.py",
         ]
 
+    def test_workflow_change_selects_guards_that_read_workflow_yaml(self, tmp_path: Path) -> None:
+        """The legacy CLI selects workflow guards by what they read, not by name.
+
+        The shard runner drives this path, so a guard missed here is a guard the
+        pull-request lane never runs.
+        """
+        import test_impact as ti  # type: ignore[import]
+
+        src = tmp_path / "src"
+        self._make_dep_map(tmp_path, src=src)
+        test_dir = tmp_path / "tests" / "unit"
+        (test_dir / "test_post_ci_dispatcher_yaml.py").write_text(
+            'from pathlib import Path\n\nWORKFLOW = Path(".github") / "workflows" / "post-ci-dispatcher.yml"\n'
+        )
+        (test_dir / "test_models.py").write_text("def test_model() -> None:\n    assert True\n")
+
+        orig_src, orig_root = ti.SRC_ROOT, ti.ROOT
+        ti.SRC_ROOT = src
+        ti.ROOT = tmp_path
+        try:
+            dep_map = build_dep_map(test_dirs=[test_dir])
+            affected = get_affected_tests([".github/workflows/post-ci-dispatcher.yml"], dep_map)
+        finally:
+            ti.SRC_ROOT = orig_src
+            ti.ROOT = orig_root
+
+        assert [path.relative_to(tmp_path).as_posix() for path in affected] == [
+            "tests/unit/test_post_ci_dispatcher_yaml.py",
+        ]
+
     def test_package_data_change_selects_tests_of_owning_package(self, tmp_path: Path) -> None:
         """Non-Python package data maps to the tests of its owning package.
 

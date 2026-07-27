@@ -530,6 +530,37 @@ uv run python scripts/check_test_collection.py          # report
 uv run python scripts/check_test_collection.py --json   # machine-readable
 ```
 
+### Workflow-guard selection
+
+A workflow-only pull request runs the affected slice, so the guards that
+parse workflow YAML have to be inside it. Selecting those guards by the
+substring `workflow` in the test file name only finds the ones that
+follow that convention: a guard named after the workflow it pins reads
+the same YAML, breaks on the same edit, and was left out, so the failure
+surfaced on `main` after the merge instead of on the pull request.
+
+`_workflow_test_files` unions two rules, and both are load-bearing:
+
+| Rule | Why it cannot be dropped |
+|---|---|
+| `workflow` in the test file name | Keeps guards that reach workflows through a script they shell out to and so spell no workflow path of their own, `test_workflow_topology_report.py` among them |
+| Test text reaches into `.github/workflows` | Keeps guards named after the workflow they pin, `test_post_ci_dispatcher_yaml.py` among them |
+
+The content rule matches the directory written as a posix path and
+assembled from path segments (`Path(".github") / "workflows"`), which is
+how every guard in the tree reaches it. Measured against the tree at the
+time the rule landed, the name rule alone selected 36 files and the union
+selects 56.
+
+Selection stays keyed on what a test reads. A test that merely names a
+script which itself scans workflows is deliberately not selected:
+`run_tests.py` holds a `.github/workflows/` constant of its own, so that
+rule pulled in 18 further files that guard nothing about workflows.
+
+```bash
+uv run python scripts/test_impact.py --files .github/workflows/ci.yml --print-paths
+```
+
 ### Required-context presence
 
 A head commit that never produced a check-run for a required context
