@@ -179,6 +179,15 @@ elif mode == "hold_lock":
 
     with _chain_append_lock(audit_dir):
         (barrier / "held").write_text("1", encoding="utf-8")
+        # Do not leave the section until the prober has announced that it is
+        # about to take it. Under a working lock the prober is then blocked and
+        # the outcome is a function of the lock rather than of who the
+        # scheduler ran first.
+        deadline = time.monotonic() + 60.0
+        while not (barrier / "probing").exists():
+            if time.monotonic() > deadline:
+                raise SystemExit("barrier timeout waiting for probing")
+            time.sleep(0.002)
         time.sleep(cfg["hold_seconds"])
         # Written as the last act *inside* the section. Writing it after the
         # block would leave a window between the flock dropping and the mark
@@ -193,6 +202,7 @@ elif mode == "probe_lock":
         if time.monotonic() > deadline:
             raise SystemExit("barrier timeout waiting for held")
         time.sleep(0.002)
+    (barrier / "probing").write_text("1", encoding="utf-8")
     with _chain_append_lock(audit_dir):
         print(json.dumps({"holder_had_finished": (barrier / "holder-done").exists()}))
 
@@ -316,10 +326,12 @@ def _run_writers(
 def test_two_processes_never_occupy_the_append_section_at_once(tmp_path: Path) -> None:
     """A second process cannot enter the section while the first holds it.
 
-    Deterministic in both directions, which the N-writers tests below are not:
-    the holder marks the section entered, sleeps for a fixed span, then marks it
-    left. The prober takes the section the instant it sees the entry mark, so if
-    it gets in it can only be because the lock did not exclude it.
+    Timing-free, unlike the N-writers tests below: the holder does not leave the
+    section until the prober has announced it is about to take it, and marks the
+    section left as its last act inside. Under a working lock the prober is
+    blocked at that point, so it can only ever observe the mark, whatever the
+    scheduler does. ``hold_seconds`` is therefore zero here; it exists for the
+    no-lock twin, where the holder has to still be inside when the prober looks.
     """
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir()
@@ -334,7 +346,7 @@ def test_two_processes_never_occupy_the_append_section_at_once(tmp_path: Path) -
         audit_dir=audit_dir,
         barrier=barrier,
         mode="hold_lock",
-        hold_seconds=2.0,
+        hold_seconds=0.0,
     )
     prober = _spawn(
         worker_script,
@@ -359,6 +371,12 @@ def test_the_probe_reports_a_violation_when_the_lock_cannot_lock(tmp_path: Path)
     fail proves nothing about the lock; running the identical harness against
     the ``fcntl is None`` path - the one the code already documents as a no-op -
     shows the assertion is load bearing.
+
+    The holder stays inside for five seconds after the prober announces itself.
+    The prober's announce-then-acquire-then-stat is a handful of syscalls, so
+    the margin is not a tuning knob to be trimmed: it is the gap between a
+    couple of milliseconds of work and a deschedule long enough to make a loaded
+    runner report a lock it does not have.
     """
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir()
@@ -373,7 +391,7 @@ def test_the_probe_reports_a_violation_when_the_lock_cannot_lock(tmp_path: Path)
         audit_dir=audit_dir,
         barrier=barrier,
         mode="hold_lock",
-        hold_seconds=2.0,
+        hold_seconds=5.0,
         break_lock=True,
     )
     prober = _spawn(
