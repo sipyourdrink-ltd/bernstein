@@ -256,7 +256,10 @@ jobs:
         id: commit
         if: steps.diff_scope.outputs.should_open_pr == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Same token as the PR step below, so the branch push and the pull
+          # request carry one identity: a push made with the Actions token
+          # emits no `pull_request: synchronize`.
+          GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
@@ -274,7 +277,12 @@ jobs:
       - name: Open PR
         if: steps.diff_scope.outputs.should_open_pr == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # A PR created with the Actions token does not trigger workflows, so
+          # neither required context ever reports and branch protection holds
+          # it at BLOCKED while the rollup reads SUCCESS. The `github.token`
+          # fallback keeps forks and secret-less environments working; see
+          # docs/operations/ci.md.
+          GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ALLOWED_SCOPE: ${{ needs.scope_gate.outputs.allowed_scope }}
         run: |
