@@ -182,10 +182,28 @@ jobs:
         with:
           egress-policy: audit
 
+      # Check out the BASE branch, never the pull request's head.
+      #
+      # Both scripts this job runs reach the pull request over the API and
+      # need nothing from its tree, so taking the head bought nothing and
+      # cost two things.
+      #
+      # Availability: the required context is published by
+      # `scripts/publish_required_check.py`, which only exists on branches
+      # cut after it landed. On an older branch the step died with
+      # "can't open file ... publish_required_check.py", so the context was
+      # never published AT ALL and the pull request sat at BLOCKED with no
+      # failing required check to point at. Four contributor pull requests
+      # were stuck this way at once.
+      #
+      # Security: this job holds `pull-requests: write` and `issues: write`.
+      # Running Python out of a fork's tree with those permissions lets the
+      # fork author execute arbitrary code against this repository. Taking
+      # the base branch removes that entirely.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.ref }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:

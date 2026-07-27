@@ -127,6 +127,36 @@ def test_every_job_publishes_the_context_through_the_api(
         )
 
 
+def test_no_job_checks_out_the_pull_request_head(
+    gate_doc: dict[str, object],
+) -> None:
+    """INV-2b. The scripts must come from the base branch, never the head.
+
+    Two independent reasons, either one sufficient:
+
+    Availability. ``scripts/publish_required_check.py`` only exists on
+    branches cut after it landed. Checking out an older head made the
+    publish step die with "can't open file", so the required context was
+    never published at all and the pull request sat at BLOCKED with no
+    failing required check to point at.
+
+    Security. These jobs hold ``pull-requests: write`` and
+    ``issues: write``. Running Python out of a fork's tree with those
+    permissions would let the fork author execute arbitrary code against
+    this repository.
+    """
+    for key, job in _jobs(gate_doc).items():
+        for step in _steps(job):
+            if "checkout" not in str(step.get("uses", "")):
+                continue
+            ref = str((step.get("with") or {}).get("ref", ""))
+            assert "pull_request.head" not in ref, (
+                f"job {key!r} checks out the pull request head ({ref!r}). Both scripts reach the pull request "
+                "over the API and need nothing from its tree; use the base ref so the publisher always exists "
+                "and a fork cannot run code under this job's write permissions."
+            )
+
+
 def test_publish_is_skipped_while_a_job_is_being_cancelled(
     gate_doc: dict[str, object],
 ) -> None:
