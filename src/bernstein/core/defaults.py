@@ -201,6 +201,19 @@ class AgentDefaults:
     # (issue #3012). Mirrors agent_lifecycle._ORPHAN_LIVENESS_GRACE_S, which
     # already defers the reap-cycle death judgment on the same signal.
     liveness_grace_s: float = 90.0  # 1.5 min
+    # Upper bound on how long `liveness_grace_s` may keep deferring a
+    # heartbeat-staleness incident. The liveness signal is the runner log's
+    # mtime, and every CLI adapter except claude merges the child's stderr
+    # into that same file (`stderr=subprocess.STDOUT`), so provider retry
+    # chatter, a progress spinner, or a runtime deprecation warning refreshes
+    # the mtime with no real progress. Past this much continuous heartbeat
+    # silence the mtime is treated as output noise rather than proof of work,
+    # and the incident is raised (issue #3058). Sits well above
+    # `heartbeat_starting_timeout_s` so a slow first turn keeps its grace, and
+    # well below the wall-clock reaper's 5400s hard cap so a stalled agent
+    # stops holding a worker slot for the full cap. Override via
+    # `tuning.agent.liveness_suppression_cap_s`.
+    liveness_suppression_cap_s: float = 900.0  # 15 min
     idle_log_age_threshold_s: float = 180.0  # 3 min
 
     # Escalation tiers (seconds of heartbeat silence)

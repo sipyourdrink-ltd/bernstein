@@ -397,6 +397,23 @@ def _terminate_stuck_agent(orch: Any, session: Any, age: float) -> None:
     _reap_session_heartbeat_loop(orch, session, reason="no_heartbeat_kill")
 
 
+def _liveness_signal_may_defer(heartbeat_age_s: float) -> bool:
+    """Whether log/git freshness is still allowed to defer the kill at this age.
+
+    The liveness signal is a file mtime, and every CLI adapter except claude
+    merges the child's stderr into that same runner log
+    (``stderr=subprocess.STDOUT``). Provider retry chatter, a progress
+    spinner, or a runtime deprecation warning therefore refreshes the mtime
+    without any real progress, and the deferral below re-applies on every
+    tick. Unbounded, that turns a deferral into a permanent exemption: the
+    stalled agent is never escalated and keeps its worker slot until the
+    wall-clock reaper's hard cap. Past ``liveness_suppression_cap_s`` of
+    continuous heartbeat silence the mtime no longer counts as evidence of
+    work and the ladder escalates normally (issue #3058).
+    """
+    return heartbeat_age_s < AGENT.liveness_suppression_cap_s
+
+
 def _agent_has_fresh_liveness_signal(orch: Any, session: Any) -> bool:
     """Whether the agent's LOG or GIT tree changed within the grace window.
 
@@ -454,6 +471,10 @@ def _escalate_heartbeat(
     kill. If the agent's log/git tree changed within the grace window it is
     alive, so no SIGTERM/SIGKILL and no soft SHUTDOWN is sent this tick; the
     ladder is reset so a genuine later stall re-escalates from the start.
+
+    That gate is a bounded deferral, not an exemption (issue #3058): it stops
+    applying once the heartbeat has been silent for
+    ``AGENT.liveness_suppression_cap_s``. See ``_liveness_signal_may_defer``.
     """
     signal_mgr = orch._signal_mgr
     task_title = _session_task_title(session)
@@ -463,7 +484,7 @@ def _escalate_heartbeat(
         # Healthy again (or never stale): drop any prior escalation state so a
         # later stall episode re-escalates from the start.
         ladder.reset_agent(session.id)
-    elif _agent_has_fresh_liveness_signal(orch, session):
+    elif _liveness_signal_may_defer(age) and _agent_has_fresh_liveness_signal(orch, session):
         # Stale heartbeat BUT a fresh log/git liveness signal: the agent is
         # demonstrably alive (see _agent_has_fresh_liveness_signal). Do NOT
         # escalate on heartbeat age alone. Reset the ladder and skip the soft
@@ -472,9 +493,11 @@ def _escalate_heartbeat(
         logger.info(
             "heartbeat_escalation: NOT escalating agent %s despite heartbeat age %.0fs "
             "-- fresh log/git liveness signal within grace window (agent is alive); will "
-            "re-evaluate once the log actually goes stale",
+            "re-evaluate once the log goes stale or the heartbeat passes the %.0fs "
+            "suppression cap",
             session.id,
             age,
+            AGENT.liveness_suppression_cap_s,
         )
         return
     else:
