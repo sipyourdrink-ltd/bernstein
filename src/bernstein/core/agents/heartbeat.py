@@ -80,7 +80,7 @@ class HeartbeatMonitor:
             session_id=session_id,
             last_heartbeat=last_heartbeat,
             age_seconds=age_seconds,
-            phase=heartbeat.phase or heartbeat.status,
+            phase=heartbeat.phase,
             progress_pct=max(0, min(int(heartbeat.progress_pct), 100)),
             is_alive=age_seconds < self._timeout_s,
             is_stale=age_seconds >= self._timeout_s,
