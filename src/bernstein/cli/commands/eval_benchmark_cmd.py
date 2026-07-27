@@ -633,7 +633,9 @@ def benchmark_receipt_emit(run_id: str, workdir: str) -> None:
         bernstein benchmark receipt emit run-2025-07-26-001
     """
     import json
+    import math
     from pathlib import Path
+    from typing import NoReturn
 
     from bernstein.core.security.audit import AuditKeyPermissionError, load_or_create_audit_key
     from bernstein.eval.metrics import EvalScoreComponents, TierScores
@@ -680,39 +682,54 @@ def benchmark_receipt_emit(run_id: str, workdir: str) -> None:
     # it, which is exactly the fabrication mode the receipt is designed to
     # detect.
     _ZERO_HASH = "sha256:" + "0" * 64
+    _REQUIRED_TASK_FIELDS = ("task_id", "journal_head_hash", "events_content_hash", "model_id", "config_fingerprint")
+    _COMPONENT_FIELDS = ("task_success", "code_quality", "efficiency", "reliability", "safety")
+
+    def _reject(message: str) -> NoReturn:
+        console.print(f"[red]{message}[/red]")
+        raise SystemExit(1)
+
+    def _required_scalar(mapping: object, field: str, where: str) -> float:
+        if not isinstance(mapping, dict) or field not in mapping:
+            _reject(f"{where} is missing {field!r}; refusing to substitute a default into a signed receipt.")
+        value = mapping[field]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            _reject(f"{where} has a non-numeric or non-finite {field!r}: {value!r}")
+        return float(value)
+
     task_anchors: list[TaskTrajectoryAnchor] = []
-    for task in run_record.get("tasks", []):
-        jh = task.get("journal_head_hash", "")
-        if not jh or jh == _ZERO_HASH:
-            console.print(
-                f"[red]Task {task.get('task_id', '?')!r} has no real journal head hash — "
-                f"cannot emit a verifiable receipt for a run without a sealed trajectory.[/red]"
-            )
-            raise SystemExit(1)
-        c = task.get("components", {})
+    for position, task in enumerate(run_record.get("tasks", [])):
+        where = f"Task at index {position}"
+        if not isinstance(task, dict):
+            _reject(f"{where} is not an object.")
+        for field in _REQUIRED_TASK_FIELDS:
+            value = task.get(field)
+            if not isinstance(value, str) or not value:
+                _reject(f"{where} is missing a usable {field!r}; refusing to invent one.")
+        where = f"Task {task['task_id']!r}"
+        for field in ("journal_head_hash", "events_content_hash"):
+            if task[field] == _ZERO_HASH:
+                _reject(
+                    f"{where} carries a placeholder {field!r}; a receipt sealed over placeholder "
+                    f"anchors verifies clean with no trajectory behind it."
+                )
+        components = task.get("components")
         task_anchors.append(
             TaskTrajectoryAnchor(
                 task_id=task["task_id"],
-                journal_head_hash=jh,
-                events_content_hash=task.get("events_content_hash", _ZERO_HASH),
-                model_id=task.get("model_id", "unknown"),
-                config_fingerprint=task.get("config_fingerprint", "unknown"),
+                journal_head_hash=task["journal_head_hash"],
+                events_content_hash=task["events_content_hash"],
+                model_id=task["model_id"],
+                config_fingerprint=task["config_fingerprint"],
                 components=EvalScoreComponents(
-                    task_success=float(c.get("task_success", 0.0)),
-                    code_quality=float(c.get("code_quality", 0.0)),
-                    efficiency=float(c.get("efficiency", 0.0)),
-                    reliability=float(c.get("reliability", 1.0)),
-                    safety=float(c.get("safety", 1.0)),
+                    **{field: _required_scalar(components, field, where) for field in _COMPONENT_FIELDS}
                 ),
             )
         )
 
-    pt = run_record.get("per_tier", {})
+    pt = run_record.get("per_tier")
     per_tier = TierScores(
-        smoke=float(pt.get("smoke", 0.0)),
-        standard=float(pt.get("standard", 0.0)),
-        stretch=float(pt.get("stretch", 0.0)),
-        adversarial=float(pt.get("adversarial", 0.0)),
+        **{tier: _required_scalar(pt, tier, "per_tier") for tier in ("smoke", "standard", "stretch", "adversarial")}
     )
 
     receipt = build_trajectory_receipt(

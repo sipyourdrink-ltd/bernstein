@@ -403,15 +403,10 @@ def _verify_trajectory_receipts() -> bool:
         )
     )
     for result in failures:
-        # Always show the receipt hash (from the result or the receipt itself)
-        # so the operator can locate the file even when result.receipt is None.
-        rh = (
-            result.receipt.receipt_hash
-            if result.receipt is not None
-            else result.reason.split("'")[1]
-            if "'" in result.reason
-            else "unknown"
-        )
+        # requested_hash is retained on every failure path, including the ones
+        # where the bytes were rejected before a receipt could be decoded, so
+        # the operator can always locate the offending file.
+        rh = result.requested_hash or (result.receipt.receipt_hash if result.receipt is not None else "unknown")
         task_idx = result.failing_task_index
         loc = f" (task [{task_idx}])" if task_idx >= 0 else ""
         console.print(f"  [red]![/red] {rh[:32]}…{loc}: {result.reason}")

@@ -180,3 +180,83 @@ def test_eval_calibration_help_lists_flags() -> None:
     assert result.exit_code == 0, result.output
     assert "--since" in result.output
     assert "--bins" in result.output
+
+
+# ---------------------------------------------------------------------------
+# benchmark receipt emit - input validation
+#
+# emit turns a persisted run record into signed bytes. Anything it substitutes
+# for missing input is sealed and then verifies clean, so a run record that is
+# short of a field has to be refused rather than defaulted.
+# ---------------------------------------------------------------------------
+
+
+_GOOD_TASK = {
+    "task_id": "smoke-001",
+    "journal_head_hash": "sha256:" + "1" * 64,
+    "events_content_hash": "sha256:" + "2" * 64,
+    "model_id": "test-model",
+    "config_fingerprint": "cfg-v1",
+    "components": {
+        "task_success": 1.0,
+        "code_quality": 0.9,
+        "efficiency": 0.8,
+        "reliability": 1.0,
+        "safety": 1.0,
+    },
+}
+_GOOD_PER_TIER = {"smoke": 1.0, "standard": 0.0, "stretch": 0.0, "adversarial": 0.0}
+
+
+def _write_run_record(root: Path, record: dict) -> None:
+    runs_path = root / ".sdd" / "benchmarks" / "benchmark_runs.jsonl"
+    runs_path.parent.mkdir(parents=True, exist_ok=True)
+    runs_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+
+def _emit(record: dict):
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp:
+        _write_run_record(Path(tmp), record)
+        return runner.invoke(benchmark_group, ["receipt", "emit", "run-1", "--workdir", tmp])
+
+
+def test_receipt_emit_rejects_task_missing_journal_head() -> None:
+    task = {k: v for k, v in _GOOD_TASK.items() if k != "journal_head_hash"}
+    result = _emit({"run_id": "run-1", "tasks": [task], "per_tier": _GOOD_PER_TIER})
+    assert result.exit_code == 1, result.output
+    assert "journal_head_hash" in result.output
+
+
+def test_receipt_emit_rejects_placeholder_events_hash() -> None:
+    task = {**_GOOD_TASK, "events_content_hash": "sha256:" + "0" * 64}
+    result = _emit({"run_id": "run-1", "tasks": [task], "per_tier": _GOOD_PER_TIER})
+    assert result.exit_code == 1, result.output
+    assert "placeholder" in result.output
+
+
+def test_receipt_emit_rejects_missing_score_component() -> None:
+    components = {k: v for k, v in _GOOD_TASK["components"].items() if k != "efficiency"}
+    task = {**_GOOD_TASK, "components": components}
+    result = _emit({"run_id": "run-1", "tasks": [task], "per_tier": _GOOD_PER_TIER})
+    assert result.exit_code == 1, result.output
+    assert "efficiency" in result.output
+
+
+def test_receipt_emit_rejects_missing_per_tier() -> None:
+    result = _emit({"run_id": "run-1", "tasks": [_GOOD_TASK]})
+    assert result.exit_code == 1, result.output
+    assert "per_tier" in result.output
+
+
+def test_receipt_emit_rejects_non_numeric_component() -> None:
+    task = {**_GOOD_TASK, "components": {**_GOOD_TASK["components"], "safety": "high"}}
+    result = _emit({"run_id": "run-1", "tasks": [task], "per_tier": _GOOD_PER_TIER})
+    assert result.exit_code == 1, result.output
+    assert "non-numeric" in result.output
+
+
+def test_receipt_emit_accepts_a_complete_run_record() -> None:
+    result = _emit({"run_id": "run-1", "tasks": [_GOOD_TASK], "per_tier": _GOOD_PER_TIER})
+    assert result.exit_code == 0, result.output
+    assert "Trajectory receipt emitted" in result.output
