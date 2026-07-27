@@ -183,3 +183,41 @@ def test_diff_scope_is_validated_before_opening_pr() -> None:
     open_condition = open_pr_step.get("if", "")
     assert isinstance(open_condition, str)
     assert "steps.diff_scope.outputs.should_open_pr == 'true'" in open_condition
+
+
+def test_concurrency_group_includes_the_label_that_gates_every_job() -> None:
+    """An irrelevant label must not cancel a run, because cancelled reads as failed.
+
+    GitHub offers no label filter on an `issues` trigger, so applying N labels
+    to one issue always creates N runs and every job here discards N-1 of them
+    through `github.event.label.name == 'bernstein'`. That job-level gate runs
+    after the run exists, so the discarded runs still need somewhere to go.
+
+    If the concurrency group omits the label, all N land in one group and
+    `cancel-in-progress` kills each as the next arrives: labelling an issue
+    eight times produced seven `cancelled` runs, and `cancelled` renders as a
+    failure on the branch. Including the label gives each its own group, so a
+    run whose jobs are all filtered out concludes `skipped` instead, which is
+    what actually happened to it.
+    """
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    concurrency = _mapping(workflow.get("concurrency"))
+    group = concurrency.get("group")
+    assert isinstance(group, str)
+
+    jobs = workflow.get("jobs", {})
+    assert isinstance(jobs, dict)
+    gated_on_label = [
+        name for name, job in jobs.items() if "github.event.label.name" in str(_mapping(job).get("if", ""))
+    ]
+    assert gated_on_label, "expected the label gate this invariant is about"
+    assert len(gated_on_label) == len(jobs), "every job is gated on the label, so no run survives a different label"
+
+    assert "github.event.label.name" in group, (
+        "the concurrency group must vary with the label the jobs filter on, "
+        "or unrelated labels cancel each other and paint the branch red"
+    )
+
+    # The cancellation itself is still wanted for the case it was written for:
+    # two rapid `bernstein` labels on one issue share a group and supersede.
+    assert concurrency.get("cancel-in-progress") is True

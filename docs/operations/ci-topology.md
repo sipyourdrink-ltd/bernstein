@@ -18,7 +18,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/auto-heal.yml | Auto-heal v2 | workflow_call | - | 2 |
 | .github/workflows/auto-release.yml | Auto-release | workflow_call | - | 5 |
 | .github/workflows/bernstein-ci-fix.yml | Bernstein CI Fix | workflow_call | - | 4 |
-| .github/workflows/bernstein-issues-decompose.yml | Bernstein Issue Decompose | issues | {"cancel-in-progress": "true", "group": "bernstein-decompose-${{ github.event.issue.number }}"} | 4 |
+| .github/workflows/bernstein-issues-decompose.yml | Bernstein Issue Decompose | issues | {"cancel-in-progress": "true", "group": "bernstein-decompose-${{ github.event.issue.number }}-${{ github.event.label.name }}"} | 4 |
 | .github/workflows/bernstein-pr-review.yml | Bernstein PR Review | pull_request | {"cancel-in-progress": "true", "group": "bernstein-pr-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/bisect-on-red.yml | Bisect on Red | workflow_call | - | 1 |
 | .github/workflows/branch-protection-audit.yml | Branch protection audit | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "branch-protection-audit-${{ github.ref }}"} | 1 |

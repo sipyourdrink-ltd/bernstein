@@ -8,8 +8,27 @@ on:
   issues:
     types: [labeled]
 
+# The label name is part of the group key, not just the issue number.
+#
+# Every job below is gated on `github.event.label.name == 'bernstein'`, but
+# that gate is evaluated per job, after the run already exists. GitHub has no
+# label filter for `issues` triggers, so applying N labels to one issue always
+# creates N runs and N-1 of them have nothing to do.
+#
+# Keyed on the issue number alone, those N runs land in one group and
+# `cancel-in-progress` kills each as the next arrives. Adding eight labels to
+# a single issue therefore produced seven `cancelled` runs and one `skipped`
+# one, with zero real work in any of them. `cancelled` renders as a failure on
+# the branch, so ordinary triage labelling left a trail of red on `main` that
+# no amount of reading the logs could explain.
+#
+# Including the label name gives each label its own group. Runs for other
+# labels no longer contend, so they conclude `skipped`, which is the honest
+# neutral outcome for a run whose jobs were all filtered out. Two rapid
+# `bernstein` labels still share a group and still supersede each other, which
+# is the only case the cancellation was ever for.
 concurrency:
-  group: bernstein-decompose-${{ github.event.issue.number }}
+  group: bernstein-decompose-${{ github.event.issue.number }}-${{ github.event.label.name }}
   cancel-in-progress: true
 
 # Default-deny at workflow scope; jobs re-assert the minimum scopes they need.
