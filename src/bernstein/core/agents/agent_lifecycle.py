@@ -2360,10 +2360,15 @@ def _refresh_heartbeat_from_signals(orch: Any, session: AgentSession, now: float
     in ``reap_dead_agents``. So a heartbeat refreshed from the log (or the
     worktree ``.git`` pointer) alone is capped to a bounded number of
     consecutive ticks before an unconfirmed session is left to age out.
+
+    ``session.pid`` is ``int | None``: a session handed to a remote runtime
+    bridge is transitioned to "working" with no local PID at all. Those
+    sessions skip the liveness probe and are judged from their file signals,
+    the same way ``_probe_liveness_signals`` guards its own probe.
     """
     _hb_freshness_s = _IDLE_HEARTBEAT_THRESHOLD_S * 0.8
 
-    if _is_process_alive(session.pid):
+    if session.pid and _is_process_alive(session.pid):
         session.heartbeat_ts = now
         session.log_only_heartbeat_ticks = 0
         return
