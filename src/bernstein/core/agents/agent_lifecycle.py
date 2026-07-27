@@ -2365,6 +2365,22 @@ def _refresh_heartbeat_from_signals(orch: Any, session: AgentSession, now: float
     bridge is transitioned to "working" with no local PID at all. Those
     sessions skip the liveness probe and are judged from their file signals,
     the same way ``_probe_liveness_signals`` guards its own probe.
+
+    The log and ``.git`` paths are resolved through the shared
+    :func:`_resolve_agent_log_path` / :func:`_resolve_agent_worktree_dir`
+    helpers, the same way the sibling probe :func:`_probe_liveness_signals`
+    does, rather than hardcoding the legacy ``.sdd/worktrees/<id>/`` layout.
+    Hardcoding it left every other layout this codebase writes agent logs
+    into with no log signal at all: the current default worktree layout
+    (``.sdd/runtime/worktrees/<id>/``), the worktrees-disabled root log, and
+    any spawn path that reports its own ``session.log_path`` - the remote
+    runtime bridge, container, and sandbox-session paths all log to
+    ``<spawn_cwd>/.sdd/logs/<id>.log``. A bridge-backed session felt that
+    worst: it also has ``pid=None`` (no local process to probe) and gets no
+    heartbeat protocol JSON, since ``bernstein.bridges`` never writes one and
+    the single pre-spawn touch in ``spawner_core`` is never refreshed. With
+    all three signals blind it aged out at ``heartbeat_timeout_s`` however
+    healthy the remote run was.
     """
     _hb_freshness_s = _IDLE_HEARTBEAT_THRESHOLD_S * 0.8
 
@@ -2383,9 +2399,15 @@ def _refresh_heartbeat_from_signals(orch: Any, session: AgentSession, now: float
     if session.log_only_heartbeat_ticks >= _MAX_LOG_ONLY_HEARTBEAT_TICKS:
         return
 
+    _wt_dir = _resolve_agent_worktree_dir(orch._workdir, session)
     paths_to_check = [
-        orch._workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log",
-        orch._workdir / ".sdd" / "worktrees" / session.id / ".git",
+        _resolve_agent_log_path(orch._workdir, session),
+        # No per-agent worktree means deliberately NO git signal rather than a
+        # fallback to the root ``workdir/.git``: the root repo is shared
+        # mutable state touched by the orchestrator's own git operations and
+        # by sibling agents, so its freshness cannot be attributed to this
+        # session. Same rationale as ``_probe_liveness_signals``.
+        *([_wt_dir / ".git"] if _wt_dir is not None else []),
     ]
     for path in paths_to_check:
         with contextlib.suppress(OSError):
