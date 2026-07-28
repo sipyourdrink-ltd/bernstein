@@ -26,6 +26,18 @@ We are grateful to everyone who has contributed to Bernstein.
 | **Ilia** ([@Ilia01](https://github.com/Ilia01)) | Issue feedback |
 | **OyaAI** ([@OyaAIProd](https://github.com/OyaAIProd)) | Security assessment review |
 | **J. Marques** ([@jagmarques](https://github.com/jagmarques)) | Issue feedback |
+| [@0xddneto](https://github.com/0xddneto) | Specify unverifiable foreign attestation ([#3192](https://github.com/sipyourdrink-ltd/bernstein/pull/3192)) |
+| [@adity982](https://github.com/adity982) | Add discoverable skill index ([#3177](https://github.com/sipyourdrink-ltd/bernstein/pull/3177)) |
+| [@aeoess](https://github.com/aeoess) | Supersede seed canonical vectors with anchored set; add nfc-rejection, nano-string and supplementary-plane classes ([#2994](https://github.com/sipyourdrink-ltd/bernstein/pull/2994)) |
+| [@AmirF194](https://github.com/AmirF194) | Cap the log-only heartbeat signal instead of riding it to the hard cap ([#3193](https://github.com/sipyourdrink-ltd/bernstein/pull/3193)) |
+| [@AnayGarodia](https://github.com/AnayGarodia) | Persist effective server port for runtime probes ([#2819](https://github.com/sipyourdrink-ltd/bernstein/pull/2819)); Centralize artifact constants and type wire payloads ([#2838](https://github.com/sipyourdrink-ltd/bernstein/pull/2838)) |
+| [@AshSgDe29071999](https://github.com/AshSgDe29071999) | Remove duplicate --fresh option on run ([#3030](https://github.com/sipyourdrink-ltd/bernstein/pull/3030)) |
+| [@bymyforge](https://github.com/bymyforge) | Annotate the tui package (mypy: 41 -> 15 errors) ([#3236](https://github.com/sipyourdrink-ltd/bernstein/pull/3236)) |
+| [@chrstphe](https://github.com/chrstphe) | Add MCP Toplist rank badge ([#3019](https://github.com/sipyourdrink-ltd/bernstein/pull/3019)) |
+| [@cnaples79](https://github.com/cnaples79) | Report Bernstein package version ([#3153](https://github.com/sipyourdrink-ltd/bernstein/pull/3153)) |
+| [@Maqbool61](https://github.com/Maqbool61) | Document and certify self-hosted OpenAI-compatible endpoint path ([#2913](https://github.com/sipyourdrink-ltd/bernstein/pull/2913)); Ship bernstein-bench — runnable, reproducibility-gated evaluation harness ([#3099](https://github.com/sipyourdrink-ltd/bernstein/pull/3099)), plus 1 more |
+| [@pollychen-lab](https://github.com/pollychen-lab) | Use scoped install hint ([#3011](https://github.com/sipyourdrink-ltd/bernstein/pull/3011)) |
+| [@Sanjays2402](https://github.com/Sanjays2402) | Stop passing removed web search flag ([#2766](https://github.com/sipyourdrink-ltd/bernstein/pull/2766)); Pass model to agy ([#2813](https://github.com/sipyourdrink-ltd/bernstein/pull/2813)), plus 1 more |
 
 ## Community
 

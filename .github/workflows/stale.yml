@@ -9,12 +9,15 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   stale:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     timeout-minutes: 10
     steps:
       - name: Harden runner (audit mode)

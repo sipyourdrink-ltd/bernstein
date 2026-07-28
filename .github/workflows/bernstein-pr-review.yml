@@ -16,12 +16,14 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   review:
     name: Review with Bernstein
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     timeout-minutes: 30
     if: >
       contains(github.event.pull_request.labels.*.name, 'deep-review') &&

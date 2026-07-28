@@ -8,6 +8,10 @@
 
 <br>
 
+<img alt="Bernstein - deterministic multi-agent CLI orchestration" src="docs/assets/banner-readme.png" width="820">
+
+<br>
+
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - Leonard Bernstein
 
 ### deterministic multi-agent CLI orchestration

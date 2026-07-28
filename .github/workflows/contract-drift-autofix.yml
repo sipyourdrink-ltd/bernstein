@@ -88,9 +88,7 @@ concurrency:
 # produce a clean patch. The autofix job re-asserts the same set at job
 # scope (Scorecard token-permissions).
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+  contents: read
 
 jobs:
   autofix:
