@@ -9,6 +9,7 @@ from textual.widgets import DataTable, Static
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import Binding
 
 
 class HelpScreen(ModalScreen[None]):
@@ -41,7 +42,7 @@ class HelpScreen(ModalScreen[None]):
     }
     """
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         ("escape", "dismiss", "Close"),
         ("q", "dismiss", "Close"),
     ]

@@ -115,9 +115,9 @@ class ShortcutsFooter(Static):
 
     def on_mount(self) -> None:
         """Render shortcut hints on mount."""
-        self._render()
+        self._update_shortcuts()
 
-    def _render(self) -> None:
+    def _update_shortcuts(self) -> None:
         parts = "  [dim]\u2502[/dim]  ".join(
             f"[bold]{hint.split()[0]}[/bold] [dim]{' '.join(hint.split()[1:])}[/dim]" for hint in self._SHORTCUTS
         )

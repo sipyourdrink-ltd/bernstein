@@ -13,6 +13,7 @@ from textual.widgets import Input, Static
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import Binding
 
 
 @dataclass(frozen=True)
@@ -221,7 +222,7 @@ class CommandPaletteScreen(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         ("escape", "cancel", "Close"),
         ("down", "move_down", "Next"),
         ("up", "move_up", "Previous"),
