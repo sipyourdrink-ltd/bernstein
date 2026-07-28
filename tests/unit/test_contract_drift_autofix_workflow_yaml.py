@@ -139,12 +139,28 @@ def test_step_actions_are_sha_pinned(autofix_steps: list[dict[str, object]]) -> 
 
 
 def test_permissions_minimum_required(workflow: dict[str, object]) -> None:
-    """Workflow needs contents:write (to push) and pull-requests:write
-    (to comment). issues:write is needed for the tracking-issue fallback."""
-    perms = workflow.get("permissions", {})
-    assert isinstance(perms, dict)
+    """The ``autofix`` job needs contents:write (to push) and
+    pull-requests:write (to comment). issues:write is needed for the
+    tracking-issue fallback.
+
+    These are asserted on the job rather than on the workflow top level: the
+    top level grants read only, so any job added to this file later starts
+    without write and has to ask for it explicitly.
+    """
+    top = workflow.get("permissions", {})
+    assert isinstance(top, dict)
+    assert top.get("contents") == "read", "top level must stay read-only; grant write per job"
+    assert "write" not in top.values(), f"no write scope belongs at the top level, found {top}"
+
+    jobs = workflow.get("jobs", {})
+    assert isinstance(jobs, dict)
+    job = jobs.get("autofix")
+    assert isinstance(job, dict)
+    perms = job.get("permissions", {})
+    assert isinstance(perms, dict), "autofix must declare its own permissions"
     assert perms.get("contents") == "write", "needs contents:write to push regen commit"
     assert perms.get("pull-requests") == "write", "needs pull-requests:write for the comment-fallback path"
+    assert perms.get("issues") == "write", "needs issues:write for the tracking-issue fallback"
 
 
 def test_recursion_guard_on_bot_author(workflow: dict[str, object]) -> None:
