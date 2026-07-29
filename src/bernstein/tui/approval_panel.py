@@ -106,7 +106,7 @@ class ApprovalPanel(Static):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection to show details."""
         if event.data_table.id == "approval-list":
-            key = str(event.cursor_row.key) if event.cursor_row else ""
+            key = str(event.row_key.value) if event.row_key else ""
             with suppress(StopIteration):
                 idx = next(i for i, e in enumerate(self._pending) if e.task_id == key)
                 self._selected_index = idx
