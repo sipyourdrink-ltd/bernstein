@@ -349,72 +349,58 @@ def install_pre_push_hook(repo_root: Path, force: bool = False) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
+    """Run ``uv run <name> --version`` and report the result as a check dict.
+
+    Turns a missing ``uv`` executable (``FileNotFoundError``, raised e.g. as
+    ``WinError 2`` on Windows) into a failed check instead of letting it
+    propagate, since ``bernstein doctor``'s entire job is to report which
+    tools are missing.
+
+    Args:
+        name: Tool to check (``ruff``, ``pytest``, ``pyright``, ...).
+        detail_limit: Max characters of stdout to keep in ``detail`` on success.
+
+    Returns:
+        Check result dict with keys: name, ok (bool), detail, fix.
+    """
+    try:
+        result = subprocess.run(
+            ["uv", "run", name, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return {
+            "name": name,
+            "ok": "False",
+            "detail": "uv not found on PATH",
+            "fix": "Install uv (https://docs.astral.sh/uv/) and ensure it is on PATH",
+        }
+
+    ok = result.returncode == 0
+    return {
+        "name": name,
+        "ok": str(ok),
+        "detail": result.stdout.strip()[:detail_limit] if ok else result.stderr.strip()[:80],
+        "fix": "" if ok else f"Add {name} to [dependency-groups] dev in pyproject.toml",
+    }
+
+
 def check_test_dependencies() -> list[dict[str, str]]:
     """Check that all CI tool dependencies are importable/executable.
 
     Returns:
         List of check result dicts with keys: name, ok (bool), detail, fix.
     """
-    checks: list[dict[str, str]] = []
-
-    # ruff
-    result = subprocess.run(
-        ["uv", "run", "ruff", "--version"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
-    ruff_ok = result.returncode == 0
-    checks.append(
-        {
-            "name": "ruff",
-            "ok": str(ruff_ok),
-            "detail": result.stdout.strip() if ruff_ok else result.stderr.strip()[:80],
-            "fix": "" if ruff_ok else "Add ruff to [dependency-groups] dev in pyproject.toml",
-        }
-    )
-
-    # pytest
-    result = subprocess.run(
-        ["uv", "run", "pytest", "--version"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
-    pytest_ok = result.returncode == 0
-    checks.append(
-        {
-            "name": "pytest",
-            "ok": str(pytest_ok),
-            "detail": result.stdout.strip()[:60] if pytest_ok else result.stderr.strip()[:80],
-            "fix": "" if pytest_ok else "Add pytest to [dependency-groups] dev in pyproject.toml",
-        }
-    )
-
-    # pyright
-    result = subprocess.run(
-        ["uv", "run", "pyright", "--version"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
-    pyright_ok = result.returncode == 0
-    checks.append(
-        {
-            "name": "pyright",
-            "ok": str(pyright_ok),
-            "detail": result.stdout.strip()[:60] if pyright_ok else result.stderr.strip()[:80],
-            "fix": "" if pyright_ok else "Add pyright to [dependency-groups] dev in pyproject.toml",
-        }
-    )
-
-    return checks
+    return [
+        _check_tool_version("ruff"),
+        _check_tool_version("pytest"),
+        _check_tool_version("pyright"),
+    ]
 
 
 # ---------------------------------------------------------------------------

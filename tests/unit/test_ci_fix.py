@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from bernstein.core.ci_fix import (
@@ -14,6 +14,7 @@ from bernstein.core.ci_fix import (
     CIFixPipeline,
     CIFixResult,
     build_task_payload,
+    check_test_dependencies,
     install_pre_push_hook,
     parse_failures,
     write_ci_fix_task,
@@ -175,6 +176,32 @@ class TestInstallPrePushHook:
         git_hooks = tmp_path / ".git" / "hooks"
         git_hooks.mkdir(parents=True)
         install_pre_push_hook(tmp_path)
+
+
+class TestCheckTestDependencies:
+    def test_no_uv_returns_result_instead_of_raising(self) -> None:
+        """A missing ``uv`` on PATH must be reported, not raised.
+
+        Regression test: ``check_test_dependencies`` previously let
+        ``FileNotFoundError`` (WinError 2 on Windows) from ``subprocess.run``
+        propagate, crashing ``bernstein doctor`` for anyone who installed
+        Bernstein with pipx/pip instead of uv.
+        """
+        with patch("bernstein.core.quality.ci_fix.subprocess.run", side_effect=FileNotFoundError):
+            checks = check_test_dependencies()
+
+        assert len(checks) == 3
+        for check in checks:
+            assert check["ok"] == "False"
+            assert check["fix"]
+
+    def test_uv_present_reports_ok(self) -> None:
+        mock_result = Mock(returncode=0, stdout="ruff 0.1.0\n", stderr="")
+        with patch("bernstein.core.quality.ci_fix.subprocess.run", return_value=mock_result):
+            checks = check_test_dependencies()
+
+        assert all(check["ok"] == "True" for check in checks)
+        assert all(check["fix"] == "" for check in checks)
 
 
 # ---------------------------------------------------------------------------
