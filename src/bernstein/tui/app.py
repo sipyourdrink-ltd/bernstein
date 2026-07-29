@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 if TYPE_CHECKING:
     from rich.text import Text
+    from textual.timer import Timer
 
 from contextlib import suppress
 
@@ -273,7 +274,7 @@ class BernsteinApp(App[None]):
         self._palette_action_labels: dict[str, str] = {}
         self._recent_palette_actions: list[str] = []
         self._log_offsets: dict[str, int] = {}  # session_id → last-read byte offset
-        self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
+        self._resize_timer: Timer | None = None  # debounce timer handle (TUI-001)
         # TUI-013: detect accessibility mode from environment
         self.accessibility: AccessibilityConfig = AccessibilityConfig.from_level(detect_accessibility())
         # TUI-008: split-pane state
@@ -288,7 +289,7 @@ class BernsteinApp(App[None]):
         self._replay_frames: list[RecordingFrame] = []
         self._replay_index = 0
         self._selected_replay_path: Path | None = None
-        self._replay_timer: object | None = None
+        self._replay_timer: Timer | None = None
         # Track seen task IDs to detect completions
         self._seen_done: set[str] = set()
         # TUI-011: theme - load persisted preference, fall back to auto-detect
@@ -407,7 +408,7 @@ class BernsteinApp(App[None]):
             event: The Textual Resize event.
         """
         if self._resize_timer is not None:
-            self._resize_timer.stop()  # type: ignore[union-attr]
+            self._resize_timer.stop()
         self._resize_timer = self.set_timer(
             self.RESIZE_DEBOUNCE_S,
             self._apply_resize,
@@ -783,7 +784,7 @@ class BernsteinApp(App[None]):
     def _stop_replay(self) -> None:
         """Stop the active playback preview timer, if one exists."""
         if self._replay_timer is not None:
-            self._replay_timer.stop()  # type: ignore[union-attr]
+            self._replay_timer.stop()
             self._replay_timer = None
 
     def _refresh_session_recorder_panel(self) -> None:
