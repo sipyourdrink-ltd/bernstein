@@ -357,62 +357,51 @@ def check_test_dependencies() -> list[dict[str, str]]:
     """
     checks: list[dict[str, str]] = []
 
-    # ruff
-    result = subprocess.run(
+    def _check(cmd: list[str], name: str, missing_fix: str, failed_fix: str) -> dict[str, str]:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+        except FileNotFoundError:
+            return {
+                "name": name,
+                "ok": "False",
+                "detail": f"'{cmd[0]}' not found on PATH",
+                "fix": missing_fix,
+            }
+        ok = result.returncode == 0
+        return {
+            "name": name,
+            "ok": str(ok),
+            "detail": result.stdout.strip() if ok else result.stderr.strip()[:80],
+            "fix": "" if ok else failed_fix,
+        }
+
+    _UV_FIX = "Install uv: https://docs.astral.sh/uv/getting-started/installation/"
+
+    checks.append(_check(
         ["uv", "run", "ruff", "--version"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
-    ruff_ok = result.returncode == 0
-    checks.append(
-        {
-            "name": "ruff",
-            "ok": str(ruff_ok),
-            "detail": result.stdout.strip() if ruff_ok else result.stderr.strip()[:80],
-            "fix": "" if ruff_ok else "Add ruff to [dependency-groups] dev in pyproject.toml",
-        }
-    )
-
-    # pytest
-    result = subprocess.run(
+        "ruff",
+        _UV_FIX,
+        "Add ruff to [dependency-groups] dev in pyproject.toml",
+    ))
+    checks.append(_check(
         ["uv", "run", "pytest", "--version"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
-    pytest_ok = result.returncode == 0
-    checks.append(
-        {
-            "name": "pytest",
-            "ok": str(pytest_ok),
-            "detail": result.stdout.strip()[:60] if pytest_ok else result.stderr.strip()[:80],
-            "fix": "" if pytest_ok else "Add pytest to [dependency-groups] dev in pyproject.toml",
-        }
-    )
-
-    # pyright
-    result = subprocess.run(
+        "pytest",
+        _UV_FIX,
+        "Add pytest to [dependency-groups] dev in pyproject.toml",
+    ))
+    checks.append(_check(
         ["uv", "run", "pyright", "--version"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
-    pyright_ok = result.returncode == 0
-    checks.append(
-        {
-            "name": "pyright",
-            "ok": str(pyright_ok),
-            "detail": result.stdout.strip()[:60] if pyright_ok else result.stderr.strip()[:80],
-            "fix": "" if pyright_ok else "Add pyright to [dependency-groups] dev in pyproject.toml",
-        }
-    )
+        "pyright",
+        _UV_FIX,
+        "Add pyright to [dependency-groups] dev in pyproject.toml",
+    ))
 
     return checks
 
