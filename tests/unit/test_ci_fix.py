@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from bernstein.core.ci_fix import (
@@ -453,3 +453,55 @@ class TestGHADownload:
         # Has a run ID but not a github.com URL, so owner/repo extraction fails.
         with pytest.raises(ValueError, match="Cannot parse owner/repo"):
             download_github_actions_log_api("https://not-github.com/foo/actions/runs/123")
+
+
+# ---------------------------------------------------------------------------
+# Doctor / check_test_dependencies tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckTestDependencies:
+    def test_returns_results_not_raises_when_uv_missing(self) -> None:
+        from bernstein.core.quality.ci_fix import check_test_dependencies
+
+        with patch(
+            "bernstein.core.quality.ci_fix.subprocess.run",
+            side_effect=FileNotFoundError("uv: No such file or directory"),
+        ):
+            results = check_test_dependencies()
+
+        assert isinstance(results, list)
+        assert len(results) == 3
+        names = {r["name"] for r in results}
+        assert names == {"ruff", "pytest", "pyright"}
+
+    def test_missing_uv_produces_failed_checks_with_fix(self) -> None:
+        from bernstein.core.quality.ci_fix import check_test_dependencies
+
+        with patch(
+            "bernstein.core.quality.ci_fix.subprocess.run",
+            side_effect=FileNotFoundError("uv: No such file or directory"),
+        ):
+            results = check_test_dependencies()
+
+        for r in results:
+            assert r["ok"] == "False"
+            assert "uv" in r["fix"].lower()
+            assert r["detail"]  # non-empty, human-readable reason
+
+    def test_all_tools_ok_when_uv_present(self) -> None:
+        from bernstein.core.quality.ci_fix import check_test_dependencies
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "ruff 0.4.0"
+        mock_result.stderr = ""
+
+        with patch(
+            "bernstein.core.quality.ci_fix.subprocess.run",
+            return_value=mock_result,
+        ):
+            results = check_test_dependencies()
+
+        assert all(r["ok"] == "True" for r in results)
+        assert all(r["fix"] == "" for r in results)
