@@ -53,7 +53,7 @@ PROVIDER_MUTATION_SUBTYPES: frozenset[str] = frozenset(
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
+type _CAST_DICT_STR_ANY = dict[str, Any]
 
 # Maximum number of text blocks retained for deduplication.  Bounded LRU
 # prevents unbounded growth in long-running sessions.

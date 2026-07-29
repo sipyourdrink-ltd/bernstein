@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 # Shared cast-type constant to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
+type _CAST_DICT_STR_ANY = dict[str, Any]
 
 
 def load_mcp_config(
