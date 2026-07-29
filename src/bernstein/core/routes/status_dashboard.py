@@ -51,8 +51,8 @@ __all__ = [
 ]
 
 
-# Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
+# Shared cast-type alias to avoid duplication at cast() call sites (Sonar S1192).
+type _CAST_DICT_STR_ANY = dict[str, Any]
 
 
 def _get_store(request: Request) -> TaskStore:
@@ -1106,6 +1106,8 @@ def _build_single_agent_detail(
     context_utilization_alert = bool(
         getattr(a, "context_utilization_alert", False) or snapshot.get("context_utilization_alert", False)
     )
+    transition_reason = getattr(a, "transition_reason", None)
+    abort_reason = getattr(a, "abort_reason", None)
     return {
         "id": a.id,
         "role": a.role,
@@ -1123,14 +1125,12 @@ def _build_single_agent_detail(
         "context_utilization_pct": context_utilization_pct,
         "context_utilization_alert": context_utilization_alert,
         "transition_reason": (
-            getattr(a, "transition_reason", None).value  # pyright: ignore[reportOptionalMemberAccess]
-            if getattr(a, "transition_reason", None) is not None
+            transition_reason.value
+            if transition_reason is not None
             else str(snapshot.get("transition_reason", "") or "")
         ),
         "abort_reason": (
-            getattr(a, "abort_reason", None).value  # pyright: ignore[reportOptionalMemberAccess]
-            if getattr(a, "abort_reason", None) is not None
-            else str(snapshot.get("abort_reason", "") or "")
+            abort_reason.value if abort_reason is not None else str(snapshot.get("abort_reason", "") or "")
         ),
         "abort_detail": str(getattr(a, "abort_detail", "") or snapshot.get("abort_detail", "") or ""),
         "finish_reason": str(getattr(a, "finish_reason", "") or snapshot.get("finish_reason", "") or ""),
