@@ -15,6 +15,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from bernstein.core.observability.metric_collector import PercentileTracker
 
@@ -120,7 +121,8 @@ def _read_latency_samples(
                 record: dict[str, object] = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            ts = float(record.get("timestamp", 0))
+            # _persist_sample writes timestamps as JSON numbers.
+            ts = float(cast(float, record.get("timestamp", 0)))
             if ts < cutoff:
                 continue
             if provider and record.get("provider") != provider:
@@ -327,7 +329,8 @@ class ProviderLatencyTracker:
         for jsonl_file in sorted(self._metrics_dir.glob("provider_latency_*.jsonl")):
             _read_latency_samples(jsonl_file, cutoff, provider, model, samples)
 
-        samples.sort(key=lambda r: float(r.get("timestamp", 0)))
+        # The history records come from _persist_sample, which emits numeric timestamps.
+        samples.sort(key=lambda r: float(cast(float, r.get("timestamp", 0))))
         return samples
 
     # ------------------------------------------------------------------
@@ -366,12 +369,13 @@ class ProviderLatencyTracker:
             record: dict[str, object] = json.loads(line)
         except json.JSONDecodeError:
             return None
-        ts = float(record.get("timestamp", 0))
+        # _persist_sample serialises both fields below as JSON numbers.
+        ts = float(cast(float, record.get("timestamp", 0)))
         if ts < cutoff:
             return None
         provider = str(record.get("provider", ""))
         model = str(record.get("model", ""))
-        latency_ms = float(record.get("latency_ms", 0))
+        latency_ms = float(cast(float, record.get("latency_ms", 0)))
         if not provider or not model or latency_ms <= 0:
             return None
         return _make_key(provider, model), latency_ms

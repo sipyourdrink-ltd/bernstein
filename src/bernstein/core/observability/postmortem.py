@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
+type _CAST_DICT_STR_ANY = dict[str, Any]
 
 
 @dataclass

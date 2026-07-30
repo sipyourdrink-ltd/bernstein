@@ -15,7 +15,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.tenanting import normalize_tenant_id, tenant_metrics_dir
@@ -1114,7 +1117,7 @@ class MetricsCollector:
         Returns:
             Success rate as a float 0-1.
         """
-        agents = self._agent_metrics.values()
+        agents: Iterable[AgentMetrics] = self._agent_metrics.values()
         if agent_id:
             agents = [a for a in agents if a.agent_id == agent_id]
         if role:
@@ -1154,7 +1157,7 @@ class MetricsCollector:
         Returns:
             Total cost in USD.
         """
-        agents = self._agent_metrics.values()
+        agents: Iterable[AgentMetrics] = self._agent_metrics.values()
         if agent_id:
             agents = [a for a in agents if a.agent_id == agent_id]
         return sum(a.total_cost_usd for a in agents)

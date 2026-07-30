@@ -21,24 +21,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+type EventKind = Literal[
+    "error",
+    "task_completed",
+    "task_failed",
+    "agent_spawned",
+    "agent_crashed",
+    "slo_breach",
+    "incident_created",
+    "incident_mitigated",
+    "incident_resolved",
+    "trace_step",
+    "metric_anomaly",
+]
+
+
 @dataclass
 class TimelineEvent:
     """A single event on an incident timeline."""
 
     timestamp: float
-    kind: Literal[
-        "error",
-        "task_completed",
-        "task_failed",
-        "agent_spawned",
-        "agent_crashed",
-        "slo_breach",
-        "incident_created",
-        "incident_mitigated",
-        "incident_resolved",
-        "trace_step",
-        "metric_anomaly",
-    ]
+    kind: EventKind
     source: str  # e.g. "metrics", "traces", "incident", "slo"
     summary: str
     details: dict[str, Any] = field(default_factory=dict)
@@ -129,7 +132,7 @@ def _collect_task_completion_events(metrics_dir: Path, start_ts: float, end_ts: 
                 role = labels.get("role", "?")
                 success = labels.get("success", True)
                 duration = rec.get("value", 0)
-                kind = "task_completed" if success else "task_failed"
+                kind: Literal["task_completed", "task_failed"] = "task_completed" if success else "task_failed"
                 summary = f"Task {task_id} ({role}) {'completed' if success else 'failed'} in {duration:.1f}s"
                 events.append(
                     TimelineEvent(
@@ -143,9 +146,13 @@ def _collect_task_completion_events(metrics_dir: Path, start_ts: float, end_ts: 
     return events
 
 
-def _classify_trace_step(step_type: str) -> str:
+def _classify_trace_step(step_type: str) -> Literal["agent_spawned", "agent_crashed", "trace_step"]:
     """Map a trace step type to a timeline event kind."""
-    return {"spawn": "agent_spawned", "fail": "agent_crashed"}.get(step_type, "trace_step")
+    if step_type == "spawn":
+        return "agent_spawned"
+    if step_type == "fail":
+        return "agent_crashed"
+    return "trace_step"
 
 
 def _trace_step_to_event(

@@ -167,8 +167,9 @@ def _load_report_data(workdir: Path, run_id: str | None) -> _ExportReport:
 
     # Load cost data
     model_costs: list[_ModelCost] = []
-    cost_path = metrics_dir / f"costs_{run_id}.json"
-    if not cost_path.exists():
+    default_cost_path = metrics_dir / f"costs_{run_id}.json"
+    cost_path: Path | None = default_cost_path
+    if not default_cost_path.exists():
         fallback = workdir / ".sdd" / "runtime" / "costs" / f"{run_id}.json"
         cost_path = fallback if fallback.exists() else None
 

@@ -15,6 +15,7 @@ from bernstein.core.observability.run_export import (
     _ExportReport,
     _fmt_duration,
     _fmt_duration_short,
+    _load_report_data,
     _sequential_estimate,
     _TaskRow,
     export_run_report,
@@ -273,6 +274,36 @@ def test_export_html_contains_cost_table(tmp_path: Path) -> None:
     assert "claude-opus" in content
     assert "claude-sonnet" in content
     assert "codex" in content
+
+
+def test_load_report_data_uses_runtime_cost_fallback(tmp_path: Path) -> None:
+    workdir = _setup_sdd(tmp_path)
+    run_id = "run-001"
+    (workdir / ".sdd" / "metrics" / f"costs_{run_id}.json").unlink()
+
+    fallback_dir = workdir / ".sdd" / "runtime" / "costs"
+    fallback_dir.mkdir(parents=True)
+    (fallback_dir / f"{run_id}.json").write_text(
+        json.dumps(
+            {
+                "total_spent_usd": 7.25,
+                "per_model": [
+                    {
+                        "model": "fallback-model",
+                        "total_cost_usd": 7.25,
+                        "invocation_count": 2,
+                        "total_tokens": 1234,
+                    }
+                ],
+            }
+        )
+    )
+
+    report = _load_report_data(workdir, run_id)
+
+    assert report.total_cost_usd == pytest.approx(7.25)
+    assert len(report.model_costs) == 1
+    assert report.model_costs[0].model == "fallback-model"
 
 
 def test_export_html_contains_agent_stats(tmp_path: Path) -> None:

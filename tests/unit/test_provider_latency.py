@@ -198,3 +198,16 @@ class TestProviderLatencyTracker:
         key = _make_key("openai", "gpt-4")
         assert key in tracker._baseline_p99
         assert tracker._baseline_p99[key] == pytest.approx(200.0, abs=1.0)
+
+    @pytest.mark.parametrize("field", ["timestamp", "latency_ms"])
+    def test_parse_latency_record_rejects_malformed_numeric_schema(self, field: str) -> None:
+        record: dict[str, object] = {
+            "timestamp": time.time(),
+            "provider": "openai",
+            "model": "gpt-4",
+            "latency_ms": 200.0,
+        }
+        record[field] = {"not": "numeric"}
+
+        with pytest.raises(TypeError):
+            ProviderLatencyTracker._parse_latency_record(json.dumps(record), cutoff=0.0)

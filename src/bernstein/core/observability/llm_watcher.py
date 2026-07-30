@@ -42,7 +42,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 logger = logging.getLogger(__name__)
 
@@ -555,9 +555,9 @@ def cost_runaway_detector(event: WatcherEvent) -> list[Suggestion]:
         present or no threshold is breached.
     """
     payload = event.payload
-    task_cost = float(payload.get("task_cost_usd") or 0.0)
-    run_cost = float(payload.get("run_cost_usd") or 0.0)
-    run_budget = float(payload.get("run_budget_usd") or _DEFAULT_RUN_BUDGET_USD)
+    task_cost = float(cast(float, payload.get("task_cost_usd") or 0.0))
+    run_cost = float(cast(float, payload.get("run_cost_usd") or 0.0))
+    run_budget = float(cast(float, payload.get("run_budget_usd") or _DEFAULT_RUN_BUDGET_USD))
     task_id = str(payload.get("task_id") or "?")
 
     breached_task = task_cost > _TASK_HARD_CEILING_USD
@@ -606,8 +606,8 @@ def stuck_spawn_detector(event: WatcherEvent) -> list[Suggestion]:
     payload = event.payload
     claim_confirmed = bool(payload.get("claim_confirmed"))
     task_completed = bool(payload.get("task_completed"))
-    audit_emissions = int(payload.get("audit_emissions") or 0)
-    time_in_state = float(payload.get("time_in_state_s") or 0.0)
+    audit_emissions = int(cast(int, payload.get("audit_emissions") or 0))
+    time_in_state = float(cast(float, payload.get("time_in_state_s") or 0.0))
     task_id = str(payload.get("task_id") or "?")
 
     if not claim_confirmed or task_completed:
@@ -649,7 +649,7 @@ def repeated_failure_detector(event: WatcherEvent) -> list[Suggestion]:
         Zero or one :class:`Suggestion`.
     """
     payload = event.payload
-    failure_count = int(payload.get("failure_count") or 0)
+    failure_count = int(cast(int, payload.get("failure_count") or 0))
     exit_signature = str(payload.get("exit_signature") or "").strip()
     task_id = str(payload.get("task_id") or "?")
     if not exit_signature:
@@ -689,8 +689,8 @@ def suspicious_tool_mask_detector(event: WatcherEvent) -> list[Suggestion]:
         Zero or one :class:`Suggestion`.
     """
     payload = event.payload
-    available = int(payload.get("available_tools") or 0)
-    masked = int(payload.get("masked_tools") or 0)
+    available = int(cast(int, payload.get("available_tools") or 0))
+    masked = int(cast(int, payload.get("masked_tools") or 0))
     if available <= 0:
         return []
     fraction = masked / available

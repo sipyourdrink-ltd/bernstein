@@ -8,6 +8,7 @@ import time
 import pytest
 from bernstein.core.incident_timeline import (
     TimelineEvent,
+    _classify_trace_step,
     build_incident_timeline,
     list_incidents,
 )
@@ -203,6 +204,18 @@ class TestTimelineEvent:
         assert d["summary"] == "Test error"
         assert d["details"] == {"key": "value"}
         assert "time" in d
+
+
+@pytest.mark.parametrize(
+    ("step_type", "expected"),
+    [
+        ("spawn", "agent_spawned"),
+        ("fail", "agent_crashed"),
+        ("edit", "trace_step"),
+    ],
+)
+def test_classify_trace_step(step_type: str, expected: str) -> None:
+    assert _classify_trace_step(step_type) == expected
 
 
 class TestBuildIncidentTimeline:

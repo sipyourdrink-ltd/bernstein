@@ -34,7 +34,7 @@ WatchdogSource = Literal["heartbeat", "log_growth", "progress_stall"]
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_OBJ = "dict[str, object]"
+type _CAST_DICT_STR_OBJ = dict[str, object]
 
 # Heartbeat phases that mean the agent is still producing its FIRST turn. A
 # non-heartbeat adapter (consumes_heartbeat_dir=False) has only its spawn-time
@@ -47,7 +47,7 @@ _STARTING_PHASES: frozenset[str] = frozenset(
 
 
 def _is_starting_phase(phase: str | None) -> bool:
-    return bool(phase) and phase.strip().lower() in _STARTING_PHASES
+    return phase is not None and phase.strip().lower() in _STARTING_PHASES
 
 
 def _log_signal_is_fresh(log_age_s: float | None) -> bool:
@@ -549,17 +549,17 @@ class WatchdogManager:
 
 def _coerce_log_state(raw: object) -> tuple[int, int]:
     if isinstance(raw, tuple):
-        values = cast("tuple[object, ...]", raw)
-        if len(values) == 2:
-            first = _safe_int(values[0])
-            second = _safe_int(values[1])
+        tuple_values = cast("tuple[object, ...]", raw)
+        if len(tuple_values) == 2:
+            first = _safe_int(tuple_values[0])
+            second = _safe_int(tuple_values[1])
             if first is not None and second is not None:
                 return first, second
     if isinstance(raw, list):
-        values = cast("list[object]", raw)
-        if len(values) == 2:
-            first = _safe_int(values[0])
-            second = _safe_int(values[1])
+        list_values = cast("list[object]", raw)
+        if len(list_values) == 2:
+            first = _safe_int(list_values[0])
+            second = _safe_int(list_values[1])
             if first is not None and second is not None:
                 return first, second
     return 0, 0
