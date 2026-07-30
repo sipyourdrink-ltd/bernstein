@@ -2924,7 +2924,14 @@ def _evaluate_approval_gate(
     janitor_passed: bool,
 ) -> bool:
     """Evaluate the approval gate and return whether to skip merge."""
-    if not janitor_passed or orch._approval_gate is None:
+    if not janitor_passed:
+        logger.warning(
+            "approval_decision: task=%s session=%s decision=held -- required quality gate failed, skipping merge",
+            task.id,
+            session.id,
+        )
+        return True
+    if orch._approval_gate is None:
         return False
 
     try:

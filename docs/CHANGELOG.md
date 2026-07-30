@@ -39,6 +39,10 @@ All notable project changes are tracked here (code + docs).
   default behind `BERNSTEIN_A2A_SERVER_ENABLED`. See
   [`docs/operations/a2a-server.md`](operations/a2a-server.md). Refs #2609.
 
+### Fixed
+
+- `_evaluate_approval_gate` returned `skip_merge=False` whenever a required quality gate failed, so a failed gate was logged and recorded as `blocked` in `quality_gates.jsonl` but the branch merged anyway. The failed-gate check is now split from the no-approval-gate-configured check, so a failed required gate always returns `skip_merge=True` (#3254).
+
 ## [3.5.0] - 2026-07-16
 
 Hardens audit identity across MCP protocol change and replay detection of provider-side context rewrites, plus a security dependency bump and CI reliability work. Full notes: [`docs/release-notes/v3.5.0.md`](release-notes/v3.5.0.md).
