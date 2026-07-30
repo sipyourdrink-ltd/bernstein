@@ -23,7 +23,7 @@ class TestPriceModelUsage:
         assert result.model == "minimax-m3"
         assert result.input_tokens == 10_000
         assert result.output_tokens == 2_000
-        expected = (10_000 / 1_000_000.0) * 0.3 + (2_000 / 1_000_000.0) * 1.2
+        expected = (10_000 / 1_000_000.0) * 0.6 + (2_000 / 1_000_000.0) * 2.4
         assert result.cost_usd == pytest.approx(expected)
         assert result.cost_usd > 0.0
 
@@ -31,6 +31,32 @@ class TestPriceModelUsage:
         result = price_model_usage("MiniMax-M3", input_tokens=1_000, output_tokens=1_000)
         assert result.priced is True
         assert result.cost_usd > 0.0
+
+    def test_minimax_rates_and_cache_tiers_match_refreshed_table(self) -> None:
+        """Rates refreshed 2026-07-23: both MiniMax SKUs were previously
+        priced at half their published input/output rates and carried no
+        cache tier, so metered spend read ~50% low. Lock in the corrected
+        input/output rates and the cache-read/cache-write tiers so a
+        regression to the old half-price entries fails loudly."""
+        m3 = MODEL_COSTS_PER_1M_TOKENS["minimax-m3"]
+        assert m3["input"] == pytest.approx(0.6)
+        assert m3["output"] == pytest.approx(2.4)
+        assert m3["cache_read"] == pytest.approx(0.12)
+        # M3 lists no separate cache-write tier.
+        assert m3["cache_write"] is None
+
+        m27 = MODEL_COSTS_PER_1M_TOKENS["minimax-m2.7"]
+        assert m27["input"] == pytest.approx(0.3)
+        assert m27["output"] == pytest.approx(1.2)
+        assert m27["cache_read"] == pytest.approx(0.06)
+        assert m27["cache_write"] == pytest.approx(0.375)
+
+        # The more specific "minimax-m2.7" key must win over "minimax-m3"
+        # under longest-key-first matching so the SKU prices at its own rate.
+        priced = price_model_usage("MiniMax-M2.7", input_tokens=1_000_000, output_tokens=1_000_000)
+        assert priced.priced is True
+        assert priced.cost_usd == pytest.approx(0.3 + 1.2)
+        assert priced.cost_usd != pytest.approx(0.6 + 2.4)
 
     def test_unknown_model_is_explicit_zero_not_dropped(
         self,
