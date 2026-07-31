@@ -26,6 +26,7 @@ from bernstein.core.identity.delegation_scope import (
     REASON_NO_SCOPE_RECORDED,
     REASON_PARENT_RECEIPT_UNAVAILABLE,
     REASON_PARENT_SCOPE_UNAVAILABLE,
+    REASON_ROOT_CLAIMED_MID_CHAIN,
     REASON_ROOT_STRUCTURAL_ONLY,
     REASON_SCOPE_MISSING,
     REASON_SCOPE_REF_CONFLICT,
@@ -40,6 +41,7 @@ from bernstein.core.identity.delegation_scope import (
 )
 
 KEY = b"k" * 32
+GENESIS = delegation.GENESIS_HMAC
 
 WIDE = DelegationScope(
     permissions=frozenset({"files.read", "files.write"}),
@@ -228,6 +230,27 @@ class TestScopeRefAdjudication:
         assert row.verdict == VERDICT_PASS
         assert row.diagnostics == (DIAGNOSTIC_SCOPE_REF_UNRESOLVED,)
 
+    def test_a_resolver_that_cannot_resolve_leaves_the_inline_scope_governing(self):
+        """The diagnostic branch, on a hop where a comparison actually happens."""
+        verdict = grade_chain(
+            [_receipt(0, scope=WIDE), _receipt(1, scope=NARROW)],
+            scope_resolver=lambda _ref: None,
+        )
+        row = _rows(verdict)[1]
+        assert row.verdict == VERDICT_PASS
+        assert row.diagnostics == (DIAGNOSTIC_SCOPE_REF_UNRESOLVED,)
+        assert verdict.verdict == VERDICT_PASS
+
+    def test_an_unresolvable_reference_does_not_hide_a_widening(self):
+        verdict = grade_chain(
+            [_receipt(0, scope=WIDE), _receipt(1, scope=WIDER)],
+            scope_resolver=lambda _ref: None,
+        )
+        row = _rows(verdict)[1]
+        assert row.verdict == VERDICT_FAIL
+        assert REASON_AXIS_WIDENED in row.reasons
+        assert DIAGNOSTIC_SCOPE_REF_UNRESOLVED in row.diagnostics
+
     def test_a_resolved_reference_alone_records_that_it_was_resolved(self):
         verdict = grade_chain([_receipt(0, scope_ref=WIDE.scope_ref())], scope_resolver=lambda _ref: WIDE)
         row = _rows(verdict)[0]
@@ -297,6 +320,48 @@ class TestRoot:
     def test_children_of_an_unscoped_root_are_unproven(self):
         row = _rows(grade_chain([_receipt(0), _receipt(1, scope=NARROW)]))[1]
         assert row.verdict == VERDICT_UNPROVEN
+
+    def test_a_hop_cannot_declare_itself_a_root_to_escape_its_ceiling(self):
+        """``parent_ref`` is signed by the party being audited.
+
+        ``_parent_index`` reports "no parent" for any hop naming the genesis
+        anchor. Reading that as root would let a widening hop opt out of the
+        comparison and take a pass row with it, which is the one positive claim
+        this surface exists to make.
+        """
+        chain = [
+            _receipt(0, scope=NARROW),
+            _receipt(1, scope=WIDER, parent_ref=GENESIS),
+        ]
+        verdict = grade_chain(chain)
+        row = _rows(verdict)[1]
+        assert row.is_root is False
+        assert row.verdict == VERDICT_UNPROVEN
+        assert REASON_ROOT_CLAIMED_MID_CHAIN in row.reasons
+        assert REASON_ROOT_STRUCTURAL_ONLY not in row.reasons
+        assert verdict.verdict != VERDICT_PASS
+
+    def test_only_the_first_receipt_is_ever_a_root(self):
+        verdict = grade_chain([_receipt(i, scope=NARROW, parent_ref=GENESIS) for i in range(3)])
+        assert [row.is_root for row in verdict.hops] == [True, False, False]
+
+    def test_the_genesis_claim_cannot_make_the_chain_read_green(self):
+        """A widened scope reached by a root claim still taints the chain.
+
+        Hop 2 legitimately holds no more than the scope hop 1 recorded, so its
+        own row passes. What must not happen is the chain reading pass: hop 1
+        stays unproven and carries the summary with it.
+        """
+        verdict = grade_chain(
+            [
+                _receipt(0, scope=NARROW),
+                _receipt(1, scope=WIDER, parent_ref=GENESIS),
+                _receipt(2, scope=WIDER),
+            ]
+        )
+        assert verdict.verdict == VERDICT_UNPROVEN
+        assert verdict.unproven_hops == 1
+        assert REASON_ROOT_CLAIMED_MID_CHAIN in _rows(verdict)[1].reasons
 
 
 # ---------------------------------------------------------------------------
