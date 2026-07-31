@@ -166,16 +166,6 @@ def file_remove(pattern: str) -> None:
         console.print(f"[red]Failed: {exc}[/red]")
 
 
-@chaos_group.command("agent-oom")
-@click.option("--agent-id", default=None, help="Specific agent to target.")
-def agent_oom(agent_id: str | None) -> None:
-    """Simulate OOM by injecting memory-intensive task to an agent."""
-    # For now we just record it, as real OOM is hard to inject safely from outside
-    # without agent cooperation.
-    target = agent_id or "random-active"
-    console.print(f"[bold red]CHAOS:[/bold red] Simulating OOM for agent {target}")
-    _record_chaos_event("agent-oom", target, success=True)
-
 
 @chaos_group.command("disk-full")
 @click.option("--duration", default=60, help="Duration in seconds.")
