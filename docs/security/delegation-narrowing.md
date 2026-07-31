@@ -146,6 +146,47 @@ checks), an `authority` block carrying the three sub-verdicts, the scope
 coverage, and every violation with its `check`, `axis`, `hop_index`,
 `parent_hop_index`, and `principal`.
 
+## Graded verdict: pass, fail, unproven
+
+`valid` cannot separate a chain whose narrowing was checked and held from a
+chain that recorded no scope to check. Both reach the caller as `True`, because
+in neither case did a check find anything. `ChainResult.verdict` is the
+additive surface that draws the line, and it never changes what `valid` means.
+
+Each hop gets one row: `pass`, `fail`, or `unproven`. The chain composes them,
+fail dominating, then any unproven making the chain unproven, then pass. Every
+hop is evaluated and nothing short-circuits, so a widening late in the chain is
+still found when an earlier hop is unproven. The chain carries an
+`unproven_hops` count at the top level, so a ten-hop chain with nine unproven
+hops cannot present as green.
+
+The reason strings are a closed set. Fail: `axis_widened`,
+`axis_widened_vs_ancestor`, `scope_ref_conflict`, and `chain_invalid` on the
+chain. Unproven: `scope_missing`, `scope_ref_only_unresolved`,
+`parent_receipt_unavailable`, `parent_scope_unavailable`,
+`comparison_axis_unsupported`, and `no_scope_recorded` on the chain. A root hop
+is reported with `is_root` and `root_structural_only`, never as a narrowing
+pass, because it has no ceiling to narrow against.
+
+Two observations are recorded without changing a verdict:
+`scope_ref_unresolved_inline_governs` when an inline scope sits beside a
+reference that could not be resolved, and `scope_ref_only_resolved` when the
+comparison came from a resolved reference rather than inline bytes.
+
+When a hop's direct parent records no scope, the child is compared against the
+nearest ancestor that does. Subset-of-ancestor is a necessary condition under
+transitive narrowing, so a widening found across the gap is evidence about the
+far side of the gap and fails with `axis_widened_vs_ancestor`. When no ancestor
+carries a scope, the hop is `parent_scope_unavailable` and unproven rather than
+failed. A chain that records no scope anywhere never reaches this path.
+
+What a pass does not establish: that runtime enforcement matched the recorded
+scope, including consumption state such as remaining uses; that any grant was
+appropriate policy; that the supplied receipt set is complete, or that no
+alternate delegation path exists; that an unresolved reference would have
+matched; anything about execution outcomes. unproven is not valid, and pass is
+the only positive claim.
+
 ## Compatibility
 
 Every field is optional. A chain recorded before these fields existed carries no
