@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from bernstein.core.provider_latency import (
+    _MIN_BASELINE_SAMPLES,
     DegradationAlert,
     ProviderLatencyTracker,
+    _coerce_float,
     _make_key,
+    _MalformedLatencyRecord,
     _split_key,
 )
 
@@ -209,5 +214,113 @@ class TestProviderLatencyTracker:
         }
         record[field] = {"not": "numeric"}
 
-        with pytest.raises(TypeError):
+        # A non-numeric field is flagged with the internal marker so the reader
+        # can skip and count it, instead of a bare TypeError/ValueError escaping.
+        with pytest.raises(_MalformedLatencyRecord):
             ProviderLatencyTracker._parse_latency_record(json.dumps(record), cutoff=0.0)
+
+
+class TestCoerceFloat:
+    """_coerce_float turns arbitrary JSONL field values into float | None (#3288)."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (12.5, 12.5),
+            (0, 0.0),
+            (200, 200.0),
+            ("12.5", 12.5),
+            ("  3 ", 3.0),
+            (None, None),
+            ("not-a-number", None),
+            ("", None),
+            ([1, 2], None),
+            ({"a": 1}, None),
+            (True, None),  # bool is an int subclass but never a real value
+            (False, None),
+        ],
+    )
+    def test_coerce_float(self, value: object, expected: float | None) -> None:
+        assert _coerce_float(value) == expected
+
+
+class TestMalformedRecordHandling:
+    """The reader skips malformed/truncated JSONL records instead of raising (#3288)."""
+
+    @staticmethod
+    def _write_jsonl(metrics_dir: Path, lines: list[str]) -> Path:
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        jsonl = metrics_dir / f"provider_latency_{date_str}.jsonl"
+        jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return jsonl
+
+    def test_get_history_skips_malformed_and_reports_count(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        now = time.time()
+        good_a = json.dumps({"timestamp": now, "provider": "anthropic", "model": "sonnet", "latency_ms": 12.5})
+        good_b = json.dumps({"timestamp": now - 60, "provider": "anthropic", "model": "sonnet", "latency_ms": 30.0})
+        lines = [
+            good_a,
+            '{"timestamp": "not-a-number", "provider": "a", "model": "m", "latency_ms": 5}',
+            '{"timestamp": null, "provider": "a", "model": "m", "latency_ms": 5}',
+            '{"timestamp": ' + repr(now) + ', "provider": "a", "model": "m", "laten',  # truncated
+            "42",  # valid JSON, but not an object
+            "",  # blank line - ignored, not counted as malformed
+            good_b,
+        ]
+        self._write_jsonl(tmp_path, lines)
+
+        tracker = ProviderLatencyTracker(tmp_path)
+        with caplog.at_level(logging.WARNING):
+            history = tracker.get_history()
+
+        # Only the two well-formed records survive, ordered by timestamp ascending.
+        assert [r["latency_ms"] for r in history] == [30.0, 12.5]
+        assert "Skipped 4 malformed latency record(s) while reading history" in caplog.text
+
+    def test_get_history_clean_file_logs_nothing(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        now = time.time()
+        self._write_jsonl(
+            tmp_path,
+            [json.dumps({"timestamp": now, "provider": "openai", "model": "gpt-4", "latency_ms": 10.0})],
+        )
+        tracker = ProviderLatencyTracker(tmp_path)
+        with caplog.at_level(logging.WARNING):
+            history = tracker.get_history()
+
+        assert len(history) == 1
+        assert "malformed" not in caplog.text
+
+    def test_load_baseline_skips_malformed_and_still_builds_baseline(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ts = time.time() - 3600
+        good = [
+            json.dumps({"timestamp": ts, "provider": "openai", "model": "gpt-4", "latency_ms": 200.0})
+            for _ in range(_MIN_BASELINE_SAMPLES)
+        ]
+        malformed = [
+            '{"timestamp": "oops", "provider": "openai", "model": "gpt-4", "latency_ms": 200}',
+            '{"timestamp": ' + repr(ts) + ', "provider": "openai", "model": "gpt-4", "latency_ms": null}',
+            "{ truncated json",
+            "3.14",  # not an object
+        ]
+        self._write_jsonl(tmp_path, [*good, *malformed])
+
+        with caplog.at_level(logging.WARNING):
+            tracker = ProviderLatencyTracker(tmp_path)
+
+        key = _make_key("openai", "gpt-4")
+        assert key in tracker._baseline_p99
+        assert tracker._baseline_p99[key] == pytest.approx(200.0, abs=1.0)
+        assert "Skipped 4 malformed latency record(s) while loading baseline" in caplog.text
+
+    def test_get_history_all_malformed_returns_empty(self, tmp_path: Path) -> None:
+        self._write_jsonl(
+            tmp_path,
+            ['{"timestamp": null}', "not json at all", "[1, 2, 3]"],
+        )
+        tracker = ProviderLatencyTracker(tmp_path)
+        # No traceback; simply nothing to return.
+        assert tracker.get_history() == []
