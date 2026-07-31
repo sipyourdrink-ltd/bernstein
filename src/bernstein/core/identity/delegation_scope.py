@@ -40,6 +40,19 @@ exactly as it did before. A chain that records scope must record it at *every*
 hop up to its root: a scoped hop whose parent has no recorded scope is reported
 as ``unscoped_parent``, because an unrecorded ceiling makes narrowing
 unprovable rather than proven.
+
+:func:`grade_chain` adds a second, additive reading of the same receipts: a
+three-valued pass / fail / unproven verdict with one row per hop. It exists
+because ``ChainResult.valid`` cannot separate a chain whose narrowing was
+checked and held from a chain that recorded no scope to check. It records no
+:class:`ScopeViolation` and leaves :class:`AuthorityReport` alone, so ``valid``
+keeps the meaning it already had.
+
+Two reasons from the design sketch are absent because this schema cannot reach
+them. There is no scope version field for ``scope_version_unsupported`` to fire
+on, and ``parent_ref_missing`` does not apply because the receipt chain is
+HMAC-linked, so the preceding hop is the parent by construction rather than by
+an inference a substituted receipt could exploit.
 """
 
 from __future__ import annotations
@@ -62,22 +75,48 @@ if TYPE_CHECKING:
     from bernstein.core.identity.delegation import DelegationReceipt
 
 __all__ = [
+    "CHAIN_REASONS",
     "CHECK_BINDING",
     "CHECK_DUTIES",
     "CHECK_NARROWING",
     "DEFAULT_SEPARATED_DUTIES",
+    "DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED",
+    "DIAGNOSTIC_SCOPE_REF_UNRESOLVED",
     "DUTY_APPROVE",
     "DUTY_MERGE",
     "DUTY_SPAWN",
+    "FAIL_REASONS",
     "GATED_DUTIES",
+    "PASS_REASONS",
+    "REASON_AXIS_WIDENED",
+    "REASON_AXIS_WIDENED_VS_ANCESTOR",
+    "REASON_CHAIN_INVALID",
+    "REASON_COMPARISON_AXIS_UNSUPPORTED",
+    "REASON_NO_SCOPE_RECORDED",
+    "REASON_PARENT_RECEIPT_UNAVAILABLE",
+    "REASON_PARENT_SCOPE_UNAVAILABLE",
+    "REASON_ROOT_STRUCTURAL_ONLY",
+    "REASON_SCOPE_MISSING",
+    "REASON_SCOPE_REF_CONFLICT",
+    "REASON_SCOPE_REF_ONLY_UNRESOLVED",
+    "SCOPE_BODY_KEYS",
+    "UNPROVEN_REASONS",
+    "VERDICT_DIAGNOSTICS",
+    "VERDICT_FAIL",
+    "VERDICT_PASS",
+    "VERDICT_REASONS",
+    "VERDICT_UNPROVEN",
     "AuthorityReport",
+    "ChainVerdict",
     "DecisionBinding",
     "DelegationScope",
+    "HopVerdict",
     "ScopeViolation",
     "check_binding",
     "check_duties",
     "check_narrowing",
     "duties_for_act",
+    "grade_chain",
     "narrowing_violations",
     "verify_authority",
 ]
@@ -695,4 +734,381 @@ def verify_authority(
         binding_ok=not binding,
         scope_coverage=coverage,
         violations=[*narrowing, *duties, *binding],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Graded chain verdict (issue #2554)
+# ---------------------------------------------------------------------------
+
+#: A hop whose narrowing was evaluated and held.
+VERDICT_PASS: str = "pass"
+#: A hop that contradicts itself or gained authority its ceiling lacked.
+VERDICT_FAIL: str = "fail"
+#: A hop that is well formed but carries too little signed material to decide.
+VERDICT_UNPROVEN: str = "unproven"
+
+#: Reason strings. The set is closed: consumers are expected to fail closed on
+#: exact matches, so adding one is a versioned change to this contract. Every
+#: reason below is reachable from a code path in this module.
+REASON_ROOT_STRUCTURAL_ONLY: str = "root_structural_only"
+REASON_SCOPE_REF_CONFLICT: str = "scope_ref_conflict"
+REASON_AXIS_WIDENED: str = "axis_widened"
+REASON_AXIS_WIDENED_VS_ANCESTOR: str = "axis_widened_vs_ancestor"
+REASON_CHAIN_INVALID: str = "chain_invalid"
+REASON_SCOPE_MISSING: str = "scope_missing"
+REASON_SCOPE_REF_ONLY_UNRESOLVED: str = "scope_ref_only_unresolved"
+REASON_PARENT_RECEIPT_UNAVAILABLE: str = "parent_receipt_unavailable"
+REASON_PARENT_SCOPE_UNAVAILABLE: str = "parent_scope_unavailable"
+REASON_COMPARISON_AXIS_UNSUPPORTED: str = "comparison_axis_unsupported"
+REASON_NO_SCOPE_RECORDED: str = "no_scope_recorded"
+
+#: Reasons that make a hop fail.
+FAIL_REASONS: frozenset[str] = frozenset(
+    {
+        REASON_AXIS_WIDENED,
+        REASON_AXIS_WIDENED_VS_ANCESTOR,
+        REASON_SCOPE_REF_CONFLICT,
+    }
+)
+
+#: Reasons that make a hop unproven when no fail reason is also present.
+UNPROVEN_REASONS: frozenset[str] = frozenset(
+    {
+        REASON_COMPARISON_AXIS_UNSUPPORTED,
+        REASON_PARENT_RECEIPT_UNAVAILABLE,
+        REASON_PARENT_SCOPE_UNAVAILABLE,
+        REASON_SCOPE_MISSING,
+        REASON_SCOPE_REF_ONLY_UNRESOLVED,
+    }
+)
+
+#: Reasons a row may carry without disturbing a pass verdict.
+PASS_REASONS: frozenset[str] = frozenset({REASON_ROOT_STRUCTURAL_ONLY})
+
+#: Reasons that appear on the chain rather than on any single row.
+CHAIN_REASONS: frozenset[str] = frozenset({REASON_CHAIN_INVALID, REASON_NO_SCOPE_RECORDED})
+
+#: Every reason string this module can emit.
+VERDICT_REASONS: frozenset[str] = FAIL_REASONS | UNPROVEN_REASONS | PASS_REASONS | CHAIN_REASONS
+
+#: Observations recorded alongside a verdict without changing it.
+DIAGNOSTIC_SCOPE_REF_UNRESOLVED: str = "scope_ref_unresolved_inline_governs"
+DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED: str = "scope_ref_only_resolved"
+VERDICT_DIAGNOSTICS: frozenset[str] = frozenset({DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED, DIAGNOSTIC_SCOPE_REF_UNRESOLVED})
+
+#: Keys :meth:`DelegationScope.from_body` interprets. A body carrying anything
+#: else is not something the comparator can reason about, so the hop is
+#: unproven rather than quietly compared on the subset it understood.
+SCOPE_BODY_KEYS: frozenset[str] = frozenset(
+    {
+        "duties",
+        "max_depth",
+        "max_uses",
+        "not_after",
+        "path_prefixes",
+        "permissions",
+        "task_ids",
+    }
+)
+
+
+@dataclass(frozen=True)
+class HopVerdict:
+    """One graded row: what this hop established, and what it did not.
+
+    ``is_root`` marks the hop with no parent to narrow against. A root is
+    verified structurally and reported as root, never as a narrowing pass.
+    ``axes`` names the scope axes the row is about, whether they were widened
+    or could not be interpreted.
+    """
+
+    hop_index: int
+    verdict: str
+    is_root: bool = False
+    reasons: tuple[str, ...] = ()
+    axes: tuple[str, ...] = ()
+    parent_hop_index: int | None = None
+    ancestor_hop_index: int | None = None
+    diagnostics: tuple[str, ...] = ()
+    principal: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict for CLI / machine consumption."""
+        return {
+            "ancestor_hop_index": self.ancestor_hop_index,
+            "axes": list(self.axes),
+            "diagnostics": list(self.diagnostics),
+            "hop_index": self.hop_index,
+            "is_root": self.is_root,
+            "parent_hop_index": self.parent_hop_index,
+            "principal": self.principal,
+            "reasons": list(self.reasons),
+            "verdict": self.verdict,
+        }
+
+    def __str__(self) -> str:
+        parts = [f"hop {self.hop_index}: {self.verdict}"]
+        if self.is_root:
+            parts.append("(root)")
+        if self.reasons:
+            parts.append(" ".join(self.reasons))
+        if self.axes:
+            parts.append("axes: " + ", ".join(self.axes))
+        if self.diagnostics:
+            parts.append("diagnostics: " + ", ".join(self.diagnostics))
+        return " ".join(parts)
+
+
+@dataclass(frozen=True)
+class ChainVerdict:
+    """Graded outcome over one run's receipts, one row per hop.
+
+    ``verdict`` composes the rows: fail dominates, otherwise any unproven row
+    makes the chain unproven, otherwise pass. ``unproven_hops`` is carried at
+    the top level so a ten-hop chain with nine unproven hops cannot present as
+    green, and the summary never replaces the rows.
+
+    What a pass does not establish: that runtime enforcement matched the
+    recorded scope, including consumption state such as remaining uses; that
+    any grant was appropriate policy; that the supplied receipt set is
+    complete, or that no alternate delegation path exists; that an unresolved
+    reference would have matched; anything about execution outcomes. unproven
+    is not valid, and pass is the only positive claim.
+    """
+
+    verdict: str = VERDICT_UNPROVEN
+    hops: tuple[HopVerdict, ...] = ()
+    unproven_hops: int = 0
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        """True only for a full pass. Unproven is not valid."""
+        return self.verdict == VERDICT_PASS
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict."""
+        return {
+            "hops": [h.to_dict() for h in self.hops],
+            "ok": self.ok,
+            "reasons": list(self.reasons),
+            "unproven_hops": self.unproven_hops,
+            "verdict": self.verdict,
+        }
+
+
+def grade_chain(
+    receipts: Sequence[DelegationReceipt],
+    *,
+    scope_resolver: Callable[[str], DelegationScope | None] | None = None,
+    genesis: str = "0" * 64,
+    chain_ok: bool = True,
+) -> ChainVerdict:
+    """Grade every hop pass / fail / unproven and compose one chain verdict.
+
+    This is an additive surface. It records no :class:`ScopeViolation` and does
+    not feed :class:`AuthorityReport`, so ``ChainResult.valid`` keeps the
+    structural meaning it already had. What it adds is the distinction ``valid``
+    cannot draw: a chain whose narrowing was checked and held reads differently
+    from a chain that recorded no scope to check.
+
+    Every hop is evaluated and nothing short-circuits, so a widening late in
+    the chain is still found when an earlier hop is unproven.
+
+    What a pass does not establish: that runtime enforcement matched the
+    recorded scope, including consumption state such as remaining uses; that
+    any grant was appropriate policy; that the supplied receipt set is
+    complete, or that no alternate delegation path exists; that an unresolved
+    reference would have matched; anything about execution outcomes. unproven
+    is not valid, and pass is the only positive claim.
+
+    Args:
+        receipts: The run's receipts in ledger order.
+        scope_resolver: Optional lookup from ``scope_ref`` to a scope body.
+        genesis: Linkage anchor marking a chain root.
+        chain_ok: The tamper-evidence verdict. False makes the chain fail,
+            since a chain that does not verify establishes nothing about
+            narrowing either.
+
+    Returns:
+        A :class:`ChainVerdict` carrying one :class:`HopVerdict` per receipt.
+    """
+    by_hmac = {r.hmac: i for i, r in enumerate(receipts) if r.hmac}
+    scopes = [_resolve_scope(r, scope_resolver) for r in receipts]
+    rows = tuple(
+        _grade_hop(
+            receipts,
+            index,
+            scopes,
+            by_hmac,
+            scope_resolver=scope_resolver,
+            genesis=genesis,
+        )
+        for index in range(len(receipts))
+    )
+    return _compose_chain(
+        rows,
+        any_scope=any(s is not None for s in scopes),
+        chain_ok=chain_ok,
+    )
+
+
+def _grade_hop(
+    receipts: Sequence[DelegationReceipt],
+    index: int,
+    scopes: list[DelegationScope | None],
+    by_hmac: dict[str, int],
+    *,
+    scope_resolver: Callable[[str], DelegationScope | None] | None,
+    genesis: str,
+) -> HopVerdict:
+    """Grade one hop without consulting any other hop's verdict."""
+    receipt = receipts[index]
+    scope = scopes[index]
+    reasons: list[str] = []
+    axes: set[str] = set()
+    ancestor_hop_index: int | None = None
+
+    resolved = _parent_index(receipts, index, by_hmac, genesis)
+    parent = resolved if isinstance(resolved, int) else None
+    if isinstance(resolved, str):
+        reasons.append(REASON_PARENT_RECEIPT_UNAVAILABLE)
+    is_root = resolved is None
+    parent_hop_index = None if parent is None else receipts[parent].hop_index
+
+    ref_reasons, diagnostics = _cross_check_scope_ref(receipt, scope_resolver)
+    reasons.extend(ref_reasons)
+
+    if scope is None:
+        reasons.append(REASON_SCOPE_REF_ONLY_UNRESOLVED if receipt.scope_ref else REASON_SCOPE_MISSING)
+    elif receipt.scope is not None:
+        axes.update(set(receipt.scope) - SCOPE_BODY_KEYS)
+        if axes:
+            reasons.append(REASON_COMPARISON_AXIS_UNSUPPORTED)
+
+    if is_root:
+        if scope is not None:
+            reasons.append(REASON_ROOT_STRUCTURAL_ONLY)
+    elif scope is not None and parent is not None:
+        ceiling = _nearest_scoped_ancestor(receipts, scopes, parent, by_hmac, genesis)
+        ceiling_scope = None if ceiling is None else scopes[ceiling]
+        if ceiling is None or ceiling_scope is None:
+            reasons.append(REASON_PARENT_SCOPE_UNAVAILABLE)
+        else:
+            widened = narrowing_violations(scope, ceiling_scope)
+            if widened:
+                across_gap = ceiling != parent
+                reasons.append(REASON_AXIS_WIDENED_VS_ANCESTOR if across_gap else REASON_AXIS_WIDENED)
+                axes.update(widened)
+                if across_gap:
+                    ancestor_hop_index = receipts[ceiling].hop_index
+
+    return HopVerdict(
+        hop_index=receipt.hop_index,
+        verdict=_hop_verdict(reasons),
+        is_root=is_root,
+        reasons=tuple(sorted(set(reasons))),
+        axes=tuple(sorted(axes)),
+        parent_hop_index=parent_hop_index,
+        ancestor_hop_index=ancestor_hop_index,
+        diagnostics=tuple(sorted(set(diagnostics))),
+        principal=receipt.subject,
+    )
+
+
+def _cross_check_scope_ref(
+    receipt: DelegationReceipt,
+    scope_resolver: Callable[[str], DelegationScope | None] | None,
+) -> tuple[list[str], list[str]]:
+    """Adjudicate ``scope`` against ``scope_ref``; return (reasons, diagnostics).
+
+    A recorded reference that is not the content address of the inline scope is
+    a contradiction inside one signed body, and so is a reference that resolves
+    to a different scope than the body carries. The signer held the key in both
+    cases, which makes this an integrity defect rather than missing evidence.
+    An unresolved reference alongside an inline scope is only a diagnostic: the
+    inline value governs the comparison.
+    """
+    if not receipt.scope_ref:
+        return [], []
+    if receipt.scope is None:
+        if scope_resolver is not None and scope_resolver(receipt.scope_ref) is not None:
+            return [], [DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED]
+        return [], []
+
+    inline = DelegationScope.from_body(receipt.scope)
+    if inline.scope_ref() != receipt.scope_ref:
+        return [REASON_SCOPE_REF_CONFLICT], []
+    if scope_resolver is None:
+        return [], [DIAGNOSTIC_SCOPE_REF_UNRESOLVED]
+    referenced = scope_resolver(receipt.scope_ref)
+    if referenced is None:
+        return [], [DIAGNOSTIC_SCOPE_REF_UNRESOLVED]
+    if referenced != inline:
+        return [REASON_SCOPE_REF_CONFLICT], []
+    return [], []
+
+
+def _nearest_scoped_ancestor(
+    receipts: Sequence[DelegationReceipt],
+    scopes: list[DelegationScope | None],
+    start: int,
+    by_hmac: dict[str, int],
+    genesis: str,
+) -> int | None:
+    """Walk parent links from ``start`` upward to the first hop with a scope.
+
+    Subset-of-ancestor is a necessary condition under transitive narrowing, so
+    a widening found across an unscoped gap is evidence about the far side of
+    the gap and not merely about the missing link.
+    """
+    seen: set[int] = set()
+    cursor: int | None = start
+    while cursor is not None and cursor not in seen:
+        seen.add(cursor)
+        if scopes[cursor] is not None:
+            return cursor
+        step = _parent_index(receipts, cursor, by_hmac, genesis)
+        cursor = step if isinstance(step, int) else None
+    return None
+
+
+def _hop_verdict(reasons: list[str]) -> str:
+    """Reduce one hop's reasons to a verdict. Fail dominates unproven."""
+    if any(r in FAIL_REASONS for r in reasons):
+        return VERDICT_FAIL
+    if any(r in UNPROVEN_REASONS for r in reasons):
+        return VERDICT_UNPROVEN
+    return VERDICT_PASS
+
+
+def _compose_chain(
+    rows: tuple[HopVerdict, ...],
+    *,
+    any_scope: bool,
+    chain_ok: bool,
+) -> ChainVerdict:
+    """Compose rows into one chain verdict without discarding any row."""
+    reasons: list[str] = []
+    unproven = sum(1 for row in rows if row.verdict == VERDICT_UNPROVEN)
+
+    if not chain_ok:
+        reasons.append(REASON_CHAIN_INVALID)
+        verdict = VERDICT_FAIL
+    elif any(row.verdict == VERDICT_FAIL for row in rows):
+        verdict = VERDICT_FAIL
+    elif unproven or not rows:
+        verdict = VERDICT_UNPROVEN
+    else:
+        verdict = VERDICT_PASS
+
+    if not any_scope:
+        reasons.append(REASON_NO_SCOPE_RECORDED)
+
+    return ChainVerdict(
+        verdict=verdict,
+        hops=rows,
+        unproven_hops=unproven,
+        reasons=tuple(sorted(set(reasons))),
     )
