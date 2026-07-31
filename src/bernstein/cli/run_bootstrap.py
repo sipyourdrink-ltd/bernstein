@@ -177,7 +177,10 @@ def _save_plan_markdown(md: str, workdir: Path) -> Path:
     plans_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     plan_file = plans_dir / f"plan-{ts}.md"
-    plan_file.write_text(md)
+    # The rendered plan always carries the status glyphs the builder emits, so
+    # writing at the platform default encoding raises UnicodeEncodeError on a
+    # cp1252 locale.
+    plan_file.write_text(md, encoding="utf-8")
     return plan_file
 
 
@@ -2449,6 +2452,70 @@ def _run_impl(
             budget_cap=budget_cap,
         )
 
+    # --plan-only: render the plan this run would execute, then exit.
+    #
+    # This block runs ahead of the --plan-file / --from-plan dispatch below.
+    # The flag is a property of the run, not of how the plan was supplied: with
+    # a positional plan file the dispatch called bootstrap_from_goal and
+    # returned before the flag was ever consulted, so ``bernstein run plan.yaml
+    # --plan-only`` started a server, spawned an agent, created a worktree and
+    # reached the merge path (gh-3255).
+    if plan_only:
+        from bernstein.core.plan_approval import create_plan
+        from bernstein.core.plan_builder import PlanBuilder
+
+        rerun_hint: str | None = None
+
+        if plan_file is not None:
+            if worker_role:
+                # The same refusal the executing path raises: --worker bypasses
+                # manager decomposition, so there is nothing here to preview.
+                raise click.UsageError("--worker requires a seed file; it is not supported with --plan-file.")
+            try:
+                tasks = load_plan_from_yaml(plan_file)
+                _resolve_depends_on(tasks)
+                try:
+                    import yaml as _yaml
+
+                    plan_data = _yaml.safe_load(plan_file.read_text(encoding="utf-8"))
+                    loaded_goal = plan_data.get("name", str(plan_file))
+                except Exception:
+                    loaded_goal = str(plan_file)
+            except Exception as exc:
+                console.print(f"[red]Failed to load plan file:[/red] {exc}")
+                raise SystemExit(1) from exc
+
+            console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
+            console.print(f"[dim]Plan name:[/dim] {loaded_goal}")
+            plan_obj = create_plan(loaded_goal, tasks)
+            # Not --from-plan: that path reads only the ``**Goal:**`` line out
+            # of the saved markdown and re-decomposes from the plan name, which
+            # silently drops every task just previewed.
+            rerun_hint = f"bernstein run {plan_file}"
+        else:
+            if from_plan is not None:
+                try:
+                    goal = _load_plan_goal(from_plan)
+                    console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
+                    console.print(f"[dim]Goal:[/dim] {goal[:100]}")
+                except (ValueError, OSError) as exc:
+                    console.print(f"[red]Failed to load plan:[/red] {exc}")
+                    raise SystemExit(1) from exc
+            effective_goal, team = _resolve_goal_and_team(workdir, goal, seed_file)
+            plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
+
+        builder = PlanBuilder(plan_obj, tasks)
+        md = builder.render_to_markdown()
+
+        from rich.markdown import Markdown
+
+        console.print(Markdown(md))
+
+        saved_plan = _save_plan_markdown(md, workdir)
+        console.print(f"\n[dim]Plan saved to:[/dim] {saved_plan}")
+        console.print(f"[dim]Execute with:[/dim] {rerun_hint or f'bernstein run --from-plan {saved_plan}'}")
+        return
+
     # --plan_file: loadable YAML plan (stages + steps)
     if plan_file is not None:
         try:
@@ -2458,7 +2525,7 @@ def _run_impl(
             try:
                 import yaml as _yaml
 
-                plan_data = _yaml.safe_load(plan_file.read_text())
+                plan_data = _yaml.safe_load(plan_file.read_text(encoding="utf-8"))
                 goal = plan_data.get("name", str(plan_file))
             except Exception:
                 goal = str(plan_file)
@@ -2502,26 +2569,6 @@ def _run_impl(
         except (ValueError, OSError) as exc:
             console.print(f"[red]Failed to load plan:[/red] {exc}")
             raise SystemExit(1) from exc
-
-    # --plan-only: build a synthetic plan, render to markdown, save, and exit
-    if plan_only:
-        from bernstein.core.plan_builder import PlanBuilder
-
-        effective_goal, team = _resolve_goal_and_team(workdir, goal, seed_file)
-        plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
-        builder = PlanBuilder(plan_obj, tasks)
-        md = builder.render_to_markdown()
-
-        # Render to terminal
-        from rich.markdown import Markdown
-
-        console.print(Markdown(md))
-
-        # Save to file
-        plan_file = _save_plan_markdown(md, workdir)
-        console.print(f"\n[dim]Plan saved to:[/dim] {plan_file}")
-        console.print(f"[dim]Execute with:[/dim] bernstein run --from-plan {plan_file}")
-        return
 
     # Confirmation prompt before execution (skip with --auto-approve)
     if not auto_approve and not _confirm_run(goal=goal, seed_file=seed_file):
