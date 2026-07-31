@@ -312,6 +312,18 @@ class TestRoot:
         assert REASON_ROOT_STRUCTURAL_ONLY in row.reasons
         assert _rows(verdict)[1].is_root is False
 
+    def test_a_single_scoped_root_composes_to_a_chain_pass(self):
+        """A one-receipt chain contains no delegation, so there is no
+        narrowing relation to evaluate. The chain passes on the vacuous
+        reading of "every delegation narrows", and ``root_structural_only``
+        keeps the structural nature of that pass machine-visible rather
+        than letting it read as a checked narrowing."""
+        verdict = grade_chain([_receipt(0, scope=WIDE)])
+        assert verdict.verdict == VERDICT_PASS
+        row = _rows(verdict)[0]
+        assert row.is_root is True
+        assert REASON_ROOT_STRUCTURAL_ONLY in row.reasons
+
     def test_an_unscoped_root_does_not_fail_for_that_alone(self):
         row = _rows(grade_chain([_receipt(0), _receipt(1, scope=NARROW)]))[0]
         assert row.verdict == VERDICT_UNPROVEN
