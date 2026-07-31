@@ -330,24 +330,10 @@ def test_fsync_failure_does_not_create_duplicate_seqs(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Finding 3 (MED): symlinks under .sdd/runtime/wal/ are silently followed.
+# Finding 3 (MED, fixed): symlinks under .sdd/runtime/wal/ are now skipped.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #3 (MED): WALRecovery.scan_all_uncommitted "
-        "and find_orphaned_claims call wal_dir.glob('*.wal.jsonl') "
-        "with no symlink filter. An attacker (or a misconfigured test) "
-        "that drops a symlink into .sdd/runtime/wal/ pointing at a "
-        "foreign WAL file will see those uncommitted entries replayed "
-        "in the local orchestrator's recovery - producing force-claim "
-        "POSTs against arbitrary task IDs from another project's WAL. "
-        "Fix: skip wal_file when wal_file.is_symlink() (or resolve and "
-        "assert it stays inside wal_dir). 5 LOC change."
-    ),
-)
 def test_symlinked_wal_is_not_replayed(tmp_path: Path) -> None:
     """A symlinked WAL pointing outside its project must not be scanned.
 

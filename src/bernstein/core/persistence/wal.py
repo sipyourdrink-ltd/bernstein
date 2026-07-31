@@ -703,6 +703,8 @@ class WALRecovery:
 
         results: list[tuple[str, WALEntry]] = []
         for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
+            if wal_file.is_symlink():
+                continue
             run_id = wal_file.name.removesuffix(".wal.jsonl")
             if run_id == exclude_run_id:
                 continue
@@ -745,6 +747,8 @@ class WALRecovery:
 
         orphans: list[tuple[str, WALEntry]] = []
         for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
+            if wal_file.is_symlink():
+                continue
             run_id = wal_file.name.removesuffix(".wal.jsonl")
             if run_id == exclude_run_id:
                 continue
