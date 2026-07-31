@@ -12,6 +12,7 @@ from typing import Any, ClassVar, cast
 
 from rich.text import Text
 from textual.containers import Container, Vertical
+from textual.message import Message
 from textual.widgets import DataTable, Label, Static
 
 from bernstein.tui.task_list import generate_sparkline
@@ -144,13 +145,14 @@ class ApprovalPanel(Static):
         self.notify("Approval sent: " + ("approved" if event.approved else "rejected"))
 
 
-@dataclass
-class ApprovalAction:
+class ApprovalAction(Message):
     """Message posted when user approves or rejects a pending task."""
 
-    approved: bool
-    task_id: str
-    reason: str = ""
+    def __init__(self, approved: bool, task_id: str, reason: str = "") -> None:
+        self.approved = approved
+        self.task_id = task_id
+        self.reason = reason
+        super().__init__()
 
 
 # ---------------------------------------------------------------------------
