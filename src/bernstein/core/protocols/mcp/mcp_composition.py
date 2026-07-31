@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
+type _CAST_DICT_STR_ANY = dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -275,7 +275,7 @@ def _parse_single_step(raw_step: dict[str, Any]) -> ToolStep:
         server=str(raw_step.get("server", "")),
         args_template=args_dict,
         output_key=str(raw_step.get("output_key", "")),
-        on_failure=on_failure,
+        on_failure=cast(Literal["stop", "skip", "retry"], on_failure),
     )
 
 
