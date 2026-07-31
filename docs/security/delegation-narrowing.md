@@ -164,9 +164,19 @@ The reason strings are a closed set. Fail: `axis_widened`,
 `axis_widened_vs_ancestor`, `scope_ref_conflict`, and `chain_invalid` on the
 chain. Unproven: `scope_missing`, `scope_ref_only_unresolved`,
 `parent_receipt_unavailable`, `parent_scope_unavailable`,
-`comparison_axis_unsupported`, and `no_scope_recorded` on the chain. A root hop
-is reported with `is_root` and `root_structural_only`, never as a narrowing
-pass, because it has no ceiling to narrow against.
+`comparison_axis_unsupported`, `root_claimed_mid_chain`, and
+`no_scope_recorded` on the chain. A root hop is reported with `is_root` and
+`root_structural_only`, never as a narrowing pass, because it has no ceiling to
+narrow against.
+
+Root status is positional and is never taken from the receipt. `parent_ref`
+sits in the signed body, written by the same party that writes the scope, so a
+hop that named the genesis anchor could otherwise opt out of the comparison
+entirely and collect a `pass` row for a scope nobody checked. Only a hop with
+nothing before it in the supplied set is a root. A hop that claims otherwise
+mid-chain gets `root_claimed_mid_chain` and is unproven: it may be a second
+tree's root or it may be evading its ceiling, and the receipts do not say
+which.
 
 Two observations are recorded without changing a verdict:
 `scope_ref_unresolved_inline_governs` when an inline scope sits beside a
