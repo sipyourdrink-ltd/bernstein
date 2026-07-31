@@ -197,6 +197,11 @@ alternate delegation path exists; that an unresolved reference would have
 matched; anything about execution outcomes. unproven is not a pass, and pass is
 the only positive claim.
 
+`ChainResult.valid` keeps its compatibility meaning throughout: it reports
+structural validity and stays `True` for an unscoped legacy chain whose verdict
+is unproven. A caller that wants a positive narrowing claim checks
+`verdict == "pass"`, never `valid` alone.
+
 ## Compatibility
 
 Every field is optional. A chain recorded before these fields existed carries no
