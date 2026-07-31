@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
+# Shared cast-type alias to avoid string duplication (Sonar S1192).
+type _CAST_DICT_STR_ANY = dict[str, Any]
 
 # ---------------------------------------------------------------------------
 # budget-aware routing
