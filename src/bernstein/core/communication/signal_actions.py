@@ -41,7 +41,7 @@ import json
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from bernstein.core.security.audit_chain import (
     EVENT_SIGNAL_GATE_PROJECTION,
@@ -241,11 +241,11 @@ def spec_from_receipt(details: Mapping[str, object], *, journal_prefix_hash: str
     return ClearanceGateSpec(
         blocker_content_hash=str(details.get("blocker_content_hash", "")),
         clearance_task_id=str(details.get("clearance_task_id", "")),
-        injected_edges=tuple(str(edge) for edge in details.get("injected_edges", []) or []),
+        injected_edges=tuple(str(edge) for edge in cast("list[object]", details.get("injected_edges", []) or [])),
         scope_cell_id=str(details.get("scope_cell_id", "")),
         journal_prefix_hash=journal_prefix_hash or str(details.get("journal_prefix_hash", "")),
         graph_delta_hash=str(details.get("graph_delta_hash", "")),
-        deadline=int(details.get("deadline", 0) or 0),
+        deadline=int(cast("str | float | int", details.get("deadline", 0)) or 0),
     )
 
 
@@ -285,9 +285,9 @@ class GateAnchor:
         self.blocker_content_hash = str(details.get("blocker_content_hash", ""))
         self.graph_delta_hash = str(details.get("graph_delta_hash", ""))
         self.scope_cell_id = str(details.get("scope_cell_id", ""))
-        self.deadline = int(details.get("deadline", 0) or 0)
+        self.deadline = int(cast("str | float | int", details.get("deadline", 0)) or 0)
         self.journal_prefix_hash = str(details.get("journal_prefix_hash", ""))
-        self.edges = {str(edge) for edge in details.get("injected_edges", []) or []}
+        self.edges = {str(edge) for edge in cast("list[object]", details.get("injected_edges", []) or [])}
         self.index = index
         self.entry_hmac = hmac
         if hmac:
@@ -951,8 +951,12 @@ def _validate_gate_resolution_row(
         ("blocker_content_hash", str(details.get("blocker_content_hash", "")), anchor.blocker_content_hash),
         ("graph_delta_hash", str(details.get("graph_delta_hash", "")), anchor.graph_delta_hash),
         ("scope_cell_id", str(details.get("scope_cell_id", "")), anchor.scope_cell_id),
-        ("deadline", int(details.get("deadline", 0) or 0), anchor.deadline),
-        ("injected_edges", {str(e) for e in details.get("injected_edges", []) or []}, anchor.edges),
+        ("deadline", int(cast("str | float | int", details.get("deadline", 0)) or 0), anchor.deadline),
+        (
+            "injected_edges",
+            {str(e) for e in cast("list[object]", details.get("injected_edges", []) or [])},
+            anchor.edges,
+        ),
     )
     for name, actual, expected in field_checks:
         if actual != expected:
