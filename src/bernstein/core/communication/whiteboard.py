@@ -269,7 +269,7 @@ class Whiteboard:
         lazy.
         """
         if not self._path.exists():
-            return iter(())
+            return
         # The file is opened eagerly so the descriptor lifetime is
         # bound to the iterator generator; closing happens when the
         # generator is exhausted or garbage-collected.

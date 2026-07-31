@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -200,7 +201,7 @@ class TestProviderLatencyTracker:
         assert tracker._baseline_p99[key] == pytest.approx(200.0, abs=1.0)
 
     @pytest.mark.parametrize("field", ["timestamp", "latency_ms"])
-    def test_parse_latency_record_rejects_malformed_numeric_schema(self, field: str) -> None:
+    def test_parse_latency_record_skips_malformed_numeric_schema(self, field: str) -> None:
         record: dict[str, object] = {
             "timestamp": time.time(),
             "provider": "openai",
@@ -209,5 +210,57 @@ class TestProviderLatencyTracker:
         }
         record[field] = {"not": "numeric"}
 
-        with pytest.raises(TypeError):
-            ProviderLatencyTracker._parse_latency_record(json.dumps(record), cutoff=0.0)
+        assert ProviderLatencyTracker._parse_latency_record(json.dumps(record), cutoff=0.0) is None
+
+    def test_malformed_jsonl_records_skipped_and_counted(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from datetime import UTC, datetime
+
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        jsonl = tmp_path / f"provider_latency_{date_str}.jsonl"
+        ts = time.time()
+        good = {
+            "timestamp": ts,
+            "provider": "openai",
+            "model": "gpt-4",
+            "latency_ms": 100.0,
+        }
+        lines = [
+            json.dumps(good),
+            json.dumps(
+                {
+                    "timestamp": "not-a-number",
+                    "provider": "openai",
+                    "model": "gpt-4",
+                    "latency_ms": 12.0,
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": ts,
+                    "provider": "openai",
+                    "model": "gpt-4",
+                    "latency_ms": None,
+                }
+            ),
+            '{"timestamp": 1.0, "provider": "openai", "model": "gpt-4", "latency_ms": 50',
+        ]
+        jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tracker = ProviderLatencyTracker(tmp_path)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.observability.provider_latency"):
+            history = tracker.get_history()
+
+        assert len(history) == 1
+        assert history[0]["provider"] == "openai"
+        assert history[0]["latency_ms"] == pytest.approx(100.0)
+        history_skip_messages = [
+            record.message
+            for record in caplog.records
+            if record.name == "bernstein.core.observability.provider_latency"
+            and "while loading history" in record.message
+        ]
+        assert any("3 malformed provider latency record(s)" in message for message in history_skip_messages)

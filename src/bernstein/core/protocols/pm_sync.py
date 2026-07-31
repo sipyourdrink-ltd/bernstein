@@ -139,8 +139,8 @@ _API_BASE_URLS: dict[PMProvider, str] = {
 # Shared string constants to avoid duplication (Sonar S1192).
 _CONTENT_TYPE_JSON = "application/json"
 _GRAPHQL_ENDPOINT = "/graphql"
-_CAST_DICT_STR_ANY = "dict[str, Any]"
-_CAST_LIST_DICT_STR_ANY = "list[dict[str, Any]]"
+type _CAST_DICT_STR_ANY = dict[str, Any]
+type _CAST_LIST_DICT_STR_ANY = list[dict[str, Any]]
 
 # ---------------------------------------------------------------------------
 # PMClient

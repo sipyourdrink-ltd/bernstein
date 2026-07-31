@@ -19,7 +19,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -355,7 +355,7 @@ class CascadeFallbackManager:
         excluded_providers: frozenset[str],
         min_strength: int,
         task_complexity: Complexity,
-    ) -> bool:
+    ) -> TypeGuard[AgentCapabilities]:
         """Check if an agent is a viable cascade candidate."""
         if agent is None:
             return False

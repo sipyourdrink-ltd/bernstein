@@ -240,17 +240,6 @@ TestWalRecoveryStateMachine.settings = settings(  # type: ignore[attr-defined]
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #1 (HIGH): WALWriter._load_tail falls back to "
-        "(count-1, GENESIS_HASH) when the trailing line is malformed "
-        "(torn write after SIGKILL). The next append then chains off "
-        "GENESIS_HASH instead of the last valid entry's hash, "
-        "permanently breaking the audit chain. Fix: keep scanning "
-        "backward for the last *valid* JSON line and use its entry_hash."
-    ),
-)
 def test_torn_tail_does_not_corrupt_chain(tmp_path: Path) -> None:
     """A torn trailing line must not reset prev_hash to GENESIS.
 
@@ -289,20 +278,6 @@ def test_torn_tail_does_not_corrupt_chain(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #2 (HIGH): WALWriter.append writes the JSON "
-        "line first, then fsyncs, *then* updates self._seq/_prev_hash. "
-        "If fsync raises (ENOSPC, EIO, EBADF) the line is already on "
-        "disk but in-memory state is unchanged, so the next successful "
-        "append re-uses the same seq number. Result: two WAL lines with "
-        "seq=N, breaking the monotonic-seq invariant and permanently "
-        "corrupting the hash chain. Fix: advance self._seq/_prev_hash "
-        "before fsync, or wrap the whole append in a try/except that "
-        "reverts the file truncate on failure."
-    ),
-)
 def test_fsync_failure_does_not_create_duplicate_seqs(tmp_path: Path) -> None:
     """An fsync error mid-append must not leave inconsistent state.
 
@@ -362,20 +337,6 @@ def test_symlinked_wal_is_not_replayed(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #4 (MED): find_orphaned_claims iterates "
-        "WALReader.iter_entries() but never calls verify_chain(). A "
-        "WAL file whose entry_hash field is forged (or whose prev_hash "
-        "linkage is broken) is treated as authoritative - the recovery "
-        "force-claims arbitrary task_ids. The hash chain that the WAL "
-        "design promises is only enforced by callers who explicitly "
-        "ask for verify_chain(); the recovery path doesn't. Fix: "
-        "either gate find_orphaned_claims on verify_chain success, or "
-        "skip individual entries whose recomputed hash mismatches."
-    ),
-)
 def test_find_orphaned_claims_rejects_broken_chain(tmp_path: Path) -> None:
     """A WAL with a forged entry_hash must not yield orphan claims."""
     sdd = tmp_path / ".sdd"
@@ -405,51 +366,36 @@ def test_find_orphaned_claims_rejects_broken_chain(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #5 (LOW): WALRecovery.close_wal fsyncs the "
-        ".closed marker file but never the parent directory dirent. On "
-        "ext4/xfs (and Linux POSIX semantics) a crash immediately after "
-        "the marker write can leave the dirent unflushed, so the file "
-        "is invisible on next boot - re-triggering the audit-072 "
-        "'unbounded re-scan' bug the marker was added to prevent. The "
-        "docstring at line 627-629 explicitly promises this property "
-        "but the implementation is missing the directory fsync. Fix: "
-        "after os.replace(tmp, marker) call fsync on the parent dir fd."
-    ),
-)
 def test_close_wal_fsyncs_parent_dir(tmp_path: Path, monkeypatch) -> None:
     """close_wal must fsync the dirent so the marker survives a crash.
 
     We assert it indirectly: instrument os.fsync and check that at
-    least one fsync targets a directory file descriptor.
+    least one fsync targets the WAL directory itself.  The descriptor is
+    identified by ``(st_dev, st_ino)`` rather than by reading
+    ``/dev/fd/<n>``, which is not a readable symlink on every POSIX
+    platform (macOS returns EINVAL).
     """
     sdd = tmp_path / ".sdd"
     sdd.mkdir()
     _write_orphan_claim(sdd, "r1", "T1")
 
-    fsynced_targets: list[str] = []
+    wal_dir_stat = os.stat(sdd / "runtime" / "wal")
+    wal_dir_id = (wal_dir_stat.st_dev, wal_dir_stat.st_ino)
+
+    fsynced_ids: list[tuple[int, int]] = []
     real_fsync = os.fsync
 
     def tracking_fsync(fd: int) -> None:
-        try:
-            # Try to identify the path of the fd
-            import os as _os
-
-            path = _os.readlink(f"/dev/fd/{fd}")
-        except OSError:
-            path = "<unknown>"
-        fsynced_targets.append(path)
+        with contextlib.suppress(OSError):
+            st = os.fstat(fd)
+            fsynced_ids.append((st.st_dev, st.st_ino))
         return real_fsync(fd)
 
     monkeypatch.setattr("bernstein.core.persistence.wal.os.fsync", tracking_fsync)
 
     WALRecovery.close_wal("r1", sdd, reason="test")
-    # The wal directory itself should be fsynced after the marker is
-    # written. Currently nothing fsyncs the dirent.
-    wal_dir_str = str((sdd / "runtime" / "wal").resolve())
-    assert any(p == wal_dir_str for p in fsynced_targets), f"close_wal did not fsync wal dir; saw {fsynced_targets}"
+    # The wal directory itself must be fsynced after the marker is written.
+    assert wal_dir_id in fsynced_ids, f"close_wal did not fsync wal dir; saw {fsynced_ids}"
 
 
 # ---------------------------------------------------------------------------
@@ -476,9 +422,11 @@ def test_close_wal_fsyncs_parent_dir(tmp_path: Path, monkeypatch) -> None:
 def test_uncommitted_index_is_consulted_by_scan(tmp_path: Path, monkeypatch) -> None:
     """Recovery must not re-parse every WAL line if the index is healthy.
 
-    We assert by patching ``WALReader.iter_entries`` and counting calls
-    when an up-to-date index exists.  Currently the call count is
-    nonzero - the index isn't consulted at all.
+    We assert by patching ``WALReader._iter_parsed`` - the single line
+    parse path behind both ``iter_entries`` and
+    ``iter_verified_entries`` - and counting calls when an up-to-date
+    index exists.  Currently the call count is nonzero: the index isn't
+    consulted at all.
     """
     sdd = tmp_path / ".sdd"
     sdd.mkdir()
@@ -491,13 +439,13 @@ def test_uncommitted_index_is_consulted_by_scan(tmp_path: Path, monkeypatch) -> 
     # near-instant (zero iter_entries calls).
 
     calls = {"n": 0}
-    real_iter = WALReader.iter_entries
+    real_iter = WALReader._iter_parsed
 
     def counting_iter(self, *args, **kwargs):
         calls["n"] += 1
         return real_iter(self, *args, **kwargs)
 
-    monkeypatch.setattr(WALReader, "iter_entries", counting_iter)
+    monkeypatch.setattr(WALReader, "_iter_parsed", counting_iter)
     WALRecovery.scan_all_uncommitted(sdd, exclude_run_id="current")
     assert calls["n"] == 0, (
         f"scan_all_uncommitted parsed entries despite empty index "

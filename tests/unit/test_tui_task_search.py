@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bernstein.tui.task_search import TaskSearchQuery, matches_task_search, parse_task_search
+from bernstein.tui.task_search import (
+    TaskSearchInput,
+    TaskSearchQuery,
+    matches_task_search,
+    parse_task_search,
+)
 
 
 @dataclass(frozen=True)
@@ -51,3 +56,20 @@ class TestMatchesTaskSearch:
     def test_matches_assigned_agent_and_blocker_text(self) -> None:
         task = _TaskStub("abc123", "Fix auth", "backend", "blocked", 2, "sonnet", "agent-123", "waiting on deps")
         assert matches_task_search(task, parse_task_search("agent:123 deps")) is True
+
+
+class TestTaskSearchInputPlaceholder:
+    def test_caller_supplied_placeholder_does_not_raise(self) -> None:
+        """Regression test for #3248.
+
+        ``TaskSearchInput.__init__`` used to pass ``placeholder`` both
+        explicitly and via ``**kwargs``, so a caller supplying
+        ``placeholder=`` hit ``TypeError: got multiple values for keyword
+        argument 'placeholder'``.
+        """
+        widget = TaskSearchInput(placeholder="custom text")
+        assert widget.placeholder == "custom text"
+
+    def test_default_placeholder_used_when_not_supplied(self) -> None:
+        widget = TaskSearchInput()
+        assert widget.placeholder == "Search tasks or use status:, role:, priority:, agent:"

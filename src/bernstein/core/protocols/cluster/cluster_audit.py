@@ -13,7 +13,10 @@ fixture to spin up an HMAC key.
 from __future__ import annotations
 
 import logging
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from bernstein.core.security.audit import AuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,7 @@ _KNOWN_LEAVE_REASONS: Final[frozenset[str]] = frozenset(
 )
 
 
-def _audit_log() -> object | None:
+def _audit_log() -> AuditLog | None:
     """Return the wired AuditLog singleton, or None.
 
     Imported lazily to break a circular import (lifecycle -> task_store

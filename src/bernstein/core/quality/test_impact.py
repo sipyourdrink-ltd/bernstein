@@ -602,10 +602,10 @@ class TestImpactAnalyzer:
                 if not module:
                     continue
                 source_imports[module] = self._parse_source_imports(source_file)
-                for test_file in self._name_based_mapping(source_file.relative_to(self._root).as_posix()):
-                    graph.setdefault(module, set()).add(test_file)
-                    reverse.setdefault(test_file, set()).add(module)
-                    all_tests.add(test_file)
+                for mapped_test in self._name_based_mapping(source_file.relative_to(self._root).as_posix()):
+                    graph.setdefault(module, set()).add(mapped_test)
+                    reverse.setdefault(mapped_test, set()).add(module)
+                    all_tests.add(mapped_test)
 
         return graph, reverse, source_imports, all_tests
 

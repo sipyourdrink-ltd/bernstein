@@ -14,6 +14,8 @@ from bernstein.core.wal_replay import (
     WALReplayEngine,
 )
 
+from bernstein.core.persistence.wal import _compute_entry_hash
+
 
 @pytest.fixture
 def sdd_dir(tmp_path: Path) -> Path:
@@ -296,7 +298,10 @@ class TestWALReplayStaleness:
             actor="test",
             committed=False,
         )
-        # Hack: overwrite the WAL to have an old timestamp
+        # Rewrite the WAL with an old timestamp. entry_hash is recomputed
+        # so the entry stays self-consistent: recovery only trusts
+        # chain-verified entries, and a hand-edited payload carrying its
+        # original hash is dropped before the staleness check is reached.
         wal_path = sdd_dir / "runtime" / "wal" / "old-run.wal.jsonl"
         lines = wal_path.read_text().splitlines()
         old_entries = []
@@ -304,6 +309,7 @@ class TestWALReplayStaleness:
             if line.strip():
                 data = json.loads(line)
                 data["timestamp"] = time.time() - 7200  # 2 hours old
+                data["entry_hash"] = _compute_entry_hash({k: v for k, v in data.items() if k != "entry_hash"})
                 old_entries.append(json.dumps(data))
         wal_path.write_text("\n".join(old_entries) + "\n")
 

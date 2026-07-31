@@ -15,7 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from bernstein.core.llm import call_llm
 
@@ -422,7 +422,7 @@ class VotingProtocol:
         else:
             verdict = "abstain"
 
-        confidence = float(data.get("confidence", 0.8))
+        confidence = float(cast("str | float | int", data.get("confidence", 0.8)))
         confidence = max(0.0, min(1.0, confidence))  # clamp to [0, 1]
 
         reasoning = str(data.get("feedback", data.get("reasoning", "")))
