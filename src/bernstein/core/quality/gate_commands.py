@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bernstein.core.quality.gate_pipeline import (
     NO_PYTHON_FILES,
@@ -830,6 +830,7 @@ class GateRunnerCommandsMixin:
             metadata[dim.name] = dim.score
         if result.errors:
             metadata["errors"] = result.errors[:3]
+        gate_status: Literal["pass", "warn", "fail"]
         if result.passed:
             gate_status = "pass"
         elif not step.required:
