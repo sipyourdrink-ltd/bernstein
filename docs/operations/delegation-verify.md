@@ -53,6 +53,8 @@ acceptable for its purpose, which is the question the old exit code hid.
 A caller that wants each status handled explicitly:
 
 ```sh
+run="$1"
+ledger_root="${2:-.sdd/audit}"
 status=0
 bernstein delegation verify "$run" --root "$ledger_root" || status=$?
 case "$status" in
@@ -60,6 +62,7 @@ case "$status" in
   1) echo "chain invalid or a hop widened" >&2; exit 1 ;;
   2) echo "usage error" >&2; exit 2 ;;
   3) echo "unproven: no narrowing was established, decide by policy" >&2; exit 3 ;;
+  *) echo "unexpected exit status $status" >&2; exit "$status" ;;
 esac
 ```
 

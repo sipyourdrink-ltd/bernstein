@@ -169,6 +169,17 @@ chain. Unproven: `scope_missing`, `scope_ref_only_unresolved`,
 `root_structural_only`, never as a narrowing pass, because it has no ceiling to
 narrow against.
 
+These reason strings belong to `ChainVerdict` rows and the chain verdict. The
+violation names earlier on this page, `scope_ref_mismatch` and
+`unscoped_parent`, belong to `AuthorityReport.violations` and its `check`
+field; the two vocabularies are separate and never interchangeable. Where they
+meet they differ by design. The authority layer reports `unscoped_parent` as a
+failure at the offending hop; the verdict climbs to the nearest scoped ancestor
+and grades a hop `parent_scope_unavailable`, unproven, only when no ancestor
+carries a scope. `scope_ref_conflict` is the verdict-side reading of the same
+disagreement the authority check reports as `scope_ref_mismatch`: an inline
+scope that does not match its recorded reference.
+
 Root status is positional and is never taken from the receipt. `parent_ref`
 sits in the signed body, written by the same party that writes the scope, so a
 hop that named the genesis anchor could otherwise opt out of the comparison
