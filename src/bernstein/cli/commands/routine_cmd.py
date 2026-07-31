@@ -12,10 +12,14 @@ Subcommands:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from bernstein.core.planning.routine_bridge import RoutineBridge
+
+if TYPE_CHECKING:
+    from bernstein.core.planning.scenario_library import ScenarioRecipe
 
 # Default scenarios directory shipped with the package.
 _DEFAULT_SCENARIOS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "templates" / "scenarios"
@@ -147,6 +151,7 @@ def routine_provision(scenarios_dir: Path | None, bernstein_url: str) -> None:
     for idx, s in enumerate(scenarios, start=1):
         console.print(f"  {idx}. [cyan]{s.scenario_id}[/cyan]: {s.name}")
     raw_choice = click.prompt("Pick a scenario", type=str)
+    scenario: ScenarioRecipe | None
     try:
         choice_idx = int(raw_choice)
         scenario = scenarios[choice_idx - 1]

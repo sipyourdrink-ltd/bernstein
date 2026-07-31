@@ -52,7 +52,10 @@ class SignalActionFailure(RuntimeError):
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_STR_NONE = "str | None"
+type _CAST_STR_NONE = str | None
+# JSON-derived scalar shape accepted by float()/int() (values loaded from
+# a loosely-typed dict; the "or 0" fallback already guards falsy values).
+type _CAST_NUMERIC = str | float | int
 
 
 @dataclass
@@ -104,9 +107,9 @@ class AgentStatusNotification:
             status=str(d.get("status", "")),
             summary=str(d.get("summary", "")),
             result=cast("dict[str, object] | None", d.get("result")),
-            usage_tokens=int(d.get("usage_tokens", 0) or 0),
-            usage_cost_usd=float(d.get("usage_cost_usd", 0.0) or 0.0),
-            timestamp=float(d.get("timestamp", 0.0) or 0.0),
+            usage_tokens=int(cast(_CAST_NUMERIC, d.get("usage_tokens", 0)) or 0),
+            usage_cost_usd=float(cast(_CAST_NUMERIC, d.get("usage_cost_usd", 0.0)) or 0.0),
+            timestamp=float(cast(_CAST_NUMERIC, d.get("timestamp", 0.0)) or 0.0),
         )
 
 
@@ -184,11 +187,11 @@ class Delegation:
             origin_agent=str(d.get("origin_agent", "")),
             target_role=str(d.get("target_role", "")),
             description=str(d.get("description", "")),
-            deadline=float(d.get("deadline", 0.0) or 0.0),
+            deadline=float(cast(_CAST_NUMERIC, d.get("deadline", 0.0)) or 0.0),
             status=status,
             claimed_by=cast(_CAST_STR_NONE, d.get("claimed_by")),
             result=cast(_CAST_STR_NONE, d.get("result")),
-            created_at=float(d.get("created_at", 0.0) or 0.0),
+            created_at=float(cast(_CAST_NUMERIC, d.get("created_at", 0.0)) or 0.0),
             cell_id=cast(_CAST_STR_NONE, d.get("cell_id")),
         )
 
@@ -443,7 +446,7 @@ class AgentActivitySummary:
         return cls(
             agent_id=str(d.get("agent_id", "")),
             summary=str(d.get("summary", "")),
-            timestamp=float(d.get("timestamp", 0.0) or 0.0),
+            timestamp=float(cast(_CAST_NUMERIC, d.get("timestamp", 0.0)) or 0.0),
         )
 
 
@@ -927,8 +930,8 @@ class ChannelQuery:
             content=str(d.get("content", "")),
             target_agent=cast(_CAST_STR_NONE, d.get("target_agent")),
             target_role=cast(_CAST_STR_NONE, d.get("target_role")),
-            timestamp=float(d.get("timestamp", 0.0) or 0.0),
-            expires_at=float(d.get("expires_at", 0.0) or 0.0),
+            timestamp=float(cast(_CAST_NUMERIC, d.get("timestamp", 0.0)) or 0.0),
+            expires_at=float(cast(_CAST_NUMERIC, d.get("expires_at", 0.0)) or 0.0),
             resolved=bool(d.get("resolved", False)),
         )
 
@@ -969,7 +972,7 @@ class ChannelResponse:
             query_id=str(d.get("query_id", "")),
             responder_agent=str(d.get("responder_agent", "")),
             content=str(d.get("content", "")),
-            timestamp=float(d.get("timestamp", 0.0) or 0.0),
+            timestamp=float(cast(_CAST_NUMERIC, d.get("timestamp", 0.0)) or 0.0),
         )
 
 

@@ -812,7 +812,7 @@ def reap_process_group(
         )
 
 
-def process_alive(pid: int) -> bool:
+def process_alive(pid: int | None) -> bool:
     """Check whether a process is still running, cross-platform.
 
     On Unix, uses ``os.kill(pid, 0)`` (signal 0 = existence check).
@@ -820,12 +820,16 @@ def process_alive(pid: int) -> bool:
     ``GetExitCodeProcess`` to distinguish live from zombie processes.
 
     Args:
-        pid: Process ID to check.
+        pid: Process ID to check. ``None`` is accepted and answers False:
+            several callers read a PID out of session state or a runtime JSON
+            file where it is legitimately absent (a session running on a
+            remote runtime bridge has no local PID), and "there is no process
+            here" is the same answer as for a zero or negative PID.
 
     Returns:
         True if the process exists and is running.
     """
-    if pid <= 0:
+    if pid is None or pid <= 0:
         return False
 
     if not IS_WINDOWS:

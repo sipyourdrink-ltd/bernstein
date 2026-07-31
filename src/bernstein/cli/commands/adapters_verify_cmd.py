@@ -33,6 +33,7 @@ import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import click
 
@@ -81,8 +82,8 @@ def _render_text(receipt: dict[str, object], sha: str, *, stored_state: str) -> 
     reason = receipt.get("reason")
     if reason:
         lines.append(f"reason:              {reason}")
-    allowed = receipt.get("allowed_capabilities") or []
-    forbidden = receipt.get("forbidden_capabilities") or []
+    allowed = cast("list[object]", receipt.get("allowed_capabilities") or [])
+    forbidden = cast("list[object]", receipt.get("forbidden_capabilities") or [])
     lines.append(f"allowed:             {', '.join(str(a) for a in allowed) or '<none>'}")
     lines.append(f"forbidden:           {', '.join(str(f) for f in forbidden) or '<none>'}")
     remediation = receipt.get("remediation")

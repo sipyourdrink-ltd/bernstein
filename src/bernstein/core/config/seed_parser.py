@@ -93,8 +93,8 @@ _DEFAULT_RATE_LIMIT_PATHS: dict[str, tuple[str, ...]] = {
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
-_CAST_STR_INT_FLOAT_NONE = "str | int | float | None"
+type _CAST_DICT_STR_ANY = dict[str, Any]
+type _CAST_STR_INT_FLOAT_NONE = str | int | float | None
 
 
 def _parse_budget(raw: str | int | float | None) -> float | None:

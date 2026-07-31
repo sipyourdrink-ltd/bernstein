@@ -32,7 +32,16 @@ IDLE_LOG_AGE_THRESHOLD_SECONDS = int(AGENT.idle_log_age_threshold_s)
 
 @dataclass(frozen=True)
 class HeartbeatStatus:
-    """Status of an agent heartbeat signal."""
+    """Status of an agent heartbeat signal.
+
+    ``phase`` is the agent's work stage and is read from the heartbeat file's
+    ``phase`` field alone. It is deliberately NOT backfilled from the file's
+    ``status`` field: ``status`` describes the heartbeat file's own lifecycle,
+    ``phase`` describes what the agent is doing, and collapsing the two handed
+    every ``phase`` consumer a value no writer ever assigned as a phase (issue
+    #3202). An absent ``phase`` therefore has exactly one meaning - "the writer
+    reported no work stage" - and surfaces as the empty string.
+    """
 
     session_id: str
     last_heartbeat: datetime | None
@@ -62,7 +71,13 @@ class HeartbeatMonitor:
         self._signal_mgr = AgentSignalManager(workdir)
 
     def check(self, session_id: str) -> HeartbeatStatus:
-        """Check one session's heartbeat."""
+        """Check one session's heartbeat.
+
+        ``phase`` is taken from the heartbeat's ``phase`` field only. The
+        pre-spawn writer in ``spawner_core`` emits ``phase="starting"``
+        explicitly, so the starting-phase grace window (issue #3012) keeps
+        working for adapters that never overwrite that file.
+        """
         heartbeat = self._read_heartbeat(session_id)
         if heartbeat is None:
             return HeartbeatStatus(
@@ -80,7 +95,7 @@ class HeartbeatMonitor:
             session_id=session_id,
             last_heartbeat=last_heartbeat,
             age_seconds=age_seconds,
-            phase=heartbeat.phase or heartbeat.status,
+            phase=heartbeat.phase,
             progress_pct=max(0, min(int(heartbeat.progress_pct), 100)),
             is_alive=age_seconds < self._timeout_s,
             is_stale=age_seconds >= self._timeout_s,
@@ -382,6 +397,23 @@ def _terminate_stuck_agent(orch: Any, session: Any, age: float) -> None:
     _reap_session_heartbeat_loop(orch, session, reason="no_heartbeat_kill")
 
 
+def _liveness_signal_may_defer(heartbeat_age_s: float) -> bool:
+    """Whether log/git freshness is still allowed to defer the kill at this age.
+
+    The liveness signal is a file mtime, and every CLI adapter except claude
+    merges the child's stderr into that same runner log
+    (``stderr=subprocess.STDOUT``). Provider retry chatter, a progress
+    spinner, or a runtime deprecation warning therefore refreshes the mtime
+    without any real progress, and the deferral below re-applies on every
+    tick. Unbounded, that turns a deferral into a permanent exemption: the
+    stalled agent is never escalated and keeps its worker slot until the
+    wall-clock reaper's hard cap. Past ``liveness_suppression_cap_s`` of
+    continuous heartbeat silence the mtime no longer counts as evidence of
+    work and the ladder escalates normally (issue #3058).
+    """
+    return heartbeat_age_s < AGENT.liveness_suppression_cap_s
+
+
 def _agent_has_fresh_liveness_signal(orch: Any, session: Any) -> bool:
     """Whether the agent's LOG or GIT tree changed within the grace window.
 
@@ -439,6 +471,10 @@ def _escalate_heartbeat(
     kill. If the agent's log/git tree changed within the grace window it is
     alive, so no SIGTERM/SIGKILL and no soft SHUTDOWN is sent this tick; the
     ladder is reset so a genuine later stall re-escalates from the start.
+
+    That gate is a bounded deferral, not an exemption (issue #3058): it stops
+    applying once the heartbeat has been silent for
+    ``AGENT.liveness_suppression_cap_s``. See ``_liveness_signal_may_defer``.
     """
     signal_mgr = orch._signal_mgr
     task_title = _session_task_title(session)
@@ -448,7 +484,7 @@ def _escalate_heartbeat(
         # Healthy again (or never stale): drop any prior escalation state so a
         # later stall episode re-escalates from the start.
         ladder.reset_agent(session.id)
-    elif _agent_has_fresh_liveness_signal(orch, session):
+    elif _liveness_signal_may_defer(age) and _agent_has_fresh_liveness_signal(orch, session):
         # Stale heartbeat BUT a fresh log/git liveness signal: the agent is
         # demonstrably alive (see _agent_has_fresh_liveness_signal). Do NOT
         # escalate on heartbeat age alone. Reset the ladder and skip the soft
@@ -457,9 +493,11 @@ def _escalate_heartbeat(
         logger.info(
             "heartbeat_escalation: NOT escalating agent %s despite heartbeat age %.0fs "
             "-- fresh log/git liveness signal within grace window (agent is alive); will "
-            "re-evaluate once the log actually goes stale",
+            "re-evaluate once the log goes stale or the heartbeat passes the %.0fs "
+            "suppression cap",
             session.id,
             age,
+            AGENT.liveness_suppression_cap_s,
         )
         return
     else:
@@ -716,7 +754,10 @@ def _check_session_stalls(
     hb_status = monitor.check(session.id)
     if hb_status.last_heartbeat is not None:
         session.heartbeat_ts = hb_status.last_heartbeat.timestamp()
-    log_summary = aggregator.parse_log(session.id)
+    # Issue #3216: prefer the session's own reported log path (set by the
+    # remote runtime bridge, container, and sandbox-session spawn paths) so
+    # stall profiling is not starved of input for those layouts.
+    log_summary = aggregator.parse_log(session.id, getattr(session, "log_path", None) or None)
     latest_tasks = getattr(orch, "_latest_tasks_by_id", {})
 
     for task_id in session.task_ids:

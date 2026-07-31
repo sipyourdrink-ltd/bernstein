@@ -255,8 +255,8 @@ def limits_status_cmd(workdir: Path | None, output_json: bool) -> None:
         table.add_column("held", justify="right")
         table.add_column("posture")
         for tag in sorted(state.tag_limits):
-            spec = state.tag_limits[tag]
-            table.add_row(tag, str(spec.limit), str(occ.get(tag, 0)), spec.posture.value)
+            tag_spec = state.tag_limits[tag]
+            table.add_row(tag, str(tag_spec.limit), str(occ.get(tag, 0)), tag_spec.posture.value)
         console.print(table)
     console.print(
         f"Active grants: {len(state.active_grants)}  Waivers: {state.waivers}  Quarantines: {len(state.quarantines)}"

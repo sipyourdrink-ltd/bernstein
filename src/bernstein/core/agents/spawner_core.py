@@ -1822,6 +1822,30 @@ class AgentSpawner:
             merge_queue=self._merge_queue,
         )
 
+    def _touch_prespawn_heartbeat(self, session_id: str) -> None:
+        """Write the spawn-time heartbeat file before the agent process starts.
+
+        Touched BEFORE spawn so the watchdog sees the agent as alive from the
+        moment it starts - otherwise there is a race window where the process
+        is running but no heartbeat file exists yet.
+
+        The file carries ``phase="starting"`` explicitly. ``HeartbeatMonitor``
+        reads the ``phase`` field alone (issue #3202), and an adapter with
+        ``consumes_heartbeat_dir=False`` never overwrites this file, so this
+        writer is the only source of the ``starting`` phase for that whole
+        population. Without the field the Tier-1 watchdog's starting-phase
+        grace window (issue #3012) would not apply to them and a slow first
+        turn would be flagged critical at the general stale threshold.
+
+        ``status`` is kept alongside it: it describes the heartbeat file's own
+        lifecycle, which is a different fact from the agent's work stage.
+        """
+        with suppress(OSError):
+            hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
+            hb_dir.mkdir(parents=True, exist_ok=True)
+            hb_file = hb_dir / f"{session_id}.json"
+            hb_file.write_text(json.dumps({"timestamp": time.time(), "status": "starting", "phase": "starting"}))
+
     def _pending_pushes_path(self) -> Path:
         """Return the path to the pending-pushes JSONL file."""
         from bernstein.core.agents.spawner_merge import pending_pushes_path
@@ -4151,14 +4175,7 @@ class AgentSpawner:
         _unattended_attempt = 0
         result: SpawnResult | None = None
 
-        # Touch heartbeat file BEFORE spawn so the watchdog sees the agent as
-        # alive from the moment it starts - avoids a race window where the
-        # process is running but no heartbeat file exists yet.
-        with suppress(OSError):
-            hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
-            hb_dir.mkdir(parents=True, exist_ok=True)
-            hb_file = hb_dir / f"{session_id}.json"
-            hb_file.write_text(json.dumps({"timestamp": time.time(), "status": "starting"}))
+        self._touch_prespawn_heartbeat(session_id)
 
         while True:
             # Remote spawn already succeeded - skip the local adapter loop entirely
@@ -4687,11 +4704,7 @@ class AgentSpawner:
         session.finish_reason = result.finish_reason
 
         # Touch heartbeat on resume spawn (same rationale as main spawn path)
-        with suppress(OSError):
-            hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
-            hb_dir.mkdir(parents=True, exist_ok=True)
-            hb_file = hb_dir / f"{session_id}.json"
-            hb_file.write_text(json.dumps({"timestamp": time.time(), "status": "starting"}))
+        self._touch_prespawn_heartbeat(session_id)
 
         transition_agent(session, "working", actor="spawner", reason="agent process started in worktree")
         if result.log_path:

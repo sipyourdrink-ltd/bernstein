@@ -12,7 +12,7 @@ Bernstein can run agents locally or in the cloud. The Cloudflare integration let
 | CI/CD pipeline | Local (Docker/K8s) | Full filesystem access, no network hops |
 | Team with shared orchestration | Cloudflare | Centralized billing, no shared server to maintain |
 | Global team, low-latency agent dispatch | Cloudflare Workers | Edge execution near developers |
-| SaaS / hosted Bernstein | Cloudflare (full stack) | D1 analytics, R2 storage, Vectorize caching |
+| SaaS / hosted Bernstein | Cloudflare (full stack) | D1 analytics, R2 storage |
 
 ---
 
@@ -30,7 +30,6 @@ graph TD
         Workflow["Workflows<br/>(durable multi-step execution)"]
         R2["R2 Object Storage<br/>(workspace sync)"]
         D1["D1 (SQLite)<br/>(analytics & billing)"]
-        Vec["Vectorize<br/>(semantic cache)"]
         AI["Workers AI<br/>(free LLM provider)"]
         Browser["Browser Rendering<br/>(web browsing)"]
     end
@@ -43,7 +42,6 @@ graph TD
     Worker --> R2
     Workflow --> Worker
     Orch --> AI
-    Orch --> Vec
     Orch --> D1
     Orch --> Browser
     MCP --> Orch
@@ -62,7 +60,6 @@ graph TD
 | Workers AI Provider | `bernstein.core.routing.cloudflare_ai` | Free-tier LLM completions for planning and decomposition |
 | Codex-on-Cloudflare Adapter | `bernstein.adapters.codex_cloudflare` | Runs Codex in a sandbox container via an operator-deployed `@cloudflare/sandbox` bridge Worker; needs a Workers Paid plan |
 | D1 Analytics | `bernstein.core.cost.d1_analytics` | Usage metering, billing tiers, quota enforcement |
-| Vectorize Cache | `bernstein.core.memory.vectorize_cache` | Semantic cache for LLM responses using vector similarity |
 | MCP Remote Transport | `bernstein.mcp.remote_transport` | Streamable HTTP transport for remote MCP server access |
 | Cloud CLI | `bernstein.cli.commands.cloud_cmd` | `bernstein cloud` subcommands (init, deploy are local; login/run/status/cost target the experimental, currently-unavailable `api.bernstein.run`) |
 
@@ -80,7 +77,6 @@ For the full stack, you also need:
 
 - An R2 bucket for workspace sync
 - A D1 database for analytics
-- A Vectorize index for semantic caching
 
 See [Setup](cloudflare-setup.md) for step-by-step provisioning instructions.
 
@@ -92,6 +88,6 @@ See [Setup](cloudflare-setup.md) for step-by-step provisioning instructions.
 - **[Bridges](cloudflare-bridges.md)** -- runtime and workflow bridges
 - **[Adapters](cloudflare-adapters.md)** -- Codex-on-Cloudflare
 - **[Workers AI](cloudflare-ai.md)** -- free LLM provider for planning
-- **[Analytics & Caching](cloudflare-analytics.md)** -- D1 billing and Vectorize cache
+- **[Analytics & Billing](cloudflare-analytics.md)** -- D1 usage metering and billing tiers
 - **[Cloud CLI](cloudflare-cli.md)** -- `bernstein cloud` commands
 - **[MCP Remote](cloudflare-mcp.md)** -- remote MCP transport

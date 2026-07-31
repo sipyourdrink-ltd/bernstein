@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, cast
 from bernstein.core.models import Complexity, Task, TaskStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bernstein.core.metrics import MetricsCollector, TaskMetrics
 
 logger = logging.getLogger(__name__)
@@ -621,10 +623,10 @@ def _write_rate_table(
     separator: str,
     done_counts: dict[str, int],
     failed_counts: dict[str, int],
-    sort_key: object = None,
+    sort_key: Callable[[str], int] | None = None,
 ) -> None:
     """Write a rate table (by role or complexity) into *lines*."""
-    all_keys = sorted(set(done_counts) | set(failed_counts), key=sort_key)  # type: ignore[arg-type]
+    all_keys = sorted(set(done_counts) | set(failed_counts), key=sort_key)
     if not all_keys:
         return
     lines.extend((header, "", columns, separator))
@@ -1418,7 +1420,7 @@ def gather_project_memory_from_json(sdd_dir: Path) -> str:
         goal = item.get("goal", "")
         done = item.get("tasks_done", 0)
         failed = item.get("tasks_failed", 0)
-        total = int(done) + int(failed)  # type: ignore[arg-type]
+        total = int(cast(int, done)) + int(cast(int, failed))
         cost = item.get("cost_usd", 0.0)
         lesson = item.get("lesson", "")
         lines.append(f"- **{goal}**: {done}/{total} done, ${cost:.2f}")

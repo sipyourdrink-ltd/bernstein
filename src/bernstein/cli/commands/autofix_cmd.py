@@ -19,6 +19,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import click
 
@@ -155,7 +156,7 @@ def _format_status_line(record: dict[str, object]) -> str:
     pr = record.get("pr_number", "?")
     outcome = str(record.get("outcome", "?"))
     classifier = str(record.get("classifier", "?"))
-    cost = float(record.get("cost_usd", 0.0) or 0.0)
+    cost = float(cast("float | int | str", record.get("cost_usd", 0.0)) or 0.0)
     attempt_index = record.get("attempt_index", "?")
     return f"{repo}#{pr}  attempt={attempt_index}  outcome={outcome}  classifier={classifier}  cost=${cost:.4f}"
 
@@ -725,13 +726,13 @@ def _build_failure_from_payload(
                 base[key] = value
     return CIFailure(
         repo=str(base["repo"]),
-        pr_number=int(base["pr_number"]),
+        pr_number=int(cast("int | str", base["pr_number"])),
         head_sha=str(base.get("head_sha", "")),
         run_id=str(base.get("run_id", "")),
         failing_files=tuple(base["failing_files"]),  # type: ignore[arg-type]
         pr_touched_files=tuple(base["pr_touched_files"]),  # type: ignore[arg-type]
         log_excerpt=str(base.get("log_excerpt", "")),
-        diff_line_count=int(base.get("diff_line_count", 0)),
+        diff_line_count=int(cast("int | str", base.get("diff_line_count", 0))),
         signature=str(base.get("signature", "")),
     )
 

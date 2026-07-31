@@ -27,9 +27,9 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
-_CAST_LIST_DICT_STR_ANY = "list[dict[str, Any]]"
+# Shared cast-type aliases to avoid duplication at cast() call sites (Sonar S1192).
+type _CAST_DICT_STR_ANY = dict[str, Any]
+type _CAST_LIST_DICT_STR_ANY = list[dict[str, Any]]
 
 
 def _get_store(request: Request) -> TaskStore:

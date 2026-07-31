@@ -868,6 +868,10 @@ bernstein cloud login
 bernstein cloud run "Add OAuth2 authentication" --max-agents 5 --budget 25.00
 ```
 
+`cloud login`, `cloud run`, `cloud status`, and `cloud cost` target the
+experimental, currently-unavailable `api.bernstein.run`; `cloud deploy` and
+`cloud init` run locally against your own Cloudflare account.
+
 ### What runs where
 
 | Component | Location | Purpose |
@@ -876,7 +880,6 @@ bernstein cloud run "Add OAuth2 authentication" --max-agents 5 --budget 25.00
 | Agent execution | Cloudflare Workers / Sandboxes | Code generation, testing |
 | Workspace files | Cloudflare R2 | File sync between local and cloud agents |
 | Analytics / billing | Cloudflare D1 | Usage metering, quota enforcement |
-| LLM response cache | Cloudflare Vectorize | Semantic prompt deduplication |
 | Internal LLM (planning) | Cloudflare Workers AI | Free-tier models for task decomposition |
 
 ### Environment variables for Cloudflare
@@ -884,10 +887,10 @@ bernstein cloud run "Add OAuth2 authentication" --max-agents 5 --budget 25.00
 | Variable | Description |
 |----------|-------------|
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identifier |
-| `CLOUDFLARE_API_TOKEN` | API token with Workers, R2, D1, Vectorize permissions |
+| `CLOUDFLARE_API_TOKEN` | API token with Workers, R2, D1 permissions |
 | `BERNSTEIN_CLOUD_API_KEY` | API key for bernstein.run hosted service |
 
-For the full Cloudflare setup guide including R2 buckets, D1 databases, and Vectorize indexes, see the [Cloudflare Setup](../cloudflare/cloudflare-setup.md) documentation.
+For the full Cloudflare setup guide including R2 buckets and D1 databases, see the [Cloudflare Setup](../cloudflare/cloudflare-setup.md) documentation.
 
 ---
 

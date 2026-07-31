@@ -95,11 +95,17 @@ MODEL_COSTS_PER_1M_TOKENS: dict[str, ModelUsdPer1MTokens] = {
     # openai_agents provider path metered spent_usd=0.0 because no entry
     # existed here AND the runner never priced/emitted usage at all - see
     # price_model_usage() below for the fix that makes unpriced models
-    # visible instead of silently vanishing). Prices approximate MiniMax's
-    # published API rates; keep "minimax-m3" ahead of any future bare
-    # "minimax" stem so substring matching cannot land on the wrong SKU.
-    "minimax-m3": {"input": 0.3, "output": 1.2},
-    "minimax-m2.7": {"input": 0.2, "output": 0.8},
+    # visible instead of silently vanishing). Keep "minimax-m3" ahead of any
+    # future bare "minimax" stem so substring matching cannot land on the
+    # wrong SKU.
+    #
+    # Rates refreshed 2026-07-23 from MiniMax's published API pricing: the
+    # earlier entries under-priced both SKUs by half and carried no cache
+    # tier, so every metered run reported ~50% of true spend. MiniMax-M3
+    # lists no separate cache-write tier (cache_write is null); MiniMax-M2.7
+    # prices cache reads and writes.
+    "minimax-m3": {"input": 0.6, "output": 2.4, "cache_read": 0.12, "cache_write": None},
+    "minimax-m2.7": {"input": 0.3, "output": 1.2, "cache_read": 0.06, "cache_write": 0.375},
 }
 
 

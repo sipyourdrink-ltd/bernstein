@@ -11,9 +11,9 @@ import httpx
 from bernstein.cli.helpers import SERVER_URL, auth_headers, console
 from bernstein.core.knowledge.knowledge_graph import query_impact
 
-# Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_LIST_DICT_STR_ANY = "list[dict[str, Any]]"
-_CAST_LIST_OBJ = "list[object]"
+# Shared cast-type aliases to avoid string duplication (Sonar S1192).
+type _CAST_LIST_DICT_STR_ANY = list[dict[str, Any]]
+type _CAST_LIST_OBJ = list[object]
 
 
 @click.group("graph")

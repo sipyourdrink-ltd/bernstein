@@ -46,6 +46,7 @@ from bernstein.adapters.plugin_sdk import (
     ensure_sampling_params_supported,
 )
 from bernstein.adapters.registry import get_adapter
+from bernstein.core.cost.model_prices import MODEL_COSTS_PER_1M_TOKENS
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -2324,8 +2325,15 @@ class TestBug13CostMetering:
         assert usage_event["output_tokens"] == 2_000
         assert usage_event["model"] == "MiniMax-M3"
         assert usage_event["priced"] is True
-        # minimax-m3: $0.30/$1.20 per 1M -> (10000/1e6)*0.3 + (2000/1e6)*1.2
-        expected_cost = (10_000 / 1_000_000.0) * 0.3 + (2_000 / 1_000_000.0) * 1.2
+        # Derive the expected cost from MODEL_COSTS_PER_1M_TOKENS itself
+        # rather than hardcoding a dollar figure: a hardcoded number here
+        # silently goes stale the next time the MiniMax rates are refreshed
+        # (as happened when the table's under-priced-by-half entries were
+        # corrected but this expectation was not).
+        minimax_rates = MODEL_COSTS_PER_1M_TOKENS["minimax-m3"]
+        input_rate = minimax_rates.get("input", 0.0)
+        output_rate = minimax_rates.get("output", 0.0)
+        expected_cost = (10_000 / 1_000_000.0) * input_rate + (2_000 / 1_000_000.0) * output_rate
         assert usage_event["cost_usd"] == pytest.approx(expected_cost)
         assert usage_event["cost_usd"] > 0.0
         assert usage_event["running_total_usd"] == pytest.approx(expected_cost)
@@ -2421,7 +2429,13 @@ class TestBug13CostMetering:
         assert usage_event["output_tokens"] == 800
         assert usage_event["priced"] is True
         assert "usage_missing" not in usage_event
-        expected_cost = (5_000 / 1_000_000.0) * 0.3 + (800 / 1_000_000.0) * 1.2
+        # Derived from the price table (see TestBug13CostMetering's
+        # comment above) so a MiniMax rate refresh cannot silently make
+        # this expectation stale again.
+        minimax_rates = MODEL_COSTS_PER_1M_TOKENS["minimax-m3"]
+        input_rate = minimax_rates.get("input", 0.0)
+        output_rate = minimax_rates.get("output", 0.0)
+        expected_cost = (5_000 / 1_000_000.0) * input_rate + (800 / 1_000_000.0) * output_rate
         assert usage_event["cost_usd"] == pytest.approx(expected_cost)
 
         sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
@@ -2586,7 +2600,13 @@ class TestUsageOnExceptionPaths:
         assert usage_event["input_tokens"] == 11_000
         assert usage_event["output_tokens"] == 1_600
         assert usage_event["priced"] is True
-        expected_cost = (11_000 / 1_000_000.0) * 0.3 + (1_600 / 1_000_000.0) * 1.2
+        # Derived from the price table (see TestBug13CostMetering's
+        # comment above) so a MiniMax rate refresh cannot silently make
+        # this expectation stale again.
+        minimax_rates = MODEL_COSTS_PER_1M_TOKENS["minimax-m3"]
+        input_rate = minimax_rates.get("input", 0.0)
+        output_rate = minimax_rates.get("output", 0.0)
+        expected_cost = (11_000 / 1_000_000.0) * input_rate + (1_600 / 1_000_000.0) * output_rate
         assert usage_event["cost_usd"] == pytest.approx(expected_cost)
         assert usage_event["cost_usd"] > 0.0
         assert usage_event["usage_source"] == "_FakeMaxTurnsExceeded.run_data"

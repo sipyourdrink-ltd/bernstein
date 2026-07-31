@@ -126,9 +126,9 @@ _LANGUAGE_BY_SUFFIX: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-# Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_OBJ = "dict[str, object]"
-_CAST_LIST_OBJ = "list[object]"
+# Shared cast-type aliases to avoid string duplication (Sonar S1192).
+type _CAST_DICT_STR_OBJ = dict[str, object]
+type _CAST_LIST_OBJ = list[object]
 
 
 @dataclass

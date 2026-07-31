@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 from bernstein.core.models import AgentSession, ModelConfig, Task
 from bernstein.core.watchdog import WatchdogFinding, WatchdogManager, collect_watchdog_findings
 
+from bernstein.core.defaults import AGENT
+
 
 def _session(task_id: str, *, spawn_ts: float = 100.0) -> AgentSession:
     return AgentSession(
@@ -214,6 +216,47 @@ def test_starting_phase_still_flags_once_past_starting_timeout(tmp_path: Path) -
     heartbeat = [f for f in findings if f.source == "heartbeat"]
     assert len(heartbeat) == 1
     assert heartbeat[0].severity == "critical"
+
+
+# ---------------------------------------------------------------------------
+# Issue #3058: the fresh-log suppression above is a bounded deferral, not a
+# permanent exemption. Every CLI adapter except claude merges the child's
+# stderr into the same runner log (``stderr=subprocess.STDOUT``), so retry
+# chatter or a progress spinner refreshes the mtime with no real progress and
+# used to suppress the heartbeat incident for as long as the noise continued.
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_log_stops_suppressing_past_the_cap(tmp_path: Path) -> None:
+    """A log written inside the grace window no longer suppresses the incident
+    once the heartbeat has been silent past the suppression cap."""
+    workdir = tmp_path
+    now = time.time()
+    session = _session("task-1", spawn_ts=now - (AGENT.liveness_suppression_cap_s + 600))
+    orch = _orch(workdir, session=session, heartbeat_timeout_s=120)
+    _write_heartbeat(workdir, session.id, now - (AGENT.liveness_suppression_cap_s + 60))
+    _write_log(workdir, session.id, 3)  # freshly written -> mtime ~now
+
+    findings = collect_watchdog_findings(orch)
+
+    heartbeat = [f for f in findings if f.source == "heartbeat"]
+    assert len(heartbeat) == 1
+    assert heartbeat[0].severity == "critical"
+
+
+def test_fresh_log_still_suppresses_below_the_cap(tmp_path: Path) -> None:
+    """Control: just under the cap a fresh log still suppresses the incident,
+    so issue #3012's still-writing agent keeps its exemption."""
+    workdir = tmp_path
+    now = time.time()
+    session = _session("task-1", spawn_ts=now - (AGENT.liveness_suppression_cap_s + 600))
+    orch = _orch(workdir, session=session, heartbeat_timeout_s=120)
+    _write_heartbeat(workdir, session.id, now - (AGENT.liveness_suppression_cap_s - 60))
+    _write_log(workdir, session.id, 3)
+
+    findings = collect_watchdog_findings(orch)
+
+    assert [f for f in findings if f.source == "heartbeat"] == []
 
 
 def test_watchdog_manager_creates_one_triage_task_for_active_incident(tmp_path: Path) -> None:

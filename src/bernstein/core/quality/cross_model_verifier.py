@@ -382,7 +382,7 @@ def _record_rework_sample(
         from bernstein.core.routing.rework_ledger import default_ledger
     except ImportError:
         return
-    outcome = "rework" if verdict.verdict == "request_changes" else "success"
+    outcome: Literal["rework", "success"] = "rework" if verdict.verdict == "request_changes" else "success"
     effort = (task.effort or "normal").lower()
     try:
         ledger = default_ledger(worktree_path)

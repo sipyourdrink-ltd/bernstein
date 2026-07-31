@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bernstein.core.quality.gate_commands import (
     _module_name_from_path,
@@ -1055,6 +1055,7 @@ class GateRunner:
             metadata[dim.name] = dim.score
         if result.errors:
             metadata["errors"] = result.errors[:3]
+        gate_status: Literal["pass", "warn", "fail"]
         if result.passed:
             gate_status = "pass"
         elif not step.required:
@@ -1423,6 +1424,7 @@ class GateRunner:
         from bernstein.core.quality.flaky_detector import FlakyDetector
         from bernstein.core.quality.test_impact import TestImpactAnalyzer
 
+        command: str | None
         if step.command_override is not None:
             command = step.command_override
         elif not self._changed_files_resolved:

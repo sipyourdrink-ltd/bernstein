@@ -525,12 +525,12 @@ class TestWALWriterEdgeCases:
         with path.open("a") as f:
             f.write("NOT VALID JSON\n")
 
-        # _load_tail sees 2 lines (1 valid + 1 corrupt), returns seq=1
-        # so the next entry gets seq=2. The key property is that it
-        # doesn't crash and continues appending.
+        # _load_tail resumes from the last valid entry (seq=0), so the
+        # next entry continues the chain at seq=1. The corrupt line is
+        # not a WAL entry and does not consume a sequence number.
         writer2 = _make_writer(tmp_path)
         entry = writer2.append("d_after_corruption", {}, {}, "a")
-        assert entry.seq == 2
+        assert entry.seq == 1
         assert entry.decision_type == "d_after_corruption"
 
 

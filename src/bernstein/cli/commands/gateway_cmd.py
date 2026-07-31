@@ -11,10 +11,14 @@ import asyncio
 import shlex
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from bernstein.cli.helpers import console
+
+if TYPE_CHECKING:
+    from bernstein.core.mcp_gateway import MCPGateway
 
 _DEFAULT_PORT = 8054
 _SDD_DIR = Path(".sdd")
@@ -212,7 +216,7 @@ def settlements_cmd(workdir: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _run_gateway(gateway: MCPGateway, *, transport: str, port: int) -> None:  # noqa: F821
+async def _run_gateway(gateway: MCPGateway, *, transport: str, port: int) -> None:
     """Start the gateway and block until done."""
     from bernstein.core.mcp_gateway import MCPGateway, create_gateway_sse_app
 

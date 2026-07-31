@@ -193,12 +193,13 @@ def save_session_on_stop(workdir: Path) -> None:
         resp = _httpx.get(f"{SERVER_URL}/tasks", timeout=3.0, headers=auth_headers())
         resp.raise_for_status()
         body = resp.json()
+        task_list: list[dict[str, Any]]
         if isinstance(body, dict) and "tasks" in body:
             task_list = cast("list[dict[str, Any]]", body["tasks"])
         elif isinstance(body, list):
             task_list = cast("list[dict[str, Any]]", body)
         else:
-            task_list: list[dict[str, Any]] = []
+            task_list = []
         done_ids = [t["id"] for t in task_list if t.get("status") == "done"]
         pending_ids = [t["id"] for t in task_list if t.get("status") in ("claimed", "in_progress")]
         # Persist still-open tasks too (issue #2798): they were dropped
