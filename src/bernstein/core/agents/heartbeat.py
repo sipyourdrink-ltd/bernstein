@@ -32,7 +32,16 @@ IDLE_LOG_AGE_THRESHOLD_SECONDS = int(AGENT.idle_log_age_threshold_s)
 
 @dataclass(frozen=True)
 class HeartbeatStatus:
-    """Status of an agent heartbeat signal."""
+    """Status of an agent heartbeat signal.
+
+    ``phase`` is the agent's work stage and is read from the heartbeat file's
+    ``phase`` field alone. It is deliberately NOT backfilled from the file's
+    ``status`` field: ``status`` describes the heartbeat file's own lifecycle,
+    ``phase`` describes what the agent is doing, and collapsing the two handed
+    every ``phase`` consumer a value no writer ever assigned as a phase (issue
+    #3202). An absent ``phase`` therefore has exactly one meaning - "the writer
+    reported no work stage" - and surfaces as the empty string.
+    """
 
     session_id: str
     last_heartbeat: datetime | None
@@ -62,7 +71,13 @@ class HeartbeatMonitor:
         self._signal_mgr = AgentSignalManager(workdir)
 
     def check(self, session_id: str) -> HeartbeatStatus:
-        """Check one session's heartbeat."""
+        """Check one session's heartbeat.
+
+        ``phase`` is taken from the heartbeat's ``phase`` field only. The
+        pre-spawn writer in ``spawner_core`` emits ``phase="starting"``
+        explicitly, so the starting-phase grace window (issue #3012) keeps
+        working for adapters that never overwrite that file.
+        """
         heartbeat = self._read_heartbeat(session_id)
         if heartbeat is None:
             return HeartbeatStatus(
