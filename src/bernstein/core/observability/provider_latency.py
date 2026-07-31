@@ -15,9 +15,11 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
 from bernstein.core.observability.metric_collector import PercentileTracker
 
 logger = logging.getLogger(__name__)
+
 
 def _coerce_latency_number(value: object) -> float | None:
     """Return *value* as a float when it is a JSON number, else ``None``."""
@@ -31,6 +33,7 @@ def _coerce_latency_number(value: object) -> float | None:
         except ValueError:
             return None
     return None
+
 
 def _is_malformed_latency_line(line: str) -> bool:
     """Return True when *line* is not a well-formed latency JSONL record."""
@@ -47,6 +50,7 @@ def _is_malformed_latency_line(line: str) -> bool:
     if _coerce_latency_number(record.get("timestamp", 0)) is None:
         return True
     return _coerce_latency_number(record.get("latency_ms", 0)) is None
+
 
 def _report_skipped_latency_records(skipped: int, jsonl_file: Path) -> None:
     """Log how many malformed provider latency records were skipped in *jsonl_file*."""
