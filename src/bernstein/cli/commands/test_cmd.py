@@ -16,6 +16,7 @@ from bernstein.cli.helpers import SERVER_URL, console
 def test_cmd(duration: int, workdir: str) -> None:
     """Run automated resilience tests."""
     from bernstein.benchmark.golden import GoldenEvalRunner
+
     console.print(f"[bold]Resilience Test started (duration={duration}s)[/bold]\n")
     runner = GoldenEvalRunner(Path(workdir), SERVER_URL)
     summary = asyncio.run(runner.run_suite())

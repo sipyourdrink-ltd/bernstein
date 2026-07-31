@@ -100,7 +100,6 @@ def agent_kill(agent_id: str | None) -> None:
         console.print("[red]Failed to kill agent.[/red]")
 
 
-
 @chaos_group.command("file-remove")
 @click.option("--pattern", default="*.py", help="Glob pattern for files to consider.")
 def file_remove(pattern: str) -> None:
