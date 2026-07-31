@@ -517,6 +517,16 @@ class WALReader:
         Raises:
             FileNotFoundError: If the WAL file does not exist.
         """
+        for _, entry in self._iter_parsed():
+            yield entry
+
+    def _iter_parsed(self) -> Iterator[tuple[dict[str, Any], WALEntry]]:
+        """Yield ``(raw_record, entry)`` for every well-formed WAL line.
+
+        The raw record is handed back alongside the parsed entry so
+        callers that need to recompute ``entry_hash`` verify it against
+        the bytes as written rather than a re-serialised approximation.
+        """
         if not self._path.exists():
             raise FileNotFoundError(f"WAL file not found: {self._path}")
 
@@ -537,7 +547,7 @@ class WALReader:
                 # iterator when a downstream caller (e.g. lineage
                 # verifier) walks a corrupted WAL.
                 try:
-                    yield WALEntry(
+                    entry = WALEntry(
                         seq=int(data["seq"]),
                         prev_hash=str(data["prev_hash"]),
                         entry_hash=str(data["entry_hash"]),
@@ -551,6 +561,41 @@ class WALReader:
                 except (KeyError, TypeError, ValueError):
                     logger.warning("WAL line missing/malformed fields at %s; skipping", self._path)
                     continue
+                yield data, entry
+
+    def iter_verified_entries(self) -> Iterator[WALEntry]:
+        """Yield only the entries whose hash chain checks out.
+
+        Applies the same two checks as :meth:`verify_chain` - the stored
+        ``entry_hash`` must equal the SHA-256 of the entry's own payload,
+        and ``prev_hash`` must equal the preceding entry's ``entry_hash``
+        - and drops any entry that fails either one.
+
+        Callers that act on WAL contents without a separate
+        :meth:`verify_chain` pass (crash recovery, orphan reclamation)
+        use this so that a corrupted or foreign WAL cannot drive real
+        actions. Entries are still streamed one at a time, and a single
+        bad entry does not disqualify the ones that follow it - the
+        running hash advances using the stored value, matching
+        :meth:`verify_chain`.
+
+        Raises:
+            FileNotFoundError: If the WAL file does not exist.
+        """
+        prev_hash = GENESIS_HASH
+        for data, entry in self._iter_parsed():
+            payload = {k: v for k, v in data.items() if k != "entry_hash"}
+            hash_ok = entry.entry_hash == _compute_entry_hash(payload)
+            linked = entry.prev_hash == prev_hash
+            prev_hash = entry.entry_hash
+            if not hash_ok or not linked:
+                logger.warning(
+                    "WAL entry at %s seq %s failed chain verification; not trusted",
+                    self._path,
+                    entry.seq,
+                )
+                continue
+            yield entry
 
     def verify_chain(self) -> tuple[bool, list[str]]:
         """Verify hash chain integrity of the entire WAL.
@@ -647,10 +692,14 @@ class WALRecovery:
     def get_uncommitted_entries(self) -> list[WALEntry]:
         """Return all entries with ``committed=False``.
 
+        Only chain-verified entries are returned: recovery acts on these
+        entries, so an entry whose ``entry_hash`` or ``prev_hash`` does
+        not check out must not reach the caller.
+
         Returns an empty list if the WAL file does not exist (fresh start).
         """
         try:
-            return [e for e in self._reader.iter_entries() if not e.committed]
+            return [e for e in self._reader.iter_verified_entries() if not e.committed]
         except FileNotFoundError:
             return []
 
@@ -791,6 +840,10 @@ class WALRecovery:
         WALs with a ``.closed`` sidecar marker are skipped so
         that orphans handled by a prior recovery are not retried forever.
 
+        Entries are read through :meth:`WALReader.iter_verified_entries`,
+        so a WAL whose ``entry_hash`` or ``prev_hash`` does not check out
+        yields no claims to force-reclaim.
+
         Args:
             sdd_dir: The ``.sdd`` directory root.
             exclude_run_id: Run ID to skip (the in-progress run).
@@ -813,7 +866,7 @@ class WALRecovery:
                 continue
             reader = WALReader(run_id=run_id, sdd_dir=sdd_dir)
             try:
-                entries = list(reader.iter_entries())
+                entries = list(reader.iter_verified_entries())
             except FileNotFoundError:
                 continue
 

@@ -337,20 +337,6 @@ def test_symlinked_wal_is_not_replayed(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #4 (MED): find_orphaned_claims iterates "
-        "WALReader.iter_entries() but never calls verify_chain(). A "
-        "WAL file whose entry_hash field is forged (or whose prev_hash "
-        "linkage is broken) is treated as authoritative - the recovery "
-        "force-claims arbitrary task_ids. The hash chain that the WAL "
-        "design promises is only enforced by callers who explicitly "
-        "ask for verify_chain(); the recovery path doesn't. Fix: "
-        "either gate find_orphaned_claims on verify_chain success, or "
-        "skip individual entries whose recomputed hash mismatches."
-    ),
-)
 def test_find_orphaned_claims_rejects_broken_chain(tmp_path: Path) -> None:
     """A WAL with a forged entry_hash must not yield orphan claims."""
     sdd = tmp_path / ".sdd"
@@ -451,9 +437,11 @@ def test_close_wal_fsyncs_parent_dir(tmp_path: Path, monkeypatch) -> None:
 def test_uncommitted_index_is_consulted_by_scan(tmp_path: Path, monkeypatch) -> None:
     """Recovery must not re-parse every WAL line if the index is healthy.
 
-    We assert by patching ``WALReader.iter_entries`` and counting calls
-    when an up-to-date index exists.  Currently the call count is
-    nonzero - the index isn't consulted at all.
+    We assert by patching ``WALReader._iter_parsed`` - the single line
+    parse path behind both ``iter_entries`` and
+    ``iter_verified_entries`` - and counting calls when an up-to-date
+    index exists.  Currently the call count is nonzero: the index isn't
+    consulted at all.
     """
     sdd = tmp_path / ".sdd"
     sdd.mkdir()
@@ -466,13 +454,13 @@ def test_uncommitted_index_is_consulted_by_scan(tmp_path: Path, monkeypatch) -> 
     # near-instant (zero iter_entries calls).
 
     calls = {"n": 0}
-    real_iter = WALReader.iter_entries
+    real_iter = WALReader._iter_parsed
 
     def counting_iter(self, *args, **kwargs):
         calls["n"] += 1
         return real_iter(self, *args, **kwargs)
 
-    monkeypatch.setattr(WALReader, "iter_entries", counting_iter)
+    monkeypatch.setattr(WALReader, "_iter_parsed", counting_iter)
     WALRecovery.scan_all_uncommitted(sdd, exclude_run_id="current")
     assert calls["n"] == 0, (
         f"scan_all_uncommitted parsed entries despite empty index "
