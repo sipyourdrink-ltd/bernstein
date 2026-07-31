@@ -108,11 +108,12 @@ def rate_limit(duration: int, provider: str) -> None:
     CHAOS_DIR.mkdir(parents=True, exist_ok=True)
     rate_limit_file = CHAOS_DIR / "rate_limit_active.json"
 
+    expires_at = time.time() + duration
     event = {
         "provider": provider,
         "started_at": time.time(),
         "duration_seconds": duration,
-        "expires_at": time.time() + duration,
+        "expires_at": expires_at,
     }
 
     rate_limit_file.write_text(json.dumps(event, indent=2))
@@ -121,7 +122,7 @@ def rate_limit(duration: int, provider: str) -> None:
     console.print(
         Panel(
             f"Provider [bold]{provider}[/bold] rate-limited for [bold]{duration}s[/bold]\n"
-            f"Expires at: {time.strftime('%H:%M:%S', time.localtime(event['expires_at']))}\n\n"
+            f"Expires at: {time.strftime('%H:%M:%S', time.localtime(expires_at))}\n\n"
             "The orchestrator should detect this and route to fallback providers.",
             title="[red]CHAOS: Rate Limit Simulation[/red]",
         )

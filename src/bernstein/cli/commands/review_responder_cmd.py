@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -31,6 +31,7 @@ from bernstein.core.review_responder import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from bernstein.core.review_responder import ReviewComment
@@ -125,7 +126,7 @@ def start_cmd(
 
     queue: list[ReviewComment] = []
 
-    def _on_payload(payload: dict[str, object]) -> None:  # pragma: no cover - exercised by integration
+    def _on_payload(payload: Mapping[str, Any]) -> None:  # pragma: no cover - exercised by integration
         from bernstein.core.review_responder import normalise_webhook_payload
 
         try:

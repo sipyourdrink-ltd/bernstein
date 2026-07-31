@@ -980,8 +980,8 @@ def _doctor_check_context_and_plugins(checks: list[dict[str, Any]], workdir: Pat
 
     from bernstein.cli.install_check import check_installations
 
-    for w in check_installations():
-        _add_check(checks, w.name, w.ok, w.detail, w.fix)
+    for iw in check_installations():
+        _add_check(checks, iw.name, iw.ok, iw.detail, iw.fix)
 
     from bernstein.plugins.plugin_errors import get_plugin_errors
 

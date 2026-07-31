@@ -192,8 +192,8 @@ def explain_help_cmd(command_name: str | None) -> None:
         table = Table(show_header=True, header_style="bold cyan")
         table.add_column("Command", style="green", width=16)
         table.add_column("Summary")
-        for cmd, info in sorted(_COMMAND_EXAMPLES.items()):
-            table.add_row(cmd, info["summary"])
+        for cmd, cmd_info in sorted(_COMMAND_EXAMPLES.items()):
+            table.add_row(cmd, cmd_info["summary"])
         console.print(table)
         console.print("\n[dim]Usage: bernstein explain <command>[/dim]")
         return

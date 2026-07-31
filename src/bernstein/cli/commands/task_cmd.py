@@ -82,7 +82,7 @@ def claim_backlog(
             project=project,
             role=role,
             capability=capability,
-            completed_ids=set(completed_ids),
+            completed_ids=frozenset(completed_ids),
             max_attempts=max_attempts,
         ),
     )

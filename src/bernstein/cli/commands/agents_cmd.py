@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
 from bernstein.cli.helpers import console
+
+if TYPE_CHECKING:
+    from bernstein.agents.agency_provider import AgencyProvider
 
 _AGENCY_DIR = ".sdd/agents/agency"
 
@@ -90,7 +93,7 @@ def _sync_agency_local_yaml() -> None:
         console.print(f"    [dim]… and {len(catalog) - 5} more[/dim]")
 
 
-def _sync_agency_github(provider_cls: type, *, force: bool) -> None:
+def _sync_agency_github(provider_cls: type[AgencyProvider], *, force: bool) -> None:
     """Sync agency catalog from GitHub."""
     default_agency_path = provider_cls.default_cache_path()
     console.print(f"\n[cyan]→ agency (GitHub)[/cyan] {default_agency_path}")
@@ -184,7 +187,7 @@ def _collect_local_agents(
 def _collect_agency_agents(
     rows: list[tuple[str, str, str, str, str]],
     source: str,
-    provider_cls: type,
+    provider_cls: type[AgencyProvider],
 ) -> None:
     """Collect agents from agency catalogs (local YAML + GitHub) into rows."""
     if source not in ("agency", "all"):

@@ -24,11 +24,14 @@ Examples::
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 
 from bernstein.cli.helpers import console
+
+if TYPE_CHECKING:
+    from bernstein.core.output_fingerprint import CorpusIndex
 
 _DEFAULT_INDEX = Path(".sdd/fingerprint_index.json")
 _DEFAULT_THRESHOLD = 0.8
@@ -138,7 +141,7 @@ def _resolve_corpus_index(
     index: str | None,
     corpus_dir: str | None,
     config: Any,
-    corpus_cls: type,
+    corpus_cls: type[CorpusIndex],
 ) -> Any | None:
     """Resolve and return a CorpusIndex, or None if unavailable."""
     if index:

@@ -287,8 +287,8 @@ def publish(
         print_json({"ok": True, "endpoint": endpoint, "version": version, "records": written})
         return
     print_success(f"Published {len(written)} A2A registry record(s)", soft_wrap=True)
-    for surface, path in sorted(written.items()):
-        console.print(f"  {surface}: {path}")
+    for surface, record_path in sorted(written.items()):
+        console.print(f"  {surface}: {record_path}")
 
 
 def _load_or_issue_card(card_path: Path, *, endpoint: str) -> SignedCapabilityCard:

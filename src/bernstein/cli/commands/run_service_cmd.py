@@ -354,7 +354,7 @@ def status_cmd(run_id: str | None, workdir: Path | None, output_json: bool) -> N
             table.add_column(col)
         for row in rows:
             table.add_row(
-                row["run_id"],
+                str(row["run_id"]),
                 "yes" if row["running"] else "no",
                 str(row["completed"]),
                 str(row["in_flight"]),
