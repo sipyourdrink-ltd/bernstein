@@ -12,10 +12,14 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from bernstein.cli.commands.delegation_cmd import delegation_group
+from bernstein.cli.commands.delegation_cmd import _verify_exit_code, delegation_group
 from bernstein.cli.commands.identity_cmd import identity_group
 from bernstein.core.identity import delegation, http_signing
-from bernstein.core.identity.delegation_scope import DecisionBinding, DelegationScope
+from bernstein.core.identity.delegation_scope import (
+    ChainVerdict,
+    DecisionBinding,
+    DelegationScope,
+)
 from bernstein.core.security.agent_card_keystore import AgentCardKeystore
 
 
@@ -250,3 +254,45 @@ class TestDelegationVerifyExitCodes:
         self._seed(tmp_path, b"k" * 32, "run-u2", [None])
         unproven = runner.invoke(delegation_group, ["verify", "run-u2", "--root", str(tmp_path)])
         assert unproven.exit_code == 3, unproven.output
+
+
+class TestVerifyExitCodeMapping:
+    """Direct cover for _verify_exit_code, including its defensive branch.
+
+    Every graded fail the CLI can currently reach also sets ``valid`` False,
+    so the ``or verdict == fail`` disjunct never decides an outcome through
+    the command itself. It is there for a caller that supplies a
+    ``scope_resolver``, which can produce ``scope_ref_conflict`` with no
+    matching ``AuthorityReport`` violation. Pinning it here keeps the mapping
+    honest without inventing a CLI path that does not exist.
+    """
+
+    @staticmethod
+    def _result(*, valid: bool, verdict: str) -> delegation.ChainResult:
+        return delegation.ChainResult(
+            valid=valid,
+            hops=1,
+            verdict=ChainVerdict(verdict=verdict),
+        )
+
+    @pytest.mark.parametrize(
+        ("valid", "verdict", "expected"),
+        [
+            (True, "pass", 0),
+            (True, "unproven", 3),
+            (True, "fail", 1),
+            (False, "pass", 1),
+            (False, "unproven", 1),
+            (False, "fail", 1),
+        ],
+    )
+    def test_the_mapping_is_total(self, valid, verdict, expected):
+        assert _verify_exit_code(self._result(valid=valid, verdict=verdict)) == expected
+
+    def test_a_graded_fail_alone_still_exits_one(self):
+        """The disjunct under test: valid True, graded verdict fail."""
+        assert _verify_exit_code(self._result(valid=True, verdict="fail")) == 1
+
+    def test_no_input_that_used_to_exit_one_can_now_exit_zero(self):
+        for verdict in ("pass", "fail", "unproven"):
+            assert _verify_exit_code(self._result(valid=False, verdict=verdict)) != 0
