@@ -754,7 +754,10 @@ def _check_session_stalls(
     hb_status = monitor.check(session.id)
     if hb_status.last_heartbeat is not None:
         session.heartbeat_ts = hb_status.last_heartbeat.timestamp()
-    log_summary = aggregator.parse_log(session.id)
+    # Issue #3216: prefer the session's own reported log path (set by the
+    # remote runtime bridge, container, and sandbox-session spawn paths) so
+    # stall profiling is not starved of input for those layouts.
+    log_summary = aggregator.parse_log(session.id, getattr(session, "log_path", None) or None)
     latest_tasks = getattr(orch, "_latest_tasks_by_id", {})
 
     for task_id in session.task_ids:
