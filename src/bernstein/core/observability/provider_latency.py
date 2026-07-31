@@ -47,9 +47,11 @@ def _is_malformed_latency_line(line: str) -> bool:
     if not isinstance(parsed, dict):
         return True
     record: dict[str, object] = parsed
-    if _coerce_latency_number(record.get("timestamp", 0)) is None:
+    if "timestamp" not in record or "latency_ms" not in record:
         return True
-    return _coerce_latency_number(record.get("latency_ms", 0)) is None
+    if _coerce_latency_number(record["timestamp"]) is None:
+        return True
+    return _coerce_latency_number(record["latency_ms"]) is None
 
 
 def _report_skipped_latency_records(skipped: int, jsonl_file: Path) -> None:
@@ -164,7 +166,7 @@ def _read_latency_samples(
                 continue
             record = json.loads(line)
             assert isinstance(record, dict)
-            ts = _coerce_latency_number(record.get("timestamp", 0))
+            ts = _coerce_latency_number(record["timestamp"])
             assert ts is not None
             if ts < cutoff:
                 continue
@@ -382,7 +384,7 @@ class ProviderLatencyTracker:
             )
 
         samples.sort(
-            key=lambda r: _coerce_latency_number(r.get("timestamp", 0)) or 0.0,
+            key=lambda r: _coerce_latency_number(r["timestamp"]) or 0.0,
         )
         return samples
 
@@ -422,13 +424,13 @@ class ProviderLatencyTracker:
             return None
         record = json.loads(line)
         assert isinstance(record, dict)
-        ts = _coerce_latency_number(record.get("timestamp", 0))
+        ts = _coerce_latency_number(record["timestamp"])
         assert ts is not None
         if ts < cutoff:
             return None
         provider = str(record.get("provider", ""))
         model = str(record.get("model", ""))
-        latency_ms = _coerce_latency_number(record.get("latency_ms", 0))
+        latency_ms = _coerce_latency_number(record["latency_ms"])
         if latency_ms is None or not provider or not model or latency_ms <= 0:
             return None
         return _make_key(provider, model), latency_ms

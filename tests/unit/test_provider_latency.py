@@ -249,16 +249,18 @@ class TestProviderLatencyTracker:
             '{"timestamp": 1.0, "provider": "openai", "model": "gpt-4", "latency_ms": 50',
         ]
         jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        with caplog.at_level(logging.WARNING):
-            tracker = ProviderLatencyTracker(tmp_path)
+        tracker = ProviderLatencyTracker(tmp_path)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.observability.provider_latency"):
             history = tracker.get_history()
 
         assert len(history) == 1
         assert history[0]["provider"] == "openai"
         assert history[0]["latency_ms"] == pytest.approx(100.0)
-        skip_messages = [
+        history_skip_messages = [
             record.message
             for record in caplog.records
-            if "Skipped" in record.message and "malformed provider latency" in record.message
+            if record.name == "bernstein.core.observability.provider_latency"
+            and "while loading history" in record.message
         ]
-        assert any("3 malformed provider latency record(s)" in message for message in skip_messages)
+        assert any("3 malformed provider latency record(s)" in message for message in history_skip_messages)
