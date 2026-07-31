@@ -208,6 +208,24 @@ def test_unsafe_receipt_id_is_not_found_rather_than_a_crash(client: TestClient) 
 # ---------------------------------------------------------------------------
 
 
+def _declares_an_event_stream(operation: Any) -> bool:
+    """Whether the document declares this operation an unbounded SSE stream.
+
+    ``bernstein.core.routes._sse`` exists so these operations publish
+    ``text/event-stream`` rather than the inferred ``application/json``,
+    precisely because their body never terminates and a consumer that
+    drives them as an ordinary request/response pair waits until its own
+    timeout fires. Reading the declaration back is how this sweep knows
+    which operations it must not drive that way.
+    """
+    if not isinstance(operation, dict):
+        return False
+    for response in (operation.get("responses") or {}).values():
+        if isinstance(response, dict) and "text/event-stream" in (response.get("content") or {}):
+            return True
+    return False
+
+
 def test_no_documented_operation_answers_5xx_on_a_stock_server(app: FastAPI, client: TestClient) -> None:
     """Nothing a stock deployment publishes may answer 5xx to one plain call.
 
@@ -216,18 +234,41 @@ def test_no_documented_operation_answers_5xx_on_a_stock_server(app: FastAPI, cli
     429 before a route's real status is ever observed, which is how these
     findings stayed hidden. One deterministic pass, each request from its
     own source address, costs seconds and cannot be masked that way.
+
+    Server-Sent Event operations are excluded, and that exclusion is the
+    difference between "costs seconds" and a file that no longer fits the
+    per-file CI budget. ``TestClient`` buffers a response fully before
+    returning - its ASGI transport runs the app to completion - so driving
+    an endless body waits out the route's idle timeout. Six such operations
+    cost 300 of this file's 302 seconds, which is the same failure mode
+    ``_sse.SSE_RESPONSES`` was introduced to stop the nightly sweep hitting.
+    Their status and media type are asserted by their own route tests.
     """
     spec = client.get("/openapi.json").json()
     offenders: list[str] = []
+    probed = 0
+    streamed: list[str] = []
     for path, operations in sorted(spec["paths"].items()):
         concrete = re.sub(r"\{[^{}]+\}", "probe-1", path)
-        for method in operations:
+        for method, operation in operations.items():
             if method not in {"get", "post", "put", "patch", "delete"}:
                 continue
+            if _declares_an_event_stream(operation):
+                streamed.append(f"{method.upper()} {path}")
+                continue
+            probed += 1
             resp = _fresh_client(app).request(method.upper(), concrete, json=None)
             if resp.status_code >= 500:
                 offenders.append(f"{method.upper()} {concrete} -> {resp.status_code}: {resp.text[:120]}")
     assert not offenders, "5xx from a stock deployment:\n" + "\n".join(offenders)
+    # The exclusion is derived from the document, so a route that stopped
+    # answering and started streaming would leave this sweep silently. Pin
+    # both sides: the excluded set stays small, and the swept set stays the
+    # bulk of the surface.
+    assert probed > 10 * len(streamed), (
+        f"only {probed} operations were driven while {len(streamed)} were excluded as event "
+        f"streams; an operation that is not really an SSE endpoint may be declaring one: {streamed}"
+    )
 
 
 # ---------------------------------------------------------------------------
