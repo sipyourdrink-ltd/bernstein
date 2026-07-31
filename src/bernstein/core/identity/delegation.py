@@ -70,9 +70,11 @@ from typing import TYPE_CHECKING, Any, Final
 
 from bernstein.core.identity.delegation_scope import (
     AuthorityReport,
+    ChainVerdict,
     DecisionBinding,
     DelegationScope,
     ScopeViolation,
+    grade_chain,
     verify_authority,
 )
 
@@ -89,6 +91,7 @@ __all__ = [
     "GENESIS_HMAC",
     "AuthorityReport",
     "ChainResult",
+    "ChainVerdict",
     "DecisionBinding",
     "DelegationLedger",
     "DelegationReceipt",
@@ -196,11 +199,18 @@ class ChainResult:
     """Outcome of reconstructing a run's delegation chain offline.
 
     ``chain_ok`` is the tamper-evidence verdict (linkage plus HMAC), unchanged
-    from before authority checks existed. ``valid`` is the overall verdict: the
-    chain is intact *and* the recomputed authority checks found nothing. A
-    widening hop therefore fails ``bernstein delegation verify`` even though
-    every HMAC in the file is correct - which is the point, since the party
-    that wrote a widened hop holds the key that seals it.
+    from before authority checks existed. ``valid`` is the structural verdict:
+    the chain is intact *and* the recomputed authority checks recorded no
+    violation. A widening hop therefore fails ``bernstein delegation verify``
+    even though every HMAC in the file is correct - which is the point, since
+    the party that wrote a widened hop holds the key that seals it.
+
+    ``valid`` does not distinguish a chain whose narrowing was checked and held
+    from a chain that recorded no scope to check: both reach the caller as
+    True, because in neither case did a check find anything. So ``valid`` on
+    its own is not a positive claim that authority narrowed. ``verdict`` is the
+    additive surface that draws that line: pass, fail, or unproven, with one
+    row per hop and a top-level unproven-hop count.
     """
 
     valid: bool
@@ -209,6 +219,8 @@ class ChainResult:
     errors: list[str] = field(default_factory=list)
     chain_ok: bool = True
     authority: AuthorityReport = field(default_factory=lambda: AuthorityReport())
+    #: Graded pass / fail / unproven reading of the same receipts (#2554).
+    verdict: ChainVerdict = field(default_factory=ChainVerdict)
 
     @property
     def violations(self) -> list[ScopeViolation]:
@@ -394,13 +406,28 @@ def verify_run_chain(
     Returns:
         A :class:`ChainResult`. ``valid`` is True only when at least one hop
         exists, the whole chain verifies from genesis to tail, and every
-        authority check passes.
+        authority check passes. ``verdict`` carries the graded reading of the
+        same receipts, which separates a chain that was checked from one that
+        recorded nothing to check.
+
+    What a pass does not establish: that runtime enforcement matched the
+    recorded scope, including consumption state such as remaining uses; that
+    any grant was appropriate policy; that the supplied receipt set is
+    complete, or that no alternate delegation path exists; that an unresolved
+    reference would have matched; anything about execution outcomes. unproven
+    is not valid, and pass is the only positive claim.
     """
     ledger_dir = Path(root) / _SUBDIR
     safe = run_id.replace("/", "_").replace("\\", "_")
     path = ledger_dir / f"{safe}.jsonl"
     if not path.is_file():
-        return ChainResult(valid=False, hops=0, errors=["no delegation receipts for run"], chain_ok=False)
+        return ChainResult(
+            valid=False,
+            hops=0,
+            errors=["no delegation receipts for run"],
+            chain_ok=False,
+            verdict=grade_chain([], chain_ok=False),
+        )
 
     receipts: list[DelegationReceipt] = []
     errors: list[str] = []
@@ -434,6 +461,12 @@ def verify_run_chain(
 
     chain_ok = not errors and len(receipts) > 0
     authority = verify_authority(receipts, scope_resolver=scope_resolver, genesis=GENESIS_HMAC)
+    verdict = grade_chain(
+        receipts,
+        scope_resolver=scope_resolver,
+        genesis=GENESIS_HMAC,
+        chain_ok=chain_ok,
+    )
     return ChainResult(
         valid=chain_ok and authority.ok,
         hops=len(receipts),
@@ -441,6 +474,7 @@ def verify_run_chain(
         errors=errors,
         chain_ok=chain_ok,
         authority=authority,
+        verdict=verdict,
     )
 
 
