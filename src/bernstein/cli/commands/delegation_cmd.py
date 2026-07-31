@@ -24,12 +24,39 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 import click
 
 from bernstein.cli.helpers import console
 from bernstein.core.identity import delegation
 from bernstein.core.identity.delegation_scope import VERDICT_FAIL, VERDICT_UNPROVEN
+
+
+class _ReceiptRecord(TypedDict):
+    """One delegation receipt as emitted on the ``--json`` boundary."""
+
+    hop_index: int
+    issuer: str
+    subject: str
+    audience: str
+    act: str
+    parent_ref: str | None
+    scope_ref: str | None
+    binding: dict[str, object] | None
+
+
+class _VerifyPayload(TypedDict):
+    """The ``delegation verify --json`` response contract."""
+
+    run: str
+    valid: bool
+    chain_ok: bool
+    hops: int
+    errors: list[str]
+    authority: dict[str, object]
+    verdict: dict[str, object]
+    receipts: list[_ReceiptRecord]
 
 
 @click.group(name="delegation")
@@ -85,7 +112,20 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
     authority = result.authority
 
     if as_json:
-        payload = {
+        receipt_records: list[_ReceiptRecord] = [
+            {
+                "hop_index": r.hop_index,
+                "issuer": r.issuer,
+                "subject": r.subject,
+                "audience": r.audience,
+                "act": r.act,
+                "parent_ref": r.parent_ref,
+                "scope_ref": r.scope_ref,
+                "binding": r.binding,
+            }
+            for r in result.receipts
+        ]
+        payload: _VerifyPayload = {
             "run": run,
             "valid": result.valid,
             "chain_ok": result.chain_ok,
@@ -93,19 +133,7 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
             "errors": result.errors,
             "authority": authority.to_dict(),
             "verdict": result.verdict.to_dict(),
-            "receipts": [
-                {
-                    "hop_index": r.hop_index,
-                    "issuer": r.issuer,
-                    "subject": r.subject,
-                    "audience": r.audience,
-                    "act": r.act,
-                    "parent_ref": r.parent_ref,
-                    "scope_ref": r.scope_ref,
-                    "binding": r.binding,
-                }
-                for r in result.receipts
-            ],
+            "receipts": receipt_records,
         }
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
         raise SystemExit(_verify_exit_code(result))
