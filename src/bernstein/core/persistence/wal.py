@@ -257,6 +257,10 @@ class WALWriter:
         fixed-size chunks until a complete non-empty line is recovered
         (or the start of the file is reached). Avoids an O(N) full-file
         read on every construction of a ``WALWriter``.
+
+        When the trailing line is torn (a write interrupted by a crash),
+        the file is rescanned for the last self-consistent entry and the
+        chain resumes from it - see :meth:`_scan_last_valid_entry`.
         """
         if not self._path.exists():
             return -1, GENESIS_HASH
@@ -269,19 +273,42 @@ class WALWriter:
             data = json.loads(last_line)
             return int(data["seq"]), str(data["entry_hash"])
         except (KeyError, ValueError):
-            logger.warning("WAL tail unreadable at %s; chain will continue from truncation point", self._path)
-            # Fall back to a streaming count of non-empty lines so the
-            # next append receives seq = count (matching prior behaviour:
-            # ``len(non_empty) - 1`` → next seq = ``len(non_empty)``).
-            count = 0
-            try:
-                with self._path.open("r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            count += 1
-            except OSError:
-                return -1, GENESIS_HASH
-            return count - 1, GENESIS_HASH
+            logger.warning("WAL tail unreadable at %s; resuming from the last valid entry", self._path)
+            return self._scan_last_valid_entry()
+
+    def _scan_last_valid_entry(self) -> tuple[int, str]:
+        """Return (seq, entry_hash) of the last self-consistent WAL line.
+
+        Used when the trailing line is torn. Resuming from
+        :data:`GENESIS_HASH` instead would make the next ``append`` chain
+        off genesis rather than off its real predecessor, forking the
+        hash chain at the truncation point. Only entries whose stored
+        ``entry_hash`` matches the SHA-256 of their own payload are
+        eligible, so a partially-written line can never become the anchor.
+
+        Returns ``(-1, GENESIS_HASH)`` when no valid entry exists.
+        """
+        last_seq = -1
+        last_hash = GENESIS_HASH
+        try:
+            with self._path.open("r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        seq = int(data["seq"])
+                        entry_hash = str(data["entry_hash"])
+                    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                        continue
+                    payload = {k: v for k, v in data.items() if k != "entry_hash"}
+                    if _compute_entry_hash(payload) != entry_hash:
+                        continue
+                    last_seq, last_hash = seq, entry_hash
+        except OSError:
+            return -1, GENESIS_HASH
+        return last_seq, last_hash
 
     def _read_last_nonempty_line(self, chunk_size: int = 4096) -> str | None:
         """Return the last non-empty line of the WAL via backward seeking.

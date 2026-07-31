@@ -240,17 +240,6 @@ TestWalRecoveryStateMachine.settings = settings(  # type: ignore[attr-defined]
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #1 (HIGH): WALWriter._load_tail falls back to "
-        "(count-1, GENESIS_HASH) when the trailing line is malformed "
-        "(torn write after SIGKILL). The next append then chains off "
-        "GENESIS_HASH instead of the last valid entry's hash, "
-        "permanently breaking the audit chain. Fix: keep scanning "
-        "backward for the last *valid* JSON line and use its entry_hash."
-    ),
-)
 def test_torn_tail_does_not_corrupt_chain(tmp_path: Path) -> None:
     """A torn trailing line must not reset prev_hash to GENESIS.
 
