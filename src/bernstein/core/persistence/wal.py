@@ -413,10 +413,23 @@ class WALWriter:
         entry_hash = _compute_entry_hash(payload)
 
         record = payload | {"entry_hash": entry_hash}
-        with self._path.open("a") as f:
-            f.write(json.dumps(record, separators=(",", ":")) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+        # Capture the pre-write length so a failed write/flush/fsync can be
+        # rolled back. Without the rollback a durable line can outlive a
+        # failed fsync while self._seq/_prev_hash stay unadvanced, and the
+        # caller's retry then reuses this seq - two lines with the same seq
+        # and a permanently inconsistent chain.
+        try:
+            pre_write_size = self._path.stat().st_size
+        except OSError:
+            pre_write_size = 0
+        try:
+            with self._path.open("a") as f:
+                f.write(json.dumps(record, separators=(",", ":")) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError:
+            self._rollback_partial_append(pre_write_size)
+            raise
 
         # update the sidecar index after the WAL line has been
         # durably written. Index corruption only degrades startup speed
@@ -442,6 +455,23 @@ class WALWriter:
         self._seq = seq
         self._prev_hash = entry_hash
         return entry
+
+    def _rollback_partial_append(self, size: int) -> None:
+        """Truncate the WAL back to *size* after a failed append.
+
+        Restores the on-disk state the writer's in-memory ``_seq`` and
+        ``_prev_hash`` still describe, so a retry re-appends the same
+        entry instead of adding a duplicate ``seq``. Best-effort: a
+        failure here is logged, never raised, so the caller still sees
+        the original write error.
+        """
+        try:
+            with self._path.open("r+b") as f:
+                f.truncate(size)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError:
+            logger.warning("WAL rollback after failed append did not complete at %s", self._path, exc_info=True)
 
     def mark_committed(self, seq: int) -> bool:
         """Remove ``(run_id, seq)`` from the uncommitted index.

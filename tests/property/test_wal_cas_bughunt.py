@@ -278,20 +278,6 @@ def test_torn_tail_does_not_corrupt_chain(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #2 (HIGH): WALWriter.append writes the JSON "
-        "line first, then fsyncs, *then* updates self._seq/_prev_hash. "
-        "If fsync raises (ENOSPC, EIO, EBADF) the line is already on "
-        "disk but in-memory state is unchanged, so the next successful "
-        "append re-uses the same seq number. Result: two WAL lines with "
-        "seq=N, breaking the monotonic-seq invariant and permanently "
-        "corrupting the hash chain. Fix: advance self._seq/_prev_hash "
-        "before fsync, or wrap the whole append in a try/except that "
-        "reverts the file truncate on failure."
-    ),
-)
 def test_fsync_failure_does_not_create_duplicate_seqs(tmp_path: Path) -> None:
     """An fsync error mid-append must not leave inconsistent state.
 
