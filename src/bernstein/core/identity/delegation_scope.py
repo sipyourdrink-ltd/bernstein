@@ -807,8 +807,9 @@ DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED: str = "scope_ref_only_resolved"
 VERDICT_DIAGNOSTICS: frozenset[str] = frozenset({DIAGNOSTIC_SCOPE_REF_ONLY_RESOLVED, DIAGNOSTIC_SCOPE_REF_UNRESOLVED})
 
 #: Keys :meth:`DelegationScope.from_body` interprets. A body carrying anything
-#: else is not something the comparator can reason about, so the hop is
-#: unproven rather than quietly compared on the subset it understood.
+#: else is not something the comparator can reason about: the unreadable key
+#: records ``comparison_axis_unsupported``. Readable axes are still compared,
+#: and a widening found on one of them fails the hop, fail dominating unproven.
 SCOPE_BODY_KEYS: frozenset[str] = frozenset(
     {
         "duties",
