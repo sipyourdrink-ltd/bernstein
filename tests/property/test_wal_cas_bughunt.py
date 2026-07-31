@@ -366,51 +366,36 @@ def test_find_orphaned_claims_rejects_broken_chain(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #5 (LOW): WALRecovery.close_wal fsyncs the "
-        ".closed marker file but never the parent directory dirent. On "
-        "ext4/xfs (and Linux POSIX semantics) a crash immediately after "
-        "the marker write can leave the dirent unflushed, so the file "
-        "is invisible on next boot - re-triggering the audit-072 "
-        "'unbounded re-scan' bug the marker was added to prevent. The "
-        "docstring at line 627-629 explicitly promises this property "
-        "but the implementation is missing the directory fsync. Fix: "
-        "after os.replace(tmp, marker) call fsync on the parent dir fd."
-    ),
-)
 def test_close_wal_fsyncs_parent_dir(tmp_path: Path, monkeypatch) -> None:
     """close_wal must fsync the dirent so the marker survives a crash.
 
     We assert it indirectly: instrument os.fsync and check that at
-    least one fsync targets a directory file descriptor.
+    least one fsync targets the WAL directory itself.  The descriptor is
+    identified by ``(st_dev, st_ino)`` rather than by reading
+    ``/dev/fd/<n>``, which is not a readable symlink on every POSIX
+    platform (macOS returns EINVAL).
     """
     sdd = tmp_path / ".sdd"
     sdd.mkdir()
     _write_orphan_claim(sdd, "r1", "T1")
 
-    fsynced_targets: list[str] = []
+    wal_dir_stat = os.stat(sdd / "runtime" / "wal")
+    wal_dir_id = (wal_dir_stat.st_dev, wal_dir_stat.st_ino)
+
+    fsynced_ids: list[tuple[int, int]] = []
     real_fsync = os.fsync
 
     def tracking_fsync(fd: int) -> None:
-        try:
-            # Try to identify the path of the fd
-            import os as _os
-
-            path = _os.readlink(f"/dev/fd/{fd}")
-        except OSError:
-            path = "<unknown>"
-        fsynced_targets.append(path)
+        with contextlib.suppress(OSError):
+            st = os.fstat(fd)
+            fsynced_ids.append((st.st_dev, st.st_ino))
         return real_fsync(fd)
 
     monkeypatch.setattr("bernstein.core.persistence.wal.os.fsync", tracking_fsync)
 
     WALRecovery.close_wal("r1", sdd, reason="test")
-    # The wal directory itself should be fsynced after the marker is
-    # written. Currently nothing fsyncs the dirent.
-    wal_dir_str = str((sdd / "runtime" / "wal").resolve())
-    assert any(p == wal_dir_str for p in fsynced_targets), f"close_wal did not fsync wal dir; saw {fsynced_targets}"
+    # The wal directory itself must be fsynced after the marker is written.
+    assert wal_dir_id in fsynced_ids, f"close_wal did not fsync wal dir; saw {fsynced_ids}"
 
 
 # ---------------------------------------------------------------------------

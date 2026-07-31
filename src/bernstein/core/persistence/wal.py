@@ -770,6 +770,23 @@ class WALRecovery:
             f.flush()
             os.fsync(f.fileno())
 
+        # Fsyncing the marker's contents does not make its directory entry
+        # durable: POSIX only guarantees a new dirent survives a crash once
+        # the parent directory itself is fsynced. Without this the marker
+        # can be invisible on the next boot and the WAL is re-scanned
+        # forever - exactly what the marker exists to prevent.
+        try:
+            dir_fd = os.open(marker.parent, os.O_RDONLY)
+        except OSError:
+            logger.warning("could not open WAL directory to fsync close marker for %s", run_id, exc_info=True)
+        else:
+            try:
+                os.fsync(dir_fd)
+            except OSError:
+                logger.warning("directory fsync for close marker failed for %s", run_id, exc_info=True)
+            finally:
+                os.close(dir_fd)
+
         # drop stale uncommitted-index rows for the now-closed
         # run so future scans do not have to filter them out.
         try:
