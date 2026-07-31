@@ -8,7 +8,10 @@ Two distinct surfaces:
   deleted hop, or missing chain (issue #2305 AC4). For hops that record their
   effective scope it also recomputes child-subset-of-parent narrowing,
   separation of duties, and decision-time charter binding, exiting non-zero
-  when any of those relations is violated (issue #2554).
+  when any of those relations is violated (issue #2554). Exit codes are
+  0 pass, 1 fail, 3 unproven; 2 is left to click for usage errors. A chain
+  that records no scope at all is unproven, not a pass, so a legacy chain
+  that used to exit 0 now exits 3.
 * ``delegation verify-token <token-file>`` verifies a signed *authority* token
   chain (see :mod:`bernstein.core.security.capability_tokens`): per-hop
   signature, structural linkage, identity/pubkey continuity, monotonic
@@ -26,6 +29,7 @@ import click
 
 from bernstein.cli.helpers import console
 from bernstein.core.identity import delegation
+from bernstein.core.identity.delegation_scope import VERDICT_FAIL, VERDICT_UNPROVEN
 
 
 @click.group(name="delegation")
@@ -38,6 +42,21 @@ def delegation_group() -> None:
       bernstein delegation verify run-42 --json
       bernstein delegation verify-token chain.json --trust-anchor principal.pem
     """
+
+
+def _verify_exit_code(result: delegation.ChainResult) -> int:
+    """0 pass, 1 fail, 3 unproven. 2 belongs to click's usage errors.
+
+    ``valid`` still decides the failing case on its own, so nothing that
+    exited 1 before this graded surface existed exits 0 now. The one changed
+    outcome is the reverse: a chain that recorded no scope to check used to
+    exit 0 and now exits 3.
+    """
+    if not result.valid or result.verdict.verdict == VERDICT_FAIL:
+        return 1
+    if result.verdict.verdict == VERDICT_UNPROVEN:
+        return 3
+    return 0
 
 
 @delegation_group.command("verify")
@@ -58,8 +77,9 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
     separated duties (spawn / approve / merge), and that gated decisions cite
     the charter version in force at decision time.
 
-    Exits 0 when the chain is intact and every authority check passes; 1
-    otherwise.
+    Exits 0 when the chain is intact and narrowing was checked and held, 1
+    when a check failed, and 3 when the receipts carry too little to decide.
+    Unproven is not a pass: a chain that recorded no scope reaches 3, not 0.
     """
     result = delegation.verify_run(run, root=root)
     authority = result.authority
@@ -72,6 +92,7 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
             "hops": result.hops,
             "errors": result.errors,
             "authority": authority.to_dict(),
+            "verdict": result.verdict.to_dict(),
             "receipts": [
                 {
                     "hop_index": r.hop_index,
@@ -87,7 +108,7 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
             ],
         }
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
-        raise SystemExit(0 if result.valid else 1)
+        raise SystemExit(_verify_exit_code(result))
 
     if result.hops == 0:
         console.print(f"[red]No delegation receipts for run[/red] {run}")
@@ -102,14 +123,25 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
             console.print(f"[dim]      binding {bits}[/dim]")
 
     console.print(f"[dim]scope coverage:[/dim] {authority.scope_coverage}")
+    for row in result.verdict.hops:
+        console.print(f"[dim]  {row}[/dim]")
     for violation in authority.violations:
         console.print(f"[red]  {violation}[/red]")
     for err in result.errors:
         console.print(f"[red]  {err}[/red]")
 
-    if result.valid:
+    code = _verify_exit_code(result)
+    if code == 0:
         console.print(f"[green]delegation chain intact[/green] ({result.hops} hop(s))")
         raise SystemExit(0)
+    if code == 3:
+        detail = f", {', '.join(result.verdict.reasons)}" if result.verdict.reasons else ""
+        console.print(
+            f"[yellow]delegation chain unproven[/yellow]: "
+            f"{result.verdict.unproven_hops} of {result.hops} hop(s) could not be checked"
+            f"{detail}"
+        )
+        raise SystemExit(3)
     if not result.chain_ok:
         console.print("[red]delegation chain verification failed[/red]")
     else:
@@ -122,7 +154,10 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
             )
             if not ok
         ]
-        console.print(f"[red]delegation authority verification failed:[/red] {', '.join(failed)}")
+        if failed:
+            console.print(f"[red]delegation authority verification failed:[/red] {', '.join(failed)}")
+        else:
+            console.print("[red]delegation chain verdict: fail[/red]")
     raise SystemExit(1)
 
 
