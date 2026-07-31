@@ -36,7 +36,9 @@ from bernstein.core.identity.delegation_scope import (
     VERDICT_PASS,
     VERDICT_REASONS,
     VERDICT_UNPROVEN,
+    ChainVerdict,
     DelegationScope,
+    HopVerdict,
     grade_chain,
 )
 
@@ -92,7 +94,7 @@ def _receipt(
     )
 
 
-def _rows(verdict) -> dict[int, object]:
+def _rows(verdict: ChainVerdict) -> dict[int, HopVerdict]:
     return {row.hop_index: row for row in verdict.hops}
 
 

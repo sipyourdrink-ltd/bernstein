@@ -7,6 +7,7 @@ principal->orchestrator->sub-agent chain for a run).
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -213,8 +214,10 @@ class TestDelegationVerifyNarrowing:
 class TestDelegationVerifyExitCodes:
     """0 pass, 1 fail, 3 unproven (#2554). 2 stays click's usage-error code."""
 
-    def _seed(self, root: Path, key: bytes, run: str, scopes) -> None:
-        ledger = delegation.DelegationLedger(root=root, key=key)
+    KEY = b"k" * 32
+
+    def _seed(self, root: Path, run: str, scopes: Sequence[DelegationScope | None]) -> None:
+        ledger = delegation.DelegationLedger(root=root, key=self.KEY)
         for i, scope in enumerate(scopes):
             ledger.record_hop(
                 run_id=run,
@@ -227,31 +230,31 @@ class TestDelegationVerifyExitCodes:
 
     @pytest.fixture(autouse=True)
     def _key(self, monkeypatch):
-        monkeypatch.setattr(delegation, "_audit_key", lambda: b"k" * 32)
+        monkeypatch.setattr(delegation, "_audit_key", lambda: self.KEY)
 
     def test_a_checked_and_held_chain_exits_zero(self, runner, tmp_path):
         wide = DelegationScope(permissions=frozenset({"files.read", "files.write"}), max_depth=3)
         narrow = DelegationScope(permissions=frozenset({"files.read"}), max_depth=2)
-        self._seed(tmp_path, b"k" * 32, "run-pass", [wide, narrow])
+        self._seed(tmp_path, "run-pass", [wide, narrow])
         result = runner.invoke(delegation_group, ["verify", "run-pass", "--root", str(tmp_path)])
         assert result.exit_code == 0, result.output
 
     def test_a_widening_chain_exits_one(self, runner, tmp_path):
         narrow = DelegationScope(permissions=frozenset({"files.read"}), max_depth=2)
         wide = DelegationScope(permissions=frozenset({"files.read", "files.write"}), max_depth=1)
-        self._seed(tmp_path, b"k" * 32, "run-fail", [narrow, wide])
+        self._seed(tmp_path, "run-fail", [narrow, wide])
         result = runner.invoke(delegation_group, ["verify", "run-fail", "--root", str(tmp_path)])
         assert result.exit_code == 1, result.output
 
     def test_a_chain_with_nothing_to_check_exits_three(self, runner, tmp_path):
-        self._seed(tmp_path, b"k" * 32, "run-unproven", [None, None])
+        self._seed(tmp_path, "run-unproven", [None, None])
         result = runner.invoke(delegation_group, ["verify", "run-unproven", "--root", str(tmp_path)])
         assert result.exit_code == 3, result.output
 
     def test_the_unproven_code_is_not_the_click_usage_code(self, runner, tmp_path):
         usage = runner.invoke(delegation_group, ["verify"])
         assert usage.exit_code == 2
-        self._seed(tmp_path, b"k" * 32, "run-u2", [None])
+        self._seed(tmp_path, "run-u2", [None])
         unproven = runner.invoke(delegation_group, ["verify", "run-u2", "--root", str(tmp_path)])
         assert unproven.exit_code == 3, unproven.output
 
