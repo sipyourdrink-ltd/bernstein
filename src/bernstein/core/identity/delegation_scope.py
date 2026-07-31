@@ -48,11 +48,17 @@ checked and held from a chain that recorded no scope to check. It records no
 :class:`ScopeViolation` and leaves :class:`AuthorityReport` alone, so ``valid``
 keeps the meaning it already had.
 
-Two reasons from the design sketch are absent because this schema cannot reach
-them. There is no scope version field for ``scope_version_unsupported`` to fire
-on, and ``parent_ref_missing`` does not apply because the receipt chain is
-HMAC-linked, so the preceding hop is the parent by construction rather than by
-an inference a substituted receipt could exploit.
+One reason from the design sketch is absent because this schema cannot reach
+it: there is no scope version field for ``scope_version_unsupported`` to fire
+on. ``parent_ref_missing`` is absent for a different reason. The chain is
+HMAC-linked, so a hop that names no parent still has a known predecessor and
+is graded against it rather than excused.
+
+``parent_ref`` is part of the signed body, written by the same party that
+writes the scope, so the grader never lets it decide whether a hop is examined.
+Root status is positional: only a hop with nothing before it in the supplied
+set is a root. A hop that names the genesis anchor mid-chain is reported
+``root_claimed_mid_chain`` and is unproven, never a pass.
 """
 
 from __future__ import annotations
@@ -95,6 +101,7 @@ __all__ = [
     "REASON_NO_SCOPE_RECORDED",
     "REASON_PARENT_RECEIPT_UNAVAILABLE",
     "REASON_PARENT_SCOPE_UNAVAILABLE",
+    "REASON_ROOT_CLAIMED_MID_CHAIN",
     "REASON_ROOT_STRUCTURAL_ONLY",
     "REASON_SCOPE_MISSING",
     "REASON_SCOPE_REF_CONFLICT",
@@ -761,6 +768,7 @@ REASON_SCOPE_REF_ONLY_UNRESOLVED: str = "scope_ref_only_unresolved"
 REASON_PARENT_RECEIPT_UNAVAILABLE: str = "parent_receipt_unavailable"
 REASON_PARENT_SCOPE_UNAVAILABLE: str = "parent_scope_unavailable"
 REASON_COMPARISON_AXIS_UNSUPPORTED: str = "comparison_axis_unsupported"
+REASON_ROOT_CLAIMED_MID_CHAIN: str = "root_claimed_mid_chain"
 REASON_NO_SCOPE_RECORDED: str = "no_scope_recorded"
 
 #: Reasons that make a hop fail.
@@ -778,6 +786,7 @@ UNPROVEN_REASONS: frozenset[str] = frozenset(
         REASON_COMPARISON_AXIS_UNSUPPORTED,
         REASON_PARENT_RECEIPT_UNAVAILABLE,
         REASON_PARENT_SCOPE_UNAVAILABLE,
+        REASON_ROOT_CLAIMED_MID_CHAIN,
         REASON_SCOPE_MISSING,
         REASON_SCOPE_REF_ONLY_UNRESOLVED,
     }
@@ -974,7 +983,19 @@ def _grade_hop(
     parent = resolved if isinstance(resolved, int) else None
     if isinstance(resolved, str):
         reasons.append(REASON_PARENT_RECEIPT_UNAVAILABLE)
-    is_root = resolved is None
+
+    # Root status is positional, never self-declared. ``_parent_index`` reports
+    # "no parent" for any hop whose ``parent_ref`` is the genesis anchor, and
+    # ``parent_ref`` is written by the same party that writes the scope. Reading
+    # that as root would let a hop opt out of the comparison by naming genesis:
+    # the ceiling it widened would go unexamined and the row would read pass.
+    # Only a hop with nothing before it in the supplied set is a root. A hop
+    # that claims otherwise mid-chain may be a second tree's root or may be
+    # evading its ceiling, and the receipts cannot tell those apart, so it is
+    # unproven.
+    is_root = resolved is None and index == 0
+    if resolved is None and index > 0:
+        reasons.append(REASON_ROOT_CLAIMED_MID_CHAIN)
     parent_hop_index = None if parent is None else receipts[parent].hop_index
 
     ref_reasons, diagnostics = _cross_check_scope_ref(receipt, scope_resolver)
