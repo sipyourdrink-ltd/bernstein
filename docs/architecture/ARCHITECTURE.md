@@ -281,7 +281,6 @@ Bernstein can execute agents on Cloudflare's edge infrastructure in addition to 
 - **R2WorkspaceSync** (`bridges/r2_sync.py`) - content-addressed workspace file sync via R2
 - **WorkersAIProvider** (`core/routing/cloudflare_ai.py`) - free-tier LLM models for planning
 - **D1AnalyticsClient** (`core/cost/d1_analytics.py`) - usage metering and billing
-- **VectorizeSemanticCache** (`core/memory/vectorize_cache.py`) - semantic LLM response caching
 
 The cloud bridges implement the same `RuntimeBridge` interface as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](../cloudflare/cloudflare-overview.md) for architecture diagrams and setup instructions.
 

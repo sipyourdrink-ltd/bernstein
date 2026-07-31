@@ -88,7 +88,7 @@ group below is a section in the left nav with its own set of pages.
 
     ---
 
-    Run agents on Cloudflare's edge - Workers, R2, D1, Vectorize.
+    Run agents on Cloudflare's edge - Workers, R2, D1.
 
     [:octicons-arrow-right-24: Cloudflare overview](../cloudflare/cloudflare-overview.md)
 
