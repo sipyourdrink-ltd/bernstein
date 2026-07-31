@@ -265,7 +265,7 @@ class TaskCreateRequest(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def _parse_upgrade_dict(raw: dict[str, Any] | None) -> UpgradeProposalDetails | None:
+def _parse_upgrade_dict(raw: Mapping[str, Any] | None) -> UpgradeProposalDetails | None:
     if not raw:
         return None
     risk = RiskAssessment(**raw.get("risk_assessment", {}))
@@ -279,6 +279,57 @@ def _parse_upgrade_dict(raw: dict[str, Any] | None) -> UpgradeProposalDetails | 
         cost_estimate_usd=raw.get("cost_estimate_usd", 0.0),
         performance_impact=raw.get("performance_impact", ""),
     )
+
+
+#: Mirrors :attr:`bernstein.core.tasks.models.CompletionSignal.type`. Request-layer
+#: schemas (e.g. ``CompletionSignalSchema``) already validate incoming signal types
+#: against a Literal, but the ``TaskCreateRequest`` protocol widens ``type`` to
+#: ``str`` so any implementer can satisfy it - this re-narrows before constructing
+#: the dataclass instead of widening the dataclass's own Literal.
+type CompletionSignalType = Literal[
+    "path_exists",
+    "glob_exists",
+    "test_passes",
+    "file_contains",
+    "llm_review",
+    "llm_judge",
+    "schema_valid",
+    "criteria_match",
+    "hash_stable",
+    "figures_grounded",
+]
+
+_COMPLETION_SIGNAL_TYPES: tuple[CompletionSignalType, ...] = (
+    "path_exists",
+    "glob_exists",
+    "test_passes",
+    "file_contains",
+    "llm_review",
+    "llm_judge",
+    "schema_valid",
+    "criteria_match",
+    "hash_stable",
+    "figures_grounded",
+)
+
+
+def _narrow_signal_type(raw: str) -> CompletionSignalType:
+    """Validate and narrow a completion-signal type string.
+
+    Raises ValueError outside the closed set instead of widening
+    ``CompletionSignal.type``'s Literal to accept bare ``str``.
+    """
+    if raw not in _COMPLETION_SIGNAL_TYPES:
+        raise ValueError(f"Unsupported completion signal type: {raw!r}")
+    return raw
+
+
+#: Mirrors the ``Task.estimated_minutes`` dataclass default. ``TaskCreateRequest``
+#: declares the field ``int | None`` (client may omit it), while ``Task`` itself
+#: requires a concrete ``int`` - route handlers normalise ``None`` before it
+#: reaches the store in the normal HTTP path (see ``task_crud.py``), so this is
+#: a same-default fallback for the type checker, not a behaviour change.
+_DEFAULT_ESTIMATED_MINUTES = 30
 
 
 async def _retry_io(fn: Any, *args: Any) -> Any:
@@ -1162,10 +1213,12 @@ class TaskStore:
             priority=req.priority,
             scope=Scope(req.scope),
             complexity=complexity_val,
-            estimated_minutes=req.estimated_minutes,
-            depends_on=req.depends_on,
+            estimated_minutes=(
+                req.estimated_minutes if req.estimated_minutes is not None else _DEFAULT_ESTIMATED_MINUTES
+            ),
+            depends_on=list(req.depends_on),
             parent_task_id=getattr(req, "parent_task_id", None),
-            owned_files=req.owned_files,
+            owned_files=list(req.owned_files),
             tenant_id=normalize_tenant_id(getattr(req, "tenant_id", "default")),
             cell_id=req.cell_id,
             repo=getattr(req, "repo", None),
@@ -1179,8 +1232,10 @@ class TaskStore:
             eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
             approval_required=bool(getattr(req, "approval_required", False)),
             risk_level=getattr(req, "risk_level", "low"),
-            completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
-            slack_context=req.slack_context,
+            completion_signals=[
+                CompletionSignal(type=_narrow_signal_type(s.type), value=s.value) for s in req.completion_signals
+            ],
+            slack_context=dict(req.slack_context) if req.slack_context is not None else None,
             metadata=getattr(req, "metadata", None) or {},
             parent_session_id=getattr(req, "parent_session_id", None),
             parent_context=getattr(req, "parent_context", None),
@@ -1581,10 +1636,12 @@ class TaskStore:
                     priority=req.priority,
                     scope=Scope(req.scope),
                     complexity=complexity_val,
-                    estimated_minutes=req.estimated_minutes,
-                    depends_on=req.depends_on,
+                    estimated_minutes=(
+                        req.estimated_minutes if req.estimated_minutes is not None else _DEFAULT_ESTIMATED_MINUTES
+                    ),
+                    depends_on=list(req.depends_on),
                     parent_task_id=getattr(req, "parent_task_id", None),
-                    owned_files=req.owned_files,
+                    owned_files=list(req.owned_files),
                     tenant_id=normalize_tenant_id(getattr(req, "tenant_id", "default")),
                     cell_id=req.cell_id,
                     repo=getattr(req, "repo", None),
@@ -1598,8 +1655,11 @@ class TaskStore:
                     eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
                     approval_required=bool(getattr(req, "approval_required", False)),
                     risk_level=getattr(req, "risk_level", "low"),
-                    completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
-                    slack_context=req.slack_context,
+                    completion_signals=[
+                        CompletionSignal(type=_narrow_signal_type(s.type), value=s.value)
+                        for s in req.completion_signals
+                    ],
+                    slack_context=dict(req.slack_context) if req.slack_context is not None else None,
                     metadata=getattr(req, "metadata", None) or {},
                     parent_session_id=getattr(req, "parent_session_id", None),
                 )

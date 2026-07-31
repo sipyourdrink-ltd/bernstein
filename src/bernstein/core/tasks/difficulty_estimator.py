@@ -28,6 +28,7 @@ def estimate_difficulty(description: str) -> DifficultyScore:
 
     raw = (word_count / 50.0) + code_ref_count + (keyword_count * 2)
 
+    level: Literal["trivial", "low", "medium", "high", "critical"]
     if raw < 2.0:
         level = "trivial"
     elif raw < 5.0:
