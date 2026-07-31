@@ -57,7 +57,7 @@ What a pass does not establish: that runtime enforcement matched the recorded
 scope, including consumption state such as remaining uses; that any grant was
 appropriate policy; that the supplied receipt set is complete, or that no
 alternate delegation path exists; that an unresolved reference would have
-matched; anything about execution outcomes. unproven is not valid, and pass is
+matched; anything about execution outcomes. unproven is not a pass, and pass is
 the only positive claim.
 
 Receipts are written by calling `DelegationLedger.record_hop` (or its
