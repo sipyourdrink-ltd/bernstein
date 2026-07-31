@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -209,5 +210,69 @@ class TestProviderLatencyTracker:
         }
         record[field] = {"not": "numeric"}
 
-        with pytest.raises(TypeError):
-            ProviderLatencyTracker._parse_latency_record(json.dumps(record), cutoff=0.0)
+        parsed, malformed = ProviderLatencyTracker._parse_latency_record(json.dumps(record), cutoff=0.0)
+        assert parsed is None
+        assert malformed is True
+
+    def test_get_history_skips_malformed_records_and_reports_count(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """One good record plus one malformed record of each kind: wrong type, null, truncated."""
+        from datetime import UTC, datetime
+
+        tracker = ProviderLatencyTracker(tmp_path)
+
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        jsonl = tmp_path / f"provider_latency_{date_str}.jsonl"
+        now = time.time()
+        lines = [
+            json.dumps({"timestamp": now, "provider": "openai", "model": "gpt-4", "latency_ms": 42.0}),
+            # Wrong type: timestamp is a string, not a number.
+            json.dumps({"timestamp": "not-a-number", "provider": "openai", "model": "gpt-4", "latency_ms": 10.0}),
+            # Null: timestamp is JSON null.
+            json.dumps({"timestamp": None, "provider": "openai", "model": "gpt-4", "latency_ms": 10.0}),
+            # Truncated: not valid JSON at all.
+            '{"timestamp": ' + repr(now) + ', "provider": "open',
+        ]
+        jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING):
+            history = tracker.get_history(provider="openai", model="gpt-4")
+
+        assert len(history) == 1
+        assert history[0]["latency_ms"] == pytest.approx(42.0)
+        assert tracker._malformed_samples_skipped == 3
+        assert any("3" in r.message and "malformed" in r.message for r in caplog.records)
+
+    def test_load_baseline_skips_malformed_records_and_reports_count(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Malformed records in the 7-day baseline window must not crash construction."""
+        from datetime import UTC, datetime
+
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        jsonl = tmp_path / f"provider_latency_{date_str}.jsonl"
+        ts = time.time() - 3600
+
+        good_lines = [
+            json.dumps({"timestamp": ts, "provider": "anthropic", "model": "sonnet", "latency_ms": 200.0})
+            for _ in range(15)
+        ]
+        malformed_lines = [
+            # Wrong type: timestamp is a string, not a number.
+            json.dumps({"timestamp": "bad", "provider": "anthropic", "model": "sonnet", "latency_ms": 200.0}),
+            # Null: timestamp is JSON null.
+            json.dumps({"timestamp": None, "provider": "anthropic", "model": "sonnet", "latency_ms": 200.0}),
+            # Truncated: not valid JSON at all.
+            '{"timestamp": ' + repr(ts) + ', "provider": "anthr',
+        ]
+        jsonl.write_text("\n".join(good_lines + malformed_lines) + "\n", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING):
+            tracker = ProviderLatencyTracker(tmp_path)
+
+        key = _make_key("anthropic", "sonnet")
+        assert key in tracker._baseline_p99
+        assert tracker._baseline_p99[key] == pytest.approx(200.0, abs=1.0)
+        assert tracker._malformed_samples_skipped == 3
+        assert any("3" in r.message and "malformed" in r.message for r in caplog.records)

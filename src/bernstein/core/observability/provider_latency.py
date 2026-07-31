@@ -15,7 +15,6 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 from bernstein.core.observability.metric_collector import PercentileTracker
 
@@ -104,25 +103,64 @@ class DegradationAlert:
         }
 
 
+def _coerce_float(value: object) -> float | None:
+    """Coerce a JSON-decoded value to a finite float, or ``None`` if it can't be trusted.
+
+    ``json.loads`` hands back whatever type was on the wire, so a "numeric"
+    field can arrive as a string, ``null``, a nested object, or (Python's
+    JSON parser is permissive) a non-finite float. Any of those means the
+    record is malformed and should be skipped rather than coerced.
+    """
+    if isinstance(value, bool):
+        return None
+    if not isinstance(value, int | float):
+        return None
+    result = float(value)
+    if result != result or result in (float("inf"), float("-inf")):  # NaN / +-Infinity
+        return None
+    return result
+
+
+def _history_sort_key(record: dict[str, object]) -> float:
+    """Sort key for history records.
+
+    ``_read_latency_samples`` only ever appends records whose timestamp
+    already coerced cleanly, so this is a defensive fallback, not a second
+    validation pass.
+    """
+    return _coerce_float(record.get("timestamp", 0)) or 0.0
+
+
 def _read_latency_samples(
     jsonl_file: Path,
     cutoff: float,
     provider: str | None,
     model: str | None,
     samples: list[dict[str, object]],
-) -> None:
-    """Read and filter latency samples from a single JSONL file."""
+) -> int:
+    """Read and filter latency samples from a single JSONL file.
+
+    Returns the number of malformed or truncated records skipped.
+    """
+    skipped = 0
     with suppress(OSError):
         for line in jsonl_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
-                record: dict[str, object] = json.loads(line)
+                raw: object = json.loads(line)
             except json.JSONDecodeError:
+                skipped += 1
                 continue
-            # _persist_sample writes timestamps as JSON numbers.
-            ts = float(cast(float, record.get("timestamp", 0)))
+            if not isinstance(raw, dict):
+                skipped += 1
+                continue
+            record: dict[str, object] = raw
+            ts = _coerce_float(record.get("timestamp", 0))
+            if ts is None:
+                skipped += 1
+                continue
             if ts < cutoff:
                 continue
             if provider and record.get("provider") != provider:
@@ -130,6 +168,7 @@ def _read_latency_samples(
             if model and record.get("model") != model:
                 continue
             samples.append(record)
+    return skipped
 
 
 class ProviderLatencyTracker:
@@ -167,6 +206,10 @@ class ProviderLatencyTracker:
 
         # Baseline sample counts - we only trust baselines above minimum
         self._baseline_sample_counts: dict[str, int] = {}
+
+        # Count of malformed/truncated JSONL records skipped by the reader
+        # (issue #3288) - incremented by _load_baseline and get_history.
+        self._malformed_samples_skipped: int = 0
 
         self._lock = threading.Lock()
         self._load_baseline()
@@ -325,12 +368,17 @@ class ProviderLatencyTracker:
         """
         cutoff = time.time() - hours * 3600
         samples: list[dict[str, object]] = []
+        skipped = 0
 
         for jsonl_file in sorted(self._metrics_dir.glob("provider_latency_*.jsonl")):
-            _read_latency_samples(jsonl_file, cutoff, provider, model, samples)
+            skipped += _read_latency_samples(jsonl_file, cutoff, provider, model, samples)
 
-        # The history records come from _persist_sample, which emits numeric timestamps.
-        samples.sort(key=lambda r: float(cast(float, r.get("timestamp", 0))))
+        if skipped:
+            with self._lock:
+                self._malformed_samples_skipped += skipped
+            logger.warning("Skipped %d malformed provider-latency record(s) while reading history", skipped)
+
+        samples.sort(key=_history_sort_key)
         return samples
 
     # ------------------------------------------------------------------
@@ -360,25 +408,40 @@ class ProviderLatencyTracker:
             logger.warning("Failed to persist latency sample: %s", exc)
 
     @staticmethod
-    def _parse_latency_record(line: str, cutoff: float) -> tuple[str, float] | None:
-        """Parse a single JSONL latency record, returning ``(key, latency_ms)`` or None."""
+    def _parse_latency_record(line: str, cutoff: float) -> tuple[tuple[str, float] | None, bool]:
+        """Parse a single JSONL latency record.
+
+        Returns ``(key_and_latency, malformed)``. ``key_and_latency`` is
+        ``None`` both when the record is well-formed but filtered out (older
+        than ``cutoff``, missing provider/model, non-positive latency) and
+        when the record is malformed. ``malformed`` is ``True`` only in the
+        latter case (invalid JSON, a non-dict payload, or non-numeric
+        timestamp/latency fields), so callers can count and report skips
+        separately from ordinary filtering.
+        """
         line = line.strip()
         if not line:
-            return None
+            return None, False
         try:
-            record: dict[str, object] = json.loads(line)
+            raw: object = json.loads(line)
         except json.JSONDecodeError:
-            return None
-        # _persist_sample serialises both fields below as JSON numbers.
-        ts = float(cast(float, record.get("timestamp", 0)))
+            return None, True
+        if not isinstance(raw, dict):
+            return None, True
+        record: dict[str, object] = raw
+        ts = _coerce_float(record.get("timestamp", 0))
+        if ts is None:
+            return None, True
         if ts < cutoff:
-            return None
+            return None, False
+        latency_ms = _coerce_float(record.get("latency_ms", 0))
+        if latency_ms is None:
+            return None, True
         provider = str(record.get("provider", ""))
         model = str(record.get("model", ""))
-        latency_ms = float(cast(float, record.get("latency_ms", 0)))
         if not provider or not model or latency_ms <= 0:
-            return None
-        return _make_key(provider, model), latency_ms
+            return None, False
+        return (_make_key(provider, model), latency_ms), False
 
     def _load_baseline(self) -> None:
         """Load historical p99 baselines by replaying persisted JSONL data.
@@ -388,16 +451,23 @@ class ProviderLatencyTracker:
         """
         cutoff = time.time() - 7 * 24 * 3600
         key_samples: dict[str, list[float]] = {}
+        skipped = 0
 
         for jsonl_file in sorted(self._metrics_dir.glob("provider_latency_*.jsonl")):
             try:
                 for line in jsonl_file.read_text(encoding="utf-8").splitlines():
-                    parsed = self._parse_latency_record(line, cutoff)
+                    parsed, malformed = self._parse_latency_record(line, cutoff)
+                    if malformed:
+                        skipped += 1
                     if parsed is not None:
                         key, latency_ms = parsed
                         key_samples.setdefault(key, []).append(latency_ms)
             except OSError:
                 continue
+
+        if skipped:
+            self._malformed_samples_skipped += skipped
+            logger.warning("Skipped %d malformed provider-latency record(s) while loading baseline", skipped)
 
         for key, samples in key_samples.items():
             if len(samples) >= _MIN_BASELINE_SAMPLES:
