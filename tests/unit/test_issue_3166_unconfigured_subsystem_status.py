@@ -26,7 +26,7 @@ from __future__ import annotations
 import itertools
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Auth must be disabled before the app is imported or built, otherwise the
 # auth middleware short-circuits every request with 401 before the route
@@ -34,11 +34,15 @@ from typing import Any
 # Schemathesis contract suite.
 os.environ.setdefault("BERNSTEIN_AUTH_DISABLED", "1")
 
+import anyio
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from bernstein.core.server.server_app import create_app
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
 
 @pytest.fixture(scope="module")
@@ -204,6 +208,78 @@ def test_unsafe_receipt_id_is_not_found_rather_than_a_crash(client: TestClient) 
 
 
 # ---------------------------------------------------------------------------
+# Streaming operations
+# ---------------------------------------------------------------------------
+
+
+def _publishes_event_stream(operation: Any) -> bool:
+    """True when an operation documents a ``text/event-stream`` body.
+
+    ``bernstein.core.routes._sse`` publishes that media type for every SSE
+    route, so the set can be read off the document. Reading it from the
+    document rather than from a hardcoded path list means a stream route
+    added later is handled the day it is added.
+    """
+    if not isinstance(operation, dict):
+        return False
+    responses: dict[str, Any] = operation.get("responses", {})
+    return any(isinstance(r, dict) and "text/event-stream" in r.get("content", {}) for r in responses.values())
+
+
+async def _stream_status_until_hangup(app: FastAPI, method: str, path: str, peer: tuple[str, int]) -> int:
+    """Open one streaming operation, hang up after its first chunk, report its status.
+
+    ``TestClient`` waits for the application coroutine to return before it
+    hands back a response, and an SSE body does not end, so driving a
+    stream through it sits out that handler's whole idle timeout. Six
+    documented operations publish ``text/event-stream`` today, and waiting
+    on all six costs 300 s: the entire per-file budget, which is why this
+    module was reported as a timeout rather than as any result.
+
+    Speaking ASGI directly delivers ``http.disconnect`` the moment the
+    first event lands - what a real client closing the connection looks
+    like to the handler - and returns in milliseconds. The status the
+    assertion is after is in the response head, which arrives first.
+
+    ``tests/contract/test_task_server_schemathesis.py`` excludes the same
+    operations from its fuzz sweep for the same reason and drives them
+    the same way.
+    """
+    status = 0
+    hung_up = anyio.Event()
+    scope: MutableMapping[str, Any] = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.1"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), (b"accept", b"text/event-stream")],
+        "client": peer,
+        "server": ("testserver", 80),
+    }
+
+    async def receive() -> MutableMapping[str, Any]:
+        # The request carries no body, so the only message this connection
+        # ever produces is the hang-up, once the first event is out.
+        await hung_up.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        nonlocal status
+        if message["type"] == "http.response.start":
+            status = int(message["status"])
+        elif message["type"] == "http.response.body" and message.get("body"):
+            hung_up.set()
+
+    await app(scope, receive, send)
+    return status
+
+
+# ---------------------------------------------------------------------------
 # The whole documented surface, not just the families named above
 # ---------------------------------------------------------------------------
 
@@ -216,17 +292,29 @@ def test_no_documented_operation_answers_5xx_on_a_stock_server(app: FastAPI, cli
     429 before a route's real status is ever observed, which is how these
     findings stayed hidden. One deterministic pass, each request from its
     own source address, costs seconds and cannot be masked that way.
+
+    An operation that publishes ``text/event-stream`` is driven as a
+    stream rather than as a request/response pair, since its body does not
+    end. It is held to the same "no 5xx" bar.
     """
     spec = client.get("/openapi.json").json()
     offenders: list[str] = []
+    streamed = 0
     for path, operations in sorted(spec["paths"].items()):
         concrete = re.sub(r"\{[^{}]+\}", "probe-1", path)
-        for method in operations:
+        for method, operation in operations.items():
             if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            if _publishes_event_stream(operation):
+                streamed += 1
+                status = anyio.run(_stream_status_until_hangup, app, method.upper(), concrete, _next_peer())
+                if status >= 500:
+                    offenders.append(f"{method.upper()} {concrete} -> {status}")
                 continue
             resp = _fresh_client(app).request(method.upper(), concrete, json=None)
             if resp.status_code >= 500:
                 offenders.append(f"{method.upper()} {concrete} -> {resp.status_code}: {resp.text[:120]}")
+    assert streamed, "no operation publishes text/event-stream; the SSE routes lost their media type"
     assert not offenders, "5xx from a stock deployment:\n" + "\n".join(offenders)
 
 
