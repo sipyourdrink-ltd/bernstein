@@ -177,7 +177,7 @@ additionally holds the CLI's server calls to the registered route table.
 | Cache policy engine | Full | Content-addressed key recipes, drift expiry, and fleet dedup with signed duplicate-of receipts (`core/persistence/cache_policy.py`) |
 | Sovereign deployment profile | Full | Signed residency-posture attestation; posture drift at spawn is a signed refusal (`core/security/deployment_profile.py`) |
 | [Workflow DSL](../operations/workflow-manifests.md) | Full | `bernstein workflow validate/list/show` |
-| [Chaos engineering](../operations/chaos-engineering.md) | Full | `bernstein chaos agent-kill/rate-limit/file-remove/status/slo` |
+| [Chaos engineering](../operations/chaos-engineering.md) | Full | `bernstein chaos agent-kill/file-remove/status/slo` |
 | Benchmark suite | Full | `bernstein benchmark run/compare/swe-bench` |
 | [Eval harness](../eval/golden-harness.md) | Full | `bernstein eval run/report/failures` |
 | SWE-Bench harness | Full | Verified eval in `benchmarks/swe_bench/run.py` |

@@ -37,6 +37,22 @@ Do not hand-edit any of these files for a bump. A bump that touches only
 CI drift gates then fail. Commit the bump in a PR; the merge to `main` triggers
 CI and `.github/workflows/auto-release.yml` picks up the untagged version.
 
+## Release notes
+
+Release history lives in `docs/release-notes/`, one `vX.Y.Z.md` page per tagged
+version. The bump PR carries the page for the version it bumps to, and adds it
+to the `Release notes` section of the `mkdocs.yml` nav. Entries that landed
+since the newest tag are collected in `docs/release-notes/unreleased.md`; cutting
+a version moves them into that version's page.
+
+The script does not write the page. `bernstein`'s local release-notes lookup
+resolves the highest-versioned page in this directory, so a bump without its
+page serves the previous release as if it were current;
+`tests/unit/test_release_notes.py` fails on exactly that state.
+
+`CHANGELOG.md` and `docs/CHANGELOG.md` are pointer documents. Do not add release
+entries to them.
+
 ## RPM channel (Copr)
 
 | Fact | Value |

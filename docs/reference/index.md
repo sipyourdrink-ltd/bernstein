@@ -47,8 +47,9 @@ Lookup material: exact flags, schemas, endpoints, and version history.
 
     ---
 
-    Changelog and every versioned release, v2.0.0 through the current release.
+    One page per tagged version, v2.0.0 through the current release, plus what
+    has landed since the newest tag.
 
-    [:octicons-arrow-right-24: Changelog](../CHANGELOG.md)
+    [:octicons-arrow-right-24: Release notes](../release-notes/unreleased.md)
 
 </div>

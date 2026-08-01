@@ -162,11 +162,13 @@ The following items are explicitly out of scope for a docs-update sweep:
   process there. If the directory is reintroduced, treat its contents as
   operator-owned and leave them to an explicit operator request rather
   than a sweep pass.
-- `CHANGELOG.md` is managed by release-please via the configuration in
-  `release-please-config.json` and `release-please-manifest.json`. Do not
-  hand-edit released entries. The `## Unreleased` section, if present,
-  may be appended to by a feature-wave PR but is never touched by a docs
-  sweep.
+- `CHANGELOG.md` and `docs/CHANGELOG.md` are pointer documents naming
+  `docs/release-notes/` as the release-history surface. A sweep does not
+  reintroduce entries into them. Release history itself lives one page per
+  tagged version under `docs/release-notes/`, alongside
+  `docs/release-notes/unreleased.md` for what has landed since the newest
+  tag; a feature-wave PR may append to that page but a docs sweep does not
+  touch it.
 - Any doc that names a third-party ecosystem tool in its filename and
   exists only as an integration memo is treated as static for sweep
   purposes; refresh only on explicit operator request.

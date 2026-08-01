@@ -194,7 +194,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 | `live.py`               | Live view helpers for ``bernstein live --classic`` |
 | `main.py`               | CLI entry point for Bernstein -- deterministic orchestrator for CLI coding agents |
 | `notebook_traces.py`    | Notebook-aware traces - detect and track Jupyter notebook cell edits |
-| `release_notes.py`      | Release notes display - fetch and format CHANGELOG.md for terminal output |
+| `release_notes.py`      | Release notes display - fetch and format release notes for terminal output |
 | `run.py`                | Enhanced run output for ``bernstein run`` |
 | `run_archive.py`        | Export full run archive as ZIP |
 | `run_bootstrap.py`      | Main Click commands and execution bootstrap for Bernstein runs |

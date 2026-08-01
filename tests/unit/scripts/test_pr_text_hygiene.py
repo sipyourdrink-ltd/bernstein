@@ -50,9 +50,9 @@ def deny_file(tmp_path: Path) -> Path:
         json.dumps(
             {
                 "denylist": [
-                    "cringe",
-                    "marketing",
-                    "funnel",
+                    "lorem",
+                    "foo",
+                    "bar",
                     "Co-Authored-By: Claude",
                 ]
             }
@@ -104,13 +104,13 @@ def test_forbidden_token_in_title_fails(hygiene_module: ModuleType, deny_file: P
     """A deny-list phrase in the title produces a finding tagged 'title'."""
     phrases = hygiene_module.load_denylist(deny_file)
     findings = hygiene_module.check_pr_text(
-        title="chore: drop cringe content",
+        title="chore: drop lorem content",
         body="",
         branch="feat/clean",
         commit_messages=[],
         phrases=phrases,
     )
-    assert ("title", "cringe") in findings
+    assert ("title", "lorem") in findings
 
 
 def test_forbidden_token_in_branch_fails(hygiene_module: ModuleType, deny_file: Path) -> None:
@@ -119,11 +119,11 @@ def test_forbidden_token_in_branch_fails(hygiene_module: ModuleType, deny_file: 
     findings = hygiene_module.check_pr_text(
         title="chore: rename docs",
         body="",
-        branch="feat/marketing-copy-cleanup",
+        branch="feat/foo-copy-cleanup",
         commit_messages=[],
         phrases=phrases,
     )
-    assert ("branch", "marketing") in findings
+    assert ("branch", "foo") in findings
 
 
 def test_forbidden_token_in_commit_body_fails(hygiene_module: ModuleType, deny_file: Path) -> None:
@@ -134,37 +134,37 @@ def test_forbidden_token_in_commit_body_fails(hygiene_module: ModuleType, deny_f
         body="",
         branch="feat/clean",
         commit_messages=[
-            "chore: rename docs\n\nDrops references to the funnel from docs/role-prompts/.",
+            "chore: rename docs\n\nDrops references to the bar from docs/role-prompts/.",
         ],
         phrases=phrases,
     )
-    assert any(surface.startswith("commit[") and phrase == "funnel" for surface, phrase in findings)
+    assert any(surface.startswith("commit[") and phrase == "bar" for surface, phrase in findings)
 
 
 def test_case_insensitive_match_fails(hygiene_module: ModuleType, deny_file: Path) -> None:
-    """Matching ignores letter case (e.g. 'Cringe' vs 'cringe')."""
+    """Matching ignores letter case (e.g. 'Lorem' vs 'lorem')."""
     phrases = hygiene_module.load_denylist(deny_file)
     findings = hygiene_module.check_pr_text(
-        title="chore: drop Cringe content",
+        title="chore: drop Lorem content",
         body="",
         branch="feat/clean",
         commit_messages=[],
         phrases=phrases,
     )
-    assert any(surface == "title" and phrase == "cringe" for surface, phrase in findings)
+    assert any(surface == "title" and phrase == "lorem" for surface, phrase in findings)
 
 
 def test_match_inside_word_boundary(hygiene_module: ModuleType, deny_file: Path) -> None:
-    """Substring semantics are intentional: 'marketing-language' is flagged."""
+    """Substring semantics are intentional: 'foo-language' is flagged."""
     phrases = hygiene_module.load_denylist(deny_file)
     findings = hygiene_module.check_pr_text(
-        title="docs: drop marketing-flavoured wording",
+        title="docs: drop foo-flavoured wording",
         body="",
         branch="feat/clean",
         commit_messages=[],
         phrases=phrases,
     )
-    assert ("title", "marketing") in findings
+    assert ("title", "foo") in findings
 
 
 def test_attribution_trailer_in_commit_fails(hygiene_module: ModuleType, deny_file: Path) -> None:
@@ -281,7 +281,7 @@ def test_cli_dirty_run_exits_one_with_annotation(tmp_path: Path, deny_file: Path
             sys.executable,
             str(SCRIPT_PATH),
             "--title",
-            "chore: drop cringe content",
+            "chore: drop lorem content",
             "--body",
             "",
             "--branch",
@@ -296,7 +296,7 @@ def test_cli_dirty_run_exits_one_with_annotation(tmp_path: Path, deny_file: Path
         text=True,
     )
     assert result.returncode == 1
-    assert "::error file=title::cringe matched in title" in result.stdout
+    assert "::error file=title::lorem matched in title" in result.stdout
 
 
 def test_load_denylist_rejects_missing_key(tmp_path: Path, hygiene_module: ModuleType) -> None:
@@ -310,9 +310,9 @@ def test_load_denylist_rejects_missing_key(tmp_path: Path, hygiene_module: Modul
 def test_load_denylist_skips_blank_entries(tmp_path: Path, hygiene_module: ModuleType) -> None:
     """Blank / whitespace-only entries are silently dropped."""
     path = tmp_path / "list.json"
-    path.write_text(json.dumps({"denylist": ["cringe", "  ", ""]}), encoding="utf-8")
+    path.write_text(json.dumps({"denylist": ["lorem", "  ", ""]}), encoding="utf-8")
     phrases = hygiene_module.load_denylist(path)
-    assert phrases == ["cringe"]
+    assert phrases == ["lorem"]
 
 
 # --- Word-boundary regression coverage ----------------------------------
@@ -330,7 +330,7 @@ def boundary_deny_file(tmp_path: Path) -> Path:
     """Deny-list mixing a short acronym and longer phrases."""
     path = tmp_path / "boundary.json"
     path.write_text(
-        json.dumps({"denylist": ["SEO", "cringe", "foo bar"]}),
+        json.dumps({"denylist": ["SEO", "lorem", "foo bar"]}),
         encoding="utf-8",
     )
     return path
@@ -393,16 +393,16 @@ def test_short_token_matched_with_hyphen_boundary(hygiene_module: ModuleType, bo
 
 
 def test_long_phrase_matched_inside_word(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
-    """A long phrase keeps left-boundary matching ('cringeworthy' fails)."""
+    """A long phrase keeps left-boundary matching ('loremworthy' fails)."""
     phrases = hygiene_module.load_denylist(boundary_deny_file)
     findings = hygiene_module.check_pr_text(
-        title="chore: this reads cringeworthy",
+        title="chore: this reads loremworthy",
         body="",
         branch="feat/clean",
         commit_messages=[],
         phrases=phrases,
     )
-    assert ("title", "cringe") in findings
+    assert ("title", "lorem") in findings
 
 
 def test_multiword_phrase_suffixed_form_still_matched(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:

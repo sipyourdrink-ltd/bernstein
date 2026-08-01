@@ -4,12 +4,12 @@
 prove the orchestrator survives the failure modes its docs claim it
 survives. It is **not** a load generator and **not** a security fuzzer.
 The verbs map directly to scenarios the deterministic core is supposed
-to recover from: an agent dies mid-task, a provider returns 429, a file
-disappears from a worktree, the disk fills up.
+to recover from: an agent dies mid-task, a file disappears from a
+worktree.
 
-The CLI lives in `cli/commands/chaos_cmd.py:33` (`@click.group("chaos")`).
+The CLI lives in `cli/commands/chaos_cmd.py:31` (`@click.group("chaos")`).
 All state - including replayable history - is written under
-`.sdd/runtime/chaos/` (`chaos_cmd.py:29`).
+`.sdd/runtime/chaos/` (`chaos_cmd.py:28`).
 
 ---
 
@@ -21,9 +21,6 @@ failure paths are exercised rarely. The same boring path covers:
 - **WAL replay**: an agent crashes mid-task. The orchestrator must
   re-claim, re-spawn, and finish the work without producing two
   conflicting commits (see `architecture/state-persistence.md`).
-- **Cross-adapter failover**: a provider rate-limits. The cascade
-  fallback manager must walk the configured order
-  (`opus → sonnet → codex → gemini → qwen`) without dropping the task.
 - **Worktree integrity**: a file the agent was editing disappears
   underneath it. The agent must surface a clean error rather than
   silently rewriting it.
@@ -49,7 +46,7 @@ bernstein chaos agent-kill [--agent-id <name>]
 
 Walks `.sdd/runtime/agents/`, finds every agent whose `pid` file points
 at a live process, and sends `SIGTERM` to one of them
-(`chaos_cmd.py:74-99`). With `--agent-id` you target a specific agent;
+(`chaos_cmd.py:73-98`). With `--agent-id` you target a specific agent;
 without it, one is chosen at random.
 
 **What recovery should look like.** The orchestrator detects the dead
@@ -59,22 +56,6 @@ the tier is too flaky, escalates to the next adapter. No commit should
 land for the killed run, and no second commit should land for the same
 task ID once it completes.
 
-### `rate-limit` - simulate a provider 429
-
-```
-bernstein chaos rate-limit [--provider claude] [--duration 60]
-```
-
-Writes a marker file `rate_limit_active.json` with an `expires_at` epoch
-(`chaos_cmd.py:102-127`). Code paths that consult the marker (the
-fallback manager, the routing layer) must treat the named provider as
-rate-limited until the marker expires.
-
-**What recovery should look like.** New tasks route to the next
-adapter in the cascade. In-flight tasks targeting the rate-limited
-provider should retry with backoff, then escalate. No tokens should be
-spent on the throttled provider during the window.
-
 ### `file-remove` - yank a file out of a worktree
 
 ```
@@ -83,7 +64,7 @@ bernstein chaos file-remove [--pattern "*.py"]
 
 Picks a random non-`__init__.py` file under
 `.claude/worktrees/*/src/**/<pattern>`, copies it to a `.chaos_backup`
-sibling, and deletes the original (`chaos_cmd.py:130-165`).
+sibling, and deletes the original (`chaos_cmd.py:101-136`).
 
 **What recovery should look like.** The agent operating in that
 worktree must either fail loudly (gate failure, missing import) or
@@ -98,9 +79,7 @@ bernstein chaos status [--limit 20]
 
 Reads `.sdd/runtime/chaos/chaos_log.jsonl` and prints a table of recent
 events: timestamp, scenario, target, success/error
-(`chaos_cmd.py:204-241`). Also surfaces any unexpired rate-limit
-simulation so operators do not forget a marker is still pinned
-(`chaos_cmd.py:244-261`).
+(`chaos_cmd.py:139-175`).
 
 ### `slo` - read the SLO dashboard during the experiment
 
@@ -109,7 +88,7 @@ bernstein chaos slo
 ```
 
 Loads `.sdd/metrics/slos.json` and prints traffic-light status per SLO
-plus the error-budget panel (`chaos_cmd.py:264-318`).
+plus the error-budget panel (`chaos_cmd.py:178-232`).
 
 The output table contains:
 
@@ -155,7 +134,7 @@ The chaos CLI is intentionally narrow:
 - **No user data is touched.** `file-remove` operates on
   `.claude/worktrees/*/src/**` only. It will not delete files outside
   the worktree, and it always writes a `.chaos_backup` sibling first
-  (`chaos_cmd.py:153-159`).
+  (`chaos_cmd.py:126-130`).
 - **No production credentials are exfiltrated or rotated.** No
   subcommand reads from the credential vault.
 - **No commits or PRs are produced.** The CLI never invokes git or
@@ -176,14 +155,14 @@ chaos run reproducible.
 
 ## Code pointers
 
-- `cli/commands/chaos_cmd.py:33` - `@click.group("chaos")` entry point.
-- `cli/commands/chaos_cmd.py:38-72` - active-agent discovery and target
+- `cli/commands/chaos_cmd.py:31` - `@click.group("chaos")` entry point.
+- `cli/commands/chaos_cmd.py:36-70` - active-agent discovery and target
   selection.
-- `cli/commands/chaos_cmd.py:75-100` - `agent-kill`.
-- `cli/commands/chaos_cmd.py:104-139` - `file-remove` with backup.
-- `cli/commands/chaos_cmd.py:142-178` - `status` (chaos log table).
-- `cli/commands/chaos_cmd.py:181-235` - `slo` (SLO dashboard).
-- `cli/commands/chaos_cmd.py:238-256` - `_record_chaos_event` (JSONL
+- `cli/commands/chaos_cmd.py:73-98` - `agent-kill`.
+- `cli/commands/chaos_cmd.py:101-136` - `file-remove` with backup.
+- `cli/commands/chaos_cmd.py:139-175` - `status` (chaos log table).
+- `cli/commands/chaos_cmd.py:178-232` - `slo` (SLO dashboard).
+- `cli/commands/chaos_cmd.py:235-253` - `_record_chaos_event` (JSONL
   append).
 - `.sdd/runtime/chaos/chaos_log.jsonl` - replayable event log.
 - `.sdd/metrics/slos.json` - SLO dashboard source consumed by

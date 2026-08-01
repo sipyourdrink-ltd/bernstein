@@ -97,7 +97,7 @@ The full operator surface (PR automation, schedules, chat bridges, the autofix d
 
 ### supported agents
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries the full table with install commands; anything else with a `--prompt` flag works through the generic wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 29 of them; `bernstein integrations list` enumerates all 48 wired-in adapters from `src/bernstein/adapters/use_cases.py`, which is the single source of truth. Anything else with a `--prompt` flag works through the generic wrapper.
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
@@ -111,7 +111,7 @@ Everything deep lives on the [docs site](https://bernstein.readthedocs.io/):
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | browser dashboard on the same API the TUI uses |
-| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | run agents on Cloudflare Workers with R2 workspace sync |
+| [cloud execution](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/cloudflare/cloudflare-overview.md) | experimental: run agents on Cloudflare Workers with R2 workspace sync against your own account. The hosted `api.bernstein.run` service is not yet available |
 | [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, hardening |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | how it works under the hood |
 

@@ -64,6 +64,12 @@ htmlcov/
 # The fixture is tmp-scoped now; this stays as a guard against regressions.
 /tunnels-test.json
 
+# Local-only fixture for the public-docs banned-claim guard test
+# (tests/unit/test_benchmark_public_site.py). Never tracked -- the phrase
+# list it holds names specific third-party products. See
+# scripts/check_pr_text_hygiene.py for the matching pattern.
+/tests/fixtures/benchmarks/local/
+
 # Project/Repository-specific generated or log files
 *.pid
 *.log

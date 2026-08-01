@@ -45,7 +45,7 @@ Drift remediation paths used by the rows below:
 | `CODE_OF_CONDUCT.md` | None (Contributor Covenant 2.1 verbatim) | Repo URL change, contact email change | `static` |
 | `CONTRIBUTING.md` | `src/bernstein/adapters/registry.py`, `src/bernstein/adapters/base.py`, `templates/roles/`, `scripts/run_tests.py`, `.importlinter` | New adapter contract method, new role added under `templates/roles/`, change to lint / type-check pipeline | `manual-prose` |
 | `SECURITY.md` | `pyproject.toml` version, security policy contacts | Disclosure policy changes, scope changes, new in-scope target | `manual-prose` |
-| `CHANGELOG.md` | Release-please managed (`release-please-config.json`, `release-please-manifest.json`) plus hand-curated `## Unreleased` section | New release tag, manual entry needed for behaviour-visible code change | `manual-prose` |
+| `CHANGELOG.md` | Pointer document; release history lives in `docs/release-notes/` | The release-notes location moves | `manual-prose` |
 | `CONTRIBUTORS.md` | None (hand-curated list of named contributors) | New contributor merged a PR | `static` |
 
 ### `docs/` top-level
@@ -55,7 +55,7 @@ Drift remediation paths used by the rows below:
 | `docs/index.md` | All docs subdirs (each linked entry must resolve) | Linked page renamed / deleted, getting-started / installation / operations / reference / architecture path moved | `manual-prose` |
 | `docs/adapter-deferred.md` | `src/bernstein/adapters/registry.py` (negative-space: agents NOT integrated) | A previously-deferred agent now has a stable CLI binary | `manual-prose` |
 | `docs/agents-md.md` | `src/bernstein/cli/commands/agents_md_cmd.py`, `src/bernstein/core/knowledge/agents_md_bridge.py`, `src/bernstein/core/knowledge/agents_md_generator.py` | New target format added to the canonical IR, sync command options change | `manual-prose` |
-| `docs/CHANGELOG.md` | Mirror of root `CHANGELOG.md` for mkdocs | Root changelog edited | `manual-prose` |
+| `docs/CHANGELOG.md` | Pointer document for mkdocs; release history lives in `docs/release-notes/` | The release-notes location moves | `manual-prose` |
 | `docs/CODE_REVIEW.md` | `src/bernstein/core/quality/`, `src/bernstein/core/review/`, `src/bernstein/core/review_responder/` | Review pipeline stage added, reviewer-role policy change | `manual-prose` |
 | `docs/ENTERPRISE.md` | `src/bernstein/core/compliance/`, `src/bernstein/core/security/`, audit / lineage / air-gap surface | New regulator mapping, new compliance pack target, audit export schema change | `manual-prose` |
 | `docs/lineage.md` | `src/bernstein/core/lineage/`, `src/bernstein/core/persistence/lineage.py`, `src/bernstein/cli/commands/lineage_cmd.py` | Lineage record schema change, signature algorithm change, new verify CLI subcommand | `manual-prose` |

@@ -8,6 +8,10 @@ name: docs-drift
 # report is posted as a non-blocking PR comment so the change can land in
 # the same PR. On pushes to main the gate fails so the drift gets fixed in
 # a follow-up.
+#
+# The removed-verb check below is the one hard gate that also fails on pull
+# requests: a doc naming a deleted command surface is a factual error, not
+# staleness, so it must not be allowed to land and be fixed later.
 
 on:
   pull_request:
@@ -145,6 +149,42 @@ jobs:
                 owner, repo, issue_number, body: payload,
               });
             }
+
+      - name: Fail on docs referencing removed CLI verbs
+        # These command surfaces were deleted from the CLI, so a doc that
+        # spells one out again documents something the binary cannot run.
+        # Unlike the drift report above, this fails on pull requests too.
+        # Historical records (release notes, blog posts) legitimately name
+        # what existed at the time, so those directories are skipped.
+        run: |
+          set -uo pipefail
+          scan_paths=(docs README.md CONTRIBUTING.md AGENTS.md CLAUDE.md CONVENTIONS.md)
+          patterns=(
+            'bernstein chaos [a-z/-]*rate-limit'
+            'bernstein chaos [a-z/-]*agent-oom'
+            'bernstein chaos [a-z/-]*disk-full'
+            'bernstein cloud [a-z/-]*deploy'
+            '--chaos([^a-z-]|$)'
+          )
+          failed=0
+          for pattern in "${patterns[@]}"; do
+            hits="$(grep -rnE --include='*.md' \
+              --exclude-dir=release-notes --exclude-dir=blog \
+              -- "${pattern}" "${scan_paths[@]}" || true)"
+            if [ -n "${hits}" ]; then
+              failed=1
+              echo "::error::Doc references a removed CLI surface matching /${pattern}/"
+              printf '%s\n' "${hits}"
+            fi
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo
+            echo "These command surfaces were deleted from the CLI. Replace the"
+            echo "reference with a verb that 'bernstein --help' lists, or drop it."
+            exit 1
+          fi
+          echo "No references to removed CLI verbs."
+        shell: bash
 
       - name: Fail the gate on main-branch drift
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
