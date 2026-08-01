@@ -31,19 +31,35 @@ name: Review-bot acknowledgement publisher
 # Failing closed has one exception, and it is not a weakening of the rule.
 # A `cancelled` gate run is not a gate that said no; it is a gate that was
 # superseded before it could say anything, and a run with no verdict must not
-# write one. The job condition drops those, and a currency check below drops
+# write one. The `publish` job drops those, and a currency check below drops
 # any other publisher that a newer gate run has already overtaken. Both are
 # necessary because publishers queue for runners, so the order they write in
 # is not the order the gates concluded in. See the job comment for the
 # incident that established this.
+#
+# Standing down has to be complementary to publishing, and it was not (#3313).
+# The currency check silenced every publisher that was not the newest for the
+# head, and the newest was then sometimes one that would never publish, so
+# nothing wrote the context at all. The `republish` job below is the other
+# half: whenever the head is about to be left with no writer, it re-dispatches
+# the gate instead of standing down silently.
 
 on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["Review-bot acknowledgement gate"]
     types: [completed]
 
+# Keyed on the triggering run, not just the head SHA.
+#
+# A head collects several gate runs and therefore several publishers. Sharing
+# one group across them made the group a one-deep queue - `cancel-in-progress`
+# is false, so a third arrival cancels the pending second - which silently
+# discarded publishers. That serialisation bought nothing once the currency
+# check landed: at most one publisher per head decides to write, so there is
+# no upsert race left to prevent, and cancelling the others can only lose the
+# one write that mattered.
 concurrency:
-  group: review-bot-ack-publish-${{ github.event.workflow_run.head_sha }}
+  group: review-bot-ack-publish-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.id }}
   cancel-in-progress: false
 
 permissions: {}
@@ -52,13 +68,20 @@ jobs:
   publish:
     name: review-bot-ack-publisher
     # merge_group runs of the gate publish their own context in-repo, where
-    # the token is already writable. Only pull-request runs need this hop.
+    # the token is already writable. Only pull-request runs need this hop -
+    # and `pull_request_review` is one of them. It was omitted here, and a
+    # fork's `pull_request_review` gate run gets exactly the same read-only
+    # token as its `pull_request` run: PR #3293's run 30655244121 passed at
+    # 18:28:48Z, 403'd on its own in-job publish, and had no publisher to
+    # fall back to, so the head carried no context until the pull request was
+    # closed and reopened (#3313).
     #
     # A cancelled gate run publishes nothing at all. It has no verdict: it was
     # superseded before it could reach one, which is not the same as failing.
     # `review-bot-ack.yml` already refuses to publish from a cancelled job for
     # exactly this reason, and the publisher has to honour the same rule or it
-    # reintroduces the problem one hop later.
+    # reintroduces the problem one hop later. The `republish` job below covers
+    # the case this leaves open.
     #
     # It is not enough to rely on the newer run overwriting the older verdict.
     # Publishers queue, so their execution order is not their trigger order.
@@ -69,7 +92,8 @@ jobs:
     # requests were blocked this way at once, and the only visible cause was a
     # failure on work that had already passed.
     if: >-
-      github.event.workflow_run.event == 'pull_request' &&
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'pull_request_review') &&
       github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -113,7 +137,16 @@ jobs:
       # one. If a newer gate run exists for this head SHA, this publisher is
       # stale by definition and stays quiet: the newer run has its own
       # publisher and a better answer.
-      - name: Stand down if a newer gate run exists for this head
+      #
+      # "Newer" has to mean newer *and able to publish*. Comparing ids alone
+      # made this publisher defer to runs that would never write anything -
+      # a cancelled run, or (before the condition above was widened) a
+      # `pull_request_review` one - and the head was then left with no writer
+      # at all. On PR #3287 the survivor of a concurrency race carried a lower
+      # id than the run that was cancelled, so id order and verdict order
+      # disagreed outright. The rule lives in a script so it can be tested
+      # against those recorded histories rather than rediscovered (#3313).
+      - name: Decide whether this publisher is the current one
         id: currency
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,21 +155,13 @@ jobs:
           THIS_RUN: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
-          newest="$(gh api \
-            "repos/$REPO/actions/runs?head_sha=$EVENT_SHA&per_page=100" \
-            --jq '[.workflow_runs[]
-                   | select(.name == "Review-bot acknowledgement gate")
-                   | .id] | max // 0')"
-          echo "this run: $THIS_RUN, newest gate run on $EVENT_SHA: $newest"
-          if [ "${newest:-0}" -gt "$THIS_RUN" ]; then
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::a newer gate run ($newest) exists for this head; leaving the verdict to it"
-          else
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-          fi
+          gh api "repos/$REPO/actions/runs?head_sha=$EVENT_SHA&per_page=100" > gate-runs.json
+          python3 scripts/ack_publisher_currency.py \
+            --runs gate-runs.json \
+            --this-run "$THIS_RUN"
 
       - name: Resolve the conclusion, failing closed
-        if: steps.currency.outputs.stale != 'true'
+        if: steps.currency.outputs.decision == 'publish'
         env:
           GATE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -170,7 +195,7 @@ jobs:
           echo "resolved $verdict: $reason"
 
       - name: Publish the review-bot-ack context on the head commit
-        if: steps.currency.outputs.stale != 'true'
+        if: steps.currency.outputs.decision == 'publish'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -186,3 +211,89 @@ jobs:
             --title "Review-bot acknowledgement gate" \
             --summary "Every must-address CodeRabbit and Sourcery finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}. See the sticky summary comment on the pull request for the per-finding breakdown." \
             --details-url "$GATE_RUN_URL"
+
+  # The other half of the rule above.
+  #
+  # `publish` correctly refuses to speak for a cancelled gate run, and the
+  # currency check correctly silences a publisher a newer run has overtaken.
+  # Together they left a gap: when the newest gate run for a head is the
+  # cancelled one, the run that would have published has already stood down
+  # as stale and the cancelled run's own publisher never starts. Nothing
+  # writes the context, nothing ever will, and the pull request sits at
+  # BLOCKED with no failing required check to point at. Three fork pull
+  # requests hit this on one day and each needed a close/reopen (#3313).
+  #
+  # Re-running the gate is the whole remedy: the re-run keeps the same run
+  # id, so when it concludes it is by definition the newest gate run for the
+  # head and its publisher writes the verdict. Nothing here inspects or
+  # trusts anything from the head - it is API calls and a base-branch script.
+  republish:
+    name: review-bot-ack-republisher
+    if: >-
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'pull_request_review') &&
+      github.event.workflow_run.conclusion == 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      # The base branch, never the head: the decision script must be the one
+      # this repository ships, not one a fork supplied.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      # Three ways this is not the head's last hope, all of them cheap to
+      # check and all of them a reason to do nothing:
+      #
+      #   * a newer gate run can still publish - it will, so stay out of it;
+      #   * a terminal `review-bot-ack` already exists on the head - the head
+      #     is not blocked, and re-running the gate would only churn it;
+      #   * some gate run on this head already carries `run_attempt > 1` -
+      #     it has been re-dispatched once, by this job or by an operator,
+      #     and one re-dispatch per head SHA is the loop guard.
+      - name: Decide whether this head still has a writer
+        id: currency
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          THIS_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/actions/runs?head_sha=$EVENT_SHA&per_page=100" > gate-runs.json
+          published="$(gh api \
+            "repos/$REPO/commits/$EVENT_SHA/check-runs?check_name=review-bot-ack&per_page=100" \
+            --jq '[.check_runs[] | select(.status == "completed")] | length')"
+          present=false
+          if [ "${published:-0}" -gt 0 ]; then
+            present=true
+          fi
+          python3 scripts/ack_publisher_currency.py \
+            --runs gate-runs.json \
+            --this-run "$THIS_RUN" \
+            --context-present "$present"
+
+      - name: Re-dispatch the gate for this head
+        if: steps.currency.outputs.decision == 'redispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          THIS_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          echo "::notice::no gate run can publish review-bot-ack for ${EVENT_SHA}; re-dispatching run ${THIS_RUN}"
+          gh api -X POST "repos/$REPO/actions/runs/$THIS_RUN/rerun"

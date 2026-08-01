@@ -16,6 +16,8 @@ isolation. They do not call the GitHub API.
 
 from __future__ import annotations
 
+import itertools
+import json
 import re
 import sys
 from pathlib import Path
@@ -38,7 +40,26 @@ PUBLISH_SCRIPT = Path("scripts/publish_required_check.py")
 # The context branch protection requires on `main`.
 CONTEXT = "review-bot-ack"
 PUBLISHER = "scripts/publish_required_check.py"
+CURRENCY = "scripts/ack_publisher_currency.py"
 VERDICT_ARTIFACT = "review-bot-ack-verdict"
+
+# The gate triggers on these events for a pull request. Every one of them
+# gets a read-only GITHUB_TOKEN on a fork, so every one of them needs the
+# `workflow_run` hop to publish. `merge_group` is excluded on purpose: those
+# runs already hold `checks: write` and publish in-repo.
+GATE_EVENTS_NEEDING_THE_HOP = ("pull_request", "pull_request_review")
+
+# Every conclusion GitHub can hand a completed workflow run.
+RUN_CONCLUSIONS = (
+    "success",
+    "failure",
+    "cancelled",
+    "timed_out",
+    "startup_failure",
+    "skipped",
+    "neutral",
+    "action_required",
+)
 
 
 @pytest.fixture(scope="module")
@@ -61,6 +82,46 @@ def _on(doc: dict[str, object]) -> dict[str, object]:
     on = doc.get(True, doc.get("on"))
     assert isinstance(on, dict)
     return on
+
+
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9.]*")
+_STRING_LITERAL_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
+_PY_KEYWORDS = frozenset({"and", "or", "not", "None", "True", "False"})
+
+
+def _eval_condition(expr: str, context: dict[str, str | None]) -> bool:
+    """Evaluate the slice of the GitHub expression language these job
+    conditions are written in: context lookups, single-quoted strings,
+    ``==``, ``!=``, ``&&``, ``||`` and parentheses.
+
+    The point is to read a job's ``if:`` as the predicate it actually is
+    rather than to grep it for substrings. A substring assertion cannot
+    tell whether two conditions between them cover every gate run; this
+    can.
+    """
+    text = " ".join(expr.split())
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2].strip()
+    # Longest path first so `...workflow_run.conclusion` is not clipped by a
+    # shorter prefix that happens to also be in the context.
+    for path, value in sorted(context.items(), key=lambda kv: -len(kv[0])):
+        text = text.replace(path, repr(value))
+    text = text.replace("&&", " and ").replace("||", " or ")
+    text = re.sub(r"\btrue\b", "True", text)
+    text = re.sub(r"\bfalse\b", "False", text)
+
+    # Identifiers are only interesting outside string literals; the literals
+    # themselves are values, not names the model has to know.
+    bare = _STRING_LITERAL_RE.sub(" ", text)
+    unknown = sorted({t for t in _IDENTIFIER_RE.findall(bare) if t not in _PY_KEYWORDS})
+    assert not unknown, (
+        f"condition {expr!r} reads {unknown!r}, which this test's model of the publisher does not know about. "
+        "Either add it to the model or express the condition in terms the model already covers - an untestable "
+        "condition is how #3313 stayed invisible."
+    )
+    # The grammar is restricted to the tokens asserted above, and the input
+    # is this repository's own workflow file.
+    return bool(eval(text, {"__builtins__": {}}, {}))
 
 
 def test_gate_workflow_exists() -> None:
@@ -152,13 +213,24 @@ def test_every_verdict_path_ends_in_an_api_publish(
 
     pub_jobs = _jobs(publish_doc)
     assert pub_jobs, "the companion publisher must define a job"
+    publishing_jobs = [key for key, job in pub_jobs.items() if PUBLISHER in _run_script(job)]
+    assert publishing_jobs, f"the companion publisher must have a job that runs {PUBLISHER}"
     for key, job in pub_jobs.items():
         script = _run_script(job)
-        assert PUBLISHER in script and f"--name {CONTEXT}" in script, (
-            f"publisher job {key!r} must publish {CONTEXT!r} via {PUBLISHER}"
+        if PUBLISHER in script:
+            assert f"--name {CONTEXT}" in script, f"publisher job {key!r} must publish {CONTEXT!r} via {PUBLISHER}"
+            perms = job.get("permissions")
+            assert isinstance(perms, dict) and perms.get("checks") == "write", (
+                f"publisher job {key!r} needs checks:write"
+            )
+            continue
+        # A job that does not publish must be the recovery path: the only
+        # other reason to exist in this workflow is to get a head that has
+        # no writer left back into a state where one runs (#3313).
+        assert "/rerun" in script, (
+            f"job {key!r} in the publisher neither publishes {CONTEXT!r} nor re-dispatches the gate. Those are "
+            "the only two things this workflow does; anything else is a verdict path that stops halfway."
         )
-        perms = job.get("permissions")
-        assert isinstance(perms, dict) and perms.get("checks") == "write", f"publisher job {key!r} needs checks:write"
 
 
 def test_publisher_runs_on_workflow_run_of_the_gate(
@@ -486,12 +558,127 @@ def test_publisher_never_speaks_for_a_cancelled_gate_run(
     Treating `cancelled` as `failure` is not conservative here, it is wrong,
     and it is wrong in the direction that blocks good work: it turns a passing
     pull request red with a summary describing a run that never finished.
+
+    The recovery job added for #3313 does run for a cancelled gate run, and
+    that is not a weakening of this rule: it writes no verdict at all, it
+    re-dispatches the gate so that a run with a verdict exists.
     """
     for key, job in _jobs(publish_doc).items():
+        if PUBLISHER not in _run_script(job):
+            continue
         condition = " ".join(str(job.get("if", "")).split())
         assert "conclusion != 'cancelled'" in condition, (
             f"publisher job {key!r} runs for a cancelled gate run; its condition is "
             f"{condition!r}. A cancelled run has no verdict and must publish nothing."
+        )
+
+
+def test_the_recovery_job_never_writes_a_verdict(
+    publish_doc: dict[str, object],
+) -> None:
+    """INV-2j. The job that runs for a cancelled gate run must not publish.
+
+    It exists because a cancelled run leaves the head with no writer, and
+    the remedy is to produce a run that has a verdict - not to invent one.
+    Handing it `checks: write` would let a run with no verdict write one,
+    which is the exact failure `test_publisher_never_speaks_for_a_cancelled_gate_run`
+    forbids.
+    """
+    for key, job in _jobs(publish_doc).items():
+        script = _run_script(job)
+        if PUBLISHER in script:
+            continue
+        perms = job.get("permissions")
+        assert isinstance(perms, dict), f"recovery job {key!r} must pin explicit permissions"
+        assert perms.get("checks") != "write", (
+            f"recovery job {key!r} holds checks:write. It runs for gate runs that have no verdict, so it must "
+            "not be able to write one; re-dispatching the gate is its only remedy."
+        )
+        assert perms.get("actions") == "write", f"recovery job {key!r} needs actions:write to re-dispatch the gate run"
+
+
+def test_publishers_for_one_head_do_not_cancel_each_other(
+    publish_doc: dict[str, object],
+) -> None:
+    """INV-2k. Two publishers for one head must not share a concurrency group.
+
+    With `cancel-in-progress: false` a group is a one-deep queue: a run
+    executing plus a run pending means a third arrival cancels the pending
+    one. A head SHA routinely collects several gate runs and therefore
+    several publishers, so keying the group on the head SHA alone let the
+    queue drop publishers - including, in the worst case, the only one whose
+    currency check would have said `publish`.
+
+    Serialising them stopped being worth anything once the currency check
+    landed: at most one publisher per head decides to write, so there is no
+    upsert race left to serialise against.
+    """
+    conc = publish_doc.get("concurrency")
+    assert isinstance(conc, dict), "the publisher must declare a concurrency block"
+    group = str(conc.get("group", ""))
+    assert "workflow_run.id" in group, (
+        f"the publisher's concurrency group is {group!r}, which several publishers for one head all share. "
+        "A shared group with cancel-in-progress: false cancels pending members, so a publisher that would "
+        "have written the required context can be dropped before it runs. Key the group on the triggering "
+        "run id as well."
+    )
+
+
+def test_every_gate_run_that_needs_the_hop_is_claimed_by_exactly_one_job(
+    publish_doc: dict[str, object],
+) -> None:
+    """INV-2i. No gate run may fall between the publisher's jobs (#3313).
+
+    The publisher's job conditions and its currency check are two halves of
+    one rule, and they were not complementary. The currency check silences
+    every publisher that is not the newest one for the head; the job
+    conditions then declined to run for the newest one in two cases, and a
+    head with no writer left never gets the required context at all:
+
+      * the newest gate run concluded ``cancelled`` - the job condition
+        dropped it, and every older publisher had already stood down as
+        stale (PR #3287: the first-contributor approval released three
+        parked runs at 12:00:02Z, concurrency cancelled run 30622786412
+        three seconds later, and the survivor 30622733829 carried the
+        *lower* id, so it read itself as stale);
+      * the newest gate run came from ``pull_request_review`` - the job
+        condition only admitted ``pull_request`` (PR #3293 pre-cycle: run
+        30655244121 passed at 18:28:48Z, its in-job publish 403'd as every
+        fork's does, and no publisher ever ran for it).
+
+    Both heads sat at BLOCKED with nothing on the page to point at until
+    the pull request was closed and reopened. So this is the invariant:
+    for every gate run that needs the `workflow_run` hop, exactly one job
+    in the publisher claims it - one to write the verdict, one to recover
+    when there is no verdict to write.
+    """
+    jobs = _jobs(publish_doc)
+    assert jobs, "the publisher must define jobs"
+
+    for event, conclusion in itertools.product(GATE_EVENTS_NEEDING_THE_HOP, RUN_CONCLUSIONS):
+        context = {
+            "github.event.workflow_run.event": event,
+            "github.event.workflow_run.conclusion": conclusion,
+        }
+        claimants = [key for key, job in jobs.items() if _eval_condition(str(job.get("if", "true")), context)]
+        assert len(claimants) == 1, (
+            f"a gate run with event={event!r} and conclusion={conclusion!r} is claimed by {claimants!r}. "
+            "Exactly one publisher job must own it: zero leaves the head with no `review-bot-ack` context and "
+            "no way to get one short of closing and reopening the pull request (#3313); two race on the "
+            "check-run upsert."
+        )
+
+    # A merge_group gate run publishes its own context in-repo, where the
+    # token is already writable. The hop must not run for it.
+    for conclusion in RUN_CONCLUSIONS:
+        context = {
+            "github.event.workflow_run.event": "merge_group",
+            "github.event.workflow_run.conclusion": conclusion,
+        }
+        claimants = [key for key, job in jobs.items() if _eval_condition(str(job.get("if", "true")), context)]
+        assert not claimants, (
+            f"jobs {claimants!r} run for a merge_group gate run (conclusion={conclusion!r}). Queue-side runs "
+            "already publish the context themselves; a second writer only races the first."
         )
 
 
@@ -523,10 +710,12 @@ def test_publisher_stands_down_when_a_newer_gate_run_exists(
         )
 
         probe = str(currency[0].get("run", ""))
-        assert "head_sha=" in probe and "workflow_runs" in probe, (
-            "the currency check must ask the API which gate runs exist for this head SHA"
+        assert "head_sha=" in probe, "the currency check must ask the API which gate runs exist for this head SHA"
+        assert CURRENCY in probe, (
+            f"publisher job {key!r} decides currency in workflow shell. The rule is what #3313 got wrong - "
+            f"'newest id' is not 'newest verdict' - so it lives in {CURRENCY}, where the recorded incident "
+            "histories are replayed against it in this file."
         )
-        assert "stale=true" in probe, "the currency check must be able to report staleness"
 
         publishing = [
             step
@@ -536,7 +725,179 @@ def test_publisher_stands_down_when_a_newer_gate_run_exists(
         assert publishing, f"expected publishing steps in job {key!r}"
         for step in publishing:
             guard = " ".join(str(step.get("if", "")).split())
-            assert "currency.outputs.stale" in guard, (
+            assert "currency.outputs.decision == 'publish'" in guard, (
                 f"step {step.get('name')!r} in job {key!r} writes the verdict without "
                 f"consulting the currency check; its condition is {guard!r}"
             )
+
+
+def _currency_module() -> object:
+    sys.path.insert(0, str(Path("scripts").resolve()))
+    import ack_publisher_currency
+
+    return ack_publisher_currency
+
+
+def _gate_run(run_id: int, event: str, conclusion: str | None, attempt: int = 1) -> dict[str, object]:
+    return {
+        "id": run_id,
+        "name": "Review-bot acknowledgement gate",
+        "event": event,
+        "status": "completed" if conclusion else "in_progress",
+        "conclusion": conclusion,
+        "run_attempt": attempt,
+    }
+
+
+def test_currency_replays_pr_3287_where_the_survivor_had_the_lower_id() -> None:
+    """The #3313 incident that proves id order is not verdict order.
+
+    Approving PR #3287's first-time contributor released three parked gate
+    runs at 12:00:02Z. Concurrency cancelled two of them within four
+    seconds, and the survivor - 30622733829, which passed at 12:05:31Z -
+    carried a LOWER id than the cancelled 30622786412.
+
+    Under the old "stand down if a higher id exists" rule the survivor read
+    itself as stale, the cancelled run's publisher never started, and the
+    head carried no `review-bot-ack` context for six hours until the pull
+    request was cycled. A run that will never publish is not a reason for
+    the run that can to stay quiet.
+    """
+    module = _currency_module()
+    runs = [
+        _gate_run(30622722192, "pull_request", "success"),
+        _gate_run(30622728511, "pull_request_review", "cancelled"),
+        _gate_run(30622733829, "pull_request", "success"),
+        _gate_run(30622786412, "pull_request", "cancelled"),
+    ]
+    assert module.decide(runs, 30622733829) == "publish"  # type: ignore[attr-defined]
+    assert module.decide(runs, 30622722192) == "stand-down"  # type: ignore[attr-defined]
+
+
+def test_currency_replays_pr_3293_where_the_newest_run_was_a_review_event() -> None:
+    """The other #3313 shape: the newest gate run was `pull_request_review`.
+
+    On PR #3293's pre-cycle head a048348, run 30655244121 passed at
+    18:28:48Z. Its in-job publish 403'd, as every fork's does, and the
+    publisher's job condition admitted only `pull_request`, so no publisher
+    ran for it. The two older `pull_request` runs had already stood down as
+    stale. That run is the head's current verdict and must publish.
+    """
+    module = _currency_module()
+    runs = [
+        _gate_run(30655070335, "pull_request", "success"),
+        _gate_run(30655134036, "pull_request", "success"),
+        _gate_run(30655244121, "pull_request_review", "success"),
+    ]
+    assert module.decide(runs, 30655244121) == "publish"  # type: ignore[attr-defined]
+    assert module.decide(runs, 30655134036) == "stand-down"  # type: ignore[attr-defined]
+
+
+def test_currency_redispatches_once_per_head_when_nothing_can_publish() -> None:
+    """When every gate run on a head is cancelled, someone must re-dispatch.
+
+    And exactly once. The mark of a re-dispatch is `run_attempt > 1` on some
+    gate run for the head, which is GitHub's own state rather than a ledger
+    this workflow would have to keep; an operator's manual re-run counts the
+    same way, because a manual re-run IS the re-dispatch.
+    """
+    module = _currency_module()
+    cancelled = [
+        _gate_run(11, "pull_request", "cancelled"),
+        _gate_run(12, "pull_request_review", "cancelled"),
+    ]
+    assert module.decide(cancelled, 12) == "redispatch"  # type: ignore[attr-defined]
+    assert module.decide(cancelled, 11) == "stand-down"  # type: ignore[attr-defined]
+
+    already_present = module.decide(cancelled, 12, context_present=True)  # type: ignore[attr-defined]
+    assert already_present == "stand-down", "a head that already carries the context must not be churned"
+
+    retried = [
+        _gate_run(11, "pull_request", "cancelled"),
+        _gate_run(12, "pull_request_review", "cancelled", attempt=2),
+    ]
+    assert module.decide(retried, 12) == "stand-down", "one re-dispatch per head SHA; this is the loop guard"  # type: ignore[attr-defined]
+
+
+def test_currency_defers_to_a_successor_that_is_still_running() -> None:
+    """A run with no conclusion yet may still produce a verdict.
+
+    Overtaking it would put the older answer on the head and lose the newer
+    one, which is the race the currency check exists to prevent.
+    """
+    module = _currency_module()
+    runs = [
+        _gate_run(21, "pull_request", "success"),
+        _gate_run(22, "pull_request", None),
+    ]
+    assert module.decide(runs, 21) == "stand-down"  # type: ignore[attr-defined]
+
+
+def test_every_gate_run_history_leaves_the_head_a_writer() -> None:
+    """The guarantee #3313 asks for, stated as a property.
+
+    For any history of gate runs on a head, at least one of them must reach
+    a decision that eventually puts a conclusion on the commit: either it
+    publishes, or it re-dispatches the gate so that a run which can publish
+    exists. `stand-down` for every run is the bug - that is a head nobody
+    will ever write, and the only recorded remedy was closing and reopening
+    the pull request.
+    """
+    module = _currency_module()
+    events = ("pull_request", "pull_request_review")
+    conclusions = ("success", "failure", "cancelled")
+
+    for size in (1, 2, 3):
+        for combo in itertools.product(itertools.product(events, conclusions), repeat=size):
+            runs = [_gate_run(100 + index, event, conclusion) for index, (event, conclusion) in enumerate(combo)]
+            decisions = {run["id"]: module.decide(runs, int(run["id"])) for run in runs}  # type: ignore[attr-defined]
+            writers = [decision for decision in decisions.values() if decision != "stand-down"]
+            assert writers, (
+                f"gate run history {combo!r} leaves every publisher standing down, so the head never gets a "
+                f"review-bot-ack conclusion at all: {decisions!r}"
+            )
+            assert len(writers) == 1, (
+                f"gate run history {combo!r} elects {len(writers)} writers: {decisions!r}. Two publishers race "
+                "on the check-run upsert; two re-dispatches double-run the gate for one head."
+            )
+
+
+def test_currency_cli_reports_its_decision_to_github_output(tmp_path: Path) -> None:
+    """The workflow reads the decision from `GITHUB_OUTPUT`, so the CLI has
+    to put it there and not only on stdout."""
+    module = _currency_module()
+    payload = {"workflow_runs": [_gate_run(31, "pull_request_review", "success")]}
+    runs_file = tmp_path / "runs.json"
+    runs_file.write_text(json.dumps(payload), encoding="utf-8")
+    output = tmp_path / "github_output"
+
+    import os
+
+    previous = os.environ.get("GITHUB_OUTPUT")
+    os.environ["GITHUB_OUTPUT"] = str(output)
+    try:
+        code = module.main(["--runs", str(runs_file), "--this-run", "31"])  # type: ignore[attr-defined]
+    finally:
+        if previous is None:
+            os.environ.pop("GITHUB_OUTPUT", None)
+        else:
+            os.environ["GITHUB_OUTPUT"] = previous
+
+    assert code == 0
+    assert "decision=publish" in output.read_text(encoding="utf-8")
+
+
+def test_currency_ignores_runs_of_other_workflows() -> None:
+    """The head SHA query returns every workflow's runs, and their ids sit
+    in the same space as the gate's. Counting one as a successor would
+    silence the publisher for a run that has nothing to do with the gate."""
+    module = _currency_module()
+    payload = {
+        "workflow_runs": [
+            _gate_run(41, "pull_request", "success"),
+            {"id": 42, "name": "CI gate", "event": "pull_request", "status": "completed", "conclusion": "success"},
+        ]
+    }
+    runs = module.gate_runs(payload)  # type: ignore[attr-defined]
+    assert [run["id"] for run in runs] == [41]
+    assert module.decide(runs, 41) == "publish"  # type: ignore[attr-defined]

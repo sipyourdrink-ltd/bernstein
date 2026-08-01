@@ -427,6 +427,50 @@ pinned in `tests/unit/test_review_bot_ack_workflow_yaml.py`, with the
 publisher's own logic covered in
 `tests/unit/test_publish_required_check.py`.
 
+#### Every head gets a verdict, or the gate is re-dispatched
+
+A fork's gate run holds a read-only token, so the context is written by
+`review-bot-ack-publish.yml`, a `workflow_run` hop that runs in the base
+repository's context. One head SHA collects several gate runs - a push,
+two body edits, a review from each bot - and each of them wakes a
+publisher, so the hop has to elect exactly one writer per head.
+
+Electing it by run id alone is wrong, and heads that carried no
+`review-bot-ack` context at all were the symptom:
+
+- Runs released together are cancelled in an order unrelated to their
+  ids. When the cancelled run holds the higher id, the run that actually
+  passed reads itself as stale and stays quiet, while the cancelled run
+  has no verdict to publish. Nobody writes.
+- `pull_request_review` gate runs 403 on their in-job publish exactly as
+  `pull_request` ones do, so they need the hop too.
+
+The publisher now elects its writer from what each run *can* do rather
+than from its id:
+
+| Situation on the head | Outcome |
+|---|---|
+| a newer gate run can still publish | this publisher stands down |
+| this run can publish and no newer one can | this publisher writes the verdict |
+| an older run can publish | it writes; this one stands down |
+| no gate run on the head can publish | the newest re-dispatches the gate |
+
+The re-dispatch is bounded to one per head SHA: it is skipped once any
+gate run on the head carries `run_attempt > 1`, which is the mark a
+re-dispatch - or an operator's own re-run - leaves in GitHub's state. It
+is also skipped when the head already carries a terminal context.
+
+The rule is a pure function in `scripts/ack_publisher_currency.py` so it
+can be replayed against recorded run histories in
+`tests/unit/test_review_bot_ack_workflow_yaml.py`, which also pins the
+property that matters: for any history of gate runs on a head, exactly
+one publisher writes or re-dispatches, never zero and never two.
+
+Operator note: closing and reopening a pull request to republish an
+absent `review-bot-ack` should no longer be necessary. If it still is,
+the run history for that head is the evidence to attach - specifically
+each gate run's id, event, conclusion and `run_attempt`.
+
 ## Required check
 
 Branch protection points at a single status check, `CI gate`, which
