@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bernstein.adapters.base import build_worker_cmd
-from bernstein.core.orchestration.worker import _resolve_launch_cmd
+from bernstein.core.orchestration.worker import (
+    _CMD_EXE_LINE_LIMIT,
+    _avoid_shim_line_overflow,
+    _resolve_launch_cmd,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -171,6 +175,96 @@ class TestResolveLaunchCmd:
     def test_empty_cmd_returned_as_is(self) -> None:
         """Guard: an empty argv is returned unchanged (main() handles it)."""
         assert _resolve_launch_cmd([]) == []
+
+
+# ---------------------------------------------------------------------------
+# _avoid_shim_line_overflow -- keep .cmd/.bat spawns under cmd.exe's
+# ~8191-character line buffer (issue #3311)
+# ---------------------------------------------------------------------------
+
+
+class TestAvoidShimLineOverflow:
+    """A prompt over cmd.exe's buffer must not reach the shim command line.
+
+    cmd.exe enforces an ~8191-character line limit independent of (and much
+    smaller than) CreateProcess's own ~32767-character allowance. A ``.cmd``/
+    ``.bat`` shim always spawns through ``cmd.exe /c`` (``_resolve_launch_cmd``),
+    so a long prompt can overflow cmd.exe's buffer even though the process
+    launch itself would otherwise succeed. cmd.exe then writes "The command
+    line is too long." and exits before the adapter binary starts, which
+    Bernstein reads as a dead agent instead of a spawn failure.
+    """
+
+    def _windows_shim_launch_cmd(self, monkeypatch: pytest.MonkeyPatch, cmd: list[str]) -> list[str]:
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: rf"C:\nvm4w\nodejs\{name}.CMD",
+        )
+        return _resolve_launch_cmd(cmd)
+
+    def test_long_claude_prompt_moved_to_stdin_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A >8191-char prompt is pulled off the command line entirely."""
+        prompt = "x" * 16_043  # the exact size reported in issue #3311
+        cmd = ["claude", "--model", "sonnet", "--effort", "high", "-p", prompt]
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+        # Unmodified, this line is far over the limit -- the reproduction.
+        assert len(subprocess.list2cmdline(launch_cmd)) > _CMD_EXE_LINE_LIMIT
+
+        result, prompt_path = _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="qa-abc123")
+
+        assert len(subprocess.list2cmdline(result)) <= _CMD_EXE_LINE_LIMIT
+        assert prompt not in result
+        assert result[-1] == "-p"  # bare flag kept so claude reads stdin
+        assert prompt_path is not None
+        assert prompt_path.read_text(encoding="utf-8") == prompt
+
+    def test_short_prompt_left_on_command_line(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A prompt well under the limit is untouched -- no file, no rewrite."""
+        cmd = ["claude", "--model", "sonnet", "-p", "fix the failing test"]
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+
+        result, prompt_path = _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="qa-abc123")
+
+        assert result == launch_cmd
+        assert prompt_path is None
+
+    def test_unknown_binary_with_long_prompt_left_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A CLI with no verified stdin fallback keeps today's behaviour.
+
+        The command line still overflows -- we do not silently drop an
+        argument against a CLI we haven't verified reads stdin instead.
+        """
+        prompt = "x" * 16_043
+        cmd = ["some-other-agent", "--go", prompt]
+        launch_cmd = self._windows_shim_launch_cmd(monkeypatch, cmd)
+
+        result, prompt_path = _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="qa-abc123")
+
+        assert result == launch_cmd
+        assert prompt_path is None
+
+    def test_posix_target_never_rewritten(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Off the cmd.exe /c path (POSIX, or a real .exe), nothing changes."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "posix")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: f"/usr/local/bin/{name}",
+        )
+        prompt = "x" * 16_043
+        cmd = ["claude", "--model", "sonnet", "-p", prompt]
+        launch_cmd = _resolve_launch_cmd(cmd)
+
+        result, prompt_path = _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="qa-abc123")
+
+        assert result == launch_cmd
+        assert prompt in result
+        assert prompt_path is None
 
 
 # ---------------------------------------------------------------------------

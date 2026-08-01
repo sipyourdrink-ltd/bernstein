@@ -118,6 +118,99 @@ def _resolve_launch_cmd(cmd: list[str]) -> list[str]:
     return [resolved, *rest]
 
 
+# cmd.exe's own internal line buffer is ~8191 characters -- independent of,
+# and much smaller than, the ~32767-character command line CreateProcess
+# itself allows. A ``.cmd``/``.bat`` shim always spawns through
+# ``cmd.exe /c`` (see ``_resolve_launch_cmd`` above), so a long prompt that
+# fits comfortably under CreateProcess's own limit can still push the *whole*
+# ``/c`` line past cmd.exe's buffer. cmd.exe then refuses the launch with
+# "The command line is too long." on stderr before the adapter binary ever
+# starts, which Bernstein reads as a process that started and produced no
+# work and routes to the merge path -- discarding real work over a spawn
+# failure that was never surfaced as one (issue #3311).
+_CMD_EXE_LINE_LIMIT = 8191
+# Safety margin below the hard limit: list2cmdline's own quoting can grow
+# an argument by a few characters per embedded space/quote, and resolved
+# shim paths vary in length across hosts.
+_CMD_EXE_LINE_MARGIN = 200
+
+# Adapters whose CLI is verified to read the prompt from stdin when their
+# prompt flag is passed with no trailing value (Claude Code's headless
+# ``-p`` / ``--print`` mode: with an argument it is the one-shot prompt,
+# without one it reads stdin). Deliberately narrow: an adapter binary not
+# listed here keeps today's behaviour -- the prompt stays on the command
+# line and an overlong one still fails the same way it does now -- rather
+# than guessing at an unverified CLI contract and silently invoking some
+# other CLI with a missing prompt argument.
+_STDIN_PROMPT_FLAGS: dict[str, str] = {
+    "claude": "-p",
+}
+
+
+def _avoid_shim_line_overflow(
+    cmd: list[str],
+    launch_cmd: list[str],
+    *,
+    workdir: Path,
+    session: str,
+) -> tuple[list[str], Path | None]:
+    """Move an overlong trailing prompt off a cmd.exe-routed command line.
+
+    Only engages when *launch_cmd* is the ``cmd.exe /c`` wrapping
+    :func:`_resolve_launch_cmd` produces for a ``.cmd``/``.bat`` shim and the
+    resulting line would exceed cmd.exe's own buffer (issue #3311). Real
+    ``.exe`` targets and every POSIX spawn are untouched by this function --
+    ``launch_cmd`` comes back unchanged and no file is written.
+
+    For adapters in :data:`_STDIN_PROMPT_FLAGS`, the trailing
+    ``[prompt_flag, prompt]`` pair is rewritten to just ``[prompt_flag]`` and
+    the prompt is written to a session-scoped file under
+    ``<workdir>/.sdd/runtime/prompts/`` -- the same location and naming
+    convention the container/sandbox spawn paths already use for prompts
+    that would overflow ``ARG_MAX`` (see ``_spawn_in_container`` /
+    ``_spawn_in_sandbox`` in ``core/agents/spawner_core.py``) -- for the
+    caller to open and pipe in as the child's stdin.
+
+    Args:
+        cmd: The original (pre-resolution) inner argv, e.g.
+            ``["claude", "--model", ..., "-p", prompt]``.
+        launch_cmd: The result of :func:`_resolve_launch_cmd` for *cmd*.
+        workdir: Project root, used to place the overflow prompt file
+            alongside the existing ``.sdd/runtime/prompts/`` convention.
+        session: Session ID, used to name the overflow prompt file so it is
+            diagnosable and never collides across concurrent spawns.
+
+    Returns:
+        A ``(launch_cmd, prompt_path)`` pair. ``prompt_path`` is ``None``
+        unless the prompt was moved to a file, in which case the caller
+        should open it and pass it as the child's ``stdin``.
+    """
+    if len(launch_cmd) < 3 or launch_cmd[1] != "/c":
+        return launch_cmd, None  # not a cmd.exe shim wrap; no line limit applies
+
+    if len(subprocess.list2cmdline(launch_cmd)) <= _CMD_EXE_LINE_LIMIT - _CMD_EXE_LINE_MARGIN:
+        return launch_cmd, None  # comfortably under cmd.exe's buffer
+
+    binary = cmd[0] if cmd else ""
+    flag = _STDIN_PROMPT_FLAGS.get(binary)
+    if flag is None or len(cmd) < 3 or cmd[-2] != flag:
+        # No verified stdin fallback for this CLI (or the trailing tokens
+        # don't match the known prompt-flag shape) -- leave the command line
+        # as-is. It still overflows and cmd.exe will still reject it, same
+        # as today; we do not guess at a contract we haven't verified.
+        return launch_cmd, None
+
+    prompt = cmd[-1]
+    prompt_dir = workdir / ".sdd" / "runtime" / "prompts"
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path = prompt_dir / f"{session}.stdin-overflow"
+    prompt_path.write_text(prompt, encoding="utf-8")
+
+    trimmed_cmd = cmd[:-1]  # drop the prompt; keep the bare flag
+    trimmed_launch_cmd = _resolve_launch_cmd(trimmed_cmd)
+    return trimmed_launch_cmd, prompt_path
+
+
 def _set_proctitle(title: str) -> None:
     """Set the process title for ps / Activity Monitor."""
     with contextlib.suppress(ImportError):
@@ -427,12 +520,21 @@ def main() -> None:
     # than failing in CreateProcess. ``cmd[0]`` is preserved for the
     # command-not-found diagnostic below.
     launch_cmd = _resolve_launch_cmd(cmd)
+    # For a .cmd/.bat shim whose resolved line would overflow cmd.exe's
+    # ~8191-character buffer, move the prompt off the command line into a
+    # file and pipe it in as stdin instead (issue #3311). No-op -- returns
+    # launch_cmd unchanged and stdin_prompt_path=None -- for every spawn that
+    # already fits, which is every POSIX spawn and most Windows ones.
+    launch_cmd, stdin_prompt_path = _avoid_shim_line_overflow(
+        cmd, launch_cmd, workdir=Path(args.workdir), session=args.session
+    )
+    stdin_file = stdin_prompt_path.open("rb") if stdin_prompt_path is not None else None
     try:
         # launch_cmd is an argv list (never a shell string) built from the
         # trusted adapter command; shell=False, so there is no shell to inject
         # into. The Windows cmd.exe /c wrapper also passes each arg as a
         # separate list element, not a concatenated command line.
-        child = subprocess.Popen(launch_cmd)  # nosemgrep
+        child = subprocess.Popen(launch_cmd, stdin=stdin_file)  # nosemgrep
         # Publish the child so the already-installed terminating-signal
         # handler forwards to it (and lets main() reap it) instead of
         # unlinking + exiting on its own.
@@ -471,6 +573,14 @@ def main() -> None:
         )
         del exc
         sys.exit(126)
+    finally:
+        # The child inherited its own handle to stdin_file when Popen
+        # returned (or never started, on the FileNotFoundError/
+        # PermissionError paths above); the parent's copy can close either
+        # way. Mirrors the existing pattern in adapters/cursor.py, the other
+        # stdin-prompt spawn path in this codebase.
+        if stdin_file is not None:
+            stdin_file.close()
 
     # Update PID file with child PID
     # Validate pid_file stays within pid_dir to prevent path traversal (S2083)

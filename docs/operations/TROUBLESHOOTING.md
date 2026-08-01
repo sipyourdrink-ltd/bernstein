@@ -79,6 +79,14 @@ claude --version  # should print version info
 
 **Resolution:** Bernstein now resolves the bare name via `shutil.which` and, on Windows, routes a resolved `.cmd`/`.bat` shim through `cmd.exe /c` automatically. Ensure `PATHEXT` is present in your environment (it is passed through to spawned agents). No manual action is needed on current versions; if you see this on an older build, upgrade Bernstein.
 
+### 2b. Windows: long prompt fails silently through a `.cmd`/`.bat` shim
+
+**Symptom:** On Windows, a task with a large prompt (roughly 8000+ characters) spawns and exits almost immediately with no useful output; Bernstein treats it as an agent that started and produced no work.
+
+**Cause:** Routing a resolved `.cmd`/`.bat` shim through `cmd.exe /c` (see 2a) makes the *whole* command line subject to cmd.exe's own ~8191-character internal line buffer -- a much smaller limit than the ~32767 characters `CreateProcess` itself allows. A long prompt passed as a command-line argument can push the line past that buffer; cmd.exe then refuses the launch with `The command line is too long.` before the adapter binary starts.
+
+**Resolution:** For the `claude` adapter, Bernstein now writes an oversized prompt to a file under `.sdd/runtime/prompts/` and pipes it to the CLI's stdin instead of passing it on the command line, so the shim's command line stays under cmd.exe's limit regardless of prompt size. No manual action is needed. Other adapters whose CLI is not yet confirmed to accept a stdin-piped prompt still fail the same way on an oversized prompt; installing the CLI's native `.exe` build (bypassing the Node version manager's `.cmd` shim) avoids the cmd.exe hop entirely.
+
 ---
 
 ## 3. API Key Not Set
