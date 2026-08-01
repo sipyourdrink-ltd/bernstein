@@ -408,9 +408,9 @@ jobs:
     # `always()` so a channel-only republish still runs with the upstream
     # release graph skipped; the PyPI result still gates the normal tag path.
     if: ${{ always() && (inputs.copr_only || needs.publish.result == 'success') }}
-    # Wider than the other publish jobs: the submit step waits for the Copr
-    # build itself, which queues behind other builders.
-    timeout-minutes: 45
+    # Comfortably above COPR_WATCH_SECONDS below, so the watch always ends on
+    # its own deadline rather than being cancelled part-way through.
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
@@ -469,13 +469,30 @@ jobs:
       - name: Submit build to Copr
         env:
           SRPM_PATH: ${{ steps.srpm.outputs.path }}
+          # The watch's own budget. copr-cli's built-in watch has none: it runs
+          # until the build ends, however long Copr's public queue takes, and a
+          # first end-to-end run spent 45 minutes there before the job's
+          # timeout cancelled the step mid-wait.
+          COPR_WATCH_SECONDS: "900"
         run: |
           set -euo pipefail
           echo "submitting ${SRPM_PATH} to ${COPR_PROJECT}"
-          # Deliberately not --nowait: copr-cli then waits for the build and
-          # exits non-zero when it fails, so the job's verdict tracks the
-          # published RPM rather than just the upload.
-          copr-cli build "${COPR_PROJECT}" "${SRPM_PATH}"
+          # copr-cli exits non-zero when Copr rejects the submission, so a bad
+          # SRPM or an expired token fails right here.
+          copr-cli build --nowait "${COPR_PROJECT}" "${SRPM_PATH}" | tee "${RUNNER_TEMP}/copr-submit.log"
+
+          BUILD_ID=$(sed -n 's/^Created builds: \([0-9][0-9]*\).*$/\1/p' "${RUNNER_TEMP}/copr-submit.log" | head -1)
+          if [ -z "${BUILD_ID}" ]; then
+            echo "::error::Copr accepted no build id; the submission output above is the evidence"
+            exit 1
+          fi
+
+          # Terminal-state handling lives in the watcher, which is unit-tested;
+          # a failed build fails this step, and a build still queued at the
+          # deadline is handed to reconcile-release.yml.
+          python3 scripts/copr_build_watch.py \
+            --build-id "${BUILD_ID}" \
+            --deadline-seconds "${COPR_WATCH_SECONDS}"
 
   # MCP registry listing (#2369). Regenerated from pyproject.toml by
   # scripts/gen_distribution_manifests.py so the listing can never drift

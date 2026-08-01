@@ -158,16 +158,43 @@ def test_copr_job_fails_the_workflow_when_the_submission_fails(workflow: dict[st
     run = submit["run"]
     assert "set -euo pipefail" in run
     assert "::warning::" not in run
-    assert "|| true" not in run
-    assert "|| echo" not in run
 
-    # `copr-cli build` exits non-zero when the build fails only if it waits for
-    # it, so the job's verdict tracks the published RPM, not just the upload.
+    # copr-cli exits non-zero when Copr rejects the submission, and nothing may
+    # map that exit code back to success.
     commands = [line.strip() for line in run.splitlines() if not line.strip().startswith("#")]
     submit_commands = [line for line in commands if line.startswith("copr-cli build")]
     assert submit_commands, "the step must invoke `copr-cli build`"
     for command in submit_commands:
-        assert "--nowait" not in command
+        assert "|| true" not in command
+        assert "|| echo" not in command
+
+
+def test_copr_build_watch_deadline_fits_inside_the_job_budget(workflow: dict[str, Any]) -> None:
+    """The watch must end on its own budget, before the job runs out of time.
+
+    The first end-to-end run submitted in under a second, then watched a queued
+    build until `timeout-minutes` cancelled the step - so a build that was
+    merely slow was indistinguishable from one that failed.
+    """
+    job = workflow["jobs"][COPR_JOB]
+    submit = _step(workflow, COPR_JOB, "Submit build to Copr")
+
+    watch_seconds = int(str(submit["env"]["COPR_WATCH_SECONDS"]))
+    job_budget_seconds = int(job["timeout-minutes"]) * 60
+
+    assert watch_seconds > 0
+    assert watch_seconds < job_budget_seconds, (
+        "the watch deadline must leave the job time to finish, or a slow Copr "
+        "queue cancels the step instead of ending it"
+    )
+
+
+def test_copr_build_watch_is_delegated_to_the_tested_watcher(workflow: dict[str, Any]) -> None:
+    """The terminal-state logic lives in a unit-tested script, not in shell."""
+    run = _step(workflow, COPR_JOB, "Submit build to Copr")["run"]
+
+    assert "scripts/copr_build_watch.py" in run
+    assert "--nowait" in run, "copr-cli's own watch has no deadline; the watcher owns it"
 
 
 def test_copr_config_secret_is_written_from_the_environment_with_owner_only_mode(

@@ -62,6 +62,7 @@ entries to them.
 | Publishing job | `publish-copr` in `.github/workflows/publish.yml` |
 | Spec | `packaging/rpm/bernstein.spec` |
 | Builder | `scripts/build_copr_srpm.py` |
+| Build watcher | `scripts/copr_build_watch.py` |
 
 `COPR_CONFIG` holds a complete `copr-cli` configuration file — the same
 content `~/.config/copr` has on a workstation, including the `[copr-cli]`
@@ -97,11 +98,33 @@ gh workflow run publish.yml --ref main -f tag=v3.13.0 -f copr_only=true
 `publish-copr` alone. Submitting a version Copr already holds is rejected by
 the build service, so bump the release or delete the existing build first.
 
-The job waits for the Copr build instead of returning at upload, and it has no
-warn-and-continue path: a rejected submission or a failed chroot build fails
-the job. Nothing about the RPM channel is visible from this repository, so a
-swallowed failure would go unnoticed until someone installed the package by
-hand.
+### What fails the job, and what does not
+
+| Outcome | Job result |
+|---|---|
+| Copr rejects the submission (bad SRPM, expired token) | fails |
+| Copr accepts it but returns no build id | fails |
+| The build ends `failed`, `canceled` or `skipped` within the watch window | fails |
+| The build ends `succeeded` | passes |
+| The build is still queued or running when the watch window expires | passes, with a `::notice::` naming the build URL |
+
+The job has no warn-and-continue path for a *known-bad* outcome: nothing about
+the RPM channel is visible from this repository, so a swallowed failure would
+go unnoticed until someone installed the package by hand.
+
+The last row is the one deliberate exception, and it is not a swallowed
+failure — the submission already succeeded and the outcome is unknown rather
+than bad. Copr's public builders are shared and its queue can run past any
+sensible job budget; failing there would paint releases red for a build queue.
+`reconcile-release.yml` compares the published Copr version daily and opens a
+`release-drift` issue if the version never lands, which is exactly the case
+this hands off to.
+
+`copr-cli`'s own watch has no deadline — it runs until the build ends, however
+long that takes — so the submission uses `--nowait` and
+`scripts/copr_build_watch.py` owns the waiting against `COPR_WATCH_SECONDS`.
+That budget must stay below the job's `timeout-minutes`, or a slow queue
+cancels the step mid-wait instead of ending it; a guard test enforces the gap.
 
 ## Guardrails
 
