@@ -522,7 +522,7 @@ def agents_match(role: str, task_description: str) -> None:
     t.append("  Priority  ", style="dim")
     t.append(f"{match.priority}\n")
     t.append("  Tools     ", style="dim")
-    t.extend((", ".join(match.tools) if match.tools else "-", "\n\n"))
+    t.append(f"{', '.join(match.tools) if match.tools else '-'}\n\n")
     t.append("  Description\n", style="dim")
     t.append(f"    {match.description[:120]}\n")
 
