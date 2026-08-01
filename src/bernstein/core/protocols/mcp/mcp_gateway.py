@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from bernstein.core.protocols.payments.x402 import X402SettlementCoordinator
     from bernstein.core.replay.journal import EventJournal
     from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.security.toolcall_interlock import ToolCallAttestationInterlock
     from bernstein.core.wal import WALEntry, WALWriter
 
 
@@ -176,6 +177,7 @@ class MCPGateway:
         journal: EventJournal | None = None,
         audit_chain: AuditChainStore | None = None,
         settlement: X402SettlementCoordinator | None = None,
+        attestation_interlock: ToolCallAttestationInterlock | None = None,
     ) -> None:
         self._upstream_cmd = upstream_cmd
         self._wal_writer = wal_writer
@@ -189,6 +191,10 @@ class MCPGateway:
         # before any payment. The settlement seam lives on the live-proxy
         # branch only, so replay can never invoke the hook or double-settle.
         self._settlement = settlement
+        # Provider-neutral enforced/observed boundary (#2931).  When wired,
+        # every live ``tools/call`` must cross it before upstream I/O.  Replay
+        # never invokes the interlock because it has no connector side effect.
+        self._attestation_interlock = attestation_interlock
         self._metrics: dict[str, ToolMetrics] = {}
         self._proc: asyncio.subprocess.Process | None = None
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
@@ -326,10 +332,12 @@ class MCPGateway:
             return self._handle_replay(method, params, req_id, is_notification)
 
         if is_notification:
+            await self._prepare_tool_dispatch(message, method, params, req_id)
             if self._proc:
                 await self._send_upstream(message)
             return None
 
+        await self._prepare_tool_dispatch(message, method, params, req_id)
         response, latency_ms = await self._send_request(message, req_id)
         self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
         self._anchor_proxied_call(method, params)
@@ -338,6 +346,29 @@ class MCPGateway:
             response = await self._maybe_settle(message, params, response)
 
         return response
+
+    async def _prepare_tool_dispatch(
+        self,
+        message: dict[str, Any],
+        method: str,
+        params: dict[str, Any],
+        req_id: Any,
+    ) -> None:
+        """Cross the attestation interlock before live connector I/O."""
+        if method != "tools/call" or self._attestation_interlock is None:
+            return
+        from bernstein.core.security.toolcall_interlock import ToolCallIntent
+
+        intent = ToolCallIntent.from_request(
+            scope_id=self._attestation_interlock.scope_id,
+            server_name=self._server_name,
+            method=method,
+            tool_name=str(params.get("name", "")),
+            request_id=req_id,
+            span_id=request_span_id(message),
+            arguments=params.get("arguments", {}),
+        )
+        await self._attestation_interlock.before_dispatch(intent)
 
     async def _send_request(self, message: dict[str, Any], req_id: Any) -> tuple[dict[str, Any], float]:
         """Send one JSON-RPC request upstream and await its response.
@@ -392,6 +423,7 @@ class MCPGateway:
         retried = build_retry_request(message, pre.payment_ref)
         retried_id = retried.get("id")
         retried_params: dict[str, Any] = retried.get("params") or {}
+        await self._prepare_tool_dispatch(retried, "tools/call", retried_params, retried_id)
         settled, latency_ms = await self._send_request(retried, retried_id)
         wal_entry = self._record_wal_and_metrics("tools/call", retried_params, retried_id, settled, latency_ms)
         self._anchor_proxied_call("tools/call", retried_params)

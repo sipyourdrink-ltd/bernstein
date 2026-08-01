@@ -86,6 +86,51 @@ without the WAL file. A failure to anchor a call is logged but never takes
 the proxy down — it shows up to a verifier as a call-index gap rather than
 a crash.
 
+## Attestation interlock modes
+
+The gateway has a provider-neutral pre-dispatch interlock for integrations
+that need a completeness claim over connector calls. It is separate from the
+observe-only instrumenter:
+
+- **Enforced:** before upstream I/O, the configured evidence provider must
+  return non-empty handles for both a verified, durably chained attestation
+  and the dispatch marker that references it. A provider, signer, or durable
+  append failure raises and the connector is not invoked.
+- **Observed:** the gateway attempts the same preparation, but a failure is
+  logged and the connector remains reachable. A receipt can still be built,
+  but its verifier reports `observed`, never complete.
+
+Completeness is derived from ordered chain projections. Every
+`toolcall.enforced_dispatch` marker must reference a preceding
+`toolcall.attestation`; a receipt field claiming `complete` cannot upgrade a
+run with absent, reordered, or unmatched markers. The interlock protocol owns
+neither identity keys nor policy evaluation, so native and external providers
+can implement the same contract without becoming dependencies of the gateway.
+The gateway hashes an opaque provider-defined scope, request span, server,
+tool, request id, and argument digest into one call-intent digest. Returned
+evidence must bind that exact digest; stale evidence for a different call is a
+hard failure in enforced mode.
+
+This initial integration seam is programmatic. The CLI does not select a
+provider yet, and an unwired gateway retains its existing observe-only
+behavior. The boundary covers calls that cross the gateway; it cannot contain
+effects that bypass the host dispatch hook.
+
+Measure the partial seam at its real boundary with:
+
+```bash
+uv run python scripts/bench_toolcall_interlock.py \
+  --calls 256 --parallel 32 --repetitions 5
+```
+
+The script times complete `MCPGateway.handle_jsonrpc` dispatches, including WAL
+recording, with and without the interlock under parallel load. Its in-process
+provider returns content-bound evidence handles, so the reported delta is the
+host-seam budget—not the future cost of signature verification or durable
+chain storage. Repeat the same gateway-level measurement with the native
+provider when that implementation lands; a signer-only microbenchmark does not
+satisfy the dispatch-path requirement.
+
 ## SSE transport correlation
 
 The SSE transport is stateless by design (no gateway instance holds
@@ -101,4 +146,7 @@ juggling several in-flight requests still matches each response correctly.
 `src/bernstein/cli/commands/gateway_cmd.py` (registered as
 `bernstein gateway`, reachable via the back-compat alias
 `bernstein.cli.gateway_cmd`), `src/bernstein/core/protocols/mcp/mcp_gateway.py`
-(`MCPGateway`, `GatewayReplay`, `ToolMetrics`, `create_gateway_sse_app`).
+(`MCPGateway`, `GatewayReplay`, `ToolMetrics`, `create_gateway_sse_app`), and
+`src/bernstein/core/security/toolcall_interlock.py` (provider-neutral enforced
+and observed dispatch contract). `scripts/bench_toolcall_interlock.py` measures
+the seam at that gateway boundary under parallel load.
