@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -202,6 +203,38 @@ class TestCheckTestDependencies:
 
         assert all(check["ok"] == "True" for check in checks)
         assert all(check["fix"] == "" for check in checks)
+
+    def test_slow_uv_returns_result_instead_of_raising(self) -> None:
+        """A probe that exceeds its budget must be reported, not raised.
+
+        ``uv run`` serialises on a shared cache lock, so on a loaded host the
+        probe can exceed its 10s budget and ``subprocess.run`` raises
+        ``TimeoutExpired``. That escaped the probe and aborted ``bernstein
+        doctor`` mid-run, before it had written anything at all -- including
+        the ``--json`` payload. A probe that cannot answer is a failed check,
+        not a crash.
+        """
+        timeout = subprocess.TimeoutExpired(cmd=["uv", "run", "ruff", "--version"], timeout=10)
+        with patch("bernstein.core.quality.ci_fix.subprocess.run", side_effect=timeout):
+            checks = check_test_dependencies()
+
+        assert len(checks) == 3
+        for check in checks:
+            assert check["ok"] == "False"
+            assert "timed out" in check["detail"]
+            assert check["fix"]
+
+    def test_unreadable_uv_returns_result_instead_of_raising(self) -> None:
+        """Any OS-level failure to launch the probe is a failed check too."""
+        with patch(
+            "bernstein.core.quality.ci_fix.subprocess.run",
+            side_effect=PermissionError(13, "Permission denied"),
+        ):
+            checks = check_test_dependencies()
+
+        assert len(checks) == 3
+        assert all(check["ok"] == "False" for check in checks)
+        assert all(check["fix"] for check in checks)
 
 
 # ---------------------------------------------------------------------------

@@ -814,9 +814,7 @@ def _enqueue_dlq_if_workdir(
         synth = IncidentSynthesizer(workdir)
         case = synth.synthesize_from_dlq_entry(entry)
         if case is not None:
-            existing = synth._load_existing_ids()
-            if case.id not in existing:
-                synth._write_case(case)
+            synth.emit_case(case)
     except Exception as exc:
         logger.debug("incident synthesiser skipped for task %s: %s", task.id, exc)
 
@@ -3231,6 +3229,20 @@ def _cleanup_batch_session(orch: Any, session: AgentSession) -> None:
         release_files(session.id)
 
 
+def _session_files_changed(orch: Any, session: AgentSession) -> int:
+    """Return the changed-file count *session*'s agent last reported.
+
+    ``AgentSession`` carries no changed-file counter: the agent reports one
+    in its heartbeat, which the signal manager persists per session. Falls
+    back to 0 when the agent never wrote a heartbeat.
+    """
+    signal_mgr = getattr(orch, "_signal_mgr", None)
+    if signal_mgr is None:
+        return 0
+    heartbeat = signal_mgr.read_heartbeat(session.id)
+    return int(heartbeat.files_changed) if heartbeat is not None else 0
+
+
 def _record_ab_test_outcome(
     orch: Any,
     task: Task,
@@ -3254,7 +3266,7 @@ def _record_ab_test_outcome(
             model=model_map[task.id],
             session_id=session.id,
             tokens_used=session.tokens_used,
-            files_changed=session.files_changed,
+            files_changed=_session_files_changed(orch, session),
             status="completed" if janitor_passed else "failed",
             duration_s=time.time() - session.spawn_ts,
         )

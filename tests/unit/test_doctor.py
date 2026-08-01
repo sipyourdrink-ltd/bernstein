@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
@@ -127,3 +134,50 @@ class TestDoctorCommand:
         if result.exit_code == 1:
             # When checks fail without --fix, hint should appear
             assert "--fix" in result.output
+
+
+class TestDoctorJsonStdoutContract:
+    """``--json`` must always leave a parseable payload on stdout.
+
+    Machine consumers read stdout and parse it; a diagnostic probe that
+    cannot answer has to land *in* the payload as a failed check. If it
+    escapes instead, the command dies before serialising and the consumer
+    gets an empty stream with no way to tell "everything is fine" from
+    "the doctor never ran".
+    """
+
+    def test_json_payload_survives_a_probe_that_times_out(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A tool probe blowing its budget must not empty stdout."""
+        monkeypatch.chdir(tmp_path)
+        timeout = subprocess.TimeoutExpired(cmd=["uv", "run", "ruff", "--version"], timeout=10)
+        runner = CliRunner()
+        with patch("bernstein.core.quality.ci_fix.subprocess.run", side_effect=timeout):
+            result = runner.invoke(cli, ["doctor", "--json"])
+
+        payload = _parse_json_payload(result.output)
+        assert isinstance(payload["checks"], list)
+        assert payload["runtime"] in {"local", "codespace"}
+        ci_rows = [c for c in payload["checks"] if str(c["name"]).startswith("CI tool: ")]
+        assert ci_rows, "the CI tool probes must still be represented in the payload"
+        assert all(row["ok"] is False for row in ci_rows)
+
+
+def _parse_json_payload(output: str) -> dict[str, Any]:
+    """Pull the single top-level JSON object out of the doctor's stdout."""
+    start = output.find("{")
+    assert start != -1, f"no JSON object in output:\n{output!r}"
+    depth = 0
+    for idx in range(start, len(output)):
+        if output[idx] == "{":
+            depth += 1
+        elif output[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                payload = json.loads(output[start : idx + 1])
+                assert isinstance(payload, dict)
+                return payload
+    raise AssertionError(f"unterminated JSON in output:\n{output!r}")

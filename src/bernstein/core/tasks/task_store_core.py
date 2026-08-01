@@ -1089,6 +1089,10 @@ class TaskStore:
             "claimed_by_session": task.claimed_by_session,
             "parent_session_id": task.parent_session_id,
             "subtask_wait_started_at": task.subtask_wait_started_at,
+            # The parent agent's context summary is what ties a subtask back to
+            # the exploration that produced it; omitting it here rebuilt every
+            # subtask without its parent context after a replay.
+            "parent_context": task.parent_context,
             # retry bookkeeping (typed source of truth).
             "retry_count": task.retry_count,
             "max_retries": task.max_retries,
