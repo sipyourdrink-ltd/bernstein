@@ -1091,33 +1091,6 @@ def _doctor_check_compliance(checks: list[dict[str, Any]], workdir: Path) -> Non
             _add_check(checks, f"Compliance ({preset_label})", True, "all prerequisites met")
 
 
-def _doctor_check_secrets_yaml(checks: list[dict[str, Any]], workdir: Path) -> None:
-    """Check secrets provider connectivity from bernstein.yaml."""
-    try:
-        yaml_path = workdir / "bernstein.yaml"
-        if yaml_path.exists():
-            from bernstein.core.seed import parse_seed
-
-            seed = parse_seed(yaml_path)
-            if seed.secrets:
-                from bernstein.core.secrets import check_secrets_connectivity
-
-                ok, detail = check_secrets_connectivity(seed.secrets)
-                _add_check(
-                    checks,
-                    f"Secrets: {seed.secrets.provider}",
-                    ok,
-                    detail,
-                    f"Check {seed.secrets.provider} credentials and path {seed.secrets.path}" if not ok else "",
-                )
-            else:
-                _add_check(checks, "Secrets", True, "none (using environment variables)")
-        else:
-            _add_check(checks, "Secrets", True, "no bernstein.yaml (using environment variables)")
-    except Exception as exc:
-        _add_check(checks, "Secrets", False, f"configuration error: {exc}", "Check bernstein.yaml syntax")
-
-
 def _doctor_print_fix_summary(auto_fix: bool, fixed: list[str], manual_needed: list[str]) -> None:
     """Print auto-fix results if applicable."""
     if not auto_fix or not (fixed or manual_needed):
@@ -1216,8 +1189,6 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
-
-    _doctor_check_secrets_yaml(checks, workdir)
 
     if as_json or is_json():
         result_dict: dict[str, Any] = {"checks": checks}
