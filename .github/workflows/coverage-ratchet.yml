@@ -159,20 +159,42 @@ jobs:
           #
           # So: read the baseline on the ratchet branch and only proceed when
           # the new measurement is strictly greater.
+          # gh prints the API error body to STDOUT on failure, so an
+          # emptiness test on the captured output cannot detect a missing
+          # branch: a 404 body parses as JSON and then fails on the absent
+          # coverage key. Branch on the exit code instead, and separate a
+          # missing ref (fine: the ratchet PR merged and its branch was
+          # auto-deleted) from every other API failure (loud).
+          set +e
           open_json=$(gh api "repos/${REPO}/contents/.coverage-baseline.json?ref=${RATCHET_BRANCH}" \
-              -H "Accept: application/vnd.github.raw" 2>/dev/null || true)
-          if [ -z "${open_json}" ]; then
-            echo "::notice::no ${RATCHET_BRANCH} branch yet; opening a fresh ratchet PR."
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            exit 0
+              -H "Accept: application/vnd.github.raw" 2>gh-err.txt)
+          gh_rc=$?
+          set -e
+          if [ "${gh_rc}" -ne 0 ]; then
+            if grep -qE "HTTP 404|No commit found|Not Found" gh-err.txt; then
+              echo "::notice::no ${RATCHET_BRANCH} baseline (branch absent); opening a fresh ratchet PR."
+              rm -f gh-err.txt
+              echo "proceed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::could not read the open ratchet baseline (exit ${gh_rc}); refusing to guess."
+            cat gh-err.txt
+            rm -f gh-err.txt
+            exit 1
           fi
+          rm -f gh-err.txt
           printf '%s' "${open_json}" > open-baseline.json
           verdict=$(OPEN_BASELINE=open-baseline.json python3 - <<'PY'
           import json
           import os
+          import sys
 
           with open(os.environ["OPEN_BASELINE"], encoding="utf-8") as fh:
-              open_pct = float(json.load(fh)["total_coverage_percent"])
+              try:
+                  open_pct = float(json.load(fh)["total_coverage_percent"])
+              except (KeyError, ValueError, TypeError) as exc:
+                  print(f"::error::open ratchet baseline is malformed: {exc!r}", file=sys.stderr)
+                  raise SystemExit(1)
           measured = float(os.environ["MEASURED"])
           print(f"{'true' if measured > open_pct else 'false'} {open_pct}")
           PY
