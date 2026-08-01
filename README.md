@@ -32,7 +32,7 @@
 
 ---
 
-Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination loop - so runs are reproducible end to end. Every task runs in its own git worktree behind lint/type/test gates. Results stay checkable after the fact: an always-on lineage spine and replay journal, plus an opt-in HMAC-chained audit log (`--audit`) with receipts you can verify offline. Air-gap install profile included. Apache-2.0.
+Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination loop - so runs are reproducible end to end. Every task runs in its own git worktree behind lint/type/test gates. Results stay checkable after the fact: an always-on lineage spine and replay journal, plus an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) with receipts you can verify offline. Air-gap install profile included. Apache-2.0.
 
 ### at a glance
 
@@ -69,7 +69,7 @@ bernstein lineage verify <run_id>     # recompute the always-on lineage spine
 bernstein audit verify                # HMAC chain + Merkle seal (written because audit was enabled)
 ```
 
-The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `--audit`, `BERNSTEIN_AUDIT=1`, or a compliance preset.
+The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
 
 ### how it works
 
@@ -97,7 +97,7 @@ The full operator surface (PR automation, schedules, chat bridges, the autofix d
 
 ### supported agents
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 29 of them; `bernstein integrations list` enumerates all 48 wired-in adapters from `src/bernstein/adapters/use_cases.py`, which is the single source of truth. Anything else with a `--prompt` flag works through the generic wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 29 of them; `bernstein integrations list` enumerates all 48 wired-in adapters from the registry in `src/bernstein/adapters/registry.py`, which is the single source of truth for what resolves; `src/bernstein/adapters/use_cases.py` carries the end-user copy for each one. Anything else with a `--prompt` flag works through the generic wrapper.
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 

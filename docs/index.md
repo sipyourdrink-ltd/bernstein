@@ -29,7 +29,7 @@ Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents r
 
 No framework to learn. No vendor lock-in. Agents are interchangeable workers - swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
 
-Results stay checkable after the run ends: an always-on lineage spine and replay journal record what happened, and an opt-in HMAC-chained audit log (`--audit`) adds receipts you can verify offline.
+Results stay checkable after the run ends: an always-on lineage spine and replay journal record what happened, and an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) adds receipts you can verify offline.
 
 What "offline" means, precisely. `bernstein artifact verify` and `bernstein audit verify --merkle-only` need only the on-disk artefacts: the Ed25519 signature on every lineage entry, the parent-hash chain, the re-derived content hash, and the Merkle seal over the daily audit files all check without any secret. Replaying the per-line HMAC chain is different: `bernstein audit verify`, `--hmac-only`, `audit verify-hmac` and `audit verify --receipt` all need the install's audit key, which by design lives outside the audit volume. To hand a reviewer who does not hold that key something they can still authenticate, export a pack with `bernstein audit export --signature-kind hmac-chain+pubkey`; it signs the chain head with the lineage Ed25519 key, so the bundle verifies against a public key alone.
 
@@ -82,7 +82,8 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
     ---
 
     An always-on lineage spine and replay journal record every run.
-    Add `--audit` for an HMAC-chained audit log and receipts you can verify offline.
+    Set `BERNSTEIN_AUDIT=1` (or pass `--audit` to `bernstein run`) for an
+    HMAC-chained audit log and receipts you can verify offline.
 
 - :material-swap-horizontal:{ .lg .middle } **Any agent, any model**
 

@@ -12,8 +12,8 @@ These are honest workflow patterns pulled from Bernstein's own docs and CLI surf
 Specific shapes where the value lands:
 
 - engineering teams running >=3 CLI coding agents in parallel: each agent gets its own git worktree, the merge queue serialises landings, no race conditions
-- operators running compliance-sensitive workflows: every routing decision is plaintext, and with `--audit` the log is HMAC-signed and tamper-evident, no SaaS hop, no third-party data plane
-- platform teams that need an audit log of agent decisions: enable `--audit` and the orchestrator writes one row per scheduling decision, you can grep it
+- operators running compliance-sensitive workflows: every routing decision is plaintext, and with `BERNSTEIN_AUDIT=1` the log is HMAC-signed and tamper-evident, no SaaS hop, no third-party data plane
+- platform teams that need an audit log of agent decisions: set `BERNSTEIN_AUDIT=1` and the orchestrator writes one row per scheduling decision, you can grep it
 - anyone burning more than $1k/mo on coding agents who wants determinism: you can replay yesterday's plan and get yesterday's task graph
 - forward-deployed engineers dropping into a client repo: credentials stay in your env, not the client's; agents you spawn are whichever CLI tool the client already trusts
 - teams whose pipeline also produces non-code deliverables (a report, a dataset, an ops result): a task can complete on a signed lineage receipt instead of a git commit; see the [artifact contract](operations/artifacts.md) page for what is reachable today
