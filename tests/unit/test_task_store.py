@@ -21,6 +21,7 @@ def _task_request(
     scope: str = "medium",
     complexity: str = "medium",
     depends_on: list[str] | None = None,
+    parent_context: str | None = None,
 ) -> Any:
     """Build a create-task request object with the TaskCreate attributes TaskStore expects."""
     return SimpleNamespace(
@@ -41,6 +42,7 @@ def _task_request(
         batch_eligible=False,
         completion_signals=[],
         slack_context=None,
+        parent_context=parent_context,
     )
 
 
@@ -109,6 +111,34 @@ async def test_replay_jsonl_reconstructs_latest_task_state(tmp_path: Path) -> No
     assert restored is not None
     assert restored.status == TaskStatus.CLAIMED
     assert restored.version == 1
+
+
+@pytest.mark.anyio
+async def test_replay_jsonl_preserves_subtask_parent_context(tmp_path: Path) -> None:
+    """A subtask's parent_context survives the JSONL write/replay round-trip.
+
+    The parent agent's context summary is the only thing tying a subtask to
+    the exploration that produced it. If the serialiser drops it, the subtask
+    is silently rebuilt without that context after a restart and the spawned
+    agent starts cold.
+    """
+    jsonl_path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(jsonl_path)
+    parent_context = "Parent explored src/parser.py and chose a recursive-descent design."
+
+    task = await store.create(_task_request(parent_context=parent_context))
+    await store.flush_buffer()
+
+    in_memory = store.get_task(task.id)
+    assert in_memory is not None
+    assert in_memory.parent_context == parent_context
+
+    replayed = TaskStore(jsonl_path)
+    replayed.replay_jsonl()
+    restored = replayed.get_task(task.id)
+
+    assert restored is not None
+    assert restored.parent_context == parent_context
 
 
 @pytest.mark.anyio
