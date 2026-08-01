@@ -1,4 +1,5 @@
-"""Structural assertions on ``.github/workflows/publish.yml`` (issues #2642, #3325).
+"""Structural assertions on ``.github/workflows/publish.yml``
+(issues #2642, #3322, #3323, #3325).
 
 The MCP-registry publish job runs with ``id-token: write``; the tool it
 downloads and executes there must be pinned to an immutable release and
@@ -9,6 +10,14 @@ The RPM publish job is pinned for a different reason: it is the only
 distribution channel whose failure mode is invisible from the repository,
 so it must be reachable on the tag trigger and must fail the job instead of
 warning.
+
+Two further contracts are pinned here:
+
+* the npm wrapper publish must fail the job on a publish error instead of
+  demoting it to a warning inside a green run, and
+* every workflow that consumes the ``release: published`` event must also be
+  dispatched explicitly, because a release created with ``GITHUB_TOKEN`` never
+  emits that event.
 """
 
 from __future__ import annotations
@@ -26,7 +35,8 @@ except ModuleNotFoundError:  # pragma: no cover - dev env should have pyyaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
+WORKFLOW = WORKFLOWS_DIR / "publish.yml"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -35,6 +45,18 @@ def _load(path: Path) -> dict[str, Any]:
 
 COPR_JOB = "publish-copr"
 
+# Workflows that only ever ran off `release: published` and therefore never ran
+# for a release the publish chain created itself.
+RELEASE_EVENT_CONSUMERS = ("publish-docker.yml", "publish-homebrew.yml", "sbom.yml")
+
+_DISPATCH_RE = re.compile(r"gh workflow run\s+(?P<workflow>[\w.-]+\.ya?ml)")
+_DISPATCH_INPUT_RE = re.compile(r"-f\s+(?P<name>[A-Za-z_][\w-]*)=")
+
+
+def _steps(workflow: dict[str, Any], job_name: str) -> list[dict[str, Any]]:
+    job = workflow["jobs"][job_name]
+    return [step for step in job.get("steps", []) if isinstance(step, dict)]
+
 
 def _step(workflow: dict[str, Any], job_name: str, step_name: str) -> dict[str, Any]:
     job = workflow["jobs"][job_name]
@@ -42,6 +64,31 @@ def _step(workflow: dict[str, Any], job_name: str, step_name: str) -> dict[str, 
         if isinstance(step_value, dict) and step_value.get("name") == step_name:
             return cast("dict[str, Any]", step_value)
     pytest.fail(f"{WORKFLOW.name}::{job_name} has no step named {step_name!r}")
+
+
+def _dispatches(workflow: dict[str, Any], job_name: str) -> dict[str, set[str]]:
+    """Map dispatched workflow file -> the input names passed with ``-f``."""
+    dispatched: dict[str, set[str]] = {}
+    for step in _steps(workflow, job_name):
+        run = step.get("run")
+        if not isinstance(run, str):
+            continue
+        match = _DISPATCH_RE.search(run)
+        if match is None:
+            continue
+        dispatched[match.group("workflow")] = set(_DISPATCH_INPUT_RE.findall(run))
+    return dispatched
+
+
+def _declared_dispatch_inputs(workflow_file: str) -> set[str]:
+    doc = _load(WORKFLOWS_DIR / workflow_file)
+    triggers = doc.get("on", doc.get(True))
+    assert isinstance(triggers, dict), f"{workflow_file} must declare mapping-style triggers"
+    dispatch = triggers.get("workflow_dispatch")
+    assert isinstance(dispatch, dict), f"{workflow_file} must accept workflow_dispatch"
+    inputs = dispatch.get("inputs", {})
+    assert isinstance(inputs, dict)
+    return {str(name) for name in inputs}
 
 
 def _step_run(workflow: dict[str, Any], job_name: str, step_name: str) -> str:
@@ -184,3 +231,55 @@ def test_copr_replay_checks_out_packaging_sources_that_carry_the_builder(workflo
     )
     ref = checkout["with"]["ref"]
     assert "inputs.copr_only" in ref
+
+
+def test_npm_publish_failure_fails_the_job(workflow: dict[str, Any]) -> None:
+    """A failed wrapper publish must fail the job, not warn inside a green run."""
+    run = _step_run(workflow, "publish-npm", "Publish to npm")
+
+    assert "::warning::npm wrapper publish failed" not in run, (
+        "a publish failure demoted to ::warning: leaves the job green while the registry stays behind"
+    )
+    assert "::error::" in run, "a publish failure must be reported as an error annotation"
+    assert 'exit "$code"' in run, "the npm exit code must propagate to the job result"
+
+
+def test_npm_publish_tolerates_only_an_already_published_version(workflow: dict[str, Any]) -> None:
+    """The single non-fatal failure is a version already on the registry."""
+    run = _step_run(workflow, "publish-npm", "Publish to npm")
+
+    # npm reports a re-publish of an existing version as EPUBLISHCONFLICT
+    # (older clients: E403 "cannot publish over the previously published versions").
+    assert "EPUBLISHCONFLICT" in run
+    assert "cannot publish over the previously published version" in run
+    # The registry answers an unauthorised token with a 404 on the PUT. That
+    # must stay outside the tolerated set, or the original defect returns in a
+    # new shape.
+    assert "404" not in run, "a 404 (token without publish rights) must not be treated as success"
+
+
+def test_npm_missing_token_fails_the_job(workflow: dict[str, Any]) -> None:
+    """A release channel without its credential is a failure, not a silent skip."""
+    run = _step_run(workflow, "publish-npm", "Publish to npm")
+
+    assert "::warning::NPM_TOKEN is not configured" not in run
+    assert "::error::NPM_TOKEN is not configured" in run
+    assert "exit 1" in run
+
+
+def test_github_release_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
+    """A GITHUB_TOKEN release emits no `release: published`, so each consumer is dispatched."""
+    dispatched = _dispatches(workflow, "github-release")
+
+    for consumer in RELEASE_EVENT_CONSUMERS:
+        assert consumer in dispatched, f"{consumer} consumes `release: published` but is never dispatched"
+
+
+def test_dispatched_inputs_match_the_target_workflow_inputs(workflow: dict[str, Any]) -> None:
+    """Every `-f name=` passed on dispatch must be an input the target declares."""
+    dispatched = _dispatches(workflow, "github-release")
+
+    for workflow_file, passed_inputs in dispatched.items():
+        declared = _declared_dispatch_inputs(workflow_file)
+        unknown = passed_inputs - declared
+        assert not unknown, f"{workflow_file} does not declare dispatch input(s) {sorted(unknown)}"

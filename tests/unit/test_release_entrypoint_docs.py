@@ -22,7 +22,18 @@ RELEASE_ENTRYPOINTS: dict[str, tuple[str, ...]] = {
     "reconcile-release.yml": ("schedule", "workflow_dispatch"),
     "publish-docker.yml": ("release", "workflow_dispatch"),
     "publish-homebrew.yml": ("release", "workflow_dispatch"),
+    "sbom.yml": ("release", "workflow_dispatch"),
 }
+
+# Release-event consumers. A release created with GITHUB_TOKEN emits no
+# `release: published` event, so the ownership table must describe each of
+# these as dispatched by publish.yml rather than as running "after a GitHub
+# Release is published" (issue #3323).
+DISPATCHED_BY_PUBLISH: tuple[str, ...] = (
+    "publish-docker.yml",
+    "publish-homebrew.yml",
+    "sbom.yml",
+)
 
 
 @dataclass(frozen=True)
@@ -98,3 +109,18 @@ def test_release_entrypoint_doc_references_actual_workflows() -> None:
         for trigger in expected_triggers:
             assert trigger in workflow_triggers, f"{documented_path} no longer has trigger {trigger}"
             assert trigger in row.triggers, f"{documented_path} doc row must list trigger {trigger}"
+
+
+def test_release_event_consumers_are_documented_as_dispatched() -> None:
+    """The doc must not claim a release event starts workflows it cannot start."""
+    rows = _release_table_rows(RELEASE_DOC.read_text(encoding="utf-8"))
+
+    for workflow_file in DISPATCHED_BY_PUBLISH:
+        documented_path = f".github/workflows/{workflow_file}"
+        row = rows[documented_path]
+        assert "dispatch" in row.handoff.lower(), (
+            f"{documented_path} is dispatched by publish.yml; the handoff column must say so"
+        )
+        assert "Runs after a GitHub Release is published, or manually" not in row.handoff, (
+            f"{documented_path} does not run off the release event for an automated release"
+        )

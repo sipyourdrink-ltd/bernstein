@@ -1,11 +1,18 @@
 name: Reconcile release drift
 
 # Daily safety net for the silent-skip class of bugs (#1273).
-# If `pyproject.toml` on main declares a version that PyPI does NOT
-# yet have AND the version commit is older than ~24h, something
-# upstream (CI / auto-release) silently dropped the publish. Open a
-# tracking issue for the operator. Re-running on the same day must not
-# spam.
+# If `pyproject.toml` on main declares a version that a published channel does
+# NOT yet have AND the version commit is older than ~24h, something upstream
+# (CI / auto-release / a publish job) silently dropped that channel. Open a
+# tracking issue for the operator. Re-running on the same day must not spam.
+#
+# The comparison set covers every channel the publish chain writes to, because
+# a channel nobody compares cannot be seen to fall behind (#3322, #3323):
+#   * PyPI                  - the sdist/wheel line
+#   * Copr                  - the RPM channel
+#   * npm                   - the `bernstein-orchestrator` wrapper
+#   * Homebrew tap          - the formula's pinned version
+#   * GitHub Release assets - dist artefacts and both SBOMs
 
 on:
   schedule:
@@ -57,11 +64,32 @@ jobs:
           import urllib.error
           import urllib.request
 
+          USER_AGENT = "bernstein-reconcile-release"
+          # Both SBOMs are attached to every release by `.github/workflows/sbom.yml`.
+          SBOM_ASSETS = ("bernstein.spdx.json", "bernstein.cyclonedx.json")
+
           def parse_version(s: str) -> tuple[int, ...]:
               # Tolerant tuple-of-ints parse. Pre-release suffixes (-rc1, .dev0)
               # get stripped; we only need ordering on the public release line.
               core = re.split(r"[^0-9.]", s, maxsplit=1)[0].strip(".")
               return tuple(int(p) for p in core.split(".") if p.isdigit())
+
+          def probe(label, url, extract, accept="application/json"):
+              # Read one channel's current version, or "unknown" when the channel
+              # cannot be read. Same bargain the Copr lookup below makes: one
+              # registry's outage must not take the rest of the comparison down
+              # with it, the warning keeps the degraded run visible in the job
+              # log, and "unknown" keeps that channel out of the drift verdict
+              # rather than reporting a version nobody checked.
+              try:
+                  req = urllib.request.Request(
+                      url, headers={"User-Agent": USER_AGENT, "Accept": accept}
+                  )
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      return extract(resp.read())
+              except (urllib.error.URLError, TimeoutError, ValueError, KeyError, OSError, TypeError) as exc:
+                  print(f"::warning::could not read the {label} channel state ({exc}); {label} drift not checked")
+                  return "unknown"
 
           # Read pyproject.toml version from the checked-out tree (main).
           with open("pyproject.toml", encoding="utf-8") as fh:
@@ -105,6 +133,31 @@ jobs:
               # the warning keeps the degraded run visible in the job log.
               print(f"::warning::could not read the Copr package state ({exc}); RPM drift not checked")
 
+          # npm wrapper. publish.yml versions packaging/npm straight from the
+          # release tag, so the `latest` dist-tag tracks the same line as
+          # pyproject.toml; anything older means a publish was dropped (#3322).
+          npm_version = probe(
+              "npm",
+              "https://registry.npmjs.org/bernstein-orchestrator",
+              lambda raw: str(json.loads(raw)["dist-tags"]["latest"]),
+              accept="application/vnd.npm.install-v1+json",
+          )
+
+          # Homebrew tap formula. The formula pins the PyPI sdist of the version
+          # it serves, so the URL carries the version the tap is on (#3323).
+          def _tap_version(raw: bytes) -> str:
+              found = re.search(r"bernstein-([0-9][0-9A-Za-z.\-]*)\.tar\.gz", raw.decode("utf-8"))
+              if found is None:
+                  raise ValueError("tap formula has no bernstein-<version>.tar.gz url")
+              return found.group(1)
+
+          brew_version = probe(
+              "Homebrew tap",
+              "https://raw.githubusercontent.com/chernistry/homebrew-tap/HEAD/Formula/bernstein.rb",
+              _tap_version,
+              accept="text/plain",
+          )
+
           pj_t = parse_version(pj_version)
           pypi_t = parse_version(pypi_version)
 
@@ -120,20 +173,22 @@ jobs:
                   "--json",
                   "assets",
                   "--jq",
-                  ".assets | length",
+                  "[.assets[].name]",
               ],
               check=False,
               capture_output=True,
               text=True,
           )
           release_exists = release_assets.returncode == 0
-          asset_count = 0
+          asset_names = []
           if release_exists:
               try:
-                  asset_count = int(release_assets.stdout.strip())
-              except ValueError:
-                  print(f"::error::could not parse GitHub Release asset count for {release_tag}")
+                  asset_names = json.loads(release_assets.stdout.strip() or "[]")
+              except json.JSONDecodeError:
+                  print(f"::error::could not parse GitHub Release asset list for {release_tag}")
                   sys.exit(1)
+          asset_count = len(asset_names)
+          absent_sboms = [name for name in SBOM_ASSETS if name not in asset_names]
 
           # Age of the pyproject.toml change (when did the version line last move?).
           # We use git blame on the version line; the diff threshold is >24h.
@@ -149,25 +204,53 @@ jobs:
           print(f"pj_version={pj_version}")
           print(f"pypi_version={pypi_version}")
           print(f"copr_version={copr_version}")
+          print(f"npm_version={npm_version}")
+          print(f"brew_version={brew_version}")
           print(f"pj_age_hours={pj_age_hours}")
           print(f"release_exists={'true' if release_exists else 'false'}")
           print(f"asset_count={asset_count}")
+          print(f"absent_sboms={','.join(absent_sboms) if absent_sboms else '-'}")
 
-          version_drift = pj_t > pypi_t and pj_age_hours >= 24
+          # A channel is only "behind" once the bump has had a full publish
+          # window to land, so every version comparison shares the age gate.
+          settled = pj_age_hours >= 24
+          version_drift = pj_t > pypi_t and settled
           missing_assets = release_exists and asset_count == 0
-          # An unreadable Copr state is reported as a warning above, not as
+          # An unreadable channel state is reported as a warning above, not as
           # drift: it says nothing about what the channel actually holds.
           copr_drift = (
               copr_version != "unknown"
               and pj_t > parse_version(copr_version)
-              and pj_age_hours >= 24
+              and settled
           )
+          npm_drift = npm_version != "unknown" and pj_t > parse_version(npm_version) and settled
+          brew_drift = brew_version != "unknown" and pj_t > parse_version(brew_version) and settled
+          missing_sboms = release_exists and settled and bool(absent_sboms)
           print(f"version_drift={'true' if version_drift else 'false'}")
           print(f"missing_assets={'true' if missing_assets else 'false'}")
           print(f"copr_drift={'true' if copr_drift else 'false'}")
+          print(f"npm_drift={'true' if npm_drift else 'false'}")
+          print(f"brew_drift={'true' if brew_drift else 'false'}")
+          print(f"missing_sboms={'true' if missing_sboms else 'false'}")
 
-          drift = version_drift or missing_assets or copr_drift
+          drift = version_drift or missing_assets or copr_drift or npm_drift or brew_drift or missing_sboms
           print(f"drift={'true' if drift else 'false'}")
+
+          # Name the channels that are behind so the tracking issue points at
+          # the one that needs attention instead of at "the release".
+          behind = [
+              label
+              for label, flagged in (
+                  ("pypi", version_drift),
+                  ("release-assets", missing_assets),
+                  ("copr", copr_drift),
+                  ("npm", npm_drift),
+                  ("homebrew", brew_drift),
+                  ("sbom", missing_sboms),
+              )
+              if flagged
+          ]
+          print(f"behind={','.join(behind) if behind else '-'}")
           PY
 
       - name: Open or update drift issue (idempotent)
@@ -178,28 +261,38 @@ jobs:
           PYPI: ${{ steps.cmp.outputs.pypi_version }}
           COPR: ${{ steps.cmp.outputs.copr_version }}
           COPR_DRIFT: ${{ steps.cmp.outputs.copr_drift }}
+          NPM: ${{ steps.cmp.outputs.npm_version }}
+          BREW: ${{ steps.cmp.outputs.brew_version }}
           AGE: ${{ steps.cmp.outputs.pj_age_hours }}
           RELEASE_EXISTS: ${{ steps.cmp.outputs.release_exists }}
           ASSET_COUNT: ${{ steps.cmp.outputs.asset_count }}
           MISSING_ASSETS: ${{ steps.cmp.outputs.missing_assets }}
+          MISSING_SBOMS: ${{ steps.cmp.outputs.missing_sboms }}
+          ABSENT_SBOMS: ${{ steps.cmp.outputs.absent_sboms }}
+          BEHIND: ${{ steps.cmp.outputs.behind }}
           REPO: ${{ github.repository }}
         run: |
-          TITLE="release drift: pyproject=\`${PJ}\` pypi=\`${PYPI}\` copr=\`${COPR}\`"
+          # The title names the channels that are behind rather than every
+          # channel's version: the set grew past what a title can carry, and
+          # the channel that needs attention is the useful part.
+          TITLE="release drift: pyproject=\`${PJ}\` behind=\`${BEHIND}\`"
           if [ "${MISSING_ASSETS}" = "true" ]; then
             CAUSE="GitHub Release missing dist assets."
           elif [ "${COPR_DRIFT}" = "true" ]; then
             CAUSE="The RPM channel is behind: re-run the Copr publish with \`gh workflow run publish.yml --ref main -f tag=v${PJ} -f copr_only=true\`."
+          elif [ "${MISSING_SBOMS}" = "true" ]; then
+            CAUSE="GitHub Release missing SBOM assets (\`${ABSENT_SBOMS}\`); \`sbom.yml\` did not attach them for this release."
           else
-            CAUSE="Likely cause: a CI run was cancelled/timed_out/action_required so \`auto-release.yml\` silently skipped the publish (see #1273)."
+            CAUSE="Likely cause: a CI run was cancelled/timed_out/action_required so \`auto-release.yml\` silently skipped the publish (see #1273), or the publish job for the named channel failed."
           fi
           # shellcheck disable=SC2016
-          BODY=$(printf 'Detected by `.github/workflows/reconcile-release.yml`.\n\n- pyproject.toml on main: **%s**\n- latest on PyPI: **%s**\n- latest on Copr: **%s**\n- age of pyproject bump: %sh\n- GitHub Release exists: **%s**\n- GitHub Release asset count: **%s**\n\n%s\n\nRun `gh workflow run reconcile-release.yml` after fixing to clear.\n' \
-            "${PJ}" "${PYPI}" "${COPR}" "${AGE}" "${RELEASE_EXISTS}" "${ASSET_COUNT}" "${CAUSE}")
+          BODY=$(printf 'Detected by `.github/workflows/reconcile-release.yml`.\n\n- pyproject.toml on main: **%s**\n- latest on PyPI: **%s**\n- latest on Copr: **%s**\n- latest on npm (`bernstein-orchestrator`): **%s**\n- Homebrew tap formula: **%s**\n- age of pyproject bump: %sh\n- GitHub Release exists: **%s**\n- GitHub Release asset count: **%s**\n- SBOM assets absent: **%s**\n- channels behind: **%s**\n\n%s\n\nRun `gh workflow run reconcile-release.yml` after fixing to clear.\n' \
+            "${PJ}" "${PYPI}" "${COPR}" "${NPM}" "${BREW}" "${AGE}" "${RELEASE_EXISTS}" "${ASSET_COUNT}" "${ABSENT_SBOMS}" "${BEHIND}" "${CAUSE}")
 
-          # Idempotency: search for an open issue whose title matches the
-          # exact channel triple. Re-runs the same day just comment.
+          # Idempotency: search for an open issue whose title matches the exact
+          # pyproject version and channel set. Re-runs the same day just comment.
           EXISTING=$(gh issue list --repo "${REPO}" --state open \
-            --search "in:title release drift pyproject=${PJ} pypi=${PYPI} copr=${COPR}" \
+            --search "in:title release drift pyproject=${PJ}" \
             --json number,title \
             --jq ".[] | select(.title == \"${TITLE}\") | .number" \
             | head -1)
@@ -217,16 +310,18 @@ jobs:
           fi
 
       - name: Auto-close stale drift issues (no drift today)
-        # When PyPI catches up the old `release drift: pyproject=… pypi=…`
-        # issue stays OPEN forever because the previous "open or update"
-        # step only fires on the drift==true branch. Close any open
-        # release-drift issue here so the inbox self-clears on the next
-        # successful publish.
+        # When the channels catch up, the old `release drift: …` issue stays
+        # OPEN forever because the previous "open or update" step only fires
+        # on the drift==true branch. Close any open release-drift issue here
+        # so the inbox self-clears on the next successful publish.
         if: steps.cmp.outputs.drift != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PYPI_VERSION: ${{ steps.cmp.outputs.pypi_version }}
+          COPR_VERSION: ${{ steps.cmp.outputs.copr_version }}
+          NPM_VERSION: ${{ steps.cmp.outputs.npm_version }}
+          BREW_VERSION: ${{ steps.cmp.outputs.brew_version }}
         run: |
           set -euo pipefail
           OPEN=$(gh issue list \
@@ -239,11 +334,12 @@ jobs:
             echo "::notice::No open release-drift issues to close."
             exit 0
           fi
+          CLEARED="PyPI \`${PYPI_VERSION}\`, Copr \`${COPR_VERSION}\`, npm \`${NPM_VERSION}\`, Homebrew \`${BREW_VERSION}\`"
           for NUM in $OPEN; do
-            echo "Closing release-drift issue #${NUM} (PyPI now at ${PYPI_VERSION})."
+            echo "Closing release-drift issue #${NUM} (${CLEARED})."
             gh issue close "$NUM" \
               --repo "${REPO}" \
-              --comment "PyPI now reports \`${PYPI_VERSION}\`; drift cleared on $(date -u +%Y-%m-%dT%H:%MZ)." \
+              --comment "Every channel is level: ${CLEARED}; drift cleared on $(date -u +%Y-%m-%dT%H:%MZ)." \
               --reason completed || true
           done
 
@@ -253,7 +349,10 @@ jobs:
           PJ_VERSION: ${{ steps.cmp.outputs.pj_version }}
           PYPI_VERSION: ${{ steps.cmp.outputs.pypi_version }}
           COPR_VERSION: ${{ steps.cmp.outputs.copr_version }}
+          NPM_VERSION: ${{ steps.cmp.outputs.npm_version }}
+          BREW_VERSION: ${{ steps.cmp.outputs.brew_version }}
           ASSET_COUNT: ${{ steps.cmp.outputs.asset_count }}
           MISSING_ASSETS: ${{ steps.cmp.outputs.missing_assets }}
+          MISSING_SBOMS: ${{ steps.cmp.outputs.missing_sboms }}
         run: |
-          echo "::notice::No release drift detected (pyproject=${PJ_VERSION}, pypi=${PYPI_VERSION}, copr=${COPR_VERSION}, assets=${ASSET_COUNT}, missing_assets=${MISSING_ASSETS})."
+          echo "::notice::No release drift detected (pyproject=${PJ_VERSION}, pypi=${PYPI_VERSION}, copr=${COPR_VERSION}, npm=${NPM_VERSION}, homebrew=${BREW_VERSION}, assets=${ASSET_COUNT}, missing_assets=${MISSING_ASSETS}, missing_sboms=${MISSING_SBOMS})."

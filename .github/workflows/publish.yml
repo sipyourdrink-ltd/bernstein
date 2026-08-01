@@ -248,8 +248,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      # actions: write is required to dispatch publish-docker.yml below (a
-      # release created with GITHUB_TOKEN does not emit `release: published`).
+      # actions: write is required to dispatch the release follow-up workflows
+      # below (a release created with GITHUB_TOKEN does not emit
+      # `release: published`, so none of them start on their own).
       actions: write
     steps:
       - name: Harden runner (audit mode)
@@ -285,18 +286,34 @@ jobs:
             exit 1
           fi
 
-      # publish-docker.yml fires on `release: published`, but a release
-      # created with GITHUB_TOKEN does not emit that event (loop-prevention on
-      # token-authored events), so GHCR would never build. Dispatch it
-      # explicitly. publish-docker.yml keeps its native `release: published`
-      # trigger for releases created by a human or PAT; workflow_dispatch is
-      # exempt from the loop-prevention, and a repeat build for the same tag
-      # is harmless (idempotent image push).
+      # Three workflows fire on `release: published`, but a release created
+      # with GITHUB_TOKEN does not emit that event (loop-prevention on
+      # token-authored events), so none of them would ever run for an
+      # automated release. Dispatch each one explicitly. All three keep their
+      # native `release: published` trigger for releases created by a human or
+      # PAT; workflow_dispatch is exempt from the loop-prevention, and every
+      # one of them is idempotent for a repeated run on the same tag (image
+      # push, formula commit, SBOM asset upload).
       - name: Dispatch docker publish (release event from GITHUB_TOKEN does not trigger it)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.RELEASE_TAG }}
         run: gh workflow run publish-docker.yml --ref main -f tag="$TAG"
+
+      # publish-homebrew.yml takes the bare version (3.12.0), not the tag.
+      - name: Dispatch Homebrew formula publish (release event from GITHUB_TOKEN does not trigger it)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: gh workflow run publish-homebrew.yml --ref main -f version="${TAG#v}"
+
+      # sbom.yml takes the tag as its build ref and attaches both SBOMs to the
+      # release it resolves for that ref.
+      - name: Dispatch SBOM generation (release event from GITHUB_TOKEN does not trigger it)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: gh workflow run sbom.yml --ref main -f ref="$TAG"
 
   publish-npm:
     name: Publish npm wrapper
@@ -335,14 +352,41 @@ jobs:
         # Trusted publishing for the npm wrapper needs a registry-side
         # publisher configuration; token auth stays until that exists.
         run: | # zizmor: ignore[use-trusted-publishing]
+          set -uo pipefail
           if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "::warning::NPM_TOKEN is not configured; skipping npm wrapper publish"
-            exit 0
+            echo "::error::NPM_TOKEN is not configured; the npm wrapper cannot be published"
+            exit 1
           fi
           cd packaging/npm
-          if ! npm publish --access public; then
-            echo "::warning::npm wrapper publish failed; continuing release"
+          # This step used to demote every publish failure to a ::warning, so an
+          # unauthorised token produced a green job while the registry kept
+          # serving the last version that did publish. Exactly one failure is
+          # legitimately non-fatal: the version is already on the registry,
+          # which happens when this job runs twice for the same tag (a workflow
+          # re-run, or the tag-push and workflow_dispatch triggers racing).
+          # npm reports that as EPUBLISHCONFLICT; older clients report an E403
+          # "cannot publish over the previously published versions". Everything
+          # else -- including the "Not Found" the registry returns for a token
+          # without publish rights on the package -- fails the job.
+          #
+          # GitHub runs this step under `bash -e`, so errexit is disabled
+          # around the capture; without it the `out=$(...)` assignment would
+          # abort the step before the exit code can be classified.
+          set +e
+          out=$(npm publish --access public 2>&1)
+          code=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$code" -eq 0 ]; then
+            exit 0
           fi
+          if printf '%s' "$out" \
+            | grep -qiE 'EPUBLISHCONFLICT|cannot publish over the previously published version'; then
+            echo "::notice::npm wrapper version is already on the registry; treating the conflict as success (idempotent)"
+            exit 0
+          fi
+          echo "::error::npm wrapper publish failed (exit ${code}); the registry is now behind this release"
+          exit "$code"
 
   # RPM channel (#3325). packaging/rpm/bernstein.spec ships a wrapper that
   # resolves the package from PyPI at run time, so this job waits for the PyPI
