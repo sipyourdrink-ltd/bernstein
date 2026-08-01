@@ -1,5 +1,12 @@
 # Cloudflare Integration Overview
 
+!!! warning "Experimental; hosted API not yet available"
+    Cloud execution is experimental. Workers, R2, D1, and Workers AI run
+    against **your own** Cloudflare account. The hosted Bernstein Cloud API at
+    `api.bernstein.run` does not resolve in DNS, so `bernstein cloud login`,
+    `run`, `status`, `runs`, and `cost` report that the service is unreachable
+    and exit non-zero.
+
 Bernstein can run agents locally or in the cloud. The Cloudflare integration lets you execute agents on Cloudflare's edge infrastructure using Workers, Durable Objects, and Workflows -- while the orchestrator stays deterministic and local.
 
 ---

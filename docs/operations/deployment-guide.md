@@ -858,8 +858,9 @@ Bernstein can execute agents on Cloudflare's edge infrastructure instead of loca
 npm install -g wrangler
 wrangler login
 
-# 2. Deploy the agent Worker
-bernstein cloud deploy --worker-name bernstein-agent
+# 2. Scaffold the agent Worker, set account_id in wrangler.toml, then deploy it
+bernstein cloud init --worker-name bernstein-agent
+npx wrangler deploy
 
 # 3. Authenticate with Bernstein Cloud
 bernstein cloud login
@@ -869,8 +870,10 @@ bernstein cloud run "Add OAuth2 authentication" --max-agents 5 --budget 25.00
 ```
 
 `cloud login`, `cloud run`, `cloud status`, and `cloud cost` target the
-experimental, currently-unavailable `api.bernstein.run`; `cloud deploy` and
-`cloud init` run locally against your own Cloudflare account.
+experimental, currently-unavailable `api.bernstein.run`; `cloud init` runs
+locally against your own Cloudflare account, and step 2's `wrangler deploy`
+talks to Cloudflare directly. Steps 3 and 4 do not work until the hosted
+service exists.
 
 ### What runs where
 

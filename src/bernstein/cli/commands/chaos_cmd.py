@@ -1,16 +1,14 @@
 """Chaos engineering CLI for agent systems.
 
-Periodically inject failures to test resilience:
+Inject failures to test resilience:
 - Kill a random agent mid-task
-- Simulate rate limit
 - Remove a file being edited
-- Inject random errors
 
 Usage:
   bernstein chaos agent-kill     Kill a random active agent
-  bernstein chaos rate-limit     Simulate API rate limiting
   bernstein chaos file-remove    Remove a file an agent is editing
   bernstein chaos status         Show chaos experiment history
+  bernstein chaos slo            Show the SLO dashboard
 """
 
 from __future__ import annotations

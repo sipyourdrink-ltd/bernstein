@@ -134,8 +134,8 @@ bernstein cloud init                 # writes wrangler.toml + src/index.js
 npx wrangler deploy --name bernstein-agent
 ```
 
-`bernstein cloud deploy --worker-name bernstein-agent` prints the same
-`wrangler deploy` command for reference.
+`bernstein cloud init` only scaffolds; the deploy itself is a wrangler step
+run against your own Cloudflare account.
 
 ---
 

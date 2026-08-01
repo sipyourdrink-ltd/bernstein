@@ -374,7 +374,7 @@ set. (`cli/commands/advanced_cmd.py`, `core/observability/otel_projection.py`.)
 | `bernstein verify` | Verify WAL integrity, execution determinism, memory provenance, formal properties, or a wheelhouse. | `cli/commands/verify_cmd.py` |
 | `bernstein autofix` | Auto-repair CI failures (group). | `cli/commands/autofix_cmd.py:172` |
 | `bernstein ci` | CI integration commands (group). | `cli/commands/ci_cmd.py:49` |
-| `bernstein chaos` | Chaos engineering (group). | `cli/commands/chaos_cmd.py:32` |
+| `bernstein chaos` | Chaos engineering (group). | `cli/commands/chaos_cmd.py:33` |
 | `bernstein eval` | Evaluation pipelines (group). | `cli/commands/eval_benchmark_cmd.py:426` |
 | `bernstein benchmark` | Benchmark pipelines (group). | `cli/commands/eval_benchmark_cmd.py:29` |
 | `bernstein api-check` | Detect breaking-API changes. | `cli/api_check_cmd.py:22` |
@@ -420,13 +420,11 @@ Common flags: `--token` (env: `GITHUB_TOKEN`), `--server`, `--interval`. (`cli/c
 | Subcommand | Purpose |
 |---|---|
 | `agent-kill` | Kill a random or specific agent. |
-| `rate-limit` | Simulate provider rate-limit. |
 | `file-remove` | Delete files matching a glob. |
-| `pause-agent` | Pause an agent for N seconds. |
 | `status` | Show recent chaos events. |
 | `slo` | SLO impact of recent chaos events. |
 
-Most subcommands accept `--agent-id`, `--duration`, `--pattern` as relevant. (`cli/commands/chaos_cmd.py:32+`.)
+`agent-kill` accepts `--agent-id`, `file-remove` accepts `--pattern`, and `status` accepts `--limit`. (`cli/commands/chaos_cmd.py:33+`.)
 
 #### `bernstein eval` / `bernstein benchmark`
 
@@ -1245,7 +1243,7 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein ab-test` | A/B model comparison. | `cli/commands/ab_test_cmd.py:14` |
 | `bernstein acp serve` | Run an ACP server. | `cli/commands/acp_cmd.py:33` |
 | `bernstein scaffold "<prompt>"` | Bootstrap a project from a prompt. | `cli/commands/scaffold_cmd.py` |
-| `bernstein test` | Run automated resilience tests with optional chaos injection. | `cli/test_cmd.py:13` |
+| `bernstein test` | Run automated resilience tests. | `cli/commands/test_cmd.py:13` |
 | `bernstein wiki build` | Render `WIKI.md` from the AST symbol graph. | `cli/commands/wiki_cmd.py` |
 | `bernstein workflow` | Workflow mgmt (group). | `cli/workflow_cmd.py:15` |
 | `bernstein replay RUN_ID --verify` / `--from-step N` | Recompute the run journal's Merkle head and report the first divergent step (writes `divergence_report.json`), or rebuild deterministic state to step N. | `cli/commands/advanced_cmd.py` |
@@ -1325,12 +1323,11 @@ Experimental voice control (see [`operations/voice-control.md`](../operations/vo
 
 #### `bernstein test`
 
-Runs automated resilience tests with optional chaos injection. This is not a project test-suite runner; use `bernstein.yaml: quality_gates.tests` (and your configured test runner) for that.
+Runs automated resilience tests. This is not a project test-suite runner; use `bernstein.yaml: quality_gates.tests` (and your configured test runner) for that.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--chaos` | off | Enable random chaos injection during the test. |
-| `--duration N` | none | Test duration in seconds. |
+| `--duration N` | 300 | Test duration in seconds. |
 | `--workdir PATH` | `.` | Project root. |
 
 #### `bernstein wiki build`
