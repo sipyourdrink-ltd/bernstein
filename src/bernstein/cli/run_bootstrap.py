@@ -1007,9 +1007,13 @@ def _init_impl(
     console.print("  1. Edit [bold]bernstein.yaml[/bold]: set a goal")
     console.print("  2. Run [bold]bernstein[/bold] to start the orchestra")
     console.print("")
+    # ``examples/`` is a repo directory and is not part of the wheel, so an
+    # operator who installed from PyPI has no such path to look at. The
+    # quickstart command carries its own inline copy of the sample project and
+    # works from any install.
     console.print(
         "  See [link=https://bernstein.readthedocs.io/en/latest/]docs[/link] "
-        "or [bold]examples/quickstart/[/bold] for a working example."
+        "or run [bold]bernstein quickstart[/bold] for a working example."
     )
 
 
