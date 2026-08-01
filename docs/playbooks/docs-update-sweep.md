@@ -10,7 +10,9 @@ across multiple agents without merge conflicts.
 
 Run a full sweep on any of the following triggers:
 
-- After a release tag has been cut (release-please merge to `main`).
+- After a release tag has been cut (`.github/workflows/auto-release.yml`
+  pushes the `v*` tag once a version-bump PR merges to `main` and CI
+  passes).
 - After a feature wave lands a set of related PRs that touched multiple
   source-of-truth modules (typically 5+ PRs that each named a module from
   `docs-drift.md`).
@@ -41,8 +43,7 @@ Recommended split for a full sweep: assign one agent per partition. The
 is already running because the row count is small.
 
 Each agent works on its own branch, opens its own PR, and never touches
-files outside its partition. The merge train (release-please or the
-operator) handles ordering of PRs.
+files outside its partition. The operator handles ordering of PRs.
 
 ## Per-partition recipe
 
@@ -129,7 +130,7 @@ touch the same file. Conflict avoidance rules:
   picks it up.
 - Each agent opens a separate PR. Do not stack PRs unless the operator
   explicitly requests it.
-- The merge train (release-please plus the operator) orders the PRs. The
+- The operator orders the PRs. The
   drift gate runs on every PR and on `main`, so the order of merges does
   not matter as long as each PR is internally consistent.
 - If two partitions both name the same source-of-truth file (this should
@@ -169,6 +170,9 @@ The following items are explicitly out of scope for a docs-update sweep:
   `docs/release-notes/unreleased.md` for what has landed since the newest
   tag; a feature-wave PR may append to that page but a docs sweep does not
   touch it.
+- Release tags themselves are cut by the tag-based
+  `.github/workflows/auto-release.yml` flow (a version-bump PR merged on
+  main triggers the tag); a docs sweep never touches that workflow.
 - Any doc that names a third-party ecosystem tool in its filename and
   exists only as an integration memo is treated as static for sweep
   purposes; refresh only on explicit operator request.

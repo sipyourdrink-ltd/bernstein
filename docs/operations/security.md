@@ -44,7 +44,7 @@ existing artefacts in this repository.
 | Documented contribution process | `CONTRIBUTING.md`. |
 | OSI-approved license, license file present | `LICENSE` (Apache-2.0). |
 | Documented build instructions | `README.md` "install" section; `docs/getting-started/install.md`. |
-| Cryptographically signed releases | `release-please` + signed PyPI uploads; `SECURITY.md`. |
+| Cryptographically signed releases | Tag-based `.github/workflows/auto-release.yml` hands off to `publish.yml` (Sigstore build-provenance attestation) + signed PyPI uploads; `SECURITY.md`. |
 | Vulnerability reporting process | `SECURITY.md`. |
 | Documented secure development knowledge for at least one committer | `docs/operations/security-and-identity.md`; CONTRIBUTING checklist. |
 | Public bug tracker | GitHub Issues. |
