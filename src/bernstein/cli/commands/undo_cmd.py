@@ -91,24 +91,31 @@ def _execute_reverts(commits: list[tuple[str, str]]) -> int:
 
 
 def _log_undo_audit(task_id: str | None, revert_all: bool, success_count: int) -> None:
-    """Log undo action to audit trail (best-effort)."""
-    with suppress(Exception):
-        from bernstein.core.lifecycle import get_audit_log
+    """Log undo action to audit trail (best-effort).
 
-        audit = get_audit_log()
-        if audit:
-            audit.log(
-                event_type="git.undo",
-                actor="user",
-                resource_type="session",
-                resource_id=task_id or "all",
-                details={
-                    "action": "revert",
-                    "commit_count": success_count,
-                    "task_id": task_id,
-                    "revert_all": revert_all,
-                },
-            )
+    The import below must resolve for any correctly-installed bernstein
+    package, so it is allowed to raise if it doesn't - that would signal a
+    broken install, not a normal runtime condition. Only the write itself is
+    best-effort: a misbehaving audit backend must not fail the undo.
+    """
+    from bernstein.core.tasks.lifecycle import get_audit_log
+
+    audit = get_audit_log()
+    if audit is None:
+        return
+    with suppress(Exception):
+        audit.log(
+            event_type="git.undo",
+            actor="user",
+            resource_type="session",
+            resource_id=task_id or "all",
+            details={
+                "action": "revert",
+                "commit_count": success_count,
+                "task_id": task_id,
+                "revert_all": revert_all,
+            },
+        )
 
 
 def _run_post_revert_tests() -> None:
