@@ -236,15 +236,25 @@ def test_auto_release_does_not_create_github_releases() -> None:
 
 
 def test_npm_publish_failures_do_not_block_python_release() -> None:
-    """The npm wrapper is advisory and must not block Python release publication."""
+    """The npm wrapper stays off the Python release critical path.
+
+    The wrapper used to be kept off that path by swallowing its own failures,
+    which also hid a broken token for months (#3322). Isolation is a property
+    of the job graph, not of the step's error handling: no job may depend on
+    ``publish-npm``, so a red wrapper publish reports the problem without
+    holding back PyPI or the GitHub Release.
+    """
     data = _load_yaml(PUBLISH_WF)
     job = _job(data, "publish-npm")
     assert job.get("name") == "Publish npm wrapper"
 
+    jobs = cast("YamlMap", data["jobs"])
+    for job_id, raw_job in jobs.items():
+        needs = cast("YamlMap", raw_job).get("needs")
+        dependencies = [needs] if isinstance(needs, str) else list(needs or [])
+        assert "publish-npm" not in dependencies, f"job {job_id!r} would be blocked by the npm wrapper publish"
+
     publish_step = _step(data, "publish-npm", "Publish to npm")
     run = publish_step.get("run")
     assert isinstance(run, str)
-    assert "::error::" not in run
-    assert "::warning::NPM_TOKEN is not configured; skipping npm wrapper publish" in run
-    assert "::warning::npm wrapper publish failed; continuing release" in run
     assert "npm publish --access public" in run
