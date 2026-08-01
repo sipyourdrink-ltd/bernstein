@@ -283,3 +283,34 @@ def test_dispatched_inputs_match_the_target_workflow_inputs(workflow: dict[str, 
         declared = _declared_dispatch_inputs(workflow_file)
         unknown = passed_inputs - declared
         assert not unknown, f"{workflow_file} does not declare dispatch input(s) {sorted(unknown)}"
+
+
+# copr-cli 2.5 imports `rich` at module scope but declares only
+# `copr, humanize, jinja2, setuptools`, so a clean `pip install copr-cli==2.5`
+# produces a CLI that cannot start. Recorded here so a future bump cannot
+# walk back into a release with a known-incomplete dependency set.
+COPR_CLI_RELEASES_WITH_UNDECLARED_IMPORTS = frozenset({"2.5"})
+
+
+def test_copr_cli_pin_avoids_releases_with_undeclared_imports(workflow: dict[str, Any]) -> None:
+    run = _step(workflow, COPR_JOB, "Install rpmbuild and copr-cli")["run"]
+    match = re.search(r"copr-cli==(\S+?)\"", run)
+    assert match is not None, "copr-cli must be installed from a pinned version"
+    assert match.group(1) not in COPR_CLI_RELEASES_WITH_UNDECLARED_IMPORTS
+
+
+def test_copr_cli_install_is_proven_to_run_before_the_credential_is_written(
+    workflow: dict[str, Any],
+) -> None:
+    """Running the CLI once at install time turns an unusable install into an
+    install-step failure instead of a failure after the token is on disk."""
+    run = _step(workflow, COPR_JOB, "Install rpmbuild and copr-cli")["run"]
+    install_pos = run.find("copr-cli==")
+    smoke_pos = run.find("copr-cli --version")
+    assert smoke_pos != -1, "the install step must run copr-cli once to prove it imports"
+    assert install_pos < smoke_pos
+
+    # The smoke check has to be in the install step, which runs before the
+    # step that writes ~/.config/copr.
+    steps = [step.get("name") for step in workflow["jobs"][COPR_JOB]["steps"] if isinstance(step, dict)]
+    assert steps.index("Install rpmbuild and copr-cli") < steps.index("Write copr-cli configuration")

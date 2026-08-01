@@ -436,8 +436,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends rpm
           # Pinned: an unpinned installer lets an upstream release change what
           # runs in the job that holds the publishing credential.
-          python3 -m pip install --disable-pip-version-check "copr-cli==2.5"
+          #
+          # 2.4 rather than 2.5: 2.5 imports `rich` at module scope but
+          # declares only `copr, humanize, jinja2, setuptools`, so a clean
+          # install of it produces a CLI that cannot start.
+          python3 -m pip install --disable-pip-version-check "copr-cli==2.4"
           command -v rpmbuild
+          # Run the CLI once here: an install that cannot import fails in this
+          # step rather than after the API token is written to disk.
           copr-cli --version
       - name: Write copr-cli configuration
         env:
