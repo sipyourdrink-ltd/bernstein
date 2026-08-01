@@ -349,13 +349,25 @@ def install_pre_push_hook(repo_root: Path, force: bool = False) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_TOOL_PROBE_TIMEOUT_SECONDS = 10
+
+
 def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
     """Run ``uv run <name> --version`` and report the result as a check dict.
 
-    Turns a missing ``uv`` executable (``FileNotFoundError``, raised e.g. as
-    ``WinError 2`` on Windows) into a failed check instead of letting it
-    propagate, since ``bernstein doctor``'s entire job is to report which
-    tools are missing.
+    Every way the probe can fail to produce an answer is reported as a failed
+    check rather than raised, because reporting which tools are unusable *is*
+    the job here and the caller (``bernstein doctor``) serialises the whole
+    check list at the very end. An exception escaping this function aborts the
+    doctor before it writes anything at all, so ``--json`` consumers get an
+    empty stream instead of a payload -- indistinguishable from a clean run.
+    Three ways it can fail to answer:
+
+    - ``uv`` is absent (``FileNotFoundError``, ``WinError 2`` on Windows);
+    - ``uv`` is present but unlaunchable (any other ``OSError``);
+    - ``uv`` runs but blows the time budget (``TimeoutExpired``) -- ``uv run``
+      serialises on a shared cache lock, so concurrent invocations on a loaded
+      host queue up behind each other.
 
     Args:
         name: Tool to check (``ruff``, ``pytest``, ``pyright``, ...).
@@ -371,14 +383,28 @@ def _check_tool_version(name: str, *, detail_limit: int = 60) -> dict[str, str]:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=10,
+            timeout=_TOOL_PROBE_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired:
+        return {
+            "name": name,
+            "ok": "False",
+            "detail": f"probe timed out after {_TOOL_PROBE_TIMEOUT_SECONDS}s",
+            "fix": f"Re-run when the host is less loaded, or check 'uv run {name} --version' by hand",
+        }
     except FileNotFoundError:
         return {
             "name": name,
             "ok": "False",
             "detail": "uv not found on PATH",
             "fix": "Install uv (https://docs.astral.sh/uv/) and ensure it is on PATH",
+        }
+    except OSError as exc:
+        return {
+            "name": name,
+            "ok": "False",
+            "detail": f"could not run uv: {exc}"[:80],
+            "fix": "Check that uv is executable and on PATH",
         }
 
     ok = result.returncode == 0
