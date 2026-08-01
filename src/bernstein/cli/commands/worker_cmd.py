@@ -675,15 +675,25 @@ class WorkerLoop:
 
             while self._running:
                 node_id, last_heartbeat = self._do_heartbeat(client, node_id, heartbeat_s, last_heartbeat)
-                if node_id is None:
-                    continue
 
-                if self.available_slots > 0:
+                # Reap finished agents into the pending-report queue on every
+                # cycle regardless of node_id, so an agent that exits while
+                # re-registration is retrying still gets drained below instead
+                # of being stranded until node_id recovers.
+                self._reap_finished()
+
+                # A None node_id here means the heartbeat failed and the
+                # re-registration attempt that follows it also failed: there is
+                # no live node to claim tasks under. Still fall through to the
+                # same poll-interval wait the success path takes below, rather
+                # than looping straight back into another _do_heartbeat call.
+                # Retrying re-registration with no wait between attempts busy
+                # loops for as long as the server stays unreachable (#3309).
+                if node_id is not None and self.available_slots > 0:
                     self._claim_available_tasks(client, node_id)
 
-                # Drive reaped agents to a terminal state on the server. Reading
-                # available_slots above already reaped finished agents into the
-                # pending queue.
+                # Drive reaped agents to a terminal state on the server. This
+                # does not require a live node_id.
                 self._report_finished(client)
 
                 if self._wake.wait(timeout_s=poll_s) == WakeReason.ABORT:
