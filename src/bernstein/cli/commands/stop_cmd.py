@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import csv
+import io
 import json
 import os
 import shutil
@@ -33,7 +35,7 @@ from bernstein.cli.helpers import (
     sigkill_pid,
 )
 from bernstein.core.observability.icons import get_icons
-from bernstein.core.process_utils import process_cwd
+from bernstein.core.process_utils import cmdline_matches, process_cwd
 from bernstein.core.runtime_state import read_supervisor_state
 
 _LABEL_TASK_SERVER = "Task server"
@@ -458,17 +460,52 @@ def _list_process_snapshots() -> list[_ProcessSnapshot]:
     return _list_process_snapshots_unix()
 
 
-def _list_process_snapshots_windows() -> list[_ProcessSnapshot]:
-    """Windows: use WMIC or PowerShell to list processes."""
+def _parse_windows_process_csv(csv_text: str) -> list[_ProcessSnapshot]:
+    """Parse ``ConvertTo-Csv`` output of ``ProcessId, ParentProcessId, CommandLine``.
+
+    Uses the stdlib ``csv`` reader rather than a manual ``split('","')`` because
+    ``CommandLine`` routinely contains commas and quotes (paths, flag values)
+    that a naive split mis-parses; ``ConvertTo-Csv`` emits RFC4180-style
+    quoting (embedded quotes doubled) that ``csv`` decodes correctly.
+    """
+    reader = csv.reader(io.StringIO(csv_text))
+    rows = list(reader)
+    if len(rows) < 2:
+        return []
     snapshots: list[_ProcessSnapshot] = []
+    for row in rows[1:]:  # header: ProcessId,ParentProcessId,CommandLine
+        if len(row) < 3:
+            continue
+        try:
+            pid = int(row[0])
+            ppid = int(row[1]) if row[1] else 0
+        except ValueError:
+            continue
+        snapshots.append(_ProcessSnapshot(pid=pid, ppid=ppid, pgid=0, command=row[2] or ""))
+    return snapshots
+
+
+def _list_process_snapshots_windows() -> list[_ProcessSnapshot]:
+    """Windows: use PowerShell/CIM to list processes with their full command line.
+
+    Queries ``Win32_Process`` directly for ``ProcessId``, ``ParentProcessId``,
+    and ``CommandLine``. An earlier version of this probe selected ``Path``
+    (just the executable, e.g. ``python.exe``) from ``Get-Process`` instead of
+    the actual command line, so none of the argv markers
+    ``_classify_repo_process`` matches on (``--watchdog``, the heartbeat/
+    worktree path prefixes, ...) were ever present in ``command`` -- the
+    process-scan fallback could not identify a repo-owned watchdog,
+    orchestrator, or task server on Windows at all (issue #3312).
+    """
     with contextlib.suppress(OSError, subprocess.SubprocessError):
-        # Use PowerShell for better reliability
         result = subprocess.run(
             [
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "Get-Process | Select-Object Id, @{N='ParentId';E={(Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.Id)\").ParentProcessId}}, Path | ConvertTo-Csv -NoTypeInformation",  # noqa: E501
+                "Get-CimInstance -ClassName Win32_Process | "
+                "Select-Object ProcessId, ParentProcessId, CommandLine | "
+                "ConvertTo-Csv -NoTypeInformation",
             ],
             capture_output=True,
             text=True,
@@ -479,22 +516,8 @@ def _list_process_snapshots_windows() -> list[_ProcessSnapshot]:
         )
         if result.returncode != 0:
             return []
-        lines = result.stdout.strip().splitlines()
-        if len(lines) < 2:
-            return []
-        # Skip header: "Id","ParentId","Path"
-        for line in lines[1:]:
-            # Parse CSV: "1234","5678","C:\path\to\exe"
-            parts = line.strip().strip('"').split('","')
-            if len(parts) >= 3:
-                try:
-                    pid = int(parts[0])
-                    ppid = int(parts[1]) if parts[1] else 0
-                    command = parts[2]
-                    snapshots.append(_ProcessSnapshot(pid=pid, ppid=ppid, pgid=0, command=command))
-                except (ValueError, IndexError):
-                    continue
-    return snapshots
+        return _parse_windows_process_csv(result.stdout)
+    return []
 
 
 def _list_process_snapshots_unix() -> list[_ProcessSnapshot]:
@@ -533,6 +556,22 @@ def _list_process_snapshots_unix() -> list[_ProcessSnapshot]:
     return snapshots
 
 
+def _watchdog_names_workdir(command: str, workdir: Path) -> bool:
+    """Whether *command* embeds *workdir* via the watchdog's own ``--workdir`` marker.
+
+    ``process_cwd()`` has no working implementation on Windows - it shells out
+    to ``lsof``, which does not exist there - so the live-cwd cross-check the
+    other infra kinds fall back on can never positively confirm anything on
+    that platform, and an orphaned watchdog (its pidfile overwritten by a
+    later run, or never written) was unreachable by the process-scan fallback
+    (issue #3312). ``_start_watchdog`` now writes ``--workdir <path>`` into its
+    own launch argv, so ownership can be read straight off the command line -
+    the same technique already used for heartbeat/worktree orphans - with no
+    cwd probe needed at all.
+    """
+    return cmdline_matches(command, (str(workdir),))
+
+
 def _classify_repo_process(
     snapshot: Any,
     workdir: Path,
@@ -544,7 +583,10 @@ def _classify_repo_process(
     ``kind`` is ``"agent"`` for orphaned worktree/heartbeat processes (matched
     purely by command-line marker, no cwd probe) or ``"infra"`` for the
     orchestrator/server/watchdog - which must additionally run with a cwd
-    inside this project, so a sibling checkout's server is never touched.
+    inside this project, so a sibling checkout's server is never touched.  The
+    watchdog gets one extra, cwd-probe-free path first (see
+    :func:`_watchdog_names_workdir`) because it is the only infra kind whose
+    launch argv self-declares its workdir.
     """
     command = snapshot.command
 
@@ -559,6 +601,9 @@ def _classify_repo_process(
 
     if not (is_watchdog or is_orchestrator or is_server):
         return None
+
+    if is_watchdog and _watchdog_names_workdir(command, workdir):
+        return "infra", "Watchdog"
 
     if process_cwd(snapshot.pid) != workdir:
         return None

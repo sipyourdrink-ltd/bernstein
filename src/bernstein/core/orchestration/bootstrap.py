@@ -848,6 +848,13 @@ def _start_watchdog(
         "--watchdog",
         "--port",
         str(port),
+        # Self-describing so the stop path can attribute an orphaned watchdog to
+        # this checkout by reading its argv, without a live cwd probe (issue
+        # #3312). The subprocess already runs with ``cwd=workdir`` below; this
+        # flag is not consumed for that -- it exists purely so ``ps``/WMI output
+        # carries the workdir as a command-line marker.
+        "--workdir",
+        str(workdir),
     ]
     if adapter:
         argv.extend(["--adapter", adapter])
@@ -1490,6 +1497,18 @@ if __name__ == "__main__":
         type=str,
         default=os.environ.get("BERNSTEIN_SEED_PATH", "").strip() or None,
         help="Resolved bernstein.yaml path, threaded through from bootstrap_from_seed().",
+    )
+    _parser.add_argument(
+        "--workdir",
+        type=str,
+        default=None,
+        help=(
+            "Project root this watchdog was launched for. Not read by the "
+            "watchdog itself (its cwd already is workdir) -- it is only a "
+            "command-line marker so 'bernstein stop --force' can attribute an "
+            "orphaned watchdog to this checkout when it has no live cwd probe "
+            "to fall back on (issue #3312)."
+        ),
     )
     _args = _parser.parse_args()
 
