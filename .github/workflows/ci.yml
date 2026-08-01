@@ -49,7 +49,6 @@ on:
       - ".github/copilot-instructions.md"
       - ".github/codeql/**"
       # Non-code project files
-      - "marketing/**"
       - "benchmarks/**"
       - "examples/**"
       - "plans/**"
@@ -99,7 +98,6 @@ on:
       - ".github/copilot-instructions.md"
       - ".github/codeql/**"
       # Non-code project files
-      - "marketing/**"
       - "benchmarks/**"
       - "examples/**"
       - "plans/**"
