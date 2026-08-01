@@ -1502,7 +1502,8 @@ def cost_policy_preflight_cmd(
     from bernstein.core.cost.spend_ledger import SpendLedger
 
     policy = _read_cost_policy_from_yaml(Path(config_path))
-    raw_pools = policy.get("pools") if isinstance(policy.get("pools"), dict) else {}
+    pools_value = policy.get("pools")
+    raw_pools = pools_value if isinstance(pools_value, dict) else {}
     caps: dict[str, float] = {}
     for name, cap in raw_pools.items():
         with contextlib.suppress(TypeError, ValueError):
@@ -1604,8 +1605,10 @@ def cost_policy_knobs_cmd(config_path: str, model_filter: str | None, as_json: b
     )
 
     policy = _read_cost_policy_from_yaml(Path(config_path))
-    knobs_cfg = policy.get("knobs") if isinstance(policy.get("knobs"), dict) else {}
-    models_cfg = knobs_cfg.get("models") if isinstance(knobs_cfg.get("models"), dict) else {}
+    knobs_value = policy.get("knobs")
+    knobs_cfg = knobs_value if isinstance(knobs_value, dict) else {}
+    models_value = knobs_cfg.get("models")
+    models_cfg = models_value if isinstance(models_value, dict) else {}
     if models_cfg:
         matrix = load_knob_matrix(
             models_cfg,

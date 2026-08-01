@@ -103,6 +103,7 @@ def profile_cmd(top_n: int, markdown: bool, prof_file: str | None) -> None:
     """
     workdir = Path.cwd()
 
+    path: Path | None
     if prof_file is not None:
         path = Path(prof_file)
     else:

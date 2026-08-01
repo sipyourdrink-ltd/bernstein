@@ -19,7 +19,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import click
 from rich.console import Console
@@ -689,7 +689,7 @@ def unlock_cmd(workdir: Path, force: bool, as_json: bool) -> None:
         removed = not lock_path.exists()
 
     pid = status.get("pid")
-    alive = status.get("alive")
+    alive = cast("bool | None", status.get("alive"))
     age = status.get("age_seconds")
     age_str = f"{int(age)}s" if isinstance(age, (int, float)) else "unknown age"
     owner = f"pid {pid}" if pid else "an unknown process"

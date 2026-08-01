@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import pytest
 import schemathesis
+from fastapi.testclient import TestClient
 from hypothesis import settings
 from schemathesis import checks as st_checks
 
@@ -108,6 +109,28 @@ _STREAMING_OPERATIONS = _streaming_operations()
 # unhandled-exception leaks against arbitrary Hypothesis-generated
 # request bodies.
 _CHECKS = [st_checks.not_a_server_error]
+
+
+@pytest.fixture(autouse=True)
+def _reset_server_mutable_state() -> Any:
+    """Undo the server-state mutations one operation's sweep leaves behind.
+
+    `_app` is built once at module scope and every parametrized operation
+    shares it, so a documented side effect outlives the test that caused it.
+    `POST /api/v1/drain` sets `app.state.draining` and nothing in the sweep
+    clears it; from that point on `GET /api/v1/ready`,
+    `GET /api/v1/health/ready` and `GET /api/v1/tasks/next/{role}` correctly
+    answer 503, which `not_a_server_error` reports as a server error. The
+    result is an order-dependent failure that says the readiness contract is
+    broken when it is being honoured.
+
+    Resetting per test is enough: Hypothesis runs its examples inside one test
+    function, and all of them drive the same operation, so contamination only
+    ever crosses a test boundary.
+    """
+    _app.state.draining = False
+    yield
+    _app.state.draining = False
 
 
 @schema.parametrize()
@@ -248,3 +271,54 @@ def test_streaming_operations_are_declared_in_the_schema() -> None:
     is legible.
     """
     assert _STREAMING_OPERATIONS, "no operation declares text/event-stream; the SSE routes lost their media type"
+
+
+# ---------------------------------------------------------------------------
+# Server-state isolation
+# ---------------------------------------------------------------------------
+
+
+_DRAIN_AWARE_READS = (
+    "/api/v1/ready",
+    "/api/v1/health/ready",
+)
+
+# The sweep ahead of this test has already spent the per-address request
+# budget, so a client on the default `testclient` address is answered 429 and
+# this test would be measuring the rate limiter instead of the drain contract.
+# Same reason the streaming probes each present a distinct peer; a separate
+# subnet keeps the two sets from consuming each other's budget.
+_DRAIN_PROBE_PEER = ("10.0.1.1", 1234)
+
+
+def test_drain_is_not_left_set_for_the_next_operation() -> None:
+    """A drain raised by one operation must not outlive its own test.
+
+    `_app` is shared by every parametrized operation, so before this was
+    pinned a single `POST /api/v1/drain` example turned every later
+    readiness and claim example into a 503 that `not_a_server_error` read as
+    a crash. The sweep reported the readiness contract broken at exactly the
+    moment it was being honoured, and which operations were hit depended on
+    ordering.
+
+    The first assertion is the regression: the autouse fixture must have
+    handed this test a server that is not draining, whatever ran before it.
+    The rest pins the contract that made the leak look like a defect --
+    while draining, a readiness probe is deliberately 503.
+    """
+    assert _app.state.draining is False, "a previous test left the shared app draining"
+
+    with TestClient(_app, client=_DRAIN_PROBE_PEER) as client:
+        assert client.post("/api/v1/drain").status_code == 200
+        assert _app.state.draining is True
+
+        for path in _DRAIN_AWARE_READS:
+            response = client.get(path)
+            assert response.status_code == 503, f"{path} answered {response.status_code} while draining"
+            assert response.json()["reason"] == "draining"
+
+        assert client.post("/api/v1/drain/cancel").status_code == 200
+        assert _app.state.draining is False
+
+        for path in _DRAIN_AWARE_READS:
+            assert client.get(path).status_code == 200, f"{path} stayed unready after the drain was cancelled"

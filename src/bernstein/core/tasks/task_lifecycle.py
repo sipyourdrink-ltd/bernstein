@@ -16,7 +16,7 @@ import re
 import time
 from collections import defaultdict
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 
@@ -66,7 +66,6 @@ from bernstein.core.tick_pipeline import (
 )
 
 if TYPE_CHECKING:
-    import concurrent.futures
     from pathlib import Path
 
     from bernstein.core.git_ops import MergeResult
@@ -339,7 +338,11 @@ def _batch_timeout_seconds(batch: list[Task]) -> int:
     xl_batch = any(task.role in _XL_ROLES for task in batch) or any(
         task.scope.value == "large" and task.complexity.value == "high" for task in batch
     )
-    return TASK.xl_timeout_s if xl_batch else bucket_seconds
+    # TASK.scope_timeout_s / xl_timeout_s are typed float (see defaults.py), but
+    # every configured bucket is a whole second count and every downstream
+    # consumer (AgentSession.timeout_s) is int - convert explicitly rather than
+    # widen the return type and push the float onward.
+    return int(TASK.xl_timeout_s) if xl_batch else int(bucket_seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -1571,9 +1574,9 @@ def _apply_fair_scheduling(orch: Any, batches: list[list[Task]]) -> list[list[Ta
         if decision is None:
             break
         seen.add(decision.task_id)
-        batch = batch_by_key.get(decision.task_id)
-        if batch is not None:
-            ordered.append(batch)
+        scheduled_batch = batch_by_key.get(decision.task_id)
+        if scheduled_batch is not None:
+            ordered.append(scheduled_batch)
 
     # Append any unscheduled batches (empty or not tracked) in original order.
     for key, batch in batch_by_key.items():
@@ -3656,17 +3659,23 @@ def _set_downstream_affinity(
     task: Task,
 ) -> None:
     """Propagate agent affinity to downstream open tasks."""
+    # The sole current caller only invokes this when task.assigned_agent is
+    # truthy, but that narrowing does not cross the function boundary - bind
+    # it locally so mypy (and any future caller) sees a plain str.
+    agent = task.assigned_agent
+    if not agent:
+        return
     affinity: dict[str, str] | None = getattr(orch, "_agent_affinity", None)
     if affinity is None:
         return
     latest: dict[str, Task] = getattr(orch, "_latest_tasks_by_id", {})
     for downstream in latest.values():
         if task.id in downstream.depends_on and downstream.status.value == "open":
-            affinity[downstream.id] = task.assigned_agent
+            affinity[downstream.id] = agent
             logger.debug(
                 "agent_affinity: task %s -> agent %s (downstream of %s)",
                 downstream.id,
-                task.assigned_agent,
+                agent,
                 task.id,
             )
 
@@ -3771,12 +3780,23 @@ def _verify_via_janitor(
     return janitor_result.passed, failed_descs
 
 
+class _JanitorFutureLike(Protocol):
+    """Structural contract shared by ``concurrent.futures.Future`` and
+    :class:`_JanitorSyncFuture` - the only two members ever assigned into
+    ``verify_futures`` and the only two methods called on it.
+    """
+
+    def result(self, timeout: float | None = None) -> tuple[bool, list[str]]: ...
+
+    def done(self) -> bool: ...
+
+
 def _enqueue_alive_exit_janitor_pass(
     orch: Any,
     task: Task,
     *,
     reason: str,
-) -> concurrent.futures.Future[tuple[bool, list[str]]] | None:
+) -> _JanitorFutureLike | None:
     """Enqueue a janitor pass for a task whose worker exited via /complete.
 
     Mirrors the dead-exit scheduling in
@@ -3940,7 +3960,7 @@ def process_completed_tasks(
     # enqueue (so a silent no-op is impossible) and exposes a reusable
     # janitor pass entrypoint that drain and retry paths can call outside
     # the orchestrator tick.
-    verify_futures: dict[str, concurrent.futures.Future[tuple[bool, list[str]]]] = {}
+    verify_futures: dict[str, _JanitorFutureLike] = {}
     for task in new_tasks:
         future = _enqueue_alive_exit_janitor_pass(orch, task, reason="alive_exit_tick")
         if future is not None:

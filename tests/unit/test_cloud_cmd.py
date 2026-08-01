@@ -163,33 +163,6 @@ def test_cloud_cost_shows_usage(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# deploy
-# ---------------------------------------------------------------------------
-
-
-def test_cloud_deploy_shows_instructions() -> None:
-    """``cloud deploy`` prints deployment instructions."""
-    runner = CliRunner()
-    result = runner.invoke(cloud_group, ["deploy"])
-    assert result.exit_code == 0
-    assert "wrangler deploy" in result.output
-    assert "bernstein-agent" in result.output
-
-
-def test_cloud_deploy_does_not_point_at_repo_only_template() -> None:
-    """``cloud deploy`` must not reference the repo-only template path.
-
-    Wheel users have no ``templates/bernstein-cloud/``; the honest pointer is
-    ``bernstein cloud init`` (issue #2784).
-    """
-    runner = CliRunner()
-    result = runner.invoke(cloud_group, ["deploy"])
-    assert result.exit_code == 0
-    assert "templates/bernstein-cloud" not in result.output
-    assert "cloud init" in result.output
-
-
-# ---------------------------------------------------------------------------
 # init - scaffold a runnable, free-tier worker
 # ---------------------------------------------------------------------------
 

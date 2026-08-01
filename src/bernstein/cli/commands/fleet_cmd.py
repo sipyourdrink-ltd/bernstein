@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import httpx
@@ -233,7 +233,7 @@ def _bulk_target(
         ProjectSnapshot(
             name=p.name,
             state=ProjectState.ONLINE,
-            cost_usd=float(rollup.per_project.get(p.name, {}).get("total_usd") or 0.0),
+            cost_usd=float(cast("float | int | str", rollup.per_project.get(p.name, {}).get("total_usd") or 0.0)),
         )
         for p in config.projects
     ]

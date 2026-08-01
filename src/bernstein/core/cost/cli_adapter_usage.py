@@ -229,20 +229,39 @@ def parse_stream_json_usage(text: str) -> tuple[int, int, str]:
     return 0, 0, fallback_model
 
 
-def _resolve_session_log(workdir: Path, session_id: str) -> Path | None:
+def _resolve_session_log(workdir: Path, session_id: str, log_path: Path | None = None) -> Path | None:
     """Resolve the on-disk session log for ``session_id``.
 
-    Mirrors the candidate order of
-    :meth:`bernstein.core.agents.agent_log_aggregator.AgentLogAggregator._resolve_log_path`
-    so worktree-isolated runs (where the adapter wrote its log inside a
-    per-task worktree) are found alongside the non-isolated root layout.
+    Prefers an explicit ``log_path`` (e.g. ``session.log_path``, threaded in
+    by the caller) when it exists on disk - the remote runtime bridge,
+    container, and sandbox-session spawn paths all report their own log at
+    ``<spawn_cwd>/.sdd/logs/<id>.log``, which no candidate layout below would
+    ever find.
+
+    Otherwise searches every worktree layout this codebase writes agent logs
+    into (issue #3216): the current default (``.sdd/runtime/worktrees/<id>``)
+    and legacy (``.sdd/worktrees/<id>``) worktree bases, each with both the
+    ``.sdd/runtime/`` and ``.sdd/logs/`` filename variants, plus the
+    worktrees-disabled root layout. The worktree-directory lookup reuses
+    :func:`bernstein.core.agents.agent_lifecycle._resolve_agent_worktree_dir`,
+    the same helper the reap tick's liveness probe uses, instead of
+    reimplementing worktree-layout resolution.
     """
-    candidates = (
+    if log_path is not None and log_path.exists():
+        return log_path
+
+    from types import SimpleNamespace
+
+    from bernstein.core.agents.agent_lifecycle import _resolve_agent_worktree_dir
+
+    candidates = [
         workdir / ".sdd" / "runtime" / f"{session_id}.log",
         workdir / ".sdd" / "logs" / f"{session_id}.log",
-        workdir / ".sdd" / "worktrees" / session_id / ".sdd" / "runtime" / f"{session_id}.log",
-        workdir / ".sdd" / "worktrees" / session_id / ".sdd" / "logs" / f"{session_id}.log",
-    )
+    ]
+    _wt_dir = _resolve_agent_worktree_dir(workdir, SimpleNamespace(id=session_id))
+    if _wt_dir is not None:
+        candidates.append(_wt_dir / ".sdd" / "runtime" / f"{session_id}.log")
+        candidates.append(_wt_dir / ".sdd" / "logs" / f"{session_id}.log")
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -289,7 +308,7 @@ def capture_cli_adapter_usage(
     except OSError:
         pass
 
-    resolved = log_path if (log_path is not None and log_path.exists()) else _resolve_session_log(workdir, session_id)
+    resolved = _resolve_session_log(workdir, session_id, log_path)
     if resolved is None:
         return 0, 0, ""
     try:

@@ -154,7 +154,8 @@ def _issue_leaf(
             critical=False,
         )
         .add_extension(
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()),
+            # ca_cert is always the RSA CA built by _build_ca() in this module.
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(cast(rsa.RSAPublicKey, ca_cert.public_key())),
             critical=False,
         )
         .sign(ca_key, hashes.SHA256())

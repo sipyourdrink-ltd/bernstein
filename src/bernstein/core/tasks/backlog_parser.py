@@ -131,8 +131,8 @@ def _parse_yaml_frontmatter(filename: str, content: str) -> ParsedBacklogTask | 
 
     title = str(raw.get("title", "")).strip()
     if not title:
-        body = content[end + 4 :].splitlines()
-        title = _extract_h1_title(body)
+        body_lines = content[end + 4 :].splitlines()
+        title = _extract_h1_title(body_lines)
     if not title:
         return None
 
@@ -180,7 +180,7 @@ def _parse_yaml_frontmatter(filename: str, content: str) -> ParsedBacklogTask | 
         depends_on=depends_on,
         affected_paths=affected,
         context_files=context,
-        estimated_minutes=int(raw.get("estimated_minutes", 45)),
+        estimated_minutes=int(cast(int, raw.get("estimated_minutes", 45))),
         require_review=bool(raw.get("require_review", False)),
         require_human_approval=bool(raw.get("require_human_approval", False)),
         janitor_signals=janitor,

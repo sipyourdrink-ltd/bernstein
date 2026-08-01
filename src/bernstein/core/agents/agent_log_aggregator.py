@@ -5,10 +5,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any, ClassVar
 
 
 @dataclass(frozen=True)
@@ -74,13 +72,20 @@ class AgentLogAggregator:
     def __init__(self, workdir: Path) -> None:
         self._workdir = workdir
 
-    def parse_log(self, session_id: str) -> AgentLogSummary:
-        """Parse a full session log into a structured summary."""
-        log_path = self._resolve_log_path(session_id)
-        if log_path is None:
+    def parse_log(self, session_id: str, log_path: str | Path | None = None) -> AgentLogSummary:
+        """Parse a full session log into a structured summary.
+
+        Args:
+            session_id: Agent session id.
+            log_path: Optional explicit log path (e.g. ``session.log_path``),
+                preferred over the candidate-layout search when present and
+                resolvable on disk (issue #3216).
+        """
+        resolved = self._resolve_log_path(session_id, log_path)
+        if resolved is None:
             return self._empty_summary(session_id)
         try:
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return self._empty_summary(session_id)
         return self._summarize(session_id, lines)
@@ -180,14 +185,39 @@ class AgentLogAggregator:
             return text
         return text[:497].rstrip() + "..."
 
-    def _resolve_log_path(self, session_id: str) -> Path | None:
-        """Resolve the most likely on-disk log path for a session."""
+    def _resolve_log_path(self, session_id: str, log_path: str | Path | None = None) -> Path | None:
+        """Resolve the most likely on-disk log path for a session.
+
+        Prefers an explicit ``log_path`` (e.g. ``session.log_path``) when
+        given and present on disk - the remote runtime bridge, container,
+        and sandbox-session spawn paths all report their own log at
+        ``<spawn_cwd>/.sdd/logs/<id>.log``, which no candidate layout below
+        would ever find.
+
+        Otherwise searches every worktree layout this codebase writes agent
+        logs into (issue #3216), reusing
+        :func:`bernstein.core.agents.agent_lifecycle._resolve_agent_worktree_dir`
+        for the worktree-directory lookup - the same helper the reap tick's
+        liveness probe uses - instead of reimplementing worktree-layout
+        resolution.
+        """
+        if log_path:
+            _explicit = log_path if isinstance(log_path, Path) else Path(log_path)
+            if _explicit.exists():
+                return _explicit
+
+        from types import SimpleNamespace
+
+        from bernstein.core.agents.agent_lifecycle import _resolve_agent_worktree_dir
+
         candidates = [
             self._workdir / ".sdd" / "runtime" / f"{session_id}.log",
             self._workdir / ".sdd" / "logs" / f"{session_id}.log",
-            self._workdir / ".sdd" / "worktrees" / session_id / ".sdd" / "runtime" / f"{session_id}.log",
-            self._workdir / ".sdd" / "worktrees" / session_id / ".sdd" / "logs" / f"{session_id}.log",
         ]
+        _wt_dir = _resolve_agent_worktree_dir(self._workdir, SimpleNamespace(id=session_id))
+        if _wt_dir is not None:
+            candidates.append(_wt_dir / ".sdd" / "runtime" / f"{session_id}.log")
+            candidates.append(_wt_dir / ".sdd" / "logs" / f"{session_id}.log")
         for candidate in candidates:
             if candidate.exists():
                 return candidate

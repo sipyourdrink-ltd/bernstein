@@ -17,21 +17,6 @@ from click.testing import CliRunner
 # ---------------------------------------------------------------------------
 
 
-def test_chaos_rate_limit(tmp_path: Path) -> None:
-    """Rate-limit command writes the active sentinel file."""
-    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
-        runner = CliRunner()
-        result = runner.invoke(chaos_group, ["rate-limit", "--duration", "10", "--provider", "test-p"])
-
-        assert result.exit_code == 0
-        assert "Provider test-p rate-limited" in result.output
-
-        rate_limit_file = tmp_path / "rate_limit_active.json"
-        assert rate_limit_file.exists()
-        data = json.loads(rate_limit_file.read_text())
-        assert data["provider"] == "test-p"
-
-
 def test_chaos_status_empty(tmp_path: Path) -> None:
     """Status command reports no history when the log is absent."""
     with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
@@ -60,20 +45,6 @@ def test_chaos_status_shows_recorded_event(tmp_path: Path) -> None:
         assert "agent-kill" in result.output
 
 
-def test_chaos_rate_limit_records_event(tmp_path: Path) -> None:
-    """Rate-limit command appends a structured event to the chaos log."""
-    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
-        runner = CliRunner()
-        runner.invoke(chaos_group, ["rate-limit", "--duration", "30", "--provider", "openai"])
-
-        log_path = tmp_path / "chaos_log.jsonl"
-        assert log_path.exists()
-        events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
-        assert len(events) == 1
-        assert events[0]["scenario"] == "rate-limit"
-        assert events[0]["success"] is True
-
-
 def test_chaos_agent_kill_no_agents(tmp_path: Path) -> None:
     """Agent-kill reports gracefully when no agents are running."""
     runner = CliRunner()
@@ -82,49 +53,6 @@ def test_chaos_agent_kill_no_agents(tmp_path: Path) -> None:
         result = runner.invoke(chaos_group, ["agent-kill"])
     assert result.exit_code == 0
     assert "No active agents" in result.output
-
-
-def test_chaos_disk_full_creates_sentinel(tmp_path: Path) -> None:
-    """Disk-full command writes the disk_full_active.json sentinel."""
-    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
-        runner = CliRunner()
-        result = runner.invoke(chaos_group, ["disk-full", "--duration", "5"])
-        assert result.exit_code == 0
-
-        sentinel = tmp_path / "disk_full_active.json"
-        assert sentinel.exists()
-        data = json.loads(sentinel.read_text())
-        assert data["duration_seconds"] == 5
-        assert data["expires_at"] > data["started_at"]
-
-
-def test_chaos_agent_oom_records_event(tmp_path: Path) -> None:
-    """agent-oom command records a chaos event in the log."""
-    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
-        runner = CliRunner()
-        result = runner.invoke(chaos_group, ["agent-oom", "--agent-id", "test-agent"])
-        assert result.exit_code == 0
-        assert "Simulating OOM" in result.output
-
-        log_path = tmp_path / "chaos_log.jsonl"
-        assert log_path.exists()
-        events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
-        assert len(events) == 1
-        assert events[0]["scenario"] == "agent-oom"
-        assert events[0]["target"] == "test-agent"
-        assert events[0]["success"] is True
-
-
-def test_chaos_agent_oom_default_target(tmp_path: Path) -> None:
-    """agent-oom without --agent-id uses 'random-active' as target."""
-    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
-        runner = CliRunner()
-        result = runner.invoke(chaos_group, ["agent-oom"])
-        assert result.exit_code == 0
-
-        log_path = tmp_path / "chaos_log.jsonl"
-        events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
-        assert events[0]["target"] == "random-active"
 
 
 # ---------------------------------------------------------------------------

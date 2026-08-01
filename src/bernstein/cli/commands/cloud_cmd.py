@@ -262,20 +262,6 @@ def cloud_init(worker_name: str, output: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# cloud deploy
-# ---------------------------------------------------------------------------
-
-
-@cloud_group.command("deploy")
-@click.option("--worker-name", default="bernstein-agent", help="Cloudflare Worker name")
-def cloud_deploy(worker_name: str) -> None:
-    """Deploy Bernstein agent Worker to your Cloudflare account."""
-    click.echo(f"Deploying {worker_name}...")
-    click.echo(f"Run: npx wrangler deploy --name {worker_name}")
-    click.echo("Scaffold a deployable worker first with 'bernstein cloud init'.")
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

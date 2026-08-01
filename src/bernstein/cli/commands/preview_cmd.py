@@ -20,7 +20,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -32,6 +32,7 @@ from bernstein.core.preview import (
     PreviewState,
     list_candidates,
 )
+from bernstein.core.preview.manager import SandboxLike
 
 if TYPE_CHECKING:
     from bernstein.core.sandbox.backend import SandboxSession
@@ -132,7 +133,10 @@ def start_cmd(
     try:
         preview = manager.start(
             cwd=cwd,
-            sandbox_session=sandbox_session,
+            # SandboxSession structurally satisfies SandboxLike (backend_name,
+            # session_id); SandboxLike is a plain class rather than a
+            # typing.Protocol, so mypy can't see the duck-typed match.
+            sandbox_session=cast(SandboxLike, sandbox_session),
             command=command_arg,
             provider=provider,
             auth_mode=AuthMode(auth_mode),

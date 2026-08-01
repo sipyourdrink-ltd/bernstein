@@ -16,6 +16,7 @@ import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from typing import cast
 
 import click
 
@@ -165,9 +166,9 @@ def _print_report(report: dict[str, object], as_json: bool) -> None:
         click.echo(json.dumps(report, indent=2))
         return
 
-    classification = report.get("classification", {})
-    conformity = report.get("conformity", {})
-    summary = report.get("compliance_summary", {})
+    classification = cast(dict[str, object], report.get("classification", {}))
+    conformity = cast(dict[str, object], report.get("conformity", {}))
+    summary = cast(dict[str, object], report.get("compliance_summary", {}))
 
     risk = str(classification.get("risk_category", "unknown")).upper()
     domain = str(classification.get("annex_iii_domain", "N/A"))
@@ -187,13 +188,13 @@ def _print_report(report: dict[str, object], as_json: bool) -> None:
     if justification:
         click.echo(f"\n  Justification:\n    {justification}")
 
-    gaps: list[object] = list(conformity.get("mandatory_gaps", []))  # type: ignore[arg-type]
+    gaps: list[object] = list(cast(list[object], conformity.get("mandatory_gaps", [])))
     if gaps:
         click.echo("\n  Mandatory Gaps:")
         for gap in gaps:
             click.echo(f"    - {gap}")
 
-    next_steps: list[object] = list(summary.get("next_steps", []))  # type: ignore[arg-type]
+    next_steps: list[object] = list(cast(list[object], summary.get("next_steps", [])))
     if next_steps:
         click.echo("\n  Next Steps:")
         for step in next_steps:

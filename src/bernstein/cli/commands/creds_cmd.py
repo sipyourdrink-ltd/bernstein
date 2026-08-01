@@ -20,7 +20,7 @@ import asyncio
 import contextlib
 import getpass
 import webbrowser
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.table import Table
@@ -28,6 +28,8 @@ from rich.table import Table
 from bernstein.cli.helpers import console
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bernstein.core.security.vault.protocol import CredentialVault
 from bernstein.core.security.vault.connect import (
     perform_connect,
@@ -60,15 +62,15 @@ __all__ = ["connect_cmd", "creds_group"]
 # ---------------------------------------------------------------------------
 
 
-def _backend_options(func: object) -> object:
+def _backend_options(func: Callable[..., Any]) -> Callable[..., Any]:
     """Apply ``--backend`` and ``--passphrase-env`` to a click command."""
-    func = click.option(  # type: ignore[assignment]
+    func = click.option(
         "--passphrase-env",
         "passphrase_env",
         default=None,
         help="Env var holding the passphrase for the file backend.",
     )(func)
-    func = click.option(  # type: ignore[assignment]
+    func = click.option(
         "--backend",
         type=click.Choice(["keyring", "file"]),
         default=None,

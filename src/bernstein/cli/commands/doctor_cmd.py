@@ -313,8 +313,8 @@ def check_canary_last_green(*, now: datetime | None = None) -> list[dict[str, An
     # Union: every matrix adapter plus any adapter that carries a row, so an
     # absent primary adapter (e.g. one still in permanent skip) is not silent.
     binaries: dict[str, str] = {target.adapter: target.binary for target in CANARY_MATRIX}
-    for name, entry in entries.items():
-        binaries.setdefault(name, entry.binary)
+    for name, green_entry in entries.items():
+        binaries.setdefault(name, green_entry.binary)
 
     results: list[dict[str, Any]] = []
     for name in sorted(binaries):

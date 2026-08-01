@@ -21,6 +21,7 @@ from bernstein.cli.helpers import console
 from bernstein.cli.scaffold.templates import (
     SCAFFOLD_TEMPLATES,
     ScaffoldError,
+    ScaffoldTemplate,
     list_template_names,
     materialize_template,
     pick_template,
@@ -64,6 +65,7 @@ def scaffold_cmd(
       bernstein scaffold "CLI to convert markdown to PDF" --template python-cli
       bernstein scaffold "static landing page" --output ./my-site
     """
+    chosen: ScaffoldTemplate | None
     if template_name == "auto":
         chosen = pick_template(prompt)
     else:

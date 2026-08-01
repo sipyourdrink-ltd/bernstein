@@ -113,7 +113,7 @@ def _print_pipeline_summary(pipeline: ReviewPipeline) -> None:
     table.add_column("Agents")
     for idx, stage in enumerate(pipeline.stages, start=1):
         agents_repr = ", ".join(f"{a.role}({a.model or 'cascade'})" for a in stage.agents)
-        agg_repr = stage.aggregator.strategy
+        agg_repr: str = stage.aggregator.strategy
         if stage.aggregator.pass_threshold is not None:
             agg_repr += f"@{stage.aggregator.pass_threshold:.2f}"
         table.add_row(str(idx), stage.name, str(stage.parallelism), agg_repr, agents_repr)
