@@ -1,6 +1,6 @@
 # Security Policy
 
-> Last reviewed: 2026-05-18.
+> Last reviewed: 2026-08-01.
 
 ## Reporting a Vulnerability
 
@@ -32,7 +32,7 @@ Open a private advisory so triage and the fix stay in one place:
 | Task server API (`localhost:8052` when self-hosted) | All HTTP endpoints |
 | Agent spawner / orchestrator | Privilege escalation, task injection |
 | Docker images (`bernstein:latest`, `bernstein:sandbox`) | Container escapes |
-| CLI entry points (`bernstein run`, `bernstein server`, etc.) | Argument injection |
+| CLI entry points (`bernstein run`, `bernstein serve`, etc.) | Argument injection |
 | Authentication tokens (agent tokens, `BERNSTEIN_AUTH_TOKEN`) | Token forgery, replay |
 
 #### Out of scope
