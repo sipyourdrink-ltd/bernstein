@@ -814,9 +814,7 @@ def _enqueue_dlq_if_workdir(
         synth = IncidentSynthesizer(workdir)
         case = synth.synthesize_from_dlq_entry(entry)
         if case is not None:
-            existing = synth._load_existing_ids()
-            if case.id not in existing:
-                synth._write_case(case)
+            synth.emit_case(case)
     except Exception as exc:
         logger.debug("incident synthesiser skipped for task %s: %s", task.id, exc)
 

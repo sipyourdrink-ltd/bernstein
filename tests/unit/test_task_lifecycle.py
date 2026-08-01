@@ -23,6 +23,7 @@ from bernstein.core.models import (
 )
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.task_lifecycle import (
+    _enqueue_dlq_if_workdir,
     _enqueue_paired_test_task,
     _has_llm_judge_signal,
     _move_backlog_ticket,
@@ -1456,3 +1457,53 @@ def test_completion_survives_evidence_gate_exception(tmp_path: Path, make_task: 
 
     assert result.verified == [task.id]
     orch._spawner.cleanup_worktree.assert_called_once_with(session.id)
+
+
+def _incident_cases_dir(workdir: Path) -> Path:
+    """Return the corpus directory IncidentSynthesizer writes cases into."""
+    return workdir / "src" / "bernstein" / "eval" / "cases" / "incidents"
+
+
+def test_dead_lettered_task_writes_an_incident_eval_case(tmp_path: Path, make_task: Any) -> None:
+    """A task that exhausts its retry budget leaves an incident eval case on disk.
+
+    Reaching the dead-letter queue is the trigger for synthesising a
+    regression case from the failure. The synthesis step is fail-open, so a
+    broken call into the synthesiser costs the corpus every terminal failure
+    without surfacing anything louder than a debug line.
+    """
+    task = make_task(id="T-dlq-synth", title="Stabilize parser", role="backend")
+
+    _enqueue_dlq_if_workdir(
+        workdir=tmp_path,
+        task=task,
+        retry_count=3,
+        reason="max_retries_exceeded",
+        original_error="AssertionError: parser returned None",
+    )
+
+    written = sorted(_incident_cases_dir(tmp_path).glob("inc-*.yaml"))
+    assert len(written) == 1, f"expected one incident eval case, found {[p.name for p in written]}"
+    body = written[0].read_text(encoding="utf-8")
+    assert "Stabilize parser" in body
+    assert "max_retries_exceeded" in body
+
+
+def test_repeated_dead_letter_does_not_duplicate_the_incident_case(tmp_path: Path, make_task: Any) -> None:
+    """The same terminal failure twice yields exactly one incident eval case.
+
+    Cases are content-addressed, so a re-run of the same failure must be
+    recognised as already present rather than written a second time.
+    """
+    task = make_task(id="T-dlq-dup", title="Stabilize parser", role="backend")
+    kwargs: dict[str, Any] = {
+        "retry_count": 3,
+        "reason": "max_retries_exceeded",
+        "original_error": "AssertionError: parser returned None",
+    }
+
+    _enqueue_dlq_if_workdir(workdir=tmp_path, task=task, **kwargs)
+    _enqueue_dlq_if_workdir(workdir=tmp_path, task=task, **kwargs)
+
+    written = sorted(_incident_cases_dir(tmp_path).glob("inc-*.yaml"))
+    assert len(written) == 1, f"expected deduplication to one case, found {[p.name for p in written]}"

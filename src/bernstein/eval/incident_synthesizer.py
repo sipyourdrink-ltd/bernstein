@@ -238,6 +238,28 @@ class IncidentSynthesizer:
         """
         return self._synthesize_eval_case(entry)
 
+    def emit_case(self, case: IncidentEvalCase, *, dry_run: bool = False) -> IncidentSyncResult:
+        """Persist a single synthesised case, deduping against the corpus.
+
+        The one-case counterpart to :meth:`sync`, for callers that already
+        hold a case from ``synthesize_from_*`` and want it written with the
+        same dedup rules a full pass would apply - both the content-hash and
+        the source-incident axis, so a re-observed incident does not land
+        twice.
+
+        Args:
+            case: The case to write.
+            dry_run: When True, nothing is written; the result still reports
+                what would have happened.
+
+        Returns:
+            An :class:`IncidentSyncResult` covering just this case.
+        """
+        existing_ids, existing_sources = self._load_existing_state()
+        result = IncidentSyncResult(dry_run=dry_run)
+        self._emit(case, existing_ids, existing_sources, result, dry_run=dry_run)
+        return result
+
     def synthesize_from_ci_postmortem(self, pm: CIFailurePostmortem) -> IncidentEvalCase | None:
         """Build a single eval case from a CI-failure post-mortem.
 
