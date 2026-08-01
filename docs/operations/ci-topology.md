@@ -192,7 +192,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
 | .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"actions": "write", "contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN, NPM_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
-| .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"attestations": "write", "contents": "write", "id-token": "write"} | GITHUB_TOKEN |
+| .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"actions": "write", "attestations": "write", "contents": "write", "id-token": "write"} | GITHUB_TOKEN |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
 | .github/workflows/review-bot-ack-publish.yml | publish: {"actions": "read", "checks": "write", "contents": "read"}<br>republish: {"actions": "write", "checks": "read", "contents": "read"} | - |
 | .github/workflows/review-bot-ack.yml | merge-group-verify: {"checks": "write", "contents": "read", "pull-requests": "read"}<br>pr-gate: {"checks": "write", "contents": "read", "issues": "write", "pull-requests": "write"} | - |

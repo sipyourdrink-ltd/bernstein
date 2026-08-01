@@ -42,6 +42,10 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      # actions: write is required to dispatch the release follow-up workflows
+      # below. This job creates the GitHub Release with GITHUB_TOKEN, which
+      # emits no `release: published` event, so none of them start on their own.
+      actions: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -163,6 +167,42 @@ jobs:
           Full changelog: https://github.com/${{ github.repository }}/compare/v${OLD_VERSION}...v${RELEASE_VERSION}
           NOTES
           )"
+
+      # publish-docker.yml, publish-homebrew.yml and sbom.yml fire on
+      # `release: published`. The release created above uses GITHUB_TOKEN,
+      # which does not emit that event (loop-prevention on token-authored
+      # events), so a major/minor release cut from here shipped to PyPI and to
+      # the GitHub Release and to nothing else: no GHCR image, no tap formula
+      # bump, no SBOM assets. publish.yml dispatches the same three explicitly
+      # for the tag path; this entrypoint owes them the same handoff.
+      #
+      # All three keep their native `release: published` trigger for releases
+      # created by a human or a PAT; workflow_dispatch is exempt from the
+      # loop-prevention, and each is idempotent for a repeated run on the same
+      # tag (image push, formula commit, SBOM asset upload).
+      - name: Dispatch docker publish (release event from GITHUB_TOKEN does not trigger it)
+        if: inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
+        run: gh workflow run publish-docker.yml --ref main -f tag="v${RELEASE_VERSION}"
+
+      # publish-homebrew.yml takes the bare version (3.12.0), not the tag.
+      - name: Dispatch Homebrew formula publish (release event from GITHUB_TOKEN does not trigger it)
+        if: inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
+        run: gh workflow run publish-homebrew.yml --ref main -f version="${RELEASE_VERSION}"
+
+      # sbom.yml takes the tag as its build ref and attaches both SBOMs to the
+      # release it resolves for that ref.
+      - name: Dispatch SBOM generation (release event from GITHUB_TOKEN does not trigger it)
+        if: inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
+        run: gh workflow run sbom.yml --ref main -f ref="v${RELEASE_VERSION}"
 
       - name: Dry run summary
         if: inputs.dry_run == true

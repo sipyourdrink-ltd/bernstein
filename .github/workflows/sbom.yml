@@ -12,6 +12,10 @@ name: SBOM
 # the ref being built, not on which event started the run. Keying it on the
 # event left the dispatch path generating SBOMs it never attached.
 #
+# "A release exists for this ref" is answered by an HTTP status, not by an
+# exit code: only a 404 means no release. Every other API failure fails the
+# job rather than skipping the attach step inside a green run.
+#
 # Ref: #1273, #3323
 
 on:
@@ -62,12 +66,29 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+
+          # Only a 404 means "there is no release for this tag". An auth
+          # failure, a rate limit, or a transient 5xx also exits non-zero, and
+          # reading those as "no release" skips the attach step on a release
+          # that does exist -- the SBOMs then live out their retention as a
+          # workflow artifact nobody looks at, in a green run. Ask the API
+          # directly so the status code is the thing being classified.
+          #
+          # The step runs under `set -e`, so errexit is lifted around the
+          # capture to let the exit code reach the classifier.
+          set +e
+          ERR=$(gh api "repos/${REPO}/releases/tags/${TAG}" --silent 2>&1)
+          CODE=$?
+          set -e
+          if [ "$CODE" -eq 0 ]; then
             echo "release $TAG exists; SBOMs will be attached to it"
             echo "release_exists=true" >> "$GITHUB_OUTPUT"
-          else
+          elif printf '%s' "$ERR" | grep -q 'HTTP 404'; then
             echo "::notice::no release for $TAG; SBOMs stay a workflow artifact only"
             echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::could not determine whether a release exists for ${TAG} (gh exit ${CODE}): ${ERR}"
+            exit 1
           fi
 
       - name: Set up uv

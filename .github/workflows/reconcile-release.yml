@@ -13,6 +13,12 @@ name: Reconcile release drift
 #   * npm                   - the `bernstein-orchestrator` wrapper
 #   * Homebrew tap          - the formula's pinned version
 #   * GitHub Release assets - dist artefacts and both SBOMs
+#
+# A channel this run could not read is reported as `unknown`, kept out of the
+# drift verdict, and named in `unknown_channels`. `unknown` is not `level`: a
+# run carrying any unknown channel neither auto-closes drift issues nor ends
+# green, because a detector that reports success for what it never checked is
+# the same silent-skip failure it exists to catch.
 
 on:
   schedule:
@@ -68,6 +74,25 @@ jobs:
           # Both SBOMs are attached to every release by `.github/workflows/sbom.yml`.
           SBOM_ASSETS = ("bernstein.spdx.json", "bernstein.cyclonedx.json")
 
+          # Channels this run could not read. A channel in here was not compared,
+          # so the run says nothing about it: it must not be counted as evidence
+          # that the channel is level, and the run must not end green pretending
+          # the reconciliation happened.
+          unresolved: list[str] = []
+
+          def annotate(text: str) -> None:
+              # This step's stdout is redirected into GITHUB_OUTPUT, where a
+              # workflow command is just an unparsed line in a file. Annotations
+              # go to stderr so the runner actually renders them.
+              print(text, file=sys.stderr)
+
+          def unreadable(label: str, reason: object) -> None:
+              unresolved.append(label)
+              annotate(
+                  f"::error::could not read the {label} channel state ({reason}); "
+                  f"{label} was NOT checked this run"
+              )
+
           def parse_version(s: str) -> tuple[int, ...]:
               # Tolerant tuple-of-ints parse. Pre-release suffixes (-rc1, .dev0)
               # get stripped; we only need ordering on the public release line.
@@ -78,9 +103,9 @@ jobs:
               # Read one channel's current version, or "unknown" when the channel
               # cannot be read. Same bargain the Copr lookup below makes: one
               # registry's outage must not take the rest of the comparison down
-              # with it, the warning keeps the degraded run visible in the job
-              # log, and "unknown" keeps that channel out of the drift verdict
-              # rather than reporting a version nobody checked.
+              # with it. What "unknown" must never mean is "fine": the label is
+              # recorded in `unresolved`, which gates the auto-close step and
+              # fails the run at the end.
               try:
                   req = urllib.request.Request(
                       url, headers={"User-Agent": USER_AGENT, "Accept": accept}
@@ -88,7 +113,7 @@ jobs:
                   with urllib.request.urlopen(req, timeout=30) as resp:
                       return extract(resp.read())
               except (urllib.error.URLError, TimeoutError, ValueError, KeyError, OSError, TypeError) as exc:
-                  print(f"::warning::could not read the {label} channel state ({exc}); {label} drift not checked")
+                  unreadable(label, exc)
                   return "unknown"
 
           # Read pyproject.toml version from the checked-out tree (main).
@@ -96,7 +121,7 @@ jobs:
               pj_text = fh.read()
           m = re.search(r'(?m)^version = "([^"]+)"', pj_text)
           if not m:
-              print("::error::pyproject.toml has no `version = \"...\"` line")
+              annotate("::error::pyproject.toml has no `version = \"...\"` line")
               sys.exit(1)
           pj_version = m.group(1)
 
@@ -129,9 +154,9 @@ jobs:
               # Copr versions carry the RPM release suffix ("3.12.0-1").
               copr_version = str(latest_build["source_package"]["version"]).split("-", 1)[0]
           except (urllib.error.URLError, TimeoutError, ValueError, KeyError, OSError, TypeError) as exc:
-              # A Copr outage must not take the PyPI comparison down with it;
-              # the warning keeps the degraded run visible in the job log.
-              print(f"::warning::could not read the Copr package state ({exc}); RPM drift not checked")
+              # A Copr outage must not take the PyPI comparison down with it, but
+              # it must not pass for a clean read of the RPM channel either.
+              unreadable("copr", exc)
 
           # npm wrapper. publish.yml versions packaging/npm straight from the
           # release tag, so the `latest` dist-tag tracks the same line as
@@ -179,13 +204,22 @@ jobs:
               capture_output=True,
               text=True,
           )
+          # `gh release view` exits non-zero both for "this release does not
+          # exist" and for "the API could not be reached". Only the first says
+          # anything about the release; collapsing the two would report an
+          # outage as a release with no assets.
+          release_stderr = (release_assets.stderr or "").strip()
+          release_known = True
           release_exists = release_assets.returncode == 0
+          if not release_exists and "release not found" not in release_stderr.lower():
+              release_known = False
+              unreadable("github-release", release_stderr or f"gh exit {release_assets.returncode}")
           asset_names = []
           if release_exists:
               try:
                   asset_names = json.loads(release_assets.stdout.strip() or "[]")
               except json.JSONDecodeError:
-                  print(f"::error::could not parse GitHub Release asset list for {release_tag}")
+                  annotate(f"::error::could not parse GitHub Release asset list for {release_tag}")
                   sys.exit(1)
           asset_count = len(asset_names)
           absent_sboms = [name for name in SBOM_ASSETS if name not in asset_names]
@@ -215,7 +249,7 @@ jobs:
           # window to land, so every version comparison shares the age gate.
           settled = pj_age_hours >= 24
           version_drift = pj_t > pypi_t and settled
-          missing_assets = release_exists and asset_count == 0
+          missing_assets = release_known and release_exists and asset_count == 0
           # An unreadable channel state is reported as a warning above, not as
           # drift: it says nothing about what the channel actually holds.
           copr_drift = (
@@ -225,7 +259,7 @@ jobs:
           )
           npm_drift = npm_version != "unknown" and pj_t > parse_version(npm_version) and settled
           brew_drift = brew_version != "unknown" and pj_t > parse_version(brew_version) and settled
-          missing_sboms = release_exists and settled and bool(absent_sboms)
+          missing_sboms = release_known and release_exists and settled and bool(absent_sboms)
           print(f"version_drift={'true' if version_drift else 'false'}")
           print(f"missing_assets={'true' if missing_assets else 'false'}")
           print(f"copr_drift={'true' if copr_drift else 'false'}")
@@ -251,6 +285,14 @@ jobs:
               if flagged
           ]
           print(f"behind={','.join(behind) if behind else '-'}")
+
+          # `drift=false` alone is not evidence that the release is level: it is
+          # also what an unreadable channel produces. Publish the distinction so
+          # the auto-close step can require a run that actually checked
+          # everything, and so the run itself can fail when it did not.
+          channels_verified = not unresolved
+          print(f"unknown_channels={','.join(unresolved) if unresolved else '-'}")
+          print(f"channels_verified={'true' if channels_verified else 'false'}")
           PY
 
       - name: Open or update drift issue (idempotent)
@@ -314,7 +356,14 @@ jobs:
         # OPEN forever because the previous "open or update" step only fires
         # on the drift==true branch. Close any open release-drift issue here
         # so the inbox self-clears on the next successful publish.
-        if: steps.cmp.outputs.drift != 'true'
+        #
+        # `drift != 'true'` on its own is not that evidence. A channel whose
+        # probe failed reads as "unknown", which is excluded from the drift
+        # verdict and therefore also produces `drift=false` -- so an npm or
+        # Copr outage would close the very ticket tracking a dropped npm or
+        # Copr publish, over a comment claiming every channel is level.
+        # Closing requires a run that read every channel.
+        if: steps.cmp.outputs.drift != 'true' && steps.cmp.outputs.channels_verified == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -344,7 +393,8 @@ jobs:
           done
 
       - name: No drift
-        if: steps.cmp.outputs.drift != 'true'
+        # Only a run that read every channel may report the release as level.
+        if: steps.cmp.outputs.drift != 'true' && steps.cmp.outputs.channels_verified == 'true'
         env:
           PJ_VERSION: ${{ steps.cmp.outputs.pj_version }}
           PYPI_VERSION: ${{ steps.cmp.outputs.pypi_version }}
@@ -356,3 +406,14 @@ jobs:
           MISSING_SBOMS: ${{ steps.cmp.outputs.missing_sboms }}
         run: |
           echo "::notice::No release drift detected (pyproject=${PJ_VERSION}, pypi=${PYPI_VERSION}, copr=${COPR_VERSION}, npm=${NPM_VERSION}, homebrew=${BREW_VERSION}, assets=${ASSET_COUNT}, missing_assets=${MISSING_ASSETS}, missing_sboms=${MISSING_SBOMS})."
+
+      # This step runs last so an unreadable channel still gets the checked
+      # channels compared and any real drift filed before the run goes red.
+      - name: Fail on unverified channels
+        if: steps.cmp.outputs.channels_verified != 'true'
+        env:
+          UNKNOWN_CHANNELS: ${{ steps.cmp.outputs.unknown_channels }}
+          DRIFT: ${{ steps.cmp.outputs.drift }}
+        run: |
+          echo "::error::reconciliation could not read: ${UNKNOWN_CHANNELS}. Those channels were not compared, so this run is not evidence that the release is level (drift verdict over the channels it did read: ${DRIFT}). Open release-drift issues were left open."
+          exit 1
