@@ -5,14 +5,17 @@
 from __future__ import annotations
 
 import collections
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
+from bernstein.core.ab_test_results import ABTestStore
 from bernstein.core.convergence_guard import ConvergenceGuard
 from bernstein.core.models import (
+    AgentHeartbeat,
     AgentSession,
     CompletionSignal,
     Complexity,
@@ -27,6 +30,7 @@ from bernstein.core.task_lifecycle import (
     _enqueue_paired_test_task,
     _has_llm_judge_signal,
     _move_backlog_ticket,
+    _record_ab_test_outcome,
     _verify_via_janitor,
     claim_and_spawn_batches,
     prepare_speculative_warm_pool,
@@ -35,6 +39,7 @@ from bernstein.core.task_lifecycle import (
 )
 from bernstein.core.warm_pool import WarmPool, WarmPoolConfig
 
+from bernstein.core.agents.agent_signals import AgentSignalManager
 from bernstein.core.knowledge.task_graph import TaskGraph
 
 
@@ -1507,3 +1512,60 @@ def test_repeated_dead_letter_does_not_duplicate_the_incident_case(tmp_path: Pat
 
     written = sorted(_incident_cases_dir(tmp_path).glob("inc-*.yaml"))
     assert len(written) == 1, f"expected deduplication to one case, found {[p.name for p in written]}"
+
+
+def test_ab_test_outcome_records_the_files_changed_the_agent_reported(
+    tmp_path: Path,
+    make_task: Any,
+) -> None:
+    """The persisted A/B record carries the agent's own changed-file count.
+
+    files_changed is one of the three axes an A/B comparison is decided on.
+    Recording is fail-open, so reading it from the wrong place costs every
+    A/B record silently rather than raising.
+    """
+    task = make_task(id="T-ab", title="Tune the router")
+    session = _session_for(task.id, exit_code=0)
+
+    signal_mgr = AgentSignalManager(tmp_path)
+    signal_mgr.write_heartbeat(
+        session.id,
+        AgentHeartbeat(timestamp=time.time(), files_changed=7, status="working"),
+    )
+
+    orch = SimpleNamespace(
+        _config=SimpleNamespace(ab_test=True),
+        _ab_split_tracker={task.id: "sonnet"},
+        _workdir=tmp_path,
+        _signal_mgr=signal_mgr,
+    )
+
+    _record_ab_test_outcome(orch, task, session, janitor_passed=True)
+
+    records = ABTestStore(tmp_path).load()
+    assert len(records) == 1, "expected exactly one A/B outcome record"
+    assert records[0].files_changed == 7
+    assert records[0].status == "completed"
+
+
+def test_ab_test_outcome_defaults_files_changed_when_no_heartbeat(
+    tmp_path: Path,
+    make_task: Any,
+) -> None:
+    """A session that never reported a heartbeat still records an outcome."""
+    task = make_task(id="T-ab-nohb", title="Tune the router")
+    session = _session_for(task.id, exit_code=0)
+
+    orch = SimpleNamespace(
+        _config=SimpleNamespace(ab_test=True),
+        _ab_split_tracker={task.id: "sonnet"},
+        _workdir=tmp_path,
+        _signal_mgr=AgentSignalManager(tmp_path),
+    )
+
+    _record_ab_test_outcome(orch, task, session, janitor_passed=False)
+
+    records = ABTestStore(tmp_path).load()
+    assert len(records) == 1, "expected exactly one A/B outcome record"
+    assert records[0].files_changed == 0
+    assert records[0].status == "failed"
