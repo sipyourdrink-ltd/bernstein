@@ -101,3 +101,50 @@ def test_no_drift_notice_reports_asset_count() -> None:
 
     run = _run(step)
     assert "assets=${ASSET_COUNT}" in run
+
+
+def test_compare_step_covers_the_rpm_channel() -> None:
+    """Copr is in the comparison set (#3325).
+
+    The RPM channel has no repository-visible artefact, so a dropped publish
+    is invisible until someone installs the package by hand. The reconciler
+    is the only surface that can see it.
+    """
+    run = _run(_step("Compare versions and release assets"))
+
+    assert "copr.fedorainfracloud.org/api_3/package" in run
+    assert "copr_version=" in run
+    assert "copr_drift=" in run
+    assert "drift = version_drift or missing_assets or copr_drift" in run
+
+
+def test_copr_lookup_failure_does_not_break_the_pypi_comparison() -> None:
+    """A Copr API outage must not take the PyPI drift detector down with it."""
+    run = _run(_step("Compare versions and release assets"))
+
+    except_clause = next(line for line in run.splitlines() if line.strip().startswith("except ("))
+    for exception in ("urllib.error.URLError", "TimeoutError", "ValueError", "KeyError", "OSError"):
+        assert exception in except_clause
+
+    assert 'copr_version = "unknown"' in run
+    assert "::warning::" in run
+
+
+def test_drift_issue_reports_the_rpm_channel_version() -> None:
+    step = _step("Open or update drift issue (idempotent)")
+    env = step.get("env", {})
+    assert isinstance(env, dict)
+    assert "COPR" in env
+
+    run = _run(step)
+    assert "latest on Copr" in run
+
+
+def test_no_drift_notice_reports_the_rpm_channel_version() -> None:
+    step = _step("No drift")
+    env = step.get("env", {})
+    assert isinstance(env, dict)
+    assert "COPR_VERSION" in env
+
+    run = _run(step)
+    assert "copr=${COPR_VERSION}" in run

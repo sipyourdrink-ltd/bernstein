@@ -1,4 +1,6 @@
 Name:           bernstein
+# Bound to the release tag by scripts/build_copr_srpm.py before the SRPM is
+# built; the committed value is only what makes this file buildable on its own.
 Version:        1.4.11
 Release:        1%{?dist}
 Summary:        Deterministic orchestrator for CLI coding agents
@@ -31,6 +33,6 @@ chmod 755 %{buildroot}%{_bindir}/bernstein
 %{_bindir}/bernstein
 
 %changelog
-* Thu Apr 03 2026 Alex Chernysh <alex@alexchernysh.com> - 1.4.11-1
+* Fri Apr 03 2026 Alex Chernysh <alex@alexchernysh.com> - 1.4.11-1
 - Switch to wrapper RPM: installs via pipx/uvx instead of native Python RPM
 - Fixes COPR build failures from missing Fedora packages for Python deps

@@ -13,6 +13,15 @@ on:
         description: "Release tag to publish (e.g. v2.8.1)"
         required: true
         type: string
+      # Republish a single distribution channel for a tag that is already
+      # released. The RPM channel builds from packaging/rpm/bernstein.spec
+      # rather than from dist/, so it can be replayed on its own without
+      # rebuilding or re-uploading anything else.
+      copr_only:
+        description: "Run only the Copr RPM publish for the given tag"
+        required: false
+        default: false
+        type: boolean
 
 # Permissions are declared per-job so that each job gets only what it
 # needs (Sonar S8264). The default permission for any job that does not
@@ -30,6 +39,10 @@ jobs:
   protocol-gate:
     name: Protocol Compatibility Gate
     runs-on: ubuntu-latest
+    # A single-channel republish re-releases nothing, so the release gates
+    # have nothing to gate. Skipping the three root jobs skips the whole
+    # build/publish graph with them - every other job reaches it via `needs`.
+    if: ${{ !inputs.copr_only }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -117,6 +130,7 @@ jobs:
   test:
     name: Verify tests pass
     runs-on: ubuntu-latest
+    if: ${{ !inputs.copr_only }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -140,6 +154,7 @@ jobs:
   version-check:
     name: Verify tag matches pyproject.toml
     runs-on: ubuntu-latest
+    if: ${{ !inputs.copr_only }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -328,6 +343,89 @@ jobs:
           if ! npm publish --access public; then
             echo "::warning::npm wrapper publish failed; continuing release"
           fi
+
+  # RPM channel (#3325). packaging/rpm/bernstein.spec ships a wrapper that
+  # resolves the package from PyPI at run time, so this job waits for the PyPI
+  # publish and then submits a source RPM built at the tag version to the
+  # Fedora Copr build service.
+  #
+  # It hangs off the tag trigger like every other job here rather than off
+  # `release: published`: a release created with GITHUB_TOKEN raises no event,
+  # which is what already leaves the release-event consumers unreachable for
+  # automated releases (#3323).
+  #
+  # No warn-and-continue. The RPM channel leaves no artefact in the repository,
+  # so a swallowed failure here is invisible until someone installs the package
+  # by hand - the failure mode #3322 documents for the npm wrapper.
+  publish-copr:
+    name: Publish RPM to Copr
+    runs-on: ubuntu-latest
+    needs: publish
+    # `always()` so a channel-only republish still runs with the upstream
+    # release graph skipped; the PyPI result still gates the normal tag path.
+    if: ${{ always() && (inputs.copr_only || needs.publish.result == 'success') }}
+    # Wider than the other publish jobs: the submit step waits for the Copr
+    # build itself, which queues behind other builders.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      COPR_PROJECT: alexchernysh/bernstein
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # A republished tag can predate the spec renderer, so in that mode the
+          # packaging sources come from the dispatch ref instead of the tag.
+          ref: ${{ inputs.copr_only && github.ref || inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install rpmbuild and copr-cli
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+          # Pinned: an unpinned installer lets an upstream release change what
+          # runs in the job that holds the publishing credential.
+          python3 -m pip install --disable-pip-version-check "copr-cli==2.5"
+          command -v rpmbuild
+          copr-cli --version
+      - name: Write copr-cli configuration
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: |
+          set -euo pipefail
+          if [ -z "${COPR_CONFIG:-}" ]; then
+            echo "::error::COPR_CONFIG secret is not configured; the RPM channel cannot publish"
+            exit 1
+          fi
+          mkdir -p ~/.config
+          printf '%s\n' "${COPR_CONFIG}" > ~/.config/copr
+          # copr-cli reads an API token from this file; keep it owner-only.
+          chmod 600 ~/.config/copr
+      - name: Build the source RPM at the release version
+        id: srpm
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          SRPM=$(python3 scripts/build_copr_srpm.py --version "${VERSION}" --outdir "${RUNNER_TEMP}/copr")
+          echo "built ${SRPM}"
+          echo "path=${SRPM}" >> "$GITHUB_OUTPUT"
+      - name: Submit build to Copr
+        env:
+          SRPM_PATH: ${{ steps.srpm.outputs.path }}
+        run: |
+          set -euo pipefail
+          echo "submitting ${SRPM_PATH} to ${COPR_PROJECT}"
+          # Deliberately not --nowait: copr-cli then waits for the build and
+          # exits non-zero when it fails, so the job's verdict tracks the
+          # published RPM rather than just the upload.
+          copr-cli build "${COPR_PROJECT}" "${SRPM_PATH}"
 
   # MCP registry listing (#2369). Regenerated from pyproject.toml by
   # scripts/gen_distribution_manifests.py so the listing can never drift

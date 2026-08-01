@@ -190,174 +190,24 @@ gh api repos/chernistry/homebrew-tap/contents/Formula/bernstein.rb \
 
 ---
 
-## 10. COPR / RPM - kill or fix decision
+## 10. COPR / RPM - resolved
 
-**Status:** ❌ broken since March 2026. Last successful build was `1.4.11`.
-Every build since fails in Fedora chroots - `copr-cli buildpypi` cannot
-resolve 30+ Python `python3dist(...)` dependencies (`beartype >= 0.21`,
-`crosshair-tool`, `openai-agents`, etc.) because they are not packaged for
-Fedora.
+**Status:** ✅ wired into the release chain (#3325).
 
-The wrapper-spec workaround landed in `packaging/rpm/bernstein.spec`
-(`1.4.11-1`) but it is unused: `publish.yml` calls `copr-cli buildpypi`,
-which **ignores** the in-repo spec and synthesizes its own from PyPI
-metadata. That regenerated spec is what pulls in the missing
-`python3dist(...)` BuildRequires.
+The channel was broken from March 2026 to August 2026 because the release
+chain called `copr-cli buildpypi`, which ignores the in-repo spec and
+synthesizes its own from PyPI metadata. That generated spec pulls in 30+
+`python3dist(...)` BuildRequires that Fedora does not package, so every
+chroot build failed. The last successful build was `1.4.11`.
 
-The operator has to pick one of two paths. Both are docs-only here - the
-actual workflow / docs edits land in a follow-up PR.
+The fix keeps the channel and drops `buildpypi`. `packaging/rpm/bernstein.spec`
+ships a wrapper RPM that resolves the package through `pipx`/`uvx` at run
+time, so it declares no Python dependencies and nothing has to be packaged for
+Fedora. `scripts/build_copr_srpm.py` binds the spec to the release tag and
+`publish-copr` in `.github/workflows/publish.yml` submits the resulting SRPM.
 
-### Option A - Kill the channel
-
-Lowest-effort, recommended if COPR install volume is < 5% of downloads.
-
-Diff for `.github/workflows/publish.yml`:
-
-```diff
--  # COPR RPM rebuild - triggers a new build from the updated PyPI release.
--  trigger-copr:
--    name: Trigger COPR rebuild
--    runs-on: ubuntu-latest
--    needs: build
--    timeout-minutes: 10
--    permissions: {}
--    steps:
--      - name: Harden runner (audit mode)
--        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
--        with:
--          egress-policy: audit
--      - name: Trigger COPR build
--        run: |
--          pip install copr-cli
--          mkdir -p ~/.config
--          cat > ~/.config/copr << EOF
--          [copr-cli]
--          login = ${{ secrets.COPR_LOGIN }}
--          username = alexchernysh
--          token = ${{ secrets.COPR_TOKEN }}
--          copr_url = https://copr.fedorainfracloud.org
--          EOF
--          copr-cli buildpypi --packagename bernstein alexchernysh/bernstein --nowait
-```
-
-Then strip the COPR install path from:
-
-- `docs/getting-started/install.md` (the `Fedora / RHEL (dnf)` tab)
-- `docs/getting-started/install-linux.md` (`## Fedora / RHEL via COPR`)
-- `docs/index.html` (FAQ schema mentions `dnf copr`)
-- `docs/llms-full.txt`
-- All `docs/i18n/README.*.md` install matrix rows
-- `packaging/rpm/bernstein.spec` (delete the file; no longer published)
-- Repo secrets: delete `COPR_LOGIN` and `COPR_TOKEN`.
-
-Recommend a redirect notice: point Fedora users at `pipx install bernstein`
-or `uv tool install bernstein` - both work on Fedora 41/42 out of the box.
-
-### Option B - Fix the spec
-
-Keep COPR alive. Stop relying on `buildpypi`'s auto-generated spec; ship the
-in-repo spec and let `%pyproject_buildrequires --generate-extras` discover
-Python deps from `pyproject.toml` at build time, falling back to bundled
-wheels for anything Fedora can't resolve.
-
-Diff for `packaging/rpm/bernstein.spec` (replaces the entire current file):
-
-```diff
--Name:           bernstein
--Version:        1.4.11
--Release:        1%{?dist}
--Summary:        Multi-agent orchestration for AI coding agents
--License:        Apache-2.0
--URL:            https://github.com/sipyourdrink-ltd/bernstein
--BuildArch:      noarch
--Requires:       python3 >= 3.12
--
--%description
--Orchestrate parallel AI coding agents. Runs Claude Code, Codex, Gemini CLI
--and others in parallel with git worktree isolation and quality gates.
--
--%install
--mkdir -p %{buildroot}%{_bindir}
--cat > %{buildroot}%{_bindir}/bernstein << 'WRAPPER'
--#!/bin/bash
--if command -v pipx &>/dev/null; then
--    exec pipx run bernstein "$@"
--elif command -v uvx &>/dev/null; then
--    exec uvx bernstein "$@"
--else
--    exec python3 -m pip install --user bernstein &>/dev/null && exec python3 -m bernstein "$@"
--fi
--WRAPPER
--chmod 755 %{buildroot}%{_bindir}/bernstein
--
--%files
--%{_bindir}/bernstein
-+%global pypi_name bernstein
-+
-+Name:           bernstein
-+Version:        2.0.1
-+Release:        1%{?dist}
-+Summary:        Multi-agent orchestration for AI coding agents
-+License:        Apache-2.0
-+URL:            https://github.com/sipyourdrink-ltd/bernstein
-+Source0:        %{pypi_source %{pypi_name}}
-+BuildArch:      noarch
-+
-+BuildRequires:  python3-devel >= 3.12
-+BuildRequires:  pyproject-rpm-macros
-+
-+%description
-+Orchestrate parallel AI coding agents. Runs Claude Code, Codex, Gemini CLI
-+and others in parallel with git worktree isolation and quality gates.
-+
-+%prep
-+%autosetup -n %{pypi_name}-%{version}
-+
-+%generate_buildrequires
-+# --generate-extras lets pyproject-rpm-macros discover optional deps from
-+# pyproject.toml so missing python3dist(...) Fedora packages don't block
-+# the build. Anything not available in Fedora is pulled from bundled wheels
-+# via %pyproject_wheel.
-+%pyproject_buildrequires -r --generate-extras
-+
-+%build
-+%pyproject_wheel
-+
-+%install
-+%pyproject_install
-+%pyproject_save_files %{pypi_name}
-+
-+%files -f %{pypi_name}.files
-+%license LICENSE
-+%doc README.md
-+%{_bindir}/bernstein
-```
-
-Then change `publish.yml` to upload the in-repo spec instead of using
-`buildpypi`:
-
-```diff
--          copr-cli buildpypi --packagename bernstein alexchernysh/bernstein --nowait
-+          copr-cli build --nowait alexchernysh/bernstein packaging/rpm/bernstein.spec
-```
-
-Expect 2–3 iterations: each rebuild reveals the next missing
-`python3dist(...)` that needs to either land in Fedora or get vendored via a
-`Source1:` wheel bundle.
-
-### Recommendation
-
-**Option A (kill).** Reasoning:
-
-- `pipx`/`uv tool install` covers Fedora natively and is the upstream
-  Python recommendation; COPR is duplicate surface.
-- Option B's "2–3 iterations" is optimistic - `crosshair-tool` and
-  `openai-agents` have transitive deps that Fedora has historically taken
-  6+ months to package. Realistic timeline is months of maintenance for
-  marginal install volume.
-- Killing COPR also frees the operator from rotating `COPR_LOGIN` /
-  `COPR_TOKEN` and from monitoring a chronically red build.
-
-Pick Option B only if a downstream consumer (gov / regulated org) has a
-hard requirement for a signed `.rpm` from a Fedora-trusted source. That
-requirement should be documented before reopening the channel.
+Operator details - secret name, project URL, local build commands, and the
+single-channel republish path - live in
+[`docs/operations/release.md`](../operations/release.md#rpm-channel-copr).
+The channel is in the `reconcile-release.yml` comparison set, so a version the
+RPM channel never received opens a `release-drift` issue.

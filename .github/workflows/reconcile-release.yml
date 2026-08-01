@@ -22,7 +22,7 @@ permissions: {}
 
 jobs:
   reconcile:
-    name: Compare pyproject.toml vs PyPI
+    name: Compare pyproject.toml vs published channels
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -54,6 +54,7 @@ jobs:
           import re
           import subprocess
           import sys
+          import urllib.error
           import urllib.request
 
           def parse_version(s: str) -> tuple[int, ...]:
@@ -79,6 +80,30 @@ jobs:
           with urllib.request.urlopen(req, timeout=30) as resp:
               pypi_payload = json.load(resp)
           pypi_version = pypi_payload["info"]["version"]
+
+          # Fetch the latest RPM the Copr build service holds. The RPM channel
+          # leaves no artefact in this repository, so this reconciliation is
+          # the only place a dropped publish becomes visible (#3325).
+          copr_version = "unknown"
+          copr_api = (
+              "https://copr.fedorainfracloud.org/api_3/package"
+              "?ownername=alexchernysh&projectname=bernstein"
+              "&packagename=bernstein&with_latest_build=true"
+          )
+          try:
+              copr_req = urllib.request.Request(
+                  copr_api,
+                  headers={"User-Agent": "bernstein-reconcile-release"},
+              )
+              with urllib.request.urlopen(copr_req, timeout=30) as resp:
+                  copr_payload = json.load(resp)
+              latest_build = copr_payload["builds"]["latest"]
+              # Copr versions carry the RPM release suffix ("3.12.0-1").
+              copr_version = str(latest_build["source_package"]["version"]).split("-", 1)[0]
+          except (urllib.error.URLError, TimeoutError, ValueError, KeyError, OSError, TypeError) as exc:
+              # A Copr outage must not take the PyPI comparison down with it;
+              # the warning keeps the degraded run visible in the job log.
+              print(f"::warning::could not read the Copr package state ({exc}); RPM drift not checked")
 
           pj_t = parse_version(pj_version)
           pypi_t = parse_version(pypi_version)
@@ -123,16 +148,25 @@ jobs:
 
           print(f"pj_version={pj_version}")
           print(f"pypi_version={pypi_version}")
+          print(f"copr_version={copr_version}")
           print(f"pj_age_hours={pj_age_hours}")
           print(f"release_exists={'true' if release_exists else 'false'}")
           print(f"asset_count={asset_count}")
 
           version_drift = pj_t > pypi_t and pj_age_hours >= 24
           missing_assets = release_exists and asset_count == 0
+          # An unreadable Copr state is reported as a warning above, not as
+          # drift: it says nothing about what the channel actually holds.
+          copr_drift = (
+              copr_version != "unknown"
+              and pj_t > parse_version(copr_version)
+              and pj_age_hours >= 24
+          )
           print(f"version_drift={'true' if version_drift else 'false'}")
           print(f"missing_assets={'true' if missing_assets else 'false'}")
+          print(f"copr_drift={'true' if copr_drift else 'false'}")
 
-          drift = version_drift or missing_assets
+          drift = version_drift or missing_assets or copr_drift
           print(f"drift={'true' if drift else 'false'}")
           PY
 
@@ -142,26 +176,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PJ: ${{ steps.cmp.outputs.pj_version }}
           PYPI: ${{ steps.cmp.outputs.pypi_version }}
+          COPR: ${{ steps.cmp.outputs.copr_version }}
+          COPR_DRIFT: ${{ steps.cmp.outputs.copr_drift }}
           AGE: ${{ steps.cmp.outputs.pj_age_hours }}
           RELEASE_EXISTS: ${{ steps.cmp.outputs.release_exists }}
           ASSET_COUNT: ${{ steps.cmp.outputs.asset_count }}
           MISSING_ASSETS: ${{ steps.cmp.outputs.missing_assets }}
           REPO: ${{ github.repository }}
         run: |
-          TITLE="release drift: pyproject=\`${PJ}\` pypi=\`${PYPI}\`"
+          TITLE="release drift: pyproject=\`${PJ}\` pypi=\`${PYPI}\` copr=\`${COPR}\`"
           if [ "${MISSING_ASSETS}" = "true" ]; then
             CAUSE="GitHub Release missing dist assets."
+          elif [ "${COPR_DRIFT}" = "true" ]; then
+            CAUSE="The RPM channel is behind: re-run the Copr publish with \`gh workflow run publish.yml --ref main -f tag=v${PJ} -f copr_only=true\`."
           else
             CAUSE="Likely cause: a CI run was cancelled/timed_out/action_required so \`auto-release.yml\` silently skipped the publish (see #1273)."
           fi
           # shellcheck disable=SC2016
-          BODY=$(printf 'Detected by `.github/workflows/reconcile-release.yml`.\n\n- pyproject.toml on main: **%s**\n- latest on PyPI: **%s**\n- age of pyproject bump: %sh\n- GitHub Release exists: **%s**\n- GitHub Release asset count: **%s**\n\n%s\n\nRun `gh workflow run reconcile-release.yml` after fixing to clear.\n' \
-            "${PJ}" "${PYPI}" "${AGE}" "${RELEASE_EXISTS}" "${ASSET_COUNT}" "${CAUSE}")
+          BODY=$(printf 'Detected by `.github/workflows/reconcile-release.yml`.\n\n- pyproject.toml on main: **%s**\n- latest on PyPI: **%s**\n- latest on Copr: **%s**\n- age of pyproject bump: %sh\n- GitHub Release exists: **%s**\n- GitHub Release asset count: **%s**\n\n%s\n\nRun `gh workflow run reconcile-release.yml` after fixing to clear.\n' \
+            "${PJ}" "${PYPI}" "${COPR}" "${AGE}" "${RELEASE_EXISTS}" "${ASSET_COUNT}" "${CAUSE}")
 
           # Idempotency: search for an open issue whose title matches the
-          # exact pyproject/pypi pair. Re-runs the same day just comment.
+          # exact channel triple. Re-runs the same day just comment.
           EXISTING=$(gh issue list --repo "${REPO}" --state open \
-            --search "in:title release drift pyproject=${PJ} pypi=${PYPI}" \
+            --search "in:title release drift pyproject=${PJ} pypi=${PYPI} copr=${COPR}" \
             --json number,title \
             --jq ".[] | select(.title == \"${TITLE}\") | .number" \
             | head -1)
@@ -214,7 +252,8 @@ jobs:
         env:
           PJ_VERSION: ${{ steps.cmp.outputs.pj_version }}
           PYPI_VERSION: ${{ steps.cmp.outputs.pypi_version }}
+          COPR_VERSION: ${{ steps.cmp.outputs.copr_version }}
           ASSET_COUNT: ${{ steps.cmp.outputs.asset_count }}
           MISSING_ASSETS: ${{ steps.cmp.outputs.missing_assets }}
         run: |
-          echo "::notice::No release drift detected (pyproject=${PJ_VERSION}, pypi=${PYPI_VERSION}, assets=${ASSET_COUNT}, missing_assets=${MISSING_ASSETS})."
+          echo "::notice::No release drift detected (pyproject=${PJ_VERSION}, pypi=${PYPI_VERSION}, copr=${COPR_VERSION}, assets=${ASSET_COUNT}, missing_assets=${MISSING_ASSETS})."
