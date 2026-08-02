@@ -60,8 +60,9 @@ manifest. The workflow authenticates with `GITHUB_TOKEN`.
 Shepherds:
 
 1. Watch CI to green.
-2. Fetch all configured review-bot comments via the two `gh api`
-   endpoints listed above.
+2. Fetch all configured review-bot artefacts via the three `gh api`
+   endpoints the gate reads: `pulls/<n>/comments`,
+   `issues/<n>/comments`, and `pulls/<n>/reviews`.
 3. Classify into must-address vs informational.
 4. Apply must-address fixes in a fixup commit (`bot-ack: <id>` in
    the message) or add a `bot-ack` marker to the PR body with a
