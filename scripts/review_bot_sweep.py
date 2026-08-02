@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-merge sweeper for unprocessed CodeRabbit/Sourcery findings.
+"""Post-merge sweeper for unprocessed review-bot findings.
 
 Walks recently merged PRs and collects must-address findings that were
 not addressed before merge. Writes a Markdown manifest the calling

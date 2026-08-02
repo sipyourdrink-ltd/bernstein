@@ -31,7 +31,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cleanup-runs.yml | Cleanup Action Runs | workflow_dispatch | {"cancel-in-progress": "false", "group": "cleanup-runs-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-e2e.yml | cluster-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
-| .github/workflows/code-review-bots-ci.yml | Code review bots (CLI lane) | pull_request | {"cancel-in-progress": "true", "group": "code-review-bots-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/codeql.yml | CodeQL Security Analysis | pull_request, push, schedule | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/coverage-ratchet-weekly.yml | Coverage ratchet (weekly floor bump) | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "coverage-ratchet-weekly"} | 1 |
@@ -98,7 +97,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cleanup-runs.yml | cleanup |
 | .github/workflows/cluster-e2e.yml | cluster-e2e: cluster-e2e (linux) |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: cluster-tunnel-e2e (linux) |
-| .github/workflows/code-review-bots-ci.yml | sourcery-cli: Sourcery CLI review (advisory) |
 | .github/workflows/codeql.yml | analyze: CodeQL (${{ matrix.language }}) |
 | .github/workflows/contract-drift-autofix.yml | autofix: Detect and patch contract drift |
 | .github/workflows/coverage-ratchet-weekly.yml | bump: Bump diff-coverage floor and open review PR |
@@ -165,7 +163,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cleanup-runs.yml | workflow: {"contents": "read"}<br>cleanup: {"actions": "write"} | GITHUB_TOKEN |
 | .github/workflows/cluster-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/cluster-tunnel-e2e.yml | workflow: {"contents": "read"} | CF_TUNNEL_HOSTNAME, CF_TUNNEL_TOKEN |
-| .github/workflows/code-review-bots-ci.yml | workflow: {"contents": "read"}<br>sourcery-cli: {"contents": "read"} | SOURCERY_API_KEY |
 | .github/workflows/codeql.yml | workflow: {"contents": "read"}<br>analyze: {"actions": "read", "contents": "read", "pull-requests": "write", "security-events": "write"} | - |
 | .github/workflows/contract-drift-autofix.yml | workflow: {"contents": "read"}<br>autofix: {"contents": "write", "issues": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
 | .github/workflows/coverage-ratchet-weekly.yml | bump: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |

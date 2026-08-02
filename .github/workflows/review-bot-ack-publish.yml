@@ -209,7 +209,7 @@ jobs:
             --name review-bot-ack \
             --conclusion "$VERDICT" \
             --title "Review-bot acknowledgement gate" \
-            --summary "Every must-address CodeRabbit and Sourcery finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}. See the sticky summary comment on the pull request for the per-finding breakdown." \
+            --summary "Every must-address review-bot finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}. See the sticky summary comment on the pull request for the per-finding breakdown." \
             --details-url "$GATE_RUN_URL"
 
   # The other half of the rule above.

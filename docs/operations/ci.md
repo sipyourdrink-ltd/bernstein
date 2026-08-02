@@ -268,7 +268,7 @@ block or unblock one.
 
 Everything else that triggers on `pull_request` is advisory:
 `a2a-federation-e2e`, `airgap-e2e`, `bernstein-pr-review`,
-`cluster-e2e`, `code-review-bots-ci`, `codeql`,
+`cluster-e2e`, `codeql`,
 `contract-drift-autofix`, `dependabot-auto-merge`,
 `dependency-review`, `docs-drift`, `license-compliance`, `pr-labels`,
 `pr-observability-summary`, `pr-policy`, `required-check-canary`,

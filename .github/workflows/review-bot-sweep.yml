@@ -1,7 +1,7 @@
 name: Review-bot post-merge sweep
 
 # Nightly sweep over recently merged PRs that looks for must-address
-# CodeRabbit and Sourcery findings that slipped through. If any are
+# review-bot findings that slipped through. If any are
 # found, opens a single consolidated follow-up PR carrying a manifest
 # of the missed findings. If none are found, exits cleanly.
 #

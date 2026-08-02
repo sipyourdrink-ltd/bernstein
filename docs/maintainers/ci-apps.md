@@ -24,22 +24,25 @@ patches as PR suggestions - it never auto-merges. Triage as normal review work.
 
 ---
 
-## 2. Install CodeRabbit GitHub App
+## 2. CodeRabbit and Sourcery - retired
 
-Free Pro tier for OSS repos. URL: <https://github.com/apps/coderabbitai>.
+Both apps are retired and no longer in use on this repository. Their repo
+configuration is gone: `.coderabbit.yaml`, `.sourcery.yaml`, and the advisory
+CLI lane `.github/workflows/code-review-bots-ci.yml` were removed, and the
+`review-bot-ack` gate no longer lists either account in `REVIEW_BOT_LOGINS`
+(`scripts/review_bot_ack.py`).
 
-Steps:
-- Click **Install** → authorize on `sipyourdrink-ltd/bernstein`.
-- No repo secret required.
-- Tuned `.coderabbit.yaml` lives at the repo root (path-aware instructions,
-  Pro features enabled, duplicate-CI tools disabled).
-- Companion `.sourcery.yaml` lives alongside it; the Sourcery CLI runs as an
-  advisory PR lane in `.github/workflows/code-review-bots-ci.yml`.
-- Secrets required: `CODERABBIT_API_KEY` (chat-only, optional) and
-  `SOURCERY_API_KEY` (used by the CLI lane).
+Remaining operator actions (owner-only, browser):
 
-Risk: adds 1 reviewer comment per PR. Rate-limit is 4 reviews/hr/PR; bursty
-force-pushes will queue.
+- Org **Settings** → **GitHub Apps** → uninstall **CodeRabbit** and
+  **Sourcery** if still installed.
+- Delete the stale repo secrets `CODERABBIT_API_KEY` and `SOURCERY_API_KEY`
+  (**Settings** → **Secrets and variables** → **Actions**); nothing reads
+  them any more.
+
+The acknowledgement gate itself stays: it tracks whichever reviewer accounts
+`REVIEW_BOT_LOGINS` names (currently `baz-reviewer[bot]`). See
+`docs/operations/review-bot-ack.md` for the protocol.
 
 ---
 
@@ -51,9 +54,9 @@ Steps:
 - **Install** → authorize on `sipyourdrink-ltd/bernstein`.
 - Auth flows through the maintainer's Google account; no repo secret needed.
 
-Risk: doubles AI-reviewer noise alongside CodeRabbit. Worth keeping for
-cross-check on security-sensitive PRs; consider disabling per-PR if signal/noise
-degrades.
+Risk: adds a second AI-reviewer lane next to the one already reviewing PRs.
+Worth keeping for cross-check on security-sensitive PRs; consider disabling
+per-PR if signal/noise degrades.
 
 ---
 

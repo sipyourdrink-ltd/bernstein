@@ -1,7 +1,7 @@
 name: Review-bot acknowledgement gate
 
-# Pre-merge gate: ensure every must-address CodeRabbit and Sourcery
-# finding on a PR is either fixed in a fixup commit or explicitly
+# Pre-merge gate: ensure every must-address finding from the configured
+# review bots on a PR is either fixed in a fixup commit or explicitly
 # acknowledged in the PR body. Automated review tools flag legitimate
 # correctness and security issues; this gate keeps the merge queue
 # honest by blocking merge until those findings are processed.
@@ -321,7 +321,7 @@ jobs:
             --name review-bot-ack \
             --conclusion "$VERDICT" \
             --title "Review-bot acknowledgement gate" \
-            --summary "Every must-address CodeRabbit and Sourcery finding must be fixed in a later commit or acknowledged in the PR body. See the sticky summary comment on the pull request for the per-finding breakdown." \
+            --summary "Every must-address review-bot finding must be fixed in a later commit or acknowledged in the PR body. See the sticky summary comment on the pull request for the per-finding breakdown." \
             --details-url "$RUN_URL"
 
       - name: Reflect the verdict in this job

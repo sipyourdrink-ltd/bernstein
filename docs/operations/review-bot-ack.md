@@ -1,7 +1,10 @@
 # Review-bot acknowledgement protocol
 
 This page documents the pre-merge gate and post-merge sweeper that
-ensure CodeRabbit and Sourcery findings on PRs are processed.
+ensure review-bot findings on PRs are processed. The bots the gate
+tracks are the `REVIEW_BOT_LOGINS` set in `scripts/review_bot_ack.py`
+(currently `baz-reviewer[bot]`); retiring or adding a bot is a change
+to that set.
 
 ## Why
 
@@ -17,7 +20,7 @@ every review submission. It calls `scripts/review_bot_ack.py`, which:
 
 1. Fetches inline review-comment threads (`pulls/<n>/comments`) and
    top-level issue comments (`issues/<n>/comments`) authored by the
-   `coderabbitai[bot]` and `sourcery-ai[bot]` accounts.
+   configured review-bot accounts (`REVIEW_BOT_LOGINS`).
 2. Classifies each comment into one of two buckets based on the
    severity tag the bot embeds in the body
    (`**Potential issue**`, `**issue:**`, `**security:**`,
@@ -57,7 +60,7 @@ manifest. The workflow authenticates with `GITHUB_TOKEN`.
 Shepherds:
 
 1. Watch CI to green.
-2. Fetch all CodeRabbit + Sourcery comments via the two `gh api`
+2. Fetch all configured review-bot comments via the two `gh api`
    endpoints listed above.
 3. Classify into must-address vs informational.
 4. Apply must-address fixes in a fixup commit (`bot-ack: <id>` in
