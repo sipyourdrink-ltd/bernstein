@@ -16,6 +16,12 @@ Checks performed:
 - The sanitiser (`core/skills/sanitizer.py`) reports zero stripped
   codepoints. Anything stripped is a high-signal sensitive-pattern leak.
 - The body starts with an ``H1`` heading and is under 5 KB.
+- The body carries no prompt-space risk phrasing (issue #2899, step 1):
+  exfiltration-shaped instructions, credential-file asks, and
+  approval-bypass wording are ERROR findings with code
+  ``prompt-space-risk``. Each check is conjunctive (an egress verb next to
+  a sensitive noun, a read verb next to a credential artifact) so ordinary
+  skill vocabulary ("use environment variables for secrets") stays clean.
 
 Output shape is a list of :class:`LintFinding` records. The caller renders
 them and chooses the exit code.
@@ -23,6 +29,7 @@ them and chooses the exit code.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -39,6 +46,95 @@ from bernstein.core.skills.sanitizer import strip_invisible_tags
 _MAX_BODY_BYTES: int = 5 * 1024
 
 _VALID_BUCKETS: tuple[str, ...] = ("references", "scripts", "assets")
+
+# ---------------------------------------------------------------------------
+# Prompt-space risk patterns (issue #2899, step 1).
+#
+# A skill body is prompt-space code: it steers the agent that loads it. The
+# three shapes below are the ones the trust gate needs to refuse before any
+# third-party skill can be admitted. Every check is deliberately conjunctive
+# per line - in-tree skills legitimately say "secrets", "POST", ".env" and
+# "credential" in isolation, so single-keyword matching is unusable.
+# ---------------------------------------------------------------------------
+
+#: Egress verbs. A line is exfiltration-shaped only when one of these
+#: co-occurs with a sensitive noun on the same line.
+_EXFIL_EGRESS_RE: re.Pattern[str] = re.compile(
+    r"(?i)\b(curl|wget|upload\w*|post\w*|send\w*|transmit\w*|exfiltrat\w*|forward\w*)\b"
+)
+
+#: Sensitive nouns for the exfiltration check. Bare "token" is excluded on
+#: purpose - orchestration skills mention session/auth-header tokens
+#: descriptively; only the compound forms are flagged.
+_EXFIL_SENSITIVE_RE: re.Pattern[str] = re.compile(
+    r"(?i)(\.env\b|\bcredentials?\b|\bsecrets?\b|\bapi[-_ ]?keys?\b"
+    r"|\benvironment variables?\b|\bssh[-_ ]?keys?\b|\bprivate keys?\b"
+    r"|\bid_rsa\b|\bauth tokens?\b|\baccess tokens?\b|\bapi tokens?\b)"
+)
+
+#: Read-verb next to a credential artifact (same line, verb first).
+_CREDENTIAL_ASK_RE: re.Pattern[str] = re.compile(
+    r"(?i)\b(read\w*|cat|open\w*|print\w*|dump\w*|copy|copie\w*|extract\w*"
+    r"|collect\w*|includ\w*|fetch\w*|grab\w*|view\w*)\b"
+    r"[^\n]{0,80}"
+    r"(~?/?\.aws/credentials|\bid_rsa\b|\.ssh/|\b\.netrc\b|\bkeychain\b|\.env\b)"
+)
+
+#: Approval-bypass phrasings. Fixed shapes rather than keywords so that
+#: "without sacrificing quality" or "skip flaky tests" stay clean.
+_APPROVAL_BYPASS_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)\b(ignore|disregard)\b[^\n]{0,40}\b(instructions?|system prompt|guardrails?|rules)\b"),
+    re.compile(r"(?i)\bskip\w*\b[^\n]{0,40}\b(confirmation|approval|permission|consent)\b"),
+    re.compile(r"(?i)\bdo not (ask|tell|inform|notify|mention)\b[^\n]{0,40}\b(user|operator|human|orchestrator)\b"),
+)
+
+#: "... without asking/approval" is a bypass instruction only when it is not
+#: itself negated: "never merge without explicit approval" is a safeguard
+#: (the retrieval pack ships exactly that line) and must stay clean.
+_WITHOUT_APPROVAL_RE: re.Pattern[str] = re.compile(
+    r"(?i)\bwithout\b[^\n]{0,15}\b(asking|prompting|notifying|informing|confirmation|approval|permission)\b"
+)
+_NEGATION_BEFORE_RE: re.Pattern[str] = re.compile(r"(?i)\b(never|not|don'?t|avoid)\b")
+
+
+def _is_approval_bypass(line: str) -> bool:
+    """Return True when a line carries approval-bypass phrasing."""
+    if any(pattern.search(line) for pattern in _APPROVAL_BYPASS_RES):
+        return True
+    match = _WITHOUT_APPROVAL_RE.search(line)
+    return bool(match) and not _NEGATION_BEFORE_RE.search(line[: match.start() if match else 0])
+
+
+def _prompt_space_risk_findings(body: str, *, skill_name: str, skill_md: Path) -> list[LintFinding]:
+    """Scan the body for instruction shapes the trust gate must refuse.
+
+    Emits at most one finding per risk shape (the first offending line) so
+    a hostile file produces a readable report rather than a wall of hits.
+    """
+
+    def _finding(label: str, lineno: int, line: str) -> LintFinding:
+        snippet = line.strip()[:100]
+        return LintFinding(
+            skill_name=skill_name,
+            severity=LintSeverity.ERROR,
+            code="prompt-space-risk",
+            message=f"{label} in body (body line {lineno}): {snippet!r}",
+            path=skill_md,
+        )
+
+    findings: list[LintFinding] = []
+    seen: set[str] = set()
+    for lineno, line in enumerate(body.splitlines(), start=1):
+        if "exfiltration" not in seen and _EXFIL_EGRESS_RE.search(line) and _EXFIL_SENSITIVE_RE.search(line):
+            seen.add("exfiltration")
+            findings.append(_finding("exfiltration-shaped instruction", lineno, line))
+        if "credential-ask" not in seen and _CREDENTIAL_ASK_RE.search(line):
+            seen.add("credential-ask")
+            findings.append(_finding("credential-file ask", lineno, line))
+        if "approval-bypass" not in seen and _is_approval_bypass(line):
+            seen.add("approval-bypass")
+            findings.append(_finding("approval-bypass phrasing", lineno, line))
+    return findings
 
 
 class LintSeverity(StrEnum):
@@ -268,6 +364,8 @@ def lint_skill(skill_dir: Path, *, skill_name: str | None = None) -> list[LintFi
                 path=skill_md,
             )
         )
+
+    findings.extend(_prompt_space_risk_findings(body, skill_name=name, skill_md=skill_md))
 
     body_lines = [line for line in body.splitlines() if line.strip()]
     if body_lines and not body_lines[0].lstrip().startswith("#"):
