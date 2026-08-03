@@ -74,8 +74,8 @@ _EXFIL_SENSITIVE_RE: re.Pattern[str] = re.compile(
 
 #: Read-verb next to a credential artifact (same line, verb first).
 _CREDENTIAL_ASK_RE: re.Pattern[str] = re.compile(
-    r"(?i)\b(read\w*|cat|open\w*|print\w*|dump\w*|copy|copie\w*|extract\w*"
-    r"|collect\w*|includ\w*|fetch\w*|grab\w*|view\w*)\b"
+    r"(?i)\b(read\w*|cat|open\w*|print\w*|dump\w*|copy|copies|copied|copying|extract\w*"
+    r"|collect\w*|include|includes|included|including|fetch\w*|grab\w*|view\w*)\b"
     r"[^\n]{0,80}"
     r"(~?/?\.aws/credentials|\bid_rsa\b|\.ssh/|\b\.netrc\b|\bkeychain\b|\.env\b)"
 )
