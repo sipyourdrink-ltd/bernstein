@@ -38,8 +38,12 @@ ERROR with code `prompt-space-risk`:
 Each check is conjunctive, so ordinary skill vocabulary stays clean:
 "use environment variables for secrets" has no egress verb, "POST each
 task to the task server" names nothing sensitive, and negated safeguards
-("never merge without explicit approval") are recognised as safeguards.
-The in-tree skill packs under `templates/skills/` lint clean by
+("never merge without explicit approval", "never upload secrets") are
+recognised as safeguards — the negation only counts inside its own
+clause, so an unrelated "not" earlier in the sentence does not mask a
+real instruction. Soft-wrapped paragraphs are scanned as one logical
+line, so a line break in the middle of a phrase does not evade the
+checks. The in-tree skill packs under `templates/skills/` lint clean by
 regression test.
 
 Findings name the shape and quote the first offending line:

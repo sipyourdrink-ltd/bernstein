@@ -110,15 +110,77 @@ _NEGATION_BEFORE_RE: re.Pattern[str] = re.compile(r"(?i)\b(never|not|don'?t|avoi
 _CLAUSE_SPLIT_RE: re.Pattern[str] = re.compile("[;,.:!?]|\u2014|\u2013| - ")
 
 
+#: Markdown block openers that start a fresh logical line: list items,
+#: ordered items, headings, quotes, table rows.
+_BLOCK_START_RE: re.Pattern[str] = re.compile(r"^(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\|)")
+
+
+def _negated_in_clause(line: str, at: int) -> bool:
+    """Return True when the clause containing position ``at`` is negated.
+
+    A negation only guards its own clause: "if tests are not green, push
+    without asking" is still a bypass - the "not" belongs to the previous
+    clause. "Never upload secrets" is a safeguard - the negation is local.
+    """
+    clause_prefix = _CLAUSE_SPLIT_RE.split(line[:at])[-1]
+    return bool(_NEGATION_BEFORE_RE.search(clause_prefix))
+
+
+def _is_exfiltration(line: str) -> bool:
+    """Return True when a line pairs a non-negated egress verb with a sensitive noun."""
+    if not _EXFIL_SENSITIVE_RE.search(line):
+        return False
+    return any(not _negated_in_clause(line, match.start()) for match in _EXFIL_EGRESS_RE.finditer(line))
+
+
 def _is_approval_bypass(line: str) -> bool:
     """Return True when a line carries approval-bypass phrasing."""
     if any(pattern.search(line) for pattern in _APPROVAL_BYPASS_RES):
         return True
     match = _WITHOUT_APPROVAL_RE.search(line)
-    if not match:
-        return False
-    clause_prefix = _CLAUSE_SPLIT_RE.split(line[: match.start()])[-1]
-    return not _NEGATION_BEFORE_RE.search(clause_prefix)
+    return bool(match) and not _negated_in_clause(line, match.start() if match else 0)
+
+
+def _logical_lines(body: str) -> list[tuple[int, str]]:
+    """Unwrap soft-wrapped markdown into logical lines for scanning.
+
+    Consecutive plain-text lines render as one paragraph, so a phrase
+    wrapped across raw lines must scan as one line - otherwise a line
+    break in the middle of a watched phrase evades the checks. Lines that
+    open a new block (list item, heading, quote, table row) start a fresh
+    logical line; a wrapped continuation of a list item merges into the
+    item. Code-fence content stays per-line. Returns ``(start_lineno,
+    text)`` pairs with 1-based body line numbers.
+    """
+    out: list[tuple[int, str]] = []
+    continues_previous = False
+    in_fence = False
+    for lineno, raw in enumerate(body.splitlines(), start=1):
+        stripped = raw.strip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continues_previous = False
+            continue
+        if not stripped:
+            continues_previous = False
+            continue
+        if in_fence:
+            out.append((lineno, stripped))
+            continues_previous = False
+            continue
+        if _BLOCK_START_RE.match(stripped):
+            out.append((lineno, stripped))
+            # Headings, quotes and table rows are single-line blocks;
+            # list items accept wrapped continuations.
+            continues_previous = stripped[0] in "-*+" or stripped[0].isdigit()
+            continue
+        if continues_previous and out:
+            start, text = out[-1]
+            out[-1] = (start, f"{text} {stripped}")
+        else:
+            out.append((lineno, stripped))
+        continues_previous = True
+    return out
 
 
 def _prompt_space_risk_findings(body: str, *, skill_name: str, skill_md: Path) -> list[LintFinding]:
@@ -140,8 +202,8 @@ def _prompt_space_risk_findings(body: str, *, skill_name: str, skill_md: Path) -
 
     findings: list[LintFinding] = []
     seen: set[str] = set()
-    for lineno, line in enumerate(body.splitlines(), start=1):
-        if "exfiltration" not in seen and _EXFIL_EGRESS_RE.search(line) and _EXFIL_SENSITIVE_RE.search(line):
+    for lineno, line in _logical_lines(body):
+        if "exfiltration" not in seen and _is_exfiltration(line):
             seen.add("exfiltration")
             findings.append(_finding("exfiltration-shaped instruction", lineno, line))
         if "credential-ask" not in seen and (_CREDENTIAL_ASK_RE.search(line) or _ENV_CONTENT_ASK_RE.search(line)):
