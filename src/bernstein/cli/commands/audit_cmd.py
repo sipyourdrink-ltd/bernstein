@@ -3254,8 +3254,15 @@ def _diagnose_run_cli(
     except LineageSignerError as exc:
         console.print(f"[red]Cannot load signing key:[/red] {exc}")
         return 2
+    # The artefact signal runs the lineage gate; mirror `audit taint`: the
+    # operator HMAC layer is checked when BERNSTEIN_LINEAGE_OP_SECRET is set,
+    # and the mode used is disclosed inside the sealed receipt params.
+    import os as _os
+
+    secret_raw = _os.environ.get("BERNSTEIN_LINEAGE_OP_SECRET")
+    lineage_secret = secret_raw.encode("utf-8") if secret_raw else None
     try:
-        predicate = resolve_signal(signal_spec, sdd_dir=sdd_dir)
+        predicate = resolve_signal(signal_spec, sdd_dir=sdd_dir, lineage_operator_secret=lineage_secret)
         result = diagnose_run(journal_path, predicate, run_id=run_id)
     except DiagnoseError as exc:
         console.print(f"[red]Diagnosis refused (fail closed, no receipt):[/red] {exc}")

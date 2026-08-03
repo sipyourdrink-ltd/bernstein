@@ -27,7 +27,7 @@ live process -- so the resolved predicate is reproducible.
 | Signal | Backing record | Culprit criterion |
 |---|---|---|
 | `gate[:RECEIPT_HASH]` | Sealed verdict receipts under `.sdd/eval/gate/` | First step whose payload carries the rejected suite / candidate result-set content hash. Bare `gate` resolves the most recent `significant_regression` receipt deterministically (highest `(timestamp, receipt_hash)`). |
-| `artefact:<path>` | The signed lineage log (`.sdd/lineage/log.jsonl`) | First step whose payload carries the content hash of an untrusted provenance record in the artefact's taint closure. The content-addressed parent chain (culprit record → artefact tip) is attached to the receipt as `lineage_path`. |
+| `artefact:<path>` | The signed lineage log (`.sdd/lineage/log.jsonl`), **gated first** | The lineage gate (byte-canonical parsing, detached signatures against `.sdd/agents` cards, parent anchoring, operator HMAC when `BERNSTEIN_LINEAGE_OP_SECRET` is set — the same checks `bernstein audit taint` requires) must pass before any predicate is shaped; then the culprit is the first step whose payload carries the content hash of an untrusted provenance record in the artefact's taint closure. The content-addressed parent chain (culprit record → artefact tip) is attached to the receipt as `lineage_path`, and the gate mode used is disclosed in the sealed params as `lineage_gate.operator_hmac_checked`. |
 | `incident:<case-id>` | A synthesised incident eval case (`src/bernstein/eval/cases/incidents/`) | First step whose payload carries the case's recorded failure text, byte-exact. |
 | `replay` | The journal itself | First step at which the Merkle chain fails to recompute (`chain_break`). An intact chain reports clean and writes no receipt. |
 
@@ -90,6 +90,8 @@ beside it. Each of these refuses with exit `2` and writes **no** receipt:
 - the audit HMAC key is unavailable (`load`-only resolution -- diagnose
   never creates key material);
 - `--sign-key` is omitted (no unsigned findings);
+- the lineage gate fails for an `artefact:` signal (an unsigned, malformed,
+  or reparented entry must never shape a sealed predicate);
 - the chain does not recompute and a content signal was requested (use
   `--signal replay` to localise the break itself);
 - the signal's fingerprint appears in no recorded step -- the command

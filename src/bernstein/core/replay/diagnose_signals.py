@@ -218,19 +218,38 @@ def _path_tip_to_offender(
     return ()
 
 
-def artefact_signal(artefact_path: str, *, lineage_log: Path) -> SignalPredicate:
-    """Resolve the ``artefact:PATH`` signal from the signed lineage log.
+def artefact_signal(
+    artefact_path: str,
+    *,
+    lineage_log: Path,
+    cards_dir: Path,
+    operator_secret: bytes | None = None,
+) -> SignalPredicate:
+    """Resolve the ``artefact:PATH`` signal from the *gated* lineage log.
+
+    The lineage gate runs first -- strict byte-canonical entry parsing,
+    detached-signature verification against the agent cards, parent
+    anchoring, and (when *operator_secret* is supplied) the per-entry
+    operator HMAC -- exactly the checks ``bernstein audit taint`` requires
+    before trusting the log. Only a log that passes shapes the predicate:
+    an unsigned, malformed, or reparented entry refuses the diagnosis
+    instead of being sealed into a signed receipt (bot-ack: 3706042986).
+    Whether the HMAC layer was checked is disclosed in the predicate params
+    (and therefore in the receipt) as ``lineage_gate.operator_hmac_checked``,
+    mirroring how the taint CLI degrades when no operator secret is
+    configured.
 
     Walks the taint projection back from the artefact tip; the offending
     fingerprint is the content hash of every untrusted provenance record in
     the closure.
 
     Raises:
-        DiagnoseError: The log is missing/empty, the artefact has no lineage
-            tip, the artefact is not tainted, or the closure carries no
-            provenance record to name.
+        DiagnoseError: The lineage gate fails, the log is missing/empty, the
+            artefact has no lineage tip, the artefact is not tainted, or the
+            closure carries no provenance record to name.
     """
     from bernstein.core.lineage.entry import entry_hash
+    from bernstein.core.lineage.gate import check
     from bernstein.core.lineage.provenance import (
         TrustClass,
         is_untrusted,
@@ -238,6 +257,14 @@ def artefact_signal(artefact_path: str, *, lineage_log: Path) -> SignalPredicate
         resolve_artefact_tip,
         taint_for_artefact,
     )
+
+    gate_result = check(lineage_log, cards_dir, operator_secret=operator_secret)
+    if not gate_result.ok:
+        shown = "; ".join(gate_result.failures[:5])
+        raise DiagnoseError(
+            f"lineage gate failed for {lineage_log} ({len(gate_result.failures)} failure(s): {shown}); "
+            "refusing to shape a diagnosis from an unverified lineage log"
+        )
 
     entries = load_entries_from_log(lineage_log)
     if not entries:
@@ -272,6 +299,10 @@ def artefact_signal(artefact_path: str, *, lineage_log: Path) -> SignalPredicate
         "tip": tip or "",
         "needles": needles,
         "lineage_path": list(lineage_path),
+        # Honest disclosure of the gate mode the predicate was shaped under:
+        # signatures/anchoring always verified, operator HMAC only when the
+        # secret was configured. Sealed into the receipt via these params.
+        "lineage_gate": {"checked": True, "operator_hmac_checked": operator_secret is not None},
     }
     return _predicate(SIGNAL_KIND_ARTEFACT, params)
 
@@ -365,6 +396,8 @@ def resolve_signal(
     sdd_dir: Path,
     workdir: Path | None = None,
     cases_dir: Path | None = None,
+    lineage_cards_dir: Path | None = None,
+    lineage_operator_secret: bytes | None = None,
 ) -> SignalPredicate:
     """Resolve a ``--signal`` spec string into a :class:`SignalPredicate`.
 
@@ -384,6 +417,11 @@ def resolve_signal(
             incident case corpus default location.
         cases_dir: Override for the incident case corpus (defaults to
             ``<workdir>/src/bernstein/eval/cases/incidents``).
+        lineage_cards_dir: Agent-card directory for the lineage gate the
+            artefact signal runs (defaults to ``<sdd>/agents``, matching
+            ``bernstein audit taint``).
+        lineage_operator_secret: Optional operator HMAC secret; when given
+            the lineage gate also verifies each entry's ``operator_hmac``.
 
     Raises:
         DiagnoseError: The spec is malformed or its backing record is
@@ -404,7 +442,12 @@ def resolve_signal(
     if kind == SIGNAL_KIND_ARTEFACT:
         if not argument:
             raise DiagnoseError("--signal artefact requires a path: artefact:<path>")
-        return artefact_signal(argument, lineage_log=sdd_dir / "lineage" / "log.jsonl")
+        return artefact_signal(
+            argument,
+            lineage_log=sdd_dir / "lineage" / "log.jsonl",
+            cards_dir=lineage_cards_dir if lineage_cards_dir is not None else sdd_dir / "agents",
+            operator_secret=lineage_operator_secret,
+        )
     if kind == SIGNAL_KIND_INCIDENT:
         if not argument:
             raise DiagnoseError("--signal incident requires a case id: incident:<case-id>")

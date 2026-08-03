@@ -436,24 +436,45 @@ def _remove_tree(path: Path) -> None:
     path.rmdir()
 
 
-def load_events(path: Path) -> list[dict[str, Any]]:
+class JournalParseError(ValueError):
+    """Raised by ``load_events(strict=True)`` for an untrustworthy row.
+
+    Carries the 0-based physical line index so a diagnostic caller can name
+    the exact on-disk location that refused to parse.
+    """
+
+
+def load_events(path: Path, *, strict: bool = False) -> list[dict[str, Any]]:
     """Load all events from a journal JSONL file in append order.
 
-    Malformed lines are skipped so a partial trailing write cannot wedge
-    a reader.
+    One scan implementation serves both reader policies, so a journal-format
+    change can never make a diagnostic reader drift from the rest of replay:
+
+    * tolerant (default): malformed lines are skipped so a partial trailing
+      write cannot wedge an ordinary reader;
+    * ``strict=True``: any non-blank line that does not decode as a JSON
+      object raises :class:`JournalParseError` naming the 0-based physical
+      line index. Diagnostic readers (``bernstein audit diagnose``) use this
+      so no reported index can ever count parsed rows rather than physical
+      journal lines, and no finding is derived from a filtered sequence.
     """
     events: list[dict[str, Any]] = []
     if not path.exists():
         return events
     with path.open(encoding="utf-8") as f:
-        for raw in f:
+        for lineno, raw in enumerate(f):
             line = raw.strip()
             if not line:
                 continue
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                if strict:
+                    raise JournalParseError(f"unparsable line at physical line {lineno} ({exc.msg})") from exc
                 continue
+            if strict and not isinstance(row, dict):
+                raise JournalParseError(f"non-object row at physical line {lineno}")
+            events.append(row)
     return events
 
 
@@ -646,6 +667,7 @@ __all__ = [
     "JOURNAL_FILENAME",
     "RETENTION_ENV_VAR",
     "EventJournal",
+    "JournalParseError",
     "JournalPathError",
     "JournalVerifyResult",
     "compute_event_hash",

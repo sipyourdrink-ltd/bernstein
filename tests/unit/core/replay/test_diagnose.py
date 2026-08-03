@@ -188,6 +188,24 @@ def test_malformed_middle_line_fails_closed_for_every_signal_mode(tmp_path: Path
         diagnose_run(path, _content_predicate(BAD_HASH), run_id="run-midtorn")
 
 
+def test_shared_loader_owns_the_malformed_line_policy(tmp_path: Path) -> None:
+    """One scan implementation serves both policies: journal.load_events is
+    tolerant by default and strict on request, and diagnose delegates to it,
+    so the two readers can never drift (regression for bot-ack: 3706042994)."""
+    from bernstein.core.replay.journal import JournalParseError
+
+    sdd = tmp_path / ".sdd"
+    path = _seed_journal(sdd, "run-policy", bad_step=None, steps=3)
+    with path.open("a", encoding="utf-8") as f:
+        f.write("{garbage\n")
+
+    tolerant = load_events(path)
+    assert len(tolerant) == 3  # ordinary readers keep their torn-tail tolerance
+
+    with pytest.raises(JournalParseError, match="unparsable line at physical line 3"):
+        load_events(path, strict=True)
+
+
 def test_non_object_json_row_fails_closed(tmp_path: Path) -> None:
     """A line that decodes to a JSON scalar is refused like garbage."""
     sdd = tmp_path / ".sdd"
@@ -343,11 +361,25 @@ def test_gate_signal_fails_closed_when_no_rejecting_receipt(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
-# artefact signal
+# artefact signal (lineage log must pass the gate before shaping a predicate)
 # ---------------------------------------------------------------------------
 
+_LINEAGE_SECRET = b"op-secret-diagnose"
 
-def _lineage_entry(
+
+class _LineageAgent:
+    """A signing identity with an on-disk agent card, as the gate expects."""
+
+    def __init__(self) -> None:
+        from bernstein.core.lineage.identity import generate_keypair
+
+        self.agent_id = "agent:diag"
+        self.kid = "k1"
+        self.priv, self.pub = generate_keypair()
+
+
+def _signed_entry(
+    agent: _LineageAgent,
     path: str,
     *,
     kind: str,
@@ -356,27 +388,65 @@ def _lineage_entry(
     ts_ns: int,
     trust_class: str | None = None,
 ) -> LineageEntry:
-    return LineageEntry(
-        v=1,
-        artefact_path=path,
-        artefact_kind=kind,
-        content_hash="sha256:" + hashlib.sha256(content).hexdigest(),
-        parent_hashes=parents,
-        agent_id="agent-1",
-        agent_card_kid="kid-1",
-        tool_call_id="tc-1",
-        span_id="span-1",
-        ts_ns=ts_ns,
-        operator_hmac="",
-        trust_class=trust_class,
+    def build(op_hmac: str) -> LineageEntry:
+        return LineageEntry(
+            v=1,
+            artefact_path=path,
+            artefact_kind=kind,
+            content_hash="sha256:" + hashlib.sha256(content).hexdigest(),
+            parent_hashes=parents,
+            agent_id=agent.agent_id,
+            agent_card_kid=agent.kid,
+            tool_call_id="tc-1",
+            span_id="span-1",
+            ts_ns=ts_ns,
+            operator_hmac=op_hmac,
+            trust_class=trust_class,
+        )
+
+    from bernstein.core.lineage.entry import compute_operator_hmac
+
+    return build(compute_operator_hmac(build(""), _LINEAGE_SECRET))
+
+
+def _write_gated_log(root: Path, entries: list[LineageEntry], agent: _LineageAgent) -> tuple[Path, Path]:
+    """Write a byte-canonical, JWS-signed lineage log + cards; returns paths."""
+    from bernstein.core.lineage.entry import canonicalise
+    from bernstein.core.lineage.identity import sign_detached
+
+    cards_dir = root / "agents"
+    card_dir = cards_dir / agent.agent_id
+    card_dir.mkdir(parents=True, exist_ok=True)
+    (card_dir / "card.json").write_text(
+        json.dumps(
+            {
+                "protocolVersion": "a2a/1.0",
+                "agent_id": agent.agent_id,
+                "kid": agent.kid,
+                "public_key_pem": agent.pub,
+            }
+        ),
+        encoding="utf-8",
     )
 
+    log_path = root / "lineage" / "log.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("wb") as f:
+        for e in entries:
+            f.write(canonicalise(e) + b"\n")
+    sig_root = log_path.parent / "signatures"
+    for e in entries:
+        jws = sign_detached(canonicalise(e), agent.priv, kid=agent.kid)
+        path_hash = hashlib.sha256(e.artefact_path.encode()).hexdigest()
+        dest = sig_root / path_hash[:2] / path_hash
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / (entry_hash(e).replace("sha256:", "") + ".jws")).write_text(jws, encoding="utf-8")
+    return log_path, cards_dir
 
-def test_artefact_signal_locates_first_appearance_of_tainted_hash(tmp_path: Path) -> None:
-    """Lineage walks back from the tip; the culprit step first records the
-    tainted record's content hash, and the parent chain rides as evidence."""
-    sdd = tmp_path / ".sdd"
-    tainted = _lineage_entry(
+
+def _tainted_pair(agent: _LineageAgent) -> tuple[LineageEntry, LineageEntry]:
+    tainted = _signed_entry(
+        agent,
         "provenance/web.fetch/aaaa",
         kind="tool-result",
         content=b"outsider-bytes",
@@ -384,21 +454,30 @@ def test_artefact_signal_locates_first_appearance_of_tainted_hash(tmp_path: Path
         ts_ns=1,
         trust_class="third_party",
     )
-    tip = _lineage_entry(
+    tip = _signed_entry(
+        agent,
         "out.txt",
         kind="file",
         content=b"derived-bytes",
         parents=[entry_hash(tainted)],
         ts_ns=2,
     )
-    log_path = sdd / "lineage" / "log.jsonl"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("\n".join(json.dumps(asdict(e)) for e in (tainted, tip)) + "\n", encoding="utf-8")
+    return tainted, tip
 
-    predicate = artefact_signal("out.txt", lineage_log=log_path)
+
+def test_artefact_signal_locates_first_appearance_of_tainted_hash(tmp_path: Path) -> None:
+    """Lineage walks back from the tip; the culprit step first records the
+    tainted record's content hash, and the parent chain rides as evidence."""
+    sdd = tmp_path / ".sdd"
+    agent = _LineageAgent()
+    tainted, tip = _tainted_pair(agent)
+    log_path, cards_dir = _write_gated_log(sdd, [tainted, tip], agent)
+
+    predicate = artefact_signal("out.txt", lineage_log=log_path, cards_dir=cards_dir, operator_secret=_LINEAGE_SECRET)
     tainted_hex = tainted.content_hash.split(":", 1)[-1]
     assert predicate.needles == (tainted_hex,)
     assert predicate.lineage_path == (entry_hash(tainted), entry_hash(tip))
+    assert predicate.params["lineage_gate"] == {"checked": True, "operator_hmac_checked": True}
 
     journal = EventJournal("run-art", sdd)
     journal.record("tick", step=0)
@@ -413,18 +492,56 @@ def test_artefact_signal_locates_first_appearance_of_tainted_hash(tmp_path: Path
     assert result.lineage_path == (entry_hash(tainted), entry_hash(tip))
 
 
+def test_unsigned_lineage_entry_cannot_shape_a_sealed_diagnosis(tmp_path: Path) -> None:
+    """The gate runs before any predicate is shaped: an unsigned log and a
+    tampered signed log both refuse (regression for bot-ack: 3706042986)."""
+    agent = _LineageAgent()
+    tainted, tip = _tainted_pair(agent)
+
+    # Unsigned: entries on disk but no JWS sidecars and no canonical bytes.
+    unsigned_log = tmp_path / "unsigned" / "lineage" / "log.jsonl"
+    unsigned_log.parent.mkdir(parents=True)
+    unsigned_log.write_text("\n".join(json.dumps(asdict(e)) for e in (tainted, tip)) + "\n", encoding="utf-8")
+    with pytest.raises(DiagnoseError, match="lineage gate failed"):
+        artefact_signal(
+            "out.txt",
+            lineage_log=unsigned_log,
+            cards_dir=tmp_path / "unsigned" / "agents",
+            operator_secret=_LINEAGE_SECRET,
+        )
+
+    # Tampered: properly signed log with one byte flipped afterwards.
+    log_path, cards_dir = _write_gated_log(tmp_path / "tampered", [tainted, tip], agent)
+    raw = log_path.read_bytes().replace(b"third_party", b"first_party", 1)
+    log_path.write_bytes(raw)
+    with pytest.raises(DiagnoseError, match="lineage gate failed"):
+        artefact_signal("out.txt", lineage_log=log_path, cards_dir=cards_dir, operator_secret=_LINEAGE_SECRET)
+
+
+def test_artefact_gate_mode_is_disclosed_in_sealed_params(tmp_path: Path) -> None:
+    """Without an operator secret the gate still verifies signatures, and the
+    weaker mode is disclosed in the params the receipt seals."""
+    agent = _LineageAgent()
+    tainted, tip = _tainted_pair(agent)
+    log_path, cards_dir = _write_gated_log(tmp_path, [tainted, tip], agent)
+
+    predicate = artefact_signal("out.txt", lineage_log=log_path, cards_dir=cards_dir, operator_secret=None)
+
+    assert predicate.params["lineage_gate"] == {"checked": True, "operator_hmac_checked": False}
+
+
 def test_artefact_signal_refuses_untainted_artefact(tmp_path: Path) -> None:
-    clean = _lineage_entry("ok.txt", kind="file", content=b"fine", parents=[], ts_ns=1, trust_class="operator")
-    log_path = tmp_path / "log.jsonl"
-    log_path.write_text(json.dumps(asdict(clean)) + "\n", encoding="utf-8")
+    agent = _LineageAgent()
+    clean = _signed_entry(agent, "ok.txt", kind="file", content=b"fine", parents=[], ts_ns=1, trust_class="operator")
+    log_path, cards_dir = _write_gated_log(tmp_path, [clean], agent)
 
     with pytest.raises(DiagnoseError, match="not tainted"):
-        artefact_signal("ok.txt", lineage_log=log_path)
+        artefact_signal("ok.txt", lineage_log=log_path, cards_dir=cards_dir, operator_secret=_LINEAGE_SECRET)
 
 
 def test_artefact_signal_fails_closed_without_lineage(tmp_path: Path) -> None:
     with pytest.raises(DiagnoseError, match="no lineage entries"):
-        artefact_signal("out.txt", lineage_log=tmp_path / "missing.jsonl")
+        artefact_signal("out.txt", lineage_log=tmp_path / "missing.jsonl", cards_dir=tmp_path / "agents")
 
 
 # ---------------------------------------------------------------------------
