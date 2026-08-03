@@ -905,6 +905,7 @@ EVENT_ODATA_WRITEBACK = "odata.writeback_receipt"
 #: after the attestation record was durable.
 EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
 EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
+EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
 
 # ---------------------------------------------------------------------------
