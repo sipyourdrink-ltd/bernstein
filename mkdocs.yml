@@ -424,6 +424,7 @@ nav:
           - Criterion profiles: operations/criterion-profiles.md
           - Golden benchmark harness: eval/golden-harness.md
           - Reproducible bench bundles: eval/bench.md
+          - pass^k reliability floor: eval/reliability.md
       - Security & identity:
           - Security & identity stack: operations/security-and-identity.md
           - Security operations: operations/security.md

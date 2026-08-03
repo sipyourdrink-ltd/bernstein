@@ -121,6 +121,25 @@ each row linking its bundle hash so anyone can re-verify.
 
 ---
 
+## Reliability floor (`--reliability k`)
+
+A submission bundle reports a single fixed-coordination run per task. To
+report a **floor** instead of a ceiling — does every task pass *all* of
+`k` attempts under byte-identical coordination, not just one? — run:
+
+```bash
+bernstein bench run golden-v1 --reliability 5 --out reliability.json
+bernstein bench reliability-verify reliability.json
+bernstein bench reliability-check reliability.json
+```
+
+This emits a signed reliability receipt reporting `pass@1` (any attempt
+passed) and `pass^k` (all `k` attempts passed, the headline floor), with
+all `k` per-attempt run receipts embedded so the floor is recomputable
+offline. Full details: [reliability.md](reliability.md).
+
+---
+
 ## Suite format
 
 Suites are content-addressed JSON files:
@@ -244,16 +263,19 @@ src/bernstein/eval/bench/
 ├── __init__.py          # public API re-exports
 ├── suite.py             # BenchSuite, BenchTask (content-addressed)
 ├── bundle.py            # SubmissionBundle, TaskResult
-├── runner.py            # BenchRunner, MockReplayAdapter
+├── runner.py            # BenchRunner, MockReplayAdapter, StochasticMockReplayAdapter
 ├── verifier.py          # BenchVerifier, VerificationStatus
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
+├── reliability.py       # pass^k reliability floor (see reliability.md)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
-└── test_bench.py        # TDD suite — all acceptance criteria
+├── test_bench.py        # TDD suite — all acceptance criteria
+└── test_reliability.py  # pass^k reliability floor tests
 
 docs/eval/
-└── bench.md             # this document
+├── bench.md             # this document
+└── reliability.md       # pass^k reliability floor
 ```
 
 ---

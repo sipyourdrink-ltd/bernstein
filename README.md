@@ -71,6 +71,8 @@ bernstein audit verify                # HMAC chain + Merkle seal (written becaus
 
 The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
 
+The same checkability applies to evaluation numbers: `bernstein bench run <suite> --reliability k` runs every task `k` times under fixed coordination and reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling, sealed in a signed receipt that `bernstein bench reliability-verify` recomputes offline — a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
 ### how it works
 
 Each goal moves through four stages:
