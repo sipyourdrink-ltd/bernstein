@@ -181,6 +181,27 @@ def artifact_output_path(task: Task) -> str:
         raise ArtifactCompletionError(f"artifact output_path {exc.reason}") from exc
 
 
+def _resolve_contained_artifact_path(workdir: Path, relpath: str) -> Path:
+    """Resolve ``relpath`` under ``workdir`` and refuse any escape.
+
+    :func:`validate_artifact_output_path` rejects lexical escapes (absolute
+    paths, ``..``) at declaration time, but a symlink planted inside the
+    workdir can still point outside it, and the produced artifact's bytes are
+    about to become the subject of a signed receipt. Containment is therefore
+    enforced on the *resolved* path, after every symlink is followed. The
+    resolved path, not the declared one, is what gets opened afterwards: a
+    component swapped between this check and the read changes which contained
+    bytes are read, never whether the read stays inside the workdir.
+    """
+    base = workdir.resolve()
+    resolved = (base / relpath).resolve()
+    if not resolved.is_relative_to(base):
+        raise ArtifactCompletionError(
+            f"artifact output path {relpath!r} resolves outside the task workdir; refusing to read it"
+        )
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # Loading the produced artifact
 # ---------------------------------------------------------------------------
@@ -218,12 +239,13 @@ def load_artifact(task: Task, workdir: Path) -> Any:
             the declared kind.
     """
     relpath = artifact_output_path(task)
-    path = Path(workdir) / relpath
-    if not path.is_file():
+    path = _resolve_contained_artifact_path(Path(workdir), relpath)
+    try:
+        raw = path.read_bytes()
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         raise ArtifactCompletionError(
             f"task declares artifact kind {task.artifact_spec.kind.value!r} but wrote no output at {relpath}"
-        )
-    raw = path.read_bytes()
+        ) from None
     kind = task.artifact_spec.kind
 
     if kind is ArtifactKind.CODE_DIFF:  # pragma: no cover - guarded by is_artifact_mode

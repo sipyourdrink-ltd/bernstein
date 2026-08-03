@@ -30,6 +30,8 @@ doub = "doub"        # doub = SQLite "double" type-affinity prefix (datasources/
 Aktive = "Aktive"    # correct German word for "Active" (i18n.py)
 abd = "abd"          # deterministic 3-byte hash fixture b"abd" (test_computer_use_lineage.py)
 continu = "continu"  # intentional substring match for "continue"/"continuity" in error text (test_capability_tokens.py)
+reprot = "reprot"    # intentionally malformed artifact-kind fixture (test_artifact_spec_declaration.py)
+critera = "critera"  # intentionally malformed artifact_spec key fixture (test_artifact_spec_declaration.py)
 
 # Technical terms used consistently in the codebase
 unparseable = "unparseable"

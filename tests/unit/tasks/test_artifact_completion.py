@@ -126,6 +126,52 @@ def test_missing_output_is_a_completion_failure_not_a_crash(tmp_path: Path) -> N
     assert any("wrote no output" in f for f in completion.failures)
 
 
+def test_escaping_directory_symlink_cannot_reach_the_signed_receipt(tmp_path: Path) -> None:
+    """A symlinked directory inside the workdir must not smuggle host bytes into the receipt.
+
+    The declared path is lexically clean; the escape happens only at resolve
+    time, which is exactly the hole the lexical validator cannot see.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "host-secret.md").write_text("host bytes", encoding="utf-8")
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "out").symlink_to(outside, target_is_directory=True)
+    task = _task(output_path="out/host-secret.md")
+    with pytest.raises(ArtifactCompletionError, match="resolves outside the task workdir"):
+        load_artifact(task, workdir)
+
+
+def test_escaping_file_symlink_cannot_reach_the_signed_receipt(tmp_path: Path) -> None:
+    outside_file = tmp_path / "host.md"
+    outside_file.write_text("host bytes", encoding="utf-8")
+    workdir = tmp_path / "workdir"
+    (workdir / "out").mkdir(parents=True)
+    (workdir / "out" / "report.md").symlink_to(outside_file)
+    task = _task(output_path="out/report.md")
+    with pytest.raises(ArtifactCompletionError, match="resolves outside the task workdir"):
+        load_artifact(task, workdir)
+
+
+def test_symlink_resolving_inside_the_workdir_still_loads(tmp_path: Path) -> None:
+    workdir = tmp_path / "workdir"
+    (workdir / "real").mkdir(parents=True)
+    (workdir / "real" / "report.md").write_text("body", encoding="utf-8")
+    (workdir / "out").symlink_to(workdir / "real", target_is_directory=True)
+    task = _task(output_path="out/report.md")
+    assert load_artifact(task, workdir) == "body"
+
+
+def test_directory_at_output_path_reads_as_missing_output(tmp_path: Path) -> None:
+    """A directory squatting on the output path is 'wrote no output', not a crash."""
+    workdir = tmp_path / "workdir"
+    (workdir / "out" / "report.md").mkdir(parents=True)
+    task = _task(output_path="out/report.md")
+    with pytest.raises(ArtifactCompletionError, match="wrote no output"):
+        load_artifact(task, workdir)
+
+
 def test_dataset_output_loads_as_rows(tmp_path: Path) -> None:
     task = _task(kind=ArtifactKind.DATASET, output_path="out/rows.jsonl")
     _write(tmp_path, "out/rows.jsonl", "\n".join(json.dumps(r) for r in _ROWS) + "\n")
