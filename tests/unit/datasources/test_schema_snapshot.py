@@ -198,8 +198,9 @@ def test_non_object_snapshot_entry_is_refused_not_dropped(tmp_path: Path) -> Non
         (lambda obj: obj["columns"].append("not-a-dict"), "non-object column entry"),
         (lambda obj: obj["columns"][0].update(name=""), "missing or empty name"),
         (lambda obj: obj["columns"][0].update(primary_key="1"), "non-integer primary_key"),
+        (lambda obj: obj["columns"][0].pop("default"), "missing its default key"),
     ],
-    ids=["non-list-columns", "non-dict-entry", "empty-column-name", "stringified-primary-key"],
+    ids=["non-list-columns", "non-dict-entry", "empty-column-name", "stringified-primary-key", "omitted-default-key"],
 )
 def test_malformed_column_entries_are_refused_not_dropped(tmp_path: Path, mutate, match: str) -> None:
     # Pre-fix, a non-dict column entry was silently filtered and a non-list

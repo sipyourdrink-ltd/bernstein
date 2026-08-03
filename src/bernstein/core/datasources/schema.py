@@ -104,7 +104,12 @@ class SchemaColumn:
         notnull = row.get("notnull")
         if not isinstance(notnull, bool):
             raise DataSourceError(f"schema column {name!r} has a non-boolean notnull")
-        default = row.get("default")
+        if "default" not in row:
+            raise DataSourceError(
+                f"schema column {name!r} is missing its default key; a truncated projection "
+                "must not hash equal to a column with no default"
+            )
+        default = row["default"]
         if default is not None and not isinstance(default, str):
             raise DataSourceError(f"schema column {name!r} has a non-string default")
         primary_key = row.get("primary_key")
