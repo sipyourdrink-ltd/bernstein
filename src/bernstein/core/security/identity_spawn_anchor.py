@@ -8,13 +8,14 @@ import json
 import time
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.security.agent_card_signer import (
     AgentCardSignature,
     canonicalize_jcs,
     verify_agent_card,
 )
+from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import (
     EVENT_IDENTITY_SPAWN_ATTESTATION,
     AuditChainStore,
@@ -23,7 +24,6 @@ from bernstein.core.security.audit_chain import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from bernstein.core.security.agent_identity import AgentIdentityCard
 
 
 class IdentitySpawnAnchorError(RuntimeError):
@@ -123,12 +123,29 @@ class IdentitySpawnAnchor:
         if len(events) != 1:
             raise IdentitySpawnAnchorError("run must contain exactly one identity spawn attestation")
         details = events[0].details
-        envelope = details.get("signed_card")
+        envelope = cast(object, details.get("signed_card"))
         if not isinstance(envelope, dict):
             raise IdentitySpawnAnchorError("signed-card evidence is unavailable")
+        typed_envelope = cast(dict[str, Any], envelope)
         digest = "sha256:" + hashlib.sha256(canonicalize_jcs(envelope)).hexdigest()
         if digest != details.get("signed_card_digest"):
             raise IdentitySpawnAnchorError("signed-card evidence digest mismatch")
+        card_data = cast(object, typed_envelope.get("card"))
+        signature_data = cast(object, typed_envelope.get("signature"))
+        if not isinstance(card_data, dict) or not isinstance(signature_data, dict):
+            raise IdentitySpawnAnchorError("signed-card evidence is malformed")
+        try:
+            card = AgentIdentityCard(**cast(dict[str, Any], card_data))
+            signature = AgentCardSignature(**cast(dict[str, Any], signature_data))
+            kid = _jws_kid(signature.detached_jws)
+        except (TypeError, IdentitySpawnAnchorError) as exc:
+            raise IdentitySpawnAnchorError("signed-card evidence is malformed") from exc
+        public_key = self.trusted_public_keys.get(kid)
+        if public_key is None:
+            raise IdentitySpawnAnchorError("historical verification key is unavailable")
+        identity_mismatch = signature.kid != kid or kid != details.get("agent_card_kid")
+        if identity_mismatch or not verify_agent_card(card, signature, public_key):
+            raise IdentitySpawnAnchorError("historical signed-card verification failed")
         return AnchoredRunIdentity(**{field: details[field] for field in AnchoredRunIdentity.__dataclass_fields__})
 
 

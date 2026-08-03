@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -91,5 +92,78 @@ def test_missing_signed_card_evidence_fails_closed(tmp_path):
     with (
         patch.object(anchor.chain, "query", return_value=[event]),
         pytest.raises(IdentitySpawnAnchorError, match="unavailable"),
+    ):
+        anchor.reconstruct("run-1")
+
+
+def test_historical_anchor_survives_later_card_expiry(tmp_path):
+    anchor, card, signature, _ = setup_anchor(tmp_path)
+    expected = anchor.anchor(run_id="run-1", card=card, signature=signature, run_journal_head="journal:1")
+    anchor.clock = lambda: 999
+    assert anchor.reconstruct("run-1") == expected
+
+
+def test_missing_historical_public_key_fails_closed(tmp_path):
+    anchor, card, signature, _ = setup_anchor(tmp_path)
+    anchor.anchor(run_id="run-1", card=card, signature=signature, run_journal_head="journal:1")
+    anchor.trusted_public_keys = {}
+    with pytest.raises(IdentitySpawnAnchorError, match="historical verification key"):
+        anchor.reconstruct("run-1")
+
+
+def test_self_asserted_key_cannot_replace_trust_source(tmp_path):
+    anchor, card, _signature, _ = setup_anchor(tmp_path)
+    attacker_private, attacker_public = generate_ed25519_keypair()
+    forged_card = replace(card, extensions={"public_key": attacker_public.decode()})
+    forged_signature = sign_agent_card(forged_card, attacker_private, kid="agent-bernstein-orchestrator")
+    with pytest.raises(IdentitySpawnAnchorError, match="not trusted"):
+        anchor.anchor(run_id="run-1", card=forged_card, signature=forged_signature, run_journal_head="journal:1")
+
+
+def test_competing_thread_identities_cannot_both_anchor(tmp_path):
+    anchor, card, signature, private = setup_anchor(tmp_path)
+    other = replace(card, agent_id="agent-2")
+    other_signature = sign_agent_card(other, private, kid="agent-bernstein-orchestrator")
+
+    def attempt(candidate, signed):
+        try:
+            return anchor.anchor(run_id="run-1", card=candidate, signature=signed, run_journal_head="journal:1")
+        except IdentitySpawnAnchorError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda pair: attempt(*pair), [(card, signature), (other, other_signature)]))
+    assert sum(result is not None for result in results) == 1
+    assert len(anchor.chain.query(event_type="identity.spawn_attestation", resource_id="run-1")) == 1
+
+
+def test_separate_store_append_cannot_move_identity_predecessor(tmp_path):
+    anchor, card, signature, _ = setup_anchor(tmp_path)
+    other_store = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    other_store.log(event_type="unrelated", actor="other", resource_type="test", resource_id="other")
+    anchor.anchor(run_id="run-1", card=card, signature=signature, run_journal_head="journal:1")
+    assert anchor.chain.verify() == (True, [])
+    events = anchor.chain.query(event_type="identity.spawn_attestation", resource_id="run-1")
+    assert events[0].details["prev_chain_digest"] != ""
+
+
+def test_physical_chain_tamper_blocks_reconstruction(tmp_path):
+    anchor, card, signature, _ = setup_anchor(tmp_path)
+    anchor.anchor(run_id="run-1", card=card, signature=signature, run_journal_head="journal:1")
+    log_path = next((tmp_path / "audit").glob("*.jsonl"))
+    original = log_path.read_text()
+    log_path.write_text(original.replace("agent-1", "agent-X", 1))
+    with pytest.raises(IdentitySpawnAnchorError, match="audit chain verification failed"):
+        anchor.reconstruct("run-1")
+
+
+def test_signed_envelope_corruption_fails_digest_check(tmp_path):
+    anchor, card, signature, _ = setup_anchor(tmp_path)
+    anchor.anchor(run_id="run-1", card=card, signature=signature, run_journal_head="journal:1")
+    event = anchor.chain.query(event_type="identity.spawn_attestation", resource_id="run-1")[0]
+    event.details["signed_card"]["card"]["agent_id"] = "agent-X"
+    with (
+        patch.object(anchor.chain, "query", return_value=[event]),
+        pytest.raises(IdentitySpawnAnchorError, match="digest mismatch"),
     ):
         anchor.reconstruct("run-1")
