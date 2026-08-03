@@ -48,7 +48,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, NoReturn, Protocol, runtime_checkable
 
 from bernstein.core.datasources.engine import DEFAULT_ROW_CAP, SqliteEngine, guard_read_only
 from bernstein.core.datasources.errors import DataSourceError, SchemaDrift, UnsupportedValue
@@ -154,6 +154,22 @@ class SqliteQueryBackend:
     ) -> NormalizedResult:
         engine = SqliteEngine(self._db_path, connection=self._conn)
         return engine.execute(sql, params, row_cap=row_cap)
+
+
+def _raise_schema_drift(recorded: SchemaSnapshot, live: SchemaSnapshot, *, message: str) -> NoReturn:
+    """Build and raise the typed drift refusal from one recorded/live pair.
+
+    Both refusal sites (pre-execution pin check, post-execution re-check)
+    share this flow so the drift payload and message shape cannot diverge.
+    """
+    drifts = diff_snapshots(recorded, live)
+    named = "; ".join(d.describe() for d in drifts) or "digests differ but no object-level diff resolved"
+    raise SchemaDrift(
+        f"{message}: {named}",
+        recorded_digest=recorded.digest,
+        live_digest=live.digest,
+        drifts=drifts,
+    )
 
 
 def _row_key(result: NormalizedResult, row: tuple[object, ...]) -> bytes:
@@ -405,14 +421,7 @@ class ReadOnlyQueryDriver:
         # Phase 2: bind to the live schema, fail closed on drift.
         schema = self._backend.schema_snapshot()
         if expected_schema is not None and expected_schema.digest != schema.digest:
-            drifts = diff_snapshots(expected_schema, schema)
-            named = "; ".join(d.describe() for d in drifts) or "digests differ but no object-level diff resolved"
-            raise SchemaDrift(
-                f"schema drift on {self._connection_id!r}: {named}",
-                recorded_digest=expected_schema.digest,
-                live_digest=schema.digest,
-                drifts=drifts,
-            )
+            _raise_schema_drift(expected_schema, schema, message=f"schema drift on {self._connection_id!r}")
 
         # Phase 3: signed inputs, then the deterministic plan (inputs freeze).
         activity = self.new_activity()
@@ -433,13 +442,10 @@ class ReadOnlyQueryDriver:
         # from snapshots alone.)
         post_schema = self._backend.schema_snapshot()
         if post_schema.digest != schema.digest:
-            drifts = diff_snapshots(schema, post_schema)
-            named = "; ".join(d.describe() for d in drifts) or "digests differ but no object-level diff resolved"
-            raise SchemaDrift(
-                f"schema changed during execution on {self._connection_id!r}; refusing to sign the result: {named}",
-                recorded_digest=schema.digest,
-                live_digest=post_schema.digest,
-                drifts=drifts,
+            _raise_schema_drift(
+                schema,
+                post_schema,
+                message=f"schema changed during execution on {self._connection_id!r}; refusing to sign the result",
             )
 
         # Phase 6: explicit row order, signed output.

@@ -138,12 +138,10 @@ class SchemaObject:
             if isinstance(raw_columns, list)
             else ()
         )
-        return cls(
-            type=str(row.get("type", "")),
-            name=str(row.get("name", "")),
-            sql=str(row.get("sql", "")),
-            columns=columns,
+        valid_type, valid_name, valid_sql = _validated_object_shape(
+            row.get("type"), row.get("name"), row.get("sql"), origin="stored schema snapshot"
         )
+        return cls(type=valid_type, name=valid_name, sql=valid_sql, columns=columns)
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +228,23 @@ def _quote_ident(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
 
 
+def _validated_object_shape(obj_type: object, name: object, sql: object, *, origin: str) -> tuple[str, str, str]:
+    """One shape rule for every digest-bearing :class:`SchemaObject` producer.
+
+    Both producers (the live ``sqlite_master`` scan and rehydration of a
+    stored snapshot) route through this check, so a malformed field is a
+    typed refusal at either boundary instead of a silent empty-string
+    default entering the trusted digest.
+    """
+    if not isinstance(obj_type, str) or obj_type not in _OBJECT_TYPES:
+        raise DataSourceError(f"{origin}: schema object type must be one of {_OBJECT_TYPES}, got {obj_type!r}")
+    if not isinstance(name, str) or not name:
+        raise DataSourceError(f"{origin}: schema object {obj_type} has a missing or empty name")
+    if sql is not None and not isinstance(sql, str):
+        raise DataSourceError(f"{origin}: schema object {name!r} has a non-string sql field")
+    return obj_type, name, sql or ""
+
+
 def _canonical_order(objects: tuple[SchemaObject, ...]) -> tuple[SchemaObject, ...]:
     """Order objects canonically by ``(type, name)``."""
     return tuple(sorted(objects, key=lambda o: (o.type, o.name)))
@@ -293,8 +308,9 @@ def snapshot_schema(conn: sqlite3.Connection) -> SchemaSnapshot:
         for obj_type, name, sql in rows:
             if obj_type not in _OBJECT_TYPES:
                 continue
-            columns = _table_columns(conn, str(name)) if obj_type == "table" else ()
-            objects.append(SchemaObject(type=str(obj_type), name=str(name), sql=str(sql or ""), columns=columns))
+            valid_type, valid_name, valid_sql = _validated_object_shape(obj_type, name, sql, origin="live schema")
+            columns = _table_columns(conn, valid_name) if valid_type == "table" else ()
+            objects.append(SchemaObject(type=valid_type, name=valid_name, sql=valid_sql, columns=columns))
         return SchemaSnapshot(objects=_canonical_order(tuple(objects)))
     finally:
         if started_txn:

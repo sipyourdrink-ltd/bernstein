@@ -151,6 +151,31 @@ def test_diff_is_empty_for_equal_snapshots(tmp_path: Path) -> None:
     assert diff_snapshots(_snapshot(tmp_path / "a.db"), _snapshot(tmp_path / "b.db")) == ()
 
 
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda obj: obj.update(name=""), "missing or empty name"),
+        (lambda obj: obj.update(type="shadow"), "type must be one of"),
+        (lambda obj: obj.update(sql=7), "non-string sql"),
+    ],
+    ids=["empty-name", "unknown-type", "non-string-sql"],
+)
+def test_malformed_stored_snapshot_is_refused_not_defaulted(tmp_path: Path, mutate, match: str) -> None:
+    # A stored snapshot blob is external input at drift-compare time. A field
+    # silently defaulted to "" would enter the trusted digest and turn a
+    # malformed blob into a self-consistent-looking comparison baseline; the
+    # rehydration boundary must refuse instead.
+    import json
+
+    from bernstein.core.datasources.errors import DataSourceError
+
+    _build_db(tmp_path / "a.db", _BASE_DDL)
+    payload = json.loads(_snapshot(tmp_path / "a.db").canonical_bytes())
+    mutate(payload["objects"][0])
+    with pytest.raises(DataSourceError, match=match):
+        SchemaSnapshot.from_bytes(json.dumps(payload).encode("utf-8"))
+
+
 def test_schema_mutation_during_snapshot_never_yields_a_mixed_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
