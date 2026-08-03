@@ -13,6 +13,7 @@ when they appear; if one goes dead, open an issue or a PR.
 ## Editorial coverage
 
 - [Augment Code - 9 Open-Source Agent Orchestrators for AI Coding (2026)](https://www.augmentcode.com/tools/open-source-agent-orchestrators): editorial roundup.
+- [A Graph of Loops: Build a Full Claude Code Agent System From GitHub](https://x.com/Granite0x/status/2080665298609328201): ten-repo architecture breakdown; Bernstein ranked G1, the orchestration layer, with the scheduler source read directly.
 - [nibzard/awesome-agentic-patterns](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md): Bernstein cited as the production implementation of the "deterministic zero-LLM orchestration" pattern.
 - [Python Weekly](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026): newsletter mention.
 - [Future Digest](https://futuredigestnews.substack.com/p/your-claude-bill-just-hit-874-heres): cost-cutting playbook write-up.

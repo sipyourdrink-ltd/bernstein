@@ -123,7 +123,7 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 
 ### mentioned in
 
-Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, cited by [awesome-agentic-patterns](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) as the production implementation of deterministic zero-LLM orchestration, and featured in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026).
+Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, cited by [awesome-agentic-patterns](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) as the production implementation of deterministic zero-LLM orchestration, featured in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026), and ranked as the orchestration layer in a ten-repo [Claude Code agent-system breakdown](https://x.com/Granite0x/status/2080665298609328201).
 
 <details>
 <summary>All coverage: 20+ awesome lists, directories, newsletters, and peer citations</summary>
