@@ -147,12 +147,24 @@ MUST_ADDRESS_FINDING_TYPES = frozenset(
 # on every PR and would stop carrying the signal that a human consciously
 # accepted a real defect.
 #
-#   AI Coding Guidelines - convention and guideline adherence.
-#   Naming and Typos     - wording, spelling, identifier names.
+#   AI Coding Guidelines       - convention and guideline adherence.
+#   Naming and Typos           - wording, spelling, identifier names.
+#   Code Dedup and Conventions - repetition a refactor would fold together.
+#
+# `Code Dedup and Conventions` is here because the fail-closed rule below
+# worked: it is a category nobody had triaged, it surfaced on the first pull
+# request that drew one, and triaging it is the response that rule is asking
+# for. It reads as conventions, the finding that surfaced it was a
+# factor-out-the-duplicate suggestion graded `low`, and a `high` one is still
+# caught by the severity escalation, so it belongs in the same drawer as the
+# two above. Leaving it unmapped would have blocked a pull request on a
+# duplication nit and taught the operator to apply the ack marker routinely,
+# which is the habit this split exists to avoid.
 INFORMATIONAL_FINDING_TYPES = frozenset(
     {
         "ai coding guidelines",
         "naming and typos",
+        "code dedup and conventions",
     }
 )
 

@@ -127,6 +127,19 @@ GUIDELINES_LOW = _body(
     "low",
 )
 
+# A composite action repeats one retry flow in both of its branches, so a
+# change to the delay or the pin has to be made twice. A factor-out
+# suggestion, graded `low`.
+CODE_DEDUP = _body(
+    "### Duplicated retry flow can drift\n\n"
+    "The bootstrap action repeats the same `astral-sh/setup-uv` retry flow in both\n"
+    "python-version branches, so changes to the delay, warning text, pin, or cache\n"
+    "flags have to be kept in sync twice.\n",
+    "_Finding type:_ `Code Dedup and Conventions`",
+    "Code%20Dedup%20and%20Conventions",
+    "low",
+)
+
 # Same category, but the finding is a path-traversal hole: a user-controlled
 # pattern reaches `unlink()` with no resolved-path containment check. Graded
 # `high`. This is why the category alone cannot decide the split.
@@ -201,6 +214,30 @@ def test_a_typo_finding_stays_informational(ack: ModuleType) -> None:
 def test_a_low_severity_guidelines_finding_stays_informational(ack: ModuleType) -> None:
     """Convention adherence is advisory at the severity the reviewer assigns."""
     assert ack.classify(GUIDELINES_LOW) == "informational"
+
+
+def test_a_code_dedup_finding_stays_informational(ack: ModuleType) -> None:
+    """Repetition a refactor would fold together is advisory, not a defect.
+
+    This category is mapped because the fail-closed rule surfaced it: it was
+    unmapped, it arrived on a pull request, and triaging it is the response
+    that rule asks for. Leaving it to fail closed would block a change on a
+    duplication nit and make the ack marker routine, which is the habit the
+    must-address / informational split exists to avoid.
+    """
+    assert ack.classify(CODE_DEDUP) == "informational"
+
+
+def test_a_high_severity_code_dedup_finding_still_escalates(ack: ModuleType) -> None:
+    """Mapping the category does not exempt it from the severity rule."""
+    escalated = _body(
+        "### Duplicated flow hides a divergent security check\n\n"
+        "The two copies no longer agree on the containment check.\n",
+        "_Finding type:_ `Code Dedup and Conventions`",
+        "Code%20Dedup%20and%20Conventions",
+        "high",
+    )
+    assert ack.classify(escalated) == "must-address"
 
 
 def test_a_resolution_reply_is_not_a_blocking_finding(ack: ModuleType) -> None:
