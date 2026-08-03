@@ -357,11 +357,34 @@ class SqliteEngine:
         )
 
 
+def _bind_scalar(value: object) -> object:
+    """Convert one bound parameter into a value ``sqlite3`` can bind.
+
+    stdlib ``sqlite3`` has no registered ``Decimal`` adapter, so a raw
+    ``Decimal`` raises ``ProgrammingError`` only at execute time - after a
+    driver has already recorded the signed query inputs. A finite ``Decimal``
+    is bound as its exact plain-text rendering (``format(value, "f")``), the
+    same rendering the driver's signed input encoding tags it with, so the
+    value that executes is digit-for-digit the value that was signed (column
+    affinity coerces it numerically wherever the column declares a numeric
+    type). A non-finite ``Decimal`` is refused, never silently degraded.
+    """
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise UnsupportedValue(f"non-finite Decimal bound parameter: {value!r}")
+        return format(value, "f")
+    return value
+
+
 def _as_bind(params: Sequence[object] | Mapping[str, object] | None) -> Sequence[Any] | Mapping[str, Any]:
     """Normalise bound parameters into a form ``sqlite3.execute`` accepts."""
+    from collections.abc import Mapping as _RuntimeMapping
+
     if params is None:
         return ()
-    return params
+    if isinstance(params, _RuntimeMapping):
+        return {key: _bind_scalar(value) for key, value in params.items()}
+    return [_bind_scalar(value) for value in params]
 
 
 def _sqlite_columns(conn: sqlite3.Connection, cur: sqlite3.Cursor) -> list[NormalizedColumn]:

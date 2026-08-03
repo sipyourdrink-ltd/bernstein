@@ -272,6 +272,23 @@ def test_param_type_difference_changes_the_receipt_input_hash(tmp_path: Path) ->
     assert run_int.receipt_hash != run_str.receipt_hash
 
 
+def test_decimal_param_never_fails_after_inputs_are_recorded(tmp_path: Path) -> None:
+    # sqlite3 has no registered Decimal adapter: pre-fix, a finite Decimal was
+    # accepted by the signed input encoding and only blew up at execute time
+    # with a raw ProgrammingError - after the input blobs and plan already
+    # existed. The engine now binds a finite Decimal as the exact plain-text
+    # rendering the signed encoding tags it with, so a Decimal-parameterised
+    # run completes all the way to a signed output instead of failing between
+    # input recording and execution.
+    db = tmp_path / "fixture.db"
+    _build_db(db)
+    run = _driver(SqliteQueryBackend(str(db)), tmp_path / "cas_dec").run(
+        "SELECT id, name FROM t WHERE id = ?", [Decimal("1")]
+    )
+    assert run.receipt.inputs
+    assert run.result.rows
+
+
 # ---------------------------------------------------------------------------
 # AC4: the canonical result bytes are a signed output; tamper breaks it
 # ---------------------------------------------------------------------------

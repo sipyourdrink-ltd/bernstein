@@ -259,6 +259,12 @@ def snapshot_schema(conn: sqlite3.Connection) -> SchemaSnapshot:
     tables, and orders everything canonically so the snapshot's digest is a
     pure function of schema content.
 
+    All reads run inside one read transaction pinned on ``conn`` before the
+    first row is fetched: the ``sqlite_master`` scan and every per-table
+    ``PRAGMA table_info`` see the same schema state, so a concurrent writer
+    (WAL mode) landing an ``ALTER TABLE`` between the reads can never yield a
+    digest describing a schema that existed at no point in time.
+
     Args:
         conn: An open connection (read-only is sufficient).
 
@@ -266,21 +272,33 @@ def snapshot_schema(conn: sqlite3.Connection) -> SchemaSnapshot:
         The canonical :class:`SchemaSnapshot`.
 
     Raises:
-        DataSourceError: When the schema cannot be read.
+        DataSourceError: When the schema cannot be read, or the read
+            transaction cannot be pinned.
     """
+    started_txn = False
+    if not conn.in_transaction:
+        try:
+            conn.execute("BEGIN")
+        except sqlite3.DatabaseError as exc:
+            raise DataSourceError(f"cannot pin a schema read transaction: {exc}") from exc
+        started_txn = True
     try:
-        rows = conn.execute(
-            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
-        ).fetchall()
-    except sqlite3.DatabaseError as exc:
-        raise DataSourceError(f"cannot read schema: {exc}") from exc
-    objects: list[SchemaObject] = []
-    for obj_type, name, sql in rows:
-        if obj_type not in _OBJECT_TYPES:
-            continue
-        columns = _table_columns(conn, str(name)) if obj_type == "table" else ()
-        objects.append(SchemaObject(type=str(obj_type), name=str(name), sql=str(sql or ""), columns=columns))
-    return SchemaSnapshot(objects=_canonical_order(tuple(objects)))
+        try:
+            rows = conn.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+            ).fetchall()
+        except sqlite3.DatabaseError as exc:
+            raise DataSourceError(f"cannot read schema: {exc}") from exc
+        objects: list[SchemaObject] = []
+        for obj_type, name, sql in rows:
+            if obj_type not in _OBJECT_TYPES:
+                continue
+            columns = _table_columns(conn, str(name)) if obj_type == "table" else ()
+            objects.append(SchemaObject(type=str(obj_type), name=str(name), sql=str(sql or ""), columns=columns))
+        return SchemaSnapshot(objects=_canonical_order(tuple(objects)))
+    finally:
+        if started_txn:
+            conn.rollback()
 
 
 def _column_drift_detail(recorded: SchemaObject, live: SchemaObject) -> str:

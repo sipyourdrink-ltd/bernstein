@@ -149,3 +149,63 @@ def test_diff_is_empty_for_equal_snapshots(tmp_path: Path) -> None:
     _build_db(tmp_path / "a.db", _BASE_DDL)
     _build_db(tmp_path / "b.db", _BASE_DDL)
     assert diff_snapshots(_snapshot(tmp_path / "a.db"), _snapshot(tmp_path / "b.db")) == ()
+
+
+def test_schema_mutation_during_snapshot_never_yields_a_mixed_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The snapshot reads sqlite_master and then PRAGMA table_info per table.
+    # A concurrent ALTER TABLE landing between those reads must never produce
+    # a digest describing a schema that never existed (old DDL text + new
+    # column list). All reads run inside one read transaction, so the
+    # snapshot is pinned at its first read: in WAL mode a concurrent writer
+    # commits freely and the snapshot still reflects the pre-ALTER state.
+    import bernstein.core.datasources.schema as schema_module
+
+    db = tmp_path / "wal.db"
+    conn_build = sqlite3.connect(db)
+    conn_build.execute("PRAGMA journal_mode=WAL")
+    for stmt in _BASE_DDL:
+        conn_build.execute(stmt)
+    conn_build.commit()
+    conn_build.close()
+
+    # Reference digests for the two states that really existed.
+    pre_digest = _snapshot(db).digest
+    twin = tmp_path / "twin.db"
+    conn_twin = sqlite3.connect(twin)
+    conn_twin.execute("PRAGMA journal_mode=WAL")
+    for stmt in _BASE_DDL:
+        conn_twin.execute(stmt)
+    conn_twin.execute("ALTER TABLE orders ADD COLUMN discount REAL")
+    conn_twin.commit()
+    conn_twin.close()
+    post_digest = _snapshot(twin).digest
+    assert pre_digest != post_digest
+
+    conn_reader = sqlite3.connect(db)
+    conn_writer = sqlite3.connect(db)
+    real_table_columns = schema_module._table_columns
+    fired = {"done": False}
+
+    def alter_then_read(conn: sqlite3.Connection, table: str) -> object:
+        # A concurrent writer lands an ALTER between the sqlite_master read
+        # and the per-table PRAGMA reads.
+        if not fired["done"]:
+            fired["done"] = True
+            conn_writer.execute("ALTER TABLE orders ADD COLUMN discount REAL")
+            conn_writer.commit()
+        return real_table_columns(conn, table)
+
+    monkeypatch.setattr(schema_module, "_table_columns", alter_then_read)
+    try:
+        snap = snapshot_schema(conn_reader)
+    finally:
+        conn_reader.close()
+        conn_writer.close()
+
+    assert fired["done"], "the concurrent ALTER never fired; the test proved nothing"
+    # The digest must describe a schema state that actually existed -- with
+    # the read transaction pinned before the ALTER, that is the pre state.
+    assert snap.digest in {pre_digest, post_digest}
+    assert snap.digest == pre_digest
