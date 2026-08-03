@@ -85,16 +85,32 @@ class SchemaColumn:
 
     @classmethod
     def from_dict(cls, row: Mapping[str, Any]) -> SchemaColumn:
-        """Rebuild a column from its canonical projection."""
+        """Rebuild a column from its canonical projection, refusing malformed fields.
+
+        Every canonical projection was written by :meth:`to_dict`, which always
+        emits all five keys with these exact types - so a mismatch here is
+        corruption or tampering, never a legitimate legacy blob, and it
+        refuses instead of defaulting a field into the trusted digest.
+
+        Raises:
+            DataSourceError: A required key is missing or carries the wrong type.
+        """
+        name = row.get("name")
+        if not isinstance(name, str) or not name:
+            raise DataSourceError("schema column has a missing or empty name")
+        declared_type = row.get("declared_type")
+        if not isinstance(declared_type, str):
+            raise DataSourceError(f"schema column {name!r} has a non-string declared_type")
+        notnull = row.get("notnull")
+        if not isinstance(notnull, bool):
+            raise DataSourceError(f"schema column {name!r} has a non-boolean notnull")
         default = row.get("default")
-        primary_key = row.get("primary_key", 0)
-        return cls(
-            name=str(row.get("name", "")),
-            declared_type=str(row.get("declared_type", "")),
-            notnull=bool(row.get("notnull", False)),
-            default=None if default is None else str(default),
-            primary_key=primary_key if isinstance(primary_key, int) and not isinstance(primary_key, bool) else 0,
-        )
+        if default is not None and not isinstance(default, str):
+            raise DataSourceError(f"schema column {name!r} has a non-string default")
+        primary_key = row.get("primary_key")
+        if not isinstance(primary_key, int) or isinstance(primary_key, bool):
+            raise DataSourceError(f"schema column {name!r} has a missing or non-integer primary_key")
+        return cls(name=name, declared_type=declared_type, notnull=notnull, default=default, primary_key=primary_key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,15 +145,12 @@ class SchemaObject:
     def from_dict(cls, row: Mapping[str, Any]) -> SchemaObject:
         """Rebuild an object from its canonical projection."""
         raw_columns = row.get("columns", [])
-        columns = (
-            tuple(
-                SchemaColumn.from_dict(cast("dict[str, Any]", c))
-                for c in cast("list[Any]", raw_columns)
-                if isinstance(c, dict)
-            )
-            if isinstance(raw_columns, list)
-            else ()
-        )
+        if not isinstance(raw_columns, list):
+            raise DataSourceError("stored schema snapshot: schema object columns must be a list")
+        for entry in cast("list[Any]", raw_columns):
+            if not isinstance(entry, dict):
+                raise DataSourceError("stored schema snapshot: schema object carries a non-object column entry")
+        columns = tuple(SchemaColumn.from_dict(cast("dict[str, Any]", c)) for c in cast("list[Any]", raw_columns))
         valid_type, valid_name, valid_sql = _validated_object_shape(
             row.get("type"), row.get("name"), row.get("sql"), origin="stored schema snapshot"
         )
@@ -192,11 +205,13 @@ class SchemaSnapshot:
         raw_objects = payload.get("objects", [])
         if not isinstance(raw_objects, list):
             raise DataSourceError("schema snapshot bytes are malformed (objects is not a list)")
-        objects = tuple(
-            SchemaObject.from_dict(cast("dict[str, Any]", o))
-            for o in cast("list[Any]", raw_objects)
-            if isinstance(o, dict)
-        )
+        for position, entry in enumerate(cast("list[Any]", raw_objects)):
+            if not isinstance(entry, dict):
+                raise DataSourceError(
+                    f"stored schema snapshot: objects[{position}] is not an object; refusing to "
+                    "rehydrate a snapshot by omission"
+                )
+        objects = tuple(SchemaObject.from_dict(cast("dict[str, Any]", o)) for o in cast("list[Any]", raw_objects))
         return cls(objects=_canonical_order(objects))
 
 
