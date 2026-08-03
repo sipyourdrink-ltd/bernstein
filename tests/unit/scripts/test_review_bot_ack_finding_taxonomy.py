@@ -221,6 +221,89 @@ def test_high_severity_escalates_an_informational_category(ack: ModuleType) -> N
     assert ack.classify(GUIDELINES_HIGH) == "must-address"
 
 
+# --- the escalation path survives the badge's own rendering -----------------
+#
+# Rule 2 above is the only thing standing between a `high` finding filed under
+# an informational category and a silent pass, and it reads its input out of a
+# URL the reviewer renders. Anything that makes that URL unreadable disarms the
+# rule quietly, so the reads below pin the parse against the shapes a URL is
+# allowed to take, and pin the fail-closed behaviour for the shapes it is not.
+
+
+def _reviewer_badge(query: str) -> str:
+    """A guidelines finding whose reviewer badge carries ``query`` verbatim."""
+    return (
+        "### A conventions finding the reviewer graded high\n\n"
+        "<!--\n_Finding type:_ `AI Coding Guidelines`\n-->\n\n"
+        f'<picture><img src="https://baz.co/api/v2/badges?{query}" alt="Severity" height="24" /></picture>\n'
+    )
+
+
+def test_severity_is_read_regardless_of_badge_parameter_order(ack: ModuleType) -> None:
+    """Parameter order is the reviewer's rendering detail, not a contract."""
+    for query in (
+        "type=reviewer&content=AI%20Coding%20Guidelines&severity=high",
+        "severity=high&type=reviewer&content=AI%20Coding%20Guidelines",
+        "content=AI%20Coding%20Guidelines&severity=high&type=reviewer",
+    ):
+        assert ack.finding_severity(_reviewer_badge(query)) == "high", query
+        assert ack.classify(_reviewer_badge(query)) == "must-address", query
+
+
+def test_severity_is_read_through_html_escaped_separators(ack: ModuleType) -> None:
+    """`&amp;` in a rendered body must not hide the grade behind `amp;severity`."""
+    escaped = _reviewer_badge("type=reviewer&amp;content=AI%20Coding%20Guidelines&amp;severity=high")
+    assert ack.finding_severity(escaped) == "high"
+    assert ack.classify(escaped) == "must-address"
+
+
+def test_severity_is_case_insensitive(ack: ModuleType) -> None:
+    """The grade is the reviewer's word, not its capitalisation."""
+    assert ack.finding_severity(_reviewer_badge("type=Reviewer&severity=HIGH")) == "high"
+
+
+def test_a_badge_of_another_kind_cannot_supply_the_severity(ack: ModuleType) -> None:
+    """Only a `type=reviewer` badge grades a finding.
+
+    Scoping by parameter rather than by position has to keep this property: a
+    coverage or build badge sitting in the same body must not be able to raise
+    or lower the reviewer's own grade.
+    """
+    body = (
+        "### A typo\n\n<!--\n_Finding type:_ `Naming and Typos`\n-->\n\n"
+        '<img src="https://example.test/badges?type=coverage&severity=high" alt="Coverage" />\n'
+        '<img src="https://baz.co/api/v2/badges?type=reviewer&content=Naming%20and%20Typos&severity=low" alt="Severity" />\n'
+    )
+    assert ack.finding_severity(body) == "low"
+    assert ack.classify(body) == "informational"
+
+
+def test_an_unreadable_reviewer_grade_fails_closed(ack: ModuleType) -> None:
+    """A reviewer badge with no readable severity blocks rather than passing.
+
+    The reviewer graded the finding; the grade did not survive the round trip.
+    Reading that absence as "not high" is the demotion the escalation rule
+    exists to prevent, so it blocks and the ack marker stays the escape hatch.
+    """
+    for query in (
+        "type=reviewer&content=AI%20Coding%20Guidelines",
+        "type=reviewer&content=AI%20Coding%20Guidelines&severity=",
+    ):
+        assert ack.has_unreadable_reviewer_severity(_reviewer_badge(query)) is True, query
+        assert ack.classify(_reviewer_badge(query)) == "must-address", query
+
+
+def test_a_body_with_no_reviewer_badge_does_not_fail_closed(ack: ModuleType) -> None:
+    """ "No badge" is a bot that states no severity, not a grade lost in transit.
+
+    Failing closed on this instead would block every finding from any reviewer
+    that does not render a badge at all, which is a different bug in the same
+    direction as the one being fixed.
+    """
+    assert ack.has_unreadable_reviewer_severity(NAMING_AND_TYPOS.split("<picture>")[0]) is False
+    assert ack.classify(RESOLUTION_REPLY) == "informational"
+
+
 # --- unmapped categories fail closed ---------------------------------------
 
 

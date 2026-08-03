@@ -36,11 +36,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
@@ -104,9 +106,19 @@ FINDING_TYPE_RE = re.compile(r"_finding types?:_((?:\s*`[^`]+`)+)", re.IGNORECAS
 _BACKTICKED_RE = re.compile(r"`([^`]+)`")
 
 # The severity the reviewer itself assigned, read from the badge it renders
-# next to the marker. Anchored on `type=reviewer` so a badge of another kind
+# next to the marker, and scoped to `type=reviewer` so a badge of another kind
 # on the same comment cannot supply the value.
-FINDING_SEVERITY_RE = re.compile(r"type=reviewer&content=[^\s\"']*?&severity=([a-z]+)", re.IGNORECASE)
+#
+# Read by parsing the badge URL's query rather than by matching one fixed
+# parameter order. The order is the reviewer's rendering detail, not a
+# contract: a reordered or re-encoded badge made the severity unreadable, and
+# at the call site an unreadable severity was indistinguishable from a
+# genuinely low one. That silently demoted exactly the case the escalation
+# rule exists for - a `high` finding filed under an informational category -
+# so the gap sat in the escalation path itself. Parsing the query makes the
+# order irrelevant, and an unreadable grade on a badge that IS present now
+# fails closed instead of reading as absent.
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 
 # Categories that block the gate, and why. Each names a defect that ships
 # broken behaviour if it is merged unexamined, which is exactly the class the
@@ -306,10 +318,40 @@ def finding_types(body: str) -> list[str]:
     return out
 
 
+def reviewer_badge_severities(body: str) -> list[str]:
+    """Return the severity of every reviewer badge in ``body``, in order.
+
+    An entry is ``""`` when that badge carries no readable ``severity``. The
+    caller needs to tell "no reviewer badge at all" (no entries) apart from "a
+    badge whose grade could not be read" (an empty entry): the first is a bot
+    that states no severity, the second is a grade lost in transit, and only
+    the second is a reason to fail closed.
+    """
+    out: list[str] = []
+    for raw_url in _URL_RE.findall(body):
+        # `&amp;` survives into some rendered bodies; without unescaping it the
+        # parameters after the first parse as `amp;content` and `amp;severity`.
+        query = urllib.parse.urlsplit(html.unescape(raw_url)).query
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        if not any(value.strip().lower() == "reviewer" for value in params.get("type", [])):
+            continue
+        graded = [value.strip().lower() for value in params.get("severity", []) if value.strip()]
+        out.append(graded[0] if graded else "")
+    return out
+
+
 def finding_severity(body: str) -> str:
     """Return the severity the reviewer assigned, or "" when it states none."""
-    match = FINDING_SEVERITY_RE.search(body)
-    return match.group(1).lower() if match else ""
+    for severity in reviewer_badge_severities(body):
+        if severity:
+            return severity
+    return ""
+
+
+def has_unreadable_reviewer_severity(body: str) -> bool:
+    """True when a reviewer badge is present but states no readable severity."""
+    severities = reviewer_badge_severities(body)
+    return bool(severities) and not any(severities)
 
 
 def classify_finding_marker(body: str) -> str | None:
@@ -322,8 +364,13 @@ def classify_finding_marker(body: str) -> str | None:
        strictest of them.
     2. The reviewer's own severity blocks at :data:`ESCALATING_FINDING_SEVERITIES`
        whatever the category.
-    3. Categories in :data:`INFORMATIONAL_FINDING_TYPES` are advisory.
-    4. Anything else blocks. An unmapped category is one nobody has triaged,
+    3. A reviewer badge whose severity cannot be read blocks. The reviewer
+       graded that finding and the grade did not survive the round trip;
+       reading the absence as "not high" is the same silent demotion rule 2
+       exists to stop, so an unreadable grade fails closed like an unmapped
+       category does.
+    4. Categories in :data:`INFORMATIONAL_FINDING_TYPES` are advisory.
+    5. Anything else blocks. An unmapped category is one nobody has triaged,
        and defaulting those to informational is what let a whole reviewer's
        output pass silently; failing closed makes the next new category
        announce itself on a pull request instead of being waved through.
@@ -336,6 +383,8 @@ def classify_finding_marker(body: str) -> str | None:
     if any(hint in name for name in types for hint in SECURITY_FINDING_TYPE_HINTS):
         return "must-address"
     if finding_severity(body) in ESCALATING_FINDING_SEVERITIES:
+        return "must-address"
+    if has_unreadable_reviewer_severity(body):
         return "must-address"
     if all(name in INFORMATIONAL_FINDING_TYPES for name in types):
         return "informational"
