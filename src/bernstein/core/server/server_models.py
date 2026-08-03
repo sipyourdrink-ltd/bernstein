@@ -168,11 +168,30 @@ class TaskCreate(BaseModel):
     # confusing CLI-level failure downstream), and an unbounded value defeats
     # turn budgeting.
     max_turns: int | None = Field(default=None, ge=1, le=10_000)
+    # Issue #3110: the declared artifact contract (see
+    # ``bernstein.core.tasks.artifacts.ArtifactSpec``). Validated by the one
+    # strict parser every declaration surface shares; a malformed block is a
+    # 422 naming the offending field, never a silent downgrade to code_diff.
+    # ``None`` = no declaration: the task keeps the default coding contract.
+    artifact_spec: dict[str, Any] | None = None
 
     @field_validator("scope", "complexity", "task_type")
     @classmethod
     def _validate_task_enums(cls, value: str, info: ValidationInfo) -> str:
         return _ensure_task_enum(value, info.field_name or "")
+
+    @field_validator("artifact_spec")
+    @classmethod
+    def _validate_artifact_spec(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Fail closed on a malformed artifact declaration (issue #3110)."""
+        if value is None:
+            return None
+        from bernstein.core.tasks.artifacts import ArtifactSpecError, parse_artifact_spec
+
+        try:
+            return parse_artifact_spec(value).to_dict()
+        except ArtifactSpecError as exc:
+            raise ValueError(str(exc)) from None
 
     # cap serialized size of dict-of-any fields to block deeply-nested
     # or very wide payloads from wedging the server at pydantic-validation time.
@@ -270,6 +289,11 @@ class TaskResponse(BaseModel):
     max_output_tokens: int | None = None
     meta_messages: list[str] = Field(default_factory=list)
     max_turns: int | None = None
+    # Issue #3110: the task's artifact contract as ``ArtifactSpec.to_dict()``.
+    # Always present on responses built by ``task_to_response`` (the default
+    # contract serialises as kind=code_diff), so a declared contract survives
+    # the wire round-trip instead of being dropped at the response boundary.
+    artifact_spec: dict[str, Any] | None = None
 
 
 class WebhookTaskResponse(BaseModel):

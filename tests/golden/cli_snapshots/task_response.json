@@ -1,5 +1,6 @@
 {
   "approval_required": false,
+  "artifact_spec": null,
   "assigned_agent": null,
   "batch_eligible": false,
   "cell_id": null,

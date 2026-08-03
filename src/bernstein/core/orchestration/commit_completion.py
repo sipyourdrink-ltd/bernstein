@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.adapters.base import CLIAdapter, SpawnResult
+    from bernstein.core.tasks.models import Task
 
 
 class ContinuationSpawnFn(Protocol):
@@ -251,6 +252,25 @@ def _safe_rev_parse(workdir: Path) -> str:
         return ""
 
 
+def task_output_mode(task: Task) -> OutputMode | None:
+    """Map a task's declared artifact contract onto the output-mode axis.
+
+    Returns ``OutputMode.ARTIFACT`` for a task declaring any artifact kind
+    other than ``code_diff`` - such a task completes on a signed lineage
+    receipt, so the commit check must never fire for it regardless of which
+    adapter runs it. Returns ``None`` for everything else, meaning "no
+    per-task override: let the adapter's declared axis decide" - which keeps
+    an undeclared task on the conservative ``git_diff`` default.
+
+    This is what makes the declaration surface (issue #3110) reach the retry
+    decision: before it, only the adapter axis was consulted, so one adapter
+    could not honestly drive both a coding task and a report task.
+    """
+    from bernstein.core.tasks.artifact_completion import is_artifact_mode
+
+    return OutputMode.ARTIFACT if is_artifact_mode(task) else None
+
+
 def _resolved_output_mode(adapter: CLIAdapter, override: OutputMode | None) -> OutputMode:
     """Return the effective output mode for a run.
 
@@ -380,6 +400,7 @@ def maybe_retry_continuation(
     nudge: str = DEFAULT_CONTINUATION_NUDGE,
     spawn_fn: ContinuationSpawnFn | None = None,
     output_mode: OutputMode | None = None,
+    task: Task | None = None,
 ) -> tuple[RetryDecision, CompletionVerdict, SpawnResult | None]:
     """Convenience wrapper around verify + decide + (optional) spawn.
 
@@ -408,12 +429,19 @@ def maybe_retry_continuation(
         output_mode: The run's declared output mode; forwarded to
             :func:`decide_retry`. Pass ``artifact`` for a task that
             completes on a signed lineage receipt instead of a commit.
+        task: The task that just ran. When given and ``output_mode`` is
+            not, the task's declared artifact contract supplies the
+            override via :func:`task_output_mode`, so a task declaring an
+            artifact kind routes past the commit check on any adapter
+            (issue #3110).
 
     Returns:
         A 3-tuple of ``(decision, verdict, retry_result)``. The third
         element is ``None`` when no retry was attempted or
         ``spawn_fn`` was omitted.
     """
+    if output_mode is None and task is not None:
+        output_mode = task_output_mode(task)
     check = check or CommitCompletionCheck()
     verdict = check.verify_after(workdir, before=before)
     decision = decide_retry(
@@ -466,4 +494,5 @@ __all__ = [
     "build_continuation_prompt",
     "decide_retry",
     "maybe_retry_continuation",
+    "task_output_mode",
 ]

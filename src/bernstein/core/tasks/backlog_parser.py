@@ -10,6 +10,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+class BacklogParseError(ValueError):
+    """Raised when a backlog file carries a malformed declaration (#3110).
+
+    Distinct from the "not a task file" case (which returns ``None``): the
+    file *is* a task file, but one of its typed declarations - today the
+    ``artifact_spec`` block - is malformed. Fail-closed: the file must not
+    silently become a default ``code_diff`` task. Scan loops catch this
+    per-file, surface the message (which names the offending field), and
+    continue with the other files.
+    """
+
+
 @dataclass(frozen=True)
 class ParsedBacklogTask:
     """Normalized metadata extracted from one backlog file.
@@ -43,6 +55,11 @@ class ParsedBacklogTask:
     # absence of the ``[P]`` marker is conservative.
     parallel_safe: bool = False
     story_id: str | None = None
+    # Issue #3110: the declared artifact contract, as the validated
+    # ``ArtifactSpec.to_dict()`` payload (kept as a plain mapping so this
+    # module's import surface stays stdlib-only). ``None`` = no declaration:
+    # the task keeps the default code_diff contract.
+    artifact_spec: dict[str, object] | None = None
 
     def to_task_payload(self) -> dict[str, object]:
         """Convert to POST /tasks payload."""
@@ -64,6 +81,10 @@ class ParsedBacklogTask:
             payload["parallel_safe"] = True
         if self.story_id:
             payload["story_id"] = self.story_id
+        if self.artifact_spec is not None:
+            # A validated declaration must reach the server; dropping it here
+            # would silently downgrade the task to code_diff (#3110).
+            payload["artifact_spec"] = dict(self.artifact_spec)
         return payload
 
 
@@ -91,7 +112,13 @@ class ParsedTaskLine:
 
 
 def parse_backlog_text(filename: str, content: str) -> ParsedBacklogTask | None:
-    """Parse backlog markdown text into normalized task metadata."""
+    """Parse backlog markdown text into normalized task metadata.
+
+    Returns ``None`` for text that is not a task file at all. Raises
+    :class:`BacklogParseError` for a task file whose ``artifact_spec``
+    declaration is malformed - the refusal names the offending field and the
+    file never becomes a task (issue #3110).
+    """
     text = content.strip()
     if not text:
         return None
@@ -156,6 +183,21 @@ def _parse_yaml_frontmatter(filename: str, content: str) -> ParsedBacklogTask | 
         else ()
     )
 
+    # Issue #3110: strict artifact-contract declaration, parsed by the one
+    # shared parser (imported lazily to keep this module's import surface
+    # stdlib-only). Fail-closed: a malformed block raises with the offending
+    # field named instead of being dropped, because a dropped declaration
+    # silently turns the task into a default code_diff task.
+    artifact_payload: dict[str, object] | None = None
+    raw_artifact = raw.get("artifact_spec")
+    if raw_artifact is not None:
+        from bernstein.core.tasks.artifacts import ArtifactSpecError, parse_artifact_spec
+
+        try:
+            artifact_payload = cast("dict[str, object]", parse_artifact_spec(raw_artifact).to_dict())
+        except ArtifactSpecError as exc:
+            raise BacklogParseError(f"{filename}: {exc}") from exc
+
     # Use only the body after the YAML frontmatter as the description.
     # The frontmatter metadata is already extracted into typed fields.
     body = content[end + 4 :].strip()
@@ -186,6 +228,7 @@ def _parse_yaml_frontmatter(filename: str, content: str) -> ParsedBacklogTask | 
         janitor_signals=janitor,
         parallel_safe=bool(raw.get("parallel_safe", False)),
         story_id=story_id,
+        artifact_spec=artifact_payload,
     )
 
 

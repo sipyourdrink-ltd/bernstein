@@ -50,6 +50,9 @@ class BacklogTask:
     complexity: str
     source_file: str
     approval_required: bool = False
+    # Issue #3110: the declared artifact contract (validated
+    # ``ArtifactSpec.to_dict()`` payload), or None for the default code_diff.
+    artifact_spec: dict[str, Any] | None = None
 
 
 def parse_backlog_file(path: Path) -> BacklogTask | None:
@@ -63,9 +66,18 @@ def parse_backlog_file(path: Path) -> BacklogTask | None:
         path: Path to the backlog file.
 
     Returns:
-        Parsed BacklogTask, or None if the file cannot be parsed.
+        Parsed BacklogTask, or None if the file cannot be parsed. A file whose
+        ``artifact_spec`` declaration is malformed is refused (#3110): the
+        refusal is logged with the offending field named, no task is created
+        from it, and the sync continues with the other files.
     """
-    parsed = parse_backlog_path(path)
+    from bernstein.core.backlog_parser import BacklogParseError
+
+    try:
+        parsed = parse_backlog_path(path)
+    except BacklogParseError as exc:
+        logger.error("backlog sync: refused %s - %s", path.name, exc)
+        return None
     if parsed is None:
         return None
     return BacklogTask(
@@ -77,6 +89,7 @@ def parse_backlog_file(path: Path) -> BacklogTask | None:
         complexity=parsed.complexity,
         source_file=parsed.source_file,
         approval_required=parsed.require_human_approval,
+        artifact_spec=dict(parsed.artifact_spec) if parsed.artifact_spec is not None else None,
     )
 
 
@@ -213,7 +226,7 @@ def _build_task_payload(task: BacklogTask) -> dict[str, Any]:
     if f"source: {task.source_file}" not in description:
         description = description + f"\n\n<!-- source: {task.source_file} -->"
 
-    return {
+    payload: dict[str, Any] = {
         "title": task.title,
         "description": description,
         "role": task.role,
@@ -222,6 +235,11 @@ def _build_task_payload(task: BacklogTask) -> dict[str, Any]:
         "complexity": task.complexity,
         "approval_required": task.approval_required,
     }
+    if task.artifact_spec is not None:
+        # A validated declaration must reach the server; dropping it here
+        # would silently downgrade the task to code_diff (#3110).
+        payload["artifact_spec"] = dict(task.artifact_spec)
+    return payload
 
 
 def _sync_one_by_one(

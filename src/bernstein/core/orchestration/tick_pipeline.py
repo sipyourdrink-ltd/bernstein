@@ -639,6 +639,13 @@ def parse_backlog_file(filename: str, content: str) -> dict[str, Any]:
 
     Returns:
         Dict suitable for POST /tasks.
+
+    Raises:
+        BacklogParseError: The file declares a malformed ``artifact_spec``
+            block (#3110). Fail-closed on purpose: the defaults fallback below
+            applies to files that are not task files at all, never to a task
+            file whose declaration is wrong - that would silently turn a
+            declared artifact task into a code_diff task.
     """
     parsed = parse_backlog_text(filename, content)
     if parsed is None:

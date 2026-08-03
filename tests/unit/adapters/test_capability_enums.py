@@ -105,9 +105,20 @@ def test_default_adapter_strategy_is_conservative() -> None:
     assert DEFAULT_ADAPTER_STRATEGY.output_mode is OutputMode.GIT_DIFF
 
 
-def test_every_shipped_adapter_declares_git_diff_output_mode() -> None:
-    """The coding path is the default: adding the axis changed no adapter."""
-    assert {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF} == set()
+def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
+    """The coding path stays the default; the axis has exactly one consumer.
+
+    ``computer_use`` fronts an external agent whose unit of work is the
+    signed per-action record, not a commit (#3110), so it declares
+    ``artifact``. Every coding adapter keeps ``git-diff`` - growing this set
+    is a deliberate act, not a default drift.
+    """
+    non_git_diff = {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF}
+    assert non_git_diff == {"computer_use"}
+
+
+def test_computer_use_declares_artifact_output_mode() -> None:
+    assert strategy_for("computer_use").output_mode is OutputMode.ARTIFACT
 
 
 def test_output_mode_is_a_closed_two_value_axis() -> None:

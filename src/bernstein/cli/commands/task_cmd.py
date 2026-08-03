@@ -200,6 +200,38 @@ def verify_claim(receipt_path: str, backlog_path: Path, audit_dir: Path) -> None
     ),
 )
 @click.option(
+    "--artifact-kind",
+    "artifact_kind",
+    default=None,
+    type=click.Choice(["report", "dataset", "action_log", "ops_result"]),
+    help=(
+        "Declare the artifact contract this task produces (issue #3110). The "
+        "task then completes on a signed lineage receipt instead of a git "
+        "commit. Requires --artifact-output. Omit for a normal coding task."
+    ),
+)
+@click.option(
+    "--artifact-output",
+    "artifact_output",
+    default=None,
+    metavar="PATH",
+    help=(
+        "Workdir-relative path the agent writes the declared artifact to. "
+        "Required with --artifact-kind; absolute paths and '..' are refused."
+    ),
+)
+@click.option(
+    "--artifact-criterion",
+    "artifact_criteria",
+    multiple=True,
+    metavar="TYPE:VALUE",
+    help=(
+        "Typed criterion evaluated against the artifact bytes, as TYPE:VALUE "
+        "split on the first colon (types: schema_valid, criteria_match, "
+        "hash_stable). Repeatable. Requires --artifact-kind."
+    ),
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Print the JSON payload that would be sent without actually calling the API.",
@@ -216,6 +248,9 @@ def add_task(
     depends_on: tuple[str, ...],
     criterion_profile: str | None,
     mode: str | None,
+    artifact_kind: str | None,
+    artifact_output: str | None,
+    artifact_criteria: tuple[str, ...],
     dry_run: bool,
 ) -> None:
     """Add a task to the running server.
@@ -231,6 +266,33 @@ def add_task(
         "complexity": complexity,
         "depends_on": list(depends_on),
     }
+
+    # Issue #3110: the declared artifact contract, validated early by the one
+    # strict parser every declaration surface shares, so operator typos
+    # surface here rather than after the payload leaves the CLI. Fail-closed:
+    # a malformed declaration is a usage error naming the offending field,
+    # never a task that silently completes as code_diff.
+    if artifact_kind is None and (artifact_output is not None or artifact_criteria):
+        raise click.UsageError("--artifact-output / --artifact-criterion require --artifact-kind.")
+    if artifact_kind is not None:
+        from bernstein.core.tasks.artifacts import ArtifactSpecError, parse_artifact_spec
+
+        criteria: list[dict[str, str]] = []
+        for raw in artifact_criteria:
+            ctype, sep, cvalue = raw.partition(":")
+            if not sep:
+                raise click.UsageError(
+                    f"--artifact-criterion {raw!r}: expected TYPE:VALUE "
+                    "(types: schema_valid, criteria_match, hash_stable)."
+                )
+            criteria.append({"type": ctype.strip(), "value": cvalue})
+        raw_spec: dict[str, Any] = {"kind": artifact_kind, "output_path": artifact_output or ""}
+        if criteria:
+            raw_spec["criteria"] = criteria
+        try:
+            payload["artifact_spec"] = parse_artifact_spec(raw_spec).to_dict()
+        except ArtifactSpecError as exc:
+            raise click.UsageError(str(exc)) from None
     if criterion_profile is not None:
         # Validate early so operator typos surface before the payload
         # leaves the CLI.  The server simply forwards metadata blindly.

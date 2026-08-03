@@ -698,6 +698,15 @@ class Task:
             except (KeyError, TypeError):
                 logger.warning("Invalid completion_signal entry: %r", sig)
 
+        # Rehydration boundary, deliberately lenient (#3110): every operator
+        # input surface (plan schema/loader, backlog frontmatter, CLI flags,
+        # POST /tasks) now refuses a malformed declaration at load via
+        # ``bernstein.core.tasks.artifacts.parse_artifact_spec``, so a bad
+        # block cannot *newly* enter a store. What reaches this path is a
+        # previously persisted record or a server response; raising here would
+        # brick store rehydration over one historic record, so the entry is
+        # logged as an error (loudly - this used to be the silent-downgrade
+        # hole) and the task falls back to the code_diff contract.
         raw_spec = raw.get("artifact_spec")
         if isinstance(raw_spec, ArtifactSpec):
             artifact_spec = raw_spec
@@ -705,7 +714,13 @@ class Task:
             try:
                 artifact_spec = ArtifactSpec.from_dict(raw_spec)
             except (KeyError, TypeError, ValueError):
-                logger.warning("Invalid artifact_spec entry: %r - defaulting to code_diff", raw_spec)
+                logger.error(
+                    "Invalid artifact_spec entry on stored task %r: %r - falling back to code_diff. "
+                    "New declarations are refused at load; this record predates that boundary or was "
+                    "hand-edited.",
+                    raw.get("id"),
+                    raw_spec,
+                )
                 artifact_spec = ArtifactSpec()
         else:
             artifact_spec = ArtifactSpec()

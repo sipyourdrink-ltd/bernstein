@@ -656,8 +656,11 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # #2606). The external agent owns its own loop, so Bernstein neither
     # resumes it natively nor reads a structured lifecycle stream: liveness is
     # polled and the per-action record is the signed lineage chain, not stdout
-    # text. Dangerous-mode is the external agent's own concern.
-    "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
+    # text. Dangerous-mode is the external agent's own concern. Its unit of
+    # work is that recorded action stream, not a commit on the worktree
+    # branch, so it declares ``artifact`` output (#3110): completion is the
+    # signed lineage receipt and the commit check never fires for it.
+    "computer_use": AdapterStrategy(event_channel=EventChannel.POLL_PTY, output_mode=OutputMode.ARTIFACT),
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),

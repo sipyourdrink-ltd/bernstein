@@ -25,6 +25,7 @@ from bernstein.core.hook_events import HookEvent
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.security.sanitize import sanitize_log
+from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
 from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_agent, transition_task
 from bernstein.core.tasks.models import (
@@ -259,6 +260,11 @@ class TaskCreateRequest(Protocol):
     @property
     def meta_messages(self) -> Sequence[str] | None: ...
 
+    # Issue #3110: the declared artifact contract, as the validated
+    # ``ArtifactSpec.to_dict()`` payload. ``None`` = default code_diff.
+    @property
+    def artifact_spec(self) -> Mapping[str, Any] | None: ...
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -279,6 +285,24 @@ def _parse_upgrade_dict(raw: Mapping[str, Any] | None) -> UpgradeProposalDetails
         cost_estimate_usd=raw.get("cost_estimate_usd", 0.0),
         performance_impact=raw.get("performance_impact", ""),
     )
+
+
+def _artifact_spec_from_request(raw: Mapping[str, Any] | None) -> ArtifactSpec:
+    """Parse a request's declared artifact contract into an :class:`ArtifactSpec`.
+
+    Defense in depth for issue #3110: the ``TaskCreate`` schema already
+    validates the block at the API boundary, but the store is also driven by
+    other :class:`TaskCreateRequest` implementers. Re-running the one shared
+    strict parser here means a malformed declaration can never reach a stored
+    task, whatever the caller. Raises
+    :class:`bernstein.core.tasks.artifacts.ArtifactSpecError` (a
+    ``ValueError``) naming the offending field.
+    """
+    if not raw:
+        return ArtifactSpec()
+    from bernstein.core.tasks.artifacts import parse_artifact_spec
+
+    return parse_artifact_spec(dict(raw))
 
 
 #: Mirrors :attr:`bernstein.core.tasks.models.CompletionSignal.type`. Request-layer
@@ -1203,6 +1227,14 @@ class TaskStore:
         retry_delay_raw = getattr(req, "retry_delay_s", None)
         meta_messages_raw = getattr(req, "meta_messages", None)
         max_turns_raw = getattr(req, "max_turns", None)
+        # Issue #3110: fail closed on a malformed artifact declaration. The
+        # TaskCreate schema already refused it at the API boundary; this
+        # re-parse covers every other TaskCreateRequest implementer, so a
+        # malformed block can never be stored as a silent code_diff task.
+        try:
+            artifact_spec = _artifact_spec_from_request(getattr(req, "artifact_spec", None))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         logger.info(
             "TaskStore.create: max_turns=%r for title=%r (None => auto-computed at spawn time)",
             max_turns_raw,
@@ -1239,6 +1271,7 @@ class TaskStore:
             completion_signals=[
                 CompletionSignal(type=_narrow_signal_type(s.type), value=s.value) for s in req.completion_signals
             ],
+            artifact_spec=artifact_spec,
             slack_context=dict(req.slack_context) if req.slack_context is not None else None,
             metadata=getattr(req, "metadata", None) or {},
             parent_session_id=getattr(req, "parent_session_id", None),
@@ -1632,6 +1665,17 @@ class TaskStore:
                     _cls = classify_task(_probe)
                     batch_eligible = _cls.level in (TaskLevel.L0, TaskLevel.L1)
 
+                # Issue #3110: fail closed per entry - a malformed artifact
+                # declaration skips this entry with the field named (matching
+                # the dependency-validation skip below) and never becomes a
+                # silent code_diff task; the rest of the batch continues.
+                try:
+                    artifact_spec = _artifact_spec_from_request(getattr(req, "artifact_spec", None))
+                except ValueError as exc:
+                    logger.warning("create_batch: skipping %r - %s", req.title, exc)
+                    skipped_titles.append(req.title)
+                    continue
+
                 task = Task(
                     id=uuid.uuid4().hex[:12],
                     title=req.title,
@@ -1663,6 +1707,7 @@ class TaskStore:
                         CompletionSignal(type=_narrow_signal_type(s.type), value=s.value)
                         for s in req.completion_signals
                     ],
+                    artifact_spec=artifact_spec,
                     slack_context=dict(req.slack_context) if req.slack_context is not None else None,
                     metadata=getattr(req, "metadata", None) or {},
                     parent_session_id=getattr(req, "parent_session_id", None),

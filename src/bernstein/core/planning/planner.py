@@ -97,6 +97,13 @@ async def _post_task_to_server(
     # Include upgrade_details if present
     if task.upgrade_details:
         body["upgrade_details"] = asdict(task.upgrade_details)
+    # Forward the declared artifact contract (issue #3110). Dropping it here
+    # would silently turn a declared report/dataset/action_log/ops_result task
+    # back into a code_diff task at the server boundary.
+    from bernstein.core.tasks.artifacts import ArtifactKind
+
+    if task.artifact_spec.kind is not ArtifactKind.CODE_DIFF:
+        body["artifact_spec"] = task.artifact_spec.to_dict()
 
     # Plan mode: tasks start as PLANNED instead of OPEN
     if plan_mode:

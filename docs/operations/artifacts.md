@@ -64,39 +64,68 @@ coding task.
 
 ### Declaring one
 
+The contract is declared where tasks are declared (issue #3110). One strict
+parser (`parse_artifact_spec` in `core/tasks/artifacts.py`) sits behind every
+surface, so they cannot drift.
+
+**On a plan step** (`stages[].steps[].artifact_spec`):
+
 ```yaml
-artifact_spec:
-  kind: report
-  output_path: reports/weekly.md      # workdir-relative; must not escape the workdir
-completion_signals:
-  - type: schema_valid
-    value: '{"type": "object", "required": ["id"]}'
-  - type: hash_stable
-    value: 'sha256:...'
+stages:
+  - name: report
+    steps:
+      - title: Produce the weekly report
+        role: analyst
+        artifact_spec:
+          kind: report
+          output_path: reports/weekly.md   # workdir-relative; required
+          criteria:
+            - type: hash_stable
+              value: 'sha256:...'
 ```
 
-`output_path` is where the agent writes its deliverable. Leave it empty and the
-task defaults to `.sdd/outbox/<task-id>/artifact`.
+**On a backlog entry** (YAML frontmatter, same block):
 
-<!-- scope:artifact-spec-reachability start - delete this note when #3110 lands -->
-#### How to reach this today
+```yaml
+---
+title: Produce the weekly report
+role: analyst
+artifact_spec:
+  kind: dataset
+  output_path: out/rows.jsonl
+---
+```
 
-The block above is the shape of an `artifact_spec` on a **task record**, not a
-key a seed file or a plan parses. `artifact_spec` is read by
-`Task.from_dict` in `core/tasks/models.py` and consumed by
-`core/tasks/artifact_completion.py` and `core/quality/janitor.py`. It is absent
-from `core/planning/plan_schema.py`, `core/planning/plan_loader.py`,
-`core/tasks/backlog_parser.py`, every CLI option and every server route.
+**On a single-task invocation**:
 
-So the only path that reaches artifact mode today is writing the key into a task
-record under `.sdd/` (or constructing the `Task` through the Python API) before
-the task is claimed. Putting `artifact_spec` in `bernstein.yaml`, a plan file or
-a backlog entry is silently ignored, and the task runs as a normal `code_diff`
-task. Declaring it from a seed, plan, or backlog entry is tracked in
-[issue #3110](https://github.com/sipyourdrink-ltd/bernstein/issues/3110), and
-routing artifact-mode tasks away from the git-only paths in
+```
+bernstein add-task "Produce the weekly report" \
+  --artifact-kind report \
+  --artifact-output reports/weekly.md \
+  --artifact-criterion 'hash_stable:sha256:...'
+```
+
+The declared block accepts exactly four keys - `kind` (required), `output_path`
+(required for every kind except `code_diff`), `canonicalisation` (optional; only
+the kind's default rule ships), and `criteria` (optional list of
+`{type, value}`). `output_path` is where the agent writes its deliverable; it
+must stay workdir-relative. A task constructed through the Python API may leave
+it empty to get the `.sdd/outbox/<task-id>/artifact` default, but a declaration
+names it explicitly.
+
+**Malformed declarations are refused at load, with the offending field
+named.** An unknown kind, a missing or workdir-escaping `output_path`, an
+unknown key, or a malformed criterion stops the plan load (or refuses the
+backlog file / CLI invocation / `POST /tasks` body) - it never silently becomes
+a `code_diff` task that completes on a git SHA. A refused backlog file is
+skipped with the field named in the log while the rest of the scan continues.
+The same validated payload rides `POST /tasks` (`artifact_spec` on the create
+body) and comes back on every task response, so the declaration survives the
+wire instead of being dropped at either boundary.
+
+Routing artifact-mode tasks away from the remaining git-only machinery
+(worktree allocation, the provider-batch path) is tracked in
 [issue #2996](https://github.com/sipyourdrink-ltd/bernstein/issues/2996).
-<!-- scope:artifact-spec-reachability end -->
 
 The bytes are read in the shape the kind expects: JSONL rows for `dataset` and
 `action_log`, a JSON object for `ops_result`, text for `report` (or a figures
@@ -119,9 +148,12 @@ one. Verify any receipt afterwards with `bernstein artifact verify` (below).
 `decide_retry` in `commit_completion` consults the run's **output mode** before
 the HEAD verdict. An artifact-mode run has no commit, so an unmoved HEAD is the
 contract rather than a defect and the "you exited without committing" nudge is
-never sent. The mode comes from the adapter's declared `output_mode` axis
-(every shipped adapter declares `git-diff`) and can be overridden per task, so
-one adapter can drive both a coding task and a report task.
+never sent. The mode comes from two places: the adapter's declared
+`output_mode` axis (every shipped coding adapter declares `git-diff`; the
+browser/computer-use family declares `artifact`), and the task's own declared
+contract - `task_output_mode` maps any non-`code_diff` `artifact_spec` onto the
+`artifact` mode, and that per-task override beats the adapter axis, so one
+adapter can drive both a coding task and a report task.
 
 ### Signing identity
 
@@ -284,7 +316,12 @@ and the command exits `2`.
 
 ## Source
 
-- `src/bernstein/core/tasks/artifacts.py` - kinds, canonicalisers, criteria.
+- `src/bernstein/core/tasks/artifacts.py` - kinds, canonicalisers, criteria,
+  and the strict declaration parser (`parse_artifact_spec`).
+- `src/bernstein/core/planning/plan_schema.py` / `plan_loader.py` and
+  `src/bernstein/core/tasks/backlog_parser.py` - the plan and backlog
+  declaration surfaces; the `--artifact-*` flags live in
+  `src/bernstein/cli/commands/task_cmd.py`.
 - `src/bernstein/core/tasks/figures.py` - figure tokenizer, `figures.json`
   sidecar, report bundle, and the pure `figures_grounded` evaluator.
 - `src/bernstein/core/lineage/figure_grounding.py` - the lineage-wired anchor
@@ -302,11 +339,17 @@ and the command exits `2`.
 ## Scope
 
 The typed contract, figure grounding for report artifacts, the `output_mode`
-adapter axis, and the completion path that records a receipt instead of a git
-SHA. A coding task stays on the git-diff path and is unchanged: `code_diff` is
-still the default kind, every shipped adapter still declares `git-diff`, and the
+adapter axis, the completion path that records a receipt instead of a git SHA,
+and the declaration surfaces (plan step, backlog frontmatter, CLI flags, and
+the `POST /tasks` wire, all behind one strict fail-closed parser). A coding
+task stays on the git-diff path and is unchanged: `code_diff` is still the
+default kind, every shipped coding adapter still declares `git-diff`, and the
 filesystem completion signals still evaluate exactly as before.
 
-Not yet wired: skipping worktree allocation for artifact-mode tasks (an
-artifact task is allocated a worktree it does not need), and the provider-batch
-path in `batch_api`, which commits by construction and so stays git-only.
+The seed file (`bernstein.yaml`) is deliberately not a declaration surface: a
+seed mints the manager decomposition goal, not concrete tasks, so an artifact
+contract belongs on the plan steps or backlog entries the decomposition
+produces. Not yet wired (tracked in issue #2996): skipping worktree allocation
+for artifact-mode tasks (an artifact task is allocated a worktree it does not
+need), and the provider-batch path in `batch_api`, which commits by
+construction and so stays git-only.

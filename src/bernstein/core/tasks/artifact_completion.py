@@ -61,7 +61,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.tasks.artifacts import ArtifactKind, CanonicalisationError
+from bernstein.core.tasks.artifacts import (
+    ArtifactKind,
+    ArtifactSpecError,
+    CanonicalisationError,
+    validate_artifact_output_path,
+)
 
 if TYPE_CHECKING:
     from bernstein.core.lineage.artifact_record import ArtifactReceipt
@@ -168,12 +173,12 @@ def artifact_output_path(task: Task) -> str:
     declared = (task.artifact_spec.output_path or "").strip()
     if not declared:
         return f"{DEFAULT_OUTBOX_RELPATH}/{task.id}/artifact"
-    normalised = declared.replace("\\", "/")
-    if normalised.startswith("/") or (len(normalised) > 2 and normalised[1:3] == ":/"):
-        raise ArtifactCompletionError(f"artifact output_path must be workdir-relative, got {declared!r}")
-    if any(seg == ".." for seg in normalised.split("/")):
-        raise ArtifactCompletionError(f"artifact output_path must not traverse out of the workdir: {declared!r}")
-    return normalised
+    # One set of path rules, shared with the declaration parser (#3110):
+    # a declaration that loads is a path this completion check will accept.
+    try:
+        return validate_artifact_output_path(declared)
+    except ArtifactSpecError as exc:
+        raise ArtifactCompletionError(f"artifact output_path {exc.reason}") from exc
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,23 @@ class CanonicalisationError(ValueError):
     """Raised when an artifact cannot be canonicalised under its kind's rule."""
 
 
+class ArtifactSpecError(ValueError):
+    """Raised when an operator-declared artifact block is malformed (#3110).
+
+    ``field`` names the offending key as a dotted path rooted at the
+    declaration key (e.g. ``artifact_spec.kind``), so every loader points the
+    operator at the exact field that was wrong. Fail-closed on purpose: a
+    malformed declaration stops the load. It must never default to
+    ``code_diff``, because a task that silently completes on a git SHA is the
+    wrong completion identity for the artifact the operator asked for.
+    """
+
+    def __init__(self, field: str, reason: str) -> None:
+        self.field = field
+        self.reason = reason
+        super().__init__(f"{field}: {reason}")
+
+
 # ---------------------------------------------------------------------------
 # Shared canonical core
 # ---------------------------------------------------------------------------
@@ -415,14 +432,161 @@ class ArtifactSpec:
         return cls()
 
 
+# ---------------------------------------------------------------------------
+# The strict declaration parser shared by every operator surface (#3110)
+# ---------------------------------------------------------------------------
+
+#: YAML / payload key an operator declares the artifact contract under, and
+#: the root of every :class:`ArtifactSpecError` field path.
+ARTIFACT_SPEC_KEY = "artifact_spec"
+
+_ALLOWED_SPEC_KEYS: frozenset[str] = frozenset({"kind", "canonicalisation", "criteria", "output_path"})
+_ALLOWED_CRITERION_KEYS: frozenset[str] = frozenset({"type", "value"})
+
+
+def validate_artifact_output_path(declared: str, *, field: str = f"{ARTIFACT_SPEC_KEY}.output_path") -> str:
+    """Validate a declared artifact output path and return its POSIX form.
+
+    The path must stay workdir-relative: absolute paths, drive-letter paths,
+    and any ``..`` traversal are refused *at declaration time*, before a task
+    exists and before any bytes are read. The same rules gate the completion
+    path (:func:`bernstein.core.tasks.artifact_completion.artifact_output_path`),
+    so a declaration that loads is one the completion path will accept.
+
+    Raises:
+        ArtifactSpecError: The path is absolute or escapes the workdir.
+    """
+    normalised = declared.replace("\\", "/")
+    if normalised.startswith("/") or (len(normalised) > 2 and normalised[1:3] == ":/"):
+        raise ArtifactSpecError(field, f"must be workdir-relative, got {declared!r}")
+    if any(seg == ".." for seg in normalised.split("/")):
+        raise ArtifactSpecError(field, f"must not traverse out of the workdir: {declared!r}")
+    return normalised
+
+
+def _parse_declared_criteria(raw: Any, *, root: str) -> tuple[ArtifactCriterion, ...]:
+    """Parse the ``criteria`` list of a declaration. Strict; see the parser."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ArtifactSpecError(
+            f"{root}.criteria", f"must be a list of {{type, value}} mappings, got {type(raw).__name__}"
+        )
+    parsed: list[ArtifactCriterion] = []
+    for i, entry in enumerate(raw):
+        path = f"{root}.criteria[{i}]"
+        if not isinstance(entry, dict):
+            raise ArtifactSpecError(path, f"must be a mapping with 'type' and 'value', got {type(entry).__name__}")
+        unknown = sorted(set(map(str, entry)) - _ALLOWED_CRITERION_KEYS)
+        if unknown:
+            raise ArtifactSpecError(f"{path}.{unknown[0]}", "unknown key (allowed keys: type, value)")
+        ctype = entry.get("type")
+        if not isinstance(ctype, str) or ctype not in ARTIFACT_CRITERION_TYPES:
+            allowed = ", ".join(sorted(ARTIFACT_CRITERION_TYPES))
+            raise ArtifactSpecError(f"{path}.type", f"must be one of: {allowed}; got {ctype!r}")
+        value = entry.get("value")
+        if not isinstance(value, str) or not value.strip():
+            raise ArtifactSpecError(f"{path}.value", "must be a non-empty string")
+        parsed.append(ArtifactCriterion(type=ctype, value=value))  # type: ignore[arg-type]
+    return tuple(parsed)
+
+
+def parse_artifact_spec(raw: object) -> ArtifactSpec:
+    """Parse an operator-declared ``artifact_spec`` block into an :class:`ArtifactSpec`.
+
+    The one strict parser behind every declaration surface - the plan schema
+    and loader, the backlog frontmatter, the CLI flags, and the task server's
+    create boundary - so the surfaces cannot drift (issue #3110).
+
+    Fail-closed by design. Anything malformed raises
+    :class:`ArtifactSpecError` naming the offending field: an unknown kind, a
+    missing or unsafe ``output_path``, an unknown key, a malformed criterion.
+    Unknown keys are refused rather than ignored, because a typo'd key that is
+    dropped silently turns a declared artifact contract into a default coding
+    task - the exact defect this parser exists to close.
+
+    Rules:
+
+    * ``kind`` is required and must be a member of :class:`ArtifactKind`.
+    * an artifact kind (anything but ``code_diff``) requires a non-empty,
+      workdir-relative ``output_path`` - the declaration says *where* the
+      deliverable lands, explicitly;
+    * ``kind: code_diff`` is accepted bare (it restates the default coding
+      contract) but takes no ``output_path`` and no ``criteria``;
+    * ``canonicalisation`` may only name the kind's own default rule (or be
+      omitted / empty) - no alternative rule ships, and accepting an unknown
+      rule name would be a claim the completion path cannot honour;
+    * each criterion is exactly ``{type, value}`` with a type from
+      :data:`ARTIFACT_CRITERION_TYPES` and a non-empty string value.
+    """
+    root = ARTIFACT_SPEC_KEY
+    if not isinstance(raw, dict):
+        raise ArtifactSpecError(root, f"must be a mapping with a 'kind' field, got {type(raw).__name__}")
+    unknown = sorted(set(map(str, raw)) - _ALLOWED_SPEC_KEYS)
+    if unknown:
+        allowed = ", ".join(sorted(_ALLOWED_SPEC_KEYS))
+        raise ArtifactSpecError(f"{root}.{unknown[0]}", f"unknown key (allowed keys: {allowed})")
+
+    kind_values = ", ".join(k.value for k in ArtifactKind)
+    if "kind" not in raw:
+        raise ArtifactSpecError(f"{root}.kind", f"is required (one of: {kind_values})")
+    kind_raw = raw["kind"]
+    if not isinstance(kind_raw, str):
+        raise ArtifactSpecError(f"{root}.kind", f"must be a string, got {type(kind_raw).__name__}")
+    try:
+        kind = ArtifactKind(kind_raw)
+    except ValueError:
+        raise ArtifactSpecError(f"{root}.kind", f"unknown artifact kind {kind_raw!r} (one of: {kind_values})") from None
+
+    output_raw = raw.get("output_path") or ""
+    if not isinstance(output_raw, str):
+        raise ArtifactSpecError(f"{root}.output_path", f"must be a string, got {type(output_raw).__name__}")
+    output_path = output_raw.strip()
+
+    if kind is ArtifactKind.CODE_DIFF:
+        if output_path:
+            raise ArtifactSpecError(
+                f"{root}.output_path", "code_diff tasks complete on the git path and take no output_path"
+            )
+        if raw.get("criteria"):
+            raise ArtifactSpecError(
+                f"{root}.criteria", "code_diff tasks complete on the git path and take no artifact criteria"
+            )
+    else:
+        if not output_path:
+            raise ArtifactSpecError(
+                f"{root}.output_path",
+                f"is required for kind {kind.value!r}: the workdir-relative path the agent writes the artifact to",
+            )
+        output_path = validate_artifact_output_path(output_path)
+
+    canon_raw = raw.get("canonicalisation") or ""
+    if not isinstance(canon_raw, str):
+        raise ArtifactSpecError(f"{root}.canonicalisation", f"must be a string, got {type(canon_raw).__name__}")
+    canonicalisation = canon_raw.strip()
+    if canonicalisation and canonicalisation != kind.value:
+        raise ArtifactSpecError(
+            f"{root}.canonicalisation",
+            f"unknown rule {canonicalisation!r}; the only rule shipped for kind {kind.value!r} is its default"
+            " (omit the key or repeat the kind)",
+        )
+
+    criteria = _parse_declared_criteria(raw.get("criteria"), root=root)
+    return ArtifactSpec(kind=kind, canonicalisation=canonicalisation, criteria=criteria, output_path=output_path)
+
+
 __all__ = [
     "ARTIFACT_CRITERION_TYPES",
+    "ARTIFACT_SPEC_KEY",
     "ArtifactCriterion",
     "ArtifactKind",
     "ArtifactSpec",
+    "ArtifactSpecError",
     "CanonicalisationError",
     "artifact_content_hash",
     "canonicalise_artifact",
     "content_hash",
     "evaluate_criterion",
+    "parse_artifact_spec",
+    "validate_artifact_output_path",
 ]

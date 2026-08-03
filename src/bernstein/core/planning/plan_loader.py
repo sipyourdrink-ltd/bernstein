@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from bernstein.core.models import CompletionSignal, Complexity, Scope, Task, TaskStatus, TaskType
+from bernstein.core.tasks.artifacts import ArtifactSpec, ArtifactSpecError, parse_artifact_spec
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -298,6 +299,20 @@ def _parse_step(
     depends_on_repo_raw = step.get("depends_on_repo")
     task_depends_on_repo: str | None = str(depends_on_repo_raw) if depends_on_repo_raw else None
 
+    # Issue #3110: the declared artifact contract. Parsed by the one strict
+    # parser every declaration surface shares. Fail-closed: a malformed block
+    # aborts the plan load naming the offending field - it must never fall
+    # back to the default code_diff contract, because a task that silently
+    # completes on a git SHA is the wrong completion identity for the
+    # artifact the operator declared.
+    raw_artifact = step.get("artifact_spec")
+    artifact_spec = ArtifactSpec.default()
+    if raw_artifact is not None:
+        try:
+            artifact_spec = parse_artifact_spec(raw_artifact)
+        except ArtifactSpecError as exc:
+            raise PlanLoadError(f"Step {step_index} in stage {stage_name!r}: {exc}") from exc
+
     metadata: dict[str, object] = {}
     phases_raw = step.get("phases")
     if phases_raw:
@@ -324,6 +339,7 @@ def _parse_step(
         depends_on=depends_on,
         owned_files=owned_files,
         completion_signals=signals,
+        artifact_spec=artifact_spec,
         model=str(model_raw) if model_raw else None,
         effort=str(effort_raw) if effort_raw else None,
         cli=str(cli_raw) if cli_raw else None,

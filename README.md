@@ -39,7 +39,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 Four things set it apart; everything after is detail.
 
 - **No LLM in the coordination loop.** Scheduling is plain Python, so a run is reproducible end to end. Replay yesterday's plan and get yesterday's task graph.
-- **Checkable after the fact.** The lineage spine and replay journal record every run; the opt-in audit chain adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run.
+- **Checkable after the fact.** The lineage spine and replay journal record every run; the opt-in audit chain adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run. Non-code deliverables get the same treatment: a task can declare an artifact contract (report, dataset, action log, ops result) on a plan step, a backlog entry, or the task CLI and complete on a signed lineage receipt instead of a git commit.
 - **Isolated by construction.** Each task gets its own git worktree behind merge gates. No shared mutable state between agents.
 - **Broad and local.** 40+ CLI agent adapters plus a generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
 

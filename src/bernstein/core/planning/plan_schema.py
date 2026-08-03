@@ -58,6 +58,14 @@ COMPLETION_SIGNAL_TYPES: list[str] = [
     "llm_judge",
 ]
 
+# Issue #3110: the declared artifact contract. Values mirror the closed sets
+# in ``bernstein.core.tasks.artifacts`` (ArtifactKind / ARTIFACT_CRITERION_TYPES);
+# the strict parser there is the behavioural source of truth and is exercised
+# by ``_validate_artifact_spec`` below, so the two cannot drift.
+ARTIFACT_KIND_VALUES: list[str] = ["code_diff", "report", "dataset", "action_log", "ops_result"]
+
+ARTIFACT_CRITERION_TYPE_VALUES: list[str] = ["criteria_match", "hash_stable", "schema_valid"]
+
 # ---------------------------------------------------------------------------
 # JSON Schema (draft 2020-12)
 # ---------------------------------------------------------------------------
@@ -76,6 +84,55 @@ _COMPLETION_SIGNAL_SCHEMA: dict[str, Any] = {
         "contains": {"type": "string", "description": "Substring for file_contains."},
     },
     "required": ["type"],
+    "additionalProperties": False,
+}
+
+_ARTIFACT_CRITERION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": ARTIFACT_CRITERION_TYPE_VALUES,
+            "description": "Typed criterion evaluated against the artifact bytes.",
+        },
+        "value": {"type": "string", "description": "Criterion value (schema text, predicate JSON, or expected hash)."},
+    },
+    "required": ["type", "value"],
+    "additionalProperties": False,
+}
+
+_ARTIFACT_SPEC_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": ARTIFACT_KIND_VALUES,
+            "description": (
+                "Artifact kind the task produces. Anything but code_diff completes "
+                "on a signed lineage receipt instead of a git commit."
+            ),
+        },
+        "output_path": {
+            "type": "string",
+            "description": (
+                "Workdir-relative path the agent writes the artifact to. Required for every "
+                "kind except code_diff; must not be absolute or traverse out of the workdir."
+            ),
+        },
+        "canonicalisation": {
+            "type": "string",
+            "description": (
+                "Canonicalisation rule id. Omit (or repeat the kind) to use the kind's "
+                "default rule - no other rule ships."
+            ),
+        },
+        "criteria": {
+            "type": "array",
+            "items": _ARTIFACT_CRITERION_SCHEMA,
+            "description": "Typed verification criteria evaluated against the artifact bytes at completion.",
+        },
+    },
+    "required": ["kind"],
     "additionalProperties": False,
 }
 
@@ -147,6 +204,7 @@ _STEP_SCHEMA: dict[str, Any] = {
             "items": _COMPLETION_SIGNAL_SCHEMA,
             "description": "Machine-checkable completion criteria.",
         },
+        "artifact_spec": _ARTIFACT_SPEC_SCHEMA,
         "phases": {
             "type": "array",
             "items": {"type": "string", "enum": PHASE_VALUES},
@@ -348,6 +406,27 @@ def _validate_completion_signals(step: dict[str, Any], path: str, errors: list[s
             _validate_enum(sig["type"], COMPLETION_SIGNAL_TYPES, f"{sig_path}.type", errors)
 
 
+def _validate_artifact_spec(step: dict[str, Any], path: str, errors: list[str]) -> None:
+    """Validate the optional artifact_spec block on a step (issue #3110).
+
+    Delegates to the one strict parser every declaration surface shares
+    (:func:`bernstein.core.tasks.artifacts.parse_artifact_spec`), so schema
+    validation and load-time parsing cannot drift. Fail-closed: a malformed
+    block is an error naming the offending field, never a silent fallback to
+    ``code_diff``.
+    """
+    if "artifact_spec" not in step:
+        return
+    # Imported here so the module stays importable without the tasks package
+    # in scope at import time (this module is otherwise dependency-free).
+    from bernstein.core.tasks.artifacts import ArtifactSpecError, parse_artifact_spec
+
+    try:
+        parse_artifact_spec(step["artifact_spec"])
+    except ArtifactSpecError as exc:
+        errors.append(f"{path}.{exc}")
+
+
 def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
     """Validate a single step dict."""
     if not isinstance(step, dict):
@@ -367,6 +446,7 @@ def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
         errors.append(f"{path}.files: expected type array, got {type(step['files']).__name__}")
 
     _validate_completion_signals(step, path, errors)
+    _validate_artifact_spec(step, path, errors)
 
 
 def _validate_stage(stage: dict[str, Any], idx: int, errors: list[str]) -> None:

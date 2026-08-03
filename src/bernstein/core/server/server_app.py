@@ -314,6 +314,10 @@ def task_to_response(task: Task) -> TaskResponse:
         cli=task.cli,
         batch_eligible=task.batch_eligible,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
+        # Issue #3110: the declared artifact contract must survive the
+        # response boundary, or a backlog/plan declaration is silently
+        # dropped on the wire. The default contract serialises as code_diff.
+        artifact_spec=task.artifact_spec.to_dict(),
         slack_context=task.slack_context,
         metadata=task.metadata,
         created_at=task.created_at,
