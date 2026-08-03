@@ -467,7 +467,26 @@ def verify_journal(path: Path) -> JournalVerifyResult:
         A :class:`JournalVerifyResult`. An empty or missing file is
         reported as ``ok`` with ``count == 0``.
     """
-    events = load_events(path)
+    return verify_events(load_events(path))
+
+
+def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
+    """Recompute the chain over in-memory journal rows.
+
+    The walk :func:`verify_journal` performs, factored out so a verifier
+    holding an embedded copy of the rows (e.g. a run receipt, issue #2924)
+    runs the *exact same* recompute as one holding the live file. The rows
+    only need the chain fields (``event``, ``prev_hash``, ``event_hash``)
+    plus the decision payload; wall-clock fields are excluded from the
+    hash either way.
+
+    Args:
+        events: Journal rows in append order.
+
+    Returns:
+        A :class:`JournalVerifyResult`. An empty list is reported as
+        ``ok`` with ``count == 0``.
+    """
     if not events:
         return JournalVerifyResult(ok=True, count=0)
 
@@ -654,5 +673,6 @@ __all__ = [
     "rebuild_state",
     "record_dispatch_knob_selection",
     "seal_journal_into_spine",
+    "verify_events",
     "verify_journal",
 ]

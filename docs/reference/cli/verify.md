@@ -1,11 +1,15 @@
 # `bernstein verify`
 
-`bernstein verify` is five independent verification modes bundled behind
-one command: air-gap wheelhouse signatures, WAL hash-chain integrity,
+`bernstein verify` is a command group: two run-receipt subcommands
+(`run` and `receipt`, issue #2924) plus five legacy verification modes —
+air-gap wheelhouse signatures, WAL hash-chain integrity,
 execution-determinism fingerprints, lesson-memory provenance, and formal
-property checks. Each mode is selected by its own flag (or a positional
-argument for wheelhouse mode); passing more than one runs all of them and
-combines their exit codes with bitwise OR.
+property checks. The legacy modes live on the default `legacy` subcommand:
+any invocation whose first token is not `run` / `receipt` / `legacy` routes
+there, so pre-group invocations keep their exact behaviour and exit codes.
+Each legacy mode is selected by its own flag (or a positional argument for
+wheelhouse mode); passing more than one runs all of them and combines their
+exit codes with bitwise OR.
 
 This command is not the audit-log verifier — for the HMAC-chained,
 Merkle-sealed audit trail, see [`bernstein audit verify`](../../security/audit-log.md).
@@ -13,6 +17,8 @@ Merkle-sealed audit trail, see [`bernstein audit verify`](../../security/audit-l
 ## Usage
 
 ```bash
+bernstein verify run <run-id> --signing-key-path key.pem    # build the signed run receipt
+bernstein verify receipt <path> [--public-key pub.pem]      # verify a receipt offline (0/1/2)
 bernstein verify <wheelhouse-path>                          # air-gap wheelhouse signatures
 bernstein verify --wal-integrity <run-id>                   # WAL hash-chain check
 bernstein verify --determinism <run-id>                     # print execution fingerprint
@@ -25,7 +31,51 @@ bernstein verify --formal <task-id>                          # Z3/Lean4 property
 Running the bare command with no arguments prints a usage hint and returns
 without error.
 
-## Modes
+One routing edge: a wheelhouse directory literally named `run`, `receipt`,
+or `legacy` shadows the positional mode — spell it `./run` or use
+`bernstein verify legacy <path>`.
+
+## Run receipts
+
+### Build (`verify run RUN_ID`)
+
+Builds an Ed25519-signed `run-receipt.json` under
+`.sdd/runs/<run-id>/` binding the run's journal head (replay identity),
+lineage-spine head (artifact provenance), and — opt-in via
+`--include-audit-range --audit-since --audit-until` — a re-chained
+audit-chain slice under one signed subject, with the public key embedded as
+an RFC 7517 OKP/Ed25519 JWK. The signing key comes from
+`--signing-key-path` (PEM PKCS#8 or raw 32-byte Ed25519) or
+`--signing-env-var`, falling back to
+`$BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH` /
+`$BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR` — the same env configuration the
+orchestrator uses to write a receipt automatically at run finalization
+(a documented no-op when no key is configured; receipts are never emitted
+unsigned). Exits 0 on success, 1 when the run has no journal events or the
+key cannot load, 2 on usage errors (no key configured, conflicting flags,
+missing audit window).
+
+### Verify (`verify receipt PATH [--public-key PEM]`)
+
+Verifies a receipt using **only the file**: recomputes the journal head
+from the embedded timing-excluded rows (the exact `verify_journal` walk),
+recomputes every spine `entry_hash` and the spine head without any HMAC
+key, recomputes the optional audit-range `head_sha256` from its embedded
+events, rebuilds the signed subject from those recomputed values, and
+checks the Ed25519 signature against the embedded JWK. `--public-key` pins
+an out-of-band Ed25519 public key that the embedded key must match
+(default is trust-on-first-use of the embedded key).
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Every head recomputes from the embedded ranges and the signature verifies. |
+| 1 | Empty or malformed input (unreadable file, missing ranges or fields). |
+| 2 | Tamper detected — the first divergent journal step index is named. |
+
+Full format description:
+[deterministic replay](../../operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+## Legacy modes
 
 ### Wheelhouse signature verification
 
@@ -86,4 +136,5 @@ must be installed separately and on `PATH` — they are not bundled.
 
 ## Source
 
-`src/bernstein/cli/commands/verify_cmd.py`.
+`src/bernstein/cli/commands/verify_cmd.py` (command group);
+`src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify).

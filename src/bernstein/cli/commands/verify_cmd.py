@@ -1,6 +1,20 @@
-"""Verify CLI -- WAL integrity, execution determinism, memory provenance, wheelhouse.
+"""Verify CLI -- run receipts, WAL integrity, determinism, memory, wheelhouse.
 
-Five verification modes, each with a hard exit-code contract:
+``bernstein verify`` is a group. Two run-receipt verbs (issue #2924):
+
+* ``bernstein verify run <run-id>`` -- build the signed ``run-receipt.json``
+  binding the run's journal head, lineage-spine head, and (opt-in) an
+  audit-chain range under one Ed25519-signed subject with an embedded
+  public JWK.
+* ``bernstein verify receipt <path> [--public-key PEM]`` -- verify a
+  receipt **fully offline** from the file alone: no HMAC key, no ``.sdd/``.
+  Exit codes: ``0`` OK, ``1`` empty/malformed input, ``2`` tamper detected
+  (naming the first divergent journal step index).
+
+The five legacy flag/positional modes are preserved verbatim under the
+default ``legacy`` subcommand -- any invocation whose first token is not a
+known subcommand routes there, so existing scripts keep their exact
+behaviour and exit codes:
 
 * ``bernstein verify <wheelhouse-path>`` -- verify air-gap wheelhouse
   manifest + signatures (cosign by default; GPG path supported).
@@ -14,6 +28,10 @@ Five verification modes, each with a hard exit-code contract:
 * ``bernstein verify --formal <task-id>`` -- spawn Z3 / Lean4 property
   checks against the task contract. The CLI surface is shipped; Z3 / Lean4
   binaries must be installed separately on PATH (no bundled extra).
+
+One routing edge: a wheelhouse directory literally named ``run``,
+``receipt``, or ``legacy`` shadows the positional mode -- spell it
+``./run`` (or use ``bernstein verify legacy run``) in that case.
 """
 
 from __future__ import annotations
@@ -35,7 +53,47 @@ _GREEN_ZERO = "[green]0[/green]"
 SDD_DIR = Path(".sdd")
 
 
-@click.command("verify")
+class _DefaultSubcommandGroup(click.Group):
+    """A group that routes to a default subcommand when the first token is not
+    a known subcommand, so ``verify --wal-integrity ...`` and
+    ``verify <wheelhouse-path>`` still reach the legacy flag modes.
+
+    Same pattern as the compliance ``pack`` group
+    (:mod:`bernstein.cli.commands.compliance_cmd`).
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self._default_cmd = kwargs.pop("default_cmd", None)
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        default = self._default_cmd
+        if isinstance(default, str):
+            if not args:
+                args = [default]
+            elif args[0] not in self.commands and args[0] not in ("--help", "-h"):
+                args = [default, *args]
+        return super().parse_args(ctx, args)
+
+
+@click.group("verify", cls=_DefaultSubcommandGroup, default_cmd="legacy")
+def verify_cmd() -> None:
+    """Verify run receipts, WAL integrity, determinism, memory, or a wheelhouse.
+
+    \b
+      bernstein verify run <run-id>               Build the signed run receipt
+      bernstein verify receipt <path>             Verify a receipt offline (0/1/2)
+      bernstein verify <wheelhouse-path>          Verify air-gap wheelhouse signatures
+      bernstein verify --wal-integrity <run-id>   Validate hash chain
+      bernstein verify --determinism  <run-id>    Show execution fingerprint
+      bernstein verify --memory-audit             Audit lesson memory provenance
+      bernstein verify --formal <task-id>         Run Z3/Lean4 property checks
+
+    Flag and positional modes route to the ``legacy`` subcommand unchanged.
+    """
+
+
+@verify_cmd.command("legacy")
 @click.argument(
     "wheelhouse_path",
     required=False,
@@ -153,7 +211,7 @@ SDD_DIR = Path(".sdd")
     default=False,
     help="Promote a missing attestation to a hard failure. Implies --sigstore.",
 )
-def verify_cmd(
+def verify_legacy_cmd(
     wheelhouse_path: Path | None,
     wal_run_id: str | None,
     determinism_run_id: str | None,
@@ -173,6 +231,10 @@ def verify_cmd(
     require_sigstore: bool,
 ) -> None:
     """Verify WAL integrity, execution determinism, memory provenance, formal properties, or a wheelhouse.
+
+    The default subcommand: ``bernstein verify <args>`` routes here whenever
+    the first token is not ``run`` / ``receipt`` / ``legacy``, so every
+    pre-group invocation keeps its exact behaviour and exit codes.
 
     \b
       bernstein verify <wheelhouse-path>          Verify air-gap wheelhouse signatures
@@ -998,3 +1060,222 @@ def _verify_formal(task_id: str) -> int:
 
     console.print()
     return 0 if fv_result.passed else 1
+
+
+# ---------------------------------------------------------------------------
+# Run receipts (issue #2924)
+# ---------------------------------------------------------------------------
+
+
+@verify_cmd.command("run")
+@click.argument("run_id", required=True)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--signing-key-path",
+    "signing_key_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help=(
+        "Path to the Ed25519 private key (PEM PKCS#8 or raw 32-byte) that signs "
+        "the receipt. Reuses the lineage / audit-receipt KMS key material "
+        "(see src/bernstein/core/security/lineage_kms.py). Mutually exclusive "
+        "with --signing-env-var. Falls back to $BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH "
+        "/ $BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR when neither flag is given."
+    ),
+)
+@click.option(
+    "--signing-env-var",
+    "signing_env_var",
+    default=None,
+    help="Env var carrying a PEM Ed25519 private key. Mutually exclusive with --signing-key-path.",
+)
+@click.option("--signing-key-id", "signing_key_id", default=None, help="Operator-stable JWK 'kid' for the receipt key.")
+@click.option(
+    "--include-audit-range",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also embed a re-chained audit-chain slice (needs the operator audit "
+        "HMAC key at build time only, plus --audit-since/--audit-until)."
+    ),
+)
+@click.option("--audit-since", "audit_since", default=None, help="ISO-8601 inclusive lower bound of the audit window.")
+@click.option("--audit-until", "audit_until", default=None, help="ISO-8601 exclusive upper bound of the audit window.")
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Receipt destination (defaults to .sdd/runs/<run-id>/run-receipt.json).",
+)
+def verify_run_cmd(
+    run_id: str,
+    workdir: str,
+    signing_key_path: str | None,
+    signing_env_var: str | None,
+    signing_key_id: str | None,
+    include_audit_range: bool,
+    audit_since: str | None,
+    audit_until: str | None,
+    output_path: Path | None,
+) -> None:
+    """Build the signed run receipt for RUN_ID.
+
+    Binds the run's journal head (replay identity), lineage-spine head
+    (artifact provenance), and optionally an audit-chain range under one
+    Ed25519-signed subject with the public key embedded as a JWK. The
+    resulting ``run-receipt.json`` verifies fully offline with
+    ``bernstein verify receipt`` -- no HMAC key, no live ``.sdd/``.
+    """
+    from bernstein.core.persistence.lineage_signer import LineageSignerError
+    from bernstein.core.replay.journal import JournalPathError
+    from bernstein.core.replay.run_receipt import (
+        RunReceiptError,
+        build_run_receipt,
+        resolve_kms_adapter_from_env,
+    )
+    from bernstein.core.security.lineage_kms import EnvBasedKMSAdapter, FileBasedKMSAdapter
+
+    if signing_key_path and signing_env_var:
+        console.print("[red]--signing-key-path and --signing-env-var are mutually exclusive.[/red]")
+        raise SystemExit(2)
+
+    try:
+        if signing_key_path:
+            kms_adapter: object | None = FileBasedKMSAdapter(Path(signing_key_path), kid=signing_key_id)
+        elif signing_env_var:
+            kms_adapter = EnvBasedKMSAdapter(signing_env_var, kid=signing_key_id)
+        else:
+            kms_adapter = resolve_kms_adapter_from_env()
+    except (LineageSignerError, OSError, ValueError) as exc:
+        console.print(f"[red]Failed to load receipt signing key: {exc}[/red]")
+        raise SystemExit(1) from None
+    if kms_adapter is None:
+        console.print(
+            "[red]No signing key configured.[/red] Provide --signing-key-path or "
+            "--signing-env-var (or set $BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH / "
+            "$BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR)."
+        )
+        raise SystemExit(2)
+
+    audit_hmac_key: bytes | None = None
+    if include_audit_range:
+        if not audit_since or not audit_until:
+            console.print("[red]--include-audit-range requires --audit-since and --audit-until.[/red]")
+            raise SystemExit(2)
+        from bernstein.core.security.audit import load_or_create_audit_key
+
+        try:
+            audit_hmac_key = load_or_create_audit_key()
+        except OSError as exc:  # pragma: no cover - filesystem race
+            console.print(f"[red]Failed to load audit key: {exc}[/red]")
+            raise SystemExit(1) from None
+
+    sdd_dir = Path(workdir).resolve() / ".sdd"
+    try:
+        receipt = build_run_receipt(
+            run_id,
+            sdd_dir,
+            kms_adapter,
+            include_audit_range=include_audit_range,
+            audit_hmac_key=audit_hmac_key,
+            audit_since=audit_since,
+            audit_until=audit_until,
+            output_path=output_path,
+        )
+    except (RunReceiptError, JournalPathError, LineageSignerError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from None
+
+    console.print()
+    console.print(Panel("[bold green]Run Receipt: WRITTEN[/bold green]", border_style="green", expand=False))
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="dim", no_wrap=True, min_width=18)
+    table.add_column("Value")
+    table.add_row("Run ID", receipt.run_id)
+    table.add_row("Journal head", receipt.journal_head[:16] + "…")
+    table.add_row("Spine head", (receipt.spine_head[:16] + "…") if receipt.spine_head else "(no spine entries)")
+    if receipt.audit_head_sha256 is not None:
+        table.add_row("Audit range head", receipt.audit_head_sha256[:16] + "…")
+    table.add_row("Receipt SHA-256", receipt.sha256[:16] + "…")
+    if receipt.receipt_path is not None:
+        table.add_row("Receipt", str(receipt.receipt_path))
+    console.print(table)
+    console.print("\n  [dim]Verify offline with: bernstein verify receipt <path> [--public-key PEM][/dim]")
+    console.print()
+    raise SystemExit(0)
+
+
+@verify_cmd.command("receipt")
+@click.argument("receipt_path", type=click.Path(path_type=Path))
+@click.option(
+    "--public-key",
+    "public_key_path",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help=(
+        "Optional trusted Ed25519 public key (PEM) to pin. The key embedded "
+        "in the receipt must match it; default is trust-on-first-use of the "
+        "embedded JWK."
+    ),
+)
+def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None:
+    """Verify a run receipt offline from RECEIPT_PATH alone.
+
+    Recomputes the journal head, the spine head, and (when present) the
+    audit-range head from the bytes embedded in the receipt, rebuilds the
+    signed subject from those recomputed values, and checks the Ed25519
+    signature against the embedded (or pinned) public key. No HMAC key and
+    no ``.sdd/`` are read.
+
+    \b
+    Exit codes:
+      0  receipt verifies
+      1  empty or malformed input (unreadable file, missing ranges/fields)
+      2  tamper detected (the first divergent journal step index is named)
+    """
+    from bernstein.core.replay.run_receipt import verify_run_receipt
+
+    try:
+        receipt_bytes = receipt_path.read_bytes()
+    except OSError as exc:
+        console.print(f"[red]Cannot read receipt:[/red] {exc}")
+        raise SystemExit(1) from None
+
+    public_key_pem: bytes | None = None
+    if public_key_path is not None:
+        try:
+            public_key_pem = public_key_path.read_bytes()
+        except OSError as exc:
+            console.print(f"[red]Cannot read --public-key:[/red] {exc}")
+            raise SystemExit(1) from None
+
+    result = verify_run_receipt(receipt_bytes, public_key_pem=public_key_pem)
+
+    console.print()
+    console.print(
+        f"[bold]Run receipt[/bold] run={result.run_id or '(unknown)'} "
+        f"journal_events={result.journal_events} spine_entries={result.spine_entries}"
+    )
+    if result.ok:
+        console.print("[green]OK[/green] -- every head recomputes from the embedded ranges; signature valid.")
+        raise SystemExit(0)
+    if result.status == "malformed":
+        console.print("[yellow]MALFORMED[/yellow] -- the receipt cannot be checked:")
+        for err in result.errors:
+            console.print(f"  - {err}")
+        raise SystemExit(1)
+    console.print("[red]TAMPER DETECTED[/red]:")
+    for err in result.errors:
+        console.print(f"  - {err}")
+    if result.divergent_step is not None:
+        console.print(f"  [red]first divergent journal step: {result.divergent_step}[/red]")
+    raise SystemExit(2)

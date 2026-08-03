@@ -215,6 +215,14 @@ The manifest carries `agent_id`, `head_hash`, `steps`,
 `verify_receipt` walks the chain end-to-end and asserts the manifest
 matches what was walked.
 
+> Scope note: this receipt covers **one agent's** persistence journal. The
+> whole-run counterpart is the signed run receipt
+> (`bernstein verify run <run_id>` / `bernstein verify receipt <path>`,
+> `core/replay/run_receipt.py`), which binds the run-level `journal.jsonl`
+> head, the lineage-spine head, and an optional audit-chain range under one
+> Ed25519-signed subject and verifies fully offline - see
+> [deterministic-replay.md](deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
 ## Publish flow (privacy redaction)
 
 `bernstein replay publish <agent_id> --opt-in` runs the configured

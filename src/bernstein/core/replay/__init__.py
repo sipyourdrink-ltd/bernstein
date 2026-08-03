@@ -51,6 +51,7 @@ from bernstein.core.replay.journal import (
     JournalVerifyResult,
     rebuild_state,
     seal_journal_into_spine,
+    verify_events,
     verify_journal,
 )
 from bernstein.core.replay.provider_state import (
@@ -66,6 +67,15 @@ from bernstein.core.replay.provider_state import (
     record_mutation_capability,
     record_provider_state_mutation,
     verify_provider_state,
+)
+from bernstein.core.replay.run_receipt import (
+    RUN_RECEIPT_FILENAME,
+    RunReceipt,
+    RunReceiptError,
+    RunReceiptVerifyResult,
+    build_run_receipt,
+    verify_run_receipt,
+    write_run_receipt_if_configured,
 )
 
 if TYPE_CHECKING:
@@ -109,6 +119,7 @@ __all__ = [
     "PROVIDER_STATE_MUTATION_EVENT",
     "RECORD_ENV_VAR",
     "RETENTION_ENV_VAR",
+    "RUN_RECEIPT_FILENAME",
     "DivergenceResult",
     "EventJournal",
     "ForkError",
@@ -119,6 +130,10 @@ __all__ = [
     "ProviderStateVerifyResult",
     "ReplayGateway",
     "ReplayMissError",
+    "RunReceipt",
+    "RunReceiptError",
+    "RunReceiptVerifyResult",
+    "build_run_receipt",
     "diff_event_logs",
     "fork_run",
     "is_recording_enabled",
@@ -132,6 +147,9 @@ __all__ = [
     "record_run",
     "record_snapshot_event",
     "seal_journal_into_spine",
+    "verify_events",
     "verify_journal",
     "verify_provider_state",
+    "verify_run_receipt",
+    "write_run_receipt_if_configured",
 ]

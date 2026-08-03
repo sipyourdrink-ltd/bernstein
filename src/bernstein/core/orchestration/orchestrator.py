@@ -2825,6 +2825,29 @@ class Orchestrator:
             logger.warning("Failed to seal journal head into lineage spine: %s", sanitize_log(str(exc)))
         else:
             self._seal_intent_capsules(hmac_key)
+        self._write_run_receipt()
+
+    def _write_run_receipt(self) -> None:
+        """Write the signed run receipt at finalization (issue #2924).
+
+        Binds the sealed journal head and the run's lineage-spine head into
+        one offline-verifiable ``run-receipt.json`` next to the journal.
+        Degrades to a documented no-op when no receipt signing key is
+        configured (``BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH`` /
+        ``BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR``) -- the audit-receipt
+        posture: never emit an unsigned "receipt". Failures are logged,
+        never raised: the receipt is a verification aid and must not fail a
+        run that already completed.
+        """
+        try:
+            from bernstein.core.replay.run_receipt import write_run_receipt_if_configured
+
+            receipt_path = write_run_receipt_if_configured(self._run_id, self._workdir / ".sdd")
+        except Exception as exc:
+            logger.warning("Failed to write run receipt: %s", sanitize_log(str(exc)))
+        else:
+            if receipt_path is not None:
+                logger.info("Run receipt written: %s", receipt_path)
 
     def _seal_intent_capsules(self, hmac_key: bytes) -> None:
         """Commit the finished journal's end for every capsule bound to this run (#2649).
