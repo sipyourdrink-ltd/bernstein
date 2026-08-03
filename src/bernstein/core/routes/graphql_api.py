@@ -158,7 +158,7 @@ def _resolve_tasks(parsed: ParsedQuery, store: Any) -> list[dict[str, Any]]:
     for t in tasks:
         task = _task_to_dict(t)
         raw_status = task.get("status")
-        task_status_str = raw_status.value if hasattr(raw_status, "value") else raw_status
+        task_status_str = raw_status.value if raw_status is not None and hasattr(raw_status, "value") else raw_status
         if status_filter and task_status_str != status_filter:
             continue
         results.append(_extract_task_fields(task, parsed.fields))

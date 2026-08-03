@@ -206,9 +206,9 @@ def _compute_per_model(
     for rec in usage_records:
         labels = rec.get("labels", {})
         model = labels.get("model") or "unknown"
-        tokens = float(rec.get("value", 0.0))
-        if tokens > 0:
-            by_model_tokens[model].append(tokens)
+        token_val = float(rec.get("value", 0.0))
+        if token_val > 0:
+            by_model_tokens[model].append(token_val)
 
     all_models = set(by_model_durations.keys()) | set(by_model_tokens.keys())
     result: dict[str, Any] = {}

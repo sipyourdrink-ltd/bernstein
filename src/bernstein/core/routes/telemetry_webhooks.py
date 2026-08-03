@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -72,7 +72,7 @@ class TelemetryReceiverState:
 
 def configure_receiver(
     *,
-    app_state: object,
+    app_state: Any,
     settings: TelemetrySettings,
     retriever: GroundingRetriever,
     dispatch_hook: GroundedDispatchHook,
