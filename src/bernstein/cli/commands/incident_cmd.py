@@ -246,4 +246,4 @@ def incident_alias(ctx: click.Context) -> None:
         "Use 'bernstein report incident' instead.",
         err=True,
     )
-    incident_cmd.main(args=ctx.args, standalone_mode=False)
+    incident_cmd.main(args=ctx.args, prog_name="bernstein incident", standalone_mode=False)

@@ -116,4 +116,4 @@ def postmortem_alias(ctx: click.Context) -> None:
         "Use 'bernstein report postmortem' instead.",
         err=True,
     )
-    postmortem_cmd.main(args=ctx.args, standalone_mode=False)
+    postmortem_cmd.main(args=ctx.args, prog_name="bernstein postmortem", standalone_mode=False)

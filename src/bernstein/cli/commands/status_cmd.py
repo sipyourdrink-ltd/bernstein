@@ -1271,4 +1271,4 @@ def commit_stats_alias(ctx: click.Context) -> None:
         "Use 'bernstein report commits' instead.",
         err=True,
     )
-    commit_stats_cmd.main(args=ctx.args, standalone_mode=False)
+    commit_stats_cmd.main(args=ctx.args, prog_name="bernstein commit-stats", standalone_mode=False)
