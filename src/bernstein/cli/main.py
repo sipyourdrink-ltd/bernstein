@@ -97,7 +97,7 @@ from bernstein.cli.explain_help_cmd import explain_help_cmd
 from bernstein.cli.fingerprint_cmd import fingerprint_group
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
-from bernstein.cli.incident_cmd import incident_cmd, incident_alias
+from bernstein.cli.incident_cmd import incident_alias, incident_cmd
 from bernstein.cli.init_wizard_cmd import init_wizard_cmd
 from bernstein.cli.logs_group_cmd import logs_group
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
@@ -112,7 +112,7 @@ from bernstein.cli.plan_dag_cmd import plan_dag
 from bernstein.cli.plan_generate_cmd import plan_generate
 from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
-from bernstein.cli.postmortem_cmd import postmortem_cmd, postmortem_alias
+from bernstein.cli.postmortem_cmd import postmortem_alias, postmortem_cmd
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
@@ -304,7 +304,7 @@ from bernstein.cli.run_cmd import (
     setup_demo_project,
     start,
 )
-from bernstein.cli.status_cmd import commit_stats_cmd, commit_stats_alias, ps_cmd, status
+from bernstein.cli.status_cmd import commit_stats_alias, commit_stats_cmd, ps_cmd, status
 
 # Re-export stop_cmd helpers used by tests and other modules
 from bernstein.cli.stop_cmd import (
