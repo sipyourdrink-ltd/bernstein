@@ -176,16 +176,6 @@ def test_malformed_stored_snapshot_is_refused_not_defaulted(tmp_path: Path, muta
         SchemaSnapshot.from_bytes(json.dumps(payload).encode("utf-8"))
 
 
-@pytest.mark.parametrize(
-    ("mutate", "match"),
-    [
-        (lambda obj: obj.update(columns="nope"), "columns must be a list"),
-        (lambda obj: obj["columns"].append("not-a-dict"), "non-object column entry"),
-        (lambda obj: obj["columns"][0].update(name=""), "missing or empty name"),
-        (lambda obj: obj["columns"][0].update(primary_key="1"), "non-integer primary_key"),
-    ],
-    ids=["non-list-columns", "non-dict-entry", "empty-column-name", "stringified-primary-key"],
-)
 def test_non_object_snapshot_entry_is_refused_not_dropped(tmp_path: Path) -> None:
     # A snapshot rehydrated with an entry silently omitted re-canonicalises to
     # a digest that can match a live schema missing the same object - the
@@ -201,6 +191,16 @@ def test_non_object_snapshot_entry_is_refused_not_dropped(tmp_path: Path) -> Non
         SchemaSnapshot.from_bytes(json.dumps(payload).encode("utf-8"))
 
 
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda obj: obj.update(columns="nope"), "columns must be a list"),
+        (lambda obj: obj["columns"].append("not-a-dict"), "non-object column entry"),
+        (lambda obj: obj["columns"][0].update(name=""), "missing or empty name"),
+        (lambda obj: obj["columns"][0].update(primary_key="1"), "non-integer primary_key"),
+    ],
+    ids=["non-list-columns", "non-dict-entry", "empty-column-name", "stringified-primary-key"],
+)
 def test_malformed_column_entries_are_refused_not_dropped(tmp_path: Path, mutate, match: str) -> None:
     # Pre-fix, a non-dict column entry was silently filtered and a non-list
     # columns value coerced to () - both let a malformed stored blob rehydrate
