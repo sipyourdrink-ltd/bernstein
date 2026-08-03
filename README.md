@@ -67,6 +67,8 @@ bernstein replay list                 # run ids recorded on disk
 bernstein replay latest --verify      # recompute the journal head, name the first divergent step
 bernstein lineage verify <run_id>     # recompute the always-on lineage spine
 bernstein audit verify                # HMAC chain + Merkle seal (written because audit was enabled)
+bernstein audit diagnose <run_id> --signal gate --sign-key KEY
+                                      # name the exact step a failure entered the run, as a signed receipt
 ```
 
 The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
