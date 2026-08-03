@@ -375,6 +375,38 @@ def test_malformed_journal_row_refuses_receipt_build(tmp_path: Path, corrupt_lin
 
 
 @pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda row: row.update(index=str(row["index"])), "non-integer 'index'"),
+        (lambda row: row.update(event=None), "non-string 'event'"),
+        (lambda row: row.pop("payload_hash"), "empty 'payload_hash'"),
+        (lambda row: row.update(event_hash=""), "empty 'event_hash'"),
+    ],
+    ids=["stringified-index", "null-event", "missing-payload-hash", "empty-event-hash"],
+)
+def test_mistyped_journal_chain_field_refuses_receipt_build(tmp_path: Path, mutate, match: str) -> None:
+    """A row with a missing or mistyped chain field is refused before signing.
+
+    Downstream hashing normalises with str() and projections drop absent
+    fields, so without this validation a null event or a stripped
+    payload_hash would be embedded verbatim into the signed receipt as a
+    non-canonical journal event instead of refusing the build.
+    """
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    journal_path = sdd / "runs" / _RUN_ID / "journal.jsonl"
+    lines = journal_path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[1])
+    mutate(row)
+    lines[1] = json.dumps(row)
+    journal_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(RunReceiptError, match=f"journal line 2 has a missing or {match}"):
+        build_run_receipt(_RUN_ID, sdd, _kms(tmp_path))
+    assert not (sdd / "runs" / _RUN_ID / RUN_RECEIPT_FILENAME).exists()
+
+
+@pytest.mark.parametrize(
     ("bad_line", "match"),
     [
         ('{"garbage": ', "spine line 2 is not valid JSON"),

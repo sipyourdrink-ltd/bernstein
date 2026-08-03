@@ -300,13 +300,45 @@ def _strict_jsonl_rows(
 
 
 def _load_journal_rows_strict(journal_path: Path, run_id: str) -> list[dict[str, Any]]:
-    """Strict line-by-line journal parse for the signing path."""
+    """Strict line-by-line journal parse for the signing path.
+
+    Beyond the shared object-shape scan, every row's chain fields are
+    validated before anything is embedded: downstream hashing normalises
+    with ``str()`` and drops absent fields from projections, so a row with
+    a null ``event`` or a missing ``payload_hash`` would otherwise be
+    signed verbatim as a non-canonical journal event instead of refusing.
+    """
     pairs = _strict_jsonl_rows(
         journal_path,
         run_id=run_id,
         substrate="journal",
         refusal="a receipt is never signed over a partial journal",
     )
+    for line_no, row in pairs:
+        index = row.get("index")
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise RunReceiptError(
+                f"refusing to sign run {run_id!r}: journal line {line_no} has a missing or "
+                "non-integer 'index'; a receipt is never signed over a malformed journal",
+            )
+        event = row.get("event")
+        if not isinstance(event, str) or not event:
+            raise RunReceiptError(
+                f"refusing to sign run {run_id!r}: journal line {line_no} has a missing or "
+                "non-string 'event'; a receipt is never signed over a malformed journal",
+            )
+        if not isinstance(row.get("prev_hash"), str):
+            raise RunReceiptError(
+                f"refusing to sign run {run_id!r}: journal line {line_no} has a missing or "
+                "non-string 'prev_hash'; a receipt is never signed over a malformed journal",
+            )
+        for hash_field in ("payload_hash", "event_hash"):
+            value = row.get(hash_field)
+            if not isinstance(value, str) or not value:
+                raise RunReceiptError(
+                    f"refusing to sign run {run_id!r}: journal line {line_no} has a missing or "
+                    f"empty {hash_field!r}; a receipt is never signed over a malformed journal",
+                )
     return [row for _line_no, row in pairs]
 
 
