@@ -4,7 +4,7 @@ from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
 from bernstein.eval.bench.reliability import (
-    AgentCardReliabilitySigner,
+    InstallIdentityReliabilitySigner,
     ReliabilityCheckResult,
     ReliabilityReceipt,
     ReliabilityRunner,
@@ -35,12 +35,12 @@ from bernstein.eval.bench.verifier import (
 )
 
 __all__ = [
-    "AgentCardReliabilitySigner",
     "BenchRunner",
     "BenchSuite",
     "BenchTask",
     "BenchVerifier",
     "BundleVerificationResult",
+    "InstallIdentityReliabilitySigner",
     "Leaderboard",
     "LeaderboardEntry",
     "MockReplayAdapter",

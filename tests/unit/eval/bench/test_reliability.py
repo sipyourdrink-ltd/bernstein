@@ -40,6 +40,7 @@ import pytest
 
 from bernstein.eval.bench.bundle import TaskResult
 from bernstein.eval.bench.reliability import (
+    InstallIdentityReliabilitySigner,
     ReliabilityReceipt,
     ReliabilityRunner,
     ReliabilityVerificationStatus,
@@ -465,12 +466,41 @@ class TestReliabilityCheck:
         """
         A fresh run whose model sample differs from the recorded attempt
         still passes: coordination is byte-identical, only the model-output
-        payload varies.
+        payload varies.  A different seed models the model resampling.
         """
         task_a = simple_suite.tasks[0]
         th = task_a.content_hash()
-        # Find a seed whose attempt-0 and attempt-1 samples differ, then
-        # compare the recorded attempt 1 against a fresh run (attempt 0).
+        # Two seeds whose attempt-0 samples differ.
+        seed_a = 0
+        seed_b = next(
+            s
+            for s in range(1, 500)
+            if StochasticMockReplayAdapter.derive_sample(s, th, 0)
+            != StochasticMockReplayAdapter.derive_sample(seed_a, th, 0)
+        )
+        receipt = _make_receipt(simple_suite, StochasticMockReplayAdapter(seed=seed_a), k=1)
+        result = reliability_check(
+            receipt,
+            simple_suite,
+            StochasticMockReplayAdapter(seed=seed_b),
+            task_id=task_a.id,
+            attempt_index=0,
+        )
+        assert result.passed
+        assert result.coordination_identical
+        assert not result.byte_identical, "model samples must differ between the compared runs"
+
+    def test_reliability_check_compares_the_requested_attempt(self, simple_suite: BenchSuite) -> None:
+        """
+        With a stateful adapter, --attempt N must compare position N against
+        position N: the check replays a fresh same-seed adapter to attempt 1,
+        so the run compared against recorded attempt 1 is byte-identical —
+        which only holds when the positions are aligned.
+        """
+        task_a = simple_suite.tasks[0]
+        th = task_a.content_hash()
+        # A seed whose attempt-0 and attempt-1 samples differ, so a position
+        # mismatch would be visible as byte divergence.
         seed = next(
             s
             for s in range(500)
@@ -486,8 +516,10 @@ class TestReliabilityCheck:
             attempt_index=1,
         )
         assert result.passed
-        assert result.coordination_identical
-        assert not result.byte_identical, "model samples must differ between the compared attempts"
+        assert result.byte_identical, (
+            "same-seed replay to position 1 must reproduce recorded attempt 1 exactly; "
+            "byte divergence here means the check compared the wrong attempt position"
+        )
 
     def test_reliability_check_detects_coordination_nondeterminism(self, simple_suite: BenchSuite) -> None:
         """A drifting coordination field fails the check and is named."""
@@ -772,3 +804,82 @@ class TestReceiptSchemaValidation:
         result = reliability_check(malformed, simple_suite, MockReplayAdapter())
         assert not result.passed
         assert "malformed" in result.detail
+
+
+# ===========================================================================
+# Review hardening: install-identity signature verification
+# ===========================================================================
+
+
+class TestInstallIdentitySignature:
+    @staticmethod
+    def _keypair() -> tuple[bytes, bytes]:
+        from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
+
+        return generate_ed25519_keypair()
+
+    def test_install_identity_signature_verifies_offline(self, simple_suite: BenchSuite, tmp_path: Path) -> None:
+        """An Ed25519-signed receipt round-trips and verifies against the trusted key."""
+        private_pem, public_pem = self._keypair()
+        signer = InstallIdentityReliabilitySigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        receipt = signer.sign(_make_receipt(simple_suite, MockReplayAdapter(), k=2))
+
+        path = tmp_path / "reliability.json"
+        receipt.save(path)
+        loaded = ReliabilityReceipt.load(path)
+
+        verifier = ReliabilityVerifier(
+            suite=simple_suite,
+            adapter=MockReplayAdapter(),
+            trusted_keys={signer.fingerprint(): public_pem},
+        )
+        assert verifier.verify(loaded).passed
+
+    def test_forged_production_signature_never_reaches_match(self, simple_suite: BenchSuite) -> None:
+        """
+        Swapped-in fingerprint/signature values must never verify: garbage
+        signatures, signatures minted by a different key, and unknown
+        fingerprints all end UNSIGNED.
+        """
+        private_pem, public_pem = self._keypair()
+        signer = InstallIdentityReliabilitySigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        base = _make_receipt(simple_suite, MockReplayAdapter(), k=2)
+        honest = signer.sign(base)
+        verifier = ReliabilityVerifier(
+            suite=simple_suite,
+            adapter=MockReplayAdapter(),
+            trusted_keys={signer.fingerprint(): public_pem},
+        )
+        assert verifier.verify(honest).passed  # guard
+
+        # (a) Garbage signature under the trusted fingerprint.
+        garbage = replace(honest, signature="AAAA..BBBB")
+        assert verifier.verify(garbage).status == ReliabilityVerificationStatus.UNSIGNED
+
+        # (b) Structurally valid signature minted by a DIFFERENT key,
+        #     presented under the trusted fingerprint.
+        other_private, other_public = self._keypair()
+        other_signer = InstallIdentityReliabilitySigner(private_key_pem=other_private, public_key_pem=other_public)
+        cross = replace(honest, signature=other_signer.sign(base).signature)
+        assert verifier.verify(cross).status == ReliabilityVerificationStatus.UNSIGNED
+
+        # (c) Unknown fingerprint (not in the trusted key map).
+        unknown = replace(honest, signer_fingerprint="not-a-known-keyid")
+        assert verifier.verify(unknown).status == ReliabilityVerificationStatus.UNSIGNED
+
+    def test_tampered_content_fails_signature_verification(self, simple_suite: BenchSuite) -> None:
+        """Content edited after signing no longer verifies (hash moved under the signature)."""
+        private_pem, public_pem = self._keypair()
+        signer = InstallIdentityReliabilitySigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        honest = signer.sign(_make_receipt(simple_suite, MockReplayAdapter(), k=2))
+        tampered = replace(honest, pass_caret_k=0.0)  # keeps the old signature
+        verifier = ReliabilityVerifier(
+            suite=simple_suite,
+            adapter=MockReplayAdapter(),
+            trusted_keys={signer.fingerprint(): public_pem},
+        )
+        assert verifier.verify(tampered).status == ReliabilityVerificationStatus.UNSIGNED
+
+    def test_signer_requires_both_or_neither_key(self) -> None:
+        with pytest.raises(ValueError, match="both"):
+            InstallIdentityReliabilitySigner(private_key_pem=b"x")

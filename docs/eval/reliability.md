@@ -172,6 +172,11 @@ named. This is the control that makes a low floor attributable to model
 sampling rather than hidden coordination non-determinism — without it,
 `pass^k` is noise.
 
+Attempt alignment: `ReplayAdapter.run_task` carries no attempt index, so
+the check replays attempts `0..N` in order on a freshly positioned adapter
+and compares position `N` against the recorded attempt `N` — well-defined
+for stateful adapters too.
+
 ---
 
 ## Python API
@@ -215,9 +220,15 @@ replays every attempt.
   submission-bundle surface documents. Until then, real-agent
   fixed-coordination repetition is an operator-side exercise of the same
   Python API.
-- Offline verification checks stub signatures cryptographically;
-  verifying an install-identity signature against the signer's public key
-  is an operator step, as with submission bundles.
+- Signatures are verified cryptographically, fail-closed. Production
+  receipts carry a detached Ed25519 JWS over the receipt hash, keyed by
+  the install identity and fingerprinted with the same keyid the install
+  publishes at `/.well-known/agent.json/keys`. The verifier resolves the
+  fingerprint against its trusted-key map (`--signer-key <pem>` on the
+  CLI, plus the local install key when present); an unresolvable
+  fingerprint or a failed verification is `UNSIGNED`, never `MATCH`.
+  Stub-signed receipts (fingerprint marked `-stub`) are test-grade and
+  verified via the deterministic stub construction.
 - The receipt seals verdicts and replay substrate, not wall-clock timing:
   timing fields are deliberately outside the coordination projection.
 

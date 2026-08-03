@@ -186,7 +186,7 @@ def bench_verify(bundle: str, suite: str) -> None:
 def _run_reliability(suite_obj: BenchSuite, scheduler: str, k: int, out_path: Path, stub_signer: bool) -> None:
     """Execute the --reliability K path of ``bench run``."""
     from bernstein.eval.bench.reliability import (
-        AgentCardReliabilitySigner,
+        InstallIdentityReliabilitySigner,
         ReliabilityRunner,
         StubReliabilitySigner,
     )
@@ -204,8 +204,16 @@ def _run_reliability(suite_obj: BenchSuite, scheduler: str, k: int, out_path: Pa
     click.echo(f"\nRunning tasks x{k} attempts (fixed coordination)…")
     receipt = runner.run()
 
-    signer = StubReliabilitySigner() if stub_signer else AgentCardReliabilitySigner()
-    receipt = signer.sign(receipt)
+    if stub_signer:
+        receipt = StubReliabilitySigner().sign(receipt)
+    else:
+        try:
+            receipt = InstallIdentityReliabilitySigner().sign(receipt)
+        except Exception as exc:
+            raise click.ClickException(
+                f"Install-identity signing failed ({exc}). Run `bernstein init` to "
+                "set up the install identity, or pass --stub-signer for a test-grade receipt."
+            ) from exc
     receipt.save(out_path)
 
     click.echo(f"\npass^{k} floor : {receipt.pass_caret_k * 100:.1f}%  (all {k} attempts must pass)")
@@ -216,17 +224,55 @@ def _run_reliability(suite_obj: BenchSuite, scheduler: str, k: int, out_path: Pa
     click.echo(f"\nReliability receipt written to: {out_path}")
 
 
+def _reliability_trusted_keys(signer_key_paths: tuple[str, ...]) -> dict[str, bytes]:
+    """Build the fingerprint -> public-key map for reliability verification.
+
+    Explicitly provided PEM files are always trusted; the local install
+    identity key is added when it already exists on disk (never generated
+    as a side effect of verification).
+    """
+    from bernstein.core.identity.http_signing import install_identity_keyid
+
+    trusted: dict[str, bytes] = {}
+    for key_path in signer_key_paths:
+        pem = Path(key_path).read_bytes()
+        try:
+            trusted[install_identity_keyid(pem)] = pem
+        except Exception as exc:
+            raise click.ClickException(f"Not an Ed25519 public key PEM: {key_path} ({exc})") from exc
+    try:
+        from bernstein.core.identity.http_signing import default_keystore
+
+        keystore = default_keystore()
+        if keystore.directory.exists() and any(keystore.directory.iterdir()):
+            _, public_pem = keystore.load_or_generate()
+            trusted.setdefault(install_identity_keyid(public_pem), public_pem)
+    except Exception:
+        # No usable local install identity; explicit --signer-key still works.
+        pass
+    return trusted
+
+
 @bench_group.command(name="reliability-verify")
 @click.argument("receipt")
 @click.option("--suite", default="golden-v1", show_default=True, help="Suite to verify against.")
-def bench_reliability_verify(receipt: str, suite: str) -> None:
+@click.option(
+    "--signer-key",
+    "signer_keys",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Trusted Ed25519 public key PEM of the emitting install (repeatable). "
+    "The local install identity key is trusted automatically when present.",
+)
+def bench_reliability_verify(receipt: str, suite: str, signer_keys: tuple[str, ...]) -> None:
     """Verify a reliability receipt by replaying all embedded attempts offline.
 
     RECEIPT is the path to a reliability receipt .json file.
 
     Recomputes pass@1 and pass^k from the embedded per-attempt run receipts
     and rejects fabricated floors, stripped attempts, tampered receipt
-    bytes, and coordination divergence.  Exits 0 on MATCH, 1 otherwise.
+    bytes, coordination divergence, and signatures that do not verify
+    against a trusted key.  Exits 0 on MATCH, 1 otherwise.
     """
     from bernstein.eval.bench.reliability import ReliabilityReceipt, ReliabilityVerifier
     from bernstein.eval.bench.runner import MockReplayAdapter
@@ -240,7 +286,11 @@ def bench_reliability_verify(receipt: str, suite: str) -> None:
 
     # Production: swap MockReplayAdapter for the real scenario_runner adapter.
     adapter = MockReplayAdapter()
-    verifier = ReliabilityVerifier(suite=suite_obj, adapter=adapter)
+    verifier = ReliabilityVerifier(
+        suite=suite_obj,
+        adapter=adapter,
+        trusted_keys=_reliability_trusted_keys(signer_keys),
+    )
     result = verifier.verify(receipt_obj)
 
     click.echo(result.report())
@@ -251,7 +301,15 @@ def bench_reliability_verify(receipt: str, suite: str) -> None:
 @click.argument("receipt")
 @click.option("--suite", default="golden-v1", show_default=True, help="Suite the receipt was produced from.")
 @click.option("--task", "task_id", default=None, help="Task id to re-run (default: first task in the receipt).")
-@click.option("--attempt", "attempt_index", type=int, default=0, show_default=True, help="Attempt index to compare.")
+@click.option(
+    "--attempt",
+    "attempt_index",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Attempt position to compare: the check replays attempts 0..N in order "
+    "on a fresh adapter and compares position N against the recorded attempt N.",
+)
 def bench_reliability_check(receipt: str, suite: str, task_id: str | None, attempt_index: int) -> None:
     """Re-run one attempt from a reliability receipt and assert coordination byte-identity.
 
