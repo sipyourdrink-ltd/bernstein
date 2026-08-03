@@ -177,6 +177,92 @@ taken from the receipt, so re-execution never trusts a DSN from untrusted data.
 
 ---
 
+## The schema-bound query driver
+
+The receipt above answers "which exact bytes did the model see". It does not
+answer two questions a reviewer holding a number eventually asks. First, **what
+did the statement mean when it ran?** A database logs every statement, but the
+schema state the statement was written against is nowhere in the record — a
+`SELECT` that was correct in March and means something different in July looks
+identical in the log. Second, **are these bytes bound to that statement?** The
+query driver (`bernstein.core.datasources.query_driver`) closes both by
+executing one read-only statement through the `DataActivity` phase machine
+(signed inputs → one deterministic plan → signed outputs, Ed25519 throughout —
+the same machinery the data/ops activity boundary already ships; the driver
+adds no second receipt format):
+
+1. The statement passes the textual read-only guard **before any connection
+   work** — a write is refused with a typed error and provably never reaches
+   the engine. The `mode=ro` open + deny-all-writes authorizer remain behind it
+   as defense in depth.
+2. A **canonical schema snapshot** is taken and recorded as a signed input
+   *before* the plan is derived, together with the query text and bound
+   parameters. The snapshot digest is a content address over the normalised
+   DDL in `sqlite_master` plus each table's column list — not
+   `PRAGMA schema_version`, which is a write counter: two identical schemas
+   can carry different counter values, and equal values attest nothing about
+   content.
+3. The result rows are put into **explicit canonical order** (sorted by their
+   canonical cell bytes) before encoding. An engine's row order without
+   `ORDER BY` is an unspecified plan detail; the driver never lets it into the
+   hash, so the recorded bytes are a pure function of the logical result.
+   (This is a driver-layer step: the `content_hash` of a plain query receipt
+   above still hashes rows in engine order, unchanged.)
+4. The canonical result bytes are recorded as a **signed output bound to the
+   plan hash**. Flipping one byte of the stored result breaks offline
+   verification (`verify_data_ops_receipt`) at evidence reattachment.
+
+```python
+from bernstein.core.datasources.connection import DataSourceConnection
+from bernstein.core.datasources.query_driver import build_sqlite_query_driver
+
+connection = DataSourceConnection(id="sales", driver="sqlite", dsn="/var/data/sales.db")
+driver = build_sqlite_query_driver(sdd_dir, connection)
+
+run = driver.run("SELECT region, SUM(amount) FROM orders GROUP BY region")
+run.schema_digest      # the schema snapshot the result was derived against
+run.result_hash        # sha256 over the canonical (explicitly ordered) bytes
+run.receipt            # the signed DataOpsReceipt; verifies offline
+```
+
+### Schema drift is a typed refusal
+
+Pin the snapshot a statement was recorded against and the driver fails closed
+when the live schema no longer matches — *before* executing the query:
+
+```python
+from bernstein.core.datasources.errors import SchemaDrift
+
+try:
+    driver.run("SELECT region, SUM(amount) FROM orders GROUP BY region",
+               expected_schema=recorded_snapshot)
+except SchemaDrift as drift:
+    drift.changed_object_names   # e.g. ('orders',)
+    drift.drifts[0].describe()   # "changed table 'orders': added columns 'discount'"
+```
+
+The verdict names the changed objects (added / removed / changed, with
+column-level detail for tables) instead of silently returning a number whose
+meaning changed.
+
+### Determinism
+
+The plan hash is a pure function of the signed input hashes; Ed25519 is
+deterministic; the result bytes carry an explicit row order. The same
+statement against the same fixture database with the same signing key
+therefore produces byte-identical canonical result bytes and an identical
+receipt hash — even across two entirely separate `.sdd` directories. The
+driver records only the connection **id** as provenance; a DSN (and any
+secret in it) never enters a signed input, output, or receipt byte.
+
+The reference backend is the stdlib `sqlite3` driver (Python DB-API), so the
+default install gains no dependency and CI needs no service. DuckDB and
+PostgreSQL are planned follow-ups behind the same `QueryDriverBackend`
+protocol (schema snapshot + guarded execution); the receipt path does not
+change.
+
+---
+
 ## On-disk layout
 
 Everything lives under `.sdd/datasources/`:
@@ -188,6 +274,9 @@ lineage/                  append-only log.jsonl + .jws signature sidecars
 receipts/<hash>.json      one receipt per execution
 results/<hash>.bin        optional, size-capped, re-hashable result copies
 receipts-audit.jsonl      additive, secret-free audit mirror
+cas/                      content-addressed store for the query driver's
+                          signed input/output blobs (schema snapshot, query,
+                          canonical result bytes)
 ```
 
 The audit mirror records the connection id, the query/params/content hashes, the

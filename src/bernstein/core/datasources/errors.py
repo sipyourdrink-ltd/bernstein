@@ -7,6 +7,11 @@ Every failure mode an operator can trip has a named exception so callers
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bernstein.core.datasources.schema import SchemaObjectDrift
+
 
 class DataSourceError(Exception):
     """Base class for every datasource / query-receipt error."""
@@ -55,12 +60,46 @@ class VerificationError(DataSourceError):
     """Offline verification of a receipt failed at a named field."""
 
 
+class SchemaDrift(DataSourceError):
+    """The live schema no longer matches the snapshot a statement was bound to.
+
+    Raised fail-closed by the query driver *before* execution when the live
+    schema digest differs from the recorded one: the statement's meaning is no
+    longer attested, so no result is returned. The error names the changed
+    objects rather than reporting a bare digest mismatch.
+
+    Attributes:
+        recorded_digest: The ``sha256:`` digest the statement was recorded against.
+        live_digest: The ``sha256:`` digest of the schema as it is now.
+        drifts: The per-object differences, in canonical ``(type, name)`` order.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        recorded_digest: str = "",
+        live_digest: str = "",
+        drifts: tuple[SchemaObjectDrift, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.recorded_digest = recorded_digest
+        self.live_digest = live_digest
+        self.drifts = drifts
+
+    @property
+    def changed_object_names(self) -> tuple[str, ...]:
+        """The names of the drifted objects, in diff order."""
+        return tuple(d.name for d in self.drifts)
+
+
 __all__ = [
     "ConnectionNotFound",
     "DataSourceError",
     "NonCanonicalText",
     "ReadOnlyViolation",
     "ReceiptNotFound",
+    "SchemaDrift",
     "UnsupportedStatement",
     "UnsupportedValue",
     "VerificationError",

@@ -25,8 +25,13 @@ if TYPE_CHECKING:
 #: Stable identity for receipt signatures.
 _DS_AGENT_ID = "agent:datasource-receipts"
 _DS_KID = "datasource-receipts-1"
-_PRIVATE_KEY_NAME = "datasource_lineage.pem"
-_PUBLIC_KEY_NAME = "datasource_lineage.pub"
+
+#: Key file names under ``<sdd>/datasources/identity``. Shared by every
+#: datasource signing surface (the receipt store here and the query driver in
+#: :mod:`bernstein.core.datasources.query_driver`), so the whole subsystem
+#: signs under one install identity.
+PRIVATE_KEY_NAME = "datasource_lineage.pem"
+PUBLIC_KEY_NAME = "datasource_lineage.pub"
 
 
 def datasources_root(sdd_dir: Path) -> Path:
@@ -52,8 +57,8 @@ def build_receipt_store(sdd_dir: Path) -> QueryReceiptStore:
     identity_dir = root / "identity"
     _priv, pub = load_or_create_signing_identity(
         identity_dir,
-        private_name=_PRIVATE_KEY_NAME,
-        public_name=_PUBLIC_KEY_NAME,
+        private_name=PRIVATE_KEY_NAME,
+        public_name=PUBLIC_KEY_NAME,
     )
     card = AgentCard(agent_id=_DS_AGENT_ID, kid=_DS_KID, public_key_pem=pub)
     return QueryReceiptStore(
@@ -141,6 +146,8 @@ def resolve_task_datasource_inputs(
 
 
 __all__ = [
+    "PRIVATE_KEY_NAME",
+    "PUBLIC_KEY_NAME",
     "ResolvedDatasourceInput",
     "TaskDatasourceInput",
     "build_connection_registry",
