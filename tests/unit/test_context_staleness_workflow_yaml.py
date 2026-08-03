@@ -178,4 +178,65 @@ def test_workflow_triggers_cover_the_staleness_inputs() -> None:
         assert isinstance(paths, list), f"expected on.{event}.paths"
         assert "scripts/check_context_staleness.py" in paths
         assert "tests/**" in paths, "tests/ holds a covered context file; churn there must trigger the check"
+        assert "src/**" in paths, (
+            "the checker enumerates nested AGENTS.md under all of src/**; "
+            "a narrower filter would let a covered subtree churn without triggering the check"
+        )
     assert "schedule" in triggers, "the weekly sweep needs the schedule trigger"
+
+
+def test_trigger_paths_cover_every_enumerable_context_location() -> None:
+    """Every DIRECTORY_CONTEXT_ROOTS entry the checker scans is a trigger path.
+
+    list_context_files enumerates nested AGENTS.md under a fixed allowlist of
+    roots; if a root is scanned but not watched, a change under it is only
+    noticed by the weekly schedule. This pins filter scope to checker scope.
+    """
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "check_context_staleness_trigger_pin", REPO_ROOT / "scripts" / "check_context_staleness.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+    workflow = _workflow()
+    triggers = workflow.get("on", workflow.get(True))
+    assert isinstance(triggers, dict)
+    for event in ("pull_request", "push"):
+        block = cast("dict[str, object]", triggers[event])
+        paths = cast("list[str]", block["paths"])
+        for root in module.DIRECTORY_CONTEXT_ROOTS:
+            assert f"{root}/**" in paths, f"checker scans {root}/** but on.{event}.paths does not watch it"
+
+
+def test_compute_failure_still_uploads_the_report_artifact() -> None:
+    """A failed compute step must never suppress the report hand-off.
+
+    drift-publish's first action is download-artifact; without always() on
+    the upload, any earlier non-zero step (e.g. a crashing checker) would
+    skip the upload and take all publishing down with it.
+    """
+    step = _step(COMPUTE_JOB, "Upload drift report")
+    assert step.get("if") == "always()", "the report upload must run even when an earlier step failed"
+
+
+def test_soft_freshness_path_cannot_kill_the_step() -> None:
+    """The PR/push freshness run is advisory: its exit status is captured.
+
+    Under plain set -e a non-zero exit from the checker would terminate the
+    step before rc=0 is recorded and before the artifact upload, which is
+    exactly the suppression the always() guard and this capture exist to
+    prevent - strictness stays confined to the schedule branch.
+    """
+    step = _step(COMPUTE_JOB, "Run data-freshness check (soft on PR + push, strict weekly)")
+    run = cast("str", step.get("run"))
+    soft_branch = run.split('"schedule"', 1)[1].split("fi", 1)[0]
+    assert "set +e" in soft_branch, "the soft branch must not run the checker under set -e"
+    assert "RC=$?" in soft_branch, "the soft branch must capture the checker's exit status"
