@@ -108,12 +108,12 @@ def postmortem_cmd(
 )
 @click.pass_context
 def postmortem_alias(ctx: click.Context) -> None:
-    '''Backward compatibility for the
+    """Backward compatibility for the
     original `postmortem` command,
-    which was moved to `report_postmortem`.'''
+    which was moved to `report_postmortem`."""
     click.echo(
         "WARNING: 'bernstein postmortem' is deprecated and will be removed in v4.0.0. "
         "Use 'bernstein report postmortem' instead.",
-        err=True
+        err=True,
     )
     postmortem_cmd.main(args=ctx.args, standalone_mode=False)
