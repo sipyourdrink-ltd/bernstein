@@ -83,6 +83,10 @@ The diagnosis is a projection of the signed record, never an inference
 beside it. Each of these refuses with exit `2` and writes **no** receipt:
 
 - the journal is missing or empty ("no signed per-step record for run X");
+- the journal contains any non-blank line that does not parse as a JSON
+  object (a torn or corrupted write) -- ordinary journal readers tolerate a
+  torn tail, but the diagnostic reader refuses a filtered sequence so every
+  reported index counts physical journal lines;
 - the audit HMAC key is unavailable (`load`-only resolution -- diagnose
   never creates key material);
 - `--sign-key` is omitted (no unsigned findings);

@@ -23,6 +23,10 @@ The diagnosis is a projection of the signed record, never an inference
 beside it:
 
 * a missing or empty journal refuses with :class:`DiagnoseError`;
+* a journal containing any non-blank line that does not parse as a JSON
+  object refuses -- unlike ordinary journal readers, which tolerate a torn
+  trailing write, the diagnostic reader never operates on a filtered
+  sequence, so every reported index counts physical journal lines;
 * a content predicate is only evaluated over a journal whose chain
   recomputes cleanly -- a chain-broken journal refuses and points the
   operator at ``--signal replay``, which reports the break itself;
@@ -35,7 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.replay.diff import (
     REASON_CODE_CHAIN_BREAK,
@@ -44,7 +48,6 @@ from bernstein.core.replay.diff import (
 )
 from bernstein.core.replay.journal import (
     _NON_DETERMINISTIC_FIELDS,  # pyright: ignore[reportPrivateUsage] - shared journal projection
-    load_events,
     rebuild_state,
     verify_journal,
 )
@@ -166,6 +169,45 @@ class DiagnosisResult:
     lineage_path: tuple[str, ...] = ()
 
 
+def _load_events_strict(journal_path: Path, *, run_id: str) -> list[dict[str, Any]]:
+    """Parse every non-blank journal line, refusing any that fails to decode.
+
+    ``journal.load_events`` skips undecodable lines so an ordinary reader
+    survives a torn trailing write. A *diagnostic* reader must not: a
+    silently dropped physical line would let the surviving prefix
+    chain-verify cleanly and a signed receipt would then cover a filtered
+    sequence, and every reported index would count parsed rows rather than
+    physical journal lines. Any non-blank line that fails to decode as a
+    JSON object refuses the whole diagnosis instead
+    (bot-ack: 3705961185).
+
+    Raises:
+        DiagnoseError: A non-blank line is not a JSON object; the message
+            names the 0-based physical line index.
+    """
+    events: list[dict[str, Any]] = []
+    with journal_path.open(encoding="utf-8") as f:
+        for lineno, raw in enumerate(f):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise DiagnoseError(
+                    f"journal for run {run_id} has an unparsable line at physical line {lineno} "
+                    f"({exc.msg}); refusing to diagnose a filtered sequence -- capture the "
+                    "corrupted journal forensically before re-running"
+                ) from exc
+            if not isinstance(row, dict):
+                raise DiagnoseError(
+                    f"journal for run {run_id} has a non-object row at physical line {lineno}; "
+                    "refusing to diagnose a filtered sequence"
+                )
+            events.append(cast("dict[str, Any]", row))
+    return events
+
+
 def _row_payload_text(row: dict[str, Any]) -> str:
     """Canonical timing-excluded payload text of one journal row.
 
@@ -217,7 +259,9 @@ def diagnose_run(journal_path: Path, predicate: SignalPredicate, *, run_id: str)
     """
     if not journal_path.exists():
         raise DiagnoseError(f"no signed per-step record for run {run_id}: {journal_path} does not exist")
-    events = load_events(journal_path)
+    # Strict load first: an unparsable line refuses the diagnosis before any
+    # head, count, chain, or culprit computation can observe a filtered view.
+    events = _load_events_strict(journal_path, run_id=run_id)
     if not events:
         raise DiagnoseError(f"no signed per-step record for run {run_id}: journal at {journal_path} is empty")
 

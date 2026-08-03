@@ -3159,10 +3159,11 @@ def diagnose_cmd(
     reconstructs and diffs; diagnose localises and signs.
 
     \b
-    Fail-closed: a missing/empty journal, an unavailable audit HMAC key, a
-    chain-broken journal (for content signals), or a signal that resolves
-    to no recorded step all exit non-zero and write no receipt - the
-    diagnosis is a projection of the signed record, never a heuristic scan.
+    Fail-closed: a missing/empty journal, a journal with any unparsable
+    line, an unavailable audit HMAC key, a chain-broken journal (for
+    content signals), or a signal that resolves to no recorded step all
+    exit non-zero and write no receipt - the diagnosis is a projection of
+    the signed record, never a heuristic scan.
 
     \b
     Exit codes (diagnose): 0 chain intact / nothing to report; 1 culprit

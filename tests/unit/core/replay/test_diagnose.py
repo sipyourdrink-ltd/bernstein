@@ -159,6 +159,46 @@ def test_empty_journal_fails_closed(tmp_path: Path) -> None:
         diagnose_run(empty, replay_signal(), run_id="run-x")
 
 
+def test_malformed_tail_line_fails_closed(tmp_path: Path) -> None:
+    """A torn/garbage tail line must refuse, never a receipt over a filtered
+    sequence: the tolerant reader would drop it and the surviving prefix
+    would chain-verify clean (regression for bot-ack: 3705961185)."""
+    sdd = tmp_path / ".sdd"
+    path = _seed_journal(sdd, "run-torn", bad_step=None)
+    with path.open("a", encoding="utf-8") as f:
+        f.write("{this is not json\n")
+
+    with pytest.raises(DiagnoseError, match="unparsable line at physical line 5"):
+        diagnose_run(path, replay_signal(), run_id="run-torn")
+
+
+def test_malformed_middle_line_fails_closed_for_every_signal_mode(tmp_path: Path) -> None:
+    """A malformed middle line refuses both chain and content predicates
+    before any index is computed, so no reported culprit can ever count
+    parsed rows instead of physical journal lines."""
+    sdd = tmp_path / ".sdd"
+    path = _seed_journal(sdd, "run-midtorn", bad_step=3)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines.insert(2, "garbage that does not decode")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(DiagnoseError, match="unparsable line at physical line 2"):
+        diagnose_run(path, replay_signal(), run_id="run-midtorn")
+    with pytest.raises(DiagnoseError, match="unparsable line at physical line 2"):
+        diagnose_run(path, _content_predicate(BAD_HASH), run_id="run-midtorn")
+
+
+def test_non_object_json_row_fails_closed(tmp_path: Path) -> None:
+    """A line that decodes to a JSON scalar is refused like garbage."""
+    sdd = tmp_path / ".sdd"
+    path = _seed_journal(sdd, "run-scalar", bad_step=None)
+    with path.open("a", encoding="utf-8") as f:
+        f.write("42\n")
+
+    with pytest.raises(DiagnoseError, match="non-object row at physical line 5"):
+        diagnose_run(path, replay_signal(), run_id="run-scalar")
+
+
 def test_unlocatable_signal_refuses_instead_of_guessing(tmp_path: Path) -> None:
     """A fingerprint absent from every step raises SignalNotLocatedError."""
     sdd = tmp_path / ".sdd"

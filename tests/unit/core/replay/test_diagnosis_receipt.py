@@ -213,6 +213,27 @@ def test_tampered_journal_after_culprit_fails_verification(tmp_path: Path) -> No
     assert not outcome.ok
 
 
+def test_garbage_line_injected_into_journal_rejected_on_verify(tmp_path: Path) -> None:
+    """A receipt stops verifying once any unparsable line enters the journal:
+    the exact-bytes pin catches it first, and the strict diagnostic loader
+    refuses the filtered sequence regardless (bot-ack: 3705961185)."""
+    journal_path = _seed(tmp_path)
+    priv, _pub = _write_keypair(tmp_path, "signer")
+    receipt = _build(tmp_path, journal_path, priv)
+    assert receipt.receipt_path is not None
+
+    with journal_path.open("a", encoding="utf-8") as f:
+        f.write("{torn trailing write\n")
+
+    outcome = verify_diagnosis_receipt(receipt.receipt_path, journal_path=journal_path, audit_key=AUDIT_KEY)
+    assert not outcome.ok
+
+    from bernstein.core.replay.diagnose import DiagnoseError
+
+    with pytest.raises(DiagnoseError, match="unparsable line"):
+        diagnose_run(journal_path, _predicate(), run_id="run-1")
+
+
 def test_absent_journal_fails_verification(tmp_path: Path) -> None:
     journal_path = _seed(tmp_path)
     priv, _pub = _write_keypair(tmp_path, "signer")

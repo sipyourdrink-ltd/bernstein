@@ -121,6 +121,26 @@ def test_missing_audit_key_fails_closed_with_no_receipt(
     assert _receipts_in(sdd) == []
 
 
+def test_malformed_journal_line_fails_closed_with_no_receipt(
+    tmp_path: Path, runner: CliRunner, keys: dict[str, Path]
+) -> None:
+    """A journal with an unparsable line refuses with exit 2 and zero
+    receipts -- diagnose never reads a filtered sequence
+    (regression for bot-ack: 3705961185)."""
+    sdd = tmp_path / ".sdd"
+    journal = EventJournal("run-torn", sdd)
+    for i in range(3):
+        journal.record("tick", step=i)
+    with journal.path.open("a", encoding="utf-8") as f:
+        f.write("{torn trailing write\n")
+
+    result = runner.invoke(audit_group, _diagnose_args(sdd, keys, "run-torn", "replay"))
+
+    assert result.exit_code == 2
+    assert "unparsable line" in result.output
+    assert _receipts_in(sdd) == []
+
+
 def test_unsigned_receipts_are_refused(tmp_path: Path, runner: CliRunner, keys: dict[str, Path]) -> None:
     """Without --sign-key the command refuses rather than emitting unsigned."""
     sdd = tmp_path / ".sdd"

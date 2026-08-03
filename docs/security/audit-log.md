@@ -637,7 +637,8 @@ bernstein audit diagnose verify .sdd/evidence/diagnosis-<run_id>-<hash>.json \
   --public-key PUB.pem
 ```
 
-Fail-closed: a missing or empty journal, an unavailable audit HMAC key
+Fail-closed: a missing or empty journal, a journal with any unparsable
+line (torn or corrupted write), an unavailable audit HMAC key
 (load-only -- diagnose never creates key material), a chain-broken journal
 under a content signal, or a signal whose fingerprint appears in no
 recorded step all exit non-zero and write **no** receipt. The diagnosis is
