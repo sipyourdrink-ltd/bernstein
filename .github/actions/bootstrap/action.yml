@@ -72,7 +72,7 @@ runs:
         # See note above on ignore-nothing-to-cache.
         ignore-nothing-to-cache: "true"
     - name: Set up uv (no python-version pin)
-      id: setup-uv-nopin
+      id: setup-uv-no-python-pin
       if: ${{ inputs.setup-uv == 'true' && inputs.python-version == '' }}
       # See note above on continue-on-error: the retry step below handles
       # a single transient fetch failure; a second failure reddens the job.
@@ -86,13 +86,13 @@ runs:
         # job that installed no dependencies.
         ignore-nothing-to-cache: "true"
     - name: Retry set up uv (no python-version pin) after transient fetch failure
-      if: ${{ inputs.setup-uv == 'true' && inputs.python-version == '' && steps.setup-uv-nopin.outcome == 'failure' }}
+      if: ${{ inputs.setup-uv == 'true' && inputs.python-version == '' && steps.setup-uv-no-python-pin.outcome == 'failure' }}
       shell: bash
       run: |
         echo "::warning::astral-sh/setup-uv failed on its first attempt (likely a transient raw.githubusercontent.com fetch failure, see issue #3360). Retrying once after a short sleep."
         sleep 5
     - name: Set up uv (no python-version pin, retry)
-      if: ${{ inputs.setup-uv == 'true' && inputs.python-version == '' && steps.setup-uv-nopin.outcome == 'failure' }}
+      if: ${{ inputs.setup-uv == 'true' && inputs.python-version == '' && steps.setup-uv-no-python-pin.outcome == 'failure' }}
       uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       with:
         version: "0.11.32"
