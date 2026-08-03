@@ -41,7 +41,7 @@ classifiers = [
 # Anything else must be vendored or re-implemented locally so the
 # air-gapped laptop install stays a single `pip install bernstein-verify`.
 dependencies = [
-    "cryptography>=43",
+    "cryptography>=50.0.0",
     "click>=8.1",
 ]
 

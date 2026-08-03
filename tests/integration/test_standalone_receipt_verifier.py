@@ -56,7 +56,7 @@ def _create_isolated_venv(venv_dir: Path) -> Path:
         subprocess.run([uv_bin, "venv", str(venv_dir), "--quiet"], check=True)
         py = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
         subprocess.run(
-            [uv_bin, "pip", "install", "--quiet", "--python", str(py), "cryptography>=45.0.0", "cbor2>=5.6"],
+            [uv_bin, "pip", "install", "--quiet", "--python", str(py), "cryptography>=50.0.0", "cbor2>=5.6"],
             check=True,
         )
         return py
@@ -71,7 +71,7 @@ def _create_isolated_venv(venv_dir: Path) -> Path:
             "install",
             "--quiet",
             "--disable-pip-version-check",
-            "cryptography>=45.0.0",
+            "cryptography>=50.0.0",
             "cbor2>=5.6",
         ],
         check=True,

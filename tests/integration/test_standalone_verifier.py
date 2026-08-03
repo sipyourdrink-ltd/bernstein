@@ -94,7 +94,7 @@ def _create_isolated_venv(venv_dir: Path) -> Path:
                 "--quiet",
                 "--python",
                 str(py),
-                "cryptography>=45.0.0",
+                "cryptography>=50.0.0",
             ],
             check=True,
         )
@@ -107,7 +107,7 @@ def _create_isolated_venv(venv_dir: Path) -> Path:
     else:
         py = venv_dir / "bin" / "python"
     subprocess.run(
-        [str(py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "cryptography>=45.0.0"],
+        [str(py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "cryptography>=50.0.0"],
         check=True,
         cwd=str(venv_dir),
     )
