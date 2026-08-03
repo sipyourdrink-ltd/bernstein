@@ -5,8 +5,11 @@ Merkle-chained :class:`~bernstein.core.replay.journal.EventJournal` (the
 run's replay identity) and the :class:`~bernstein.core.lineage.spine.LineageSpine`
 (the run's artifact provenance) - plus the opt-in HMAC audit chain. Each
 verifies only its own slice, and two of the three need the operator's key
-material or a live ``.sdd/``. This module binds them into **one signed
-artefact a reviewer can check with nothing but the file**:
+material or a live ``.sdd/``. This module binds them into one signed
+artefact: **the file alone proves integrity** (every head recomputes from
+the embedded ranges, any post-signing mutation is caught and localized),
+and **the file plus the operator's out-of-band public key proves
+provenance** (see the trust-model note on :func:`verify_run_receipt`):
 
 * ``journal``: the timing-excluded projection of every journal row (the
   exact bytes :func:`~bernstein.core.replay.journal.compute_event_hash`
@@ -498,6 +501,17 @@ def verify_run_receipt(
     ranges, the signed subject is rebuilt from the recomputed heads, and
     the Ed25519 signature is checked against the embedded JWK (which must
     match ``public_key_pem`` when a pin is supplied).
+
+    Trust model: **what a pass proves depends on where the key came
+    from.** Without a pin the signature is checked against the key
+    embedded in the receipt itself (trust-on-first-use), so a pass is
+    *integrity-only* - the file is internally consistent and any
+    post-signing mutation is caught at a precise step, but an attacker
+    who controls the whole file could have swapped in their own key and
+    re-signed, so the embedded key cannot establish *who* produced the
+    receipt. Provenance - the receipt was signed by a specific operator's
+    key - requires supplying that key out-of-band via ``public_key_pem``;
+    the embedded key must then match it.
 
     Args:
         receipt_bytes: The receipt file contents.

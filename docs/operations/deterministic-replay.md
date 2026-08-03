@@ -154,7 +154,9 @@ one root.
 The journal, the lineage spine, and the audit chain each verify their own
 slice, and two of the three need the operator's key material or a live
 `.sdd/`. The **run receipt** (`core/replay/run_receipt.py`, issue #2924) binds
-them into one signed artefact a reviewer verifies with nothing but the file:
+them into one signed artefact: the file alone proves integrity, the file plus
+the operator's out-of-band public key proves provenance (see the trust-model
+note below):
 
 ```bash
 # Build: signs .sdd/runs/<run_id>/run-receipt.json
@@ -190,9 +192,22 @@ Receipt bytes are byte-identical across independent builds of the same run.
 
 Exit codes for `bernstein verify receipt` (mirrors `bernstein lineage
 verify`): `0` OK, `1` empty/malformed input, `2` tamper detected (first
-divergent journal step index named). By default the embedded key is trusted on
-first use; pass `--public-key` to pin an out-of-band Ed25519 public key - the
-embedded key must then match it.
+divergent journal step index named).
+
+**Trust model - what a pass proves depends on where the key came from.** By
+default the verifier checks the signature against the Ed25519 key embedded in
+the receipt (trust-on-first-use). That makes a pass **integrity-only**: the
+file is internally consistent - every head recomputes from the embedded
+ranges and any post-signing mutation is caught and localized to a precise
+step - but an attacker who controls the whole file could have swapped in
+their own key and re-signed it, so the embedded key cannot establish *who*
+produced the receipt. For **provenance** - confirming the receipt was signed
+by a specific operator's key - pass `--public-key` with an out-of-band copy
+of that key; the embedded key must then match it or verification fails with
+exit `2`. The CLI verdict is labelled accordingly (`OK (integrity-only:
+embedded key)` vs `OK (provenance: pinned key)`), so a trust-on-first-use
+pass cannot be misread as an authenticated one. Provenance-sensitive review
+(incident triage, compliance handover) should always pin.
 
 **Automatic receipts at finalization.** When a signing key is configured via
 `BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH` (key file) or

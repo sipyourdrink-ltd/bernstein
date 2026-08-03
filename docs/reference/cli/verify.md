@@ -57,20 +57,32 @@ missing audit window).
 
 ### Verify (`verify receipt PATH [--public-key PEM]`)
 
-Verifies a receipt using **only the file**: recomputes the journal head
-from the embedded timing-excluded rows (the exact `verify_journal` walk),
-recomputes every spine `entry_hash` and the spine head without any HMAC
-key, recomputes the optional audit-range `head_sha256` from its embedded
-events, rebuilds the signed subject from those recomputed values, and
-checks the Ed25519 signature against the embedded JWK. `--public-key` pins
-an out-of-band Ed25519 public key that the embedded key must match
-(default is trust-on-first-use of the embedded key).
+Verifies a receipt from the file: recomputes the journal head from the
+embedded timing-excluded rows (the exact `verify_journal` walk), recomputes
+every spine `entry_hash` and the spine head without any HMAC key, recomputes
+the optional audit-range `head_sha256` from its embedded events, rebuilds
+the signed subject from those recomputed values, and checks the Ed25519
+signature. No HMAC key and no `.sdd/` are read.
+
+What a pass proves depends on where the key came from, and the verdict is
+labelled accordingly:
+
+- **Without `--public-key`** the signature is checked against the key
+  embedded in the receipt (trust-on-first-use) and the verdict reads
+  `OK (integrity-only: embedded key)`. This proves the file is internally
+  consistent — any post-signing mutation is caught at a precise step — but
+  not *who* signed it: a forger controlling the whole file could re-sign
+  with their own embedded key.
+- **With `--public-key`** the embedded key must match the pinned
+  out-of-band Ed25519 public key and the verdict reads
+  `OK (provenance: pinned key)`. Provenance-sensitive review should always
+  pin.
 
 | Exit code | Meaning |
 |---|---|
 | 0 | Every head recomputes from the embedded ranges and the signature verifies. |
 | 1 | Empty or malformed input (unreadable file, missing ranges or fields). |
-| 2 | Tamper detected — the first divergent journal step index is named. |
+| 2 | Tamper detected — the first divergent journal step index is named (a pinned-key mismatch also exits 2). |
 
 Full format description:
 [deterministic replay](../../operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).

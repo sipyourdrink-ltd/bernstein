@@ -73,7 +73,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
 
-The run receipt binds the journal head and the lineage-spine head (plus, opt-in, an audit-chain range) under one Ed25519-signed subject with the public key embedded, so a reviewer who is handed only the file can confirm the recorded actions are exactly what executed - no HMAC key, no live `.sdd/`, exit `2` naming the first divergent step on tamper. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+The run receipt binds the journal head and the lineage-spine head (plus, opt-in, an audit-chain range) under one Ed25519-signed subject with the public key embedded, so a reviewer holding the file and the operator's public key can confirm the recorded actions are exactly what executed - no HMAC key, no live `.sdd/`, exit `2` naming the first divergent step on tamper. With the file alone (no `--public-key` pin) the check is integrity-only: it proves the receipt is internally consistent, not who signed it, and the verdict says so. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 ### how it works
 

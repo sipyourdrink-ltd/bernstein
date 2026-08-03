@@ -1228,13 +1228,20 @@ def verify_run_cmd(
     ),
 )
 def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None:
-    """Verify a run receipt offline from RECEIPT_PATH alone.
+    """Verify a run receipt offline from RECEIPT_PATH.
 
     Recomputes the journal head, the spine head, and (when present) the
     audit-range head from the bytes embedded in the receipt, rebuilds the
     signed subject from those recomputed values, and checks the Ed25519
-    signature against the embedded (or pinned) public key. No HMAC key and
-    no ``.sdd/`` are read.
+    signature. No HMAC key and no ``.sdd/`` are read.
+
+    What a pass proves depends on the key source, and the verdict says
+    which check ran. Without ``--public-key`` the signature is checked
+    against the key EMBEDDED in the receipt (trust-on-first-use), which
+    proves the file is internally consistent -- integrity only, not who
+    signed it: a forger controlling the whole file could re-sign with
+    their own key. With ``--public-key`` the embedded key must match the
+    pinned out-of-band key, which additionally proves provenance.
 
     \b
     Exit codes:
@@ -1266,7 +1273,22 @@ def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None
         f"journal_events={result.journal_events} spine_entries={result.spine_entries}"
     )
     if result.ok:
-        console.print("[green]OK[/green] -- every head recomputes from the embedded ranges; signature valid.")
+        if public_key_pem is not None:
+            console.print(
+                "[green]OK (provenance: pinned key)[/green] -- every head recomputes from the "
+                "embedded ranges and the signature verifies against the pinned public key."
+            )
+        else:
+            console.print(
+                "[green]OK (integrity-only: embedded key)[/green] -- every head recomputes from "
+                "the embedded ranges and the signature matches the key embedded in the receipt "
+                "(trust-on-first-use)."
+            )
+            console.print(
+                "  [dim]This proves the file is internally consistent, not who signed it: a forger "
+                "controlling the whole file could re-sign with their own key. Pass --public-key "
+                "with the operator's key for provenance.[/dim]"
+            )
         raise SystemExit(0)
     if result.status == "malformed":
         console.print("[yellow]MALFORMED[/yellow] -- the receipt cannot be checked:")

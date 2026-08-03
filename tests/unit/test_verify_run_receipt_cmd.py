@@ -181,6 +181,46 @@ def test_receipt_verb_tamper_exits_2_and_names_step(tmp_path: Path) -> None:
     assert "step: 1" in result.output
 
 
+def test_receipt_verb_labels_integrity_only_vs_provenance(tmp_path: Path) -> None:
+    """A pass names its trust level so a TOFU pass cannot be misread.
+
+    Without --public-key the verdict is labelled integrity-only (embedded
+    key, trust-on-first-use); with the operator's pinned key it is labelled
+    provenance.
+    """
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    _seed_run(workdir)
+    sign_key = tmp_path / "sign.pem"
+    _write_signing_key(sign_key)
+
+    runner = CliRunner()
+    built = runner.invoke(
+        verify_cmd,
+        ["run", _RUN_ID, "-w", str(workdir), "--signing-key-path", str(sign_key)],
+    )
+    assert built.exit_code == 0, built.output
+    receipt_path = workdir / ".sdd" / "runs" / _RUN_ID / "run-receipt.json"
+
+    unpinned = runner.invoke(verify_cmd, ["receipt", str(receipt_path)])
+    assert unpinned.exit_code == 0, unpinned.output
+    assert "integrity-only" in unpinned.output
+    assert "provenance: pinned key" not in unpinned.output
+
+    right_pub = tmp_path / "right.pub.pem"
+    right_key = Ed25519PrivateKey.from_private_bytes(b"i" * 32)
+    right_pub.write_bytes(
+        right_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ),
+    )
+    pinned = runner.invoke(verify_cmd, ["receipt", str(receipt_path), "--public-key", str(right_pub)])
+    assert pinned.exit_code == 0, pinned.output
+    assert "provenance: pinned key" in pinned.output
+    assert "integrity-only" not in pinned.output
+
+
 def test_receipt_verb_wrong_public_key_exits_2(tmp_path: Path) -> None:
     """A --public-key pin for a different key rejects the receipt."""
     workdir = tmp_path / "proj"

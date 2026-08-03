@@ -2823,17 +2823,21 @@ class Orchestrator:
             )
         except Exception as exc:
             logger.warning("Failed to seal journal head into lineage spine: %s", sanitize_log(str(exc)))
+            logger.warning("Run receipt not written for run %s: journal-head seal failed", self._run_id)
         else:
             self._seal_intent_capsules(hmac_key)
-        self._write_run_receipt()
+            self._write_run_receipt()
 
     def _write_run_receipt(self) -> None:
         """Write the signed run receipt at finalization (issue #2924).
 
         Binds the sealed journal head and the run's lineage-spine head into
         one offline-verifiable ``run-receipt.json`` next to the journal.
-        Degrades to a documented no-op when no receipt signing key is
-        configured (``BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH`` /
+        Called only from the seal hook's success branch: when sealing the
+        journal head into the spine fails, no receipt is written at all
+        (fail-closed) rather than signing a spine whose journal binding is
+        incomplete. Degrades to a documented no-op when no receipt signing
+        key is configured (``BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH`` /
         ``BERNSTEIN_RUN_RECEIPT_SIGNING_ENV_VAR``) -- the audit-receipt
         posture: never emit an unsigned "receipt". Failures are logged,
         never raised: the receipt is a verification aid and must not fail a

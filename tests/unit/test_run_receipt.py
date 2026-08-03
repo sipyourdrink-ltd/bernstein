@@ -387,3 +387,67 @@ def test_seal_hook_helper_writes_receipt_when_key_configured(
     assert receipt_path is not None
     assert receipt_path == sdd / "runs" / _RUN_ID / RUN_RECEIPT_FILENAME
     assert verify_run_receipt(receipt_path.read_bytes()).ok
+
+
+class _SealHookStub:
+    """Just enough of ``Orchestrator`` for its unbound seal-hook method.
+
+    Records which downstream hooks ran so the tests can assert the receipt
+    write is gated on seal success.
+    """
+
+    def __init__(self, workdir: Path, journal: EventJournal) -> None:
+        self._workdir = workdir
+        self._recorder = journal
+        self._run_id = journal.run_id
+        self.calls: list[str] = []
+
+    def _seal_intent_capsules(self, hmac_key: bytes) -> None:
+        self.calls.append("capsules")
+
+    def _write_run_receipt(self) -> None:
+        self.calls.append("receipt")
+
+
+def test_failed_spine_seal_produces_no_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When sealing the journal head into the spine fails, no receipt is written.
+
+    Fail-closed: a receipt must never be signed over a spine whose journal
+    binding is incomplete. The seal failure is simulated at the audit-key
+    load, the first step of the hook's try block.
+    """
+    from bernstein.core.orchestration.orchestrator import Orchestrator
+
+    sdd = tmp_path / ".sdd"
+    journal = EventJournal(run_id="run-hook-fail", sdd_dir=sdd)
+    journal.record("run_started")
+    stub = _SealHookStub(tmp_path, journal)
+
+    def _boom() -> bytes:
+        raise OSError("audit key store unavailable")
+
+    monkeypatch.setattr("bernstein.core.security.audit.load_or_create_audit_key", _boom)
+
+    Orchestrator._seal_journal_into_lineage_spine(stub)  # type: ignore[arg-type]
+    assert "receipt" not in stub.calls
+
+
+def test_successful_seal_writes_receipt_via_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The success branch of the seal hook reaches the receipt write."""
+    from bernstein.core.orchestration.orchestrator import Orchestrator
+
+    sdd = tmp_path / ".sdd"
+    journal = EventJournal(run_id="run-hook-ok", sdd_dir=sdd)
+    journal.record("run_started")
+    stub = _SealHookStub(tmp_path, journal)
+
+    monkeypatch.setattr("bernstein.core.security.audit.load_or_create_audit_key", lambda: b"k" * 32)
+
+    Orchestrator._seal_journal_into_lineage_spine(stub)  # type: ignore[arg-type]
+    assert "receipt" in stub.calls
