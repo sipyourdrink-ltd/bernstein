@@ -29,6 +29,8 @@ uv run pytest tests/unit/test_foo.py -x -q    # single file (fast)
 - Docs-guard tests (`unit/test_naming_policy_docs.py`,
   `unit/test_nested_agents_context.py`) pin repo-level invariants;
   extend them when adding gated docs.
+- Tests for `scripts/*.py` load the script via importlib; git-derived
+  behaviour runs on synthetic repos (`unit/test_context_staleness.py`).
 
 ## Gotchas
 

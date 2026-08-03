@@ -165,6 +165,62 @@ curl -sS https://pypistats.org/api/packages/bernstein/recent | jq .data
 - The `docs-data-freshness` check is advisory and is not part of the canary
   list of required checks.
 
+## Context-file staleness (curated context files vs their subtrees)
+
+The two gates above check *internal consistency* (`bernstein agents-md
+verify`) and *referential integrity* (source-of-truth paths still exist).
+Neither can notice a subtree churning for weeks while the curated context
+file that describes it stays byte-identical. `scripts/check_context_staleness.py`
+covers that third failure mode with a report derived from git history alone.
+
+What it computes, per curated context file (nested `AGENTS.md` under `src/`
+and `tests/`, plus `.sdd/agents-md/*.md` overlays when committed):
+
+- the last commit that touched the file;
+- the net diff under the file's scope since that commit (files changed,
+  insertions + deletions, `*.py` modules added or removed);
+- the commits in that range ranked by churn, so every flag names the exact
+  commits that aged the file.
+
+Flag rules (named constants at the top of the script):
+
+| Context file kind | Scope | Flags when |
+|-------------------|-------|------------|
+| Nested `AGENTS.md` | its directory subtree | net churn >= 200 lines, or any `*.py` module added/removed |
+| Committed `.sdd/agents-md` overlay | whole repository | net churn >= 2000 lines (module events alone never flag repo-wide prose) |
+
+The computation is a pure function of the repository state: two runs on the
+same repo state produce byte-identical output. Rename detection is disabled
+explicitly (`--no-renames`), so a rename surfaces as one module-removed plus
+one module-added event and the verdict cannot vary with git version or local
+diff configuration. The checker refuses to run on a shallow clone (exit 2)
+rather than emit silently truncated numbers.
+
+Where it surfaces (`.github/workflows/docs-drift.yml`):
+
+- **Pull requests**: a non-blocking comment (marker tag
+  `<!-- context-staleness-report -->`), posted only when the PR itself pushes
+  a scope over threshold — the PR base sha is passed as `--baseline` and only
+  newly flagged files count.
+- **Weekly schedule**: accumulated flags are upserted into a single tracking
+  issue titled `context-file staleness: curated context files lag their
+  subtrees` (updated in place, never duplicated).
+- It never fails a push to `main`: staleness accrues from ordinary merges and
+  is a review prompt, not a merge gate.
+
+To clear a flag, review the context file against its scope and touch it in a
+commit — update the prose, or make a reconfirmation-only edit if everything
+still holds. Either way the "is this still true?" review leaves a commit that
+resets the file's clock.
+
+Run it locally:
+
+```bash
+uv run python scripts/check_context_staleness.py           # markdown report
+uv run python scripts/check_context_staleness.py --json    # machine-readable
+uv run python scripts/check_context_staleness.py --strict  # exit 1 on any flag
+```
+
 ## Cross-repo
 
 The public website mirrors some docs pages.
