@@ -366,3 +366,47 @@ class TestAgentsMdSection:
         s = AgentsMdSection(key="k", title="T", body="b", kind="overview")
         assert s.target_globs == ()
         assert s.always_apply is True
+
+
+# ---------------------------------------------------------------------------
+# _build_directory_context - nested AGENTS.md map
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDirectoryContext:
+    def test_absent_when_no_nested_files(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path)
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        assert all(s.key != "directory-context" for s in sections)
+
+    def test_lists_nested_file_with_h1_as_description(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path)
+        (tmp_path / "src" / "bernstein" / "core" / "AGENTS.md").write_text("# Core engine\n\nInvariants live here.\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        sec = next(s for s in sections if s.key == "directory-context")
+        assert "`src/bernstein/core/AGENTS.md`" in sec.body
+        assert "Core engine" in sec.body
+        assert sec.always_apply is False
+
+    def test_rows_sorted_by_posix_path(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path)
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "AGENTS.md").write_text("# Test suite\n")
+        (tmp_path / "src" / "bernstein" / "core" / "AGENTS.md").write_text("# Core\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        sec = next(s for s in sections if s.key == "directory-context")
+        assert sec.body.index("src/bernstein/core/AGENTS.md") < sec.body.index("tests/AGENTS.md")
+
+    def test_missing_h1_falls_back_to_directory_name(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path)
+        (tmp_path / "src" / "bernstein" / "core" / "AGENTS.md").write_text("no heading here\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        sec = next(s for s in sections if s.key == "directory-context")
+        assert "core/ context" in sec.body
+
+    def test_appears_between_module_map_and_build_test(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path)
+        (tmp_path / "src" / "bernstein" / "core" / "AGENTS.md").write_text("# Core\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        keys = [s.key for s in sections]
+        assert keys.index("module-map") < keys.index("directory-context") < keys.index("build-test")

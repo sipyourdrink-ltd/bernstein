@@ -184,6 +184,12 @@ _NON_PACKAGE_DIRS: tuple[tuple[str, str], ...] = (
 # under version control next to the auto-derived data.
 _OVERLAY_DIR = ".sdd/agents-md"
 
+# Top-level roots searched for nested per-directory ``AGENTS.md`` files.
+# Deliberately narrow: a fixed allowlist keeps the derived section
+# byte-stable across environments (a stray untracked AGENTS.md in an
+# unrelated tool directory must not change the render).
+_DIRECTORY_CONTEXT_ROOTS: tuple[str, ...] = ("src", "tests")
+
 
 # ---------------------------------------------------------------------------
 # Top-level entry point
@@ -239,6 +245,7 @@ def generate(repo_path: Path, options: GenerateOptions | None = None) -> list[Ag
     builders: list[tuple[str, object]] = [
         ("overview", _build_overview(repo_path)),
         ("module-map", _build_module_map(repo_path, opts) if opts.include_module_map else None),
+        ("directory-context", _build_directory_context(repo_path)),
         ("build-test", _build_build_test(repo_path)),
         ("setup", _build_setup(repo_path)),
         ("architecture", _build_architecture(repo_path)),
@@ -354,6 +361,62 @@ def _build_module_map(repo_path: Path, opts: GenerateOptions) -> AgentsMdSection
         always_apply=False,
         target_globs=("src/**", "tests/**"),
     )
+
+
+def _build_directory_context(repo_path: Path) -> AgentsMdSection | None:
+    """One row per committed nested ``AGENTS.md`` under the search roots.
+
+    Nested files are hand-curated per-directory context (purpose, key
+    files, invariants, how to test the subtree) that coding-agent
+    harnesses read when working inside that directory. This section is
+    the root-level map of them, derived purely from the tree: sorted
+    relative path plus the file's own H1 as the description. Because the
+    map is part of the canonical render, ``bernstein agents-md verify``
+    fails whenever a nested file is added, removed, or retitled without
+    rerunning ``bernstein agents-md sync`` - the map cannot silently
+    disagree with the tree.
+
+    Returns ``None`` when no nested file exists (the common case for
+    repos that have not adopted per-directory context).
+    """
+    rows: list[tuple[str, str]] = []
+    for root in _DIRECTORY_CONTEXT_ROOTS:
+        base = repo_path / root
+        if not base.is_dir():
+            continue
+        found = sorted(base.rglob("AGENTS.md"), key=lambda p: p.relative_to(repo_path).as_posix())
+        for path in found:
+            rel = path.relative_to(repo_path).as_posix()
+            title = _first_h1_text(path) or f"{path.parent.name}/ context"
+            rows.append((f"`{rel}`", title))
+    if not rows:
+        return None
+    body = (
+        "Per-directory context files for agents working inside a subtree. "
+        "Each covers: what the directory is for, key files, invariants, and "
+        "how to test that subtree.\n\n" + _render_two_column_table(rows, "Path", right_header="Covers")
+    )
+    return AgentsMdSection(
+        key="directory-context",
+        title="Directory context files",
+        body=body,
+        kind="custom",
+        always_apply=False,
+        target_globs=("src/**", "tests/**"),
+    )
+
+
+def _first_h1_text(path: Path) -> str:
+    """Return the text of the first markdown H1 line in ``path`` (or ``""``)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip()
+    return ""
 
 
 def _build_build_test(repo_path: Path) -> AgentsMdSection | None:
