@@ -102,11 +102,21 @@ Fixed coordination is checked on a **coordination projection** of each run
 receipt: per-attempt run identity (`run_id`) and the content-hash heads
 that commit to model output (`journal_head`, `spine_head`) are dropped,
 timing fields are dropped from every event, and model-output events
-(`model.*` kinds) are reduced to their schedule position (`seq`, `kind`)
-with the sampled payload removed. Two fixed-coordination attempts must
-have byte-identical projections; only the model-output payloads may
-differ. Attempts that diverge anywhere else make the floor inadmissible —
-it would be measuring scheduler noise, not model sampling.
+(`model.*` kinds) keep every field **except** the declared stochastic
+payload fields (`sample` in the bench event vocabulary). Undeclared
+fields inside a model event — routing, tool selection, scheduler state —
+default to coordination (fail-closed), so divergence there fails
+admission instead of being silently erased. Two fixed-coordination
+attempts must have byte-identical projections; only the declared
+model-output payloads may differ. Attempts that diverge anywhere else
+make the floor inadmissible — it would be measuring scheduler noise, not
+model sampling.
+
+Receipts are schema-validated before they are hashed into a coordination
+identity: every event must be an object with a non-empty string `kind`
+and an integer `seq`. The runner raises on a malformed adapter receipt at
+emit time; the verifier and `reliability-check` report a malformed
+receipt instead of proceeding.
 
 ---
 
@@ -140,6 +150,7 @@ The verifier needs no access to the emitting machine. It rejects:
 | Stripped attempt (fewer than `k` receipts) | attempt count check | `MISSING_RECEIPT` |
 | Stripped failing task (cherry-picked suite) | full suite coverage check | `MISSING_RECEIPT` |
 | Coordination divergence across attempts | coordination projection recompute | `COORDINATION_DIVERGED` |
+| Malformed event schema (non-string `kind`, non-integer `seq`) | receipt schema validation before hashing | `MALFORMED_RECEIPT` |
 | Missing or invalid signature | signature check | `UNSIGNED` |
 
 A cherry-picked or fabricated floor fails because the replays do not

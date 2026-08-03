@@ -628,3 +628,147 @@ class TestDocs:
         bench_docs = repo_root / "docs" / "eval" / "bench.md"
         assert bench_docs.exists()
         assert "reliability" in bench_docs.read_text()
+
+
+# ===========================================================================
+# Review hardening: model-event coordination metadata + receipt schema
+# ===========================================================================
+
+
+class ModelMetadataDivergenceAdapter:
+    """
+    Adapter whose ``model.output`` events carry coordination metadata (a
+    routing field) that drifts per call while the sampled payload stays
+    fixed.  The projection must treat the undeclared field as coordination
+    (fail-closed), so this divergence must be detected.
+    """
+
+    def __init__(self) -> None:
+        self._calls = 0
+
+    def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
+        task_hash = task.content_hash()
+        self._calls += 1
+        return {
+            "journal_head": "j" * 64,
+            "spine_head": "s" * 64,
+            "run_id": f"meta-{self._calls}",
+            "events": [
+                {"seq": 0, "kind": "task.started", "task_hash": task_hash},
+                {"seq": 1, "kind": "model.output", "sample": 42, "route": self._calls},  # ← route drifts
+                {"seq": 2, "kind": "task.completed", "task_hash": task_hash},
+            ],
+        }
+
+    def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
+        return True, 1.0, {}
+
+
+class MalformedReceiptAdapter:
+    """Adapter emitting an event whose kind is not a string."""
+
+    def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "journal_head": "j" * 64,
+            "spine_head": "s" * 64,
+            "run_id": "malformed",
+            "events": [{"seq": 0, "kind": 123}],
+        }
+
+    def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
+        return True, 1.0, {}
+
+
+def _with_first_attempt_receipt(receipt: ReliabilityReceipt, run_receipt: dict[str, Any]) -> ReliabilityReceipt:
+    """Rebuild *receipt* with task 0 / attempt 0 swapped for *run_receipt* (hash recomputed)."""
+    target = receipt.task_results[0]
+    swapped_attempt = TaskResult(
+        task_id=target.attempts[0].task_id,
+        task_hash=target.attempts[0].task_hash,
+        receipt=run_receipt,
+        passed=target.attempts[0].passed,
+        score=target.attempts[0].score,
+    )
+    swapped_task = replace(target, attempts=[swapped_attempt, *target.attempts[1:]])
+    return replace(receipt, task_results=[swapped_task, *receipt.task_results[1:]])
+
+
+class TestModelEventCoordinationMetadata:
+    def test_model_event_metadata_divergence_is_detected(self, simple_suite: BenchSuite) -> None:
+        """
+        Coordination-relevant metadata inside a model.* event is NOT erased
+        by the projection: divergence there fails coordination identity.
+        """
+        receipt = _make_receipt(simple_suite, ModelMetadataDivergenceAdapter(), k=2)
+        assert not receipt.coordination_ok
+        assert all(not tr.coordination_identical for tr in receipt.task_results)
+
+    def test_model_event_metadata_divergence_rejected_by_verifier(self, simple_suite: BenchSuite) -> None:
+        receipt = _signed(_make_receipt(simple_suite, ModelMetadataDivergenceAdapter(), k=2))
+        verifier = ReliabilityVerifier(suite=simple_suite, adapter=ModelMetadataDivergenceAdapter())
+        result = verifier.verify(receipt)
+        assert not result.passed
+        diverged = [
+            tr for tr in result.task_results if tr.status == ReliabilityVerificationStatus.COORDINATION_DIVERGED
+        ]
+        assert diverged
+        assert "route" in diverged[0].detail
+
+    def test_declared_sample_field_still_allowed_to_vary(self, simple_suite: BenchSuite) -> None:
+        """The declared stochastic payload (sample) still varies freely (regression guard)."""
+        task = simple_suite.tasks[0]
+        seed = _find_seed(task, 3, lambda v: any(v) and not all(v))
+        receipt = _make_receipt(simple_suite, StochasticMockReplayAdapter(seed=seed), k=3)
+        assert receipt.coordination_ok
+
+
+class TestReceiptSchemaValidation:
+    def test_malformed_event_kind_rejected_by_verifier(self, simple_suite: BenchSuite) -> None:
+        """A non-string event kind is surfaced as MALFORMED_RECEIPT, never MATCH."""
+        honest = _make_receipt(simple_suite, MockReplayAdapter(), k=2)
+        malformed = _signed(
+            _with_first_attempt_receipt(
+                honest,
+                {"journal_head": "j" * 64, "spine_head": "s" * 64, "run_id": "x", "events": [{"seq": 0, "kind": 123}]},
+            )
+        )
+        verifier = ReliabilityVerifier(suite=simple_suite, adapter=MockReplayAdapter())
+        result = verifier.verify(malformed)
+        assert not result.passed
+        statuses = {tr.task_id: tr.status for tr in result.task_results}
+        assert statuses[honest.task_results[0].task_id] == ReliabilityVerificationStatus.MALFORMED_RECEIPT
+
+    def test_malformed_event_seq_rejected_by_verifier(self, simple_suite: BenchSuite) -> None:
+        """A missing / non-integer seq is surfaced as MALFORMED_RECEIPT."""
+        honest = _make_receipt(simple_suite, MockReplayAdapter(), k=2)
+        malformed = _signed(
+            _with_first_attempt_receipt(
+                honest,
+                {
+                    "journal_head": "j" * 64,
+                    "spine_head": "s" * 64,
+                    "run_id": "x",
+                    "events": [{"kind": "task.started"}],  # ← seq missing
+                },
+            )
+        )
+        verifier = ReliabilityVerifier(suite=simple_suite, adapter=MockReplayAdapter())
+        result = verifier.verify(malformed)
+        assert not result.passed
+        statuses = {tr.task_id: tr.status for tr in result.task_results}
+        assert statuses[honest.task_results[0].task_id] == ReliabilityVerificationStatus.MALFORMED_RECEIPT
+
+    def test_runner_rejects_malformed_adapter_receipt(self, simple_suite: BenchSuite) -> None:
+        runner = ReliabilityRunner(suite=simple_suite, adapter=MalformedReceiptAdapter(), scheduler_config={}, k=1)
+        with pytest.raises(ValueError, match="malformed run receipt"):
+            runner.run()
+
+    def test_reliability_check_rejects_malformed_recorded_receipt(self, simple_suite: BenchSuite) -> None:
+        honest = _make_receipt(simple_suite, MockReplayAdapter(), k=2)
+        malformed = _with_first_attempt_receipt(
+            honest,
+            {"journal_head": "j" * 64, "spine_head": "s" * 64, "run_id": "x", "events": [{"seq": 0, "kind": 123}]},
+        )
+        result = reliability_check(malformed, simple_suite, MockReplayAdapter())
+        assert not result.passed
+        assert "malformed" in result.detail

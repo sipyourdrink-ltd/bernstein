@@ -78,9 +78,45 @@ _ATTEMPT_VARIANT_RECEIPT_FIELDS = frozenset({"run_id", "journal_head", "spine_he
 # across fixed-coordination attempts.
 _MODEL_OUTPUT_KIND_PREFIX = "model."
 
+# The declared stochastic payload fields of the bench event vocabulary:
+# the only fields of a ``model.*`` event that may vary across
+# fixed-coordination attempts.  Every OTHER field of a model event is
+# treated as coordination (fail-closed): metadata an adapter records
+# alongside the sample — routing, tool selection, scheduler state — must
+# be byte-identical across attempts, and divergence there fails admission
+# instead of being silently erased from the projection.
+_MODEL_SAMPLE_PAYLOAD_FIELDS = frozenset({"sample"})
+
+_MODEL_EVENT_DROPPED_FIELDS = _TIMING_EVENT_FIELDS | _MODEL_SAMPLE_PAYLOAD_FIELDS
+
 
 def _canonical_bytes(obj: Any) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+
+
+def validate_run_receipt(receipt: dict[str, Any]) -> str:
+    """
+    Structural check of a run receipt's event schema.
+
+    Returns an empty string when well-formed, else a description of the
+    first problem.  The reliability surfaces refuse to hash arbitrary
+    shapes into a coordination identity: the runner raises at emit time,
+    and the verifier / ``reliability_check`` report ``MALFORMED_RECEIPT``
+    instead of proceeding.
+    """
+    events = receipt.get("events")
+    if not isinstance(events, list):
+        return f"receipt 'events' must be a list, got {type(events).__name__}"
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            return f"events[{index}] must be an object, got {type(event).__name__}"
+        kind = event.get("kind")
+        if not isinstance(kind, str) or not kind:
+            return f"events[{index}].kind must be a non-empty string, got {kind!r}"
+        seq = event.get("seq")
+        if isinstance(seq, bool) or not isinstance(seq, int):
+            return f"events[{index}].seq must be an integer, got {seq!r}"
+    return ""
 
 
 def coordination_projection(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -88,25 +124,33 @@ def coordination_projection(receipt: dict[str, Any]) -> dict[str, Any]:
     Project a run receipt down to its coordination-only view.
 
     Dropped: per-attempt run identity, the content-hash heads that commit
-    to model output, timing fields on every event, and the *payload* of
-    model-output events.  Kept: the event schedule itself — every event's
-    position and kind, and the full content of every coordination event.
+    to model output, timing fields on every event, and the *declared
+    stochastic payload fields* of model-output events
+    (:data:`_MODEL_SAMPLE_PAYLOAD_FIELDS`).  Kept: everything else —
+    every event's position and kind, the full content of every
+    coordination event, and any metadata an adapter records inside a
+    model event beyond the declared sample fields (fail-closed: unknown
+    fields default to coordination).
 
     Two fixed-coordination attempts must have byte-identical projections;
-    only the model-output payloads may differ.
+    only the declared model-output payloads may differ.
+
+    Callers that admit untrusted receipts must run
+    :func:`validate_run_receipt` first; this function does not coerce or
+    validate event field types.
     """
     projected: dict[str, Any] = {
         key: value for key, value in receipt.items() if key not in _ATTEMPT_VARIANT_RECEIPT_FIELDS and key != "events"
     }
     events: list[dict[str, Any]] = []
     for event in receipt.get("events", []):
-        kind = str(event.get("kind", ""))
-        if kind.startswith(_MODEL_OUTPUT_KIND_PREFIX):
-            # The *slot* in the schedule is coordination; the sampled
-            # content is not.  Keep position and kind, drop the payload.
-            events.append({"seq": event.get("seq"), "kind": kind})
-        else:
-            events.append({k: v for k, v in event.items() if k not in _TIMING_EVENT_FIELDS})
+        kind = event.get("kind")
+        dropped = _TIMING_EVENT_FIELDS
+        if isinstance(kind, str) and kind.startswith(_MODEL_OUTPUT_KIND_PREFIX):
+            # The schedule slot and any coordination metadata stay; only
+            # the declared sampled content is allowed to vary.
+            dropped = _MODEL_EVENT_DROPPED_FIELDS
+        events.append({k: v for k, v in event.items() if k not in dropped})
     projected["events"] = events
     return projected
 
@@ -429,8 +473,14 @@ class ReliabilityRunner:
         for task in self.suite.tasks:
             attempts: list[TaskResult] = []
             coordination_hashes: list[str] = []
-            for _ in range(self.k):
+            for attempt_index in range(self.k):
                 receipt = self.adapter.run_task(task, self.scheduler_config)
+                schema_problem = validate_run_receipt(receipt)
+                if schema_problem:
+                    raise ValueError(
+                        f"Adapter produced a malformed run receipt for task "
+                        f"{task.id!r} attempt {attempt_index}: {schema_problem}"
+                    )
                 passed, score, harness_output = self.adapter.score_task(task, receipt)
                 attempts.append(
                     TaskResult(
@@ -490,6 +540,10 @@ class ReliabilityVerificationStatus(Enum):
     MISSING_RECEIPT = "MISSING_RECEIPT"
     HASH_MISMATCH = "HASH_MISMATCH"
     FABRICATED_SCORE = "FABRICATED_SCORE"
+    # An embedded run receipt violates the event schema (non-string kind,
+    # non-integer seq, non-object events); it is never hashed into a
+    # coordination identity or replayed.
+    MALFORMED_RECEIPT = "MALFORMED_RECEIPT"
     # The sealed pass@1 / pass^k aggregates do not match the replayed verdicts.
     FABRICATED_FLOOR = "FABRICATED_FLOOR"
     # The k attempts of a task do not share one coordination identity, so
@@ -749,6 +803,17 @@ class ReliabilityVerifier:
                     status=ReliabilityVerificationStatus.MISSING_RECEIPT,
                     detail=f"Attempt {index} has no run receipt; the verdict has no replay substrate.",
                 )
+            schema_problem = validate_run_receipt(attempt.receipt)
+            if schema_problem:
+                return TaskReliabilityVerification(
+                    task_id=tr.task_id,
+                    status=ReliabilityVerificationStatus.MALFORMED_RECEIPT,
+                    detail=(
+                        f"Attempt {index} run receipt is malformed: {schema_problem}. "
+                        "A receipt that violates the event schema is never hashed "
+                        "into a coordination identity."
+                    ),
+                )
             live_hash = hashlib.sha256(_canonical_bytes(attempt.receipt)).hexdigest()
             if attempt.stored_receipt_hash != live_hash:
                 return TaskReliabilityVerification(
@@ -915,7 +980,28 @@ def reliability_check(
         )
 
     recorded = tr.attempts[attempt_index].receipt
+    recorded_problem = validate_run_receipt(recorded)
+    if recorded_problem:
+        return ReliabilityCheckResult(
+            passed=False,
+            task_id=tr.task_id,
+            attempt_index=attempt_index,
+            byte_identical=False,
+            coordination_identical=False,
+            detail=f"Recorded attempt receipt is malformed: {recorded_problem}",
+        )
+
     fresh = adapter.run_task(task, receipt.scheduler_config)
+    fresh_problem = validate_run_receipt(fresh)
+    if fresh_problem:
+        return ReliabilityCheckResult(
+            passed=False,
+            task_id=tr.task_id,
+            attempt_index=attempt_index,
+            byte_identical=False,
+            coordination_identical=False,
+            detail=f"Fresh run receipt is malformed: {fresh_problem}",
+        )
 
     byte_identical = _canonical_bytes(recorded) == _canonical_bytes(fresh)
     divergent_field = first_divergent_coordination_field(recorded, fresh)

@@ -18,6 +18,7 @@ from bernstein.eval.bench.reliability import (
     coordination_projection,
     first_divergent_coordination_field,
     reliability_check,
+    validate_run_receipt,
 )
 from bernstein.eval.bench.runner import (
     BenchRunner,
@@ -63,4 +64,5 @@ __all__ = [
     "coordination_projection",
     "first_divergent_coordination_field",
     "reliability_check",
+    "validate_run_receipt",
 ]
