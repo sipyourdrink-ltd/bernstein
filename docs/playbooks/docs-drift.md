@@ -207,6 +207,11 @@ Where it surfaces (`.github/workflows/docs-drift.yml`):
   subtrees` (updated in place, never duplicated).
 - It never fails a push to `main`: staleness accrues from ordinary merges and
   is a review prompt, not a merge gate.
+- The `drift-check` job that executes the checker scripts is read-only
+  (`contents: read`); the PR comments and tracking-issue upserts run in the
+  separate `drift-publish` job, which only downloads the report artifacts and
+  never executes repository code — on pull requests the checked-out scripts
+  are PR-controlled, so they must never share a job with a write token.
 
 To clear a flag, review the context file against its scope and touch it in a
 commit — update the prose, or make a reconfirmation-only edit if everything

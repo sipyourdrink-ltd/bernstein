@@ -6,7 +6,12 @@ must fetch full history (a shallow clone makes every churn number wrong, and
 the checker refuses to run), the compute step must stay unconditional and
 advisory, the PR comment must use its own marker tag (so it can never
 overwrite the docs-drift report comment), and the weekly sweep must upsert a
-single tracking issue instead of stacking duplicates. These tests pin each of
+single tracking issue instead of stacking duplicates.
+
+The job split is equally load-bearing: the compute job executes checker
+scripts from the event's ref - PR-controlled code on pull_request events -
+so it must hold contents: read only, while the publish job holds the write
+permissions and must never execute repository code. These tests pin each of
 those properties.
 """
 
@@ -21,9 +26,12 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "docs-drift.yml"
 
+COMPUTE_JOB = "drift-check"
+PUBLISH_JOB = "drift-publish"
 COMPUTE_STEP = "Run context-file staleness check"
 COMMENT_STEP = "Comment staleness report on the pull request"
 SWEEP_STEP = "Track accumulated context-file staleness (weekly)"
+FRESHNESS_SWEEP_STEP = "Track stale data-freshness markers (weekly)"
 MARKER_TAG = "<!-- context-staleness-report -->"
 
 
@@ -31,26 +39,30 @@ def _workflow() -> dict[str, object]:
     return cast("dict[str, object]", yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")))
 
 
-def _steps() -> list[dict[str, object]]:
+def _job(job_id: str) -> dict[str, object]:
     jobs = _workflow().get("jobs")
     assert isinstance(jobs, dict), "docs-drift.yml has no jobs mapping"
-    job = jobs.get("drift-check")
-    assert isinstance(job, dict), "expected a drift-check job"
-    steps = job.get("steps")
-    assert isinstance(steps, list), "drift-check job has no steps"
+    job = jobs.get(job_id)
+    assert isinstance(job, dict), f"expected a {job_id} job"
+    return job
+
+
+def _steps(job_id: str) -> list[dict[str, object]]:
+    steps = _job(job_id).get("steps")
+    assert isinstance(steps, list), f"{job_id} job has no steps"
     return [step for step in steps if isinstance(step, dict)]
 
 
-def _step(name: str) -> dict[str, object]:
-    for step in _steps():
+def _step(job_id: str, name: str) -> dict[str, object]:
+    for step in _steps(job_id):
         if step.get("name") == name:
             return step
-    pytest.fail(f"docs-drift.yml has no {name!r} step")
+    pytest.fail(f"docs-drift.yml job {job_id!r} has no {name!r} step")
 
 
 def test_checkout_fetches_full_history() -> None:
     """History-derived churn needs the whole history, not a shallow clone."""
-    for step in _steps():
+    for step in _steps(COMPUTE_JOB):
         uses = step.get("uses")
         if isinstance(uses, str) and uses.startswith("actions/checkout@"):
             with_block = step.get("with")
@@ -60,12 +72,12 @@ def test_checkout_fetches_full_history() -> None:
                 "checker refuses shallow clones rather than emit wrong numbers"
             )
             return
-    pytest.fail("docs-drift.yml has no actions/checkout step")
+    pytest.fail(f"docs-drift.yml job {COMPUTE_JOB!r} has no actions/checkout step")
 
 
 def test_staleness_step_runs_the_script_on_every_event() -> None:
     """The compute step is unconditional and baseline-aware."""
-    step = _step(COMPUTE_STEP)
+    step = _step(COMPUTE_JOB, COMPUTE_STEP)
     assert "if" not in step, f"{COMPUTE_STEP!r} must run on every event"
     run = step.get("run")
     assert isinstance(run, str)
@@ -74,13 +86,44 @@ def test_staleness_step_runs_the_script_on_every_event() -> None:
     assert "--strict" not in run, "the compute step is advisory; strictness belongs to the sweep's verdict"
 
 
+def test_compute_job_is_read_only_and_publish_runs_no_repository_code() -> None:
+    """PR-controlled checker code and the write token must never share a job.
+
+    On pull_request events the checked-out scripts come from the PR, so
+    the job that executes them holds contents: read only; the job that
+    comments and edits issues downloads report artifacts and runs no
+    checkout and no scripts.
+    """
+    compute = _job(COMPUTE_JOB)
+    assert compute.get("permissions") == {"contents": "read"}, (
+        f"{COMPUTE_JOB} executes PR-controlled scripts and must hold contents: read only"
+    )
+
+    publish = _job(PUBLISH_JOB)
+    permissions = publish.get("permissions")
+    assert isinstance(permissions, dict)
+    assert permissions.get("pull-requests") == "write"
+    assert permissions.get("issues") == "write"
+    assert publish.get("needs") == COMPUTE_JOB
+
+    for step in _steps(PUBLISH_JOB):
+        uses = step.get("uses")
+        if isinstance(uses, str):
+            assert not uses.startswith("actions/checkout@"), (
+                f"{PUBLISH_JOB} must not check out repository code next to its write token"
+            )
+        run = step.get("run")
+        if isinstance(run, str):
+            assert "scripts/" not in run, f"{PUBLISH_JOB} must not execute repository scripts: {step.get('name')!r}"
+
+
 def test_pr_comment_upsert_uses_its_own_marker_tag() -> None:
     """The comment step upserts by a tag distinct from the drift report's."""
-    step = _step(COMMENT_STEP)
+    step = _step(PUBLISH_JOB, COMMENT_STEP)
     condition = step.get("if")
     assert isinstance(condition, str)
     assert "pull_request" in condition
-    assert "new_flags" in condition, "the comment must key on flags the PR itself introduced"
+    assert "staleness_new_flags" in condition, "the comment must key on flags the PR itself introduced"
     assert step.get("continue-on-error") is True, "a 403 on the comment API must not fail the job"
 
     with_block = step.get("with")
@@ -92,19 +135,34 @@ def test_pr_comment_upsert_uses_its_own_marker_tag() -> None:
     assert "updateComment" in script and "createComment" in script, "expected an upsert, not append-only comments"
 
 
-def test_weekly_sweep_upserts_a_single_tracking_issue() -> None:
-    """Scheduled runs update one tracking issue; they never stack duplicates."""
-    step = _step(SWEEP_STEP)
-    assert step.get("if") == "github.event_name == 'schedule'"
+@pytest.mark.parametrize("step_name", [SWEEP_STEP, FRESHNESS_SWEEP_STEP])
+def test_weekly_sweeps_upsert_only_exact_bot_owned_tracking_issues(step_name: str) -> None:
+    """Scheduled runs update one tracking issue; they never stack duplicates
+    and never edit a near-miss issue that a broad title search returned."""
+    step = _step(PUBLISH_JOB, step_name)
+    condition = step.get("if")
+    assert isinstance(condition, str)
+    assert "github.event_name == 'schedule'" in condition
     run = step.get("run")
     assert isinstance(run, str)
     assert "gh issue list" in run, "must look for an existing tracking issue first"
     assert "gh issue edit" in run and "gh issue create" in run
-    assert "context-file staleness" in run, "the tracking-issue title anchors the upsert search"
-    assert "heredoc" not in run and "<<EOF" not in run, (
+    # The lookup must not trust result order of a broad in:title search:
+    # constrain to the bot-owned tracker and require an exact title match.
+    assert '--author "app/github-actions"' in run, "lookup must be constrained to bot-authored issues"
+    assert "--label bot" in run, "lookup must be constrained to the bot-labeled tracker"
+    assert "$2 == title" in run, "lookup must require an exact title match, not the first search hit"
+    assert "<<EOF" not in run, (
         "the issue body must be assembled with printf - the report contains "
         "backticks, which an unquoted heredoc expands as command substitutions"
     )
+
+
+def test_sweep_step_is_gated_on_an_explicit_staleness_verdict() -> None:
+    """A crashed compute step ('unknown'/'') must never file an empty issue."""
+    step = _step(PUBLISH_JOB, SWEEP_STEP)
+    condition = cast("str", step.get("if"))
+    assert "staleness_clean == 'False'" in condition
 
 
 def test_workflow_triggers_cover_the_staleness_inputs() -> None:

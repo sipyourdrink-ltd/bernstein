@@ -37,7 +37,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | push | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 1 |
+| .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
@@ -103,7 +103,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/coverage-ratchet.yml | ratchet: Total coverage ratchet |
 | .github/workflows/dependabot-auto-merge.yml | auto-merge |
 | .github/workflows/dependency-review.yml | review: Dependency review |
-| .github/workflows/docs-drift.yml | drift-check: Run drift check |
+| .github/workflows/docs-drift.yml | drift-check: Run drift check<br>drift-publish: Publish drift surfaces |
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture snapshot |
 | .github/workflows/eval-nightly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
 | .github/workflows/hotfix-r-tracker.yml | track: Detect hotfix-begets-hotfix |
@@ -169,7 +169,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/coverage-ratchet.yml | ratchet: {"actions": "read", "contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
-| .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
+| .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read"}<br>drift-publish: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
@@ -224,7 +224,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cluster-e2e.yml | cluster-e2e: upload cluster-e2e-logs |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: upload cluster-tunnel-e2e-logs |
 | .github/workflows/coverage-ratchet.yml | ratchet: download coverage-report |
-| .github/workflows/docs-drift.yml | drift-check: upload docs-drift-report |
+| .github/workflows/docs-drift.yml | drift-check: upload docs-drift-report<br>drift-publish: download docs-drift-report |
 | .github/workflows/eval-nightly.yml | bench: upload eval-nightly-${{ github.run_id }}<br>smoke: upload eval-nightly-smoke |
 | .github/workflows/license-compliance.yml | license-check: upload license-report |
 | .github/workflows/mutation-fixed.yml | mutate: upload mutation-${{ matrix.module }}<br>summary: download - |
