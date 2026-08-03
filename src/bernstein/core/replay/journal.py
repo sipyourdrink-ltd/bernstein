@@ -436,25 +436,76 @@ def _remove_tree(path: Path) -> None:
     path.rmdir()
 
 
-def load_events(path: Path) -> list[dict[str, Any]]:
+class JournalParseError(ValueError):
+    """Raised by ``load_events(strict=True)`` for an untrustworthy row.
+
+    Carries the 0-based physical line index so a diagnostic caller can name
+    the exact on-disk location that refused to parse.
+    """
+
+
+def load_events(path: Path, *, strict: bool = False) -> list[dict[str, Any]]:
     """Load all events from a journal JSONL file in append order.
 
-    Malformed lines are skipped so a partial trailing write cannot wedge
-    a reader.
+    One scan implementation serves both reader policies, so a journal-format
+    change can never make a diagnostic reader drift from the rest of replay:
+
+    * tolerant (default): malformed lines are skipped so a partial trailing
+      write cannot wedge an ordinary reader;
+    * ``strict=True``: any non-blank line that does not decode as a JSON
+      object raises :class:`JournalParseError` naming the 0-based physical
+      line index. Diagnostic readers (``bernstein audit diagnose``) use this
+      so no reported index can ever count parsed rows rather than physical
+      journal lines, and no finding is derived from a filtered sequence.
     """
     events: list[dict[str, Any]] = []
     if not path.exists():
         return events
     with path.open(encoding="utf-8") as f:
-        for raw in f:
+        for lineno, raw in enumerate(f):
             line = raw.strip()
             if not line:
                 continue
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                if strict:
+                    raise JournalParseError(f"unparsable line at physical line {lineno} ({exc.msg})") from exc
                 continue
+            if strict:
+                if not isinstance(row, dict):
+                    raise JournalParseError(f"non-object row at physical line {lineno}")
+                _validate_strict_row(row, lineno)
+            events.append(row)
     return events
+
+
+def _validate_strict_row(row: dict[str, Any], lineno: int) -> None:
+    """Shape-check one journal row for the strict (diagnostic) reader.
+
+    ``verify_journal`` recomputes hashes with tolerant ``.get`` defaults, so
+    a row missing or mistyping its chain fields would surface downstream as
+    a *chain break* - a cryptographic verdict - when the honest verdict is
+    "malformed input". The strict reader therefore refuses such a row up
+    front, naming the physical line, before any head or chain computation
+    can be derived from it.
+
+    Raises:
+        JournalParseError: A required field is missing or carries the wrong
+            primitive type.
+    """
+    event = row.get("event")
+    if not isinstance(event, str) or not event:
+        raise JournalParseError(f"row at physical line {lineno} has a missing or non-string 'event'")
+    index = row.get("index")
+    if not isinstance(index, int) or isinstance(index, bool):
+        raise JournalParseError(f"row at physical line {lineno} has a missing or non-integer 'index'")
+    if not isinstance(row.get("prev_hash"), str):
+        raise JournalParseError(f"row at physical line {lineno} has a missing or non-string 'prev_hash'")
+    for hash_field in ("payload_hash", "event_hash"):
+        value = row.get(hash_field)
+        if not isinstance(value, str) or not value:
+            raise JournalParseError(f"row at physical line {lineno} has a missing or empty {hash_field!r}")
 
 
 def verify_journal(path: Path) -> JournalVerifyResult:
@@ -665,6 +716,7 @@ __all__ = [
     "JOURNAL_FILENAME",
     "RETENTION_ENV_VAR",
     "EventJournal",
+    "JournalParseError",
     "JournalPathError",
     "JournalVerifyResult",
     "compute_event_hash",

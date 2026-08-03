@@ -41,6 +41,24 @@ REASON_CODE_LENGTH_MISMATCH = "length_mismatch"
 #: The first mismatching event is a provider-side context mutation entry.
 REASON_CODE_PROVIDER_STATE_MUTATION = "provider_state_mutation"
 
+# -- Single-run diagnosis attribution (issue #2928) -------------------------
+# ``bernstein audit diagnose`` classifies the first faulty step of a single
+# run with the same machine-readable vocabulary this module already defines
+# for two-run divergence, so the reason-code set stays single-sourced. The
+# additions below are strictly additive: existing codes keep their values.
+
+#: The first faulty step is a chain-integrity break located by
+#: :func:`bernstein.core.replay.journal.verify_journal`.
+REASON_CODE_CHAIN_BREAK = "chain_break"
+
+#: The culprit step is the first recorded step whose payload carries the
+#: failure fingerprint of the diagnosed incident.
+REASON_CODE_FIRST_FAILING_TOOL_RESULT = "first_failing_tool_result"
+
+#: The culprit step first introduced the content hash that a downstream
+#: gate verdict or lineage taint projection rejected.
+REASON_CODE_BAD_INPUT_CONTENT_HASH = "bad_input_content_hash"
+
 
 @dataclass(frozen=True)
 class DivergenceResult:

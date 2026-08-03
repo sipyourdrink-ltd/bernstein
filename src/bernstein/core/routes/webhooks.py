@@ -347,7 +347,7 @@ def _with_receipt(response: JSONResponse, admission: TriggerAdmission | None) ->
         return response
     import json as _json
 
-    body: dict[str, Any] = _json.loads(response.body)
+    body: dict[str, Any] = _json.loads(bytes(response.body))
     body["receipt"] = admission.receipt.to_dict()
     return JSONResponse(status_code=response.status_code, content=body)
 

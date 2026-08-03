@@ -67,6 +67,8 @@ bernstein replay list                 # run ids recorded on disk
 bernstein replay latest --verify      # recompute the journal head, name the first divergent step
 bernstein lineage verify <run_id>     # recompute the always-on lineage spine
 bernstein audit verify                # HMAC chain + Merkle seal (written because audit was enabled)
+bernstein audit diagnose <run_id> --signal gate --sign-key KEY
+                                      # name the exact step a failure entered the run, as a signed receipt
 bernstein verify run <run_id> --signing-key-path key.pem   # sign one portable run receipt
 bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offline: file only
 ```
@@ -74,6 +76,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
 
 The run receipt binds the journal head and the lineage-spine head (plus, opt-in, an audit-chain range) under one Ed25519-signed subject with the public key embedded, so a reviewer holding the file and the operator's public key can confirm the recorded actions are exactly what executed - no HMAC key, no live `.sdd/`, exit `2` naming the first divergent step on tamper. With the file alone (no `--public-key` pin) the check is integrity-only: it proves the receipt is internally consistent, not who signed it, and the verdict says so. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+The same checkability applies to evaluation numbers: `bernstein bench run <suite> --reliability k` runs every task `k` times under fixed coordination and reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling, sealed in a signed receipt that `bernstein bench reliability-verify` recomputes offline — a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 ### how it works
 

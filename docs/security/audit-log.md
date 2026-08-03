@@ -613,9 +613,43 @@ rare benign causes:
    tighten the key permissions and try again rather than pointing at
    a different key - the existing log was signed with the original.
 
+## Diagnosing a run
+
+`bernstein audit verify` tells you the chain is intact; it does not tell
+you which step of a run first went wrong. `bernstein audit diagnose` does:
+it evaluates a failure signal as a pure predicate over the run's
+Merkle-chained journal (`.sdd/runs/<run_id>/journal.jsonl`) and names the
+first step at which the predicate holds, sealed into an Ed25519-signed,
+content-addressed diagnosis receipt you can re-derive offline.
+
+```bash
+# name the step that introduced the content hash the eval gate rejected
+bernstein audit diagnose <run_id> --signal gate --sign-key KEY
+
+# walk a tainted artefact's lineage back to the recording step
+bernstein audit diagnose <run_id> --signal artefact:out/report.md --sign-key KEY
+
+# localise a chain break (tamper / non-determinism) as a signed finding
+bernstein audit diagnose <run_id> --signal replay --sign-key KEY
+
+# re-derive the culprit offline and assert byte-identity with the receipt
+bernstein audit diagnose verify .sdd/evidence/diagnosis-<run_id>-<hash>.json \
+  --public-key PUB.pem
+```
+
+Fail-closed: a missing or empty journal, a journal with any unparsable
+line (torn or corrupted write), an unavailable audit HMAC key
+(load-only -- diagnose never creates key material), a chain-broken journal
+under a content signal, or a signal whose fingerprint appears in no
+recorded step all exit non-zero and write **no** receipt. The diagnosis is
+a projection of the signed record, never a heuristic log scan. Full
+runbook: [audit diagnose](../operations/audit-diagnose.md).
+
 ## Cross-references
 
 - [SOC 2 audit mode quick start](AUDIT.md)
+- [Single-run fault localisation](../operations/audit-diagnose.md) -
+  `bernstein audit diagnose` runbook.
 - [Multi-tenant audit-chain export](audit-multitenant.md)
 - [DSSE / in-toto envelope](audit-dsse-envelope.md) - third-party-verifiable
   wrapper over the Article 12 bundle.

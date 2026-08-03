@@ -25,6 +25,9 @@ Commands:
   bernstein audit slice              Write a deterministic subset.
   bernstein audit query              Query audit log events with filters.
   bernstein audit archive            Safely archive corrupt / pre-rotation jsonl files.
+  bernstein audit diagnose           Name the first faulty step of a run from
+                                     its signed per-step journal (#2928).
+  bernstein audit diagnose verify    Re-derive a diagnosis receipt offline.
 
 Operator guide: docs/security/audit-log.md.
 """
@@ -3081,3 +3084,318 @@ def receipt_verify_cmd(
     if proc.returncode != 0 and proc.stderr:
         console.print(f"[red]{proc.stderr.rstrip()}[/red]")
     raise SystemExit(proc.returncode)
+
+
+# ---------------------------------------------------------------------------
+# audit diagnose - single-run first-fault localisation (#2928)
+# ---------------------------------------------------------------------------
+
+
+@audit_group.command("diagnose")
+@click.argument("args", nargs=-1, required=True)
+@click.option(
+    "--signal",
+    "signal_spec",
+    default=None,
+    help="Failure signal: gate[:RECEIPT_HASH] | artefact:<path> | incident:<case-id> | replay.",
+)
+@click.option(
+    "--sign-key",
+    "sign_key_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Ed25519 private key (PEM or raw 32-byte seed) that signs the diagnosis receipt.",
+)
+@click.option(
+    "--public-key",
+    "public_key_path",
+    default=None,
+    type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+    help="Trusted Ed25519 public key to pin when verifying a receipt.",
+)
+@click.option(
+    "--out",
+    "-o",
+    "output_dir",
+    default=None,
+    help="Receipt output directory (default: <sdd-dir>/evidence).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the finding as JSON.")
+@click.option("--sdd-dir", "sdd_dir", default=".sdd", show_default=True, help="Project .sdd directory.")
+@click.option(
+    "--audit-key",
+    "audit_key_path",
+    default=None,
+    type=click.Path(dir_okay=False, resolve_path=True),
+    help="Audit HMAC key path override (default: the canonical resolver, load-only).",
+)
+def diagnose_cmd(
+    args: tuple[str, ...],
+    signal_spec: str | None,
+    sign_key_path: str | None,
+    public_key_path: str | None,
+    output_dir: str | None,
+    as_json: bool,
+    sdd_dir: str,
+    audit_key_path: str | None,
+) -> None:
+    """Name the exact first faulty step of a run from its signed journal.
+
+    \b
+    Usage:
+      bernstein audit diagnose <RUN_ID> --signal <SIGNAL> --sign-key KEY
+      bernstein audit diagnose verify <RECEIPT> [--public-key PEM]
+
+    \b
+    The per-run journal (.sdd/runs/<run_id>/journal.jsonl) already records
+    every step as a Merkle-chained row. `verify` (chain integrity) and
+    `replay diff` (two runs) cannot point at the first faulty step of one
+    run - this command can: it resolves --signal into a pure predicate over
+    on-disk records, names the minimal step index at which the predicate
+    first holds, and seals the finding (culprit_index + culprit_step_hash,
+    bound to the recomputed journal head) into an Ed25519-signed,
+    content-addressed diagnosis receipt under <sdd-dir>/evidence.
+    Complementary to `bernstein replay --verify/--from-step/diff`, which
+    reconstructs and diffs; diagnose localises and signs.
+
+    \b
+    Fail-closed: a missing/empty journal, a journal with any unparsable
+    line, an unavailable audit HMAC key, a chain-broken journal (for
+    content signals), or a signal that resolves to no recorded step all
+    exit non-zero and write no receipt - the diagnosis is a projection of
+    the signed record, never a heuristic scan.
+
+    \b
+    Exit codes (diagnose): 0 chain intact / nothing to report; 1 culprit
+    named and receipt written; 2 fail-closed refusal.
+    Exit codes (verify): 0 receipt re-derives byte-for-byte; 1 verification
+    failed; 2 usage or unreadable receipt.
+
+    Operator runbook: docs/security/audit-log.md (Diagnosing a run).
+    """
+    if args[0] == "verify":
+        raise SystemExit(
+            _diagnose_verify(
+                args[1:],
+                public_key_path=public_key_path,
+                sdd_dir=Path(sdd_dir),
+                audit_key_path=audit_key_path,
+                as_json=as_json,
+            )
+        )
+    raise SystemExit(
+        _diagnose_run_cli(
+            args,
+            signal_spec=signal_spec,
+            sign_key_path=sign_key_path,
+            output_dir=output_dir,
+            sdd_dir=Path(sdd_dir),
+            audit_key_path=audit_key_path,
+            as_json=as_json,
+        )
+    )
+
+
+def _diagnose_load_audit_key(audit_key_path: str | None) -> bytes:
+    """Load the operator audit HMAC key, never creating one (fail closed)."""
+    from bernstein.core.security.audit import load_audit_key
+
+    return load_audit_key(Path(audit_key_path) if audit_key_path else None)
+
+
+def _diagnose_run_cli(
+    args: tuple[str, ...],
+    *,
+    signal_spec: str | None,
+    sign_key_path: str | None,
+    output_dir: str | None,
+    sdd_dir: Path,
+    audit_key_path: str | None,
+    as_json: bool,
+) -> int:
+    """Run the diagnosis flow. Returns the process exit code."""
+    import json as _json
+
+    from bernstein.core.persistence.lineage_signer import Ed25519FileKeySigner, LineageSignerError
+    from bernstein.core.replay.diagnose import DiagnoseError, diagnose_run
+    from bernstein.core.replay.diagnose_signals import resolve_signal
+    from bernstein.core.replay.diagnosis_receipt import DiagnosisReceiptError, build_diagnosis_receipt
+    from bernstein.core.replay.journal import JournalPathError, run_journal_path
+    from bernstein.core.security.audit import AuditKeyMissingError, AuditKeyPermissionError
+
+    if len(args) != 1:
+        console.print("[red]Usage:[/red] bernstein audit diagnose <RUN_ID> --signal <SIGNAL> --sign-key KEY")
+        return 2
+    run_id = args[0]
+    if signal_spec is None:
+        console.print(
+            "[red]--signal is required[/red] (gate[:RECEIPT_HASH] | artefact:<path> | incident:<case-id> | replay)"
+        )
+        return 2
+    if sign_key_path is None:
+        console.print(
+            "[red]--sign-key is required:[/red] the diagnosis receipt is the deliverable and it "
+            "must be Ed25519-signed; refusing to emit an unsigned finding."
+        )
+        return 2
+
+    try:
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
+    try:
+        audit_key = _diagnose_load_audit_key(audit_key_path)
+    except (AuditKeyMissingError, AuditKeyPermissionError) as exc:
+        console.print(f"[red]Audit HMAC key unavailable - failing closed, no receipt:[/red] {exc}")
+        return 2
+    try:
+        signer = Ed25519FileKeySigner.from_path(Path(sign_key_path))
+    except LineageSignerError as exc:
+        console.print(f"[red]Cannot load signing key:[/red] {exc}")
+        return 2
+    # The artefact signal runs the lineage gate; mirror `audit taint`: the
+    # operator HMAC layer is checked when BERNSTEIN_LINEAGE_OP_SECRET is set,
+    # and the mode used is disclosed inside the sealed receipt params.
+    import os as _os
+
+    secret_raw = _os.environ.get("BERNSTEIN_LINEAGE_OP_SECRET")
+    lineage_secret = secret_raw.encode("utf-8") if secret_raw else None
+    try:
+        predicate = resolve_signal(signal_spec, sdd_dir=sdd_dir, lineage_operator_secret=lineage_secret)
+        result = diagnose_run(journal_path, predicate, run_id=run_id)
+    except DiagnoseError as exc:
+        console.print(f"[red]Diagnosis refused (fail closed, no receipt):[/red] {exc}")
+        return 2
+
+    if not result.located:
+        if as_json:
+            click.echo(_json.dumps({"run_id": run_id, "located": False, "reason": result.reason}, sort_keys=True))
+        else:
+            console.print(f"[green]{result.reason}[/green] - nothing to report, no receipt emitted.")
+        return 0
+
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    chain_head = AuditChainStore(sdd_dir / "audit", key=audit_key).prev_chain_digest
+    try:
+        receipt = build_diagnosis_receipt(
+            result,
+            chain_head_hmac=chain_head,
+            signer=signer,
+            audit_key=audit_key,
+            output_dir=Path(output_dir) if output_dir else sdd_dir / "evidence",
+        )
+    except DiagnosisReceiptError as exc:
+        console.print(f"[red]Receipt build failed:[/red] {exc}")
+        return 2
+
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {
+                    "run_id": run_id,
+                    "located": True,
+                    "culprit_index": result.culprit_index,
+                    "culprit_step_hash": result.culprit_step_hash,
+                    "reason_code": result.reason_code,
+                    "reason": result.reason,
+                    "predicate_id": result.predicate_id,
+                    "predicate_hash": result.predicate_hash,
+                    "journal_head": result.journal_head,
+                    "receipt_hash": receipt.receipt_hash,
+                    "receipt_sha256": receipt.sha256,
+                    "receipt_path": str(receipt.receipt_path),
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]run {run_id}[/bold]\n"
+            f"culprit step: [bold red]#{result.culprit_index}[/bold red] of {result.event_count}\n"
+            f"step hash:    {result.culprit_step_hash}\n"
+            f"reason:       [bold]{result.reason_code}[/bold] - {result.reason}\n"
+            f"journal head: {result.journal_head}",
+            title="Diagnosis",
+            border_style="red",
+            expand=False,
+        )
+    )
+    console.print(f"[green]Signed diagnosis receipt[/green] -> {receipt.receipt_path}")
+    console.print(f"  receipt_hash: {receipt.receipt_hash}")
+    console.print("[dim]Re-check offline with:[/dim] bernstein audit diagnose verify " + str(receipt.receipt_path))
+    return 1
+
+
+def _diagnose_verify(
+    args: tuple[str, ...],
+    *,
+    public_key_path: str | None,
+    sdd_dir: Path,
+    audit_key_path: str | None,
+    as_json: bool,
+) -> int:
+    """Verify a diagnosis receipt offline. Returns the process exit code."""
+    import json as _json
+
+    from bernstein.core.persistence.lineage_signer import Ed25519PublicKeyVerifier, LineageSignerError
+    from bernstein.core.replay.diagnosis_receipt import verify_diagnosis_receipt
+    from bernstein.core.replay.journal import JournalPathError, run_journal_path
+    from bernstein.core.security.audit import AuditKeyMissingError, AuditKeyPermissionError
+
+    if len(args) != 1:
+        console.print("[red]Usage:[/red] bernstein audit diagnose verify <RECEIPT> [--public-key PEM]")
+        return 2
+    receipt_path = Path(args[0])
+    if not receipt_path.is_file():
+        console.print(f"[red]Receipt not found:[/red] {receipt_path}")
+        return 2
+
+    try:
+        run_id = str(_json.loads(receipt_path.read_text(encoding="utf-8")).get("run_id", ""))
+        journal_path = run_journal_path(sdd_dir, run_id)
+    except (OSError, _json.JSONDecodeError, JournalPathError) as exc:
+        console.print(f"[red]Cannot locate the diagnosed journal:[/red] {exc}")
+        return 2
+
+    verifier = None
+    if public_key_path is not None:
+        try:
+            verifier = Ed25519PublicKeyVerifier.from_path(Path(public_key_path))
+        except LineageSignerError as exc:
+            console.print(f"[red]Cannot load public key:[/red] {exc}")
+            return 2
+
+    audit_key: bytes | None
+    try:
+        audit_key = _diagnose_load_audit_key(audit_key_path)
+    except (AuditKeyMissingError, AuditKeyPermissionError):
+        audit_key = None
+
+    outcome = verify_diagnosis_receipt(
+        receipt_path,
+        journal_path=journal_path,
+        verifier=verifier,
+        audit_key=audit_key,
+    )
+
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {"ok": outcome.ok, "reason": outcome.reason, "hmac_checked": outcome.hmac_checked},
+                sort_keys=True,
+            )
+        )
+        return 0 if outcome.ok else 1
+
+    if outcome.ok:
+        console.print("[green]Diagnosis receipt verified:[/green] the culprit re-derives byte-for-byte.")
+        if not outcome.hmac_checked:
+            console.print("[yellow]Operator HMAC not checked (no audit key available).[/yellow]")
+        return 0
+    console.print(f"[red]Diagnosis receipt FAILED verification:[/red] {outcome.reason}")
+    return 1

@@ -12,14 +12,32 @@ name: docs-drift
 # The removed-verb check below is the one hard gate that also fails on pull
 # requests: a doc naming a deleted command surface is a factual error, not
 # staleness, so it must not be allowed to land and be fixed later.
+#
+# The context-file staleness check (scripts/check_context_staleness.py)
+# covers the failure mode the other two gates cannot see: a subtree churns
+# while the curated context file describing it stays byte-identical. It is
+# derived from git history alone, so it needs the full-history checkout
+# below; on pull requests it posts a non-blocking comment when the PR
+# itself pushes a scope over threshold, and the weekly scheduled sweep
+# opens/updates a single tracking issue for accumulated staleness.
+#
+# Job split (defense in depth): the drift-check job executes the checker
+# scripts from the checked-out ref - on pull_request events that is
+# PR-controlled code - so it holds contents: read ONLY and hands its
+# reports off as artifacts. The drift-publish job holds the write
+# permissions for the PR comments and tracking-issue upserts, and runs no
+# repository code at all: it only downloads the artifacts and calls the
+# GitHub API.
 
 on:
   pull_request:
     paths:
       - "docs/**"
-      - "src/bernstein/**"
+      - "src/**"
+      - "tests/**"
       - "scripts/check_docs_drift.py"
       - "scripts/check_data_freshness.py"
+      - "scripts/check_context_staleness.py"
       - "scripts/gen_agents_md.py"
       - ".github/workflows/docs-drift.yml"
       - "AGENTS.md"
@@ -32,9 +50,11 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "src/bernstein/**"
+      - "src/**"
+      - "tests/**"
       - "scripts/check_docs_drift.py"
       - "scripts/check_data_freshness.py"
+      - "scripts/check_context_staleness.py"
       - "scripts/gen_agents_md.py"
       - ".github/workflows/docs-drift.yml"
       - "AGENTS.md"
@@ -59,16 +79,21 @@ permissions:
 
 jobs:
   drift-check:
-    # Single job: the drift check and the data-freshness check share the
-    # same checkout + Python setup, so running them as sequential steps
-    # saves one runner slot per PR event on the shared pool.
+    # Compute-only job: it checks out and executes the checker scripts
+    # (check_docs_drift.py, check_context_staleness.py,
+    # check_data_freshness.py) from the event's ref, so it must never
+    # hold a write token - on pull_request events that code is
+    # PR-controlled. All publishing happens in drift-publish below.
     name: Run drift check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: write
-      issues: write
+    outputs:
+      drift_clean: ${{ steps.drift.outputs.clean }}
+      staleness_clean: ${{ steps.staleness.outputs.clean }}
+      staleness_new_flags: ${{ steps.staleness.outputs.new_flags }}
+      freshness_rc: ${{ steps.freshness.outputs.rc }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -77,6 +102,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # Full history: the context-file staleness check derives churn
+          # numbers from git log; a shallow clone would silently truncate
+          # every one of them, so the checker refuses shallow repos.
+          fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
@@ -103,52 +132,101 @@ jobs:
           cat drift-report.md
         shell: bash
 
+      - name: Run context-file staleness check
+        id: staleness
+        # Deterministic staleness report for curated context files (nested
+        # AGENTS.md, committed .sdd/agents-md overlays): last commit that
+        # touched each file vs the churn under its scope since, derived
+        # from git history alone. On pull requests the PR base sha is the
+        # baseline, so only files this PR itself pushes over threshold
+        # count as new flags. Advisory on every event; the weekly sweep
+        # in drift-publish tracks accumulated flags in a single issue.
+        env:
+          BASELINE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set +e
+          baseline_args=()
+          if [ -n "${BASELINE_SHA}" ]; then
+            baseline_args=(--baseline "${BASELINE_SHA}")
+          fi
+          python scripts/check_context_staleness.py "${baseline_args[@]}" > staleness-report.md
+          rc=$?
+          echo "report_rc=${rc}" >> "$GITHUB_OUTPUT"
+          python scripts/check_context_staleness.py "${baseline_args[@]}" --json > staleness-report.json
+          clean=$(python -c "import json; print(json.load(open('staleness-report.json')).get('clean', False))" 2>/dev/null || echo "unknown")
+          new_flags=$(python -c "import json; print(len(json.load(open('staleness-report.json')).get('newly_flagged', [])))" 2>/dev/null || echo "0")
+          echo "clean=${clean}" >> "$GITHUB_OUTPUT"
+          echo "new_flags=${new_flags}" >> "$GITHUB_OUTPUT"
+          cat staleness-report.md
+        shell: bash
+
+      # Advisory data-freshness check. Flags time-stamped metric lines
+      # (stars, downloads, dated qualifiers) older than 30 days as a soft
+      # warning. Staleness is purely temporal, so pushes to main and PRs
+      # only run the soft check and never fail on it. The hard 60-day
+      # threshold is computed only on the weekly scheduled run; the
+      # publish job turns a non-zero verdict into the tracking-issue
+      # upsert so this read-only job never needs a token.
+      - name: Run data-freshness check (soft on PR + push, strict weekly)
+        id: freshness
+        run: |
+          set -e
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+            # PR + push to main: soft run only. A stale marker is a warning,
+            # never a failure, so it cannot redden an unrelated main push -
+            # and a crashing checker must not kill the step either, or the
+            # report artifact below would never upload and drift-publish
+            # would fail at download-artifact.
+            set +e
+            python scripts/check_data_freshness.py
+            RC=$?
+            set -e
+            if [ "${RC}" -ne 0 ]; then
+              echo "data-freshness check exited ${RC}; soft mode, continuing"
+            fi
+            echo "rc=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Weekly scheduled sweep: compute the hard-threshold verdict and
+          # capture the report for the publish job.
+          set +e
+          python scripts/check_data_freshness.py --strict > freshness-report.txt 2>&1
+          RC=$?
+          set -e
+          cat freshness-report.txt
+          echo "rc=${RC}" >> "$GITHUB_OUTPUT"
+        shell: bash
+
       - name: Upload drift report
+        # always(): a failed earlier step must still hand whatever reports
+        # exist to drift-publish instead of suppressing all publishing.
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: docs-drift-report
+          # freshness-report.txt exists only on scheduled runs; the
+          # missing-file warning on other events is expected.
           path: |
             drift-report.md
             drift-report.json
+            staleness-report.md
+            staleness-report.json
+            freshness-report.txt
           retention-days: 14
 
       - name: Add drift report to job summary
         # Always surface the report in the job summary when there is drift,
         # so it is visible on fork PRs (whose read-only token cannot post a
-        # comment) and whenever the comment step below is swallowed.
+        # comment) and whenever the comment step in drift-publish is
+        # swallowed.
         if: github.event_name == 'pull_request' && steps.drift.outputs.clean != 'True'
         run: cat drift-report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Comment drift report on the pull request
-        # Same-repo PRs only: fork PRs run with a read-only GITHUB_TOKEN and
-        # the comment API 403s (the job summary above is their fallback).
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.drift.outputs.clean != 'True'
-        # Dependabot same-repo PRs also receive a read-only token, so even a
-        # same-repo comment can 403. Do not fail the drift check on that; the
-        # report is already in the job summary and the uploaded artifact.
-        continue-on-error: true
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('drift-report.md', 'utf8');
-            const tag = '<!-- docs-drift-report -->';
-            const issue_number = context.payload.pull_request.number;
-            const { owner, repo } = context.repo;
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner, repo, issue_number, per_page: 100,
-            });
-            const existing = comments.find(c => c.body && c.body.includes(tag));
-            const payload = `${tag}\n${body}`;
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner, repo, comment_id: existing.id, body: payload,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner, repo, issue_number, body: payload,
-              });
-            }
+      - name: Add staleness report to job summary
+        # Fork-PR fallback, mirroring the drift report above: the report
+        # stays visible even when the comment step cannot post.
+        if: github.event_name == 'pull_request' && steps.staleness.outputs.new_flags != '0' && steps.staleness.outputs.new_flags != ''
+        run: cat staleness-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail on docs referencing removed CLI verbs
         # These command surfaces were deleted from the CLI, so a doc that
@@ -191,58 +269,123 @@ jobs:
         run: |
           python scripts/check_docs_drift.py --strict
 
-      # Advisory data-freshness check, folded into this job so it reuses
-      # the checkout + Python setup instead of holding a second runner
-      # slot. Flags time-stamped metric lines (stars, downloads, dated
-      # qualifiers) older than 30 days as a soft warning. Staleness is
-      # purely temporal, so pushes to main and PRs only run the soft check
-      # and never fail on it. The hard 60-day threshold is enforced only
-      # on the weekly scheduled run, which opens or updates a single
-      # marker-tagged tracking issue instead of failing an unrelated main
-      # push.
-      - name: Run data-freshness check (soft on PR + push, strict weekly)
+  drift-publish:
+    # Publish-only job: holds the write permissions the compute job must
+    # not have, and runs no repository code - no checkout, only the
+    # downloaded report artifacts and GitHub API calls. Runs even when
+    # drift-check failed one of its hard gates (removed-verb, main-branch
+    # strict) so the advisory reports still reach the PR, matching the
+    # old single-job ordering where comments posted before those gates.
+    name: Publish drift surfaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: drift-check
+    if: needs.drift-check.result == 'success' || needs.drift-check.result == 'failure'
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Download drift report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: docs-drift-report
+
+      - name: Comment drift report on the pull request
+        # Same-repo PRs only: fork PRs run with a read-only GITHUB_TOKEN and
+        # the comment API 403s (the drift-check job summary is their
+        # fallback).
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.drift-check.outputs.drift_clean != 'True'
+        # Dependabot same-repo PRs also receive a read-only token, so even a
+        # same-repo comment can 403. Do not fail the drift check on that; the
+        # report is already in the job summary and the uploaded artifact.
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('drift-report.md', 'utf8');
+            const tag = '<!-- docs-drift-report -->';
+            const issue_number = context.payload.pull_request.number;
+            const { owner, repo } = context.repo;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(tag));
+            const payload = `${tag}\n${body}`;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body: payload,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body: payload,
+              });
+            }
+
+      - name: Comment staleness report on the pull request
+        # Non-blocking by design: staleness is a review prompt, not a
+        # merge gate. Posted only when this PR itself pushed a context
+        # file's scope over threshold (new_flags from the baseline
+        # comparison), for same-repo PRs whose token can comment.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.drift-check.outputs.staleness_new_flags != '0' && needs.drift-check.outputs.staleness_new_flags != ''
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('staleness-report.md', 'utf8');
+            const tag = '<!-- context-staleness-report -->';
+            const issue_number = context.payload.pull_request.number;
+            const { owner, repo } = context.repo;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(tag));
+            const payload = `${tag}\n${body}`;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body: payload,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body: payload,
+              });
+            }
+
+      # Weekly data-freshness tracking issue. The lookup filters to an
+      # exact title match among open, bot-authored, bot-labeled issues
+      # (matching what the create branch produces) instead of trusting
+      # result order of a broad in:title search; no exact match means
+      # create, never edit a near-miss. The body is assembled with printf
+      # (not a heredoc) so report content can never be expanded by the
+      # shell.
+      - name: Track stale data-freshness markers (weekly)
+        if: github.event_name == 'schedule' && needs.drift-check.outputs.freshness_rc != '0' && needs.drift-check.outputs.freshness_rc != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-            # PR + push to main: soft run only. A stale marker is a warning,
-            # never a failure, so it cannot redden an unrelated main push.
-            python scripts/check_data_freshness.py
-            exit 0
-          fi
-          # Weekly scheduled sweep: enforce the hard threshold, but route a
-          # failure into a single tracking issue rather than failing the job.
-          set +e
-          OUTPUT="$(python scripts/check_data_freshness.py --strict 2>&1)"
-          RC=$?
-          set -e
-          printf '%s\n' "${OUTPUT}"
+          set -euo pipefail
           TITLE="docs data-freshness: stale time-stamped markers"
-          if [ "${RC}" -eq 0 ]; then
-            echo "::notice::No stale markers; nothing to track."
-            exit 0
-          fi
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          BODY="$(cat <<EOF
-          One or more time-stamped markers exceed the 60-day hard limit.
-          Refresh them per docs/playbooks/docs-drift.md, then this issue auto-updates on the next weekly sweep.
-
-          \`\`\`
-          ${OUTPUT}
-          \`\`\`
-
-          Workflow run: ${RUN_URL}
-          EOF
-          )"
+          INTRO="One or more time-stamped markers exceed the 60-day hard limit. Refresh them per docs/playbooks/docs-drift.md, then this issue auto-updates on the next weekly sweep."
+          BODY="$(printf '%s\n\n```\n%s\n```\n\nWorkflow run: %s\n' "${INTRO}" "$(cat freshness-report.txt)" "${RUN_URL}")"
           EXISTING="$(gh issue list \
             --repo "${GITHUB_REPOSITORY}" \
             --search "in:title ${TITLE}" \
             --state open \
-            --json number \
-            --jq '.[0].number // ""')"
+            --author "app/github-actions" \
+            --label bot \
+            --json number,title \
+            --jq '.[] | [(.number | tostring), .title] | @tsv' \
+            | awk -F'\t' -v title="${TITLE}" '$2 == title { print $1; exit }')"
           if [ -n "${EXISTING}" ]; then
-            echo "Refreshing existing tracking issue #${EXISTING}"
+            echo "Refreshing existing tracking issue #${EXISTING} (exact title match)"
             gh issue edit "${EXISTING}" --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --body "${BODY}"
           else
             gh issue create --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" \
@@ -250,3 +393,36 @@ jobs:
           fi
         shell: bash
 
+      # Weekly accumulated-staleness sweep: same single-tracking-issue
+      # pattern and the same exact-match lookup as the data-freshness
+      # step above. Staleness accrues from ordinary merges, so it must
+      # never redden a main push; the weekly issue is the durable surface
+      # for flags nobody has reconfirmed yet. Gated on an explicit
+      # 'False' so a crashed compute step can never file an empty issue.
+      - name: Track accumulated context-file staleness (weekly)
+        if: github.event_name == 'schedule' && needs.drift-check.outputs.staleness_clean == 'False'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="context-file staleness: curated context files lag their subtrees"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          INTRO="One or more curated context files have accumulated churn under their scope since they were last touched. Review each flagged file per docs/playbooks/docs-drift.md and touch it in a commit to reset its clock; this issue auto-updates on the next weekly sweep."
+          BODY="$(printf '%s\n\n%s\n\nWorkflow run: %s\n' "${INTRO}" "$(cat staleness-report.md)" "${RUN_URL}")"
+          EXISTING="$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --search "in:title ${TITLE}" \
+            --state open \
+            --author "app/github-actions" \
+            --label bot \
+            --json number,title \
+            --jq '.[] | [(.number | tostring), .title] | @tsv' \
+            | awk -F'\t' -v title="${TITLE}" '$2 == title { print $1; exit }')"
+          if [ -n "${EXISTING}" ]; then
+            echo "Refreshing existing context-staleness tracking issue #${EXISTING} (exact title match)"
+            gh issue edit "${EXISTING}" --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --body "${BODY}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" \
+              --label "docs,bot" --body "${BODY}"
+          fi
+        shell: bash

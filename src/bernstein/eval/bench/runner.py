@@ -90,6 +90,71 @@ class MockReplayAdapter:
 
 
 # ---------------------------------------------------------------------------
+# Stochastic mock adapter (hermetic, seed-parameterised — used in
+# reliability tests to model model-sampling variance under fixed
+# coordination)
+# ---------------------------------------------------------------------------
+
+
+class StochasticMockReplayAdapter:
+    """
+    Seed-parameterised mock whose *model-output* payload varies per call
+    while every coordination field stays byte-identical across calls.
+
+    This is the hermetic stand-in for the one genuinely stochastic element
+    of a fixed-coordination run: model sampling.  Each ``run_task`` call
+    for the same task emits the same event schedule (same seqs, same
+    kinds, same coordination payloads) but a different ``model.output``
+    sample, derived deterministically from ``(seed, task_hash,
+    call_index)`` so tests are reproducible.
+
+    The verdict is a pure function of the sample embedded in the receipt
+    (:meth:`sample_passes`), so ``score_task`` re-derives it from the
+    receipt alone — exactly what the offline verifier needs.
+    """
+
+    def __init__(self, seed: int = 0) -> None:
+        self._seed = seed
+        self._call_counts: dict[str, int] = {}
+
+    @staticmethod
+    def derive_sample(seed: int, task_hash: str, attempt_index: int) -> int:
+        """Deterministic 64-bit sample for ``(seed, task, attempt)``."""
+        digest = hashlib.sha256(f"sample:{seed}:{task_hash}:{attempt_index}".encode()).digest()
+        return int.from_bytes(digest[:8], "big")
+
+    @staticmethod
+    def sample_passes(sample: int) -> bool:
+        """Verdict rule: a pure function of the sampled value."""
+        return sample % 2 == 0
+
+    def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
+        task_hash = task.content_hash()
+        attempt_index = self._call_counts.get(task_hash, 0)
+        self._call_counts[task_hash] = attempt_index + 1
+        sample = self.derive_sample(self._seed, task_hash, attempt_index)
+        # journal_head commits to the events including the model output, so
+        # it legitimately varies per attempt; the spine head does not.
+        journal_head = hashlib.sha256(f"journal:{task_hash}:{sample}".encode()).hexdigest()
+        spine_head = hashlib.sha256(f"spine:{task_hash}".encode()).hexdigest()
+        return {
+            "journal_head": journal_head,
+            "spine_head": spine_head,
+            "run_id": f"mock-{task_hash[:12]}-a{attempt_index}",
+            "events": [
+                {"seq": 0, "kind": "task.started", "task_hash": task_hash},
+                {"seq": 1, "kind": "model.output", "sample": sample},
+                {"seq": 2, "kind": "task.completed", "task_hash": task_hash},
+            ],
+        }
+
+    def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
+        sample = next(event["sample"] for event in receipt.get("events", []) if event.get("kind") == "model.output")
+        passed = self.sample_passes(sample)
+        return passed, 1.0 if passed else 0.0, {"sample": sample}
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
