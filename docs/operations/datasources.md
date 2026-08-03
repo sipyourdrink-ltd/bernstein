@@ -201,7 +201,15 @@ adds no second receipt format):
    DDL in `sqlite_master` plus each table's column list — not
    `PRAGMA schema_version`, which is a write counter: two identical schemas
    can carry different counter values, and equal values attest nothing about
-   content.
+   content. The query input uses a **type-tagged canonical encoding**: every
+   bound parameter carries its type in the signed bytes, so `1`, `"1"`,
+   `1.0`, `Decimal("1")`, `b"1"` and `True` all sign differently, and an
+   unsupported parameter type is a typed refusal — never a silent
+   stringification.
+   After execution the driver **re-snapshots the schema and compares
+   digests**: if the schema moved between the signed snapshot and the
+   execution, it raises `SchemaDrift` and refuses to sign a result the
+   recorded snapshot may not describe.
 3. The result rows are put into **explicit canonical order** (sorted by their
    canonical cell bytes) before encoding. An engine's row order without
    `ORDER BY` is an unspecified plan detail; the driver never lets it into the

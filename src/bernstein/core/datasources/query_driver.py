@@ -31,7 +31,10 @@ Guarantees:
 * **Fail-closed drift.** When the caller pins the schema snapshot a statement
   was recorded against and the live digest differs, the driver raises a typed
   :class:`~bernstein.core.datasources.errors.SchemaDrift` naming the changed
-  objects instead of returning a number whose meaning changed.
+  objects instead of returning a number whose meaning changed. The same typed
+  refusal fires when the schema changes *between* the signed snapshot and the
+  execution: the driver re-snapshots after executing and refuses to sign a
+  result the recorded snapshot may not describe.
 
 The reference backend is the stdlib ``sqlite3`` driver (Python DB-API); the
 :class:`QueryDriverBackend` protocol is the seam a DuckDB / PostgreSQL backend
@@ -40,13 +43,15 @@ slots in behind later without touching the receipt path.
 
 from __future__ import annotations
 
-import json
+import datetime as _dt
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from bernstein.core.datasources.engine import DEFAULT_ROW_CAP, SqliteEngine, guard_read_only
-from bernstein.core.datasources.errors import DataSourceError, SchemaDrift
+from bernstein.core.datasources.errors import DataSourceError, SchemaDrift, UnsupportedValue
 from bernstein.core.datasources.result import NormalizedResult, canonical_bytes, content_hash
 from bernstein.core.datasources.schema import SchemaSnapshot, diff_snapshots, snapshot_schema
 from bernstein.core.orchestration.activity_modalities import (
@@ -57,14 +62,16 @@ from bernstein.core.orchestration.activity_modalities import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
     from bernstein.core.datasources.connection import DataSourceConnection
     from bernstein.core.orchestration.activity import ActivityResult
 
-#: Query-input format version, folded into the signed query blob.
-QUERY_INPUT_VERSION = 1
+#: Query-input format version. Version 2 replaced the JSON encoding (whose
+#: ``default=str`` fallback collapsed e.g. ``Decimal("1.5")`` and ``"1.5"``
+#: onto identical bytes) with the type-tagged canonical encoding below.
+QUERY_INPUT_VERSION = 2
 
 #: The declared plan steps. The plan hash covers these plus the signed input
 #: hashes, so the receipt attests both *what* ran and *which* canonicalisation
@@ -181,14 +188,95 @@ def canonicalize_row_order(result: NormalizedResult) -> NormalizedResult:
     )
 
 
+# --- signed query input: type-tagged canonical encoding ----------------------
+
+#: Format magic for the signed query-input blob (bernstein query input, v2).
+_QUERY_INPUT_MAGIC = b"bqi\x02"
+
+# One-byte type tags for bound parameters, aligned with the result encoding's
+# cell tags where the types overlap so the two surfaces read consistently.
+_P_NULL = b"n"
+_P_BOOLEAN = b"o"
+_P_INTEGER = b"i"
+_P_FLOAT = b"f"
+_P_DECIMAL = b"d"
+_P_TEXT = b"t"
+_P_BLOB = b"b"
+_P_DATETIME = b"z"
+_P_DATE = b"y"
+
+
+def _field(payload: bytes) -> bytes:
+    """Length-prefix ``payload`` netstring-style: ``<len>:<payload>``."""
+    return str(len(payload)).encode("ascii") + b":" + payload
+
+
+def _param_scalar_bytes(value: object) -> bytes:
+    """Render one bound parameter to tagged canonical bytes, type-preserving.
+
+    Every supported DB-API parameter type carries its own one-byte tag, so two
+    parameters that differ only in type (``1`` vs ``"1"`` vs ``1.0`` vs
+    ``Decimal("1")`` vs ``b"1"`` vs ``True``) can never render to the same
+    bytes. An unsupported type is refused with a typed error -- never silently
+    stringified, because a lossy fallback is exactly what lets two distinct
+    queries share one signed input hash.
+    """
+    if value is None:
+        return _P_NULL
+    # ``bool`` before ``int`` (subclass); ``datetime`` before ``date`` (subclass).
+    if isinstance(value, bool):
+        return _P_BOOLEAN + (b"1" if value else b"0")
+    if isinstance(value, int):
+        return _P_INTEGER + str(value).encode("ascii")
+    if isinstance(value, float):
+        return _P_FLOAT + repr(value).encode("ascii")
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise UnsupportedValue(f"non-finite Decimal bound parameter: {value!r}")
+        return _P_DECIMAL + format(value, "f").encode("ascii")
+    if isinstance(value, str):
+        return _P_TEXT + value.encode("utf-8")
+    if isinstance(value, (bytes, bytearray)):
+        return _P_BLOB + bytes(value)
+    if isinstance(value, _dt.datetime):
+        return _P_DATETIME + value.isoformat().encode("utf-8")
+    if isinstance(value, _dt.date):
+        return _P_DATE + value.isoformat().encode("utf-8")
+    raise UnsupportedValue(f"cannot canonically encode bound parameter of type {type(value).__name__}: {value!r}")
+
+
 def query_input_bytes(sql: str, params: Sequence[object] | Mapping[str, object] | None) -> bytes:
     """Canonical bytes of the signed query input (statement + bound parameters).
 
-    Canonical JSON over ``{v, sql, params}`` so the same statement with the
-    same parameters signs to the same input hash on every run.
+    The encoding is type-preserving and deterministic: the statement text and
+    every parameter are length-prefixed (netstring-style) and each parameter
+    carries a one-byte type tag, so the same statement with the same
+    parameters signs to the same input hash on every run, and parameters that
+    differ in type or value always sign differently. Positional and named
+    parameter shapes are framed distinctly (``seq`` vs ``map``), and mapping
+    keys are encoded in sorted order so dict iteration order cannot leak into
+    the hash. Unsupported parameter types are refused with a typed error.
     """
-    payload = {"v": QUERY_INPUT_VERSION, "sql": sql, "params": params}
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
+    parts: list[bytes] = [_QUERY_INPUT_MAGIC]
+    parts.append(_field(b"v=" + str(QUERY_INPUT_VERSION).encode("ascii")))
+    parts.append(_field(sql.encode("utf-8")))
+    if params is None:
+        parts.append(_field(b"params=none"))
+    elif isinstance(params, Mapping):
+        parts.append(_field(b"params=map"))
+        parts.append(_field(str(len(params)).encode("ascii")))
+        # Keys are str by the DB-API named-parameter contract (and by this
+        # function's signature); sorted order keeps dict iteration order out
+        # of the signed bytes.
+        for key in sorted(params):
+            parts.append(_field(key.encode("utf-8")))
+            parts.append(_field(_param_scalar_bytes(params[key])))
+    else:
+        parts.append(_field(b"params=seq"))
+        parts.append(_field(str(len(params)).encode("ascii")))
+        for value in params:
+            parts.append(_field(_param_scalar_bytes(value)))
+    return b"".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,8 +324,12 @@ class ReadOnlyQueryDriver:
        and the query never executes.
     3. Snapshot and query + parameters are recorded as signed inputs; the
        deterministic plan is derived from them (inputs are frozen from here).
-    4. The statement executes on the backend (read-only, authorizer-guarded),
-       the rows are put into explicit canonical order, and the canonical
+    4. The statement executes on the backend (read-only, authorizer-guarded).
+    5. The schema is snapshotted *again* and compared to the signed snapshot:
+       a digest mismatch means the schema moved between snapshot and
+       execution, so the driver raises :class:`SchemaDrift` and refuses to
+       sign a result the recorded snapshot may not describe.
+    6. The rows are put into explicit canonical order and the canonical
        result bytes are recorded as the signed output bound to the plan.
 
     The resulting :class:`DataOpsReceipt` verifies offline through the
@@ -299,7 +391,10 @@ class ReadOnlyQueryDriver:
         Raises:
             UnsupportedStatement: Empty or multi-statement input.
             ReadOnlyViolation: A write statement, refused before execution.
-            SchemaDrift: The live schema diverged from ``expected_schema``.
+            SchemaDrift: The live schema diverged from ``expected_schema``, or
+                the schema changed between the signed snapshot and execution
+                (the driver refuses to sign the result in both cases).
+            UnsupportedValue: A bound parameter of an unencodable type.
         """
         # Phase 1: refuse a write before any connection work. The guard is
         # textual and runs first, so a refused statement provably never
@@ -325,8 +420,29 @@ class ReadOnlyQueryDriver:
         activity.add_input(ref=f"query:{self._connection_id}", content=query_input_bytes(statement, params))
         plan = activity.plan(PLAN_STEPS)
 
-        # Phase 4: guarded execution, explicit row order, signed output.
+        # Phase 4: guarded execution.
         engine_result = self._backend.execute(statement, params, row_cap=row_cap)
+
+        # Phase 5: re-snapshot before signing, fail closed. The snapshot and
+        # the execution may run on separate connections, so a schema change in
+        # the gap could otherwise leave the signed snapshot attesting a schema
+        # the result was not derived against. SQLite blocks a schema change
+        # for the duration of a single executing statement; this check closes
+        # the between-statements window. (A change that is reverted between
+        # the two snapshots -- same digest on both sides -- is not detectable
+        # from snapshots alone.)
+        post_schema = self._backend.schema_snapshot()
+        if post_schema.digest != schema.digest:
+            drifts = diff_snapshots(schema, post_schema)
+            named = "; ".join(d.describe() for d in drifts) or "digests differ but no object-level diff resolved"
+            raise SchemaDrift(
+                f"schema changed during execution on {self._connection_id!r}; refusing to sign the result: {named}",
+                recorded_digest=schema.digest,
+                live_digest=post_schema.digest,
+                drifts=drifts,
+            )
+
+        # Phase 6: explicit row order, signed output.
         result = canonicalize_row_order(engine_result)
         result_bytes = canonical_bytes(result)
         activity.add_output(ref=f"result:{self._connection_id}", content=result_bytes)

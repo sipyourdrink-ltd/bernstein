@@ -24,9 +24,11 @@ fixtures, fully offline.
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -36,6 +38,7 @@ from bernstein.core.datasources.errors import (
     ReadOnlyViolation,
     SchemaDrift,
     UnsupportedStatement,
+    UnsupportedValue,
 )
 from bernstein.core.datasources.query_driver import (
     ReadOnlyQueryDriver,
@@ -208,6 +211,68 @@ def test_bound_parameters_are_inside_the_signed_query_input(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# The signed query input is type-preserving (baz finding 3705959721)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ([1], ["1"]),  # int vs str
+        ([1], [1.0]),  # int vs float
+        ([1], [True]),  # int vs bool
+        (["1"], [b"1"]),  # str vs bytes
+        ([Decimal("1")], ["1"]),  # decimal vs its string rendering
+        ([Decimal("1.50")], [Decimal("1.5")]),  # scale is significant
+        ([datetime.datetime(2026, 1, 1)], ["2026-01-01T00:00:00"]),  # datetime vs ISO string
+        ([datetime.date(2026, 1, 1)], [datetime.datetime(2026, 1, 1)]),  # date vs datetime
+        ([None], [""]),  # NULL vs empty string
+    ],
+)
+def test_int_and_str_params_produce_distinct_signed_inputs(left: list[object], right: list[object]) -> None:
+    # The signed input hash must move whenever a parameter's *type* moves,
+    # not only its value -- otherwise two semantically different queries
+    # share one content address.
+    sql = "SELECT id FROM t WHERE id = ?"
+    assert query_input_bytes(sql, left) != query_input_bytes(sql, right)
+
+
+def test_mapping_params_are_order_insensitive_but_shape_sensitive() -> None:
+    sql = "SELECT id FROM t WHERE a = :a AND b = :b"
+    # Dict iteration order must not leak into the signed bytes...
+    assert query_input_bytes(sql, {"a": 1, "b": 2}) == query_input_bytes(sql, {"b": 2, "a": 1})
+    # ...but positional and named parameter shapes are distinct.
+    assert query_input_bytes(sql, [1, 2]) != query_input_bytes(sql, {"a": 1, "b": 2})
+
+
+def test_unsupported_param_type_is_refused_not_stringified() -> None:
+    class Opaque:
+        def __str__(self) -> str:
+            return "1"
+
+    with pytest.raises(UnsupportedValue):
+        query_input_bytes("SELECT 1", [Opaque()])
+
+
+def test_param_type_difference_changes_the_receipt_input_hash(tmp_path: Path) -> None:
+    # Driver-level: the same statement bound with 1 (int) and "1" (str) must
+    # record different signed query inputs on the receipt.
+    db = tmp_path / "fixture.db"
+    _build_db(db)
+    keypair = generate_signer_keypair()
+    run_int = _driver(SqliteQueryBackend(str(db)), tmp_path / "cas_int", keypair).run(
+        "SELECT id, name FROM t WHERE id = ?", [1]
+    )
+    run_str = _driver(SqliteQueryBackend(str(db)), tmp_path / "cas_str", keypair).run(
+        "SELECT id, name FROM t WHERE id = ?", ["1"]
+    )
+    hashes_int = {a.content_hash for a in run_int.receipt.inputs}
+    hashes_str = {a.content_hash for a in run_str.receipt.inputs}
+    assert hashes_int != hashes_str
+    assert run_int.receipt_hash != run_str.receipt_hash
+
+
+# ---------------------------------------------------------------------------
 # AC4: the canonical result bytes are a signed output; tamper breaks it
 # ---------------------------------------------------------------------------
 
@@ -338,6 +403,47 @@ def test_schema_drift_is_typed_and_fail_closed(tmp_path: Path) -> None:
     # own schema introspection touched the connection) and nothing was signed.
     assert not any("FROM t" in s for s in traced)
     assert list(store_root.iterdir()) == []
+
+
+def test_schema_mutation_between_snapshot_and_execute_refuses_to_sign(tmp_path: Path) -> None:
+    # baz finding 3705959714: the snapshot and the execution may run on
+    # separate connections, so the schema can move in the gap. The driver
+    # re-snapshots after executing and must refuse to sign a result the
+    # recorded snapshot no longer describes.
+    conn = sqlite3.connect(":memory:")
+    for stmt in _FIXTURE_DDL:
+        conn.execute(stmt)
+
+    class MutatingBackend:
+        """Delegates to the real sqlite backend, but the schema moves mid-run."""
+
+        name = "sqlite"
+
+        def __init__(self) -> None:
+            self._inner = SqliteQueryBackend(connection=conn)
+
+        def schema_snapshot(self) -> object:
+            return self._inner.schema_snapshot()
+
+        def execute(self, sql: str, params: object = None, *, row_cap: int = 10_000) -> object:
+            result = self._inner.execute(sql, params, row_cap=row_cap)  # type: ignore[arg-type]
+            # The schema changes after the query ran but before the driver signs.
+            conn.execute("ALTER TABLE t ADD COLUMN sneaky TEXT")
+            return result
+
+    store_root = tmp_path / "cas"
+    driver = _driver(MutatingBackend(), store_root)  # type: ignore[arg-type]
+
+    with pytest.raises(SchemaDrift) as excinfo:
+        driver.run("SELECT id, name FROM t")
+
+    drift = excinfo.value
+    assert drift.recorded_digest != drift.live_digest
+    assert "t" in drift.changed_object_names
+    assert any("sneaky" in d.detail for d in drift.drifts)
+    # Refused to sign: the store holds exactly the two signed input blobs
+    # (schema + query) and no output blob, and no receipt was produced.
+    assert len(list(store_root.iterdir())) == 2
 
 
 # ---------------------------------------------------------------------------
