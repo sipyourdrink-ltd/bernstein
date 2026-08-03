@@ -274,6 +274,12 @@ Outstanding contributions are featured in our
 [monthly Community Spotlight](https://alexchernysh.com/blog)
 blog posts, which are shared on Twitter/X, LinkedIn, and dev.to.
 
+## Naming
+
+Forks and derivative builds are welcome and ship under their own name.
+The Apache-2.0 code grant does not cover the project name itself — the
+short version of what that means is in [TRADEMARKS.md](TRADEMARKS.md).
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
