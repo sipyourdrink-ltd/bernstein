@@ -352,6 +352,57 @@ def test_build_refuses_to_sign_tampered_journal(tmp_path: Path) -> None:
         build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False)
 
 
+@pytest.mark.parametrize("corrupt_line_index", [1, 2], ids=["middle-row", "trailing-row"])
+def test_malformed_journal_row_refuses_receipt_build(tmp_path: Path, corrupt_line_index: int) -> None:
+    """An unparseable journal line refuses the build, naming the physical line.
+
+    The trailing-row case is the load-bearing one: the tolerant shared
+    loader would silently drop it and the surviving prefix chains cleanly
+    from genesis, so without the strict signing-path parse the receipt
+    would attest a shorter run with a wrong event_count and head. The
+    build must refuse instead, and no receipt file may exist afterwards.
+    """
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    journal_path = sdd / "runs" / _RUN_ID / "journal.jsonl"
+    lines = journal_path.read_text(encoding="utf-8").splitlines()
+    lines[corrupt_line_index] = '{"truncated": '
+    journal_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(RunReceiptError, match=f"journal line {corrupt_line_index + 1} is not valid JSON"):
+        build_run_receipt(_RUN_ID, sdd, _kms(tmp_path))
+    assert not (sdd / "runs" / _RUN_ID / RUN_RECEIPT_FILENAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("bad_line", "match"),
+    [
+        ('{"garbage": ', "spine line 2 is not valid JSON"),
+        ('{"v": 1, "prev_hash": "x"}', "spine line 2 is missing fields"),
+    ],
+    ids=["malformed-json", "bad-shape"],
+)
+def test_incomplete_spine_never_signed(tmp_path: Path, bad_line: str, match: str) -> None:
+    """A malformed or bad-shape spine row refuses the build - never skipped.
+
+    ``iter_entries`` tolerantly drops such rows; on a trailing row the
+    remaining prefix still chains, so signing through it would attest an
+    incomplete spine. The strict signing-path reader refuses instead, and
+    no receipt file may exist afterwards.
+    """
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    spine_path = sdd / "lineage" / _RUN_ID / "spine.jsonl"
+    lines = spine_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    lines[1] = bad_line
+    spine_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(RunReceiptError, match=match):
+        build_run_receipt(_RUN_ID, sdd, _kms(tmp_path))
+    assert not (sdd / "runs" / _RUN_ID / RUN_RECEIPT_FILENAME).exists()
+
+
 # ---------------------------------------------------------------------------
 # Finalization hook degradation
 # ---------------------------------------------------------------------------

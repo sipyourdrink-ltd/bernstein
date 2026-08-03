@@ -61,7 +61,6 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, compute_entry_hash
 from bernstein.core.replay.journal import (
-    load_events,
     run_journal_path,
     verify_events,
 )
@@ -255,17 +254,109 @@ def _project_journal_row(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k not in _WALL_CLOCK_FIELDS}
 
 
+def _load_journal_rows_strict(journal_path: Path, run_id: str) -> list[dict[str, Any]]:
+    """Strict line-by-line journal parse for the signing path.
+
+    The shared :func:`~bernstein.core.replay.journal.load_events` is
+    deliberately tolerant - a partial trailing write must not wedge replay
+    or gateway readers - but a *signer* must never survive corruption: a
+    corrupted middle row surfaces downstream as a chain break, while a
+    corrupted **trailing** row would silently vanish and the surviving
+    prefix (which chains cleanly from genesis) would be signed as a
+    shorter run with a wrong ``event_count`` and head. Any non-blank line
+    that does not parse to a JSON object refuses the whole build, naming
+    the physical line.
+    """
+    rows: list[dict[str, Any]] = []
+    if not journal_path.exists():
+        return rows
+    with journal_path.open(encoding="utf-8") as fh:
+        for line_no, raw in enumerate(fh, start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RunReceiptError(
+                    f"refusing to sign run {run_id!r}: journal line {line_no} is not valid JSON "
+                    f"({exc.msg}); a receipt is never signed over a partial journal",
+                ) from exc
+            if not isinstance(row, dict):
+                raise RunReceiptError(
+                    f"refusing to sign run {run_id!r}: journal line {line_no} is not a JSON object; "
+                    "a receipt is never signed over a partial journal",
+                )
+            rows.append(row)
+    return rows
+
+
 def _spine_rows(sdd_dir: Path, run_id: str) -> list[dict[str, Any]]:
-    """Load the run's spine entries as embeddable bodies (no ``hmac``).
+    """Strictly load the run's spine entries as embeddable bodies (no ``hmac``).
 
     The spine store wants an HMAC key at construction, but reading rows and
     recomputing ``entry_hash`` values never touches it - the entry hash is
-    plain SHA-256 over caller-visible fields. An empty key is passed and
-    only key-free surfaces are used, which is exactly what makes the
-    receipt verifiable without operator secrets.
+    plain SHA-256 over caller-visible fields. The store is used only to
+    derive the validated path; the rows are parsed here rather than through
+    :meth:`~bernstein.core.lineage.spine.LineageSpine.iter_entries`, which
+    tolerantly skips malformed or bad-shape rows - fine for projections,
+    fail-open for a signer: a skipped **trailing** row would leave a
+    cleanly-chaining prefix and the receipt would attest an incomplete
+    spine. Every non-blank line must parse to a complete entry or the whole
+    build is refused with the physical line named, so the parsed rows equal
+    the stored rows by construction.
     """
     spine = LineageSpine(sdd_dir / "lineage", run_id=run_id, hmac_key=b"")
-    return [entry.body() for entry in spine.iter_entries()]
+    spine_path = spine.spine_path
+    rows: list[dict[str, Any]] = []
+    if not spine_path.exists():
+        return rows
+    with spine_path.open(encoding="utf-8") as fh:
+        for line_no, raw in enumerate(fh, start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RunReceiptError(
+                    f"refusing to sign run {run_id!r}: spine line {line_no} is not valid JSON "
+                    f"({exc.msg}); a receipt is never signed over an incomplete spine",
+                ) from exc
+            if not isinstance(row, dict):
+                raise RunReceiptError(
+                    f"refusing to sign run {run_id!r}: spine line {line_no} is not a JSON object; "
+                    "a receipt is never signed over an incomplete spine",
+                )
+            missing = [f for f in (*_SPINE_REQUIRED_FIELDS, "hmac") if f not in row]
+            if missing:
+                raise RunReceiptError(
+                    f"refusing to sign run {run_id!r}: spine line {line_no} is missing fields "
+                    f"{sorted(missing)}; a receipt is never signed over an incomplete spine",
+                )
+            try:
+                body: dict[str, Any] = {
+                    "v": int(row["v"]),
+                    "prev_hash": str(row["prev_hash"]),
+                    "artifact_path": str(row["artifact_path"]),
+                    "content_hash": str(row["content_hash"]),
+                    "actor": str(row["actor"]),
+                    "step_id": str(row["step_id"]),
+                    "model": str(row["model"]),
+                    "timestamp": int(row["timestamp"]),
+                    "entry_hash": str(row["entry_hash"]),
+                }
+            except (TypeError, ValueError) as exc:
+                raise RunReceiptError(
+                    f"refusing to sign run {run_id!r}: spine line {line_no} has an unusable field "
+                    f"type ({exc}); a receipt is never signed over an incomplete spine",
+                ) from exc
+            for optional in _SPINE_OPTIONAL_FIELDS:
+                value = row.get(optional)
+                if value is not None:
+                    body[optional] = value
+            rows.append(body)
+    return rows
 
 
 def _walk_spine_rows(rows: list[dict[str, Any]]) -> tuple[str, int | None, str]:
@@ -348,13 +439,16 @@ def build_run_receipt(
         A :class:`RunReceipt`.
 
     Raises:
-        RunReceiptError: The journal is missing/empty, an embedded chain
-            does not recompute (never sign a broken chain), or the opt-in
-            audit range was requested without its inputs.
+        RunReceiptError: The journal is missing/empty, a journal or spine
+            row is malformed (never sign over a parseable subset - the
+            build refuses on the first bad line rather than signing the
+            surviving rows as a shorter run), an embedded chain does not
+            recompute (never sign a broken chain), or the opt-in audit
+            range was requested without its inputs.
         JournalPathError: ``run_id`` is not a safe path segment.
     """
     journal_path = run_journal_path(sdd_dir, run_id)
-    events = load_events(journal_path)
+    events = _load_journal_rows_strict(journal_path, run_id)
     if not events:
         raise RunReceiptError(
             f"no journal events for run {run_id!r} at {journal_path}; an empty run has no identity to attest",

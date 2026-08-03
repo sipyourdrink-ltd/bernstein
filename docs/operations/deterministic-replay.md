@@ -189,6 +189,9 @@ then checks the signature. Mutate one embedded row and verification names the
 exact divergent step; strip a range and the signed subject becomes
 unreachable - the receipt stops verifying, it does not merely lose a line.
 Receipt bytes are byte-identical across independent builds of the same run.
+The build side is strict too: an unparseable journal or spine row refuses the
+whole build with the physical line named - a receipt is never signed over the
+parseable subset of a corrupted store.
 
 Exit codes for `bernstein verify receipt` (mirrors `bernstein lineage
 verify`): `0` OK, `1` empty/malformed input, `2` tamper detected (first
