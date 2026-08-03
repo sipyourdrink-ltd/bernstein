@@ -1,18 +1,21 @@
 # Commit attribution stats
 
-`bernstein commit-stats` reports git commit counts and line churn grouped by
+`bernstein report commits` reports git commit counts and line churn grouped by
 agent role, so an operator can see which roles (backend, qa, security, ...)
 produced how much of a repository's history without hand-parsing `git log`.
 
 ## CLI
 
 ```bash
-bernstein commit-stats                     # all-time stats for the current repo
-bernstein commit-stats --since 2025-01-01  # date-bounded stats
-bernstein commit-stats --until 2025-06-30  # date-bounded stats
-bernstein commit-stats --repo-dir ../other-repo
-bernstein commit-stats --json              # machine-readable output
+bernstein report commits                     # all-time stats for the current repo
+bernstein report commits --since 2025-01-01  # date-bounded stats
+bernstein report commits --until 2025-06-30  # date-bounded stats
+bernstein report commits --repo-dir ../other-repo
+bernstein report commits --json              # machine-readable output
 ```
+
+`bernstein commit-stats` remains as a deprecated alias with identical
+behaviour until v4.0.0; it prints a migration notice on stderr.
 
 | Flag | Default | Meaning |
 |---|---|---|

@@ -266,12 +266,12 @@ See [`cli/task-lifecycle.md#bernstein-review-bernstein-verify`](cli/task-lifecyc
 | `bernstein retro` | Detailed retrospective. | `cli/commands/advanced_cmd.py:299` |
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
 | `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
-| `bernstein commit-stats` | Per-run git diff stats. | `cli/commands/status_cmd.py:914` |
-| `bernstein report` | Build a custom report. | `cli/report_cmd.py` |
+| `bernstein report commits` | Per-run git diff stats. Deprecated alias until v4.0.0: `bernstein commit-stats`. | `cli/commands/status_cmd.py:914` |
+| `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
-| `bernstein incident` | Open an incident report. | `cli/incident_cmd.py:53` |
-| `bernstein postmortem` | Failed-task postmortem. | `cli/postmortem_cmd.py:12` |
+| `bernstein report incident` | Open an incident report. Deprecated alias until v4.0.0: `bernstein incident`. | `cli/incident_cmd.py:53` |
+| `bernstein report postmortem` | Failed-task postmortem. Deprecated alias until v4.0.0: `bernstein postmortem`. | `cli/postmortem_cmd.py:12` |
 
 #### `bernstein status`
 
