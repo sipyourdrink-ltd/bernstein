@@ -57,11 +57,11 @@ def postmortem_cmd(
 
     \b
     Examples:
-      bernstein postmortem                        # latest run, markdown to stdout
-      bernstein postmortem abc123                 # specific run
-      bernstein postmortem --format html --save   # HTML, also saved to .sdd/reports/
-      bernstein postmortem --format pdf -o r.pdf  # PDF (requires weasyprint or wkhtmltopdf)
-      bernstein postmortem -o report.md           # write markdown to file
+      bernstein report postmortem                        # latest run, markdown to stdout
+      bernstein report postmortem abc123                 # specific run
+      bernstein report postmortem --format html --save   # HTML, also saved to .sdd/reports/
+      bernstein report postmortem --format pdf -o r.pdf  # PDF (requires weasyprint or wkhtmltopdf)
+      bernstein report postmortem -o report.md           # write markdown to file
     """
     from bernstein.core.postmortem import PostMortemGenerator
 
@@ -99,3 +99,21 @@ def postmortem_cmd(
     if save:
         saved = generator.save(report, fmt=fmt)
         console.print(f"\n[green]Report saved to {saved}[/green]")
+
+
+@click.command(
+    "postmortem_alias",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    help="(Deprecated) Legacy alias for `bernstein report postmortem`.",
+)
+@click.pass_context
+def postmortem_alias(ctx: click.Context) -> None:
+    '''Backward compatibility for the
+    original `postmortem` command, 
+    which was moved to `report_postmortem`.'''
+    click.echo(
+        "WARNING: 'bernstein postmortem' is deprecated and will be removed in v4.0.0. "
+        "Use 'bernstein report postmortem' instead.",
+        err=True
+    )
+    postmortem_cmd.main(args=ctx.args, standalone_mode=False)

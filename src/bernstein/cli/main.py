@@ -97,7 +97,7 @@ from bernstein.cli.explain_help_cmd import explain_help_cmd
 from bernstein.cli.fingerprint_cmd import fingerprint_group
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
-from bernstein.cli.incident_cmd import incident_cmd
+from bernstein.cli.incident_cmd import incident_cmd, incident_alias
 from bernstein.cli.init_wizard_cmd import init_wizard_cmd
 from bernstein.cli.logs_group_cmd import logs_group
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
@@ -112,7 +112,7 @@ from bernstein.cli.plan_dag_cmd import plan_dag
 from bernstein.cli.plan_generate_cmd import plan_generate
 from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
-from bernstein.cli.postmortem_cmd import postmortem_cmd
+from bernstein.cli.postmortem_cmd import postmortem_cmd, postmortem_alias
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
@@ -304,7 +304,7 @@ from bernstein.cli.run_cmd import (
     setup_demo_project,
     start,
 )
-from bernstein.cli.status_cmd import commit_stats_cmd, ps_cmd, status
+from bernstein.cli.status_cmd import commit_stats_cmd, commit_stats_alias, ps_cmd, status
 
 # Re-export stop_cmd helpers used by tests and other modules
 from bernstein.cli.stop_cmd import (
@@ -1079,7 +1079,7 @@ cli.add_command(cost_envelopes_group, "cost-envelopes")
 cli.add_command(estimate_cmd, "estimate")
 cli.add_command(status)
 cli.add_command(ps_cmd, "ps")
-cli.add_command(commit_stats_cmd, "commit-stats")
+cli.add_command(commit_stats_alias, "commit-stats")
 cli.add_command(stop)
 cli.add_command(test_adapter, "test-adapter")
 cli.add_command(adapters_group, "adapters")
@@ -1113,7 +1113,10 @@ cli.add_command(cloud_group, "cloud")
 cli.add_command(gateway_group, "gateway")
 cli.add_command(export_cmd, "export")
 cli.add_command(report_cmd, "report")
-cli.add_command(postmortem_cmd, "postmortem")
+cli.add_command(postmortem_alias, 'postmortem')
+report_cmd.add_command(postmortem_cmd, "postmortem")
+report_cmd.add_command(incident_cmd, 'incident')
+report_cmd.add_command(commit_stats_cmd, 'commits')
 cli.add_command(slo_cmd, "slo")
 cli.add_command(man_pages_cmd, "man-pages")
 cli.add_command(workflow_group, "workflow")
@@ -1141,7 +1144,7 @@ cli.add_command(changelog_cmd, "changelog")
 cli.add_command(run_changelog_cmd, "run-changelog")
 cli.add_command(run_lookup_cmd, "run-lookup")
 cli.add_command(dr_group, "dr")
-cli.add_command(incident_cmd, "incident")
+cli.add_command(incident_alias, "incident")
 cli.add_command(profile_cmd, "profile")
 cli.add_command(templates_group, "templates")
 cli.add_command(validate_plan, "validate")
