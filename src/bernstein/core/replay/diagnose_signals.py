@@ -116,9 +116,29 @@ def predicate_from_params(params: Mapping[str, Any]) -> SignalPredicate:
     Raises:
         DiagnoseError: The params block names an unknown signal kind.
     """
-    kind = str(params.get("kind", ""))
-    if kind not in _PREDICATE_IDS:
+    kind = params.get("kind")
+    if not isinstance(kind, str) or kind not in _PREDICATE_IDS:
         raise DiagnoseError(f"diagnosis receipt names an unknown signal kind: {kind!r}")
+    # Receipt params are external input at verify time: reject malformed
+    # shapes instead of coercing them. A plain string here would otherwise
+    # iterate per-character through tuple(str(...) for ...) and silently
+    # rewrite the predicate (and therefore its predicate_hash) into
+    # something that was never evaluated.
+    for list_field in ("needles", "lineage_path"):
+        value = params.get(list_field, [])
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise DiagnoseError(
+                f"diagnosis receipt params field {list_field!r} must be a list of strings; refusing to rebuild "
+                "a predicate from a malformed receipt"
+            )
+    gate_block = params.get("lineage_gate")
+    if gate_block is not None and (
+        not isinstance(gate_block, dict) or any(not isinstance(v, bool) for v in gate_block.values())
+    ):
+        raise DiagnoseError(
+            "diagnosis receipt params field 'lineage_gate' must be a mapping of booleans; refusing to rebuild "
+            "a predicate from a malformed receipt"
+        )
     return _predicate(kind, dict(params))
 
 

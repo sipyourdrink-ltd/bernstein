@@ -472,10 +472,40 @@ def load_events(path: Path, *, strict: bool = False) -> list[dict[str, Any]]:
                 if strict:
                     raise JournalParseError(f"unparsable line at physical line {lineno} ({exc.msg})") from exc
                 continue
-            if strict and not isinstance(row, dict):
-                raise JournalParseError(f"non-object row at physical line {lineno}")
+            if strict:
+                if not isinstance(row, dict):
+                    raise JournalParseError(f"non-object row at physical line {lineno}")
+                _validate_strict_row(row, lineno)
             events.append(row)
     return events
+
+
+def _validate_strict_row(row: dict[str, Any], lineno: int) -> None:
+    """Shape-check one journal row for the strict (diagnostic) reader.
+
+    ``verify_journal`` recomputes hashes with tolerant ``.get`` defaults, so
+    a row missing or mistyping its chain fields would surface downstream as
+    a *chain break* - a cryptographic verdict - when the honest verdict is
+    "malformed input". The strict reader therefore refuses such a row up
+    front, naming the physical line, before any head or chain computation
+    can be derived from it.
+
+    Raises:
+        JournalParseError: A required field is missing or carries the wrong
+            primitive type.
+    """
+    event = row.get("event")
+    if not isinstance(event, str) or not event:
+        raise JournalParseError(f"row at physical line {lineno} has a missing or non-string 'event'")
+    index = row.get("index")
+    if not isinstance(index, int) or isinstance(index, bool):
+        raise JournalParseError(f"row at physical line {lineno} has a missing or non-integer 'index'")
+    if not isinstance(row.get("prev_hash"), str):
+        raise JournalParseError(f"row at physical line {lineno} has a missing or non-string 'prev_hash'")
+    for hash_field in ("payload_hash", "event_hash"):
+        value = row.get(hash_field)
+        if not isinstance(value, str) or not value:
+            raise JournalParseError(f"row at physical line {lineno} has a missing or empty {hash_field!r}")
 
 
 def verify_journal(path: Path) -> JournalVerifyResult:

@@ -611,6 +611,61 @@ def test_predicate_round_trips_through_embedded_params(tmp_path: Path) -> None:
     assert rebuilt.predicate_hash() == original.predicate_hash()
 
 
+def test_mistyped_chain_field_is_refused_as_malformed_not_chain_break(tmp_path: Path) -> None:
+    """A row with a wrong-typed chain field is malformed input, not tamper.
+
+    Pre-fix, strict loading accepted any JSON object, so a mistyped row
+    reached verify_journal and was reported as a cryptographic chain break
+    at that index -- the honest verdict is a refusal naming the physical
+    line (regression for bot-ack: 3707430834).
+    """
+    import json as _json
+
+    from bernstein.core.replay.journal import JournalParseError
+
+    sdd = tmp_path / ".sdd"
+    path = _seed_journal(sdd, "run-mistyped", bad_step=None, steps=3)
+    rows = [_json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows[1]["index"] = str(rows[1]["index"])  # right value, wrong type
+    path.write_text("".join(_json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    with pytest.raises(JournalParseError, match="physical line 1 has a missing or non-integer 'index'"):
+        load_events(path, strict=True)
+
+
+def test_row_missing_event_hash_is_refused_before_any_chain_verdict(tmp_path: Path) -> None:
+    import json as _json
+
+    from bernstein.core.replay.journal import JournalParseError
+
+    sdd = tmp_path / ".sdd"
+    path = _seed_journal(sdd, "run-nohash", bad_step=None, steps=3)
+    rows = [_json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    del rows[2]["event_hash"]
+    path.write_text("".join(_json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    with pytest.raises(JournalParseError, match="physical line 2 has a missing or empty 'event_hash'"):
+        load_events(path, strict=True)
+
+
+def test_string_needles_in_receipt_params_are_refused_not_split() -> None:
+    """A plain-string needles value must refuse, never iterate per character.
+
+    Pre-fix, tuple(str(n) for n in "abc") silently rebuilt the predicate as
+    ("a", "b", "c") -- a predicate that was never evaluated -- and its
+    predicate_hash changed with it (regression for bot-ack: 3707430843).
+    """
+    with pytest.raises(DiagnoseError, match="'needles' must be a list of strings"):
+        predicate_from_params({"kind": "gate", "needles": "abc"})
+
+
+def test_malformed_lineage_gate_params_are_refused() -> None:
+    with pytest.raises(DiagnoseError, match="'lineage_gate' must be a mapping of booleans"):
+        predicate_from_params(
+            {"kind": "artefact", "needles": [], "lineage_path": [], "lineage_gate": {"checked": "yes"}}
+        )
+
+
 def test_predicate_from_params_rejects_unknown_kind() -> None:
     with pytest.raises(DiagnoseError, match="unknown signal kind"):
         predicate_from_params({"kind": "mystery"})
