@@ -50,11 +50,18 @@ downgrades to `observed`.
 
 ## Trust boundary
 
-The provider protocol promises that returned handles are verified and durable;
-the initial seam does not implement a signer, key store, identity issuer,
-policy engine, or chain backend. Bernstein's native implementation can reuse
-its existing identity and audit substrate. External providers can implement the
-same contract without becoming core dependencies.
+`NativeToolCallEvidenceProvider` is Bernstein's first implementation. It writes
+the ordered `toolcall.attestation` and `toolcall.enforced_dispatch` records to
+the existing HMAC audit chain while holding one cross-process chain
+transaction. Raw tool arguments are never retained; only their canonical
+SHA-256 digest is recorded. If the second append fails, no evidence handle is
+returned, the connector remains unreachable in enforced mode, and the lone
+attestation projects as `observed` rather than `complete`.
+
+This native provider proves host-enforced capture and durable chain ordering.
+It does **not** claim per-agent signed identity, issue an identity, or evaluate
+agent policy. Those remain a separate provider layer. External providers can
+implement the same contract without becoming core dependencies.
 
 This boundary does not contain direct filesystem, process, network, or
 connector effects that bypass the host hook. A completeness statement is valid

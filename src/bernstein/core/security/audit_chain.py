@@ -899,6 +899,13 @@ EVENT_PAYMENT_REFUSED = "payment.refused"
 #: credential are never stored.
 EVENT_ODATA_WRITEBACK = "odata.writeback_receipt"
 
+#: Issue #2931 -- emitted before an enforced connector dispatch.  The first
+#: event binds Bernstein's host-derived tool-call intent into the HMAC chain;
+#: the second proves that the dispatch boundary admitted that exact intent only
+#: after the attestation record was durable.
+EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
+EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
