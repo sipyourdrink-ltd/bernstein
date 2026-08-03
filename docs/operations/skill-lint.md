@@ -28,7 +28,10 @@ ERROR with code `prompt-space-risk`:
   `POST`, `send`, ...) next to a sensitive noun (`.env`, credentials,
   secrets, API keys, ...) on the same line.
 - **Credential-file asks** — a read verb next to a credential artifact
-  (`~/.aws/credentials`, `id_rsa`, `.ssh/`, `.netrc`, keychain, `.env`).
+  (`~/.aws/credentials`, `id_rsa`, `.ssh/`, `.netrc`, keychain), or a
+  content-access verb (read, cat, print, dump, extract) next to `.env`.
+  File-management guidance ("include `.env` in `.gitignore`", "copy
+  `.env.example` to `.env`") stays clean.
 - **Approval-bypass phrasing** — "ignore previous instructions", "skip the
   confirmation", "without asking", "do not tell the user", and similar.
 

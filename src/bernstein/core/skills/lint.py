@@ -73,11 +73,19 @@ _EXFIL_SENSITIVE_RE: re.Pattern[str] = re.compile(
 )
 
 #: Read-verb next to a credential artifact (same line, verb first).
+#: ``.env`` is handled separately below: file-management guidance
+#: ("include .env in .gitignore", "copy .env.example to .env") is everyday
+#: skill vocabulary, so only content-access verbs pair with ``.env``.
 _CREDENTIAL_ASK_RE: re.Pattern[str] = re.compile(
     r"(?i)\b(read\w*|cat|open\w*|print\w*|dump\w*|copy|copies|copied|copying|extract\w*"
     r"|collect\w*|include|includes|included|including|fetch\w*|grab\w*|view\w*)\b"
     r"[^\n]{0,80}"
-    r"(~?/?\.aws/credentials|\bid_rsa\b|\.ssh/|\b\.netrc\b|\bkeychain\b|\.env\b)"
+    r"(~?/?\.aws/credentials|\bid_rsa\b|\.ssh/|\b\.netrc\b|\bkeychain\b)"
+)
+
+#: Content-access verbs next to ``.env`` (same line, verb first).
+_ENV_CONTENT_ASK_RE: re.Pattern[str] = re.compile(
+    r"(?i)\b(read\w*|cat|print\w*|dump\w*|extract\w*)\b[^\n]{0,80}\.env\b"
 )
 
 #: Approval-bypass phrasings. Fixed shapes rather than keywords so that
@@ -96,13 +104,21 @@ _WITHOUT_APPROVAL_RE: re.Pattern[str] = re.compile(
 )
 _NEGATION_BEFORE_RE: re.Pattern[str] = re.compile(r"(?i)\b(never|not|don'?t|avoid)\b")
 
+#: Clause boundaries for negation scoping. A negation only guards the
+#: clause it appears in: "if tests are not green, push without asking"
+#: is still a bypass - the "not" belongs to the previous clause.
+_CLAUSE_SPLIT_RE: re.Pattern[str] = re.compile("[;,.:!?]|\u2014|\u2013| - ")
+
 
 def _is_approval_bypass(line: str) -> bool:
     """Return True when a line carries approval-bypass phrasing."""
     if any(pattern.search(line) for pattern in _APPROVAL_BYPASS_RES):
         return True
     match = _WITHOUT_APPROVAL_RE.search(line)
-    return bool(match) and not _NEGATION_BEFORE_RE.search(line[: match.start() if match else 0])
+    if not match:
+        return False
+    clause_prefix = _CLAUSE_SPLIT_RE.split(line[: match.start()])[-1]
+    return not _NEGATION_BEFORE_RE.search(clause_prefix)
 
 
 def _prompt_space_risk_findings(body: str, *, skill_name: str, skill_md: Path) -> list[LintFinding]:
@@ -128,7 +144,7 @@ def _prompt_space_risk_findings(body: str, *, skill_name: str, skill_md: Path) -
         if "exfiltration" not in seen and _EXFIL_EGRESS_RE.search(line) and _EXFIL_SENSITIVE_RE.search(line):
             seen.add("exfiltration")
             findings.append(_finding("exfiltration-shaped instruction", lineno, line))
-        if "credential-ask" not in seen and _CREDENTIAL_ASK_RE.search(line):
+        if "credential-ask" not in seen and (_CREDENTIAL_ASK_RE.search(line) or _ENV_CONTENT_ASK_RE.search(line)):
             seen.add("credential-ask")
             findings.append(_finding("credential-file ask", lineno, line))
         if "approval-bypass" not in seen and _is_approval_bypass(line):
