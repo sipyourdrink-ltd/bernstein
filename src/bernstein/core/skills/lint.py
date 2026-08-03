@@ -115,15 +115,25 @@ _CLAUSE_SPLIT_RE: re.Pattern[str] = re.compile("[;,.:!?]|\u2014|\u2013| - ")
 _BLOCK_START_RE: re.Pattern[str] = re.compile(r"^(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\|)")
 
 
+#: Sequencing conjunctions start a new instruction, so a negation from the
+#: previous step does not carry over: "do not upload secrets and then send
+#: credentials" flags on "send". Plain coordination stays in scope:
+#: "never upload or send secrets" is one safeguard.
+_SEQUENCE_SPLIT_RE: re.Pattern[str] = re.compile(r"(?i)\b(?:and\s+then|then|after\s+that|afterwards?|next)\b")
+
+
 def _negated_in_clause(line: str, at: int) -> bool:
     """Return True when the clause containing position ``at`` is negated.
 
     A negation only guards its own clause: "if tests are not green, push
     without asking" is still a bypass - the "not" belongs to the previous
     clause. "Never upload secrets" is a safeguard - the negation is local.
+    Sequencing conjunctions also end a negation's scope (see
+    :data:`_SEQUENCE_SPLIT_RE`).
     """
     clause_prefix = _CLAUSE_SPLIT_RE.split(line[:at])[-1]
-    return bool(_NEGATION_BEFORE_RE.search(clause_prefix))
+    step_prefix = _SEQUENCE_SPLIT_RE.split(clause_prefix)[-1]
+    return bool(_NEGATION_BEFORE_RE.search(step_prefix))
 
 
 def _is_exfiltration(line: str) -> bool:
