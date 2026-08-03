@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, cast
 from bernstein.core.security.agent_card_signer import (
     AgentCardSignature,
     canonicalize_jcs,
+    ed25519_pem_from_jwk,
+    ed25519_public_jwk,
     verify_agent_card,
 )
 from bernstein.core.security.agent_identity import AgentIdentityCard
@@ -25,9 +27,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 
-
 class IdentitySpawnAnchorError(RuntimeError):
     """Raised when a run identity cannot be anchored or reconstructed."""
+
+
+def _sha256_digest(value: object) -> str:
+    return "sha256:" + hashlib.sha256(canonicalize_jcs(value)).hexdigest()
+
+
+def _card_is_valid_at(card: AgentIdentityCard, instant: float) -> bool:
+    return card.created_at <= instant and (not card.expires_at or card.expires_at > instant)
 
 
 def _jws_kid(detached_jws: str) -> str:
@@ -79,12 +88,13 @@ class IdentitySpawnAnchor:
         public_key = self.trusted_public_keys.get(kid)
         if public_key is None or not verify_agent_card(snapshot, signature, public_key):
             raise IdentitySpawnAnchorError("agent-card signature is not trusted")
-        now = float(self.clock())
-        if snapshot.created_at > now or (snapshot.expires_at and snapshot.expires_at <= now):
+        validated_at = float(self.clock())
+        if not _card_is_valid_at(snapshot, validated_at):
             raise IdentitySpawnAnchorError("agent card is not valid at spawn time")
 
         envelope = {"card": asdict(snapshot), "signature": asdict(signature)}
-        digest = "sha256:" + hashlib.sha256(canonicalize_jcs(envelope)).hexdigest()
+        digest = _sha256_digest(envelope)
+        public_jwk = ed25519_public_jwk(public_key, kid=kid)
         identity = AnchoredRunIdentity(
             run_id=run_id,
             agent_id=snapshot.agent_id,
@@ -94,7 +104,13 @@ class IdentitySpawnAnchor:
             svid_reference=snapshot.svid_reference,
             run_journal_head=run_journal_head,
         )
-        details = {**asdict(identity), "anchored_at": now, "signed_card": envelope}
+        details = {
+            **asdict(identity),
+            "validated_at": validated_at,
+            "signed_card": envelope,
+            "verification_key_jwk": public_jwk,
+            "verification_key_digest": _sha256_digest(public_jwk),
+        }
 
         with self.chain.chain_transaction():
             existing = self.chain.query(
@@ -105,6 +121,8 @@ class IdentitySpawnAnchor:
                 prior = {key: existing[0].details.get(key) for key in asdict(identity)}
                 if prior == asdict(identity):
                     return identity
+                if prior.get("run_journal_head") != run_journal_head:
+                    raise IdentitySpawnAnchorError("run journal head moved since the identity was anchored")
                 raise IdentitySpawnAnchorError("a conflicting identity is already anchored to this run")
             self.chain.log_with_prev_digest(
                 event_type=EVENT_IDENTITY_SPAWN_ATTESTATION,
@@ -127,7 +145,7 @@ class IdentitySpawnAnchor:
         if not isinstance(envelope, dict):
             raise IdentitySpawnAnchorError("signed-card evidence is unavailable")
         typed_envelope = cast(dict[str, Any], envelope)
-        digest = "sha256:" + hashlib.sha256(canonicalize_jcs(envelope)).hexdigest()
+        digest = _sha256_digest(typed_envelope)
         if digest != details.get("signed_card_digest"):
             raise IdentitySpawnAnchorError("signed-card evidence digest mismatch")
         card_data = cast(object, typed_envelope.get("card"))
@@ -140,9 +158,25 @@ class IdentitySpawnAnchor:
             kid = _jws_kid(signature.detached_jws)
         except (TypeError, IdentitySpawnAnchorError) as exc:
             raise IdentitySpawnAnchorError("signed-card evidence is malformed") from exc
-        public_key = self.trusted_public_keys.get(kid)
-        if public_key is None:
-            raise IdentitySpawnAnchorError("historical verification key is unavailable")
+
+        validated_at = details.get("validated_at")
+        if not isinstance(validated_at, (int, float)) or isinstance(validated_at, bool):
+            raise IdentitySpawnAnchorError("historical validation timestamp is unavailable")
+        if not _card_is_valid_at(card, float(validated_at)):
+            raise IdentitySpawnAnchorError("agent card was not valid at its recorded validation time")
+
+        public_jwk = cast(object, details.get("verification_key_jwk"))
+        if not isinstance(public_jwk, dict):
+            raise IdentitySpawnAnchorError("frozen historical verification key is unavailable")
+        typed_jwk = cast(dict[str, Any], public_jwk)
+        if _sha256_digest(typed_jwk) != details.get("verification_key_digest"):
+            raise IdentitySpawnAnchorError("frozen historical verification key digest mismatch")
+        if typed_jwk.get("kid") != kid or typed_jwk.get("alg") != "EdDSA" or typed_jwk.get("use") != "sig":
+            raise IdentitySpawnAnchorError("frozen historical verification key metadata mismatch")
+        try:
+            public_key = ed25519_pem_from_jwk(typed_jwk)
+        except ValueError as exc:
+            raise IdentitySpawnAnchorError("frozen historical verification key is malformed") from exc
         identity_mismatch = signature.kid != kid or kid != details.get("agent_card_kid")
         if identity_mismatch or not verify_agent_card(card, signature, public_key):
             raise IdentitySpawnAnchorError("historical signed-card verification failed")

@@ -30,11 +30,15 @@ locally without waiting for the cloud runner.
 | **coverage ratchet** (LEVEL 2) | Total coverage dropped below the committed high-water mark      | push to main (advisory) |
 | **import-linter**           | Architecture-contract violations (cross-package imports)          | PR                  |
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
+| **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
 
 ## Run any of the above locally
 
 ```bash
+# Identity anchoring, including a real two-process race against one audit dir
+uv run pytest tests/unit/security/test_identity_spawn_anchor.py -q --no-cov
+
 # Property suite (smoke)
 HYPOTHESIS_PROFILE=smoke uv run pytest tests/property/ -q --no-cov
 
