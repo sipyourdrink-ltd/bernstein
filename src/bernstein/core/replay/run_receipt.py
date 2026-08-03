@@ -254,8 +254,14 @@ def _project_journal_row(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k not in _WALL_CLOCK_FIELDS}
 
 
-def _load_journal_rows_strict(journal_path: Path, run_id: str) -> list[dict[str, Any]]:
-    """Strict line-by-line journal parse for the signing path.
+def _strict_jsonl_rows(
+    path: Path,
+    *,
+    run_id: str,
+    substrate: str,
+    refusal: str,
+) -> list[tuple[int, dict[str, Any]]]:
+    """One strict JSONL scan for every signing substrate.
 
     The shared :func:`~bernstein.core.replay.journal.load_events` is
     deliberately tolerant - a partial trailing write must not wedge replay
@@ -263,14 +269,17 @@ def _load_journal_rows_strict(journal_path: Path, run_id: str) -> list[dict[str,
     corrupted middle row surfaces downstream as a chain break, while a
     corrupted **trailing** row would silently vanish and the surviving
     prefix (which chains cleanly from genesis) would be signed as a
-    shorter run with a wrong ``event_count`` and head. Any non-blank line
-    that does not parse to a JSON object refuses the whole build, naming
-    the physical line.
+    shorter record. Any non-blank line that does not parse to a JSON
+    object refuses the whole build, naming the substrate and the physical
+    line. Journal and spine share this single implementation so parsing
+    and error naming cannot drift between them; substrate-specific field
+    validation stays with the caller, which is why rows come back paired
+    with their physical line numbers.
     """
-    rows: list[dict[str, Any]] = []
-    if not journal_path.exists():
+    rows: list[tuple[int, dict[str, Any]]] = []
+    if not path.exists():
         return rows
-    with journal_path.open(encoding="utf-8") as fh:
+    with path.open(encoding="utf-8") as fh:
         for line_no, raw in enumerate(fh, start=1):
             line = raw.strip()
             if not line:
@@ -279,16 +288,26 @@ def _load_journal_rows_strict(journal_path: Path, run_id: str) -> list[dict[str,
                 row = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise RunReceiptError(
-                    f"refusing to sign run {run_id!r}: journal line {line_no} is not valid JSON "
-                    f"({exc.msg}); a receipt is never signed over a partial journal",
+                    f"refusing to sign run {run_id!r}: {substrate} line {line_no} is not valid JSON "
+                    f"({exc.msg}); {refusal}",
                 ) from exc
             if not isinstance(row, dict):
                 raise RunReceiptError(
-                    f"refusing to sign run {run_id!r}: journal line {line_no} is not a JSON object; "
-                    "a receipt is never signed over a partial journal",
+                    f"refusing to sign run {run_id!r}: {substrate} line {line_no} is not a JSON object; {refusal}",
                 )
-            rows.append(row)
+            rows.append((line_no, row))
     return rows
+
+
+def _load_journal_rows_strict(journal_path: Path, run_id: str) -> list[dict[str, Any]]:
+    """Strict line-by-line journal parse for the signing path."""
+    pairs = _strict_jsonl_rows(
+        journal_path,
+        run_id=run_id,
+        substrate="journal",
+        refusal="a receipt is never signed over a partial journal",
+    )
+    return [row for _line_no, row in pairs]
 
 
 def _spine_rows(sdd_dir: Path, run_id: str) -> list[dict[str, Any]]:
@@ -309,53 +328,41 @@ def _spine_rows(sdd_dir: Path, run_id: str) -> list[dict[str, Any]]:
     spine = LineageSpine(sdd_dir / "lineage", run_id=run_id, hmac_key=b"")
     spine_path = spine.spine_path
     rows: list[dict[str, Any]] = []
-    if not spine_path.exists():
-        return rows
-    with spine_path.open(encoding="utf-8") as fh:
-        for line_no, raw in enumerate(fh, start=1):
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise RunReceiptError(
-                    f"refusing to sign run {run_id!r}: spine line {line_no} is not valid JSON "
-                    f"({exc.msg}); a receipt is never signed over an incomplete spine",
-                ) from exc
-            if not isinstance(row, dict):
-                raise RunReceiptError(
-                    f"refusing to sign run {run_id!r}: spine line {line_no} is not a JSON object; "
-                    "a receipt is never signed over an incomplete spine",
-                )
-            missing = [f for f in (*_SPINE_REQUIRED_FIELDS, "hmac") if f not in row]
-            if missing:
-                raise RunReceiptError(
-                    f"refusing to sign run {run_id!r}: spine line {line_no} is missing fields "
-                    f"{sorted(missing)}; a receipt is never signed over an incomplete spine",
-                )
-            try:
-                body: dict[str, Any] = {
-                    "v": int(row["v"]),
-                    "prev_hash": str(row["prev_hash"]),
-                    "artifact_path": str(row["artifact_path"]),
-                    "content_hash": str(row["content_hash"]),
-                    "actor": str(row["actor"]),
-                    "step_id": str(row["step_id"]),
-                    "model": str(row["model"]),
-                    "timestamp": int(row["timestamp"]),
-                    "entry_hash": str(row["entry_hash"]),
-                }
-            except (TypeError, ValueError) as exc:
-                raise RunReceiptError(
-                    f"refusing to sign run {run_id!r}: spine line {line_no} has an unusable field "
-                    f"type ({exc}); a receipt is never signed over an incomplete spine",
-                ) from exc
-            for optional in _SPINE_OPTIONAL_FIELDS:
-                value = row.get(optional)
-                if value is not None:
-                    body[optional] = value
-            rows.append(body)
+    pairs = _strict_jsonl_rows(
+        spine_path,
+        run_id=run_id,
+        substrate="spine",
+        refusal="a receipt is never signed over an incomplete spine",
+    )
+    for line_no, row in pairs:
+        missing = [f for f in (*_SPINE_REQUIRED_FIELDS, "hmac") if f not in row]
+        if missing:
+            raise RunReceiptError(
+                f"refusing to sign run {run_id!r}: spine line {line_no} is missing fields "
+                f"{sorted(missing)}; a receipt is never signed over an incomplete spine",
+            )
+        try:
+            body: dict[str, Any] = {
+                "v": int(row["v"]),
+                "prev_hash": str(row["prev_hash"]),
+                "artifact_path": str(row["artifact_path"]),
+                "content_hash": str(row["content_hash"]),
+                "actor": str(row["actor"]),
+                "step_id": str(row["step_id"]),
+                "model": str(row["model"]),
+                "timestamp": int(row["timestamp"]),
+                "entry_hash": str(row["entry_hash"]),
+            }
+        except (TypeError, ValueError) as exc:
+            raise RunReceiptError(
+                f"refusing to sign run {run_id!r}: spine line {line_no} has an unusable field "
+                f"type ({exc}); a receipt is never signed over an incomplete spine",
+            ) from exc
+        for optional in _SPINE_OPTIONAL_FIELDS:
+            value = row.get(optional)
+            if value is not None:
+                body[optional] = value
+        rows.append(body)
     return rows
 
 
