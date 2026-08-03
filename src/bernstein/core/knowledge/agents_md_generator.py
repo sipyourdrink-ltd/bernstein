@@ -376,9 +376,18 @@ def _build_directory_context(repo_path: Path) -> AgentsMdSection | None:
     rerunning ``bernstein agents-md sync`` - the map cannot silently
     disagree with the tree.
 
+    Inside a git work tree only *tracked* files are listed, so an
+    untracked scratch ``AGENTS.md`` in someone's working copy cannot
+    change the render (and thereby fail ``verify`` or rewrite mirrors
+    on ``sync``) - the same environment-stability rule
+    :func:`_build_git_workflow` documents. Outside git (no repo, git
+    binary missing) the on-disk tree is trusted as-is, matching every
+    other section builder.
+
     Returns ``None`` when no nested file exists (the common case for
     repos that have not adopted per-directory context).
     """
+    tracked = _git_tracked_files(repo_path)
     rows: list[tuple[str, str]] = []
     for root in _DIRECTORY_CONTEXT_ROOTS:
         base = repo_path / root
@@ -387,6 +396,8 @@ def _build_directory_context(repo_path: Path) -> AgentsMdSection | None:
         found = sorted(base.rglob("AGENTS.md"), key=lambda p: p.relative_to(repo_path).as_posix())
         for path in found:
             rel = path.relative_to(repo_path).as_posix()
+            if tracked is not None and rel not in tracked:
+                continue
             title = _first_h1_text(path) or f"{path.parent.name}/ context"
             rows.append((f"`{rel}`", title))
     if not rows:
@@ -404,6 +415,30 @@ def _build_directory_context(repo_path: Path) -> AgentsMdSection | None:
         always_apply=False,
         target_globs=("src/**", "tests/**"),
     )
+
+
+def _git_tracked_files(repo_path: Path) -> frozenset[str] | None:
+    """Return repo-relative POSIX paths of git-tracked files, or ``None``.
+
+    ``None`` means tracking state cannot be determined (not a git work
+    tree, git binary missing, or timeout); callers fall back to trusting
+    the on-disk tree, which is the trust model every other section
+    builder already uses. An empty result from a real work tree is
+    returned as-is - "nothing is tracked" is an answer, not an error.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return frozenset(p for p in result.stdout.split("\0") if p)
 
 
 def _first_h1_text(path: Path) -> str:

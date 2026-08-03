@@ -410,3 +410,22 @@ class TestBuildDirectoryContext:
         sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
         keys = [s.key for s in sections]
         assert keys.index("module-map") < keys.index("directory-context") < keys.index("build-test")
+
+    def test_untracked_file_excluded_inside_git_repo(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path, with_git=True)
+        tracked = tmp_path / "src" / "bernstein" / "core" / "AGENTS.md"
+        tracked.write_text("# Core engine\n")
+        subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "core context"], cwd=tmp_path, check=True)
+        # Untracked scratch file must not leak into the render.
+        (tmp_path / "src" / "bernstein" / "AGENTS.md").write_text("# Scratch notes\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        sec = next(s for s in sections if s.key == "directory-context")
+        assert "`src/bernstein/core/AGENTS.md`" in sec.body
+        assert "Scratch notes" not in sec.body
+
+    def test_only_untracked_files_omits_section_inside_git_repo(self, tmp_path: Path) -> None:
+        _make_repo(tmp_path, with_git=True)
+        (tmp_path / "src" / "bernstein" / "core" / "AGENTS.md").write_text("# Never committed\n")
+        sections = generate(tmp_path, GenerateOptions(include_git_workflow=False))
+        assert all(s.key != "directory-context" for s in sections)
