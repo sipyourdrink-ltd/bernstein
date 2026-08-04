@@ -557,7 +557,10 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     ``otel.projection`` audit event. A span whose id does not recompute, or
     whose anchor mismatches, is rejected as a forgery.
 
-    Exit codes: 0 = genuine, 1 = forged / unverifiable / bad input.
+    Exit codes: 0 = genuine, 1 = could not be evaluated (missing journal,
+    malformed span, bad input), 2 = verification failed (forged). Same
+    convention as ``trace verify-projection``; a rejection is always a hard
+    nonzero exit, never a warning.
     """
     from bernstein.core.observability.otel_bridge import (
         SpanParseError,
@@ -590,7 +593,20 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     projections: list[dict[str, Any]] = []
     try:
         chain = AuditChainStore(root / ".sdd" / "audit", key=load_or_create_audit_key())
-        projections = [event.details for event in chain.query(event_type=EVENT_OTEL_PROJECTION)]
+        # include_archived: retention must not make an old genuine span
+        # unverifiable -- the verified snapshot covers archived segments, so
+        # the consumed rows must too.
+        chain_ok, chain_errors, chain_events = chain.verify_and_query(
+            event_type=EVENT_OTEL_PROJECTION, include_archived=True
+        )
+        if chain_ok:
+            projections = [event.details for event in chain_events]
+        else:
+            # A chain that fails its own HMAC verification is not evidence.
+            # Leaving ``projections`` empty makes the verdict "unverifiable"
+            # (exit 1, never a pass) -- report and continue.
+            detail = "; ".join(chain_errors) if chain_errors else "chain verification failed"
+            click.echo(f"warning: audit chain failed integrity check: {sanitize_log(detail)}", err=True)
     except Exception as exc:
         # A missing or unreadable chain leaves ``projections`` empty, so the
         # verdict is "unverifiable" (never a silent pass) -- report and continue.
@@ -599,7 +615,11 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     result = verify_exported_span(span, events, projections, run_id=run_id)
     for line in _render_span_verdict(result, run_id=run_id, journal_path=journal_path):
         click.echo(line)
-    ctx.exit(0 if result.ok else 1)
+    if result.ok:
+        ctx.exit(0)
+    # Same convention as ``trace verify-projection``: 1 = could not be
+    # evaluated, 2 = verification failed. A forgery is the hard failure.
+    ctx.exit(1 if result.unverifiable else 2)
 
 
 @telemetry_group.command("tail")

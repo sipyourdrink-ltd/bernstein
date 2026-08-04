@@ -136,7 +136,9 @@ bernstein bench reliability-check reliability.json
 This emits a signed reliability receipt reporting `pass@1` (any attempt
 passed) and `pass^k` (all `k` attempts passed, the headline floor), with
 all `k` per-attempt run receipts embedded so the floor is recomputable
-offline. Full details: [reliability.md](reliability.md).
+offline. `bernstein eval --reliability k` is a thin alias for the same
+run path — identical receipt, verified with the same two verbs above.
+Full details: [reliability.md](reliability.md).
 
 ---
 

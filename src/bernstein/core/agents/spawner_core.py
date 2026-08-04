@@ -28,6 +28,10 @@ from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
+from bernstein.core.agents.context_attachments import (
+    collect_declared_context_files,
+    resolve_context_attachments,
+)
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
 from bernstein.core.agents.response_style import (
@@ -4090,13 +4094,7 @@ class AgentSpawner:
         # and context files instead of only the generic project CLAUDE.md
         # . The helper also marks the file as skip-worktree so
         # the override never lands in merge commits.
-        _task_context_files: list[str] = []
-        for _t in tasks:
-            _cfs = _t.metadata.get("context_files") if isinstance(_t.metadata, dict) else None
-            if isinstance(_cfs, list):
-                for _cf in _cfs:
-                    if isinstance(_cf, str) and _cf not in _task_context_files:
-                        _task_context_files.append(_cf)
+        _task_context_files = self._resolve_and_stamp_context_files(session, tasks, spawn_cwd)
         try:
             write_claude_md(
                 spawn_cwd,
@@ -4579,6 +4577,44 @@ class AgentSpawner:
         )
         return session
 
+    def _resolve_and_stamp_context_files(
+        self,
+        session: AgentSession,
+        tasks: list[Task],
+        root: Path,
+    ) -> list[str]:
+        """Content-address declared context files at dispatch onto *session*.
+
+        Issue #3375: shared by the fresh-spawn and crash-resume paths so a
+        resumed worker's declared context is recorded exactly like a fresh
+        one's - resume goes straight to the adapter and previously bypassed
+        this flow entirely, silently dropping the declaration from the run
+        record. Resolution runs against *root*, the worktree the worker
+        actually reads the files from; on resume that pins the bytes as they
+        exist after the crashed agent's edits. An unresolvable path is
+        recorded in its declared position with a reason code and a log
+        warning - never skipped, and never a spawn abort. The stamped
+        entries are what ``_record_spawned_events`` journals as the
+        ``context.files_attached`` event next to ``agent_spawned``.
+
+        Returns the declared list so the fresh-spawn path can hand it to
+        ``write_claude_md``. The resume path ignores the return value: it
+        never rewrites the preserved worktree's CLAUDE.md, which still
+        carries the context section the original spawn wrote.
+        """
+        declared = collect_declared_context_files(tasks)
+        if declared:
+            session.context_attachments = resolve_context_attachments(root=root, declared=declared)
+            for entry in session.context_attachments:
+                if entry["reason_code"]:
+                    logger.warning(
+                        "Context file %s for session %s did not resolve (%s); recorded with reason code",
+                        entry["path"],
+                        session.id,
+                        entry["reason_code"],
+                    )
+        return declared
+
     def spawn_for_resume(
         self,
         tasks: list[Task],
@@ -4688,6 +4724,15 @@ class AgentSpawner:
             model_config=model_config,
             status="starting",
         )
+
+        # Record declared context on resume exactly like a fresh spawn
+        # (#3375): the resumed worker reads its context from the preserved
+        # worktree - the task-specific CLAUDE.md the original spawn wrote
+        # survives the crash, so nothing is rewritten here - but the
+        # attachment set must be re-resolved against that worktree so the
+        # run journal pins the bytes this session actually sees, including
+        # any edits the crashed agent made to the declared files.
+        self._resolve_and_stamp_context_files(session, tasks, worktree_path)
 
         _scope_order = {"small": 0, "medium": 1, "large": 2}
         resume_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))

@@ -783,7 +783,9 @@ class SpanVerification:
     ``unverifiable`` is set the span could not be proven either way (no
     journal, or the run was never anchored into the audit chain); otherwise
     the span is a positive forgery. Both non-ok outcomes are nonzero exits on
-    the CLI -- a real rejection is never softened into a pass.
+    the CLI -- unverifiable exits ``1``, a forgery exits ``2``, matching
+    ``trace verify-projection`` -- a real rejection is never softened into a
+    pass.
     """
 
     ok: bool

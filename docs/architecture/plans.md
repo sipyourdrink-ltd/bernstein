@@ -52,7 +52,7 @@ Source-of-truth files:
 | `budget` | string \| number | no | Spending cap (`"$10"`, `5.00`). Stops the run when exceeded. |
 | `max_agents` | integer | no | Override `bernstein.yaml`'s `max_agents` for this plan. |
 | `constraints` | list[string] | no | Hard constraints injected into every agent's prompt. |
-| `context_files` | list[string] | no | Extra files concatenated into every agent's context. |
+| `context_files` | list[string] | no | Reference files (worktree-relative) every worker on this plan should read. Stamped onto each task's `metadata["context_files"]` at load, listed in the worker's per-session CLAUDE.md at spawn, and content-addressed into the run record (see below). |
 | `repos` | list[object] | no | Repo references for multi-repo plans. Each entry is `{path, branch?, name?}`; `path` is required. |
 
 Source: `plan_schema.py:198-244` (`PLAN_JSON_SCHEMA`).
@@ -310,6 +310,31 @@ nodes:
 
 Use the plain plan format for linear or sequential-stage work; reach for
 the workflow DSL only when you need conditional edges or retry loops.
+
+### Context files and the recorded attachment set
+
+Plan-level `context_files` reach the workers, verifiably:
+
+1. `load_plan()` stamps the declared list onto every produced task's
+   `metadata["context_files"]`, and the task POST forwards that key, so
+   the declaration survives to the stored task.
+2. At spawn, the orchestrator lists the declared files in the worker's
+   task-specific CLAUDE.md and resolves each path - in declared order -
+   against the worker's worktree, content-addressing it as
+   `(path, order, sha256)`.
+3. The resolved set is recorded in the run journal as a
+   `context.files_attached` event next to `agent_spawned`, so "which
+   reference material did this worker see, at which content" is
+   answerable offline. A verifier can recompute every digest from the
+   files and match.
+4. A declared path that does not resolve is recorded in its position
+   with a reason code (`missing`, `is_directory`, `unreadable`,
+   `outside_root`, `invalid`) and logged - never silently skipped. It
+   does not abort the spawn.
+
+Backlog tickets declare the same field in Ticket Format v1 frontmatter;
+see [operations/task_format.md](../operations/task_format.md). Source:
+`src/bernstein/core/agents/context_attachments.py`.
 
 ---
 

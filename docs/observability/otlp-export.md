@@ -113,12 +113,33 @@ export bridge used and prints one verdict:
   `bernstein.journal.entry_hash` it carries, that entry exists in the run's
   journal, and `bernstein.audit.anchor` derives the trace id recorded by the
   run's `otel.projection` audit event.
-- **forged** (exit 1) - the span id does not recompute, the referenced entry
-  is absent from the journal, or the anchor does not match the chain. A real
-  rejection is a hard failure, never a warning.
 - **unverifiable** (exit 1) - the run's journal is absent, or the run was
   never anchored into the audit chain, so the span cannot be proven either
   way.
+- **forged** (exit 2) - the span id does not recompute, the referenced entry
+  is absent from the journal, or the anchor does not match the chain. A real
+  rejection is a hard failure, never a warning.
+
+The exit codes are the same convention `trace verify-projection` has
+shipped since v3.9.0, so one script drives both commands:
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Verified. |
+| `1` | Input could not be evaluated: missing journal, malformed span JSON, unreadable input, or a run that was never anchored into the chain. |
+| `2` | Verification failed: the span is a forgery. |
+
+### What verification does not prove
+
+`verify-span` binds a span to a journal entry and a chain anchor: it proves
+the span was projected from this run's journal by the same derivation the
+export bridge used, and that the resulting trace was anchored into the
+audit chain. It does not vouch for the journal's own authorship - a party
+holding the journal and the audit key could have produced both - and it
+does not attest the semantic truth of the span's attributes: the journal
+records what the orchestrator observed, and verification proves faithful
+projection of those records, not that the recorded events describe the
+world correctly.
 
 The offline projection tooling remains available for the whole-run surface:
 
