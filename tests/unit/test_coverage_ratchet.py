@@ -278,6 +278,72 @@ def _write_reference_coverage_xml(path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("bad", ["2.0", "-0.1", "1.5", "100"])
+def test_parse_line_rate_rejects_out_of_range(tmp_path: Path, bad: str) -> None:
+    """A line-rate outside [0, 1] is a broken report, not a coverage figure.
+
+    ``2.0`` is the dangerous one: it derives to 200%, clears the baseline,
+    and is written as the new high-water mark - after which every honest
+    measurement reads as a catastrophic drop.
+    """
+    xml = tmp_path / "coverage.xml"
+    _write_coverage_xml(xml, bad)
+
+    with pytest.raises(ratchet.CoverageParseError, match="line-rate"):
+        ratchet.parse_line_rate(xml)
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "Infinity"])
+def test_parse_line_rate_rejects_non_finite(tmp_path: Path, bad: str) -> None:
+    """NaN/inf survive float() and poison every comparison downstream."""
+    xml = tmp_path / "coverage.xml"
+    _write_coverage_xml(xml, bad)
+
+    with pytest.raises(ratchet.CoverageParseError, match="line-rate"):
+        ratchet.parse_line_rate(xml)
+
+
+@pytest.mark.parametrize("edge", ["0", "0.0", "1", "1.0"])
+def test_parse_line_rate_accepts_the_inclusive_bounds(tmp_path: Path, edge: str) -> None:
+    """0% and 100% are legitimate reports and must still parse."""
+    xml = tmp_path / "coverage.xml"
+    _write_coverage_xml(xml, edge)
+
+    assert ratchet.parse_line_rate(xml) == pytest.approx(float(edge), abs=1e-12)
+
+
+def test_a_malformed_report_cannot_poison_the_baseline(tmp_path: Path) -> None:
+    """End-to-end: `check` soft-skips on a 200% report and writes nothing."""
+    baseline_path = tmp_path / ".coverage-baseline.json"
+    ratchet.write_baseline(
+        baseline_path,
+        ratchet.Baseline(
+            total_coverage_percent=_REFERENCE_PERCENT,
+            diff_coverage_floor_percent=85,
+            line_rate=0.8281,
+        ),
+    )
+    before = baseline_path.read_bytes()
+    xml = tmp_path / "coverage.xml"
+    _write_coverage_xml(xml, "2.0")
+
+    exit_code = ratchet.main(["check", "--coverage-xml", str(xml), "--baseline", str(baseline_path)])
+
+    # Exit 3 = malformed report, the existing soft-skip contract.
+    assert exit_code == 3
+    assert baseline_path.read_bytes() == before, "a malformed report rewrote the baseline"
+
+
+def test_init_refuses_a_malformed_report(tmp_path: Path) -> None:
+    """`init` must not seed a baseline from a nonsense line-rate either."""
+    xml = tmp_path / "coverage.xml"
+    _write_coverage_xml(xml, "nan")
+    baseline_path = tmp_path / ".coverage-baseline.json"
+
+    assert ratchet.main(["init", "--coverage-xml", str(xml), "--baseline", str(baseline_path)]) == 3
+    assert not baseline_path.exists()
+
+
 def test_parse_line_rate_returns_the_raw_cobertura_fraction(tmp_path: Path) -> None:
     """The stored fraction is the report's own attribute, not a derived value."""
     xml = tmp_path / "coverage.xml"

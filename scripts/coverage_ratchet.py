@@ -78,6 +78,7 @@ import argparse
 import dataclasses
 import datetime as _dt
 import json
+import math
 import os
 import sys
 import tempfile
@@ -171,7 +172,8 @@ def parse_line_rate(coverage_xml: Path) -> float:
 
     Raises:
         CoverageParseError: If the file is missing, not valid XML, lacks a
-            ``line-rate`` attribute, or that attribute is not numeric.
+            ``line-rate`` attribute, or that attribute is not a finite
+            number in ``[0, 1]``.
     """
     if not coverage_xml.exists():
         raise CoverageParseError(f"coverage report not found: {coverage_xml}")
@@ -190,9 +192,21 @@ def parse_line_rate(coverage_xml: Path) -> float:
         raise CoverageParseError(f"coverage report has no root line-rate attribute: {coverage_xml}")
 
     try:
-        return float(raw)
+        fraction = float(raw)
     except ValueError as exc:
         raise CoverageParseError(f"coverage report line-rate is not numeric: {raw!r}") from exc
+
+    # ``float()`` happily returns nan/inf and any magnitude, none of which
+    # is a coverage fraction. Left unchecked they reach the baseline: nan
+    # makes every comparison in decide() false (so the ratchet silently
+    # does nothing forever), and a value like 2.0 derives to 200%, clears
+    # the high-water mark, and is written as the new one - after which
+    # every honest measurement reads as a catastrophic drop. Reject here,
+    # where it is still a parse error the workflow soft-skips on.
+    if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
+        raise CoverageParseError(f"coverage report line-rate is not a fraction in [0, 1]: {raw!r}")
+
+    return fraction
 
 
 def derive_percent_from_line_rate(line_rate: float) -> float:
