@@ -710,6 +710,94 @@ def test_receipt_projection_refuses_a_range_without_the_attestation(tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
+# Store hardening: a linked store component is refused, never followed
+# ---------------------------------------------------------------------------
+
+
+def test_a_symlinked_clean_run_store_is_refused_not_followed(tmp_path: Path) -> None:
+    # A genuine attestation, sealed elsewhere, planted in an outside
+    # directory that a symlinked clean-run store points at.
+    # realpath-vs-realpath containment passes vacuously in that layout, so
+    # the store must refuse the symlink itself.
+    from bernstein.eval.clean_run import read_clean_run_attestation
+
+    elsewhere = tmp_path / "elsewhere"
+    events = _seed_journal(elsewhere, _clean_rows())
+    attestation = _build(elsewhere, events)
+    attestation_json = clean_run_attestation_path(elsewhere, attestation.attestation_hash).read_text(encoding="utf-8")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / f"{attestation.attestation_hash}.json").write_text(attestation_json, encoding="utf-8")
+
+    victim = tmp_path / "victim"
+    (victim / ".sdd" / "eval").mkdir(parents=True)
+    (victim / ".sdd" / "eval" / "clean_run").symlink_to(outside)
+
+    assert read_clean_run_attestation(victim, attestation.attestation_hash) is None
+    with pytest.raises(ValueError, match="symlink"):
+        clean_run_attestation_path(victim, attestation.attestation_hash)
+    result = verify_clean_run_attestation(
+        workdir=victim,
+        lineage_root=victim / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        attestation_hash=attestation.attestation_hash,
+        journal_events=events,
+    )
+    assert not result.ok
+    assert "symlink" in result.reason
+
+    # The CLI surfaces the refusal as a nonzero exit, never a traceback.
+    import os as _os
+
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.eval_benchmark_cmd import eval_group
+
+    key_file = tmp_path / "audit.key"
+    key_file.write_bytes(_KEY)
+    _os.chmod(key_file, 0o600)
+    cli_result = CliRunner().invoke(
+        eval_group,
+        ["clean-run", "verify", attestation.attestation_hash, "--workdir", str(victim)],
+        env={"BERNSTEIN_AUDIT_KEY_PATH": str(key_file)},
+    )
+    assert cli_result.exit_code == 1
+    assert "Traceback" not in cli_result.output
+
+
+class _JunctionProbePath(Path):
+    """POSIX stand-in for an NTFS junction on the store walk.
+
+    ``is_junction()`` answers ``True`` for the marked component while
+    ``is_symlink()`` keeps its real (``False``) answer, so
+    ``is_filesystem_link`` takes its junction branch through the real
+    component walk rather than having the whole check stubbed away.
+    """
+
+    _junction_component = "clean_run"
+
+    def is_junction(self) -> bool:
+        return self.name == self._junction_component
+
+
+def test_a_junction_store_component_is_refused_like_a_symlink(tmp_path: Path) -> None:
+    # Path.is_symlink() is False for NTFS junctions, so a symlink-only probe
+    # is bypassed by a junctioned store component on Windows. A component
+    # that is a filesystem link of any kind must be refused before the
+    # realpath containment check, with no candidate returned.
+    from bernstein.eval.clean_run import read_clean_run_attestation
+
+    events = _seed_journal(tmp_path, _clean_rows())
+    attestation = _build(tmp_path, events)
+    workdir = _JunctionProbePath(tmp_path)
+
+    with pytest.raises(ValueError, match="symlink or junction"):
+        clean_run_attestation_path(workdir, attestation.attestation_hash)
+    assert read_clean_run_attestation(workdir, attestation.attestation_hash) is None
+
+
+# ---------------------------------------------------------------------------
 # Scope boundary + activity extraction unit surface
 # ---------------------------------------------------------------------------
 

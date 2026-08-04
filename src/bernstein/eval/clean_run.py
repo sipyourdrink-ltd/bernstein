@@ -57,14 +57,15 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.platform_compat import is_filesystem_link
 from bernstein.core.replay.journal import run_journal_path, verify_events
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.security.audit_receipt import AuditReceipt
@@ -818,13 +819,31 @@ def clean_run_attestation_path(workdir: Path, attestation_hash: str) -> Path:
     The hash is validated against ``sha256:<64 hex>`` and the resolved path
     is asserted to stay under the clean-run directory (path-injection defense
     in depth, mirroring :func:`bernstein.eval.gate_receipt.verdict_receipt_path`).
+    An attestation store relocated via a filesystem link is refused outright:
+    with ``.sdd``, ``.sdd/eval``, or the clean-run directory itself symlinked
+    (or, on Windows, junctioned -- ``Path.is_symlink()`` is ``False`` for
+    NTFS junctions, hence :func:`is_filesystem_link`) elsewhere, base and
+    candidate both resolve into the link's target and a realpath containment
+    check passes vacuously, so the store would follow attacker-placed
+    content. Same posture as the gate and verifier-ladder receipt stores
+    (#3414). The returned path is the *resolved* candidate, so the
+    subsequent read or write cannot follow a same-named symlink planted
+    inside the store.
 
     Raises:
-        ValueError: The hash is not canonical or the path escapes.
+        ValueError: The hash is not a canonical ``sha256:`` digest, a
+            component of the clean-run directory is a symlink or junction,
+            or the resolved path escapes the clean-run directory.
     """
     if not _ATTESTATION_HASH_RE.match(attestation_hash):
         msg = f"attestation_hash is not a canonical sha256 digest: {attestation_hash!r}"
         raise ValueError(msg)
+    probe = workdir
+    for part in _CLEAN_RUN_SUBPATH:
+        probe = probe / part
+        if is_filesystem_link(probe):
+            msg = f"clean-run attestation store path is a symlink or junction; refusing to follow it: {probe}"
+            raise ValueError(msg)
     base = workdir.joinpath(*_CLEAN_RUN_SUBPATH)
     candidate = base / f"{attestation_hash}.json"
     base_real = os.path.realpath(base)
@@ -832,7 +851,7 @@ def clean_run_attestation_path(workdir: Path, attestation_hash: str) -> Path:
     if os.path.commonpath([base_real, cand_real]) != base_real:
         msg = f"attestation path escapes clean-run directory: {attestation_hash!r}"
         raise ValueError(msg)
-    return candidate
+    return Path(cand_real)
 
 
 def recompute_attestation_hash(payload: Mapping[str, Any]) -> str:
@@ -1088,7 +1107,9 @@ def verify_clean_run_attestation(
     try:
         path = clean_run_attestation_path(workdir, attestation_hash)
     except ValueError as exc:
-        return CleanRunVerifyResult(ok=False, reason=f"invalid attestation hash: {exc}", attestation=None)
+        # Surfaces the named refusal verbatim: a non-canonical hash or a
+        # store component that is a symlink/junction (refused, not followed).
+        return CleanRunVerifyResult(ok=False, reason=str(exc), attestation=None)
     if not path.is_file():
         return CleanRunVerifyResult(ok=False, reason=f"no attestation for {attestation_hash!r}", attestation=None)
     try:
