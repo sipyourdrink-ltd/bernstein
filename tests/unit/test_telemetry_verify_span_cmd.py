@@ -1,12 +1,15 @@
-"""Tests for ``bernstein telemetry verify-span`` (#2526, Phase 3).
+"""Tests for ``bernstein telemetry verify-span`` (#2526, Phase 3; #3256).
 
 ``verify-span`` proves an exported OTLP span against the run journal and the
 audit chain: the span id must recompute from the ``bernstein.journal.entry_hash``
 it carries (the same derivation the export bridge used), that entry must exist
 in the run's journal, and the ``bernstein.audit.anchor`` must resolve to the
 run's ``otel.projection`` audit event. A genuine exported span is accepted
-(exit 0); a span whose id does not recompute or whose anchor mismatches is
-rejected as a forgery (exit 1). Nothing here touches the network.
+(exit 0); an input that cannot be proven either way -- missing journal,
+malformed span, never-anchored run -- exits 1; a span whose id does not
+recompute or whose anchor mismatches is rejected as a forgery (exit 2). The
+table is the one ``trace verify-projection`` has shipped since v3.9.0, and a
+cross-command test here pins the two to it. Nothing here touches the network.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from bernstein.cli.commands.advanced_cmd import trace_cmd
 from bernstein.cli.commands.telemetry_cmd import telemetry_group
 from bernstein.core.observability.otel_bridge import (
     parse_exported_span,
@@ -124,55 +128,55 @@ def test_genuine_span_from_stdin(project: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Forgeries are rejected (hard fail, nonzero)                                  #
+# Forgeries are rejected (hard fail, exit 2)                                   #
 # --------------------------------------------------------------------------- #
 
 
-def test_tampered_span_id_rejected(project: Path) -> None:
+def test_tampered_span_id_rejected_exit_two(project: Path) -> None:
     spans = _exported_spans(project)
     forged = json.loads(json.dumps(spans[0]))
     forged["spanId"] = "0000000000000000"  # id no longer recomputes from entry_hash
     span_file = _write(project, forged)
     result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "forged" in result.output.lower()
     assert "recompute" in result.output.lower()
 
 
-def test_tampered_entry_hash_rejected(project: Path) -> None:
+def test_tampered_entry_hash_rejected_exit_two(project: Path) -> None:
     spans = _exported_spans(project)
     forged = _set_attr(spans[0], "bernstein.journal.entry_hash", "de" * 32)
     span_file = _write(project, forged)
     result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "forged" in result.output.lower()
 
 
-def test_wrong_anchor_rejected(project: Path) -> None:
+def test_wrong_anchor_rejected_exit_two(project: Path) -> None:
     spans = _exported_spans(project)
     forged = _set_attr(spans[0], "bernstein.audit.anchor", "ab" * 32)
     span_file = _write(project, forged)
     result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "forged" in result.output.lower()
     assert "anchor" in result.output.lower()
 
 
-def test_run_id_mismatch_rejected(project: Path) -> None:
+def test_run_id_mismatch_rejected_exit_two(project: Path) -> None:
     spans = _exported_spans(project)
     forged = _set_attr(spans[0], "bernstein.run.id", "some-other-run")
     span_file = _write(project, forged)
     result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "forged" in result.output.lower()
 
 
 # --------------------------------------------------------------------------- #
-# Unverifiable (never anchored) is nonzero and distinct from forgery           #
+# Unverifiable (cannot be evaluated) exits 1, distinct from forgery's 2        #
 # --------------------------------------------------------------------------- #
 
 
-def test_unanchored_span_is_unverifiable(project: Path) -> None:
+def test_unanchored_span_is_unverifiable_exit_one(project: Path) -> None:
     spans = _exported_spans(project, record_audit=False)  # no otel.projection event
     span_file = _write(project, spans[0])
     result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
@@ -180,7 +184,7 @@ def test_unanchored_span_is_unverifiable(project: Path) -> None:
     assert "unverifiable" in result.output.lower()
 
 
-def test_missing_journal_is_unverifiable(project: Path) -> None:
+def test_missing_journal_is_unverifiable_exit_one(project: Path) -> None:
     spans = _exported_spans(project)
     # Drop the run-id attribute so the run cross-check does not fire; the point
     # here is that a run whose journal is absent cannot be proven either way.
@@ -192,12 +196,69 @@ def test_missing_journal_is_unverifiable(project: Path) -> None:
     assert "unverifiable" in result.output.lower()
 
 
-def test_bad_json_errors(project: Path) -> None:
+def test_bad_json_errors_exit_one(project: Path) -> None:
     span_file = project / "bad.json"
     span_file.write_text("{not json", encoding="utf-8")
     result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
     assert result.exit_code == 1
     assert "json" in result.output.lower()
+
+
+# --------------------------------------------------------------------------- #
+# Cross-command convention: one exit-code table for both verifiers (#3256)     #
+# --------------------------------------------------------------------------- #
+
+
+def test_verify_span_and_verify_projection_share_one_exit_code_convention(project: Path) -> None:
+    """0 = verified, 1 = could not be evaluated, 2 = verification failed.
+
+    ``telemetry verify-span`` and ``trace verify-projection`` are scripted
+    against together; this test drives both commands through all three
+    outcomes and pins their documented contracts to the same table, so a
+    drift in either command's behaviour or help text fails a named test.
+    """
+    trace_runner = CliRunner()
+
+    # exit 0 -- verified.
+    spans = _exported_spans(project)
+    genuine = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(_write(project, spans[0]))])
+    assert genuine.exit_code == 0, genuine.output
+    projected = trace_runner.invoke(trace_cmd, ["project", _RUN_ID, "--workdir", str(project)])
+    assert projected.exit_code == 0, projected.output
+    projection_ok = trace_runner.invoke(trace_cmd, ["verify-projection", _RUN_ID, "--workdir", str(project)])
+    assert projection_ok.exit_code == 0, projection_ok.output
+
+    # exit 1 -- input could not be evaluated (run with no journal).
+    stripped = json.loads(json.dumps(spans[0]))
+    stripped["attributes"] = [a for a in stripped["attributes"] if a["key"] != "bernstein.run.id"]
+    span_no_journal = _invoke(
+        ["verify-span", "--run", "no-such-run", "-w", str(project), "--span", str(_write(project, stripped))]
+    )
+    assert span_no_journal.exit_code == 1, span_no_journal.output
+    projection_no_journal = trace_runner.invoke(
+        trace_cmd, ["verify-projection", "no-such-run", "--workdir", str(project)]
+    )
+    assert projection_no_journal.exit_code == 1, projection_no_journal.output
+
+    # exit 2 -- verification failed (a span id that no longer recomputes).
+    forged = json.loads(json.dumps(spans[0]))
+    forged["spanId"] = "0000000000000000"
+    span_forged = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(_write(project, forged))])
+    assert span_forged.exit_code == 2, span_forged.output
+    dest = project / ".sdd" / "runs" / _RUN_ID / "projection.otel.json"
+    payload = json.loads(dest.read_text(encoding="utf-8"))
+    payload["spans"][1]["span_id"] = "deadbeefdeadbeef"
+    dest.write_text(json.dumps(payload), encoding="utf-8")
+    projection_forged = trace_runner.invoke(trace_cmd, ["verify-projection", _RUN_ID, "--workdir", str(project)])
+    assert projection_forged.exit_code == 2, projection_forged.output
+
+    # Both documented contracts state the same table.
+    span_help = " ".join(_invoke(["verify-span", "--help"]).output.split())
+    projection_help = " ".join(trace_runner.invoke(trace_cmd, ["verify-projection", "--help"]).output.split())
+    assert "2 = verification failed" in span_help
+    assert "2 = verification failed" in projection_help
+    assert "1 = could not be evaluated" in span_help
+    assert "1 = bad input" in projection_help
 
 
 # --------------------------------------------------------------------------- #

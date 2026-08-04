@@ -557,7 +557,10 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     ``otel.projection`` audit event. A span whose id does not recompute, or
     whose anchor mismatches, is rejected as a forgery.
 
-    Exit codes: 0 = genuine, 1 = forged / unverifiable / bad input.
+    Exit codes: 0 = genuine, 1 = could not be evaluated (missing journal,
+    malformed span, bad input), 2 = verification failed (forged). Same
+    convention as ``trace verify-projection``; a rejection is always a hard
+    nonzero exit, never a warning.
     """
     from bernstein.core.observability.otel_bridge import (
         SpanParseError,
@@ -599,7 +602,11 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     result = verify_exported_span(span, events, projections, run_id=run_id)
     for line in _render_span_verdict(result, run_id=run_id, journal_path=journal_path):
         click.echo(line)
-    ctx.exit(0 if result.ok else 1)
+    if result.ok:
+        ctx.exit(0)
+    # Same convention as ``trace verify-projection``: 1 = could not be
+    # evaluated, 2 = verification failed. A forgery is the hard failure.
+    ctx.exit(1 if result.unverifiable else 2)
 
 
 @telemetry_group.command("tail")
