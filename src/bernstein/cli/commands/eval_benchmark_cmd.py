@@ -797,9 +797,94 @@ def benchmark_receipt_verify(receipt_hash: str, workdir: str) -> None:
         raise SystemExit(1)
 
 
-@click.group("eval")
-def eval_group() -> None:
-    """Evaluation harness with multiplicative scoring."""
+@click.group("eval", invoke_without_command=True)
+@click.option(
+    "--reliability",
+    "reliability_k",
+    type=click.IntRange(min=1),
+    default=None,
+    metavar="K",
+    help=(
+        "Run each suite task K times under fixed coordination and emit a signed "
+        "pass^k reliability receipt — an alias for 'bernstein bench run "
+        "--reliability K'. Verify the receipt with 'bernstein bench "
+        "reliability-verify'; probe coordination byte-identity with 'bernstein "
+        "bench reliability-check'."
+    ),
+)
+@click.option(
+    "--suite",
+    "reliability_suite",
+    default="golden-v1",
+    show_default=True,
+    help="Suite name or .json path (--reliability mode only).",
+)
+@click.option(
+    "--out",
+    "reliability_out",
+    default="reliability.json",
+    show_default=True,
+    help="Output path for the reliability receipt (--reliability mode only).",
+)
+@click.option(
+    "--scheduler",
+    "reliability_scheduler",
+    default="default",
+    show_default=True,
+    help="Scheduler name to embed in the receipt (--reliability mode only).",
+)
+@click.option(
+    "--stub-signer",
+    "reliability_stub_signer",
+    is_flag=True,
+    default=False,
+    help="Use the stub signer instead of the install identity (--reliability mode only, for testing).",
+)
+@click.pass_context
+def eval_group(
+    ctx: click.Context,
+    reliability_k: int | None,
+    reliability_suite: str,
+    reliability_out: str,
+    reliability_scheduler: str,
+    reliability_stub_signer: bool,
+) -> None:
+    """Evaluation harness with multiplicative scoring.
+
+    \b
+      bernstein eval --reliability 5        # pass^k reliability floor
+      bernstein eval run                    # golden suite run
+
+    --reliability K is a thin alias for 'bernstein bench run --reliability K'
+    (issue #2933): same runner, same signed reliability receipt. Verify with
+    'bernstein bench reliability-verify' and probe coordination byte-identity
+    with 'bernstein bench reliability-check'.
+    """
+    if ctx.invoked_subcommand is not None:
+        if reliability_k is not None:
+            raise click.UsageError(
+                "--reliability runs the pass^k reliability floor directly; "
+                "it cannot be combined with an eval subcommand."
+            )
+        return
+    if reliability_k is None:
+        # Preserve the pre-alias behaviour of a bare `bernstein eval`:
+        # show help and exit 2 (Click's no-args-is-help path).
+        click.echo(ctx.get_help())
+        ctx.exit(2)
+    # Delegate to the exact code path `bernstein bench run --reliability K`
+    # uses: same ReliabilityRunner, same signed ReliabilityReceipt, same
+    # verification story. No reliability logic lives on the eval surface.
+    from bernstein.eval.bench.bench_cli import bench_run
+
+    ctx.invoke(
+        bench_run,
+        suite=reliability_suite,
+        out=reliability_out,
+        scheduler=reliability_scheduler,
+        stub_signer=reliability_stub_signer,
+        reliability_k=reliability_k,
+    )
 
 
 @eval_group.command("golden")
