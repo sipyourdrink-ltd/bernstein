@@ -7954,6 +7954,81 @@ def record_self_update_receipt(
     )
 
 
+# ---------------------------------------------------------------------------
+# Verifier-ladder tier records (#2927)
+# ---------------------------------------------------------------------------
+
+#: Issue #2927 -- emitted once per verifier-ladder tier that actually ran
+#: against a task's attributed diff. The event is the ladder-level binder: it
+#: carries the composite ladder receipt hash, the task id, the tier name, the
+#: tier's configuration / inputs / evidence hashes, its verdict
+#: (``pass`` / ``fail`` / ``skip``), and the lineage-spine entry hash under
+#: which the tier's canonical record bytes are sealed. Only hashes, ids, and
+#: the verdict are recorded -- never the raw diff, rubric, or model output.
+#: Tier-local receipts (``gate.adjudication``, ``review.receipt``) remain
+#: separate; this event binds coverage across the whole ladder.
+EVENT_VERIFIER_TIER = "verifier.tier"
+
+
+def record_verifier_tier(
+    *,
+    chain: AuditChainStore,
+    receipt_hash: str,
+    task_id: str,
+    tier: str,
+    config_hash: str,
+    inputs_hash: str,
+    evidence_hash: str,
+    verdict: str,
+    spine_entry_hash: str,
+    actor: str = "verifier_ladder",
+) -> AuditEvent:
+    """Append a ``verifier.tier`` event into *chain* (#2927).
+
+    Mirrors one sealed verifier-ladder tier record into the HMAC chain so an
+    operator can prove, from the chain alone, that a given tier executed
+    against a named body of evidence: the tier's own configuration, the
+    attributed inputs it saw, and the structured findings it produced -- each
+    as a ``sha256:`` hash. A verifier holding the ``verifier-ladder`` lineage
+    spine confirms the ``spine_entry_hash`` seals exactly these hashes, so a
+    tier that silently degraded or was skipped cannot later read as coverage.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_hash: Content hash of the composite ladder receipt this tier
+            record belongs to (the ladder's identity).
+        task_id: The task whose work the ladder verified.
+        tier: The tier name (``deterministic`` / ``judge`` / ``human``).
+        config_hash: ``sha256:`` hash of the tier's own configuration.
+        inputs_hash: ``sha256:`` hash of the attributed inputs the tier saw.
+        evidence_hash: ``sha256:`` hash of the tier's structured findings.
+        verdict: The tier verdict (``pass`` / ``fail`` / ``skip``).
+        spine_entry_hash: Lineage-spine entry hash sealing the tier record's
+            canonical bytes under the ``verifier-ladder`` run.
+        actor: Recorded actor; defaults to ``"verifier_ladder"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_VERIFIER_TIER,
+        actor=actor,
+        resource_type="verifier_tier",
+        resource_id=receipt_hash,
+        details={
+            "receipt_hash": receipt_hash,
+            "task_id": task_id,
+            "tier": tier,
+            "config_hash": config_hash,
+            "inputs_hash": inputs_hash,
+            "evidence_hash": evidence_hash,
+            "verdict": verdict,
+            "spine_entry_hash": spine_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -8074,6 +8149,7 @@ __all__ = [
     "EVENT_TOURNAMENT_SELECTION",
     "EVENT_TRAJECTORY_RECEIPT",
     "EVENT_UPDATE_ADVISORY",
+    "EVENT_VERIFIER_TIER",
     "EVENT_WEBHOOK_NODE_RECEIPT",
     "EVENT_WEBHOOK_PAYLOAD_ANCHOR",
     "EVENT_WORK_LEDGER_ANCHOR",
@@ -8206,6 +8282,7 @@ __all__ = [
     "record_tournament_selection",
     "record_trajectory_receipt",
     "record_update_advisory",
+    "record_verifier_tier",
     "record_webhook_node_receipt",
     "record_webhook_payload_anchor",
     "record_work_ledger_anchor",
