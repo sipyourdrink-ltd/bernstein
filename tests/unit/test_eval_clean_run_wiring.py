@@ -86,6 +86,10 @@ def test_evaluate_task_attaches_the_attestation(tmp_path: Path) -> None:
     result = harness.evaluate_task(_task(), _passing_telemetry(), clean_run_attestation=attestation)
     assert result.clean_run is attestation
     assert result.passed
+    # This synthetic task has no golden source and no reference blobs: the
+    # commitment must say so in its sealed coverage rather than pretending.
+    assert attestation.contraband.reference_source_count == 0
+    assert attestation.contraband.token_source_count >= 3
 
 
 def test_dirty_attestation_zeroes_the_safety_factor(tmp_path: Path) -> None:

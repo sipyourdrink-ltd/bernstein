@@ -8,7 +8,12 @@ artefact following the receipt-is-the-proof pattern of
 * the task's ground-truth (id, title, completion signals, expected test
   commands, reference-solution contents) is sealed into a
   :class:`ContrabandSet` of keyed HMAC digests under the operator's audit key,
-  so the attestation commits to the answer without ever carrying it;
+  so the attestation commits to the answer without ever carrying it. The
+  task's own golden-source material is derived automatically
+  (:func:`derive_task_reference_blobs`) and coverage counts are sealed into
+  the commitment, so reference content can neither be silently omitted nor
+  silently absent -- declared-but-unloadable reference content refuses to
+  seal (:class:`CleanRunCommitmentError`);
 * the closed universe of in-scope reads comes from the substrate, not from
   config: the task's worktree root plus the allowed endpoints of a
   :class:`~bernstein.core.security.network_isolation.NetworkPolicy`. Without a
@@ -16,10 +21,13 @@ artefact following the receipt-is-the-proof pattern of
   (:class:`CleanRunBoundaryError`) because the completeness claim would be
   vacuous;
 * the activity set is drawn from the run's Merkle-chained
-  :mod:`~bernstein.core.replay.journal` rows (head hash = run identity),
-  optionally joined with the run's HMAC audit-chain slice, and the attestation
-  records both heads so an omitted or mutated contaminating access breaks the
-  anchor rather than silently trimming the set;
+  :mod:`~bernstein.core.replay.journal` rows (head hash = run identity), and
+  the attestation records that head so an omitted or mutated contaminating
+  access breaks the anchor rather than silently trimming the set. The
+  attestation binds the journal head only: the audit-chain mirror carries the
+  attestation's own hash, so it cannot sit inside the sealed bytes and is
+  verified separately (``bernstein audit verify`` plus
+  :func:`project_clean_run_receipt`);
 * :func:`scan_activity` is a pure set-membership pass over sealed digests:
   verdict is ``CLEAN`` iff zero contraband matches and zero out-of-scope
   accesses, and matches are recorded as ``(journal index, match class)``
@@ -116,6 +124,15 @@ class CleanRunAnchorError(CleanRunError):
     """The activity set cannot be anchored (empty or broken journal chain)."""
 
 
+class CleanRunCommitmentError(CleanRunError):
+    """Declared reference content could not be loaded into the commitment.
+
+    Raised instead of sealing. A commitment that silently omitted reference
+    material the task declared would let a contaminated run attest ``CLEAN``
+    against an incomplete ground-truth set.
+    """
+
+
 class CleanRunProjectionError(CleanRunError):
     """The projected chain range does not cover the attestation's mirror."""
 
@@ -177,9 +194,16 @@ class ContrabandSet:
     """The task's ground-truth, sealed as keyed digests.
 
     Stores only HMAC digests plus non-identifying shape metadata (window
-    sizes), so publishing the attestation can never reveal the solution. The
-    ``salt_commitment`` binds the set to the operator key without revealing
-    it.
+    sizes and coverage counts), so publishing the attestation can never
+    reveal the solution. The ``salt_commitment`` binds the set to the
+    operator key without revealing it.
+
+    Coverage is explicit, never silent: ``token_source_count`` records how
+    many task-derived token sources were committed and
+    ``reference_source_count`` how many reference-content blobs fed the
+    n-gram space. A task that genuinely has no reference content seals with
+    ``reference_source_count == 0`` visible in the signed bytes, so a
+    verifier can always see what the commitment covered.
     """
 
     schema_version: int
@@ -188,6 +212,8 @@ class ContrabandSet:
     ngram_digests: tuple[str, ...]
     ngram_words: int
     max_token_words: int
+    token_source_count: int
+    reference_source_count: int
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,6 +223,8 @@ class ContrabandSet:
             "ngram_digests": list(self.ngram_digests),
             "ngram_words": self.ngram_words,
             "max_token_words": self.max_token_words,
+            "token_source_count": self.token_source_count,
+            "reference_source_count": self.reference_source_count,
         }
 
     def canonical_bytes(self) -> bytes:
@@ -212,6 +240,8 @@ class ContrabandSet:
             ngram_digests=tuple(str(d) for d in raw["ngram_digests"]),
             ngram_words=int(raw["ngram_words"]),
             max_token_words=int(raw["max_token_words"]),
+            token_source_count=int(raw["token_source_count"]),
+            reference_source_count=int(raw["reference_source_count"]),
         )
 
 
@@ -225,16 +255,22 @@ def build_contraband_set(
 
     Tokens are the task-identifying strings (id, title, completion signals,
     expected test commands); n-grams are content windows over the
-    reference-solution blobs. The task *description* is what the agent is
+    reference-content blobs. The task *description* is what the agent is
     legitimately shown, so it is never contraband. Blob iteration is sorted by
     key and digest sets are sorted and de-duplicated, so two builds over the
-    same inputs are byte-identical.
+    same inputs are byte-identical. Coverage counts are sealed alongside the
+    digests so an empty n-gram space is a visible fact, never a silent one.
+
+    The attestation builder derives the task's own golden-source material via
+    :func:`derive_task_reference_blobs` before calling this, so *reference_blobs*
+    is additive extra material -- omitting it cannot silently drop the task's
+    derivable reference content from the commitment.
 
     Args:
         task: The golden task whose ground-truth to commit to.
         key: Operator audit HMAC key (no new key material).
-        reference_blobs: Reference-solution / golden-data contents keyed by a
-            label; only the values are sealed.
+        reference_blobs: Reference-content blobs keyed by a label; only the
+            values are sealed (labels never enter the artifact).
 
     Returns:
         The sealed :class:`ContrabandSet`.
@@ -242,10 +278,13 @@ def build_contraband_set(
     token_sources = [task.id, task.title, *task.completion_signals, *task.expected_test_outcomes]
     tokens: set[str] = set()
     ngrams: set[str] = set()
+    token_source_count = 0
+    reference_source_count = 0
     for source in token_sources:
         normalized = _normalize(source)
         if not normalized:
             continue
+        token_source_count += 1
         tokens.add(_seal(key, "token", normalized))
         # A token longer than the matchable word-run cap is still catchable
         # through the n-gram space.
@@ -255,6 +294,7 @@ def build_contraband_set(
         normalized = _normalize(blob)
         if not normalized:
             continue
+        reference_source_count += 1
         ngrams.update(_seal(key, "ngram", w) for w in _windows(normalized))
     return ContrabandSet(
         schema_version=CLEAN_RUN_SCHEMA_VERSION,
@@ -263,7 +303,92 @@ def build_contraband_set(
         ngram_digests=tuple(sorted(ngrams)),
         ngram_words=NGRAM_WORDS,
         max_token_words=MAX_TOKEN_WORDS,
+        token_source_count=token_source_count,
+        reference_source_count=reference_source_count,
     )
+
+
+def _frontmatter_of(text: str) -> str | None:
+    """Return the YAML frontmatter of a golden markdown source, or ``None``.
+
+    Mirrors the ``---`` split contract of :mod:`bernstein.eval.golden`: the
+    frontmatter carries the hidden ground-truth strings (completion signals,
+    expected outcomes), while the body is the description the agent is
+    legitimately shown -- only the frontmatter is ever committed.
+    """
+    if not text.startswith("---"):
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    return parts[1].strip()
+
+
+def derive_task_reference_blobs(
+    task: GoldenTask,
+    *,
+    golden_dir: Path | None = None,
+) -> dict[str, str]:
+    """Reference material derivable from the task's own golden source.
+
+    Locates the task's golden markdown (operator override under
+    ``<golden_dir>/<tier>/*.md`` first, then the packaged
+    ``bernstein.eval.golden_data`` fixture) by parsed task id and returns its
+    YAML frontmatter text -- the part carrying the hidden ground-truth
+    strings -- keyed by an internal label that never enters the artifact.
+    The description body is excluded: it is what the agent is legitimately
+    shown.
+
+    A synthetic task backed by no golden source (and no *golden_dir*
+    declaration) derives nothing; the commitment then seals
+    ``reference_source_count == 0`` visibly rather than pretending coverage.
+
+    Args:
+        task: The task whose golden source to locate (matched by ``id``
+            within ``task.tier``).
+        golden_dir: Operator golden root. Supplying it *declares* that the
+            task's source must be loadable.
+
+    Returns:
+        A blob mapping suitable for :func:`build_contraband_set`.
+
+    Raises:
+        CleanRunCommitmentError: *golden_dir* was supplied but the task's
+            golden source could not be located there or in the packaged
+            data -- declared reference content must never go silently
+            uncommitted.
+    """
+    from bernstein.eval.golden import _packaged_tier_files, _parse_golden_text
+
+    label = f"golden:{task.id}"
+    if golden_dir is not None:
+        tier_dir = golden_dir / task.tier
+        if tier_dir.is_dir():
+            for md_file in sorted(tier_dir.glob("*.md")):
+                try:
+                    text = md_file.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                parsed = _parse_golden_text(text, task.tier, str(md_file))
+                frontmatter = _frontmatter_of(text)
+                if parsed is not None and parsed.id == task.id and frontmatter:
+                    return {label: frontmatter}
+    for entry in _packaged_tier_files(task.tier):
+        try:
+            text = entry.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parsed = _parse_golden_text(text, task.tier, entry.name)
+        frontmatter = _frontmatter_of(text)
+        if parsed is not None and parsed.id == task.id and frontmatter:
+            return {label: frontmatter}
+    if golden_dir is not None:
+        raise CleanRunCommitmentError(
+            f"refusing to seal: golden_dir {golden_dir} was declared but no golden source "
+            f"for task {task.id!r} (tier {task.tier!r}) could be loaded from it or from the "
+            "packaged data -- declared reference content must not go silently uncommitted",
+        )
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -499,11 +624,18 @@ class CleanRunAttestation:
     """A sealed clean-run attestation.
 
     The body (everything ``attestation_hash`` covers) binds the contraband
-    commitment, the scope roots, the sealed activity set, both anchors
-    (journal head and chain-range head), the verdict, the match positions,
-    the schema version, and the timestamp. ``journal_entry_hash`` is the
-    lineage-spine anchor assigned post-seal and is not part of the hashed
-    body.
+    commitment, the scope roots, the sealed activity set, the journal-head
+    anchor, the verdict, the match positions, the schema version, and the
+    timestamp. ``journal_entry_hash`` is the lineage-spine anchor assigned
+    post-seal and is not part of the hashed body.
+
+    The attestation binds the **journal head only**. The audit-chain mirror
+    (:func:`~bernstein.core.security.audit_chain.record_clean_run_attestation`)
+    carries this attestation's hash, so by construction it cannot sit inside
+    the sealed bytes; it is verified separately -- a tampered mirror fails
+    ``bernstein audit verify`` like any tampered chain entry, and
+    :func:`project_clean_run_receipt` refuses to project a chain range that
+    does not cover it.
     """
 
     schema_version: int
@@ -513,7 +645,6 @@ class CleanRunAttestation:
     scope: ScopeBoundary
     activities: tuple[ActivityRecord, ...]
     journal_head: str
-    chain_range_head: str
     verdict: str
     matches: tuple[ScanMatch, ...]
     timestamp: int
@@ -530,7 +661,6 @@ class CleanRunAttestation:
             "scope": self.scope.to_dict(),
             "activities": [a.to_dict() for a in self.activities],
             "journal_head": self.journal_head,
-            "chain_range_head": self.chain_range_head,
             "verdict": self.verdict,
             "matches": [m.to_dict() for m in self.matches],
             "timestamp": self.timestamp,
@@ -563,7 +693,6 @@ class CleanRunAttestation:
             scope=ScopeBoundary.from_dict(raw["scope"]),
             activities=tuple(ActivityRecord.from_dict(a) for a in raw["activities"]),
             journal_head=str(raw["journal_head"]),
-            chain_range_head=str(raw["chain_range_head"]),
             verdict=str(raw["verdict"]),
             matches=tuple(ScanMatch.from_dict(m) for m in raw["matches"]),
             timestamp=int(raw["timestamp"]),
@@ -610,7 +739,6 @@ def recompute_attestation_hash(payload: Mapping[str, Any]) -> str:
         "scope": payload["scope"],
         "activities": payload["activities"],
         "journal_head": str(payload["journal_head"]),
-        "chain_range_head": str(payload["chain_range_head"]),
         "verdict": str(payload["verdict"]),
         "matches": payload["matches"],
         "timestamp": int(payload["timestamp"]),
@@ -643,16 +771,24 @@ def build_clean_run_attestation(
     hmac_key: bytes,
     timestamp: int,
     reference_blobs: Mapping[str, str] | None = None,
-    audit_events: Sequence[Mapping[str, Any]] | None = None,
+    golden_dir: Path | None = None,
     chain: AuditChainStore | None = None,
 ) -> CleanRunAttestation:
     """Scan a run's anchored activity and seal the verdict into an attestation.
 
     The boundary check runs first and fails closed: without a bounded
     worktree root nothing is scanned, nothing is written, and nothing is
-    signed. The journal rows must form an intact Merkle chain; their head and
-    the audit-chain range head are recorded so the activity set cannot be
-    silently trimmed after the fact.
+    signed. The journal rows must form an intact Merkle chain; their head is
+    recorded so the activity set cannot be silently trimmed after the fact.
+    The attestation binds the journal head only -- the audit-chain mirror
+    carries this attestation's hash, so it cannot sit inside the sealed
+    bytes; it is verified separately by ``bernstein audit verify`` and by
+    :func:`project_clean_run_receipt`.
+
+    The contraband commitment always includes the reference material
+    derivable from the task itself (:func:`derive_task_reference_blobs`);
+    *reference_blobs* is additive extra material, so omitting it cannot
+    silently weaken the commitment.
 
     Args:
         task: The golden task whose ground-truth is committed.
@@ -665,9 +801,10 @@ def build_clean_run_attestation(
         lineage_root: ``.sdd/lineage`` root for the spine.
         hmac_key: Operator audit HMAC key (seals digests and the spine entry).
         timestamp: Injected integer timestamp (no wall-clock in signed bytes).
-        reference_blobs: Reference-solution contents for the commitment.
-        audit_events: Optional audit-chain slice rows (dicts with ``hmac``);
-            the last row's HMAC becomes the recorded chain-range head.
+        reference_blobs: Additional reference-content blobs for the
+            commitment, merged over the task-derived material.
+        golden_dir: Operator golden root for the task-source lookup;
+            supplying it declares the source must be loadable.
         chain: Optional :class:`AuditChainStore` accepting the mirror.
 
     Returns:
@@ -676,12 +813,15 @@ def build_clean_run_attestation(
     Raises:
         CleanRunBoundaryError: No bounded worktree root.
         CleanRunAnchorError: Empty or non-chaining journal rows.
+        CleanRunCommitmentError: Declared reference content could not be
+            loaded.
     """
     boundary = scope_boundary(worktree_root, network_policy)
     journal_head = _journal_head_of(journal_events)
-    chain_range_head = str(audit_events[-1].get("hmac", "")) if audit_events else ""
 
-    contraband = build_contraband_set(task, key=hmac_key, reference_blobs=reference_blobs)
+    derived_blobs = derive_task_reference_blobs(task, golden_dir=golden_dir)
+    merged_blobs = {**derived_blobs, **(reference_blobs or {})}
+    contraband = build_contraband_set(task, key=hmac_key, reference_blobs=merged_blobs)
     activities = extract_activity(journal_events, boundary=boundary, key=hmac_key)
     matches = scan_activity(activities, contraband)
     verdict = derive_verdict(matches)
@@ -694,7 +834,6 @@ def build_clean_run_attestation(
         scope=boundary,
         activities=activities,
         journal_head=journal_head,
-        chain_range_head=chain_range_head,
         verdict=verdict.value,
         matches=matches,
         timestamp=timestamp,
@@ -751,7 +890,6 @@ def _fields_of(attestation: CleanRunAttestation) -> dict[str, Any]:
         "scope": attestation.scope,
         "activities": attestation.activities,
         "journal_head": attestation.journal_head,
-        "chain_range_head": attestation.chain_range_head,
         "verdict": attestation.verdict,
         "matches": attestation.matches,
         "timestamp": attestation.timestamp,
@@ -969,6 +1107,7 @@ __all__ = [
     "CleanRunAnchorError",
     "CleanRunAttestation",
     "CleanRunBoundaryError",
+    "CleanRunCommitmentError",
     "CleanRunError",
     "CleanRunProjectionError",
     "CleanRunVerdict",
@@ -979,6 +1118,7 @@ __all__ = [
     "build_clean_run_attestation",
     "build_contraband_set",
     "clean_run_attestation_path",
+    "derive_task_reference_blobs",
     "derive_verdict",
     "extract_activity",
     "project_clean_run_receipt",

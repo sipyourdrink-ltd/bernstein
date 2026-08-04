@@ -13,6 +13,12 @@ The ground-truth (task id, title, completion signals, expected test commands,
 reference-solution contents) is sealed into a `ContrabandSet` of keyed HMAC
 digests under the operator's audit key — the attestation commits to the
 answer without ever carrying it, so publishing it cannot leak the solution.
+The task's own golden-source frontmatter is derived automatically
+(`derive_task_reference_blobs`), so a caller cannot silently omit the task's
+reference material; coverage counts are sealed into the commitment (a task
+with no reference content seals `reference_source_count == 0` visibly), and
+declared-but-unloadable reference content refuses to seal
+(`CleanRunCommitmentError`).
 The scope boundary comes from the substrate, not from config: the task's
 worktree root plus the `NetworkPolicy` endpoint allowlist. Without a bounded
 worktree root the builder refuses to sign (`CleanRunBoundaryError`), because
@@ -21,10 +27,13 @@ claim vacuous.
 
 ## Retained evidence
 
-The activity set is drawn from the run's Merkle-chained `EventJournal` rows,
-optionally joined with the run's HMAC audit-chain slice; the attestation
-records both heads, so an omitted or mutated contaminating access breaks the
-anchor rather than silently trimming the set. `scan_activity` is a pure
+The activity set is drawn from the run's Merkle-chained `EventJournal` rows;
+the attestation records that head, so an omitted or mutated contaminating
+access breaks the anchor rather than silently trimming the set. The
+attestation binds the journal head only: the audit-chain mirror carries the
+attestation's own hash, so it cannot sit inside the sealed bytes and is
+verified separately — by `bernstein audit verify` and by the receipt
+projection's coverage check. `scan_activity` is a pure
 membership pass over sealed digests: verdict `CLEAN` iff zero contraband
 matches and zero out-of-scope accesses, with matches recorded as
 `(journal index, match class)` positions — never plaintext. The canonical

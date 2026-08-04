@@ -141,6 +141,89 @@ def test_contraband_set_differs_under_a_different_key() -> None:
     assert a.canonical_bytes() != b.canonical_bytes()
 
 
+_GOLDEN_FRONTMATTER = (
+    "id: golden-fib-001\n"
+    "title: Implement fibonacci helper\n"
+    "completion_signals:\n"
+    f'  - "{_HIDDEN_TEST_TOKEN}"\n'
+    "expected_test_outcomes:\n"
+    '  "pytest tests/test_fib.py": true\n'
+)
+
+
+def _write_golden_source(golden_dir: Path) -> None:
+    tier_dir = golden_dir / "smoke"
+    tier_dir.mkdir(parents=True, exist_ok=True)
+    (tier_dir / "golden-fib-001.md").write_text(
+        f"---\n{_GOLDEN_FRONTMATTER}---\n\nAdd a fibonacci helper to the math module.\n",
+        encoding="utf-8",
+    )
+
+
+def test_the_commitment_cannot_silently_omit_a_tasks_reference_solution(tmp_path: Path) -> None:
+    """Omitting the reference_blobs param must not weaken the commitment.
+
+    The task's own golden-source frontmatter is derived by the builder, so a
+    read of that hidden material still flips DIRTY even when the caller
+    supplied no reference blobs at all.
+    """
+    golden_dir = tmp_path / "golden"
+    _write_golden_source(golden_dir)
+    rows = _clean_rows()
+    rows.append({"event": "file_read", "path": "src/notes.py", "content_window": _GOLDEN_FRONTMATTER.strip()})
+    events = _seed_journal(tmp_path, rows)
+    attestation = build_clean_run_attestation(
+        task=_task(),
+        journal_events=events,
+        run_id="run-clean-1",
+        worktree_root=_worktree(tmp_path),
+        network_policy=_policy(),
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        timestamp=_TS,
+        golden_dir=golden_dir,
+    )
+    assert attestation.verdict == CleanRunVerdict.DIRTY.value
+    assert any(m.match_class == "contraband_ngram" for m in attestation.matches)
+    assert attestation.contraband.reference_source_count == 1
+
+
+def test_commitment_coverage_is_sealed_and_visible() -> None:
+    """Coverage counts sit inside the signed bytes -- absence is loud."""
+    with_reference = build_contraband_set(_task(), key=_KEY, reference_blobs=_reference_blobs())
+    assert with_reference.reference_source_count == 1
+    assert with_reference.token_source_count >= 3
+    assert with_reference.to_dict()["reference_source_count"] == 1
+
+    without_reference = build_contraband_set(_task(), key=_KEY)
+    assert without_reference.reference_source_count == 0
+    assert without_reference.to_dict()["reference_source_count"] == 0
+
+
+def test_builder_refuses_a_declared_golden_dir_without_the_tasks_source(tmp_path: Path) -> None:
+    """Declared reference content that cannot be loaded refuses to seal."""
+    from bernstein.eval.clean_run import CleanRunCommitmentError
+
+    golden_dir = tmp_path / "golden"
+    (golden_dir / "smoke").mkdir(parents=True)
+    events = _seed_journal(tmp_path, _clean_rows())
+    with pytest.raises(CleanRunCommitmentError):
+        build_clean_run_attestation(
+            task=_task(),
+            journal_events=events,
+            run_id="run-clean-1",
+            worktree_root=_worktree(tmp_path),
+            network_policy=_policy(),
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=_KEY,
+            timestamp=_TS,
+            golden_dir=golden_dir,
+        )
+    assert not (tmp_path / ".sdd" / "eval" / "clean_run").exists()
+
+
 # ---------------------------------------------------------------------------
 # 2. Scan detects a planted contaminating read and an out-of-scope path
 # ---------------------------------------------------------------------------
@@ -200,34 +283,29 @@ def test_attestation_artifact_carries_no_plaintext_ground_truth(tmp_path: Path) 
 
 
 # ---------------------------------------------------------------------------
-# 3. Activity set is head-anchored (journal + chain range)
+# 3. Activity set is head-anchored (journal head only; mirror chain-checked)
 # ---------------------------------------------------------------------------
 
 
-def test_attestation_records_journal_head_and_chain_range_head(tmp_path: Path) -> None:
-    from dataclasses import asdict
+def test_attestation_binds_the_journal_head_only_and_mirror_is_chain_checked(tmp_path: Path) -> None:
+    """The sealed contract carries one anchor: the journal head.
 
-    from bernstein.core.security.audit_chain import AuditChainStore
+    The audit-chain mirror carries the attestation's own hash, so it cannot
+    sit inside the sealed bytes; its integrity is checked by audit verify
+    (and its coverage by the receipt projection), never by a sealed field
+    that verification would have to take on faith.
+    """
+    from bernstein.core.security.audit_chain import EVENT_CLEAN_RUN_ATTESTATION, AuditChainStore
 
     events = _seed_journal(tmp_path, _clean_rows())
     chain = AuditChainStore(tmp_path / "audit", key=_KEY)
-    chain.log(event_type="task.created", actor="op", resource_type="task", resource_id="t1")
-    audit_events = [asdict(e) for e in chain.query()]
-    attestation = build_clean_run_attestation(
-        task=_task(),
-        reference_blobs=_reference_blobs(),
-        journal_events=events,
-        run_id="run-clean-1",
-        worktree_root=_worktree(tmp_path),
-        network_policy=_policy(),
-        workdir=tmp_path,
-        lineage_root=tmp_path / ".sdd" / "lineage",
-        hmac_key=_KEY,
-        timestamp=_TS,
-        audit_events=audit_events,
-    )
+    attestation = _build(tmp_path, events, chain=chain)
     assert attestation.journal_head == str(events[-1]["event_hash"])
-    assert attestation.chain_range_head == str(audit_events[-1]["hmac"])
+    assert "chain_range_head" not in attestation.to_dict()
+    mirrors = chain.query(event_type=EVENT_CLEAN_RUN_ATTESTATION)
+    assert [e.details["attestation_hash"] for e in mirrors] == [attestation.attestation_hash]
+    ok, errors = chain.verify()
+    assert ok, errors
 
 
 def test_mutating_a_scanned_event_changes_the_anchor(tmp_path: Path) -> None:

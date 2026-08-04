@@ -67,9 +67,11 @@ per-tier pass rates (smoke/standard/stretch/adversarial).
 A score is only meaningful when the agent never saw the answer. Passing a
 sealed `CleanRunAttestation` (`bernstein.eval.clean_run`) to `evaluate_task`
 attaches it to the task result: the attestation commits to the task's
-ground-truth as keyed HMAC digests (never plaintext), scans the run's
-Merkle-chained journal activity against that commitment and against the
-worktree/network scope boundary, and anchors the verdict in the
+ground-truth as keyed HMAC digests (never plaintext) — deriving the task's
+own golden-source material automatically and sealing coverage counts, so
+reference content can neither be silently omitted nor silently absent —
+scans the run's Merkle-chained journal activity against that commitment and
+against the worktree/network scope boundary, and anchors the verdict in the
 `eval-clean-run` lineage spine with a mirror in the HMAC audit chain. A
 `DIRTY` verdict zeroes the `Safety` gate exactly like a test regression;
 without an attestation, scoring is unchanged. Verify offline with
