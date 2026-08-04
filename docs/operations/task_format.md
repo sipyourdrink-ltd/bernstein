@@ -66,7 +66,7 @@ skipped; it does not abort the spawn. Crash-recovery resumes record the
 same event, re-resolved against the preserved worktree, so a resumed
 worker's context is pinned as it exists after the crashed agent's edits.
 Tickets that declare nothing produce byte-identical payloads and records
-to before.
+as before.
 
 `ticket_type` and `affected_paths` ride in the same payload `metadata`
 mapping when set. `depends_on` in frontmatter still refers to ticket ids
