@@ -25,14 +25,25 @@ def _proposal(
     title: str,
     *,
     status: UpgradeStatus = UpgradeStatus.PENDING,
+    affected_components: list[str] | None = None,
 ) -> SimpleNamespace:
+    # Default to a real repo-relative PATH. Production's
+    # ProposalGenerator.create_proposal never populates affected_components
+    # (it builds RiskAssessment from a level-only map), and the detector's
+    # values are subsystem labels like "model_routing" -- neither is a path,
+    # and _create_upgrade_tasks now refuses those. Tests that want the
+    # creation path must therefore supply something path-shaped.
     return SimpleNamespace(
         id=proposal_id,
         title=title,
         description="desc",
         status=status,
         proposed_change="x" * 100,
-        risk_assessment=SimpleNamespace(affected_components=["model_routing"]),
+        risk_assessment=SimpleNamespace(
+            affected_components=(
+                ["src/bernstein/core/routing/model_routing.py"] if affected_components is None else affected_components
+            )
+        ),
     )
 
 
@@ -66,6 +77,89 @@ def test_allowed_upgrade_task_is_created_and_posted(tmp_path: Path) -> None:
     _, kwargs = orch._client.post.call_args
     assert kwargs["json"]["title"] == "Upgrade: Improve task success rate"
     assert result.errors == []
+
+
+def test_created_upgrade_task_declares_owned_files(tmp_path: Path) -> None:
+    """An auto-spawned upgrade task must declare the files it owns.
+
+    Regression for the incident where an upgrade agent overwrote a calc.py
+    that two other agents had already written correctly and auto_merge landed
+    it. The task carried owned_files=[], which no-ops every guard:
+    task_store_core._check_file_conflicts returns None on `not
+    task.owned_files`, batch_api._claim_file_ownership never acquires the
+    lock, and circuit_breaker's scope-violation check skips the session
+    entirely ("if not owned_files: continue") so the out-of-scope write is
+    never killed or quarantined.
+    """
+    orch = _orch(tmp_path)
+    result = SimpleNamespace(errors=[])
+
+    _create_upgrade_tasks(
+        orch,
+        [_proposal("p1", "Improve task success rate", affected_components=["src/bernstein/core/foo.py"])],
+        result,
+    )
+
+    _, kwargs = orch._client.post.call_args
+    assert kwargs["json"]["owned_files"] == ["src/bernstein/core/foo.py"]
+
+
+def test_upgrade_task_refused_when_components_are_not_paths(tmp_path: Path) -> None:
+    """Subsystem labels are not file paths and must not become owned_files.
+
+    Production only ever supplies [] (ProposalGenerator.create_proposal drops
+    the opportunity's components) or labels like "model_routing" / "policy" /
+    "cost_per_task". Writing those into owned_files would be worse than
+    leaving it empty: the guards would stop short-circuiting on "no scope
+    declared" while still matching no real file. Refuse loudly instead.
+    """
+    orch = _orch(tmp_path)
+    result = SimpleNamespace(errors=[])
+
+    _create_upgrade_tasks(
+        orch,
+        [
+            _proposal("p1", "Improve task success rate", affected_components=["model_routing"]),
+            _proposal("p2", "Review policy", affected_components=[]),
+            _proposal("p3", "Fix anomaly", affected_components=["cost_per_task"]),
+        ],
+        result,
+    )
+
+    assert orch._client.post.call_count == 0
+    assert len(result.errors) == 3
+    assert all("no derivable owned_files" in e for e in result.errors)
+
+
+def test_only_path_shaped_components_survive_the_filter(tmp_path: Path) -> None:
+    """Mixed lists keep the paths and drop the labels, absolutes and traversal."""
+    orch = _orch(tmp_path)
+    result = SimpleNamespace(errors=[])
+
+    _create_upgrade_tasks(
+        orch,
+        [
+            _proposal(
+                "p1",
+                "Mixed",
+                affected_components=[
+                    "model_routing",
+                    "templates/roles/backend.md",
+                    "/etc/passwd",
+                    "../../escape.py",
+                    "src/bernstein/core/foo.py",
+                    "src/bernstein/core/foo.py",
+                ],
+            )
+        ],
+        result,
+    )
+
+    _, kwargs = orch._client.post.call_args
+    assert kwargs["json"]["owned_files"] == [
+        "templates/roles/backend.md",
+        "src/bernstein/core/foo.py",
+    ]
 
 
 def test_dedupe_refuses_upgrade_task_matching_existing_open_task(tmp_path: Path) -> None:

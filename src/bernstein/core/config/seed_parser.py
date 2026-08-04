@@ -2088,6 +2088,7 @@ _PARSED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "cost_tags",
         "dashboard_auth",
         "deployment_strategy",
+        "evolution_enabled",
         "formal_verification",
         "github",
         "goal",
@@ -2335,6 +2336,7 @@ def parse_seed(path: Path) -> SeedConfig:
 
     internal_llm_provider_raw = _validate_optional_str(data, "internal_llm_provider", "openrouter_free")
     internal_llm_model_raw = _validate_optional_str(data, "internal_llm_model", "nvidia/nemotron-3-super-120b-a12b")
+    evolution_enabled_raw = _validate_optional_bool(data, "evolution_enabled", True)
     judge_model_raw = _parse_optional_str_field(data, "judge_model")
     judge_provider_raw = _parse_optional_str_field(data, "judge_provider")
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
@@ -2398,6 +2400,7 @@ def parse_seed(path: Path) -> SeedConfig:
         tenants=tenants,
         internal_llm_provider=internal_llm_provider_raw,
         internal_llm_model=internal_llm_model_raw,
+        evolution_enabled=evolution_enabled_raw,
         judge_model=cast("str | None", judge_model_raw),
         judge_provider=cast("str | None", judge_provider_raw),
         model_fallback=model_fallback,

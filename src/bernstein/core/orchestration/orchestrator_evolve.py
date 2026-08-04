@@ -33,6 +33,41 @@ _TESTS_DIR = "tests/"
 
 logger = logging.getLogger(__name__)
 
+# A component string is usable as an owned file only if it is a repo-relative
+# path to a FILE: no leading "/", no "..", and a real-looking suffix.
+_PATH_LIKE_COMPONENT = re.compile(r"^[\w.\-/]+\.[A-Za-z0-9]{1,8}$")
+
+
+def _owned_files_from_components(components: Any) -> list[str]:
+    """Return the entries of *components* that are repo-relative file paths.
+
+    ``RiskAssessment.affected_components`` is a free-form ``list[str]`` that
+    production fills with SUBSYSTEM LABELS, not paths: ``["model_routing"]``,
+    ``["policy"]``, ``["role_templates", <task_type>]`` (evolution/detector.py),
+    or ``[anomaly.metric_name]`` (evolution/proposals.py:164, always
+    ``"cost_per_task"``). For the proposals that actually reach task creation
+    it is empty outright, because ``ProposalGenerator.create_proposal``
+    (evolution/proposals.py:116-136) builds ``RiskAssessment`` from a
+    level-only map and drops the opportunity's components entirely.
+
+    Anything not path-shaped must NOT become an owned file. A bogus entry is
+    worse than an empty list: it defeats the ``if not task.owned_files``
+    short-circuits that exist to mean "no scope declared" while protecting
+    nothing real. This filter keeps genuine paths (an injected generator or a
+    downstream fork may supply them) and drops the labels.
+    """
+    owned: list[str] = []
+    for raw in components or ():
+        candidate = str(raw).strip()
+        if not candidate or candidate.startswith("/") or ".." in candidate:
+            continue
+        if not _PATH_LIKE_COMPONENT.match(candidate):
+            continue
+        if candidate not in owned:
+            owned.append(candidate)
+    return owned
+
+
 # Priority rotation for evolve mode -- each cycle emphasizes a different area
 _EVOLVE_FOCUS_AREAS: list[str] = [
     "new_features",
@@ -795,6 +830,30 @@ def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
             if not decision.allowed:
                 continue
             target_files = proposal.risk_assessment.affected_components
+            owned_files = _owned_files_from_components(target_files)
+            if not owned_files:
+                # Refuse rather than spawn an agent that owns nothing. An
+                # empty owned_files silently no-ops every collision guard in
+                # the system: task_store_core._check_file_conflicts returns
+                # None on `not task.owned_files`, batch_api._claim_file_
+                # ownership never takes the lock, and -- worst -- the
+                # scope-violation circuit breaker skips the session outright
+                # ("if not owned_files: continue"), so an upgrade agent can
+                # overwrite a file another agent just wrote and still be
+                # auto-merged. The title/description are prose ("Improve task
+                # success rate"), so task_lifecycle.infer_affected_paths finds
+                # nothing to fall back on either.
+                logger.warning(
+                    "Refusing upgrade task for proposal %s (%s): no repo-relative file "
+                    "paths derivable from risk_assessment.affected_components=%r. "
+                    "Creating it would produce owned_files=[], which disables the "
+                    "file-collision and scope-violation guards for that agent.",
+                    proposal.id,
+                    proposal.title,
+                    list(target_files or ()),
+                )
+                result.errors.append(f"evolution_task: refused {proposal.id} (no derivable owned_files)")
+                continue
             diff_estimate = max(len(proposal.proposed_change) // 10, 10)
             risk_score = orch._risk_scorer.score_proposal(
                 target_files=target_files,
@@ -806,6 +865,7 @@ def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
                 "title": title,
                 "description": proposal.description,
                 "role": "backend",
+                "owned_files": owned_files,
                 "priority": 1 if is_high else 2,
                 "scope": "large" if is_high else "medium",
                 "complexity": "high" if is_high else "medium",

@@ -6360,6 +6360,10 @@ if __name__ == "__main__":
             judge_model=seed.judge_model if seed else None,
             judge_provider=seed.judge_provider if seed else None,
             cost_policy=getattr(seed, "cost_policy", None) if seed else None,
+            # Without this the top-level ``evolution_enabled`` key in
+            # bernstein.yaml never reached the runtime object and the
+            # self-evolution loop ran regardless of the seed (#config-drift).
+            evolution_enabled=getattr(seed, "evolution_enabled", True) if seed else True,
         )
 
         if args.cells > 1:

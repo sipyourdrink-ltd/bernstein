@@ -431,6 +431,12 @@ class SeedConfig:
     # explicitly and export the matching API key.
     internal_llm_provider: str = "none"
     internal_llm_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    # Top-level ``evolution_enabled`` from bernstein.yaml. Previously the key
+    # was documented and schema-known (BernsteinConfig) but no runtime code
+    # path read it: OrchestratorConfig.evolution_enabled always took its True
+    # default, so ``evolution_enabled: false`` silently ran the self-evolution
+    # loop anyway. Parsed here and threaded into OrchestratorConfig by the CLI.
+    evolution_enabled: bool = True
     # Janitor LLM-judge model/provider override (falls back to
     # bernstein.core.quality.janitor.JUDGE_MODEL/JUDGE_PROVIDER when unset).
     judge_model: str | None = None
