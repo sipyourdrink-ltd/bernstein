@@ -182,3 +182,68 @@ def test_receipt_mirrors_into_audit_chain(tmp_path: Path) -> None:
 
 def test_read_missing_receipt_returns_none(tmp_path: Path) -> None:
     assert read_verdict_receipt(tmp_path, "sha256:" + "a" * 64) is None
+
+
+# ---------------------------------------------------------------------------
+# Symlinked receipt store is refused, not followed
+# ---------------------------------------------------------------------------
+
+
+def test_a_symlinked_gate_receipt_store_is_refused_not_followed(tmp_path: Path) -> None:
+    # A genuine receipt, sealed elsewhere, planted in an outside directory
+    # that a symlinked gate store points at. realpath-vs-realpath containment
+    # passes vacuously in that layout, so the store must refuse the symlink
+    # itself.
+    base, cand = _outcomes(base_passes=4, cand_passes=12, n=16)
+    elsewhere = tmp_path / "elsewhere"
+    receipt = _build(elsewhere, base, cand)
+    receipt_json = verdict_receipt_path(elsewhere, receipt.receipt_hash).read_text(encoding="utf-8")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / f"{receipt.receipt_hash}.json").write_text(receipt_json, encoding="utf-8")
+
+    victim = tmp_path / "victim"
+    (victim / ".sdd" / "eval").mkdir(parents=True)
+    (victim / ".sdd" / "eval" / "gate").symlink_to(outside)
+
+    assert read_verdict_receipt(victim, receipt.receipt_hash) is None
+    with pytest.raises(ValueError, match="symlink"):
+        verdict_receipt_path(victim, receipt.receipt_hash)
+    result = verify_verdict_receipt(
+        workdir=victim,
+        lineage_root=victim / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        receipt_hash=receipt.receipt_hash,
+    )
+    assert not result.ok
+    assert "no verdict receipt" in result.reason
+
+
+class _JunctionProbePath(Path):
+    """POSIX stand-in for an NTFS junction on the store walk.
+
+    ``is_junction()`` answers ``True`` for the marked component while
+    ``is_symlink()`` keeps its real (``False``) answer, so
+    ``is_filesystem_link`` takes its junction branch through the real
+    component walk rather than having the whole check stubbed away.
+    """
+
+    _junction_component = "gate"
+
+    def is_junction(self) -> bool:
+        return self.name == self._junction_component
+
+
+def test_a_junction_store_component_is_refused_like_a_symlink(tmp_path: Path) -> None:
+    # Path.is_symlink() is False for NTFS junctions, so a symlink-only probe
+    # is bypassed by a junctioned store component on Windows. A component
+    # that is a filesystem link of any kind must be refused before the
+    # realpath containment check, with no candidate returned.
+    base, cand = _outcomes(base_passes=4, cand_passes=12, n=16)
+    receipt = _build(tmp_path, base, cand)
+    workdir = _JunctionProbePath(tmp_path)
+
+    with pytest.raises(ValueError, match="symlink or junction"):
+        verdict_receipt_path(workdir, receipt.receipt_hash)
+    assert read_verdict_receipt(workdir, receipt.receipt_hash) is None

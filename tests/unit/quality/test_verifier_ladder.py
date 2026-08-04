@@ -272,6 +272,21 @@ class TestMalformedReceiptFailsClosed:
 # ---------------------------------------------------------------------------
 
 
+class _JunctionProbePath(Path):
+    """POSIX stand-in for an NTFS junction on the store walk.
+
+    ``is_junction()`` answers ``True`` for the marked component while
+    ``is_symlink()`` keeps its real (``False``) answer, so
+    ``is_filesystem_link`` takes its junction branch through the real
+    component walk rather than having the whole check stubbed away.
+    """
+
+    _junction_component = "ladder"
+
+    def is_junction(self) -> bool:
+        return self.name == self._junction_component
+
+
 class TestSymlinkedLadderDirectoryRefused:
     def test_a_symlinked_ladder_directory_is_refused_not_followed(self, tmp_path: Path) -> None:
         # A genuine receipt, sealed elsewhere, planted in an outside directory
@@ -295,6 +310,18 @@ class TestSymlinkedLadderDirectoryRefused:
         assert read_ladder_receipt(victim, receipt.receipt_hash) is None
         result = _verify(victim, receipt.receipt_hash)
         assert not result.ok
+
+    def test_a_junction_store_component_is_refused_like_a_symlink(self, tmp_path: Path) -> None:
+        # Path.is_symlink() is False for NTFS junctions, so a symlink-only
+        # probe is bypassed by a junctioned store component on Windows. A
+        # component that is a filesystem link of any kind must be refused
+        # before the realpath containment check, with no candidate returned.
+        receipt = _build(tmp_path, [_rec(VerifierTier.DETERMINISTIC)])
+        workdir = _JunctionProbePath(tmp_path)
+
+        with pytest.raises(ValueError, match="symlink or junction"):
+            ladder_receipt_path(workdir, receipt.receipt_hash)
+        assert read_ladder_receipt(workdir, receipt.receipt_hash) is None
 
 
 # ---------------------------------------------------------------------------

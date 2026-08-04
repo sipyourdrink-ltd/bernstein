@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
+from bernstein.core.platform_compat import is_filesystem_link
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -113,9 +114,11 @@ def ladder_receipt_path(workdir: Path, receipt_hash: str) -> Path:
     The hash is validated against ``sha256:<64 hex>`` and the resolved path
     is asserted to stay under the ladder directory, so a caller-influenced
     hash can never escape the receipt store (path-injection defense in
-    depth). A receipt store relocated via symlink is refused outright: with
-    ``.sdd``, ``.sdd/quality``, or the ladder directory itself symlinked
-    elsewhere, base and candidate both resolve into the symlink's target and
+    depth). A receipt store relocated via a filesystem link is refused
+    outright: with ``.sdd``, ``.sdd/quality``, or the ladder directory
+    itself symlinked (or, on Windows, junctioned -- ``Path.is_symlink()`` is
+    ``False`` for NTFS junctions, hence :func:`is_filesystem_link`)
+    elsewhere, base and candidate both resolve into the link's target and
     a realpath containment check passes vacuously, so the store would follow
     attacker-placed content. Same posture as the MCP shutdown barrier's
     refusal of a ``.sdd`` symlinked elsewhere (#3080). The returned path is
@@ -124,15 +127,15 @@ def ladder_receipt_path(workdir: Path, receipt_hash: str) -> Path:
 
     Raises:
         ValueError: The hash is not a canonical ``sha256:`` digest, a
-            component of the ladder directory is a symlink, or the resolved
-            path escapes the ladder directory.
+            component of the ladder directory is a symlink or junction, or
+            the resolved path escapes the ladder directory.
     """
     _require_canonical_hash(receipt_hash, "receipt_hash")
     probe = workdir
     for part in _LADDER_SUBPATH:
         probe = probe / part
-        if probe.is_symlink():
-            msg = f"ladder receipt store path is a symlink; refusing to follow it: {probe}"
+        if is_filesystem_link(probe):
+            msg = f"ladder receipt store path is a symlink or junction; refusing to follow it: {probe}"
             raise ValueError(msg)
     base = workdir.joinpath(*_LADDER_SUBPATH)
     candidate = base / f"{receipt_hash}.json"
