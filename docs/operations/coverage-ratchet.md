@@ -138,18 +138,18 @@ is reported as a warning and in the step summary; it does not fail the PR.
 
 ---
 
-## LEVEL 2 - total-coverage monotonic ratchet (per push to main)
+## LEVEL 2 - total-coverage monotonic ratchet (per CI run on main)
 
 Prevents backsliding: total coverage may only hold or rise.
 
-Flow (`.github/workflows/coverage-ratchet.yml`, triggered on push to
-`main`):
+Flow (`.github/workflows/coverage-ratchet.yml`, triggered when a **CI run
+on `main` completes** - `workflow_run`, any conclusion):
 
-1. Resolve the CI run that measured **this** commit and download its
-   `coverage-report` (the same `coverage.xml` the shard produced). The
-   workflow checks out `github.sha` rather than `main`, so the tree it
-   holds is the commit that triggered the fire, and candidate runs are
-   filtered to that `head_sha` before anything else. See
+1. Take the `coverage-report` from the CI run that just finished, and
+   check out the commit that run measured
+   (`github.event.workflow_run.head_sha`). Because the run has completed,
+   the artifact either exists now or never will - there is nothing to wait
+   for. See
    [Which run supplies the measurement](#which-run-supplies-the-measurement).
 2. `scripts/coverage_ratchet.py check` parses the root `line-rate` and
    compares it to `total_coverage_percent`:
@@ -174,31 +174,57 @@ The baseline write lives in this separate workflow (not in `ci.yml`) so
 ### Which run supplies the measurement
 
 The ratchet may only bump on a measurement of the commit it is running
-for. Resolving by "freshest recent run that happens to have a
-`coverage-report`" does not guarantee that: it will happily take a report
-belonging to some other commit, record it as the high-water mark, and
-leave the next honest measurement looking like a regression.
+for. Two things have to be true at once, and they pull against each other:
 
-So candidate runs are filtered on `head_sha` first, then tried in two
-passes:
+- **The right commit.** Resolving by "freshest recent run that happens to
+  have a `coverage-report`" takes whatever report exists, including one
+  belonging to a different commit. That records a high-water mark for a
+  tree nobody can identify and makes the next honest measurement look like
+  a regression.
+- **A run that has actually finished.** On a `push` trigger the ratchet
+  and the CI run start from the same event, so the artifact does not exist
+  yet when the ratchet looks. Pinning the commit *without* moving the
+  trigger would leave the ratchet correct and permanently idle - it would
+  skip every commit.
+
+So the trigger is CI completion, not the push:
+
+```yaml
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+```
+
+`types: [completed]` deliberately does **not** filter on conclusion.
+`ci.yml`'s `cancel-in-progress` concurrency cancels most `main` runs under
+the rapid-merge cadence, so firing only on `success` would idle the
+ratchet almost permanently - the reason the original implementation
+avoided `workflow_run` altogether. A cancelled run has usually already
+uploaded `coverage-report` before it was cut, and the event still hands us
+an exact `head_sha` and run id.
+
+From there, two ordered passes:
 
 | Pass | Accepts | Why |
 |---|---|---|
-| 1 | `conclusion == success` for this `head_sha` | the ordinary case |
-| 2 | **any** conclusion for this `head_sha`, incl. `cancelled` | deliberate fallback - see below |
+| 1 | the triggering run itself | the ordinary case; its id and `head_sha` come straight from the event |
+| 2 | any **other completed** run for the same `head_sha` | fallback when the triggering run was cut before the shard uploaded |
 
-Pass 2 is load-bearing, not an oversight. `ci.yml`'s `cancel-in-progress`
-concurrency cancels most `main` runs under the rapid-merge cadence, and a
-cancelled run has usually already uploaded `coverage-report` before it was
-cut; without this pass the ratchet would almost never fire. It is safe
-because it widens the *conclusion* check only, never the `head_sha` check:
-the worst case is a **partial** report for the right commit, which
-understates coverage and so can cost a bump but can never manufacture one.
-A run for a different commit is not a candidate in either pass.
+Pass 2 widens *which run*, never *which commit*, and ignores runs still in
+flight (they have not finished uploading). So the worst case is a
+**partial** report for the right commit, which understates coverage and
+can therefore cost a bump but never manufacture one.
 
-If no run for this commit has a `coverage-report` (a docs-only push, say),
-the workflow logs a notice and skips. Skipping is the correct outcome -
-the alternative is measuring something else.
+If no completed run for this commit carries a `coverage-report` (a
+docs-only push, say), the workflow logs a notice and skips. Skipping is
+the correct outcome - the alternative is measuring something else - and
+the next commit's CI completion gets its own chance.
+
+> A `workflow_run` workflow always executes the copy of the file on the
+> default branch, so edits to this workflow take effect only once merged
+> to `main`.
 
 ### Why a missing coverage.xml is not a drop
 
