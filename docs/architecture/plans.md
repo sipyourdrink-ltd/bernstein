@@ -329,8 +329,8 @@ Plan-level `context_files` reach the workers, verifiably:
    files and match.
 4. A declared path that does not resolve is recorded in its position
    with a reason code (`missing`, `is_directory`, `unreadable`,
-   `outside_root`) and logged - never silently skipped. It does not
-   abort the spawn.
+   `outside_root`, `invalid`) and logged - never silently skipped. It
+   does not abort the spawn.
 
 Backlog tickets declare the same field in Ticket Format v1 frontmatter;
 see [operations/task_format.md](../operations/task_format.md). Source:

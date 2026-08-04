@@ -60,9 +60,13 @@ recorded in the run journal as a `context.files_attached` event next to
 content - is answerable offline, and a verifier can recompute the
 digests from the files and match. A path that does not resolve keeps its
 position in the record with a reason code (`missing`, `is_directory`,
-`unreadable`, `outside_root`) and a log warning instead of being
-silently skipped; it does not abort the spawn. Tickets that declare
-nothing produce byte-identical payloads and records to before.
+`unreadable`, `outside_root`, or `invalid` for a path the filesystem
+cannot represent at all) and a log warning instead of being silently
+skipped; it does not abort the spawn. Crash-recovery resumes record the
+same event, re-resolved against the preserved worktree, so a resumed
+worker's context is pinned as it exists after the crashed agent's edits.
+Tickets that declare nothing produce byte-identical payloads and records
+to before.
 
 `ticket_type` and `affected_paths` ride in the same payload `metadata`
 mapping when set. `depends_on` in frontmatter still refers to ticket ids

@@ -25,6 +25,7 @@ from bernstein.core.worktree_claude_md import generate_claude_md, write_claude_m
 
 from bernstein.core.agents.context_attachments import (
     CONTEXT_FILES_ATTACHED_EVENT,
+    REASON_INVALID,
     REASON_IS_DIRECTORY,
     REASON_MISSING,
     REASON_OUTSIDE_ROOT,
@@ -230,6 +231,29 @@ def test_declared_but_missing_file_is_recorded_with_missing_reason_code(tmp_path
     ]
 
 
+def test_a_malformed_declared_path_is_recorded_with_a_reason_code_not_a_crash(tmp_path: Path) -> None:
+    """A path the filesystem cannot represent (embedded NUL) must not abort the spawn."""
+    (tmp_path / "ok.md").write_bytes(b"fine\n")
+
+    declared = ["ok.md", "bad\x00name.md", "gone.md"]
+    entries = resolve_context_attachments(root=tmp_path, declared=declared)
+
+    assert len(entries) == len(declared)
+    assert [e["path"] for e in entries] == declared
+    assert entries[0]["reason_code"] == ""
+    assert entries[1] == {
+        "path": "bad\x00name.md",
+        "order": 1,
+        "sha256": "",
+        "reason_code": REASON_INVALID,
+    }
+    assert entries[2]["reason_code"] == REASON_MISSING
+
+    # The verify side must not abort either: the malformed entry re-resolves
+    # to the same recorded absence, so the round trip still matches.
+    assert verify_context_attachments(root=tmp_path, entries=entries) == []
+
+
 def test_recorded_attachment_set_round_trips_via_recomputed_digests(tmp_path: Path) -> None:
     """A verifier recomputes every digest from the bytes and matches."""
     doc = tmp_path / "doc.md"
@@ -286,6 +310,62 @@ def test_context_attachments_are_recorded_in_the_run_journal_next_to_agent_spawn
     assert data["agent_id"] == "sess-1"
     assert data["task_ids"] == ["T-1"]
     assert data["entries"] == [attachment]
+
+
+def test_resumed_tasks_keep_their_declared_context_files(tmp_path: Path) -> None:
+    """Crash resume records the declared context exactly like a fresh spawn.
+
+    ``spawn_for_resume`` goes straight to the adapter; the resumed worker
+    reads its context from the preserved worktree (the task-specific
+    CLAUDE.md written by the original spawn survives the crash and is not
+    rewritten). The attachment set must still be re-resolved against that
+    worktree and stamped on the session, so ``_record_spawned_events``
+    emits ``context.files_attached`` for resumed sessions too. Harness
+    mirrors tests/unit/test_crash_recovery.py.
+    """
+    from unittest.mock import MagicMock
+
+    from bernstein.core.spawner import AgentSpawner
+
+    from bernstein.adapters.base import CLIAdapter, SpawnResult
+
+    adapter = MagicMock(spec=CLIAdapter)
+    adapter.spawn.return_value = SpawnResult(pid=42, proc=None, log_path=None)
+    adapter.is_alive.return_value = True
+    adapter.is_rate_limited.return_value = False
+    spawner = AgentSpawner(
+        adapter=adapter,
+        templates_dir=tmp_path / "templates",
+        workdir=tmp_path,
+        default_model="mock-model",
+    )
+
+    worktree = tmp_path / ".sdd" / "worktrees" / "preserved"
+    (worktree / "docs").mkdir(parents=True)
+    (worktree / "docs" / "adr.md").write_bytes(b"decision\n")
+
+    task = Task(
+        id="T-1",
+        title="Resume me",
+        description="Continue the work.",
+        role="backend",
+        metadata={"context_files": ["docs/adr.md", "docs/gone.md"]},
+    )
+
+    session = spawner.spawn_for_resume([task], worktree_path=worktree, changed_files=["docs/adr.md"])
+
+    # The session carries the resolved attachments, re-resolved against the
+    # preserved worktree - identical to what the fresh-spawn path resolves
+    # for the same worktree and declaration.
+    expected = resolve_context_attachments(root=worktree, declared=collect_declared_context_files([task]))
+    assert session.context_attachments == expected
+    assert session.context_attachments[0]["sha256"] == "sha256:" + hashlib.sha256(b"decision\n").hexdigest()
+    assert session.context_attachments[1]["reason_code"] == REASON_MISSING
+
+    # The resumed session journals the attachment event next to agent_spawned.
+    events = _record_spawned(session)
+    names = [name for name, _data in events]
+    assert names.index(CONTEXT_FILES_ATTACHED_EVENT) == names.index("agent_spawned") + 1
 
 
 # ---------------------------------------------------------------------------

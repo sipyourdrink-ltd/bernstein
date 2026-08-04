@@ -18,7 +18,8 @@ read-side manifest can adopt it):
   ``""`` otherwise.
 * ``reason_code`` - ``""`` when resolved; otherwise one of
   :data:`REASON_MISSING`, :data:`REASON_IS_DIRECTORY`,
-  :data:`REASON_UNREADABLE`, :data:`REASON_OUTSIDE_ROOT`.
+  :data:`REASON_UNREADABLE`, :data:`REASON_OUTSIDE_ROOT`,
+  :data:`REASON_INVALID`.
 
 Absence is explicit: an unresolvable path keeps its position in the list
 with a reason code instead of being skipped, the same discipline #3366
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONTEXT_FILES_ATTACHED_EVENT",
+    "REASON_INVALID",
     "REASON_IS_DIRECTORY",
     "REASON_MISSING",
     "REASON_OUTSIDE_ROOT",
@@ -69,6 +71,10 @@ REASON_UNREADABLE = "unreadable"
 #: The declared path escapes the worktree root (absolute path outside it,
 #: ``..`` traversal, or a symlink pointing out of the tree).
 REASON_OUTSIDE_ROOT = "outside_root"
+#: The declared path cannot be represented as a filesystem path at all
+#: (e.g. an embedded NUL byte): normalization refused it before any
+#: containment or existence check could run.
+REASON_INVALID = "invalid"
 
 
 def collect_declared_context_files(tasks: Iterable[Task]) -> list[str]:
@@ -100,9 +106,17 @@ def _resolve_one(root: Path, declared: str) -> tuple[str, str]:
     not externally-influenced identifiers - so names the allowlist would
     refuse (spaces, unicode) still resolve; only an actual escape is refused.
     """
-    root_real = os.path.realpath(root)
-    root_prefix = os.path.join(root_real, "")
-    candidate = os.path.realpath(os.path.join(root_real, declared))
+    try:
+        root_real = os.path.realpath(root)
+        root_prefix = os.path.join(root_real, "")
+        candidate = os.path.realpath(os.path.join(root_real, declared))
+    except (TypeError, ValueError, OSError):
+        # ``os.path.realpath`` raises ValueError on an embedded NUL byte
+        # (and TypeError/OSError on other input the filesystem cannot
+        # represent). This function is total by contract: a malformed
+        # declaration surfaces as a recorded absence in its position, not
+        # as an exception that would abort the spawn - or the verify pass.
+        return "", REASON_INVALID
     if not candidate.startswith(root_prefix):
         return "", REASON_OUTSIDE_ROOT
     if os.path.isdir(candidate):
