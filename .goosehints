@@ -253,6 +253,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 | `ab_runner.py`            | A/B runner primitive - deterministic prompt-vs-prompt comparison |
 | `baseline.py`             | Baseline tracking for eval-gated evolution |
 | `calibration.py`          | Calibration log + Brier score for router and judge decisions |
+| `clean_run.py`            | Clean-run attestation: prove task ground-truth was never fetched (#2930) |
 | `gate_receipt.py`         | Signed verdict receipts for statistical eval gating (#2520) |
 | `golden.py`               | Golden benchmark suite - curated tasks for eval |
 | `harness.py`              | Eval harness - multiplicative scoring, LLM judge, failure taxonomy |
