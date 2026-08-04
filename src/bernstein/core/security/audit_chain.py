@@ -907,6 +907,16 @@ EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
 EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
 EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
+#: Issue #2930 -- emitted whenever an eval run seals a clean-run attestation
+#: (:mod:`bernstein.eval.clean_run`). The event mirrors the attestation's
+#: identity into the HMAC chain: the attestation hash, the verdict, the sealed
+#: task commitment, the journal head anchoring the scanned activity set, and
+#: the lineage-spine anchor -- hashes and the verdict only, never the plaintext
+#: ground-truth, the read contents, or the match spans. A tampered attestation
+#: therefore fails ``bernstein audit verify`` exactly like any tampered chain
+#: entry.
+EVENT_CLEAN_RUN_ATTESTATION = "eval.clean_run_attestation"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -3586,6 +3596,58 @@ def record_evidence_bundle(
             "bundle_hash": bundle_hash,
             "item_count": item_count,
             "gate_passed": gate_passed,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_clean_run_attestation(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    attestation_hash: str,
+    verdict: str,
+    task_commitment: str,
+    journal_head: str,
+    journal_entry_hash: str,
+    actor: str = "eval_clean_run",
+) -> AuditEvent:
+    """Append an ``eval.clean_run_attestation`` event into *chain* (#2930).
+
+    Mirrors a sealed, spine-anchored clean-run attestation into the
+    HMAC-chained audit log so an operator can prove, from the chain alone,
+    that an eval run's activity was scanned against the task's ground-truth
+    commitment and what the verdict was. Only the attestation hash, the
+    verdict, the keyed task commitment, the journal-head anchor, and the
+    spine anchor are recorded -- never the plaintext ground-truth, the read
+    contents, or the matched spans. Mirrors :func:`record_evidence_bundle`
+    (#2362) and :func:`record_eval_gate_verdict` (#2520).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The eval run the attestation was sealed for.
+        attestation_hash: ``sha256:`` hash of the canonical attestation body.
+        verdict: ``"clean"`` or ``"dirty"``.
+        task_commitment: Keyed digest of the task identity (never the id).
+        journal_head: Merkle head of the scanned run journal.
+        journal_entry_hash: The eval-clean-run spine entry hash.
+        actor: Recorded actor; defaults to ``"eval_clean_run"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CLEAN_RUN_ATTESTATION,
+        actor=actor,
+        resource_type="clean_run_attestation",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "attestation_hash": attestation_hash,
+            "verdict": verdict,
+            "task_commitment": task_commitment,
+            "journal_head": journal_head,
             "journal_entry_hash": journal_entry_hash,
         },
     )
@@ -8051,6 +8113,7 @@ __all__ = [
     "EVENT_CACHE_MISS",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_CLAIM_JOURNAL_RECEIPT",
+    "EVENT_CLEAN_RUN_ATTESTATION",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COMPUTER_USE_ACTION",
@@ -8188,6 +8251,7 @@ __all__ = [
     "record_capability_selection",
     "record_checkpoint_retry",
     "record_claim_journal_receipt",
+    "record_clean_run_attestation",
     "record_computer_use_action",
     "record_context_capsule",
     "record_cost_batch_route",

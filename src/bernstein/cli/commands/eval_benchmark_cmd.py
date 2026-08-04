@@ -2305,5 +2305,64 @@ def eval_gate_verify_cmd(receipt_hash: str, workdir: str, as_json: bool) -> None
     raise SystemExit(1)
 
 
+@eval_group.group("clean-run")
+def eval_clean_run_group() -> None:
+    """Clean-run attestation surface (#2930)."""
+
+
+@eval_clean_run_group.command("verify")
+@click.argument("attestation_hash")
+@click.option(
+    "--workdir",
+    "workdir",
+    type=click.Path(file_okay=False),
+    default=".",
+    show_default=True,
+    help=("Project root holding .sdd/eval/clean_run attestations, .sdd/runs/<run-id>/journal.jsonl, and .sdd/lineage."),
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def eval_clean_run_verify_cmd(attestation_hash: str, workdir: str, as_json: bool) -> None:
+    """Verify a clean-run attestation offline (#2930).
+
+    Re-derives the verdict from the embedded activity digests and contraband
+    commitment (the stored verdict is never trusted), re-checks that the
+    scanned activity set chains to the recorded journal head, and re-checks
+    the eval-clean-run lineage-spine anchor.
+
+    \b
+      bernstein eval clean-run verify sha256:<hash>
+    """
+    import json as _json
+
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.eval.clean_run import verify_clean_run_attestation
+
+    root = Path(workdir)
+    result = verify_clean_run_attestation(
+        workdir=root,
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=load_or_create_audit_key(),
+        attestation_hash=attestation_hash,
+    )
+    verdict = result.attestation.verdict if result.attestation is not None else ""
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {
+                    "ok": result.ok,
+                    "reason": result.reason,
+                    "attestation_hash": attestation_hash,
+                    "verdict": verdict,
+                }
+            )
+        )
+        raise SystemExit(0 if result.ok else 1)
+    if result.ok:
+        console.print(f"[green]Clean-run attestation verified:[/green] {attestation_hash} (verdict: {verdict})")
+        return
+    console.print(f"[red]Clean-run attestation verification failed:[/red] {result.reason}")
+    raise SystemExit(1)
+
+
 # ---------------------------------------------------------------------------
 # workspace - multi-repo workspace management
