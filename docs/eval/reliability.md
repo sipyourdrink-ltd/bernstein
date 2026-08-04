@@ -134,6 +134,13 @@ pass@1       : 100.0%  (any attempt passed — the ceiling)
 coordination : held fixed
 ```
 
+`bernstein eval --reliability k` (the spelling issue #2933 asked for) is a
+thin alias for the same command: it accepts `--suite`, `--out`,
+`--scheduler`, and `--stub-signer`, delegates into the identical run path,
+and emits the identical signed receipt. Verification is unchanged — use
+the two `bench` verbs below; the eval surface adds no reliability logic of
+its own.
+
 ### 2. Verify the receipt offline
 
 ```bash
@@ -242,8 +249,14 @@ src/bernstein/eval/bench/
 │                        # ReliabilityVerifier, reliability_check
 └── runner.py            # + StochasticMockReplayAdapter
 
+src/bernstein/cli/commands/
+└── eval_benchmark_cmd.py  # `bernstein eval --reliability` alias
+
 tests/unit/eval/bench/
 └── test_reliability.py  # TDD suite — all acceptance criteria
+
+tests/unit/cli/
+└── test_eval_reliability_alias.py  # eval alias == bench path
 
 docs/eval/
 └── reliability.md       # this document
