@@ -45,6 +45,7 @@ from bernstein.core.agent_recycling import (
     send_shutdown_signals,
 )
 from bernstein.core.agent_signals import AgentSignalManager
+from bernstein.core.agents.context_attachments import CONTEXT_FILES_ATTACHED_EVENT
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.batch_api import ProviderBatchManager
@@ -5181,6 +5182,18 @@ class Orchestrator:
                 task_ids=session.task_ids,
                 agent_source=session.agent_source,
             )
+            # Issue #3375: pin the declared context files the spawner resolved
+            # for this session at their content addresses. Recorded only when
+            # the tasks declared something, so undeclared runs journal exactly
+            # what they did before. Entries keep declared order; unresolvable
+            # paths hold their position with a reason code.
+            if session.context_attachments:
+                self._recorder.record(
+                    CONTEXT_FILES_ATTACHED_EVENT,
+                    agent_id=session.id,
+                    task_ids=session.task_ids,
+                    entries=list(session.context_attachments),
+                )
             for tid in session.task_ids:
                 self._recorder.record(
                     "task_claimed",

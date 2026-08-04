@@ -28,6 +28,10 @@ from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
+from bernstein.core.agents.context_attachments import (
+    collect_declared_context_files,
+    resolve_context_attachments,
+)
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
 from bernstein.core.agents.response_style import (
@@ -4090,13 +4094,27 @@ class AgentSpawner:
         # and context files instead of only the generic project CLAUDE.md
         # . The helper also marks the file as skip-worktree so
         # the override never lands in merge commits.
-        _task_context_files: list[str] = []
-        for _t in tasks:
-            _cfs = _t.metadata.get("context_files") if isinstance(_t.metadata, dict) else None
-            if isinstance(_cfs, list):
-                for _cf in _cfs:
-                    if isinstance(_cf, str) and _cf not in _task_context_files:
-                        _task_context_files.append(_cf)
+        _task_context_files = collect_declared_context_files(tasks)
+        if _task_context_files:
+            # Issue #3375: content-address the declared context files at
+            # dispatch, in declared order, against the worktree the worker
+            # actually reads them from. An unresolvable path is recorded in
+            # its position with a reason code - never skipped - and logged;
+            # a broken declaration must surface, not abort the spawn. The
+            # entries are stamped on the session so the run journal records
+            # them next to ``agent_spawned``.
+            session.context_attachments = resolve_context_attachments(
+                root=spawn_cwd,
+                declared=_task_context_files,
+            )
+            for _entry in session.context_attachments:
+                if _entry["reason_code"]:
+                    logger.warning(
+                        "Context file %s for session %s did not resolve (%s); recorded with reason code",
+                        _entry["path"],
+                        session_id,
+                        _entry["reason_code"],
+                    )
         try:
             write_claude_md(
                 spawn_cwd,

@@ -1191,6 +1191,13 @@ class AgentSession:
     # agent log's mtime, not a live PID or the heartbeat JSON (issue #3058).
     # Reset whenever a stronger signal confirms real activity.
     log_only_heartbeat_ticks: int = 0
+    # Declared context files resolved at dispatch (issue #3375). Each entry
+    # is ``{"path", "order", "sha256", "reason_code"}`` in declared order -
+    # an unresolvable path keeps its position with a reason code instead of
+    # being skipped. Stamped by the spawner so the run journal can record
+    # the attachment set next to the ``agent_spawned`` event. Empty when the
+    # session's tasks declare nothing.
+    context_attachments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
 
 
 class IsolationMode(StrEnum):
