@@ -1256,7 +1256,7 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein profile` | Task profiling. | `cli/profile_cmd.py:73` |
 | `bernstein evolve` | Self-improvement loop (see [Adapters & agents](#adapters-agents)). | `cli/evolve_cmd.py:48` |
 | `bernstein changelog` | Changelog from runs (group: bare = agent-produced diffs, `conventional` subcommand = from conventional commits). | `cli/changelog_cmd.py:405` |
-| `bernstein run-changelog` | Deprecated alias for `bernstein changelog` (removed in 4.0.0). | `cli/changelog_cmd.py:533` |
+| `bernstein run-changelog` | Deprecated alias for `bernstein changelog` (removed in a later release). | `cli/changelog_cmd.py:533` |
 | `bernstein checkpoint` | Save progress (see [Run & control](#run-control)). | `cli/commands/checkpoint_cmd.py:49` |
 | `bernstein voice` / `bernstein listen` | Voice control (experimental). | `cli/voice_cmd.py:437` |
 | `bernstein install-hooks` | Install git hooks. | `cli/commands/advanced_cmd.py:448` |

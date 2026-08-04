@@ -3,13 +3,14 @@
 In v4.0.0 the orchestration-specific command takes the bare name
 ``bernstein changelog``, and the conventional-commit command moves under
 ``bernstein changelog conventional``. The ``bernstein run-changelog`` name
-stays registered through the 3.10 line as a deprecated alias so existing
-scripts print a warning rather than silently changing meaning. Both commands
-had zero tests before #3142; this file pins both.
+stays registered as a deprecated alias so existing scripts print a warning
+rather than silently changing meaning; it is removed in a release after the
+4.0 line that introduced it. Both commands had zero tests before #3142; this
+file pins both.
 
 The tests go through the top-level ``cli`` entry point rather than the group
 or subcommand objects directly, so they pin the registered names and the
-help-text shape. The group can be removed together with the alias in v4.0.0.
+help-text shape. The group can be removed together with the alias.
 """
 
 from __future__ import annotations
@@ -82,7 +83,7 @@ class TestChangelogGroupRegistration:
 
     def test_back_compat_alias_in_main_module(self) -> None:
         # ``from bernstein.cli.main import run_changelog_cmd`` keeps working
-        # through the 3.10 line per #3142. The alias points to the new name.
+        # for as long as the alias lives, per #3142. It points to the new name.
         assert run_changelog_cmd is _re_default
         assert run_changelog_cmd is run_changelog_default
 
@@ -105,9 +106,9 @@ class TestRunChangelogDeprecation:
         # Help text itself must mention the deprecation so a user running
         # ``bernstein run-changelog --help`` learns about the rename.
         # click renders the long form on multiple lines, so accept either
-        # collapsed or split ("[Deprecated,\n  removed in 4.0.0]").
+        # collapsed or split ("[Deprecated,\n  removed in a later release]").
         combined = (result.output or "").replace("\n", " ")
-        assert "Deprecated" in combined and "removed in 4.0.0" in combined
+        assert "Deprecated" in combined and "removed in a later release" in combined
 
     def test_run_changelog_help_text_points_to_new_name(self) -> None:
         runner = CliRunner()
@@ -156,7 +157,7 @@ class TestRunChangelogDeprecation:
 
     def test_run_changelog_top_level_help_lists_command(self) -> None:
         # The legacy alias is registered at the top level so existing scripts
-        # keep working through the 3.10 line (#3142). It MUST show up in the
+        # keep working while it lives (#3142). It MUST show up in the
         # top-level command list.
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])

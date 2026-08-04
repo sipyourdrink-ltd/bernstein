@@ -666,14 +666,15 @@ def changelog_run_alias(
     server_url: str | None,
     workdir: str,
 ) -> None:
-    """Generate a changelog from what Bernstein agents actually changed. [Deprecated, removed in 4.0.0]
+    """Generate a changelog from what Bernstein agents actually changed. [Deprecated, removed in a later release]
 
     The command name changed in v4.0.0 to free up ``bernstein changelog`` for
     the orchestration-specific changelog (#3142): it now lives at
     ``bernstein changelog`` (same behaviour, same flags including ``--hours``).
-    The ``run-changelog`` name stays registered through the 3.10 line with
+    The ``run-changelog`` name stays registered as a deprecated alias with
     this deprecation notice so existing scripts print a warning rather than
-    silently changing meaning.
+    silently changing meaning; it is removed in a release after the 4.0 line
+    that introduced it.
 
     \b
     Examples:
@@ -684,8 +685,8 @@ def changelog_run_alias(
     """
     click.echo(
         "WARNING: 'bernstein run-changelog' is deprecated and will be removed "
-        "in v4.0.0 (#3142): it now lives at 'bernstein changelog' (same flags, "
-        "including --hours).",
+        "in a later release (#3142): it now lives at 'bernstein changelog' "
+        "(same flags, including --hours).",
         err=True,
     )
     from bernstein.cli.commands.run_changelog_cmd import run_changelog_default
