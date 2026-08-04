@@ -39,13 +39,13 @@ import os
 import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -113,13 +113,27 @@ def ladder_receipt_path(workdir: Path, receipt_hash: str) -> Path:
     The hash is validated against ``sha256:<64 hex>`` and the resolved path
     is asserted to stay under the ladder directory, so a caller-influenced
     hash can never escape the receipt store (path-injection defense in
-    depth; same discipline as :func:`bernstein.eval.gate_receipt.verdict_receipt_path`).
+    depth). A receipt store relocated via symlink is refused outright: with
+    ``.sdd``, ``.sdd/quality``, or the ladder directory itself symlinked
+    elsewhere, base and candidate both resolve into the symlink's target and
+    a realpath containment check passes vacuously, so the store would follow
+    attacker-placed content. Same posture as the MCP shutdown barrier's
+    refusal of a ``.sdd`` symlinked elsewhere (#3080). The returned path is
+    the *resolved* candidate, so the subsequent read or write cannot follow
+    a same-named symlink planted inside the store.
 
     Raises:
-        ValueError: The hash is not a canonical ``sha256:`` digest, or the
-            resolved path escapes the ladder directory.
+        ValueError: The hash is not a canonical ``sha256:`` digest, a
+            component of the ladder directory is a symlink, or the resolved
+            path escapes the ladder directory.
     """
     _require_canonical_hash(receipt_hash, "receipt_hash")
+    probe = workdir
+    for part in _LADDER_SUBPATH:
+        probe = probe / part
+        if probe.is_symlink():
+            msg = f"ladder receipt store path is a symlink; refusing to follow it: {probe}"
+            raise ValueError(msg)
     base = workdir.joinpath(*_LADDER_SUBPATH)
     candidate = base / f"{receipt_hash}.json"
     base_real = os.path.realpath(base)
@@ -127,7 +141,7 @@ def ladder_receipt_path(workdir: Path, receipt_hash: str) -> Path:
     if os.path.commonpath([base_real, cand_real]) != base_real:
         msg = f"receipt path escapes ladder directory: {receipt_hash!r}"
         raise ValueError(msg)
-    return candidate
+    return Path(cand_real)
 
 
 @dataclass(frozen=True, slots=True)
@@ -494,16 +508,40 @@ def verify_ladder_receipt(
       whose content hash equals the record's own canonical bytes -- proving
       that tier sealed *this* evidence, not a substituted one; and
     * the receipt's own anchor must resolve the same way.
+
+    ``missing`` is reserved for a receipt that cannot be read at all (no
+    file, unreadable, malformed JSON, or a refused store path such as a
+    symlinked ladder directory). A receipt that *is* readable but does not
+    construct -- an unknown tier name, an invalid verdict, a malformed hash
+    -- reports as ``failed`` verification: ``receipt_hash`` is an unsigned
+    content hash anyone can recompute over a tampered body, so a forged
+    field must be a named rejection, never a crash and never a silent
+    "missing".
     """
-    receipt = read_ladder_receipt(workdir, receipt_hash)
-    if receipt is None:
+    try:
+        path = ladder_receipt_path(workdir, receipt_hash)
+    except ValueError as exc:
+        return _fail("missing", f"no readable ladder receipt for {receipt_hash!r}: {exc}", None)
+    if not path.is_file():
         return _fail("missing", f"no ladder receipt for {receipt_hash!r}", None)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _fail("missing", f"no readable ladder receipt for {receipt_hash!r} (malformed JSON)", None)
+    try:
+        receipt = LadderReceipt.from_dict(raw)
+    except (KeyError, TypeError, ValueError) as exc:
+        return _fail("failed", f"receipt is readable but not a valid ladder receipt: {exc}", None)
     if receipt.receipt_hash != receipt_hash:
         return _fail("failed", "receipt hash does not match request", receipt)
 
     if canonical_hash(receipt.body()) != receipt.receipt_hash:
         return _fail("failed", "receipt_hash does not recompute from the receipt body (tampered)", receipt)
 
+    known = {tier.value for tier in VerifierTier}
+    unknown = sorted(set(receipt.required_tiers) - known)
+    if unknown:
+        return _fail("failed", f"invalid required_tiers policy in receipt: {unknown}", receipt)
     required = tuple(VerifierTier(tier) for tier in receipt.required_tiers)
     rederived = derive_ladder_verdict(receipt.records, required_tiers=required)
     if rederived != receipt.merge_eligible:

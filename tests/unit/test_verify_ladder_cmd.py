@@ -46,13 +46,14 @@ def _rec(tier: VerifierTier, verdict: str = "pass") -> TierRecord:
     )
 
 
-def _build(project: Path, records: list[TierRecord]) -> LadderReceipt:
+def _build(project: Path, records: list[TierRecord], *, workdir: Path | None = None) -> LadderReceipt:
     key = load_or_create_audit_key(project / "audit.key")
+    root = workdir if workdir is not None else project
     return build_ladder_receipt(
         task_id="T-001",
         records=records,
-        workdir=project,
-        lineage_root=project / ".sdd" / "lineage",
+        workdir=root,
+        lineage_root=root / ".sdd" / "lineage",
         hmac_key=key,
         timestamp=_TS,
     )
@@ -90,3 +91,39 @@ def test_verify_ladder_forged_merge_eligible_exit_2(project: Path) -> None:
     result = runner.invoke(verify_cmd, ["ladder", payload["receipt_hash"], "-w", str(project)])
     assert result.exit_code == 2, result.output
     assert "entail" in result.output or "re-deriv" in result.output
+
+
+def test_verify_ladder_unknown_required_tier_exit_2_no_traceback(project: Path) -> None:
+    receipt = _build(project, [_rec(VerifierTier.DETERMINISTIC)])
+    path = ladder_receipt_path(project, receipt.receipt_hash)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["required_tiers"] = ["unknown"]
+    payload["receipt_hash"] = recompute_ladder_receipt_hash(payload)
+    ladder_receipt_path(project, payload["receipt_hash"]).write_text(json.dumps(payload), encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(verify_cmd, ["ladder", payload["receipt_hash"], "-w", str(project)])
+    # A forged policy must be a named verification failure, never a traceback.
+    assert result.exit_code == 2, f"exit={result.exit_code} exc={result.exception!r} out={result.output}"
+    assert "required_tiers" in result.output
+
+
+def test_verify_ladder_symlinked_dir_refused_no_traceback(project: Path) -> None:
+    elsewhere = project / "elsewhere"
+    receipt = _build(project, [_rec(VerifierTier.DETERMINISTIC)], workdir=elsewhere)
+    receipt_json = (elsewhere / ".sdd" / "quality" / "ladder" / f"{receipt.receipt_hash}.json").read_text(
+        encoding="utf-8"
+    )
+
+    outside = project / "outside"
+    outside.mkdir()
+    (outside / f"{receipt.receipt_hash}.json").write_text(receipt_json, encoding="utf-8")
+
+    victim = project / "victim"
+    (victim / ".sdd" / "quality").mkdir(parents=True)
+    (victim / ".sdd" / "quality" / "ladder").symlink_to(outside)
+
+    runner = CliRunner()
+    result = runner.invoke(verify_cmd, ["ladder", receipt.receipt_hash, "-w", str(victim)])
+    assert result.exit_code != 0, result.output
+    assert "symlink" in result.output

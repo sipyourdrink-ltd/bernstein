@@ -223,6 +223,81 @@ class TestTamperedMergeEligibleRejected:
 
 
 # ---------------------------------------------------------------------------
+# Malformed-but-internally-consistent receipts fail verification, never crash
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedReceiptFailsClosed:
+    def test_a_receipt_with_an_unknown_required_tier_fails_verification_instead_of_crashing(
+        self, tmp_path: Path
+    ) -> None:
+        # receipt_hash is an unsigned content hash anyone can recompute over a
+        # tampered body, so a forged required_tiers policy passes the
+        # hash-recompute check; the enum conversion must not crash the
+        # verifier before the checks that would name the forgery.
+        receipt = _build(tmp_path, [_rec(VerifierTier.DETERMINISTIC)])
+        path = ladder_receipt_path(tmp_path, receipt.receipt_hash)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["required_tiers"] = ["unknown"]
+        payload["receipt_hash"] = recompute_ladder_receipt_hash(payload)
+        forged_path = ladder_receipt_path(tmp_path, payload["receipt_hash"])
+        forged_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        result = _verify(tmp_path, payload["receipt_hash"])
+
+        assert not result.ok
+        assert result.status == "failed"
+        assert "required_tiers" in result.reason
+        assert "unknown" in result.reason
+
+    def test_a_receipt_with_an_unknown_record_tier_fails_verification_not_missing(self, tmp_path: Path) -> None:
+        # A readable receipt whose tier records do not construct must report
+        # as failed verification, not vanish as "missing".
+        receipt = _build(tmp_path, [_rec(VerifierTier.DETERMINISTIC)])
+        path = ladder_receipt_path(tmp_path, receipt.receipt_hash)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["records"][0]["tier"] = "unknown"
+        payload["receipt_hash"] = recompute_ladder_receipt_hash(payload)
+        forged_path = ladder_receipt_path(tmp_path, payload["receipt_hash"])
+        forged_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        result = _verify(tmp_path, payload["receipt_hash"])
+
+        assert not result.ok
+        assert result.status == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Symlinked receipt store is refused, not followed
+# ---------------------------------------------------------------------------
+
+
+class TestSymlinkedLadderDirectoryRefused:
+    def test_a_symlinked_ladder_directory_is_refused_not_followed(self, tmp_path: Path) -> None:
+        # A genuine receipt, sealed elsewhere, planted in an outside directory
+        # that a symlinked ladder store points at. realpath-vs-realpath
+        # containment passes vacuously in that layout, so the store must
+        # refuse the symlink itself.
+        elsewhere = tmp_path / "elsewhere"
+        receipt = _build(elsewhere, [_rec(VerifierTier.DETERMINISTIC)])
+        receipt_json = ladder_receipt_path(elsewhere, receipt.receipt_hash).read_text(encoding="utf-8")
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / f"{receipt.receipt_hash}.json").write_text(receipt_json, encoding="utf-8")
+
+        victim = tmp_path / "victim"
+        (victim / ".sdd" / "quality").mkdir(parents=True)
+        (victim / ".sdd" / "quality" / "ladder").symlink_to(outside)
+
+        with pytest.raises(ValueError, match="symlink"):
+            ladder_receipt_path(victim, receipt.receipt_hash)
+        assert read_ladder_receipt(victim, receipt.receipt_hash) is None
+        result = _verify(victim, receipt.receipt_hash)
+        assert not result.ok
+
+
+# ---------------------------------------------------------------------------
 # 5. Substituted evidence_hash rejected by the spine content re-check
 # ---------------------------------------------------------------------------
 
