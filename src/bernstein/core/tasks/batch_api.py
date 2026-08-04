@@ -25,7 +25,7 @@ from bernstein.core.router import route_task
 from bernstein.core.tasks.batch_router import BATCH_DISCOUNT_FACTOR, BatchMode, classify_batch_mode
 from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.tasks.models import AgentSession, ModelConfig, Task
-from bernstein.core.tasks.task_claim import infer_affected_paths
+from bernstein.core.tasks.task_claim import _claim_file_ownership as _lifecycle_claim_file_ownership
 from bernstein.core.tick_pipeline import complete_task
 from bernstein.core.traces import AgentTrace, TraceStep, TraceStore
 
@@ -1019,22 +1019,14 @@ def _parse_anthropic_output(job: BatchJobRecord, raw_output: str) -> BatchPollRe
 
 
 def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:
-    """Mirror task_lifecycle file-ownership behavior for batch sessions.
+    """Claim file ownership for batch sessions via the shared lifecycle helper.
 
-    Unions paths inferred from the task title/description into the claimed
-    set on the same terms as ``task_lifecycle._claim_file_ownership``
-    (CRITICAL-007), so a task without explicit ``owned_files`` still gets a
-    lock when its text names real files (issue #3398).
+    Delegates to the same implementation the main claim path uses, so batch
+    sessions get the ``owned_files`` / ``infer_affected_paths`` union
+    (CRITICAL-007) on identical terms and a claim-semantic change lands in
+    one place (issue #3398).
     """
-    lock_manager = getattr(orch, "_lock_manager", None)
-    for task in tasks:
-        all_files = sorted(set(task.owned_files) | infer_affected_paths(task))
-        if not all_files:
-            continue
-        if lock_manager is not None:
-            lock_manager.acquire(all_files, agent_id=agent_id, task_id=task.id, task_title=task.title)
-        for file_path in all_files:
-            orch._file_ownership[file_path] = agent_id
+    _lifecycle_claim_file_ownership(orch, agent_id, tasks)
 
 
 def _get_batch_sessions(orch: Any) -> dict[str, AgentSession]:
