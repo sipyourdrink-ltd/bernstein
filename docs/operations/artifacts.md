@@ -123,16 +123,20 @@ The same validated payload rides `POST /tasks` (`artifact_spec` on the create
 body) and comes back on every task response, so the declaration survives the
 wire instead of being dropped at either boundary.
 
-The run substrate routes on the same declaration (issue #2996). An
-artifact-mode task's session is allocated an isolated plain directory under
-`.sdd/workspaces/<session_id>` instead of a per-session git worktree - no
-checkout, no agent branch, nothing to merge back - with the decision made in
-one place (`needs_git_worktree` in `core/tasks/artifact_completion.py`, next
-to the mode resolver the completion path uses). The provider-batch path
-(`batch_api`), which commits by construction, refuses an artifact-mode task
-before any provider call with a message naming this completion path; the task
-is dispatched through the realtime spawn instead. A batch that contains any
-`code_diff` task keeps the git worktree, and pure coding runs are unchanged.
+The run substrate routes on the same declaration (issue #2996). Under
+worktree isolation (the default), an artifact-mode task's session is
+allocated an isolated plain directory under `.sdd/workspaces/<session_id>`
+instead of a per-session git worktree - no checkout, no agent branch, nothing
+to merge back - with the decision made in one place (`needs_git_worktree` in
+`core/tasks/artifact_completion.py`, next to the mode resolver the completion
+path uses). Disabling worktrees remains the operator's explicit choice to run
+in the checkout, and applies to artifact and coding tasks alike: with
+worktrees off, an artifact task spawns in the shared workdir exactly as a
+`code_diff` task does. The provider-batch path (`batch_api`), which commits
+by construction, refuses an artifact-mode task before any provider call with
+a message naming this completion path; the task is dispatched through the
+realtime spawn instead. A batch that contains any `code_diff` task keeps the
+git worktree, and pure coding runs are unchanged.
 
 The bytes are read in the shape the kind expects: JSONL rows for `dataset` and
 `action_log`, a JSON object for `ops_result`, text for `report` (or a figures
@@ -357,10 +361,12 @@ task stays on the git-diff path and is unchanged: `code_diff` is still the
 default kind, every shipped coding adapter still declares `git-diff`, and the
 filesystem completion signals still evaluate exactly as before.
 
-Since issue #2996 the run substrate also branches on the declared mode: an
-artifact-mode session runs in an isolated plain directory rather than a git
-worktree, and the provider-batch path refuses artifact-mode tasks with the
-supported path named instead of committing on their behalf.
+Since issue #2996 the run substrate also branches on the declared mode: under
+the default worktree isolation an artifact-mode session runs in an isolated
+plain directory rather than a git worktree (with worktrees disabled, every
+mode runs in the operator checkout, as before), and the provider-batch path
+refuses artifact-mode tasks with the supported path named instead of
+committing on their behalf.
 
 The seed file (`bernstein.yaml`) is deliberately not a declaration surface: a
 seed mints the manager decomposition goal, not concrete tasks, so an artifact

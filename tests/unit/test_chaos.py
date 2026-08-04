@@ -468,6 +468,7 @@ def test_disk_full_merge_cleanup_worktree_survives_oserror(tmp_path: Path) -> No
     spawner._worktree_roots = {}
     spawner._worktree_managers = {}
     spawner._worktree_mgr = None
+    spawner._artifact_workdirs = {}
 
     session_id = "disk-sess-3"
     worktree = tmp_path / session_id
@@ -527,6 +528,7 @@ def test_merge_worktree_branch_no_corruption_after_disk_full(tmp_path: Path) -> 
     spawner._worktree_roots = {}
     spawner._worktree_managers = {}
     spawner._worktree_mgr = None
+    spawner._artifact_workdirs = {}
 
     session_id = "disk-sess-5"
     worktree = tmp_path / session_id

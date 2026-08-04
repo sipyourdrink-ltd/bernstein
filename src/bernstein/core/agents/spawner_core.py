@@ -4026,596 +4026,613 @@ class AgentSpawner:
                         "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
                     ) from exc
 
-        # Manager/planning write-boundary preflight (#2793). Once the working
-        # directory is resolved, refuse a planning agent that would run directly
-        # in the operator checkout with no OS sandbox: prompt text is not a
-        # boundary, and an ungated CLI adapter that ignores it writes straight
-        # into the operator tree. A per-session worktree or an OS sandbox both
-        # satisfy the boundary, so the default (worktree) flow is unaffected.
-        _boundary_error = manager_write_boundary_error(
-            role,
-            spawn_cwd,
-            self._workdir,
-            has_os_sandbox=(
-                self._sandbox is not None or self._container_mgr is not None or self._sandbox_backend is not None
-            ),
-        )
-        if _boundary_error is not None:
-            raise SpawnError(_boundary_error)
-
-        # Second write-boundary layer (#2793): a worktree cwd confines only
-        # relative writes, so snapshot the operator checkout's untracked set
-        # before the planning agent runs. Any untracked path that appears by
-        # reap time (an absolute/`..` write an ungated adapter made past its
-        # worktree) is swept in _sweep_manager_write_boundary. Snapshot only
-        # for the write-boundary roles and never let it block a spawn.
-        if role in _WRITE_BOUNDARY_ROLES:
-            with suppress(Exception):
-                self._manager_write_baselines[session_id] = operator_tree_untracked(self._workdir)
-
-        # Install the in-process verification-gate policy for this session so a
-        # gate-capable adapter (Claude Code) can refuse a failing completion or
-        # an out-of-scope write in-session (#2360). Fail-open: installing the
-        # policy must never block a spawn, and the authoritative scheduler-side
-        # gate runs regardless. The task's owned_files become the write
-        # allowlist and its required evidence_producers the completion check.
-        with suppress(Exception):
-            from bernstein.core.security.hook_gate import policy_from_task_fields, write_policy
-
-            gate_owned: list[str] = []
-            gate_producers: list[dict[str, Any]] = []
-            for gate_task in tasks:
-                gate_owned.extend(getattr(gate_task, "owned_files", []) or [])
-                gate_producers.extend(getattr(gate_task, "evidence_producers", []) or [])
-            gate_policy = policy_from_task_fields(session_id, owned_files=gate_owned, evidence_producers=gate_producers)
-            if gate_policy.is_active:
-                write_policy(spawn_cwd, session_id, gate_policy)
-
-        # Build per-task MCP config: auto-detected servers merged with base config
-        effective_mcp = self._mcp_config
-        if self._mcp_registry is not None:
-            effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
-
-        # Layer MCPManager servers on top (task-requested MCP servers)
-        if self._mcp_manager is not None:
-            # Collect MCP server names requested by tasks in this batch
-            task_server_names: list[str] = []
-            for t in tasks:
-                task_server_names.extend(t.mcp_servers)
-            # Deduplicate while preserving order
-            seen: set[str] = set()
-            unique_names: list[str] = []
-            for n in task_server_names:
-                if n not in seen:
-                    seen.add(n)
-                    unique_names.append(n)
-            # Pass None to get all servers when no specific ones requested
-            requested = unique_names or None
-            effective_mcp = self._mcp_manager.build_mcp_config_for_task(
-                task_mcp_servers=requested,
-                base_config=effective_mcp,
-            )
-            # Validate that MCP servers are ready before spawning the agent.
-            # A non-ready server is logged as a warning but does not block spawn
-            # so that a single failing optional server does not halt all work.
-            try:
-                from bernstein.core.mcp_readiness import validate_mcp_readiness
-
-                validate_mcp_readiness(
-                    self._mcp_manager,
-                    server_names=unique_names or None,
-                    fail_on_error=False,
-                )
-            except Exception:
-                logger.warning("MCP readiness probe raised unexpectedly (non-fatal)", exc_info=True)
-
-        # Layer per-role endpoint overrides and mode-profile sampling params
-        # onto the per-spawn config. Both feed the same ``SAMPLING_PARAM_KEYS``
-        # slots the adapter manifest reads, and both are opt-in: absent config
-        # leaves ``effective_mcp`` byte-identical to today. An explicit value
-        # already present in ``mcp_config`` always wins over these derived
-        # defaults, so operator-set overrides are never silently replaced.
-        effective_mcp = self._apply_sampling_overrides(
-            effective_mcp,
-            role_policy=role_policy,
-            model_config=model_config,
-            tasks=tasks,
-            provider_name=provider_name,
-        )
-
-        log_dir = spawn_cwd / ".sdd" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        preferred_log_path = log_dir / f"{session_id}.log"
-
-        # Write a task-specific CLAUDE.md at the worktree root so the agent
-        # inherits its assigned tasks, role constraints, owned file paths,
-        # and context files instead of only the generic project CLAUDE.md
-        # . The helper also marks the file as skip-worktree so
-        # the override never lands in merge commits.
-        _task_context_files = self._resolve_and_stamp_context_files(session, tasks, spawn_cwd)
+        # Leak guard (issue #2996): from here to the success return, any
+        # exception that escapes this spawn - a sampling-params refusal, a
+        # security-floor or admission refusal, a write-boundary error, an
+        # adapter failure that exhausts its retries - must not orphan the
+        # artifact-mode workspace allocated above. The cleanup pops the
+        # session from its tracking map, so it is idempotent and a no-op
+        # for sessions that allocated a git worktree (or nothing at all).
         try:
-            write_claude_md(
+            # Manager/planning write-boundary preflight (#2793). Once the working
+            # directory is resolved, refuse a planning agent that would run directly
+            # in the operator checkout with no OS sandbox: prompt text is not a
+            # boundary, and an ungated CLI adapter that ignores it writes straight
+            # into the operator tree. A per-session worktree or an OS sandbox both
+            # satisfy the boundary, so the default (worktree) flow is unaffected.
+            _boundary_error = manager_write_boundary_error(
+                role,
                 spawn_cwd,
-                tasks,
-                session_id=session_id,
-                role=role,
-                workdir=self._workdir,
-                context_files=_task_context_files or None,
+                self._workdir,
+                has_os_sandbox=(
+                    self._sandbox is not None or self._container_mgr is not None or self._sandbox_backend is not None
+                ),
             )
-        except Exception as exc:  # pragma: no cover - best-effort, never blocks spawn
-            logger.warning("Failed to write task-specific CLAUDE.md for %s: %s", session_id, exc)
+            if _boundary_error is not None:
+                raise SpawnError(_boundary_error)
 
-        # Inject role-specific skills into the worktree before spawn so the
-        # agent picks up orchestration protocol and role-specific instructions.
-        # Skills survive context compaction and reduce prompt boilerplate.
-        inject_skills(
-            workdir=spawn_cwd,
-            role=role,
-            tasks=tasks,
-            session_id=session_id,
-            templates_dir=self._templates_dir,
-        )
-        _inject_scheduled_tasks(
-            workdir=spawn_cwd,
-            session_id=session_id,
-            health_interval_minutes=_health_check_interval(tasks),
-        )
+            # Second write-boundary layer (#2793): a worktree cwd confines only
+            # relative writes, so snapshot the operator checkout's untracked set
+            # before the planning agent runs. Any untracked path that appears by
+            # reap time (an absolute/`..` write an ungated adapter made past its
+            # worktree) is swept in _sweep_manager_write_boundary. Snapshot only
+            # for the write-boundary roles and never let it block a spawn.
+            if role in _WRITE_BOUNDARY_ROLES:
+                with suppress(Exception):
+                    self._manager_write_baselines[session_id] = operator_tree_untracked(self._workdir)
 
-        remote_spawned = False
-        if self._runtime_bridge is not None:
-            # Same capability gate as the local adapter loop below: the
-            # bridge spawn request has no way to carry sampling/endpoint
-            # overrides, so requesting them alongside a configured bridge
-            # must fail loudly instead of running the task remotely with
-            # provider defaults.
-            _bridge_sampling_keys = tuple(
-                key for key in SAMPLING_PARAM_KEYS if effective_mcp is not None and effective_mcp.get(key) is not None
+            # Install the in-process verification-gate policy for this session so a
+            # gate-capable adapter (Claude Code) can refuse a failing completion or
+            # an out-of-scope write in-session (#2360). Fail-open: installing the
+            # policy must never block a spawn, and the authoritative scheduler-side
+            # gate runs regardless. The task's owned_files become the write
+            # allowlist and its required evidence_producers the completion check.
+            with suppress(Exception):
+                from bernstein.core.security.hook_gate import policy_from_task_fields, write_policy
+
+                gate_owned: list[str] = []
+                gate_producers: list[dict[str, Any]] = []
+                for gate_task in tasks:
+                    gate_owned.extend(getattr(gate_task, "owned_files", []) or [])
+                    gate_producers.extend(getattr(gate_task, "evidence_producers", []) or [])
+                gate_policy = policy_from_task_fields(
+                    session_id, owned_files=gate_owned, evidence_producers=gate_producers
+                )
+                if gate_policy.is_active:
+                    write_policy(spawn_cwd, session_id, gate_policy)
+
+            # Build per-task MCP config: auto-detected servers merged with base config
+            effective_mcp = self._mcp_config
+            if self._mcp_registry is not None:
+                effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
+
+            # Layer MCPManager servers on top (task-requested MCP servers)
+            if self._mcp_manager is not None:
+                # Collect MCP server names requested by tasks in this batch
+                task_server_names: list[str] = []
+                for t in tasks:
+                    task_server_names.extend(t.mcp_servers)
+                # Deduplicate while preserving order
+                seen: set[str] = set()
+                unique_names: list[str] = []
+                for n in task_server_names:
+                    if n not in seen:
+                        seen.add(n)
+                        unique_names.append(n)
+                # Pass None to get all servers when no specific ones requested
+                requested = unique_names or None
+                effective_mcp = self._mcp_manager.build_mcp_config_for_task(
+                    task_mcp_servers=requested,
+                    base_config=effective_mcp,
+                )
+                # Validate that MCP servers are ready before spawning the agent.
+                # A non-ready server is logged as a warning but does not block spawn
+                # so that a single failing optional server does not halt all work.
+                try:
+                    from bernstein.core.mcp_readiness import validate_mcp_readiness
+
+                    validate_mcp_readiness(
+                        self._mcp_manager,
+                        server_names=unique_names or None,
+                        fail_on_error=False,
+                    )
+                except Exception:
+                    logger.warning("MCP readiness probe raised unexpectedly (non-fatal)", exc_info=True)
+
+            # Layer per-role endpoint overrides and mode-profile sampling params
+            # onto the per-spawn config. Both feed the same ``SAMPLING_PARAM_KEYS``
+            # slots the adapter manifest reads, and both are opt-in: absent config
+            # leaves ``effective_mcp`` byte-identical to today. An explicit value
+            # already present in ``mcp_config`` always wins over these derived
+            # defaults, so operator-set overrides are never silently replaced.
+            effective_mcp = self._apply_sampling_overrides(
+                effective_mcp,
+                role_policy=role_policy,
+                model_config=model_config,
+                tasks=tasks,
+                provider_name=provider_name,
             )
-            if _bridge_sampling_keys:
-                raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
+
+            log_dir = spawn_cwd / ".sdd" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            preferred_log_path = log_dir / f"{session_id}.log"
+
+            # Write a task-specific CLAUDE.md at the worktree root so the agent
+            # inherits its assigned tasks, role constraints, owned file paths,
+            # and context files instead of only the generic project CLAUDE.md
+            # . The helper also marks the file as skip-worktree so
+            # the override never lands in merge commits.
+            _task_context_files = self._resolve_and_stamp_context_files(session, tasks, spawn_cwd)
             try:
-                remote_spawned = self._spawn_via_runtime_bridge(
-                    session=session,
-                    prompt=prompt,
-                    spawn_cwd=spawn_cwd,
-                    model_config=model_config,
-                    preferred_log_path=preferred_log_path,
+                write_claude_md(
+                    spawn_cwd,
+                    tasks,
+                    session_id=session_id,
+                    role=role,
+                    workdir=self._workdir,
+                    context_files=_task_context_files or None,
                 )
-            except BridgeError as exc:
-                fallback_allowed = bool(self._runtime_bridge.config.extra.get("fallback_to_local", True))
-                if not fallback_allowed:
-                    raise SpawnError(f"OpenClaw bridge rejected spawn for {session_id}: {exc}") from exc
-                logger.warning(
-                    "OpenClaw bridge failed before acceptance for %s, falling back to local adapter: %s",
-                    session_id,
-                    exc,
+            except Exception as exc:  # pragma: no cover - best-effort, never blocks spawn
+                logger.warning("Failed to write task-specific CLAUDE.md for %s: %s", session_id, exc)
+
+            # Inject role-specific skills into the worktree before spawn so the
+            # agent picks up orchestration protocol and role-specific instructions.
+            # Skills survive context compaction and reduce prompt boilerplate.
+            inject_skills(
+                workdir=spawn_cwd,
+                role=role,
+                tasks=tasks,
+                session_id=session_id,
+                templates_dir=self._templates_dir,
+            )
+            _inject_scheduled_tasks(
+                workdir=spawn_cwd,
+                session_id=session_id,
+                health_interval_minutes=_health_check_interval(tasks),
+            )
+
+            remote_spawned = False
+            if self._runtime_bridge is not None:
+                # Same capability gate as the local adapter loop below: the
+                # bridge spawn request has no way to carry sampling/endpoint
+                # overrides, so requesting them alongside a configured bridge
+                # must fail loudly instead of running the task remotely with
+                # provider defaults.
+                _bridge_sampling_keys = tuple(
+                    key
+                    for key in SAMPLING_PARAM_KEYS
+                    if effective_mcp is not None and effective_mcp.get(key) is not None
                 )
+                if _bridge_sampling_keys:
+                    raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
+                try:
+                    remote_spawned = self._spawn_via_runtime_bridge(
+                        session=session,
+                        prompt=prompt,
+                        spawn_cwd=spawn_cwd,
+                        model_config=model_config,
+                        preferred_log_path=preferred_log_path,
+                    )
+                except BridgeError as exc:
+                    fallback_allowed = bool(self._runtime_bridge.config.extra.get("fallback_to_local", True))
+                    if not fallback_allowed:
+                        raise SpawnError(f"OpenClaw bridge rejected spawn for {session_id}: {exc}") from exc
+                    logger.warning(
+                        "OpenClaw bridge failed before acceptance for %s, falling back to local adapter: %s",
+                        session_id,
+                        exc,
+                    )
 
-        # Spawn via adapter with runtime provider/adapter failover.
-        # This is critical for real-world rate-limit handling where a chosen
-        # provider may fail at process-start time.
-        #
-        # In unattended mode, wrap the spawn with persistent retry
-        # (exponential backoff + heartbeats) for rate-limit errors.
-        from bernstein.core.rate_limit_tracker import (
-            UnattendedRetryPolicy,
-            is_unattended_mode,
-        )
+            # Spawn via adapter with runtime provider/adapter failover.
+            # This is critical for real-world rate-limit handling where a chosen
+            # provider may fail at process-start time.
+            #
+            # In unattended mode, wrap the spawn with persistent retry
+            # (exponential backoff + heartbeats) for rate-limit errors.
+            from bernstein.core.rate_limit_tracker import (
+                UnattendedRetryPolicy,
+                is_unattended_mode,
+            )
 
-        _unattended_policy: UnattendedRetryPolicy | None = None
-        if is_unattended_mode():
-            _unattended_policy = UnattendedRetryPolicy()
-            logger.info("Unattended mode: retry rate-limit errors with backoff")
+            _unattended_policy: UnattendedRetryPolicy | None = None
+            if is_unattended_mode():
+                _unattended_policy = UnattendedRetryPolicy()
+                logger.info("Unattended mode: retry rate-limit errors with backoff")
 
-        _unattended_max = _unattended_policy.max_retries if _unattended_policy is not None else 1
-        _unattended_attempt = 0
-        result: SpawnResult | None = None
+            _unattended_max = _unattended_policy.max_retries if _unattended_policy is not None else 1
+            _unattended_attempt = 0
+            result: SpawnResult | None = None
 
-        self._touch_prespawn_heartbeat(session_id)
+            self._touch_prespawn_heartbeat(session_id)
 
-        while True:
-            # Remote spawn already succeeded - skip the local adapter loop entirely
-            if remote_spawned:
-                break
-            if not remote_spawned:
-                attempt_errors: list[str] = []
-                disabled_providers: dict[str, bool] = {}
-                attempted: set[tuple[str | None, str, str]] = set()
-                max_attempts = max(1, len(self._router.state.providers) if self._router is not None else 1) + 2
-                while len(attempted) < max_attempts:
-                    adapter_name = self._infer_adapter_name_for_provider(provider_name, model_config.model)
-                    attempt_key = (provider_name, adapter_name, model_config.model)
-                    if attempt_key in attempted:
-                        break
-                    attempted.add(attempt_key)
+            while True:
+                # Remote spawn already succeeded - skip the local adapter loop entirely
+                if remote_spawned:
+                    break
+                if not remote_spawned:
+                    attempt_errors: list[str] = []
+                    disabled_providers: dict[str, bool] = {}
+                    attempted: set[tuple[str | None, str, str]] = set()
+                    max_attempts = max(1, len(self._router.state.providers) if self._router is not None else 1) + 2
+                    while len(attempted) < max_attempts:
+                        adapter_name = self._infer_adapter_name_for_provider(provider_name, model_config.model)
+                        attempt_key = (provider_name, adapter_name, model_config.model)
+                        if attempt_key in attempted:
+                            break
+                        attempted.add(attempt_key)
 
-                    try:
-                        target_adapter = self._get_adapter_by_name(adapter_name, role=session.role)
-                    except Exception as exc:
-                        attempt_errors.append(f"{adapter_name}: {exc}")
-                        break
-
-                    # Fail loudly when sampling/endpoint overrides are
-                    # requested for an adapter that does not declare the
-                    # SUPPORTS_SAMPLING_PARAMS capability.  Silently
-                    # dropping them would run the task with parameters the
-                    # operator did not ask for, so this raises instead of
-                    # falling through to provider failover.
-                    ensure_sampling_params_supported(target_adapter, effective_mcp)
-
-                    # Security-floor spawn preflight (#2515): refuse a
-                    # below-floor adapter binary before it receives task
-                    # context, sealing a chain-anchored receipt for the
-                    # verdict. Placed outside the inner spawn try/except so a
-                    # refusal raises out of the spawn (hard stop) instead of
-                    # falling through to alternate-provider failover.
-                    self._preflight_adapter_security_floor(adapter_name)
-
-                    # Receipt-gated admission (#2610): re-derive the adapter's
-                    # conformance evidence and refuse one that cannot present
-                    # a fresh, matching admission receipt, sealing a chain-
-                    # anchored receipt for the decision either way. Same
-                    # placement rationale as the floor preflight above.
-                    self._preflight_adapter_admission(adapter_name)
-
-                    # Capability-aware routing (#2663): anchor the profile hash
-                    # the resolved adapter presents at dispatch so replay detects
-                    # profile drift, and refuse with a signed receipt when the
-                    # task's declared capability requirements outrun that profile.
-                    # Same placement rationale as the floor preflight above: a
-                    # refusal is a hard stop, not an alternate-adapter failover.
-                    self._record_adapter_capability_selection(adapter_name, tasks)
-
-                    # Per-attempt config so a failover to a different
-                    # adapter never inherits another adapter's extras.
-                    attempt_mcp = self._mcp_config_for_adapter(target_adapter, effective_mcp)
-
-                    # Wave 3 (per-agent instrumentation): tell the
-                    # openai_agents runner subprocess which task it is
-                    # working so its RunInstrumenter writes to
-                    # .sdd/runs/<run_id>/tasks/<task_id>/agents/<agent_id>/
-                    # instead of an "unknown" task bucket. Scoped to the
-                    # openai_agents adapter only: other adapters pass
-                    # mcp_config through to their own CLI flags verbatim,
-                    # and a stray top-level "task_id" key there is an
-                    # unnecessary risk for no benefit (those adapters are
-                    # not instrumented in this wave).
-                    if "openai_agents" in adapter_name and tasks:
-                        attempt_mcp = dict(attempt_mcp or {})
-                        attempt_mcp.setdefault("task_id", tasks[0].id)
-                        # Bug fix (instrumentation audit, bug 3 - "4 of 9
-                        # implement tasks have zero instrumentation"): this
-                        # spawn can carry MULTIPLE tasks in one agent
-                        # process (role-batched spawns / spawn_for_resume
-                        # with a multi-task batch). Only tagging tasks[0].id
-                        # meant every OTHER task in the batch got no
-                        # instrumentation directory at all - the runner's
-                        # singleton RunInstrumenter only ever knew about the
-                        # first task. Pass the FULL id list so the runner
-                        # can fan its JSONL writes out to every task's own
-                        # agents/<agent_id>/ directory, not just the first.
-                        all_task_ids = [t.id for t in tasks if getattr(t, "id", None)]
-                        if len(all_task_ids) > 1:
-                            attempt_mcp.setdefault("task_ids", all_task_ids)
-                        logger.info(
-                            "instrumentation task-id injection: adapter=%s primary_task_id=%s "
-                            "batch_size=%d all_task_ids=%s",
-                            adapter_name,
-                            tasks[0].id,
-                            len(tasks),
-                            all_task_ids,
-                        )
-
-                    # Inline per-role council block
-                    # (``role_model_policy.<role>.council``, parsed and
-                    # validated by ``seed_parser._parse_council``): forward
-                    # it so the runner manifest gets the same ``council``
-                    # payload the ``model: councils/<name>.yaml`` file
-                    # convention produces via ``_load_council_config``.
-                    # Scoped to the openai_agents adapter only - its runner
-                    # is the sole consumer of ``manifest.council``, and
-                    # other adapters treat unknown top-level mcp_config
-                    # keys as MCP server entries (see claude.py's
-                    # bare-servers fallback). An operator-set
-                    # ``mcp_config["council"]`` always wins (setdefault).
-                    if "openai_agents" in adapter_name:
-                        role_council = role_policy.get("council")
-                        if isinstance(role_council, dict) and role_council:
-                            attempt_mcp = dict(attempt_mcp or {})
-                            attempt_mcp.setdefault("council", role_council)
-                            logger.info(
-                                "spawn_for_tasks: role=%r inline role_model_policy council block "
-                                "forwarded into the runner manifest (candidates=%d)",
-                                tasks[0].role if tasks else None,
-                                len(role_council.get("candidates") or ()),
-                            )
-
-                    try:
-                        # Apply OS-level resource limits to non-sandboxed spawns.
-                        target_adapter.set_resource_limits(self._resource_limits)
-                        spawn_start = time.perf_counter()
-                        if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
-                            # In-process: run the adapter's subprocess via
-                            # a thread inside the current Python process
-                            fake_pid, actual_log_path = self._in_process.run(
-                                prompt=prompt,
-                                workdir=spawn_cwd,
-                                model_config=model_config,
-                                session_id=session_id,
-                                mcp_config=attempt_mcp,
-                            )
-                            result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
-                        elif self._sandbox_session_routing_active():
-                            # oai-002 phase 2: route exec through a
-                            # SandboxSession (Docker, E2B, Modal,
-                            # plugin) - either the shared session
-                            # attached at construction or a per-spawn
-                            # session provisioned from the attached
-                            # backend (issue #2162).  The local-worktree
-                            # backend is intentionally excluded so the
-                            # existing direct-subprocess path keeps
-                            # worker-wrapper / PID semantics intact.
-                            result = self._spawn_via_sandbox_session(
-                                session_id=session_id,
-                                prompt=prompt,
-                                spawn_cwd=spawn_cwd,
-                                model_config=model_config,
-                                mcp_config=attempt_mcp,
-                                session=session,
-                                adapter=target_adapter,
-                            )
-                        elif self._sandbox is not None:
-                            result = self._spawn_in_sandbox(
-                                session_id=session_id,
-                                prompt=prompt,
-                                spawn_cwd=spawn_cwd,
-                                model_config=model_config,
-                                mcp_config=attempt_mcp,
-                                session=session,
-                                adapter=target_adapter,
-                                task_scope=max_scope,
-                            )
-                        elif self._container_mgr is not None:
-                            result = self._spawn_in_container(
-                                session_id=session_id,
-                                prompt=prompt,
-                                spawn_cwd=spawn_cwd,
-                                model_config=model_config,
-                                mcp_config=attempt_mcp,
-                                session=session,
-                                adapter=target_adapter,
-                                task_scope=max_scope,
-                            )
-                        else:
-                            # Extract budget_multiplier from task metadata
-                            # (set by retry logic when previous attempt hit budget cap).
-                            _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
-                            # Explicit per-task max_turns override (Task.max_turns):
-                            # thread it to the adapter as explicit_max_turns, but
-                            # only when its spawn() signature accepts the
-                            # parameter. Adapters without support keep their own
-                            # auto-computed turn budget; warn so the operator
-                            # knows the cap was not applied. When several grouped
-                            # tasks carry a value the largest wins, mirroring
-                            # budget_multiplier above.
-                            _extra_spawn_kwargs: dict[str, Any] = {}
-                            _explicit_turns = max((t.max_turns for t in tasks if t.max_turns is not None), default=None)
-                            if _explicit_turns is not None:
-                                if "explicit_max_turns" in inspect.signature(target_adapter.spawn).parameters:
-                                    _extra_spawn_kwargs["explicit_max_turns"] = _explicit_turns
-                                else:
-                                    logger.warning(
-                                        "Adapter %s spawn() does not accept explicit_max_turns; "
-                                        "task max_turns=%d ignored, falling back to adapter-computed turns",
-                                        adapter_name,
-                                        _explicit_turns,
-                                    )
-                            # Cacheable prefix extraction is deferred to adapters
-                            # that support provider-specific caching.
-                            result = target_adapter.spawn(
-                                prompt=prompt,
-                                workdir=spawn_cwd,
-                                model_config=model_config,
-                                session_id=session_id,
-                                mcp_config=attempt_mcp,
-                                task_scope=max_scope,
-                                budget_multiplier=_budget_mult,
-                                system_addendum=style_addendum,
-                                **_extra_spawn_kwargs,
-                            )
-                        spawn_duration = time.perf_counter() - spawn_start
-                        agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
-                        self._adapter_health.record_success(adapter_name, latency_ms=spawn_duration * 1000)
-                        if provider_name is not None:
-                            session.provider = provider_name
-                        elif self._router and self._router.state.providers:
-                            session.provider = adapter_name
-                        else:
-                            session.provider = None
-                        session.model_config = model_config
-                        break
-                    except RateLimitError as exc:
-                        attempt_errors.append(f"{adapter_name}: {exc}")
-                        self._adapter_health.record_failure(adapter_name)
-                        logger.warning(
-                            "Rate-limit detected for provider=%s adapter=%s; retrying with alternate provider",
-                            provider_name or adapter_name,
-                            adapter_name,
-                        )
-                        if self._router is None or provider_name is None:
-                            continue
-                        provider_cfg = self._router.state.providers.get(provider_name)
-                        if provider_cfg is not None:
-                            provider_cfg.health.status = ProviderHealthStatus.RATE_LIMITED
-                            if provider_name not in disabled_providers:
-                                disabled_providers[provider_name] = provider_cfg.available
-                            provider_cfg.available = False
                         try:
-                            decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
-                            provider_name = decision.provider
-                            model_config = decision.model_config
-                        except RouterError:
-                            provider_name = None
-                    except Exception as exc:
-                        categorized = classify_spawn_error(exc, provider=provider_name)
-                        # Re-derive the failure reason from the runner's own
-                        # per-session log instead of trusting str(exc), which
-                        # for fast-exit-probe failures (adapters/base.py)
-                        # only ever embeds the log's LAST LINE - see
-                        # extract_error_aware_reason()'s module docstring
-                        # and work/bernstein/proofs/d2/minimax/FAIL-NOTE.md.
-                        diagnosed_reason = _diagnose_spawn_failure(session_id, spawn_cwd, adapter_name, exc)
-                        attempt_errors.append(f"{adapter_name}: {diagnosed_reason}")
-
-                        # Fail-fast for permanent and operator-fix errors - no
-                        # point trying alternate providers when the binary is
-                        # missing or credentials are invalid.
-                        if categorized.retry_strategy in (
-                            RetryStrategy.NO_RETRY,
-                            RetryStrategy.RETRY_AFTER_FIX,
-                        ):
-                            logger.warning(
-                                "Spawn failure is non-retryable (strategy=%s session=%s adapter=%s): %s",
-                                categorized.retry_strategy.value,
-                                session_id,
-                                adapter_name,
-                                diagnosed_reason,
-                            )
-                            self._adapter_health.record_failure(adapter_name)
+                            target_adapter = self._get_adapter_by_name(adapter_name, role=session.role)
+                        except Exception as exc:
+                            attempt_errors.append(f"{adapter_name}: {exc}")
                             break
 
-                        self._adapter_health.record_failure(adapter_name)
-                        logger.warning(
-                            "Agent spawn failed (session=%s provider=%s adapter=%s strategy=%s): %s",
-                            session_id,
-                            provider_name,
-                            adapter_name,
-                            categorized.retry_strategy.value,
-                            diagnosed_reason,
-                        )
-                        if self._router is None or provider_name is None:
-                            continue
-                        provider_cfg = self._router.state.providers.get(provider_name)
-                        if provider_cfg is not None:
-                            self._router.update_provider_health(provider_name, success=False)
-                            if provider_name not in disabled_providers:
-                                disabled_providers[provider_name] = provider_cfg.available
-                            provider_cfg.available = False
+                        # Fail loudly when sampling/endpoint overrides are
+                        # requested for an adapter that does not declare the
+                        # SUPPORTS_SAMPLING_PARAMS capability.  Silently
+                        # dropping them would run the task with parameters the
+                        # operator did not ask for, so this raises instead of
+                        # falling through to provider failover.
+                        ensure_sampling_params_supported(target_adapter, effective_mcp)
+
+                        # Security-floor spawn preflight (#2515): refuse a
+                        # below-floor adapter binary before it receives task
+                        # context, sealing a chain-anchored receipt for the
+                        # verdict. Placed outside the inner spawn try/except so a
+                        # refusal raises out of the spawn (hard stop) instead of
+                        # falling through to alternate-provider failover.
+                        self._preflight_adapter_security_floor(adapter_name)
+
+                        # Receipt-gated admission (#2610): re-derive the adapter's
+                        # conformance evidence and refuse one that cannot present
+                        # a fresh, matching admission receipt, sealing a chain-
+                        # anchored receipt for the decision either way. Same
+                        # placement rationale as the floor preflight above.
+                        self._preflight_adapter_admission(adapter_name)
+
+                        # Capability-aware routing (#2663): anchor the profile hash
+                        # the resolved adapter presents at dispatch so replay detects
+                        # profile drift, and refuse with a signed receipt when the
+                        # task's declared capability requirements outrun that profile.
+                        # Same placement rationale as the floor preflight above: a
+                        # refusal is a hard stop, not an alternate-adapter failover.
+                        self._record_adapter_capability_selection(adapter_name, tasks)
+
+                        # Per-attempt config so a failover to a different
+                        # adapter never inherits another adapter's extras.
+                        attempt_mcp = self._mcp_config_for_adapter(target_adapter, effective_mcp)
+
+                        # Wave 3 (per-agent instrumentation): tell the
+                        # openai_agents runner subprocess which task it is
+                        # working so its RunInstrumenter writes to
+                        # .sdd/runs/<run_id>/tasks/<task_id>/agents/<agent_id>/
+                        # instead of an "unknown" task bucket. Scoped to the
+                        # openai_agents adapter only: other adapters pass
+                        # mcp_config through to their own CLI flags verbatim,
+                        # and a stray top-level "task_id" key there is an
+                        # unnecessary risk for no benefit (those adapters are
+                        # not instrumented in this wave).
+                        if "openai_agents" in adapter_name and tasks:
+                            attempt_mcp = dict(attempt_mcp or {})
+                            attempt_mcp.setdefault("task_id", tasks[0].id)
+                            # Bug fix (instrumentation audit, bug 3 - "4 of 9
+                            # implement tasks have zero instrumentation"): this
+                            # spawn can carry MULTIPLE tasks in one agent
+                            # process (role-batched spawns / spawn_for_resume
+                            # with a multi-task batch). Only tagging tasks[0].id
+                            # meant every OTHER task in the batch got no
+                            # instrumentation directory at all - the runner's
+                            # singleton RunInstrumenter only ever knew about the
+                            # first task. Pass the FULL id list so the runner
+                            # can fan its JSONL writes out to every task's own
+                            # agents/<agent_id>/ directory, not just the first.
+                            all_task_ids = [t.id for t in tasks if getattr(t, "id", None)]
+                            if len(all_task_ids) > 1:
+                                attempt_mcp.setdefault("task_ids", all_task_ids)
+                            logger.info(
+                                "instrumentation task-id injection: adapter=%s primary_task_id=%s "
+                                "batch_size=%d all_task_ids=%s",
+                                adapter_name,
+                                tasks[0].id,
+                                len(tasks),
+                                all_task_ids,
+                            )
+
+                        # Inline per-role council block
+                        # (``role_model_policy.<role>.council``, parsed and
+                        # validated by ``seed_parser._parse_council``): forward
+                        # it so the runner manifest gets the same ``council``
+                        # payload the ``model: councils/<name>.yaml`` file
+                        # convention produces via ``_load_council_config``.
+                        # Scoped to the openai_agents adapter only - its runner
+                        # is the sole consumer of ``manifest.council``, and
+                        # other adapters treat unknown top-level mcp_config
+                        # keys as MCP server entries (see claude.py's
+                        # bare-servers fallback). An operator-set
+                        # ``mcp_config["council"]`` always wins (setdefault).
+                        if "openai_agents" in adapter_name:
+                            role_council = role_policy.get("council")
+                            if isinstance(role_council, dict) and role_council:
+                                attempt_mcp = dict(attempt_mcp or {})
+                                attempt_mcp.setdefault("council", role_council)
+                                logger.info(
+                                    "spawn_for_tasks: role=%r inline role_model_policy council block "
+                                    "forwarded into the runner manifest (candidates=%d)",
+                                    tasks[0].role if tasks else None,
+                                    len(role_council.get("candidates") or ()),
+                                )
+
                         try:
-                            decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
-                            provider_name = decision.provider
-                            model_config = decision.model_config
-                        except RouterError:
-                            provider_name = None
-
-                for prov, was_available in disabled_providers.items():
-                    provider_cfg = self._router.state.providers.get(prov) if self._router is not None else None
-                    if provider_cfg is not None:
-                        provider_cfg.available = was_available
-
-                if result is None:
-                    error_text = "; ".join(attempt_errors) or "no viable spawn attempts"
-                    if _unattended_policy is not None:
-                        _unattended_attempt += 1
-                        if _unattended_attempt < _unattended_max:
-                            delay = _unattended_policy.next_delay(_unattended_attempt)
-                            signals_dir = spawn_cwd / ".sdd" / "runtime" / "signals"
+                            # Apply OS-level resource limits to non-sandboxed spawns.
+                            target_adapter.set_resource_limits(self._resource_limits)
+                            spawn_start = time.perf_counter()
+                            if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+                                # In-process: run the adapter's subprocess via
+                                # a thread inside the current Python process
+                                fake_pid, actual_log_path = self._in_process.run(
+                                    prompt=prompt,
+                                    workdir=spawn_cwd,
+                                    model_config=model_config,
+                                    session_id=session_id,
+                                    mcp_config=attempt_mcp,
+                                )
+                                result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
+                            elif self._sandbox_session_routing_active():
+                                # oai-002 phase 2: route exec through a
+                                # SandboxSession (Docker, E2B, Modal,
+                                # plugin) - either the shared session
+                                # attached at construction or a per-spawn
+                                # session provisioned from the attached
+                                # backend (issue #2162).  The local-worktree
+                                # backend is intentionally excluded so the
+                                # existing direct-subprocess path keeps
+                                # worker-wrapper / PID semantics intact.
+                                result = self._spawn_via_sandbox_session(
+                                    session_id=session_id,
+                                    prompt=prompt,
+                                    spawn_cwd=spawn_cwd,
+                                    model_config=model_config,
+                                    mcp_config=attempt_mcp,
+                                    session=session,
+                                    adapter=target_adapter,
+                                )
+                            elif self._sandbox is not None:
+                                result = self._spawn_in_sandbox(
+                                    session_id=session_id,
+                                    prompt=prompt,
+                                    spawn_cwd=spawn_cwd,
+                                    model_config=model_config,
+                                    mcp_config=attempt_mcp,
+                                    session=session,
+                                    adapter=target_adapter,
+                                    task_scope=max_scope,
+                                )
+                            elif self._container_mgr is not None:
+                                result = self._spawn_in_container(
+                                    session_id=session_id,
+                                    prompt=prompt,
+                                    spawn_cwd=spawn_cwd,
+                                    model_config=model_config,
+                                    mcp_config=attempt_mcp,
+                                    session=session,
+                                    adapter=target_adapter,
+                                    task_scope=max_scope,
+                                )
+                            else:
+                                # Extract budget_multiplier from task metadata
+                                # (set by retry logic when previous attempt hit budget cap).
+                                _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
+                                # Explicit per-task max_turns override (Task.max_turns):
+                                # thread it to the adapter as explicit_max_turns, but
+                                # only when its spawn() signature accepts the
+                                # parameter. Adapters without support keep their own
+                                # auto-computed turn budget; warn so the operator
+                                # knows the cap was not applied. When several grouped
+                                # tasks carry a value the largest wins, mirroring
+                                # budget_multiplier above.
+                                _extra_spawn_kwargs: dict[str, Any] = {}
+                                _explicit_turns = max(
+                                    (t.max_turns for t in tasks if t.max_turns is not None), default=None
+                                )
+                                if _explicit_turns is not None:
+                                    if "explicit_max_turns" in inspect.signature(target_adapter.spawn).parameters:
+                                        _extra_spawn_kwargs["explicit_max_turns"] = _explicit_turns
+                                    else:
+                                        logger.warning(
+                                            "Adapter %s spawn() does not accept explicit_max_turns; "
+                                            "task max_turns=%d ignored, falling back to adapter-computed turns",
+                                            adapter_name,
+                                            _explicit_turns,
+                                        )
+                                # Cacheable prefix extraction is deferred to adapters
+                                # that support provider-specific caching.
+                                result = target_adapter.spawn(
+                                    prompt=prompt,
+                                    workdir=spawn_cwd,
+                                    model_config=model_config,
+                                    session_id=session_id,
+                                    mcp_config=attempt_mcp,
+                                    task_scope=max_scope,
+                                    budget_multiplier=_budget_mult,
+                                    system_addendum=style_addendum,
+                                    **_extra_spawn_kwargs,
+                                )
+                            spawn_duration = time.perf_counter() - spawn_start
+                            agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
+                            self._adapter_health.record_success(adapter_name, latency_ms=spawn_duration * 1000)
+                            if provider_name is not None:
+                                session.provider = provider_name
+                            elif self._router and self._router.state.providers:
+                                session.provider = adapter_name
+                            else:
+                                session.provider = None
+                            session.model_config = model_config
+                            break
+                        except RateLimitError as exc:
+                            attempt_errors.append(f"{adapter_name}: {exc}")
+                            self._adapter_health.record_failure(adapter_name)
                             logger.warning(
-                                "Unattended retry: cycle %d/%d, sleeping %.0fs",
-                                _unattended_attempt,
-                                _unattended_max,
-                                delay,
+                                "Rate-limit detected for provider=%s adapter=%s; retrying with alternate provider",
+                                provider_name or adapter_name,
+                                adapter_name,
                             )
-                            _unattended_policy.wait_with_heartbeats(
+                            if self._router is None or provider_name is None:
+                                continue
+                            provider_cfg = self._router.state.providers.get(provider_name)
+                            if provider_cfg is not None:
+                                provider_cfg.health.status = ProviderHealthStatus.RATE_LIMITED
+                                if provider_name not in disabled_providers:
+                                    disabled_providers[provider_name] = provider_cfg.available
+                                provider_cfg.available = False
+                            try:
+                                decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                                provider_name = decision.provider
+                                model_config = decision.model_config
+                            except RouterError:
+                                provider_name = None
+                        except Exception as exc:
+                            categorized = classify_spawn_error(exc, provider=provider_name)
+                            # Re-derive the failure reason from the runner's own
+                            # per-session log instead of trusting str(exc), which
+                            # for fast-exit-probe failures (adapters/base.py)
+                            # only ever embeds the log's LAST LINE - see
+                            # extract_error_aware_reason()'s module docstring
+                            # and work/bernstein/proofs/d2/minimax/FAIL-NOTE.md.
+                            diagnosed_reason = _diagnose_spawn_failure(session_id, spawn_cwd, adapter_name, exc)
+                            attempt_errors.append(f"{adapter_name}: {diagnosed_reason}")
+
+                            # Fail-fast for permanent and operator-fix errors - no
+                            # point trying alternate providers when the binary is
+                            # missing or credentials are invalid.
+                            if categorized.retry_strategy in (
+                                RetryStrategy.NO_RETRY,
+                                RetryStrategy.RETRY_AFTER_FIX,
+                            ):
+                                logger.warning(
+                                    "Spawn failure is non-retryable (strategy=%s session=%s adapter=%s): %s",
+                                    categorized.retry_strategy.value,
+                                    session_id,
+                                    adapter_name,
+                                    diagnosed_reason,
+                                )
+                                self._adapter_health.record_failure(adapter_name)
+                                break
+
+                            self._adapter_health.record_failure(adapter_name)
+                            logger.warning(
+                                "Agent spawn failed (session=%s provider=%s adapter=%s strategy=%s): %s",
                                 session_id,
-                                _unattended_attempt,
-                                f"429 rate limit ({error_text})",
-                                signals_dir=signals_dir,
+                                provider_name,
+                                adapter_name,
+                                categorized.retry_strategy.value,
+                                diagnosed_reason,
                             )
-                            # Reset provider availability for the retry
-                            if self._router is not None:
-                                for _p, _was_available in disabled_providers.items():
-                                    _pcfg = self._router.state.providers.get(_p)
-                                    if _pcfg is not None:
-                                        _pcfg.available = _was_available
-                            # Re-select provider for the retry
-                            if self._router is not None and self._router.state.providers:
-                                with suppress(RouterError):
-                                    _decision = self._router.select_provider_for_task(
-                                        tasks[0], base_config=model_config
-                                    )
-                                    provider_name = _decision.provider
-                                    model_config = _decision.model_config
-                            continue
-                    # Release warm pool slot before raising so the pre-provisioned
-                    # worktree is not permanently leaked (BUG-19). Same for an
-                    # artifact-mode session's plain workspace (#2996).
-                    self._release_warm_pool_slot(session_id)
-                    cleanup_artifact_workspace(session_id, artifact_workdirs=self._artifact_workdirs)
-                    raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
-                # Success - exit the retry loop
-                break
+                            if self._router is None or provider_name is None:
+                                continue
+                            provider_cfg = self._router.state.providers.get(provider_name)
+                            if provider_cfg is not None:
+                                self._router.update_provider_health(provider_name, success=False)
+                                if provider_name not in disabled_providers:
+                                    disabled_providers[provider_name] = provider_cfg.available
+                                provider_cfg.available = False
+                            try:
+                                decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                                provider_name = decision.provider
+                                model_config = decision.model_config
+                            except RouterError:
+                                provider_name = None
 
-        # Post-spawn session setup
-        if result is not None:
-            session.pid = result.pid
-            session.abort_reason = result.abort_reason
-            session.abort_detail = result.abort_detail
-            session.finish_reason = result.finish_reason
-            if result.log_path:
-                session.log_path = str(result.log_path)
+                    for prov, was_available in disabled_providers.items():
+                        provider_cfg = self._router.state.providers.get(prov) if self._router is not None else None
+                        if provider_cfg is not None:
+                            provider_cfg.available = was_available
 
-        if session.status != "working":
-            transition_agent(
-                session,
-                "working",
-                actor="spawner",
-                reason="agent process started",
+                    if result is None:
+                        error_text = "; ".join(attempt_errors) or "no viable spawn attempts"
+                        if _unattended_policy is not None:
+                            _unattended_attempt += 1
+                            if _unattended_attempt < _unattended_max:
+                                delay = _unattended_policy.next_delay(_unattended_attempt)
+                                signals_dir = spawn_cwd / ".sdd" / "runtime" / "signals"
+                                logger.warning(
+                                    "Unattended retry: cycle %d/%d, sleeping %.0fs",
+                                    _unattended_attempt,
+                                    _unattended_max,
+                                    delay,
+                                )
+                                _unattended_policy.wait_with_heartbeats(
+                                    session_id,
+                                    _unattended_attempt,
+                                    f"429 rate limit ({error_text})",
+                                    signals_dir=signals_dir,
+                                )
+                                # Reset provider availability for the retry
+                                if self._router is not None:
+                                    for _p, _was_available in disabled_providers.items():
+                                        _pcfg = self._router.state.providers.get(_p)
+                                        if _pcfg is not None:
+                                            _pcfg.available = _was_available
+                                # Re-select provider for the retry
+                                if self._router is not None and self._router.state.providers:
+                                    with suppress(RouterError):
+                                        _decision = self._router.select_provider_for_task(
+                                            tasks[0], base_config=model_config
+                                        )
+                                        provider_name = _decision.provider
+                                        model_config = _decision.model_config
+                                continue
+                        # Release warm pool slot before raising so the pre-provisioned
+                        # worktree is not permanently leaked (BUG-19). An
+                        # artifact-mode session's plain workspace is removed by
+                        # the surrounding leak guard as this raise propagates.
+                        self._release_warm_pool_slot(session_id)
+                        raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
+                    # Success - exit the retry loop
+                    break
+
+            # Post-spawn session setup
+            if result is not None:
+                session.pid = result.pid
+                session.abort_reason = result.abort_reason
+                session.abort_detail = result.abort_detail
+                session.finish_reason = result.finish_reason
+                if result.log_path:
+                    session.log_path = str(result.log_path)
+
+            if session.status != "working":
+                transition_agent(
+                    session,
+                    "working",
+                    actor="spawner",
+                    reason="agent process started",
+                )
+            if result is not None and result.proc is not None:
+                self._procs[session_id] = result.proc  # type: ignore[assignment]
+                # Register stdin pipe for real-time IPC (if available)
+                proc_stdin = getattr(result.proc, "stdin", None)
+                if proc_stdin is not None:
+                    from bernstein.core.agents.agent_ipc import register_stdin_pipe
+
+                    register_stdin_pipe(session_id, proc_stdin)
+
+            # Create and persist the initial trace
+            # Serialize task fields to JSON-safe types (convert Enums to their values)
+            import dataclasses
+
+            def _task_to_dict(t: Task) -> dict[str, Any]:
+                d: dict[str, Any] = {}
+                for fld in dataclasses.fields(t):
+                    val: Any = getattr(t, fld.name)
+                    if hasattr(val, "value"):  # Enum
+                        val = val.value
+                    elif isinstance(val, list):
+                        val = [v.value if hasattr(v, "value") else v for v in cast("list[Any]", val)]
+                    d[fld.name] = val
+                return d
+
+            task_snapshots: list[dict[str, Any]] = [_task_to_dict(t) for t in tasks]
+            trace = new_trace(
+                session_id=session_id,
+                task_ids=[t.id for t in tasks],
+                role=role,
+                model=model_config.model,
+                effort=model_config.effort,
+                log_path=session.log_path,
+                task_snapshots=task_snapshots,
             )
-        if result is not None and result.proc is not None:
-            self._procs[session_id] = result.proc  # type: ignore[assignment]
-            # Register stdin pipe for real-time IPC (if available)
-            proc_stdin = getattr(result.proc, "stdin", None)
-            if proc_stdin is not None:
-                from bernstein.core.agents.agent_ipc import register_stdin_pipe
+            self._traces[session_id] = trace
+            try:
+                self._trace_store.write(trace)
+            except Exception as exc:
+                logger.warning("Failed to write initial trace for %s: %s", session_id, exc)
 
-                register_stdin_pipe(session_id, proc_stdin)
-
-        # Create and persist the initial trace
-        # Serialize task fields to JSON-safe types (convert Enums to their values)
-        import dataclasses
-
-        def _task_to_dict(t: Task) -> dict[str, Any]:
-            d: dict[str, Any] = {}
-            for fld in dataclasses.fields(t):
-                val: Any = getattr(t, fld.name)
-                if hasattr(val, "value"):  # Enum
-                    val = val.value
-                elif isinstance(val, list):
-                    val = [v.value if hasattr(v, "value") else v for v in cast("list[Any]", val)]
-                d[fld.name] = val
-            return d
-
-        task_snapshots: list[dict[str, Any]] = [_task_to_dict(t) for t in tasks]
-        trace = new_trace(
-            session_id=session_id,
-            task_ids=[t.id for t in tasks],
-            role=role,
-            model=model_config.model,
-            effort=model_config.effort,
-            log_path=session.log_path,
-            task_snapshots=task_snapshots,
-        )
-        self._traces[session_id] = trace
-        try:
-            self._trace_store.write(trace)
-        except Exception as exc:
-            logger.warning("Failed to write initial trace for %s: %s", session_id, exc)
-
-        get_plugin_manager().fire_agent_spawned(
-            session_id=session.id, role=session.role, model=session.model_config.model
-        )
-        return session
+            get_plugin_manager().fire_agent_spawned(
+                session_id=session.id, role=session.role, model=session.model_config.model
+            )
+            return session
+        except BaseException:
+            cleanup_artifact_workspace(session_id, artifact_workdirs=self._artifact_workdirs)
+            raise
 
     def _resolve_and_stamp_context_files(
         self,
