@@ -387,9 +387,7 @@ def build_ladder_receipt(
 
     ordered = sorted(records, key=lambda record: LADDER_ORDER.index(record.tier))
     spine = LineageSpine(lineage_root, run_id=VERIFIER_LADDER_RUN_ID, hmac_key=hmac_key)
-    sealed_records = tuple(
-        _seal_tier_record(record, spine, task_id=task_id, timestamp=timestamp) for record in ordered
-    )
+    sealed_records = tuple(_seal_tier_record(record, spine, task_id=task_id, timestamp=timestamp) for record in ordered)
 
     merge_eligible = derive_ladder_verdict(sealed_records, required_tiers=required_tiers)
     unsealed = LadderReceipt(

@@ -1916,6 +1916,7 @@ class TestVerifierLadderWiring:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from bernstein.core.models import JudgeVerdict
+
         from bernstein.core.quality.verifier_ladder import (
             VerifierTier,
             read_ladder_receipt,
@@ -1958,6 +1959,7 @@ class TestVerifierLadderWiring:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from bernstein.core.models import JudgeVerdict
+
         from bernstein.core.quality.verifier_ladder import VerifierTier, read_ladder_receipt
 
         (tmp_path / "a.py").write_text("x")
@@ -1992,6 +1994,7 @@ class TestVerifierLadderWiring:
     @pytest.mark.asyncio
     async def test_judge_rejection_records_fail(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from bernstein.core.models import JudgeVerdict
+
         from bernstein.core.quality.verifier_ladder import VerifierTier, read_ladder_receipt
 
         (tmp_path / "a.py").write_text("x")
