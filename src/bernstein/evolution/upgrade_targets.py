@@ -47,17 +47,20 @@ UPGRADE_CATEGORY_TARGETS: dict[UpgradeCategory, tuple[tuple[_Anchor, str], ...]]
 
 
 def upgrade_target_paths(category: UpgradeCategory, state_dir: Path) -> tuple[Path, ...]:
-    """Return the absolute file paths an upgrade of *category* writes.
+    """Return the file paths an upgrade of *category* writes, anchored on *state_dir*.
 
     The repository root is ``state_dir.parent``, matching the contract the
-    evolution loop and :class:`FileUpgradeExecutor` already assume.
+    evolution loop and :class:`FileUpgradeExecutor` already assume. The
+    returned paths are absolute exactly when *state_dir* is absolute; no
+    ``resolve()`` is applied, preserving the executor's pre-existing
+    anchoring semantics.
 
     Args:
         category: The upgrade category being applied.
         state_dir: The runtime state directory (the ``.sdd`` directory).
 
     Returns:
-        The resolved target paths; empty only for a category missing from
+        The anchored target paths; empty only for a category missing from
         :data:`UPGRADE_CATEGORY_TARGETS`.
     """
     repo_root = state_dir.parent

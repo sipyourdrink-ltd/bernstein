@@ -12,7 +12,8 @@ executor writes.
 runtime state directory (`.sdd` by the evolution loop's contract) and paths
 under the repository root. Two resolvers render it:
 
-- `upgrade_target_paths(category, state_dir)` - absolute paths;
+- `upgrade_target_paths(category, state_dir)` - paths anchored on the
+  executor's state directory (absolute exactly when `state_dir` is);
   `FileUpgradeExecutor`'s apply methods resolve their write targets through
   it, so the executor cannot write a file the table does not name.
 - `upgrade_owned_files(category)` - workdir-relative strings;
