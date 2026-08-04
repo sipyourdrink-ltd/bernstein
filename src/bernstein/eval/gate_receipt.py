@@ -29,6 +29,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
@@ -46,7 +47,6 @@ from bernstein.eval.significance import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -70,15 +70,31 @@ def verdict_receipt_path(workdir: Path, receipt_hash: str) -> Path:
 
     The hash is validated against ``sha256:<64 hex>`` and the resolved path is
     asserted to stay under the gate directory, so a caller-influenced hash can
-    never escape the receipt store (path-injection defense in depth).
+    never escape the receipt store (path-injection defense in depth). A
+    receipt store relocated via symlink is refused outright: with ``.sdd``,
+    ``.sdd/eval``, or the gate directory itself symlinked elsewhere, base and
+    candidate both resolve into the symlink's target and a realpath
+    containment check passes vacuously, so the store would follow
+    attacker-placed content. Same posture as the verifier-ladder receipt
+    store and the MCP shutdown barrier's refusal of a ``.sdd`` symlinked
+    elsewhere (#3080). The returned path is the *resolved* candidate, so the
+    subsequent read or write cannot follow a same-named symlink planted
+    inside the store.
 
     Raises:
-        ValueError: The hash is not a canonical ``sha256:`` digest, or the
-            resolved path escapes the gate directory.
+        ValueError: The hash is not a canonical ``sha256:`` digest, a
+            component of the gate directory is a symlink, or the resolved
+            path escapes the gate directory.
     """
     if not _RECEIPT_HASH_RE.match(receipt_hash):
         msg = f"receipt_hash is not a canonical sha256 digest: {receipt_hash!r}"
         raise ValueError(msg)
+    probe = workdir
+    for part in _GATE_SUBPATH:
+        probe = probe / part
+        if probe.is_symlink():
+            msg = f"gate receipt store path is a symlink; refusing to follow it: {probe}"
+            raise ValueError(msg)
     base = workdir.joinpath(*_GATE_SUBPATH)
     candidate = base / f"{receipt_hash}.json"
     base_real = os.path.realpath(base)
@@ -86,7 +102,7 @@ def verdict_receipt_path(workdir: Path, receipt_hash: str) -> Path:
     if os.path.commonpath([base_real, cand_real]) != base_real:
         msg = f"receipt path escapes gate directory: {receipt_hash!r}"
         raise ValueError(msg)
-    return candidate
+    return Path(cand_real)
 
 
 def _hash_obj(obj: Any) -> str:

@@ -122,3 +122,50 @@ def test_eval_promotions_projects_stage_history(tmp_path: Path) -> None:
     payload = json.loads(proj.output)
     assert payload["final_stage"] == "canary"
     assert payload["stage_at_prefix"] == ["shadow", "canary"]
+
+
+def test_eval_gate_verify_symlinked_store_refused_no_traceback(tmp_path: Path) -> None:
+    # A genuine receipt sealed in another workdir, planted in an outside
+    # directory that the victim's symlinked gate store points at: the refusal
+    # must be a named verification failure with a nonzero exit, never a
+    # traceback and never a verdict read from the outside file.
+    runner = CliRunner()
+    base = tmp_path / "base.json"
+    cand = tmp_path / "cand.json"
+    _write_result_set(base, base_passes=4, n=16)
+    _write_result_set(cand, base_passes=12, n=16)
+    elsewhere = tmp_path / "elsewhere"
+    sealed = runner.invoke(
+        eval_group,
+        [
+            "gate",
+            "--baseline",
+            str(base),
+            "--candidate",
+            str(cand),
+            "--workdir",
+            str(elsewhere),
+            "--no-audit",
+            "--json",
+        ],
+    )
+    assert sealed.exit_code == 0, sealed.output
+    receipt_hash = json.loads(sealed.output)["receipt_hash"]
+    receipt_json = (elsewhere / ".sdd" / "eval" / "gate" / f"{receipt_hash}.json").read_text(encoding="utf-8")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / f"{receipt_hash}.json").write_text(receipt_json, encoding="utf-8")
+
+    victim = tmp_path / "victim"
+    (victim / ".sdd" / "eval").mkdir(parents=True)
+    (victim / ".sdd" / "eval" / "gate").symlink_to(outside)
+
+    result = runner.invoke(
+        eval_group,
+        ["gate-verify", receipt_hash, "--workdir", str(victim), "--json"],
+    )
+    assert result.exit_code == 1, f"exit={result.exit_code} exc={result.exception!r} out={result.output}"
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert "no verdict receipt" in payload["reason"]
