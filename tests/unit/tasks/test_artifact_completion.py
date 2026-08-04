@@ -35,6 +35,7 @@ from bernstein.core.tasks.artifact_completion import (
     complete_artifact_task,
     is_artifact_mode,
     load_artifact,
+    needs_git_worktree,
     verify_task_completion,
 )
 from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec, artifact_content_hash
@@ -98,6 +99,31 @@ def test_code_diff_task_is_not_artifact_mode() -> None:
 )
 def test_every_non_code_kind_is_artifact_mode(kind: ArtifactKind) -> None:
     assert is_artifact_mode(_task(kind=kind)) is True
+
+
+# ---------------------------------------------------------------------------
+# Worktree-allocation decision (issue #2996)
+# ---------------------------------------------------------------------------
+
+
+def test_code_diff_batch_needs_git_worktree() -> None:
+    task = Task(id="T", title="t", description="d", role="backend")
+    assert needs_git_worktree([task]) is True
+
+
+def test_artifact_only_batch_needs_no_git_worktree() -> None:
+    assert needs_git_worktree([_task()]) is False
+    assert needs_git_worktree([_task(task_id="A"), _task(task_id="B", kind=ArtifactKind.DATASET)]) is False
+
+
+def test_mixed_batch_needs_git_worktree() -> None:
+    """One code_diff task in the batch forces the git path for the session."""
+    coding = Task(id="T", title="t", description="d", role="backend")
+    assert needs_git_worktree([_task(), coding]) is True
+
+
+def test_empty_batch_answers_conservatively() -> None:
+    assert needs_git_worktree([]) is True
 
 
 def test_default_output_path_is_per_task_under_the_outbox() -> None:

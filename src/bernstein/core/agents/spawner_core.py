@@ -77,14 +77,16 @@ from bernstein.core.agents.spawner_warm_pool import (
     _should_use_router,
 )
 from bernstein.core.agents.spawner_worktree import (
+    cleanup_artifact_workspace,
+    create_artifact_workspace,
+    release_warm_pool_slot,
+    worktree_manager_for_repo,
+)
+from bernstein.core.agents.spawner_worktree import (
     cleanup_worktree as _cleanup_worktree,
 )
 from bernstein.core.agents.spawner_worktree import (
     prune_orphan_worktrees as _prune_orphan_worktrees,
-)
-from bernstein.core.agents.spawner_worktree import (
-    release_warm_pool_slot,
-    worktree_manager_for_repo,
 )
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -110,6 +112,7 @@ from bernstein.core.prometheus import (
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.sandbox.selector import SandboxSelectionError
+from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -1505,6 +1508,11 @@ class AgentSpawner:
                 logger.info("Cleaned %d stale worktree(s) from prior run", cleaned)
         self._worktree_paths: dict[str, Path] = {}
         self._worktree_roots: dict[str, Path] = {}
+        # Artifact-mode sessions (issue #2996): plain isolated working
+        # directories allocated instead of git worktrees. Kept out of the
+        # worktree maps on purpose - there is no branch to merge back, so the
+        # merge/salvage paths must stay structural no-ops for these sessions.
+        self._artifact_workdirs: dict[str, Path] = {}
         self._warm_pool = warm_pool
         self._warm_pool_entries: dict[str, PoolSlot] = {}
         # Per-repo lock to serialize pushes and prevent non-fast-forward races
@@ -1765,7 +1773,15 @@ class AgentSpawner:
         return self._sandbox_backend is not None and self._sandbox_manifest_factory is not None
 
     def cleanup_worktree(self, session_id: str) -> None:
-        """Remove the worktree and branch for a dead agent session."""
+        """Remove the worktree and branch for a dead agent session.
+
+        Artifact-mode sessions (issue #2996) have no worktree; their plain
+        workspace directory is removed instead, through the same entry point
+        so every caller that cleans a dead session covers both modes.
+        """
+        if session_id in self._artifact_workdirs:
+            cleanup_artifact_workspace(session_id, artifact_workdirs=self._artifact_workdirs)
+            return
         _cleanup_worktree(
             session_id,
             worktree_roots=self._worktree_roots,
@@ -1782,6 +1798,7 @@ class AgentSpawner:
             worktree_managers=self._worktree_managers,
             worktree_paths=self._worktree_paths,
             worktree_roots=self._worktree_roots,
+            artifact_workdirs=self._artifact_workdirs,
         )
 
     def _release_warm_pool_slot(self, session_id: str) -> None:
@@ -1928,6 +1945,11 @@ class AgentSpawner:
             trace_store=self._trace_store,
             merge_queue=self._merge_queue,
         )
+        # Artifact-mode session (issue #2996): no worktree, so the merge path
+        # above was a structural no-op; remove the plain workspace directory
+        # unless the caller asked to keep it for inspection.
+        if not defer_cleanup:
+            cleanup_artifact_workspace(session.id, artifact_workdirs=self._artifact_workdirs)
         # Reap-time write-boundary sweep (#2793): keep the operator checkout
         # clean after a planning agent exits. Best-effort; never fails a reap.
         with suppress(Exception):
@@ -3955,7 +3977,23 @@ class AgentSpawner:
                 )
 
         worktree_mgr = self._worktree_manager_for_repo(worktree_repo_root)
-        if self._use_worktrees and worktree_mgr is not None:
+        if self._use_worktrees and worktree_mgr is not None and not needs_git_worktree(tasks):
+            # Artifact-mode batch (issue #2996): every task in it completes on
+            # a signed lineage receipt, never a commit, so the session gets an
+            # isolated plain directory instead of a git worktree - no checkout,
+            # no agent branch, nothing to merge back. The warm pool is skipped
+            # too: its slots are pre-provisioned git worktrees. The decision
+            # itself lives in ``needs_git_worktree`` next to the completion
+            # path's mode resolver, so allocation and completion cannot drift.
+            try:
+                spawn_cwd = create_artifact_workspace(worktree_repo_root, session_id)
+            except OSError as exc:
+                raise SpawnError(
+                    f"Cannot create artifact workspace for agent {session_id}: {exc}. "
+                    "Fix: remove the stale directory under .sdd/workspaces/ and retry"
+                ) from exc
+            self._artifact_workdirs[session_id] = spawn_cwd
+        elif self._use_worktrees and worktree_mgr is not None:
             # Try acquiring a pre-provisioned worktree from the warm pool first.
             # This avoids the 5-15s ``git worktree add`` overhead on hot paths.
             #
@@ -4510,8 +4548,10 @@ class AgentSpawner:
                                     model_config = _decision.model_config
                             continue
                     # Release warm pool slot before raising so the pre-provisioned
-                    # worktree is not permanently leaked (BUG-19).
+                    # worktree is not permanently leaked (BUG-19). Same for an
+                    # artifact-mode session's plain workspace (#2996).
                     self._release_warm_pool_slot(session_id)
+                    cleanup_artifact_workspace(session_id, artifact_workdirs=self._artifact_workdirs)
                     raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
                 # Success - exit the retry loop
                 break
