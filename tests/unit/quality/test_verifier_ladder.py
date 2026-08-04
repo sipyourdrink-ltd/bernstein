@@ -287,6 +287,22 @@ class _JunctionProbePath(Path):
         return self.name == self._junction_component
 
 
+class _UnprobeableProbePath(Path):
+    """Store walk stand-in whose link probe itself fails.
+
+    ``is_symlink`` raises ``PermissionError`` for the marked component, so
+    the fail-closed caller-side probe sees a genuine probe failure through
+    the real walk rather than a stubbed helper.
+    """
+
+    _unprobeable_component = "ladder"
+
+    def is_symlink(self) -> bool:
+        if self.name == self._unprobeable_component:
+            raise PermissionError(13, "Permission denied")
+        return super().is_symlink()
+
+
 class TestSymlinkedLadderDirectoryRefused:
     def test_a_symlinked_ladder_directory_is_refused_not_followed(self, tmp_path: Path) -> None:
         # A genuine receipt, sealed elsewhere, planted in an outside directory
@@ -322,6 +338,40 @@ class TestSymlinkedLadderDirectoryRefused:
         with pytest.raises(ValueError, match="symlink or junction"):
             ladder_receipt_path(workdir, receipt.receipt_hash)
         assert read_ladder_receipt(workdir, receipt.receipt_hash) is None
+
+    def test_an_unprobeable_store_component_is_refused_by_name(self, tmp_path: Path) -> None:
+        # The shared best-effort helper answers False on a probe error; a
+        # store walk that cannot prove a component is not a link must fail
+        # closed rather than continue.
+        receipt = _build(tmp_path, [_rec(VerifierTier.DETERMINISTIC)])
+        workdir = _UnprobeableProbePath(tmp_path)
+
+        with pytest.raises(ValueError, match="could not be probed for links"):
+            ladder_receipt_path(workdir, receipt.receipt_hash)
+        assert read_ladder_receipt(workdir, receipt.receipt_hash) is None
+
+    def test_a_symlink_planted_at_the_receipt_leaf_is_not_followed(self, tmp_path: Path) -> None:
+        # A leaf symlink yields no parsed content: a link pointing outside
+        # the store is refused by containment, and the no-follow leaf open
+        # rejects a symlink swapped in after path validation (the TOCTOU
+        # window) with ELOOP -- pinned against the real filesystem.
+        import errno as _errno
+
+        from bernstein.core.quality.verifier_ladder import _read_leaf_text
+
+        receipt = _build(tmp_path, [_rec(VerifierTier.DETERMINISTIC)])
+        leaf = ladder_receipt_path(tmp_path, receipt.receipt_hash)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        stolen = outside / "planted.json"
+        stolen.write_text(leaf.read_text(encoding="utf-8"), encoding="utf-8")
+        leaf.unlink()
+        leaf.symlink_to(stolen)
+
+        assert read_ladder_receipt(tmp_path, receipt.receipt_hash) is None
+        with pytest.raises(OSError) as excinfo:
+            _read_leaf_text(leaf)
+        assert excinfo.value.errno == _errno.ELOOP
 
 
 # ---------------------------------------------------------------------------

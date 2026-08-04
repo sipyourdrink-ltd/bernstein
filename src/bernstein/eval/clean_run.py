@@ -61,7 +61,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
-from bernstein.core.platform_compat import is_filesystem_link
 from bernstein.core.replay.journal import run_journal_path, verify_events
 
 if TYPE_CHECKING:
@@ -813,6 +812,50 @@ class CleanRunAttestation:
         )
 
 
+def _refuse_unprobeable_or_linked(probe: Path) -> None:
+    """Fail-closed link probe for one clean-run store component.
+
+    Deliberately not ``is_filesystem_link``: that shared helper answers
+    ``False`` when the probe itself fails (a best-effort contract that
+    serves the worktree GC sweep), and a store walk that cannot prove a
+    component is not a link must refuse rather than continue. A component
+    that does not exist yet is fine -- ``is_symlink`` / ``is_junction``
+    return ``False`` without raising for a missing path -- so sealing into
+    a fresh workdir still creates the store.
+
+    Raises:
+        ValueError: The component is a symlink or junction, or the probe
+            itself failed.
+    """
+    try:
+        linked = probe.is_symlink()
+        if not linked:
+            probe_junction = getattr(probe, "is_junction", None)
+            linked = probe_junction is not None and bool(probe_junction())
+    except OSError as exc:
+        msg = f"clean-run attestation store component could not be probed for links; refusing: {probe}: {exc.errno}"
+        raise ValueError(msg) from exc
+    if linked:
+        msg = f"clean-run attestation store path is a symlink or junction; refusing to follow it: {probe}"
+        raise ValueError(msg)
+
+
+def _read_leaf_text(path: Path) -> str:
+    """Read one attestation leaf without following a symlink planted there.
+
+    Opens with ``O_NOFOLLOW`` so a symlink swapped in at the receipt
+    filename after path validation is rejected atomically by the read
+    itself -- a separate pre-check would leave a TOCTOU window. Mirrors the
+    CAS blob read (:mod:`bernstein.core.persistence.cas_store`). The flag
+    is POSIX-only; where it is absent it degrades to 0. A symlinked leaf
+    surfaces as ``OSError`` (``ELOOP``), which callers classify as
+    unreadable, never parsed.
+    """
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
 def clean_run_attestation_path(workdir: Path, attestation_hash: str) -> Path:
     """Return the on-disk attestation path for *attestation_hash*.
 
@@ -822,18 +865,21 @@ def clean_run_attestation_path(workdir: Path, attestation_hash: str) -> Path:
     An attestation store relocated via a filesystem link is refused outright:
     with ``.sdd``, ``.sdd/eval``, or the clean-run directory itself symlinked
     (or, on Windows, junctioned -- ``Path.is_symlink()`` is ``False`` for
-    NTFS junctions, hence :func:`is_filesystem_link`) elsewhere, base and
-    candidate both resolve into the link's target and a realpath containment
-    check passes vacuously, so the store would follow attacker-placed
-    content. Same posture as the gate and verifier-ladder receipt stores
-    (#3414). The returned path is the *resolved* candidate, so the
-    subsequent read or write cannot follow a same-named symlink planted
-    inside the store.
+    NTFS junctions) elsewhere, base and candidate both resolve into the
+    link's target and a realpath containment check passes vacuously, so the
+    store would follow attacker-placed content. The probe fails closed: a
+    component that cannot be probed for links refuses by name rather than
+    continuing (the shared best-effort helper's ``False``-on-error contract
+    serves the worktree GC sweep, not a store walk). Same posture as the
+    gate and verifier-ladder receipt stores (#3414). The returned path is
+    the *resolved* candidate. Directory-component races are accepted; leaf
+    opens are no-follow per :mod:`bernstein.core.persistence.cas_store`.
 
     Raises:
         ValueError: The hash is not a canonical ``sha256:`` digest, a
-            component of the clean-run directory is a symlink or junction,
-            or the resolved path escapes the clean-run directory.
+            component of the clean-run directory is a symlink or junction or
+            could not be probed, or the resolved path escapes the clean-run
+            directory.
     """
     if not _ATTESTATION_HASH_RE.match(attestation_hash):
         msg = f"attestation_hash is not a canonical sha256 digest: {attestation_hash!r}"
@@ -841,9 +887,7 @@ def clean_run_attestation_path(workdir: Path, attestation_hash: str) -> Path:
     probe = workdir
     for part in _CLEAN_RUN_SUBPATH:
         probe = probe / part
-        if is_filesystem_link(probe):
-            msg = f"clean-run attestation store path is a symlink or junction; refusing to follow it: {probe}"
-            raise ValueError(msg)
+        _refuse_unprobeable_or_linked(probe)
     base = workdir.joinpath(*_CLEAN_RUN_SUBPATH)
     candidate = base / f"{attestation_hash}.json"
     base_real = os.path.realpath(base)
@@ -951,6 +995,9 @@ def build_clean_run_attestation(
         CleanRunCommitmentError: Declared reference content could not be
             loaded, or caller-supplied extra material collides with a
             task-derived label.
+        CleanRunError: An attestation with this hash already exists in the
+            store -- the store is write-once, so a duplicate seal (or a
+            same-named planted leaf) refuses rather than overwriting.
     """
     boundary = scope_boundary(worktree_root, network_policy)
     journal_head = _journal_head_of(journal_events)
@@ -988,6 +1035,18 @@ def build_clean_run_attestation(
         **{**_fields_of(unsealed), "attestation_hash": attestation_hash},
     )
 
+    # The store is write-once: names are content-addressed, so a same-hash
+    # leaf can only be a duplicate seal or a planted entry -- refuse before
+    # the spine append so a refused seal leaves no dangling anchor.
+    path = clean_run_attestation_path(workdir, attestation_hash)
+    if os.path.lexists(path):
+        msg = (
+            f"refusing to seal: attestation {attestation_hash!r} already exists in the "
+            "clean-run store (the store is write-once; a same-named leaf planted in the "
+            "store also lands here)"
+        )
+        raise CleanRunError(msg)
+
     spine = LineageSpine(lineage_root, run_id=EVAL_CLEAN_RUN_RUN_ID, hmac_key=hmac_key)
     artifact_path = "/".join((*_CLEAN_RUN_SUBPATH, f"{attestation_hash}.json"))
     anchor = spine.record(
@@ -1002,12 +1061,22 @@ def build_clean_run_attestation(
         **{**_fields_of(sealed_no_anchor), "journal_entry_hash": anchor},
     )
 
-    path = clean_run_attestation_path(workdir, attestation_hash)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(sealed.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-        encoding="utf-8",
-    )
+    # O_EXCL closes the leaf-swap race on create (a symlink or file swapped
+    # in after the write-once check fails the open with EEXIST rather than
+    # being followed or overwritten); O_NOFOLLOW-degrade mirrors the CAS
+    # blob open (bernstein.core.persistence.cas_store).
+    write_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, write_flags, 0o644)
+    except FileExistsError as exc:
+        msg = (
+            f"refusing to seal: attestation {attestation_hash!r} appeared in the "
+            "clean-run store during sealing (the store is write-once)"
+        )
+        raise CleanRunError(msg) from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(sealed.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True))
 
     if chain is not None:
         from bernstein.core.security.audit_chain import record_clean_run_attestation
@@ -1048,10 +1117,15 @@ def read_clean_run_attestation(workdir: Path, attestation_hash: str) -> CleanRun
         path = clean_run_attestation_path(workdir, attestation_hash)
     except ValueError:
         return None
-    if not path.is_file():
+    try:
+        raw = _read_leaf_text(path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        logger.warning("eval: clean-run attestation leaf refused a no-follow open at %s", path)
         return None
     try:
-        return CleanRunAttestation.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        return CleanRunAttestation.from_dict(json.loads(raw))
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         logger.warning("eval: malformed clean-run attestation at %s", path)
         return None
@@ -1110,10 +1184,18 @@ def verify_clean_run_attestation(
         # Surfaces the named refusal verbatim: a non-canonical hash or a
         # store component that is a symlink/junction (refused, not followed).
         return CleanRunVerifyResult(ok=False, reason=str(exc), attestation=None)
-    if not path.is_file():
-        return CleanRunVerifyResult(ok=False, reason=f"no attestation for {attestation_hash!r}", attestation=None)
     try:
-        attestation = CleanRunAttestation.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        raw = _read_leaf_text(path)
+    except FileNotFoundError:
+        return CleanRunVerifyResult(ok=False, reason=f"no attestation for {attestation_hash!r}", attestation=None)
+    except OSError as exc:
+        return CleanRunVerifyResult(
+            ok=False,
+            reason=f"attestation leaf could not be opened without following links; refusing: {exc}",
+            attestation=None,
+        )
+    try:
+        attestation = CleanRunAttestation.from_dict(json.loads(raw))
     except json.JSONDecodeError:
         return CleanRunVerifyResult(ok=False, reason="stored attestation is not valid JSON", attestation=None)
     except CleanRunSchemaError as exc:

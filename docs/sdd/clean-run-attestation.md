@@ -47,6 +47,16 @@ zeroes the multiplicative `Safety` factor at scoring time.
 
 ## Verification re-derives, never trusts
 
+The attestation store itself fails closed: every path component is probed
+with a raising link check (a component that is a symlink/junction — or that
+cannot be probed at all — refuses by name rather than continuing), leaf
+reads and the seal's write open with `O_NOFOLLOW`-degrade per the CAS blob
+pattern (`bernstein.core.persistence.cas_store`) so a symlink swapped in at
+the receipt filename after path validation is rejected atomically, and the
+content-addressed store is write-once — a duplicate seal or a same-named
+planted leaf refuses instead of overwriting. Directory-component races are
+accepted (repo-wide realpath posture); leaf opens are no-follow.
+
 `verify_clean_run_attestation()` (surfaced as `bernstein eval clean-run
 verify <hash>`) parses the stored bytes under exact-type strictness — a
 signed int cannot be re-spelled as its string or as a bool and still verify

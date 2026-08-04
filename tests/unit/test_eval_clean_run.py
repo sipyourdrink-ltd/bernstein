@@ -797,6 +797,147 @@ def test_a_junction_store_component_is_refused_like_a_symlink(tmp_path: Path) ->
     assert read_clean_run_attestation(workdir, attestation.attestation_hash) is None
 
 
+class _UnprobeableProbePath(Path):
+    """Store walk stand-in whose link probe itself fails.
+
+    ``is_symlink`` raises ``PermissionError`` for the marked component, so
+    the fail-closed caller-side probe sees a genuine probe failure through
+    the real walk rather than a stubbed helper.
+    """
+
+    _unprobeable_component = "clean_run"
+
+    def is_symlink(self) -> bool:
+        if self.name == self._unprobeable_component:
+            raise PermissionError(13, "Permission denied")
+        return super().is_symlink()
+
+
+def test_an_unprobeable_store_component_is_refused_by_name(tmp_path: Path) -> None:
+    """A component that cannot be probed for links refuses, never continues.
+
+    The shared best-effort helper answers False on a probe error; a store
+    walk that cannot prove a component is not a link must fail closed.
+    """
+    from bernstein.eval.clean_run import read_clean_run_attestation
+
+    events = _seed_journal(tmp_path, _clean_rows())
+    attestation = _build(tmp_path, events)
+    workdir = _UnprobeableProbePath(tmp_path)
+
+    with pytest.raises(ValueError, match="could not be probed for links"):
+        clean_run_attestation_path(workdir, attestation.attestation_hash)
+    assert read_clean_run_attestation(workdir, attestation.attestation_hash) is None
+
+
+def test_sealing_into_a_fresh_workdir_still_creates_the_store(tmp_path: Path) -> None:
+    """Nonexistent store components are not probe failures: the seal creates them."""
+    events = _seed_journal(tmp_path / "j", _clean_rows())
+    fresh = tmp_path / "fresh"
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    attestation = build_clean_run_attestation(
+        task=_task(),
+        reference_blobs=_reference_blobs(),
+        journal_events=events,
+        run_id="run-clean-1",
+        worktree_root=worktree,
+        network_policy=_policy(),
+        workdir=fresh,
+        lineage_root=fresh / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        timestamp=_TS,
+    )
+    assert clean_run_attestation_path(fresh, attestation.attestation_hash).is_file()
+
+
+def test_a_symlink_planted_at_the_attestation_leaf_is_not_followed(tmp_path: Path) -> None:
+    """A leaf symlink yields no parsed content: refused, not followed.
+
+    A symlink pointing outside the store is refused by containment before
+    any open; the no-follow leaf open itself rejects a symlink swapped in
+    after path validation (the TOCTOU window) with ELOOP -- pinned against
+    the real filesystem, no mocking.
+    """
+    import errno as _errno
+
+    from bernstein.eval.clean_run import _read_leaf_text, read_clean_run_attestation
+
+    events = _seed_journal(tmp_path, _clean_rows())
+    attestation = _build(tmp_path, events)
+    leaf = clean_run_attestation_path(tmp_path, attestation.attestation_hash)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    stolen = outside / "planted.json"
+    stolen.write_text(leaf.read_text(encoding="utf-8"), encoding="utf-8")
+    leaf.unlink()
+    leaf.symlink_to(stolen)
+
+    assert read_clean_run_attestation(tmp_path, attestation.attestation_hash) is None
+    result = verify_clean_run_attestation(
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        attestation_hash=attestation.attestation_hash,
+        journal_events=events,
+    )
+    assert not result.ok
+
+    # The no-follow open primitive rejects the symlink itself (the race
+    # window a resolve-then-open sequence would leave).
+    with pytest.raises(OSError) as excinfo:
+        _read_leaf_text(leaf)
+    assert excinfo.value.errno == _errno.ELOOP
+
+
+def test_a_second_seal_of_the_same_attestation_is_refused_write_once(tmp_path: Path) -> None:
+    """Content-addressed names make the store write-once; a duplicate seal refuses."""
+    from bernstein.eval.clean_run import CleanRunError
+
+    events = _seed_journal(tmp_path, _clean_rows())
+    _build(tmp_path, events)
+    with pytest.raises(CleanRunError, match="write-once"):
+        _build(tmp_path, events)
+
+
+def test_a_symlink_planted_at_the_leaf_refuses_the_write(tmp_path: Path) -> None:
+    """A pre-planted leaf (symlink or file) is never overwritten or followed."""
+    from bernstein.eval.clean_run import CleanRunError
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+
+    def _build_shared(workdir: Path, events: list[dict[str, object]]):
+        return build_clean_run_attestation(
+            task=_task(),
+            reference_blobs=_reference_blobs(),
+            journal_events=events,
+            run_id="run-clean-1",
+            worktree_root=worktree,
+            network_policy=_policy(),
+            workdir=workdir,
+            lineage_root=workdir / ".sdd" / "lineage",
+            hmac_key=_KEY,
+            timestamp=_TS,
+        )
+
+    # Learn the deterministic hash by sealing in a scratch workdir.
+    scratch_events = _seed_journal(tmp_path / "scratch", _clean_rows())
+    scratch = _build_shared(tmp_path / "scratch", scratch_events)
+
+    victim = tmp_path / "victim"
+    store = victim / ".sdd" / "eval" / "clean_run"
+    store.mkdir(parents=True)
+    attacker_file = store / "attacker-target.json"
+    attacker_file.write_text("{}", encoding="utf-8")
+    (store / f"{scratch.attestation_hash}.json").symlink_to(attacker_file)
+
+    victim_events = _seed_journal(victim, _clean_rows())
+    with pytest.raises(CleanRunError, match="write-once"):
+        _build_shared(victim, victim_events)
+    assert attacker_file.read_text(encoding="utf-8") == "{}"
+
+
 # ---------------------------------------------------------------------------
 # Scope boundary + activity extraction unit surface
 # ---------------------------------------------------------------------------
