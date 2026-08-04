@@ -123,9 +123,16 @@ The same validated payload rides `POST /tasks` (`artifact_spec` on the create
 body) and comes back on every task response, so the declaration survives the
 wire instead of being dropped at either boundary.
 
-Routing artifact-mode tasks away from the remaining git-only machinery
-(worktree allocation, the provider-batch path) is tracked in
-[issue #2996](https://github.com/sipyourdrink-ltd/bernstein/issues/2996).
+The run substrate routes on the same declaration (issue #2996). An
+artifact-mode task's session is allocated an isolated plain directory under
+`.sdd/workspaces/<session_id>` instead of a per-session git worktree - no
+checkout, no agent branch, nothing to merge back - with the decision made in
+one place (`needs_git_worktree` in `core/tasks/artifact_completion.py`, next
+to the mode resolver the completion path uses). The provider-batch path
+(`batch_api`), which commits by construction, refuses an artifact-mode task
+before any provider call with a message naming this completion path; the task
+is dispatched through the realtime spawn instead. A batch that contains any
+`code_diff` task keeps the git worktree, and pure coding runs are unchanged.
 
 The bytes are read in the shape the kind expects: JSONL rows for `dataset` and
 `action_log`, a JSON object for `ops_result`, text for `report` (or a figures
@@ -331,8 +338,12 @@ and the command exits `2`.
   report bundle; the figures verdict is part of `verify_artifact`).
 - `src/bernstein/core/lineage/entry.py` - the widened, still-closed
   `ARTEFACT_KINDS`.
-- `src/bernstein/core/tasks/artifact_completion.py` - the completion path:
-  load, evaluate every signal with the artifact in scope, record the receipt.
+- `src/bernstein/core/tasks/artifact_completion.py` - the completion path
+  (load, evaluate every signal with the artifact in scope, record the receipt)
+  and `needs_git_worktree`, the one-place git-vs-plain workspace decision.
+- `src/bernstein/core/agents/spawner_worktree.py` - the artifact-mode
+  workspace lifecycle (`.sdd/workspaces/<session_id>`: create, reap, orphan
+  sweep); `spawner_core` branches its allocation on `needs_git_worktree`.
 - `src/bernstein/adapters/_contract.py` - the `output_mode` strategy axis.
 - the `artifact` group in `src/bernstein/cli/commands/artifact_cmd.py`.
 
@@ -346,10 +357,12 @@ task stays on the git-diff path and is unchanged: `code_diff` is still the
 default kind, every shipped coding adapter still declares `git-diff`, and the
 filesystem completion signals still evaluate exactly as before.
 
+Since issue #2996 the run substrate also branches on the declared mode: an
+artifact-mode session runs in an isolated plain directory rather than a git
+worktree, and the provider-batch path refuses artifact-mode tasks with the
+supported path named instead of committing on their behalf.
+
 The seed file (`bernstein.yaml`) is deliberately not a declaration surface: a
 seed mints the manager decomposition goal, not concrete tasks, so an artifact
 contract belongs on the plan steps or backlog entries the decomposition
-produces. Not yet wired (tracked in issue #2996): skipping worktree allocation
-for artifact-mode tasks (an artifact task is allocated a worktree it does not
-need), and the provider-batch path in `batch_api`, which commits by
-construction and so stays git-only.
+produces.
