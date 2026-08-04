@@ -12,6 +12,7 @@ verification.
 | `gate_runner.py` | Gate dispatch and execution (subprocess discipline, timeouts) |
 | `quality_gates.py` | `QualityGatesConfig` plus the core gate implementations |
 | `janitor.py` | Claim verification: did the agent do what its result claims |
+| `verifier_ladder.py` | Multi-tier verifier ladder with signed, re-derivable per-tier receipts (#2927) |
 | `review_pipeline/` | Fresh-context cross-model review gate |
 | `formal_verification.py` | Z3/Lean4 checks over scalar task metadata |
 

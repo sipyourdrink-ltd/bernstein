@@ -1,12 +1,14 @@
 # `bernstein verify`
 
 `bernstein verify` is a command group: two run-receipt subcommands
-(`run` and `receipt`, issue #2924) plus five legacy verification modes —
+(`run` and `receipt`, issue #2924), the verifier-ladder subcommand
+(`ladder`, issue #2927), plus five legacy verification modes —
 air-gap wheelhouse signatures, WAL hash-chain integrity,
 execution-determinism fingerprints, lesson-memory provenance, and formal
 property checks. The legacy modes live on the default `legacy` subcommand:
-any invocation whose first token is not `run` / `receipt` / `legacy` routes
-there, so pre-group invocations keep their exact behaviour and exit codes.
+any invocation whose first token is not `run` / `receipt` / `ladder` /
+`legacy` routes there, so pre-group invocations keep their exact behaviour
+and exit codes.
 Each legacy mode is selected by its own flag (or a positional argument for
 wheelhouse mode); passing more than one runs all of them and combines their
 exit codes with bitwise OR.
@@ -19,6 +21,7 @@ Merkle-sealed audit trail, see [`bernstein audit verify`](../../security/audit-l
 ```bash
 bernstein verify run <run-id> --signing-key-path key.pem    # build the signed run receipt
 bernstein verify receipt <path> [--public-key pub.pem]      # verify a receipt offline (0/1/2)
+bernstein verify ladder <receipt-hash>                      # re-derive a verifier-ladder receipt (0/1/2)
 bernstein verify <wheelhouse-path>                          # air-gap wheelhouse signatures
 bernstein verify --wal-integrity <run-id>                   # WAL hash-chain check
 bernstein verify --determinism <run-id>                     # print execution fingerprint
@@ -32,7 +35,7 @@ Running the bare command with no arguments prints a usage hint and returns
 without error.
 
 One routing edge: a wheelhouse directory literally named `run`, `receipt`,
-or `legacy` shadows the positional mode — spell it `./run` or use
+`ladder`, or `legacy` shadows the positional mode — spell it `./run` or use
 `bernstein verify legacy <path>`.
 
 ## Run receipts
@@ -86,6 +89,33 @@ labelled accordingly:
 
 Full format description:
 [deterministic replay](../../operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+
+## Ladder receipts (`verify ladder RECEIPT_HASH`)
+
+Re-derives a pre-merge verifier-ladder receipt (issue #2927) instead of
+trusting it. The receipt — written by the janitor under
+`.sdd/quality/ladder/` when it runs with a `VerifierLadderContext` — carries
+one sealed record per verifier tier that actually executed (`deterministic`
+/ `judge` / `human`) and a composite `merge_eligible` claim. Verification
+re-hashes the stored body, re-runs the pure fail-closed verdict derivation
+over the stored tier verdicts (a stored claim those verdicts do not entail
+is rejected even when the receipt's hashes are internally consistent), and
+re-checks every tier's `spine_entry_hash` against the `verifier-ladder`
+lineage spine's content hashes, so a substituted or dangling tier record
+fails by name. The command prints per-tier
+`tier / config_hash / evidence_hash / verdict` plus the composite result.
+
+Reads the project audit HMAC key (the spine key) and `.sdd/` under
+`--workdir`; a removed or tampered spine fails closed — without the
+substrate no tier can be confirmed to have run.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | The receipt verifies and its composite claim is entailed by its tier verdicts. |
+| 1 | No readable receipt for the hash. |
+| 2 | Re-derivation or spine-anchor mismatch (tamper). |
+
+Architecture: [verifier ladder](../../sdd/verifier-ladder.md).
 
 ## Legacy modes
 
@@ -149,4 +179,5 @@ must be installed separately and on `PATH` — they are not bundled.
 ## Source
 
 `src/bernstein/cli/commands/verify_cmd.py` (command group);
-`src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify).
+`src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify);
+`src/bernstein/core/quality/verifier_ladder.py` (ladder receipts).
