@@ -280,6 +280,31 @@ class LadderReceipt:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class VerifierLadderContext:
+    """Opt-in wiring context for the janitor's ladder emission.
+
+    ``run_janitor()`` seals tier records and builds a ladder receipt only
+    when a context is supplied -- the default (``None``) leaves janitor
+    behaviour and every ``JanitorResult`` consumer unchanged.
+
+    Attributes:
+        lineage_root: ``.sdd/lineage`` root for the ``verifier-ladder`` spine.
+        hmac_key: Audit-chain HMAC key for the spine seal.
+        chain: Optional audit chain accepting the per-tier mirrors.
+        timestamp: Injected clock for the spine seals; ``None`` reads the
+            wall clock at emission time. Tests inject a fixed value so
+            identical evidence seals byte-identically.
+        required_tiers: Tiers whose passing record eligibility requires.
+    """
+
+    lineage_root: Path
+    hmac_key: bytes
+    chain: AuditChainStore | None = None
+    timestamp: int | None = None
+    required_tiers: tuple[VerifierTier, ...] = DEFAULT_REQUIRED_TIERS
+
+
 def recompute_ladder_receipt_hash(payload: Mapping[str, Any]) -> str:
     """Recompute the ``receipt_hash`` from a receipt dict's body fields.
 
@@ -522,6 +547,7 @@ __all__ = [
     "LadderReceipt",
     "LadderVerifyResult",
     "TierRecord",
+    "VerifierLadderContext",
     "VerifierTier",
     "build_ladder_receipt",
     "canonical_hash",

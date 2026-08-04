@@ -852,6 +852,9 @@ class JanitorResult:
     guardrail_results: list[GuardrailResult] = field(
         default_factory=list[GuardrailResult]
     )  # Pre-merge guardrail checks
+    # Composite verifier-ladder receipt hash (#2927). Set only when the
+    # janitor ran with a VerifierLadderContext; None when the ladder is off.
+    ladder_receipt_hash: str | None = None
 
 
 @dataclass(frozen=True)

@@ -31,6 +31,13 @@ from bernstein.core.models import (
     Task,
     TaskType,
 )
+from bernstein.core.quality.verifier_ladder import (
+    TierRecord,
+    VerifierLadderContext,
+    VerifierTier,
+    build_ladder_receipt,
+    canonical_hash,
+)
 
 if TYPE_CHECKING:
     from bernstein.core.persistence.lineage import LineageVerificationResult
@@ -654,6 +661,147 @@ def _surface_tamper(
     )
 
 
+# --- Verifier ladder wiring (#2927) ---
+#
+# When run_janitor() is handed a VerifierLadderContext, every tier that
+# actually executed for a task -- the deterministic completion-signal tier
+# and, when declared, the LLM judge tier -- seals a TierRecord into the
+# verifier-ladder lineage spine, and the composite LadderReceipt hash is
+# returned on JanitorResult.ladder_receipt_hash. Without the context
+# (the default) nothing is sealed and behaviour is unchanged.
+
+_JUDGE_SIGNAL_PREFIX = "llm_judge:"
+
+
+def _judge_tier_verdict(judge_verdict: JudgeVerdict | None) -> str:
+    """Map the janitor's judge outcome onto a ladder tier verdict.
+
+    ``skip`` records a judge tier that was consulted but never adjudicated:
+    either the prerequisite signals failed so :func:`judge_task` was not
+    invoked (``judge_verdict is None``), or the tier degraded to a stub --
+    :func:`judge_task` encodes every such degradation (LLM call failure,
+    empty or unparseable response, a tripped upstream circuit breaker) as a
+    zero-confidence flagged retry. Recording ``skip`` keeps the coverage
+    claim honest -- the tier produced no adjudication -- while still
+    blocking merge eligibility fail-closed in ``derive_ladder_verdict``.
+    """
+    if judge_verdict is None:
+        return "skip"
+    if judge_verdict.verdict == "accept":
+        return "pass"
+    if judge_verdict.confidence == 0.0 and judge_verdict.flagged_for_review:
+        return "skip"
+    return "fail"
+
+
+def _emit_ladder_receipt(
+    *,
+    task: Task,
+    workdir: Path,
+    signal_results: list[tuple[str, bool, str]],
+    judge_verdict: JudgeVerdict | None,
+    attributed_commits: list[str],
+    attributed_files: list[str],
+    judge_model: str | None,
+    judge_provider: str | None,
+    ladder: VerifierLadderContext,
+) -> str | None:
+    """Seal one ``TierRecord`` per tier that ran and build the ladder receipt.
+
+    The deterministic tier's evidence is the non-judge signal rows (including
+    attribution and guardrail rows -- they are deterministic checks); the
+    judge tier records whenever the task declared an ``llm_judge`` signal,
+    with a ``skip`` verdict when the judge never adjudicated rather than
+    being silently absent. Inputs reuse the attribution the janitor already
+    computed (:func:`_attribute_task_work`).
+
+    Returns:
+        The composite receipt hash, or ``None`` when no tier produced any
+        structured evidence.
+    """
+    deterministic_rows = [list(row) for row in signal_results if not row[0].startswith(_JUDGE_SIGNAL_PREFIX)]
+    judge_rows = [list(row) for row in signal_results if row[0].startswith(_JUDGE_SIGNAL_PREFIX)]
+    judge_signals = [s for s in task.completion_signals if s.type == "llm_judge"]
+
+    inputs_hash = canonical_hash(
+        {
+            "task_id": task.id,
+            "attributed_commits": list(attributed_commits),
+            "attributed_files": list(attributed_files),
+        }
+    )
+
+    records: list[TierRecord] = []
+    if deterministic_rows:
+        records.append(
+            TierRecord(
+                tier=VerifierTier.DETERMINISTIC,
+                config_hash=canonical_hash(
+                    {
+                        "task_type": task.task_type.value,
+                        "signals": [
+                            {"type": s.type, "value": s.value} for s in task.completion_signals if s.type != "llm_judge"
+                        ],
+                    }
+                ),
+                inputs_hash=inputs_hash,
+                evidence_hash=canonical_hash({"signal_results": deterministic_rows}),
+                verdict="pass" if all(passed for _, passed, _ in deterministic_rows) else "fail",
+            )
+        )
+    if judge_signals:
+        verdict_payload = (
+            {
+                "verdict": judge_verdict.verdict,
+                "confidence": judge_verdict.confidence,
+                "feedback": judge_verdict.feedback,
+                "flagged_for_review": judge_verdict.flagged_for_review,
+            }
+            if judge_verdict is not None
+            else None
+        )
+        records.append(
+            TierRecord(
+                tier=VerifierTier.JUDGE,
+                config_hash=canonical_hash(
+                    {
+                        "judge_model": judge_model or JUDGE_MODEL,
+                        "judge_provider": judge_provider or JUDGE_PROVIDER,
+                        "criteria": judge_signals[0].value,
+                        "prompt_template": "prompts/judge.md",
+                    }
+                ),
+                inputs_hash=inputs_hash,
+                evidence_hash=canonical_hash({"judge_verdict": verdict_payload, "signal_results": judge_rows}),
+                verdict=_judge_tier_verdict(judge_verdict),
+            )
+        )
+    if not records:
+        return None
+
+    import time
+
+    timestamp = ladder.timestamp if ladder.timestamp is not None else int(time.time())
+    receipt = build_ladder_receipt(
+        task_id=task.id,
+        records=records,
+        workdir=workdir,
+        lineage_root=ladder.lineage_root,
+        hmac_key=ladder.hmac_key,
+        timestamp=timestamp,
+        required_tiers=ladder.required_tiers,
+        chain=ladder.chain,
+    )
+    logger.info(
+        "janitor ladder: task=%s tiers=%s merge_eligible=%s receipt=%s",
+        task.id,
+        [(r.tier.value, r.verdict) for r in receipt.records],
+        receipt.merge_eligible,
+        receipt.receipt_hash,
+    )
+    return receipt.receipt_hash
+
+
 async def run_janitor(
     tasks: list[Task],
     workdir: Path,
@@ -663,6 +811,7 @@ async def run_janitor(
     permission_mode: str | None = None,
     judge_model: str | None = None,
     judge_provider: str | None = None,
+    ladder: VerifierLadderContext | None = None,
 ) -> list[JanitorResult]:
     """Evaluate tasks and return structured results.
 
@@ -687,6 +836,12 @@ async def run_janitor(
             to ``JUDGE_MODEL`` as a last resort.
         judge_provider: Optional provider override for llm_judge signal
             evaluation. Same fallback order as ``judge_model``.
+        ladder: Optional verifier-ladder context (#2927). When supplied,
+            every tier that executed for a task seals a ``TierRecord`` into
+            the ``verifier-ladder`` lineage spine and the composite
+            ``LadderReceipt`` hash is returned on
+            ``JanitorResult.ladder_receipt_hash``. Default ``None``: nothing
+            is sealed and janitor behaviour is unchanged.
 
     Returns:
         List of JanitorResult for each evaluated task.
@@ -834,6 +989,20 @@ async def run_janitor(
                 attribution_reason,
             )
 
+        ladder_receipt_hash: str | None = None
+        if ladder is not None:
+            ladder_receipt_hash = _emit_ladder_receipt(
+                task=task,
+                workdir=workdir,
+                signal_results=signal_results,
+                judge_verdict=judge_verdict,
+                attributed_commits=attributed_commits,
+                attributed_files=attributed_files,
+                judge_model=judge_model,
+                judge_provider=judge_provider,
+                ladder=ladder,
+            )
+
         results.append(
             JanitorResult(
                 task_id=task.id,
@@ -842,6 +1011,7 @@ async def run_janitor(
                 fix_tasks_created=fix_task_ids,
                 judge_verdict=judge_verdict,
                 guardrail_results=guardrail_results,
+                ladder_receipt_hash=ladder_receipt_hash,
             )
         )
     return results
