@@ -442,6 +442,18 @@ The two groups share most flags:
 
 `bernstein eval run` is the typical command for SWE-bench-style evaluations; `bernstein benchmark run` for Bernstein-internal performance benchmarks. See `cli/commands/eval_benchmark_cmd.py:127+` and `:426+`.
 
+`bernstein eval` additionally accepts group-level reliability options — a pass^k alias for `bench run --reliability` that cannot be combined with an eval subcommand:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--reliability K` | none | Run each suite task K times under fixed coordination; emit a signed pass^k reliability receipt. |
+| `--suite NAME` | `golden-v1` | Suite name or `.json` path (`--reliability` mode only). |
+| `--out PATH` | `reliability.json` | Output path for the reliability receipt. |
+| `--scheduler NAME` | `default` | Scheduler name embedded in the receipt. |
+| `--stub-signer` | off | Stub signer instead of the install identity (testing). |
+
+Verification stays on `bernstein bench reliability-verify` / `bernstein bench reliability-check`. (`cli/commands/eval_benchmark_cmd.py:800+`.)
+
 #### `bernstein api-check`
 
 | Flag | Default | Meaning |
