@@ -43,7 +43,7 @@ runs:
       # retry step is not marked continue-on-error and the job reddens for
       # real (issue #3360).
       continue-on-error: true
-      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       with:
         version: "0.11.33"
         enable-cache: ${{ inputs.enable-uv-cache }}
@@ -63,7 +63,7 @@ runs:
         sleep 5
     - name: Set up uv (with explicit python-version, retry)
       if: ${{ inputs.setup-uv == 'true' && inputs.python-version != '' && steps.setup-uv-pinned.outcome == 'failure' }}
-      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       with:
         version: "0.11.33"
         enable-cache: ${{ inputs.enable-uv-cache }}
@@ -77,7 +77,7 @@ runs:
       # See note above on continue-on-error: the retry step below handles
       # a single transient fetch failure; a second failure reddens the job.
       continue-on-error: true
-      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       with:
         version: "0.11.33"
         enable-cache: ${{ inputs.enable-uv-cache }}
@@ -93,7 +93,7 @@ runs:
         sleep 5
     - name: Set up uv (no python-version pin, retry)
       if: ${{ inputs.setup-uv == 'true' && inputs.python-version == '' && steps.setup-uv-no-python-pin.outcome == 'failure' }}
-      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       with:
         version: "0.11.33"
         enable-cache: ${{ inputs.enable-uv-cache }}
