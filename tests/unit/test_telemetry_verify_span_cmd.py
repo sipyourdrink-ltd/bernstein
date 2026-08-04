@@ -204,6 +204,43 @@ def test_bad_json_errors_exit_one(project: Path) -> None:
     assert "json" in result.output.lower()
 
 
+def test_a_tampered_audit_chain_row_makes_the_span_unverifiable_not_genuine(project: Path) -> None:
+    """A chain row that fails HMAC verification is not evidence.
+
+    Tampering one field of the persisted ``otel.projection`` row must flip
+    the verdict from genuine (exit 0) to unverifiable (exit 1) -- never a
+    pass on the tampered row's say-so, and not forged (exit 2), because it
+    is the local evidence store that failed its own integrity check, not
+    the span.
+    """
+    spans = _exported_spans(project)
+    span_file = _write(project, spans[0])
+    genuine = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
+    assert genuine.exit_code == 0, genuine.output
+
+    # Tamper the persisted otel.projection chain row on disk, re-serialising
+    # in the writer's canonical form (json.dumps sort_keys=True) so the line
+    # still parses and only the HMAC check can catch the edit.
+    tampered = False
+    for log_file in sorted((project / ".sdd" / "audit").glob("*.jsonl")):
+        lines = log_file.read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            row = json.loads(line)
+            if row.get("event_type") == "otel.projection":
+                row["details"]["span_count"] = int(row["details"]["span_count"]) + 1
+                lines[i] = json.dumps(row, sort_keys=True)
+                tampered = True
+        if tampered:
+            log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            break
+    assert tampered, "expected a persisted otel.projection row to tamper"
+
+    result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
+    assert result.exit_code == 1, result.output
+    assert "unverifiable" in result.output.lower()
+    assert "audit chain" in result.output.lower()
+
+
 # --------------------------------------------------------------------------- #
 # Cross-command convention: one exit-code table for both verifiers (#3256)     #
 # --------------------------------------------------------------------------- #

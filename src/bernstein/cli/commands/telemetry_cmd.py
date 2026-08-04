@@ -593,7 +593,15 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     projections: list[dict[str, Any]] = []
     try:
         chain = AuditChainStore(root / ".sdd" / "audit", key=load_or_create_audit_key())
-        projections = [event.details for event in chain.query(event_type=EVENT_OTEL_PROJECTION)]
+        chain_ok, chain_errors, chain_events = chain.verify_and_query(event_type=EVENT_OTEL_PROJECTION)
+        if chain_ok:
+            projections = [event.details for event in chain_events]
+        else:
+            # A chain that fails its own HMAC verification is not evidence.
+            # Leaving ``projections`` empty makes the verdict "unverifiable"
+            # (exit 1, never a pass) -- report and continue.
+            detail = "; ".join(chain_errors) if chain_errors else "chain verification failed"
+            click.echo(f"warning: audit chain failed integrity check: {sanitize_log(detail)}", err=True)
     except Exception as exc:
         # A missing or unreadable chain leaves ``projections`` empty, so the
         # verdict is "unverifiable" (never a silent pass) -- report and continue.
