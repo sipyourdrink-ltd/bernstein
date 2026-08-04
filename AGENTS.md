@@ -3,7 +3,7 @@
 
 ## Overview
 
-Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination loop - so runs are reproducible end to end. Every coding task runs in its own git worktree behind lint/type/test gates; artifact-mode tasks, which complete on a signed lineage receipt instead of a commit, get an isolated plain directory instead. Results stay checkable after the fact: an always-on lineage spine and replay journal, plus an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) with receipts you can verify offline. Air-gap install profile included. Apache-2.0.
+Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination loop - so runs are reproducible end to end. Every coding task runs in its own git worktree behind lint/type/test gates; artifact-mode tasks, which complete on a signed lineage receipt instead of a commit, get a plain working directory instead. Results stay checkable after the fact: an always-on lineage spine and replay journal, plus an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) with receipts you can verify offline. Air-gap install profile included. Apache-2.0.
 
 ## Module map
 
