@@ -102,6 +102,12 @@ uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under="$FLOOR
 # committed high-water mark without writing unless it rose.
 uv run python scripts/coverage_ratchet.py check \
   --coverage-xml coverage.xml --baseline .coverage-baseline.json --no-bump
+
+# Re-derive the committed high-water mark from the baseline alone (no
+# coverage.xml, no network). Fails if the committed percentage does not
+# follow from the committed line-rate.
+uv run python scripts/coverage_ratchet.py verify \
+  --baseline .coverage-baseline.json --require-provenance
 ```
 
 ## When a tool fires on you

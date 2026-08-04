@@ -33,6 +33,15 @@ The failures this module exists to prevent
    branch must serialise, not cancel: a run cancelled between the
    force-push and the PR call leaves a pushed branch with no pull
    request.
+
+5. **A baseline measured on some other commit.** Resolving the coverage
+   artifact by "first recent run that has one" accepts a report for a
+   commit unrelated to the tree being checked out, so the committed
+   high-water mark describes a tree nobody can identify and the next
+   honest measurement reads as a drop. Run resolution must filter on
+   ``head_sha``, and the cancelled-run fallback - which the rapid-merge
+   cadence makes load-bearing - must sit *inside* that filter rather
+   than beside it.
 """
 
 from __future__ import annotations
@@ -137,3 +146,82 @@ def test_concurrency_serialises_and_never_cancels(workflow: dict) -> None:
 def test_still_fires_on_push_to_main(workflow: dict) -> None:
     on = workflow.get("on", workflow.get(True))
     assert on["push"]["branches"] == ["main"]
+
+
+# --------------------------------------------------------------------------- #
+# the measurement must belong to the commit being checked out
+# --------------------------------------------------------------------------- #
+
+
+def _checkout_step(steps: list[dict]) -> dict:
+    for step in steps:
+        if "actions/checkout" in str(step.get("uses", "")):
+            return step
+    raise AssertionError("coverage-ratchet.yml no longer checks out the repo")
+
+
+def test_checkout_pins_the_triggering_commit(steps: list[dict]) -> None:
+    """`ref: main` resolves to whatever main's tip is when the runner clones.
+
+    That can be a newer commit than the one that triggered this fire, which
+    puts the checked-out tree and the measured tree out of step.
+    """
+    assert _checkout_step(steps)["with"]["ref"] == "${{ github.sha }}"
+
+
+def test_run_resolution_filters_candidates_by_head_sha(steps: list[dict]) -> None:
+    script = _step_by_id(steps, "ci_run")["run"]
+
+    assert "headSha" in script, "run resolution no longer asks the API for each run's head_sha"
+    assert "select(.headSha == env.TARGET_SHA)" in script, (
+        "candidate runs must be filtered to the checked-out commit; without it a "
+        "coverage artifact from an unrelated commit can justify a baseline bump"
+    )
+
+
+def test_cancelled_run_fallback_stays_inside_the_head_sha_filter(steps: list[dict]) -> None:
+    """The fallback is deliberate, but it may only widen *conclusion*.
+
+    The rapid-merge cadence cancels most main CI runs, so refusing every
+    non-success run would stop the ratchet firing at all. The fallback
+    therefore relaxes the conclusion check - never the head_sha check.
+    """
+    script = _step_by_id(steps, "ci_run")["run"]
+
+    filter_expr = "select(.headSha == env.TARGET_SHA)"
+    conclusion_branches = [
+        'select(.conclusion == "success")',
+        'select(.conclusion != "success")',
+    ]
+    for branch in conclusion_branches:
+        assert branch in script, f"expected a {branch} pass over the candidates"
+        assert script.index(filter_expr) < script.index(branch), (
+            "the head_sha filter must be applied before the conclusion passes, so a "
+            "cancelled run can only ever supply a measurement of the same commit"
+        )
+
+
+def test_ratchet_step_records_the_resolved_provenance(steps: list[dict]) -> None:
+    """The bump has to name the commit and run it came from."""
+    step = _step_by_id(steps, "ratchet")
+
+    assert step["env"]["HEAD_SHA"] == "${{ steps.ci_run.outputs.head_sha }}"
+    assert step["env"]["RUN_ID"] == "${{ steps.ci_run.outputs.run_id }}"
+    assert "--head-sha" in step["run"]
+    assert "--run-id" in step["run"]
+
+
+def test_a_bumped_baseline_is_verified_before_the_pr_opens(steps: list[dict]) -> None:
+    """A value that cannot be re-derived must not reach a pull request."""
+    verify_steps = [s for s in steps if "coverage_ratchet.py verify" in str(s.get("run", ""))]
+    assert verify_steps, "nothing re-derives the bumped baseline before the PR step"
+
+    verify = verify_steps[0]
+    assert "--require-provenance" in verify["run"]
+    assert verify["if"] == "steps.ratchet.outputs.baseline_bumped == 'true'"
+    assert verify.get("continue-on-error") is not True, (
+        "an unverifiable baseline must block the PR, not warn and open it anyway"
+    )
+    assert steps.index(verify) < steps.index(_create_pr_step(steps)), (
+        "the verify step must run before create-pull-request"
+    )
