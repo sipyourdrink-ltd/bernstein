@@ -54,6 +54,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -62,7 +63,7 @@ from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.replay.journal import run_journal_path, verify_events
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
@@ -125,11 +126,25 @@ class CleanRunAnchorError(CleanRunError):
 
 
 class CleanRunCommitmentError(CleanRunError):
-    """Declared reference content could not be loaded into the commitment.
+    """The contraband commitment cannot be built honestly.
 
-    Raised instead of sealing. A commitment that silently omitted reference
-    material the task declared would let a contaminated run attest ``CLEAN``
-    against an incomplete ground-truth set.
+    Raised instead of sealing, in two cases: declared reference content could
+    not be loaded (a commitment that silently omitted material the task
+    declared would let a contaminated run attest ``CLEAN`` against an
+    incomplete ground-truth set), or caller-supplied extra material collides
+    with a task-derived label (additive means strictly additive -- extra
+    blobs may only add, never replace the task's own ground-truth).
+    """
+
+
+class CleanRunSchemaError(CleanRunError):
+    """A stored attestation payload fails exact-type validation.
+
+    Deserializers never coerce: a field signed as an int must be stored as
+    an int (``bool`` is rejected explicitly as an int subclass), a string as
+    a string. Coercion would let distinct stored bytes -- ``"7"`` or
+    ``true`` where ``7`` was signed -- re-canonicalize to the same body hash
+    and verify as the signed body.
     """
 
 
@@ -185,6 +200,69 @@ def _hash_obj(obj: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Exact-type payload readers (never coerce)
+# ---------------------------------------------------------------------------
+
+
+def _require(raw: Mapping[str, Any], field: str) -> Any:
+    if not isinstance(raw, Mapping) or field not in raw:
+        raise CleanRunSchemaError(f"missing field {field!r}")
+    return raw[field]
+
+
+def _require_int(raw: Mapping[str, Any], field: str) -> int:
+    value = _require(raw, field)
+    if type(value) is not int:
+        raise CleanRunSchemaError(f"field {field!r} must be an int, got {type(value).__name__}")
+    return value
+
+
+def _require_str(raw: Mapping[str, Any], field: str) -> str:
+    value = _require(raw, field)
+    if type(value) is not str:
+        raise CleanRunSchemaError(f"field {field!r} must be a str, got {type(value).__name__}")
+    return value
+
+
+def _optional_str(raw: Mapping[str, Any], field: str, default: str = "") -> str:
+    if not isinstance(raw, Mapping) or field not in raw:
+        return default
+    value = raw[field]
+    if type(value) is not str:
+        raise CleanRunSchemaError(f"field {field!r} must be a str, got {type(value).__name__}")
+    return value
+
+
+def _require_str_items(raw: Mapping[str, Any], field: str) -> tuple[str, ...]:
+    value = _require(raw, field)
+    if type(value) is not list and type(value) is not tuple:
+        raise CleanRunSchemaError(f"field {field!r} must be a list of strings")
+    items: list[Any] = list(value)
+    if any(type(item) is not str for item in items):
+        raise CleanRunSchemaError(f"field {field!r} must contain only strings")
+    return tuple(items)
+
+
+def _require_record(raw: Mapping[str, Any], field: str) -> Mapping[str, Any]:
+    value = _require(raw, field)
+    if not isinstance(value, Mapping):
+        raise CleanRunSchemaError(f"field {field!r} must be an object")
+    return value
+
+
+def _require_records(raw: Mapping[str, Any], field: str) -> list[Mapping[str, Any]]:
+    value = _require(raw, field)
+    if type(value) is not list and type(value) is not tuple:
+        raise CleanRunSchemaError(f"field {field!r} must be a list of objects")
+    records: list[Mapping[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise CleanRunSchemaError(f"field {field!r} must contain only objects")
+        records.append(item)
+    return records
+
+
+# ---------------------------------------------------------------------------
 # Contraband commitment
 # ---------------------------------------------------------------------------
 
@@ -233,15 +311,21 @@ class ContrabandSet:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ContrabandSet:
+        """Parse with exact-type strictness; never coerce.
+
+        Raises:
+            CleanRunSchemaError: A field is missing or carries the wrong
+                exact type (``bool`` is rejected where an int was signed).
+        """
         return cls(
-            schema_version=int(raw["schema_version"]),
-            salt_commitment=str(raw["salt_commitment"]),
-            token_digests=tuple(str(d) for d in raw["token_digests"]),
-            ngram_digests=tuple(str(d) for d in raw["ngram_digests"]),
-            ngram_words=int(raw["ngram_words"]),
-            max_token_words=int(raw["max_token_words"]),
-            token_source_count=int(raw["token_source_count"]),
-            reference_source_count=int(raw["reference_source_count"]),
+            schema_version=_require_int(raw, "schema_version"),
+            salt_commitment=_require_str(raw, "salt_commitment"),
+            token_digests=_require_str_items(raw, "token_digests"),
+            ngram_digests=_require_str_items(raw, "ngram_digests"),
+            ngram_words=_require_int(raw, "ngram_words"),
+            max_token_words=_require_int(raw, "max_token_words"),
+            token_source_count=_require_int(raw, "token_source_count"),
+            reference_source_count=_require_int(raw, "reference_source_count"),
         )
 
 
@@ -416,9 +500,14 @@ class ScopeBoundary:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ScopeBoundary:
+        """Parse with exact-type strictness; never coerce.
+
+        Raises:
+            CleanRunSchemaError: A field is missing or mistyped.
+        """
         return cls(
-            worktree_root=str(raw["worktree_root"]),
-            allowed_endpoints=tuple(str(e) for e in raw["allowed_endpoints"]),
+            worktree_root=_require_str(raw, "worktree_root"),
+            allowed_endpoints=_require_str_items(raw, "allowed_endpoints"),
         )
 
 
@@ -485,12 +574,18 @@ class ActivityRecord:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ActivityRecord:
+        """Parse with exact-type strictness; never coerce.
+
+        Raises:
+            CleanRunSchemaError: A field is missing or mistyped (``bool`` is
+                rejected where the journal index int was signed).
+        """
         return cls(
-            index=int(raw["index"]),
-            kind=str(raw["kind"]),
-            path_digest=str(raw["path_digest"]),
-            scope_violation=str(raw["scope_violation"]),
-            span_digests=tuple(str(d) for d in raw["span_digests"]),
+            index=_require_int(raw, "index"),
+            kind=_require_str(raw, "kind"),
+            path_digest=_require_str(raw, "path_digest"),
+            scope_violation=_require_str(raw, "scope_violation"),
+            span_digests=_require_str_items(raw, "span_digests"),
         )
 
 
@@ -506,7 +601,12 @@ class ScanMatch:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ScanMatch:
-        return cls(index=int(raw["index"]), match_class=str(raw["match_class"]))
+        """Parse with exact-type strictness; never coerce.
+
+        Raises:
+            CleanRunSchemaError: A field is missing or mistyped.
+        """
+        return cls(index=_require_int(raw, "index"), match_class=_require_str(raw, "match_class"))
 
 
 def _span_of(value: Any) -> str:
@@ -685,19 +785,30 @@ class CleanRunAttestation:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> CleanRunAttestation:
+        """Parse with exact-type strictness; never coerce.
+
+        Coercion here would break byte-honesty: ``"7"`` or ``true`` stored
+        where ``7`` was signed would re-canonicalize to the same body hash
+        and pass verification, so distinct stored bytes would verify as one
+        signed body.
+
+        Raises:
+            CleanRunSchemaError: A field is missing or carries the wrong
+                exact type (``bool`` is rejected as an int subclass).
+        """
         return cls(
-            schema_version=int(raw["schema_version"]),
-            run_id=str(raw["run_id"]),
-            task_commitment=str(raw["task_commitment"]),
-            contraband=ContrabandSet.from_dict(raw["contraband"]),
-            scope=ScopeBoundary.from_dict(raw["scope"]),
-            activities=tuple(ActivityRecord.from_dict(a) for a in raw["activities"]),
-            journal_head=str(raw["journal_head"]),
-            verdict=str(raw["verdict"]),
-            matches=tuple(ScanMatch.from_dict(m) for m in raw["matches"]),
-            timestamp=int(raw["timestamp"]),
-            attestation_hash=str(raw["attestation_hash"]),
-            journal_entry_hash=str(raw.get("journal_entry_hash", "")),
+            schema_version=_require_int(raw, "schema_version"),
+            run_id=_require_str(raw, "run_id"),
+            task_commitment=_require_str(raw, "task_commitment"),
+            contraband=ContrabandSet.from_dict(_require_record(raw, "contraband")),
+            scope=ScopeBoundary.from_dict(_require_record(raw, "scope")),
+            activities=tuple(ActivityRecord.from_dict(a) for a in _require_records(raw, "activities")),
+            journal_head=_require_str(raw, "journal_head"),
+            verdict=_require_str(raw, "verdict"),
+            matches=tuple(ScanMatch.from_dict(m) for m in _require_records(raw, "matches")),
+            timestamp=_require_int(raw, "timestamp"),
+            attestation_hash=_require_str(raw, "attestation_hash"),
+            journal_entry_hash=_optional_str(raw, "journal_entry_hash"),
         )
 
 
@@ -729,19 +840,24 @@ def recompute_attestation_hash(payload: Mapping[str, Any]) -> str:
 
     Exposed so a verifier (or a test) can confirm that an attestation whose
     hashes are internally consistent is still rejected when its evidence does
-    not entail its verdict.
+    not entail its verdict. Scalar fields are read with the same exact-type
+    strictness as :meth:`CleanRunAttestation.from_dict` -- a hash is never
+    recomputed over coerced spellings of the signed body.
+
+    Raises:
+        CleanRunSchemaError: A scalar field is missing or mistyped.
     """
     body = {
-        "schema_version": int(payload["schema_version"]),
-        "run_id": str(payload["run_id"]),
-        "task_commitment": str(payload["task_commitment"]),
-        "contraband": payload["contraband"],
-        "scope": payload["scope"],
-        "activities": payload["activities"],
-        "journal_head": str(payload["journal_head"]),
-        "verdict": str(payload["verdict"]),
-        "matches": payload["matches"],
-        "timestamp": int(payload["timestamp"]),
+        "schema_version": _require_int(payload, "schema_version"),
+        "run_id": _require_str(payload, "run_id"),
+        "task_commitment": _require_str(payload, "task_commitment"),
+        "contraband": _require(payload, "contraband"),
+        "scope": _require(payload, "scope"),
+        "activities": _require(payload, "activities"),
+        "journal_head": _require_str(payload, "journal_head"),
+        "verdict": _require_str(payload, "verdict"),
+        "matches": _require(payload, "matches"),
+        "timestamp": _require_int(payload, "timestamp"),
     }
     return _hash_obj(body)
 
@@ -814,13 +930,22 @@ def build_clean_run_attestation(
         CleanRunBoundaryError: No bounded worktree root.
         CleanRunAnchorError: Empty or non-chaining journal rows.
         CleanRunCommitmentError: Declared reference content could not be
-            loaded.
+            loaded, or caller-supplied extra material collides with a
+            task-derived label.
     """
     boundary = scope_boundary(worktree_root, network_policy)
     journal_head = _journal_head_of(journal_events)
 
     derived_blobs = derive_task_reference_blobs(task, golden_dir=golden_dir)
-    merged_blobs = {**derived_blobs, **(reference_blobs or {})}
+    extra_blobs = dict(reference_blobs or {})
+    colliding = sorted(set(derived_blobs) & set(extra_blobs))
+    if colliding:
+        raise CleanRunCommitmentError(
+            f"refusing to seal: caller-supplied reference material collides with the "
+            f"task-derived ground-truth label(s) {colliding} -- extra material may only "
+            "add to the commitment, never replace what the task itself derives",
+        )
+    merged_blobs = {**derived_blobs, **extra_blobs}
     contraband = build_contraband_set(task, key=hmac_key, reference_blobs=merged_blobs)
     activities = extract_activity(journal_events, boundary=boundary, key=hmac_key)
     matches = scan_activity(activities, contraband)
@@ -939,6 +1064,9 @@ def verify_clean_run_attestation(
 
     The stored verdict is never trusted. In order:
 
+    * the stored bytes parse under exact-type strictness
+      (:class:`CleanRunSchemaError` otherwise) -- a signed int cannot be
+      re-spelled as its string or as a bool and still verify;
     * the attestation hash recomputes from the stored body;
     * the contraband commitment is bound to the operator key (salt
       commitment recomputes);
@@ -957,9 +1085,18 @@ def verify_clean_run_attestation(
     * the lineage spine verifies and anchors the attestation's canonical
       bytes at the recorded entry hash.
     """
-    attestation = read_clean_run_attestation(workdir, attestation_hash)
-    if attestation is None:
+    try:
+        path = clean_run_attestation_path(workdir, attestation_hash)
+    except ValueError as exc:
+        return CleanRunVerifyResult(ok=False, reason=f"invalid attestation hash: {exc}", attestation=None)
+    if not path.is_file():
         return CleanRunVerifyResult(ok=False, reason=f"no attestation for {attestation_hash!r}", attestation=None)
+    try:
+        attestation = CleanRunAttestation.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except json.JSONDecodeError:
+        return CleanRunVerifyResult(ok=False, reason="stored attestation is not valid JSON", attestation=None)
+    except CleanRunSchemaError as exc:
+        return CleanRunVerifyResult(ok=False, reason=f"stored attestation is schema-invalid: {exc}", attestation=None)
     if attestation.attestation_hash != attestation_hash:
         return CleanRunVerifyResult(ok=False, reason="attestation hash does not match request", attestation=attestation)
 
@@ -1110,6 +1247,7 @@ __all__ = [
     "CleanRunCommitmentError",
     "CleanRunError",
     "CleanRunProjectionError",
+    "CleanRunSchemaError",
     "CleanRunVerdict",
     "CleanRunVerifyResult",
     "ContrabandSet",

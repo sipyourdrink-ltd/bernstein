@@ -15,10 +15,12 @@ digests under the operator's audit key — the attestation commits to the
 answer without ever carrying it, so publishing it cannot leak the solution.
 The task's own golden-source frontmatter is derived automatically
 (`derive_task_reference_blobs`), so a caller cannot silently omit the task's
-reference material; coverage counts are sealed into the commitment (a task
-with no reference content seals `reference_source_count == 0` visibly), and
-declared-but-unloadable reference content refuses to seal
-(`CleanRunCommitmentError`).
+reference material; caller-supplied extra blobs are strictly additive — a
+label collision with derived material refuses to seal, so extra material can
+add to but never replace the task's own ground-truth. Coverage counts are
+sealed into the commitment (a task with no reference content seals
+`reference_source_count == 0` visibly), and declared-but-unloadable
+reference content refuses to seal (`CleanRunCommitmentError`).
 The scope boundary comes from the substrate, not from config: the task's
 worktree root plus the `NetworkPolicy` endpoint allowlist. Without a bounded
 worktree root the builder refuses to sign (`CleanRunBoundaryError`), because
@@ -46,7 +48,11 @@ zeroes the multiplicative `Safety` factor at scoring time.
 ## Verification re-derives, never trusts
 
 `verify_clean_run_attestation()` (surfaced as `bernstein eval clean-run
-verify <hash>`) recomputes the attestation hash from the stored body,
+verify <hash>`) parses the stored bytes under exact-type strictness — a
+signed int cannot be re-spelled as its string or as a bool and still verify
+(`CleanRunSchemaError`; deserializers never coerce, preserving the
+byte-honesty of the receipt) — recomputes the attestation hash from the
+stored body,
 re-derives the verdict and match positions from the embedded activity digests
 and contraband commitment alone — rejecting a stored `CLEAN` whose embedded
 evidence contains a match, even when the hashes are internally consistent —

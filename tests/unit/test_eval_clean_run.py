@@ -201,6 +201,51 @@ def test_commitment_coverage_is_sealed_and_visible() -> None:
     assert without_reference.to_dict()["reference_source_count"] == 0
 
 
+def test_extra_reference_material_cannot_displace_the_derived_ground_truth(tmp_path: Path) -> None:
+    """Additive means strictly additive: a label collision refuses to seal.
+
+    A caller-supplied blob whose key collides with the derived golden-source
+    label must not displace the task's own ground-truth from the commitment;
+    the seal refuses naming the colliding key. Non-colliding extra material
+    still merges additively.
+    """
+    from bernstein.eval.clean_run import CleanRunCommitmentError
+
+    golden_dir = tmp_path / "golden"
+    _write_golden_source(golden_dir)
+    events = _seed_journal(tmp_path, _clean_rows())
+    with pytest.raises(CleanRunCommitmentError) as excinfo:
+        build_clean_run_attestation(
+            task=_task(),
+            journal_events=events,
+            run_id="run-clean-1",
+            worktree_root=_worktree(tmp_path),
+            network_policy=_policy(),
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=_KEY,
+            timestamp=_TS,
+            golden_dir=golden_dir,
+            reference_blobs={"golden:golden-fib-001": "innocuous decoy"},
+        )
+    assert "golden:golden-fib-001" in str(excinfo.value)
+
+    attestation = build_clean_run_attestation(
+        task=_task(),
+        journal_events=events,
+        run_id="run-clean-1",
+        worktree_root=_worktree(tmp_path),
+        network_policy=_policy(),
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=_KEY,
+        timestamp=_TS,
+        golden_dir=golden_dir,
+        reference_blobs=_reference_blobs(),
+    )
+    assert attestation.contraband.reference_source_count == 2
+
+
 def test_builder_refuses_a_declared_golden_dir_without_the_tasks_source(tmp_path: Path) -> None:
     """Declared reference content that cannot be loaded refuses to seal."""
     from bernstein.eval.clean_run import CleanRunCommitmentError
@@ -491,6 +536,33 @@ def test_trimmed_embedded_activity_is_rejected(tmp_path: Path) -> None:
         journal_events=events,
     )
     assert not result.ok
+
+
+def test_a_type_altered_stored_attestation_cannot_verify_as_the_signed_body(tmp_path: Path) -> None:
+    """Alternate JSON spellings of the signed body must not re-verify.
+
+    Coercing deserializers would let ``"1700000000"`` (str) or ``true``
+    (bool, an int subclass) re-canonicalize to the exact body hash that was
+    signed over an int -- distinct stored bytes verifying as one signed
+    body. Exact-type parsing rejects both as schema-invalid.
+    """
+    events = _seed_journal(tmp_path, _clean_rows())
+    attestation = _build(tmp_path, events)
+    path = clean_run_attestation_path(tmp_path, attestation.attestation_hash)
+    original = json.loads(path.read_text(encoding="utf-8"))
+    for field, altered in (("timestamp", str(original["timestamp"])), ("schema_version", True)):
+        payload = dict(original)
+        payload[field] = altered
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        result = verify_clean_run_attestation(
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=_KEY,
+            attestation_hash=attestation.attestation_hash,
+            journal_events=events,
+        )
+        assert not result.ok, f"type-altered {field} must not verify"
+        assert "schema-invalid" in result.reason, f"{field}: {result.reason}"
 
 
 def test_tampering_any_stored_field_breaks_verification(tmp_path: Path) -> None:
