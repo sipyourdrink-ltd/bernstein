@@ -947,3 +947,48 @@ class TestParseSeedUnknownTopLevelKeys:
 
         messages = [r.getMessage() for r in caplog.records]
         assert any("container_image" in m and "sandbox.image" in m for m in messages)
+
+
+class TestParseSeedEvolutionEnabled:
+    """``evolution_enabled`` must survive the YAML -> SeedConfig hop.
+
+    The key was schema-known through ``BernsteinConfig``, so it never tripped
+    the unknown-key warning above, yet no parser branch consumed it. The value
+    therefore never reached ``OrchestratorConfig``, which kept its ``True``
+    default no matter what the seed said. A key that is silently ignored is
+    harder to notice than one that is rejected: the only outward sign was
+    ``config_snapshot.json`` (dumped from the YAML) disagreeing with the run
+    manifest (serialised from the live config object).
+    """
+
+    def test_defaults_to_true_when_absent(self, seed_file: Path) -> None:
+        seed_file.write_text(MINIMAL_YAML)
+        assert parse_seed(seed_file).evolution_enabled is True
+
+    def test_explicit_false_is_preserved(self, seed_file: Path) -> None:
+        seed_file.write_text(MINIMAL_YAML + "evolution_enabled: false\n")
+        assert parse_seed(seed_file).evolution_enabled is False
+
+    def test_explicit_true_is_preserved(self, seed_file: Path) -> None:
+        seed_file.write_text(MINIMAL_YAML + "evolution_enabled: true\n")
+        assert parse_seed(seed_file).evolution_enabled is True
+
+    def test_non_boolean_is_rejected(self, seed_file: Path) -> None:
+        seed_file.write_text(MINIMAL_YAML + 'evolution_enabled: "sometimes"\n')
+        with pytest.raises(SeedError, match="evolution_enabled must be a boolean"):
+            parse_seed(seed_file)
+
+    def test_key_is_consumed_not_merely_tolerated(self, seed_file: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Warning-free *and* value-carrying.
+
+        Silently-ignored is exactly the state this guards against, and it also
+        produces no warning, so the absence of a warning proves nothing on its
+        own. The parsed value has to change too.
+        """
+        seed_file.write_text(MINIMAL_YAML + "evolution_enabled: false\n")
+
+        with caplog.at_level(logging.WARNING, logger=_SEED_PARSER_LOGGER):
+            cfg = parse_seed(seed_file)
+
+        assert not caplog.records
+        assert cfg.evolution_enabled is False
