@@ -214,6 +214,15 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
     for i, stage in enumerate(stages):
         _parse_stage(stage, i, stage_tasks, tasks)
 
+    # Issue #3375: plan-level ``context_files`` must reach the workers, but
+    # every caller that needs only the task list discards the config half of
+    # this return value. Stamping the declaration onto each task's metadata
+    # here - the key the spawner reads at dispatch - closes that gap at the
+    # source instead of relying on callers to carry the config through.
+    if config.context_files:
+        for task in tasks:
+            task.metadata["context_files"] = list(config.context_files)
+
     return config, tasks
 
 

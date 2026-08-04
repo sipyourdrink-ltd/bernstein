@@ -85,6 +85,23 @@ class ParsedBacklogTask:
             # A validated declaration must reach the server; dropping it here
             # would silently downgrade the task to code_diff (#3110).
             payload["artifact_spec"] = dict(self.artifact_spec)
+        # Issue #3375: declared context files must reach the worker. The
+        # spawner reads ``task.metadata["context_files"]`` at dispatch, and
+        # POST /tasks persists ``metadata`` verbatim onto the stored task -
+        # dropping the field here was the break in that wire. ``ticket_type``
+        # and ``affected_paths`` fall out at the same spot and ride in the
+        # same metadata mapping; ``depends_on`` needs ticket-id resolution
+        # and is deliberately not carried here. Every key is conditional so
+        # a ticket declaring nothing produces a byte-identical payload.
+        metadata: dict[str, object] = {}
+        if self.context_files:
+            metadata["context_files"] = list(self.context_files)
+        if self.affected_paths:
+            metadata["affected_paths"] = list(self.affected_paths)
+        if self.ticket_type != "feature":
+            metadata["ticket_type"] = self.ticket_type
+        if metadata:
+            payload["metadata"] = metadata
         return payload
 
 
