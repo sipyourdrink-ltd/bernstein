@@ -593,7 +593,12 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     projections: list[dict[str, Any]] = []
     try:
         chain = AuditChainStore(root / ".sdd" / "audit", key=load_or_create_audit_key())
-        chain_ok, chain_errors, chain_events = chain.verify_and_query(event_type=EVENT_OTEL_PROJECTION)
+        # include_archived: retention must not make an old genuine span
+        # unverifiable -- the verified snapshot covers archived segments, so
+        # the consumed rows must too.
+        chain_ok, chain_errors, chain_events = chain.verify_and_query(
+            event_type=EVENT_OTEL_PROJECTION, include_archived=True
+        )
         if chain_ok:
             projections = [event.details for event in chain_events]
         else:

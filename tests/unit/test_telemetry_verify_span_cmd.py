@@ -35,6 +35,7 @@ from bernstein.core.observability.otel_projection import (
     sign_projection,
 )
 from bernstein.core.replay.journal import EventJournal, load_events, run_journal_path
+from bernstein.core.security.audit import AuditLog, RetentionPolicy
 from bernstein.core.security.audit_dsse import keyid_from_public_key
 from bernstein.core.security.install_key import load_or_create_install_key, signing_key_path
 
@@ -239,6 +240,32 @@ def test_a_tampered_audit_chain_row_makes_the_span_unverifiable_not_genuine(proj
     assert result.exit_code == 1, result.output
     assert "unverifiable" in result.output.lower()
     assert "audit chain" in result.output.lower()
+
+
+def test_a_genuine_span_stays_verifiable_after_retention_archives_the_projection_row(project: Path) -> None:
+    """Retention archiving the ``otel.projection`` row must not orphan a span.
+
+    ``AuditLog.archive`` gzip-compresses aged segments into
+    ``archive/<date>.jsonl.gz`` and unlinks the live file, and ``verify``
+    still replays those segments -- so the rows the command consumes must
+    cover them too. A genuine span re-checked after retention stays exit 0.
+    """
+    spans = _exported_spans(project)
+    span_file = _write(project, spans[0])
+    before = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
+    assert before.exit_code == 0, before.output
+
+    # Age out the live segment through the store's own retention path (a
+    # negative window makes today's segment archivable) -- the archive is
+    # produced by the real code, not a hand-built .gz.
+    audit_dir = project / ".sdd" / "audit"
+    archived = AuditLog(audit_dir).archive(RetentionPolicy(retention_days=-1))
+    assert archived.archived, "expected retention to archive the live segment"
+    assert not list(audit_dir.glob("*.jsonl")), "expected no live segment to remain"
+
+    after = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
+    assert after.exit_code == 0, after.output
+    assert "genuine" in after.output.lower()
 
 
 # --------------------------------------------------------------------------- #
