@@ -395,7 +395,8 @@ def _changelog_conventional_inner(
 # v4.0.0 swap: the orchestration-specific command (``run-changelog``) now owns
 # the bare name ``bernstein changelog``, and the conventional-commit command is
 # a subcommand ``bernstein changelog conventional``. The old ``run-changelog``
-# name stays as a deprecated alias through the 3.10 line so existing scripts
+# name stays as a deprecated alias — removed in a release after the 4.0 line
+# that introduced it — so existing scripts
 # emit a notice rather than silently changing meaning (#3142, #3147). Both
 # commands had zero tests before this issue; coverage is added in
 # ``tests/unit/cli/test_changelog_swap.py``.

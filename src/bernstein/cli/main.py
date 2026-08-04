@@ -234,7 +234,8 @@ __all__ = [
     # #3142: ``run_changelog_cmd`` was renamed to ``run_changelog_default`` and
     # the click command moved inside the ``changelog`` group. Re-export under
     # the old name so any out-of-tree import (``from bernstein.cli.main import
-    # run_changelog_cmd``) keeps working through the 3.10 line.
+    # run_changelog_cmd``) keeps working for as long as the deprecated alias
+    # lives; both go away together in a release after the 4.0 line.
     "run_changelog_cmd",
     "run_changelog_default",
     "save_session_on_stop",
@@ -1156,8 +1157,9 @@ cli.add_command(merge_cmd, "merge")
 cli.add_command(migrate_cmd, "migrate")
 # #3142: ``bernstein changelog`` is now a group (default = run-changelog
 # behaviour). ``bernstein run-changelog`` stays as a top-level deprecated
-# alias through the 3.10 line so existing scripts print a notice on stderr
-# rather than silently changing meaning at the bare name.
+# alias — removed in a release after the 4.0 line that introduced it — so
+# existing scripts print a notice on stderr rather than silently changing
+# meaning at the bare name.
 cli.add_command(changelog_cmd, "changelog")
 cli.add_command(changelog_run_alias, "run-changelog")
 cli.add_command(run_lookup_cmd, "run-lookup")
@@ -1436,5 +1438,6 @@ cli.add_command(tournament_group, "tournament")
 # #3142: ``run_changelog_cmd`` was renamed to ``run_changelog_default`` and its
 # click command moved inside the ``changelog`` group. Re-export under the
 # old name here so any out-of-tree import (``from bernstein.cli.main import
-# run_changelog_cmd``) keeps working through the 3.10 line.
+# run_changelog_cmd``) keeps working for as long as the deprecated alias
+# lives; both go away together in a release after the 4.0 line.
 run_changelog_cmd = run_changelog_default  # intentional back-compat alias (#3142)
