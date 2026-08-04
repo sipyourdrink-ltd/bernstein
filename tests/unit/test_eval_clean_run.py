@@ -12,6 +12,7 @@ chain to the recorded journal head is rejected as unanchored.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -898,6 +899,18 @@ def test_a_second_seal_of_the_same_attestation_is_refused_write_once(tmp_path: P
     _build(tmp_path, events)
     with pytest.raises(CleanRunError, match="write-once"):
         _build(tmp_path, events)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_sealed_attestation_is_operator_only_readable(tmp_path: Path) -> None:
+    """The sealed leaf is 0o600 like the lineage log, not group/world readable."""
+    import stat
+
+    events = _seed_journal(tmp_path, _clean_rows())
+    attestation = _build(tmp_path, events)
+    leaf = clean_run_attestation_path(tmp_path, attestation.attestation_hash)
+    mode = stat.S_IMODE(leaf.stat().st_mode)
+    assert mode & 0o077 == 0, f"attestation must be operator-only, got {mode:#o}"
 
 
 def test_a_symlink_planted_at_the_leaf_refuses_the_write(tmp_path: Path) -> None:

@@ -1065,10 +1065,12 @@ def build_clean_run_attestation(
     # O_EXCL closes the leaf-swap race on create (a symlink or file swapped
     # in after the write-once check fails the open with EEXIST rather than
     # being followed or overwritten); O_NOFOLLOW-degrade mirrors the CAS
-    # blob open (bernstein.core.persistence.cas_store).
+    # blob open (bernstein.core.persistence.cas_store). 0o600 -- the
+    # attestation is a signed audit artifact, operator-only readable like
+    # the lineage log (bernstein.core.lineage.store).
     write_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, write_flags, 0o644)
+        fd = os.open(path, write_flags, 0o600)
     except FileExistsError as exc:
         msg = (
             f"refusing to seal: attestation {attestation_hash!r} appeared in the "
