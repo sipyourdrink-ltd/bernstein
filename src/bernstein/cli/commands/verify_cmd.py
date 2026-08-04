@@ -1,6 +1,7 @@
-"""Verify CLI -- run receipts, WAL integrity, determinism, memory, wheelhouse.
+"""Verify CLI -- run receipts, ladder receipts, WAL integrity, determinism, memory, wheelhouse.
 
-``bernstein verify`` is a group. Two run-receipt verbs (issue #2924):
+``bernstein verify`` is a group. Two run-receipt verbs (issue #2924) and a
+ladder-receipt verb (issue #2927):
 
 * ``bernstein verify run <run-id>`` -- build the signed ``run-receipt.json``
   binding the run's journal head, lineage-spine head, and (opt-in) an
@@ -10,6 +11,11 @@
   receipt **fully offline** from the file alone: no HMAC key, no ``.sdd/``.
   Exit codes: ``0`` OK, ``1`` empty/malformed input, ``2`` tamper detected
   (naming the first divergent journal step index).
+* ``bernstein verify ladder <receipt-hash>`` -- re-derive a pre-merge
+  verifier-ladder receipt: per-tier ``tier / config_hash / evidence_hash /
+  verdict`` plus the composite claim, re-checked against the
+  ``verifier-ladder`` lineage spine. Exit codes: ``0`` OK, ``1`` no readable
+  receipt, ``2`` re-derivation or anchor mismatch.
 
 The five legacy flag/positional modes are preserved verbatim under the
 default ``legacy`` subcommand -- any invocation whose first token is not a
@@ -30,8 +36,8 @@ behaviour and exit codes:
   binaries must be installed separately on PATH (no bundled extra).
 
 One routing edge: a wheelhouse directory literally named ``run``,
-``receipt``, or ``legacy`` shadows the positional mode -- spell it
-``./run`` (or use ``bernstein verify legacy run``) in that case.
+``receipt``, ``ladder``, or ``legacy`` shadows the positional mode -- spell
+it ``./run`` (or use ``bernstein verify legacy run``) in that case.
 """
 
 from __future__ import annotations
@@ -78,11 +84,12 @@ class _DefaultSubcommandGroup(click.Group):
 
 @click.group("verify", cls=_DefaultSubcommandGroup, default_cmd="legacy")
 def verify_cmd() -> None:
-    """Verify run receipts, WAL integrity, determinism, memory, or a wheelhouse.
+    """Verify run receipts, ladder receipts, WAL integrity, determinism, memory, or a wheelhouse.
 
     \b
       bernstein verify run <run-id>               Build the signed run receipt
       bernstein verify receipt <path>             Verify a receipt offline (0/1/2)
+      bernstein verify ladder <receipt-hash>      Re-derive a verifier-ladder receipt (0/1/2)
       bernstein verify <wheelhouse-path>          Verify air-gap wheelhouse signatures
       bernstein verify --wal-integrity <run-id>   Validate hash chain
       bernstein verify --determinism  <run-id>    Show execution fingerprint
@@ -233,8 +240,8 @@ def verify_legacy_cmd(
     """Verify WAL integrity, execution determinism, memory provenance, formal properties, or a wheelhouse.
 
     The default subcommand: ``bernstein verify <args>`` routes here whenever
-    the first token is not ``run`` / ``receipt`` / ``legacy``, so every
-    pre-group invocation keeps its exact behaviour and exit codes.
+    the first token is not ``run`` / ``receipt`` / ``ladder`` / ``legacy``,
+    so every pre-group invocation keeps its exact behaviour and exit codes.
 
     \b
       bernstein verify <wheelhouse-path>          Verify air-gap wheelhouse signatures
@@ -1300,4 +1307,112 @@ def verify_receipt_cmd(receipt_path: Path, public_key_path: Path | None) -> None
         console.print(f"  - {err}")
     if result.divergent_step is not None:
         console.print(f"  [red]first divergent journal step: {result.divergent_step}[/red]")
+    raise SystemExit(2)
+
+
+# ---------------------------------------------------------------------------
+# Verifier-ladder receipts (issue #2927)
+# ---------------------------------------------------------------------------
+
+
+@verify_cmd.command("ladder")
+@click.argument("receipt_hash", required=True)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+def verify_ladder_cmd(receipt_hash: str, workdir: str) -> None:
+    """Re-derive and verify the verifier-ladder receipt RECEIPT_HASH.
+
+    The receipt is never trusted: the stored body is re-hashed, the
+    composite ``merge_eligible`` claim is re-derived from the stored tier
+    verdicts, and every tier's spine anchor is re-checked against the
+    ``verifier-ladder`` lineage spine's content hashes. Prints per-tier
+    ``tier / config_hash / evidence_hash / verdict`` plus the composite
+    result.
+
+    \b
+    Exit codes:
+      0  receipt verifies and its composite claim is entailed
+      1  no readable receipt for the hash
+      2  re-derivation or spine-anchor mismatch (tamper)
+    """
+    from bernstein.core.quality.verifier_ladder import verify_ladder_receipt
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    root = Path(workdir).resolve()
+    try:
+        hmac_key = load_or_create_audit_key()
+    except OSError as exc:
+        console.print(f"[red]Failed to load audit key: {exc}[/red]")
+        raise SystemExit(1) from None
+
+    result = verify_ladder_receipt(
+        workdir=root,
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        receipt_hash=receipt_hash,
+    )
+
+    console.print()
+    receipt = result.receipt
+    if receipt is not None:
+        table = Table(show_header=True, box=None, padding=(0, 2))
+        table.add_column("Tier", style="bold", no_wrap=True, min_width=13)
+        table.add_column("Verdict", no_wrap=True)
+        table.add_column("Config hash", no_wrap=True)
+        table.add_column("Evidence hash", no_wrap=True)
+        for record in receipt.records:
+            verdict_style = {"pass": "green", "fail": "red", "skip": "yellow"}.get(record.verdict, "red")
+            table.add_row(
+                record.tier.value,
+                f"[{verdict_style}]{record.verdict}[/{verdict_style}]",
+                record.config_hash[:16] + "…",
+                record.evidence_hash[:16] + "…",
+            )
+        console.print(table)
+        console.print()
+        eligible = "[green]yes[/green]" if receipt.merge_eligible else "[red]no[/red]"
+        console.print(f"  Task: {receipt.task_id}    Merge eligible (stored): {eligible}")
+
+    if result.ok:
+        console.print(
+            Panel(
+                "[bold green]Verifier Ladder: VERIFIED[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        console.print(
+            "  [dim]Composite claim re-derived from the stored tier verdicts; every tier's "
+            "spine anchor seals exactly its recorded evidence.[/dim]"
+        )
+        console.print()
+        raise SystemExit(0)
+
+    if result.status == "missing":
+        console.print(
+            Panel(
+                "[bold red]Verifier Ladder: NOT FOUND[/bold red]",
+                border_style="red",
+                expand=False,
+            )
+        )
+        console.print(f"  [red]![/red] {result.reason}")
+        console.print()
+        raise SystemExit(1)
+
+    console.print(
+        Panel(
+            "[bold red]Verifier Ladder: FAILED[/bold red]",
+            border_style="red",
+            expand=False,
+        )
+    )
+    console.print(f"  [red]![/red] {result.reason}")
+    console.print()
     raise SystemExit(2)
