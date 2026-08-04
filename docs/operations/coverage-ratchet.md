@@ -173,8 +173,8 @@ The baseline write lives in this separate workflow (not in `ci.yml`) so
 
 ### Which run supplies the measurement
 
-The ratchet may only bump on a measurement of the commit it is running
-for. Two things have to be true at once, and they pull against each other:
+The ratchet may only bump on a measurement of the commit being ratcheted.
+Two things have to be true at once, and they pull against each other:
 
 - **The right commit.** Resolving by "freshest recent run that happens to
   have a `coverage-report`" takes whatever report exists, including one
