@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import yaml
 
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
+from bernstein.evolution.upgrade_targets import upgrade_target_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -129,8 +130,8 @@ class FileUpgradeExecutor:
 
     def _apply_policy_update(self, proposal: UpgradeProposal) -> bool:
         """Apply a policy update to .sdd/config/policies.yaml."""
-        config_file = self.config_dir / "policies.yaml"
-        self._backup_file("policies.yaml")
+        config_file = upgrade_target_paths(UpgradeCategory.POLICY_UPDATE, self.state_dir)[0]
+        self._backup_file(config_file.name)
 
         data = self._read_yaml(config_file)
 
@@ -153,8 +154,8 @@ class FileUpgradeExecutor:
 
     def _apply_routing_rules(self, proposal: UpgradeProposal) -> bool:
         """Apply routing rule changes to .sdd/config/routing.yaml."""
-        config_file = self.config_dir / "routing.yaml"
-        self._backup_file("routing.yaml")
+        config_file = upgrade_target_paths(UpgradeCategory.ROUTING_RULES, self.state_dir)[0]
+        self._backup_file(config_file.name)
 
         data = self._read_yaml(config_file)
 
@@ -180,8 +181,8 @@ class FileUpgradeExecutor:
 
     def _apply_provider_config(self, proposal: UpgradeProposal) -> bool:
         """Apply provider configuration changes to .sdd/config/providers.yaml."""
-        config_file = self.config_dir / "providers.yaml"
-        self._backup_file("providers.yaml")
+        config_file = upgrade_target_paths(UpgradeCategory.PROVIDER_CONFIG, self.state_dir)[0]
+        self._backup_file(config_file.name)
 
         data = self._read_yaml(config_file)
 
@@ -203,10 +204,8 @@ class FileUpgradeExecutor:
 
     def _apply_role_template(self, proposal: UpgradeProposal) -> bool:
         """Record a role template upgrade proposal in the templates directory."""
-        templates_dir = self.state_dir.parent / "templates" / "roles"
-        templates_dir.mkdir(parents=True, exist_ok=True)
-
-        proposals_file = templates_dir / "PROPOSED_UPGRADES.jsonl"
+        proposals_file = upgrade_target_paths(UpgradeCategory.ROLE_TEMPLATES, self.state_dir)[0]
+        proposals_file.parent.mkdir(parents=True, exist_ok=True)
         with proposals_file.open("a") as f:
             f.write(
                 json.dumps(

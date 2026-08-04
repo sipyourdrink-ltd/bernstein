@@ -22,6 +22,7 @@ from bernstein.core.models import TaskStatus, TaskType
 from bernstein.core.orchestration.evolution import UpgradeStatus
 from bernstein.core.platform_compat import kill_process_group
 from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard
+from bernstein.evolution.upgrade_targets import upgrade_owned_files
 
 if TYPE_CHECKING:
     from bernstein.core.orchestration.tick_pipeline import (
@@ -802,6 +803,17 @@ def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
                 test_coverage_delta=0.0,
             )
             is_high = orch._risk_scorer.is_high_risk(risk_score)
+            # The category's applicator targets are the task's declared scope;
+            # without them every file-collision guard short-circuits on the
+            # empty "no scope declared" value (issue #3398). A missing mapping
+            # is recorded rather than refused: refusal fires unconditionally
+            # when the source is empty by construction (#3397).
+            owned_files = upgrade_owned_files(proposal.category)
+            if not owned_files:
+                result.errors.append(
+                    f"evolution_task: {proposal.id} spawned without owned_files "
+                    f"(no target mapping for category {proposal.category!r})"
+                )
             task_body = {
                 "title": title,
                 "description": proposal.description,
@@ -811,6 +823,7 @@ def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
                 "complexity": "high" if is_high else "medium",
                 "estimated_minutes": 60 if is_high else 30,
                 "task_type": TaskType.UPGRADE_PROPOSAL.value,
+                "owned_files": owned_files,
             }
             resp = orch._client.post(f"{base}/tasks", json=task_body)
             resp.raise_for_status()

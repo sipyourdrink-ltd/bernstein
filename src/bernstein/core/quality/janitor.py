@@ -78,9 +78,10 @@ _JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 #
 # TaskType.UPGRADE_PROPOSAL is included because verify_upgrade_task() (see
 # the UPGRADE_PROPOSAL branch above) is the real pass/fail authority for
-# these tasks, and UpgradeProposal.to_task() never sets owned_files -- there
-# is no attribution source for this task type, so the generic empty-diff
-# guard would hard-reject an already-verified upgrade proposal.
+# these tasks. Their owned_files name the category's config/template targets
+# (collision-guard scope, issue #3398), not a commit-attribution source, so
+# the generic empty-diff guard would still hard-reject an already-verified
+# upgrade proposal.
 _NOOP_TASK_TYPES = frozenset({TaskType.RESEARCH, TaskType.UPGRADE_PROPOSAL})
 
 _ATTRIBUTION_MAX_COMMITS = 50

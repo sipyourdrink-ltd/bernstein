@@ -383,3 +383,45 @@ def test_anthropic_batch_client_poll_fetches_results_url() -> None:
     assert "diff --git" in result.output_text
     assert result.input_tokens == 50
     assert result.output_tokens == 25
+
+
+def test_batch_claim_infers_paths_like_the_main_claim_path(make_task: Any) -> None:
+    """A task with no explicit owned_files but a path-bearing title still gets
+    a lock through the batch claim path.
+
+    task_lifecycle._claim_file_ownership unions infer_affected_paths(task)
+    into the claimed set (CRITICAL-007); before issue #3398 the batch mirror
+    gated on ``task.owned_files`` being truthy and never inferred, so batch
+    sessions for such tasks claimed nothing.
+    """
+    from bernstein.core.tasks.batch_api import _claim_file_ownership
+
+    task = make_task(
+        title="Harden src/bernstein/core/tasks/batch_api.py against timeouts",
+        owned_files=[],
+    )
+    lock_manager = MagicMock()
+    orch = SimpleNamespace(_lock_manager=lock_manager, _file_ownership={})
+
+    _claim_file_ownership(orch, "agent-1", [task])
+
+    lock_manager.acquire.assert_called_once()
+    claimed = lock_manager.acquire.call_args[0][0]
+    assert "src/bernstein/core/tasks/batch_api.py" in claimed
+    assert orch._file_ownership["src/bernstein/core/tasks/batch_api.py"] == "agent-1"
+
+
+def test_batch_claim_still_skips_tasks_with_no_paths_at_all(make_task: Any) -> None:
+    """Prose-only tasks with no explicit or inferable paths claim nothing -
+    the empty union stays a valid "no scope declared", matching the main path.
+    """
+    from bernstein.core.tasks.batch_api import _claim_file_ownership
+
+    task = make_task(title="Improve overall reliability", description="Prose only.", owned_files=[])
+    lock_manager = MagicMock()
+    orch = SimpleNamespace(_lock_manager=lock_manager, _file_ownership={})
+
+    _claim_file_ownership(orch, "agent-1", [task])
+
+    lock_manager.acquire.assert_not_called()
+    assert orch._file_ownership == {}

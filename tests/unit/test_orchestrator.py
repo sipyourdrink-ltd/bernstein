@@ -4534,6 +4534,7 @@ class TestRunEvolutionCycle:
         return orch, evolution
 
     def _make_proposal(self, proposal_id: str = "P-001", title: str = "Improve routing") -> MagicMock:
+        from bernstein.evolution.detector import UpgradeCategory
         from bernstein.evolution.proposals import UpgradeStatus
 
         proposal = MagicMock()
@@ -4541,6 +4542,7 @@ class TestRunEvolutionCycle:
         proposal.title = title
         proposal.description = f"Description for {title}"
         proposal.status = UpgradeStatus.PENDING
+        proposal.category = UpgradeCategory.MODEL_ROUTING
         return proposal
 
     def test_happy_path_creates_http_task_per_proposal(self, tmp_path: Path) -> None:

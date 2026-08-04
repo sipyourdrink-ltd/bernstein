@@ -17,6 +17,7 @@ from bernstein.core.models import (
     UpgradeProposalDetails,
 )
 from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
+from bernstein.evolution.upgrade_targets import upgrade_owned_files
 
 if TYPE_CHECKING:
     from bernstein.evolution.aggregator import AnomalyDetection
@@ -95,6 +96,7 @@ class UpgradeProposal:
             estimated_minutes=60,
             task_type=TaskType.UPGRADE_PROPOSAL,
             upgrade_details=upgrade_details,
+            owned_files=upgrade_owned_files(self.category),
         )
 
 
@@ -113,11 +115,15 @@ class ProposalGenerator:
         self._counter += 1
         proposal_id = f"UPG-{self._counter:04d}"
 
+        # Forward the opportunity's components instead of dropping them: they
+        # are the risk scorer's blast-radius input (issue #3398). They are
+        # subsystem labels, not paths, and never become owned_files.
         risk_level_map = {
-            "low": RiskAssessment(level="low"),
-            "medium": RiskAssessment(level="medium"),
-            "high": RiskAssessment(level="high"),
+            "low": RiskAssessment(level="low", affected_components=list(opportunity.affected_components)),
+            "medium": RiskAssessment(level="medium", affected_components=list(opportunity.affected_components)),
+            "high": RiskAssessment(level="high", affected_components=list(opportunity.affected_components)),
         }
+        default_risk = RiskAssessment(affected_components=list(opportunity.affected_components))
 
         approval_mode_map = {
             "low": ApprovalMode.AUTO,
@@ -133,7 +139,7 @@ class ProposalGenerator:
             current_state=f"Current {opportunity.category.value} needs improvement",
             proposed_change=opportunity.description,
             benefits=[opportunity.expected_improvement],
-            risk_assessment=risk_level_map.get(opportunity.risk_level, RiskAssessment()),
+            risk_assessment=risk_level_map.get(opportunity.risk_level, default_risk),
             rollback_plan=RollbackPlan(
                 steps=["Revert configuration changes", "Restart affected components"],
                 estimated_rollback_minutes=15,

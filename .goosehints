@@ -243,6 +243,7 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 | `risk.py`                  | Strategic Risk Score (SRS) computation for evolution proposals |
 | `sandbox.py`               | SandboxValidator - isolated testing of evolution proposals |
 | `types.py`                 | Shared types for the evolution system |
+| `upgrade_targets.py`       | Category-to-target-file mapping shared by the upgrade executor and task spawn |
 
 ### `src/bernstein/eval/` - evaluation harness
 
