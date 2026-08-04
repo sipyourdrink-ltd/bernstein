@@ -125,18 +125,35 @@ wire instead of being dropped at either boundary.
 
 The run substrate routes on the same declaration (issue #2996). Under
 worktree isolation (the default), an artifact-mode task's session is
-allocated an isolated plain directory under `.sdd/workspaces/<session_id>`
-instead of a per-session git worktree - no checkout, no agent branch, nothing
-to merge back - with the decision made in one place (`needs_git_worktree` in
+allocated an **artifact workspace** instead of a per-session git worktree,
+with the decision made in one place (`needs_git_worktree` in
 `core/tasks/artifact_completion.py`, next to the mode resolver the completion
-path uses). Disabling worktrees remains the operator's explicit choice to run
-in the checkout, and applies to artifact and coding tasks alike: with
-worktrees off, an artifact task spawns in the shared workdir exactly as a
-`code_diff` task does. The provider-batch path (`batch_api`), which commits
-by construction, refuses an artifact-mode task before any provider call with
-a message naming this completion path; the task is dispatched through the
-realtime spawn instead. A batch that contains any `code_diff` task keeps the
-git worktree, and pure coding runs are unchanged.
+path uses). The workspace contract:
+
+- **What it is.** A plain directory at `.sdd/workspaces/<session_id>` under
+  the repo root - the agent's working directory for the session. No git
+  checkout, no `agent/<session>` branch, no warm-pool slot; the merge-back
+  and salvage paths never touch it because there is nothing to merge. The
+  task's durable output is its signed lineage receipt, never the workspace.
+- **Cleanup guarantees.** The directory is removed when the session is
+  reaped, by the dead-agent cleanup path, and - should any exception escape
+  the spawn after allocation (a preflight refusal included) - by a leak
+  guard before the error propagates. Directories orphaned by a crash are
+  swept on the same terms as orphan worktrees.
+- **Not a sandbox.** Like the per-session worktree it replaces, the
+  workspace is working-directory separation between agents, not kernel-level
+  isolation, and it does not constrain network or filesystem access. For
+  enforcement, use a [sandbox backend](../architecture/sandbox.md) - the
+  sandbox layers are orthogonal to a task's output mode.
+
+Disabling worktrees remains the operator's explicit choice to run in the
+checkout, and applies to artifact and coding tasks alike: with worktrees off,
+an artifact task spawns in the shared workdir exactly as a `code_diff` task
+does. The provider-batch path (`batch_api`), which commits by construction,
+refuses an artifact-mode task before any provider call with a message naming
+this completion path; the task is dispatched through the realtime spawn
+instead. A batch that contains any `code_diff` task keeps the git worktree,
+and pure coding runs are unchanged.
 
 The bytes are read in the shape the kind expects: JSONL rows for `dataset` and
 `action_log`, a JSON object for `ops_result`, text for `report` (or a figures

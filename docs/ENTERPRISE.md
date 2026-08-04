@@ -61,7 +61,7 @@ What to verify:
 By default, Bernstein isolates agents by:
 
 - separate processes
-- separate git worktrees
+- separate git worktrees (coding tasks) or plain per-session directories (artifact-mode tasks)
 - per-agent task ownership
 - optional credential scoping
 

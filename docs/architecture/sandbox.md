@@ -414,6 +414,11 @@ tests auto-skip without a live daemon or provider credentials.
 
 - `worktree` does **not** isolate at the kernel level. If you need
   to run untrusted code you must choose a sandboxed backend.
+- An artifact-mode task (issue #2996) runs in a plain directory under
+  `.sdd/workspaces/` instead of a git worktree. The same caveat applies:
+  that directory is working-directory separation, not kernel-level
+  isolation - choose a sandboxed backend for untrusted code regardless
+  of a task's output mode.
 - `docker` should be run with `network_disabled=True` for untrusted
   workloads; the default leaves network enabled because most agent
   tasks legitimately need outbound HTTP.

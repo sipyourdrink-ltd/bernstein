@@ -96,7 +96,8 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
     ---
 
-    Each agent works in its own git worktree.
+    Each coding agent works in its own git worktree
+    (artifact-mode tasks get an isolated plain directory).
     No merge conflicts. Clean history. Parallel by default.
 
 - :material-shield-check:{ .lg .middle } **Built-in verification**

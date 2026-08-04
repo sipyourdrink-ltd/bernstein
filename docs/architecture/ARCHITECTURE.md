@@ -2,7 +2,7 @@
 
 ## Overview
 
-Bernstein is a deterministic orchestrator for CLI coding agents. You declare what you want, the control plane schedules it, short-lived agents execute in per-task git worktrees, and a janitor verifies the output before anything lands.
+Bernstein is a deterministic orchestrator for CLI coding agents. You declare what you want, the control plane schedules it, short-lived agents execute in per-task git worktrees (artifact-mode tasks, which complete on a signed lineage receipt rather than a commit, get an isolated plain directory under `.sdd/workspaces/` instead - see [the artifact contract](../operations/artifacts.md)), and a janitor verifies the output before anything lands.
 
 The orchestrator is **deterministic Python** - no model in the coordination loop. Every scheduling decision, every retry, every spawn is auditable code, not a model response, so the same plan replays to a byte-identical task graph.
 
