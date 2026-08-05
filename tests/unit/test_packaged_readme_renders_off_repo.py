@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 README = REPO_ROOT / "README.md"
@@ -74,7 +74,10 @@ def test_readme_absolute_links_point_at_paths_this_repo_actually_has() -> None:
         if prefix is None:
             continue
         path = link[len(prefix) :].split("#", 1)[0]
-        if not (REPO_ROOT / path).exists():
+        # A traversal component is itself a broken GitHub URL, and letting it
+        # through would validate against whatever happens to exist OUTSIDE the
+        # repository on the machine running the test.
+        if ".." in PurePosixPath(path).parts or not (REPO_ROOT / path).exists():
             broken.append(link)
     assert not broken, f"README links to paths this repository does not contain: {broken}"
 
