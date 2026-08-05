@@ -8,8 +8,11 @@ from pathlib import Path
 import pytest
 from bernstein.core.models import Task
 
-from bernstein.adapters.skills_injector import inject_skills
+from bernstein.adapters import skills_injector
+from bernstein.adapters.skills_injector import inject_skills, render_skill_template
 from bernstein.core.skills.activation_log import ENV_VAR, activation_log_path
+from bernstein.core.skills.sanitizer import sanitize_skill_body
+from bernstein.core.skills.selection_rules import SELECTION_RULES_FILENAME
 
 
 def _make_skill_templates(root: Path) -> Path:
@@ -151,6 +154,208 @@ def test_inject_skills_auto_route_adds_matching_skill_when_enabled(
     auto_rows = [row for row in rows if row["skill"] == "pytest-helper"]
     assert len(auto_rows) == 1
     assert auto_rows[0]["trigger_source"] == "auto-route"
+
+
+def test_no_rule_table_is_byte_identical_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Merge-deciding property of issue #3383: absent table == no rule layer.
+
+    With no ``selection-rules.yaml`` on disk the injector must behave
+    byte-identically to a build without the rule layer: the loader is
+    never invoked (existence is one cheap stat), the injected file set
+    and bytes are exactly what the unchanged sanitize+render pipeline
+    produces for role binding alone, and the activation log carries
+    only ``role-binding`` lines.
+    """
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    monkeypatch.delenv("BERNSTEIN_SKILLS_AUTO_ROUTE", raising=False)
+    loader_calls = {"count": 0}
+    real_loader = skills_injector.load_selection_rules
+
+    def _counting_loader(*args: object, **kwargs: object) -> object:
+        loader_calls["count"] += 1
+        return real_loader(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(skills_injector, "load_selection_rules", _counting_loader)
+
+    templates_dir = _make_skill_templates(tmp_path)
+    skills_source_dir = templates_dir.parent / "skills"
+    assert not (skills_source_dir / SELECTION_RULES_FILENAME).exists()
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    task = _make_task("T-100")
+
+    inject_skills(
+        workdir=workdir,
+        role="security",
+        tasks=[task],
+        session_id="sec-noop",
+        templates_dir=templates_dir,
+    )
+
+    # No rule table on disk -> the loader is never invoked.
+    assert loader_calls["count"] == 0
+
+    # Injected file set is exactly the role-derived pair - no new writes.
+    out_dir = workdir / ".claude" / "skills"
+    expected_names = ["bernstein-completion-protocol.md", "bernstein-signal-check.md"]
+    assert sorted(p.name for p in out_dir.iterdir()) == expected_names
+
+    # Bytes are identical to the pre-rule-layer sanitize+render pipeline.
+    for name in expected_names:
+        source_path = skills_source_dir / name
+        expected_bytes = render_skill_template(
+            sanitize_skill_body(
+                source_path.read_text(encoding="utf-8"),
+                skill_name=name,
+                origin=str(source_path),
+                source_name="templates/skills",
+            ),
+            session_id="sec-noop",
+            tasks=[task],
+        ).encode("utf-8")
+        assert (out_dir / name).read_bytes() == expected_bytes
+
+    # Activation log: one role-binding line per injected skill, nothing else.
+    rows = [json.loads(line) for line in activation_log_path(workdir).read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    assert {row["skill"] for row in rows} == {"bernstein-completion-protocol", "bernstein-signal-check"}
+    assert {row["trigger_source"] for row in rows} == {"role-binding"}
+
+
+def test_rule_selected_skill_logs_trigger_source_rule(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rule-selected template is injected with trigger_source ``rule``."""
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    monkeypatch.delenv("BERNSTEIN_SKILLS_AUTO_ROUTE", raising=False)
+    templates_dir = _make_skill_templates(tmp_path)
+    skills_source_dir = templates_dir.parent / "skills"
+    (skills_source_dir / SELECTION_RULES_FILENAME).write_text(
+        "rules:\n  - owned_files: 'tests/*.py'\n    skills: [pytest-helper]\n",
+        encoding="utf-8",
+    )
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    task = Task(
+        id="T-200",
+        title="Refactor helpers",
+        description="Cleanup",
+        role="security",
+        owned_files=["tests/test_api.py"],
+    )
+
+    inject_skills(
+        workdir=workdir,
+        role="security",
+        tasks=[task],
+        session_id="sec-rule",
+        templates_dir=templates_dir,
+    )
+
+    assert (workdir / ".claude" / "skills" / "pytest-helper.md").is_file()
+    rows = [json.loads(line) for line in activation_log_path(workdir).read_text(encoding="utf-8").splitlines()]
+    rule_rows = [row for row in rows if row["skill"] == "pytest-helper"]
+    assert len(rule_rows) == 1
+    assert rule_rows[0]["trigger_source"] == "rule"
+    assert rule_rows[0]["task_id"] == "T-200"
+
+
+def test_role_binding_wins_for_template_selected_by_both(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A template selected by role map and rules keeps the role-binding trigger."""
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    monkeypatch.delenv("BERNSTEIN_SKILLS_AUTO_ROUTE", raising=False)
+    templates_dir = _make_skill_templates(tmp_path)
+    skills_source_dir = templates_dir.parent / "skills"
+    (skills_source_dir / "bernstein-test-runner.md").write_text(
+        "---\nname: bernstein-test-runner\n"
+        "description: Run the project test suite before completion.\n"
+        "version: 1.0.0\n---\n\n# Test runner\nRun tests with uv.\n",
+        encoding="utf-8",
+    )
+    (skills_source_dir / SELECTION_RULES_FILENAME).write_text(
+        "rules:\n  - owned_files: 'src/*.py'\n    skills: [bernstein-test-runner]\n",
+        encoding="utf-8",
+    )
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    task = Task(
+        id="T-300",
+        title="Implement feature",
+        description="Feature work",
+        role="qa",
+        owned_files=["src/feature.py"],
+    )
+
+    inject_skills(
+        workdir=workdir,
+        role="qa",  # qa role-binds bernstein-test-runner.md
+        tasks=[task],
+        session_id="qa-both",
+        templates_dir=templates_dir,
+    )
+
+    assert (workdir / ".claude" / "skills" / "bernstein-test-runner.md").is_file()
+    rows = [json.loads(line) for line in activation_log_path(workdir).read_text(encoding="utf-8").splitlines()]
+    runner_rows = [row for row in rows if row["skill"] == "bernstein-test-runner"]
+    # Exactly one activation line, and role binding wins the trigger.
+    assert len(runner_rows) == 1
+    assert runner_rows[0]["trigger_source"] == "role-binding"
+
+
+def test_auto_route_excludes_rule_selected_templates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rule-selected templates are excluded from TF-IDF scoring, trigger stays ``rule``."""
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    monkeypatch.setenv("BERNSTEIN_SKILLS_AUTO_ROUTE", "1")
+    templates_dir = _make_skill_templates(tmp_path)
+    skills_source_dir = templates_dir.parent / "skills"
+    (skills_source_dir / SELECTION_RULES_FILENAME).write_text(
+        "rules:\n  - owned_files: 'tests/*.py'\n    skills: [pytest-helper]\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, list[str]] = {}
+    real_auto_route = skills_injector.select_auto_route_templates
+
+    def _spying_auto_route(*args: object, **kwargs: object) -> object:
+        captured["excluded"] = list(kwargs["excluded_templates"])  # type: ignore[arg-type]
+        return real_auto_route(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(skills_injector, "select_auto_route_templates", _spying_auto_route)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    task = Task(
+        id="T-400",
+        title="Fix pytest regression",
+        description="The pytest suite is failing.",
+        role="security",
+        owned_files=["tests/test_api.py"],
+    )
+
+    inject_skills(
+        workdir=workdir,
+        role="security",
+        tasks=[task],
+        session_id="sec-excl",
+        templates_dir=templates_dir,
+    )
+
+    # The rule-selected template was passed to the auto-route as excluded,
+    # so TF-IDF neither re-scored nor duplicated it.
+    assert "pytest-helper.md" in captured["excluded"]
+    assert (workdir / ".claude" / "skills" / "pytest-helper.md").is_file()
+    rows = [json.loads(line) for line in activation_log_path(workdir).read_text(encoding="utf-8").splitlines()]
+    helper_rows = [row for row in rows if row["skill"] == "pytest-helper"]
+    assert len(helper_rows) == 1
+    assert helper_rows[0]["trigger_source"] == "rule"
 
 
 def test_inject_skills_auto_route_ignores_malformed_frontmatter(
