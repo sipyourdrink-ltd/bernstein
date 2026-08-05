@@ -256,6 +256,7 @@ nav:
           - agents-md sync: agents-md.md
           - Skills catalog: operations/skills-catalog.md
           - Skill lint: operations/skill-lint.md
+          - Skill selection rules: operations/skill-selection-rules.md
           - Layered skill merge: skills/layered-merge.md
           - Agent prompt template: examples/agent-prompt-template.md
       - Memory & context:
