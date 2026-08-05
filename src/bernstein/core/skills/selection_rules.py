@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final, Protocol, cast
 
 import yaml
@@ -191,22 +192,28 @@ def _rule_matches_task(rule: SelectionRule, task: RuleSelectableTask) -> bool:
     return any(fnmatchcase(entry, pattern) for pattern in rule.owned_files for entry in owned)
 
 
-def _coerce_task_type(value: object) -> str:
+def _coerce_task_type(value: object) -> str | None:
     """Normalize a task's ``task_type`` field to its lowercase token.
 
     An enum member normalizes through its ``value``; a bare string through
     itself. The injector's local ``Task`` protocol does not carry
-    ``task_type``, so missing or unrecognized values deterministically
-    default to ``"standard"``. Matching by token rather than enum identity
-    keeps this module import-free of scheduler internals (see
-    ``_KNOWN_TASK_TYPE_TOKENS``).
+    ``task_type``, so an *absent* field (``None``) deterministically
+    defaults to ``"standard"``. A field that is present but unrecognized -
+    a task type this module does not know, or a non-string value - returns
+    ``None`` and therefore matches no ``task_type``-scoped rule at all:
+    coercing it to ``"standard"`` would inject operator-authored skills
+    into tasks that are explicitly not standard. Matching by token rather
+    than enum identity keeps this module import-free of scheduler
+    internals (see ``_KNOWN_TASK_TYPE_TOKENS``).
     """
+    if value is None:
+        return "standard"
     token = getattr(value, "value", value)
     if isinstance(token, str):
         normalized = token.strip().lower()
         if normalized in _KNOWN_TASK_TYPE_TOKENS:
             return normalized
-    return "standard"
+    return None
 
 
 def _parse_rule(
@@ -291,6 +298,16 @@ def _parse_skills(value: object, *, label: str, skills_source_dir: Path) -> tupl
             raise SelectionRuleError(f"{label}: 'skills' entries must be non-empty strings, got {item!r}")
         name = item.strip()
         template_name = name if name.endswith(".md") else f"{name}.md"
+        # Containment: a template name is a bare file name inside the skills
+        # directory, never a path. Without this, an absolute entry replaces
+        # the base in the join and ``..`` walks out of the corpus, and the
+        # injector would read and inject a file from outside the skills
+        # directory as if it were a vetted template.
+        if PurePosixPath(template_name).name != template_name or "\\" in template_name or template_name == ".md":
+            raise SelectionRuleError(
+                f"{label} names skill template {name!r}, which is not a bare template file name - "
+                "rule templates must live directly in the skills directory, path components are not allowed"
+            )
         if not (skills_source_dir / template_name).is_file():
             raise SelectionRuleError(
                 f"{label} names skill template {name!r}, but {skills_source_dir / template_name} does not exist"

@@ -320,3 +320,58 @@ def test_known_task_type_tokens_track_the_scheduler_enum() -> None:
     from bernstein.core.skills.selection_rules import _KNOWN_TASK_TYPE_TOKENS
 
     assert {member.value for member in TaskType} == _KNOWN_TASK_TYPE_TOKENS
+
+
+def test_unknown_task_type_matches_no_typed_rule(tmp_path: Path) -> None:
+    """A present-but-unrecognized task_type fails closed on typed rules.
+
+    Coercing an unknown type to "standard" would inject operator-authored
+    skills into tasks that are explicitly not standard; only a genuinely
+    absent field defaults. Glob-only rules still apply - the failure is
+    scoped to the task_type axis.
+    """
+    from types import SimpleNamespace
+
+    skills_dir = _make_skills_dir(tmp_path, ["typed-skill", "glob-skill"])
+    _write_rules(
+        skills_dir,
+        """
+rules:
+  - owned_files: "src/**"
+    task_type: standard
+    skills: [typed-skill]
+  - owned_files: "src/**"
+    skills: [glob-skill]
+""",
+    )
+    rules = load_selection_rules(skills_dir)
+    future_task = SimpleNamespace(owned_files=["src/main.py"], task_type="future_type")
+    assert resolve_rule_templates(rules, [future_task]) == ("glob-skill.md",)
+
+    absent_task = SimpleNamespace(owned_files=["src/main.py"])
+    assert resolve_rule_templates(rules, [absent_task]) == ("typed-skill.md", "glob-skill.md")
+
+
+@pytest.mark.parametrize(
+    "escape_name",
+    ["/outside/secret.md", "../escape.md", "nested/dir-skill.md", "..\\win-escape.md"],
+)
+def test_rule_template_name_cannot_escape_the_skills_directory(tmp_path: Path, escape_name: str) -> None:
+    """Template names are bare file names; paths never leave the corpus.
+
+    An absolute entry replaces the base in a pathlib join and ".." walks
+    out of the skills directory, so without this rejection a rule table
+    could point the injector at any readable file on the host and have its
+    content injected as a vetted skill template.
+    """
+    skills_dir = _make_skills_dir(tmp_path, ["real-skill"])
+    _write_rules(
+        skills_dir,
+        f"""
+rules:
+  - owned_files: "src/**"
+    skills: ['{escape_name}']
+""",
+    )
+    with pytest.raises(SelectionRuleError, match="bare template file name"):
+        load_selection_rules(skills_dir)
