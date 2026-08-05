@@ -67,15 +67,15 @@ extend-exclude = [
     # Translated READMEs - typos has only an English dictionary, every
     # non-English word would be a false positive.
     "docs/i18n/**",
-    # Lineage demo fixtures are 100% deterministic hex content (sha256 hashes,
-    # JWS base64url, Ed25519 PEM). The scanner reads three-char hex slices like
-    # "abd"/"caf"/"dbe" as misspellings of and/calf/be. Path-exclude the entire
-    # fixtures tree; review still applies to the human-authored README/Makefile.
     # README demo evidence (issue #3426) - machine-generated recording bytes
     # and cryptographic content (base64url JWK x / signature, hex hashes);
     # the scanner reads base64 slices like "izRV" as words. The
     # human-authored docs around the evidence stay in scope.
     "docs/assets/demo-run/**",
+    # Lineage demo fixtures are 100% deterministic hex content (sha256 hashes,
+    # JWS base64url, Ed25519 PEM). The scanner reads three-char hex slices like
+    # "abd"/"caf"/"dbe" as misspellings of and/calf/be. Path-exclude the entire
+    # fixtures tree; review still applies to the human-authored README/Makefile.
     "examples/lineage/*/fixtures/**",
     "examples/lineage/*/expected-pack.zip",
     # Vite-built SPA bundle - minified JS / sourcemaps mangle identifiers to
