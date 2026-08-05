@@ -543,11 +543,15 @@ def _fetch_demo_outcome(server_url: str, *, expected_total: int) -> _DemoOutcome
             tasks_data = _status_task_rows(payload)
             total_cost = float(payload.get("total_cost_usd", 0.0) or 0.0)
 
-    # Count done against the seeded set. A failed task spawns a retry task with a
-    # fresh id, so the live list can balloon past the seeded count (banner said
-    # 4, summary said 12). Clamp done to the seeded total and derive "not fixed"
-    # from it so banner, progress and summary never disagree.
-    done = min(sum(1 for t in tasks_data if t.get("status") == "done"), expected_total)
+    # Count done LINEAGES against the seeded set. A failed task spawns a retry
+    # task with a fresh id, so the live list balloons past the seeded count
+    # (banner said 4, summary said 12) and a retried lineage can carry several
+    # done rows - counting rows would let duplicates satisfy the seeded total
+    # while another bug has no successful attempt at all. Clamp to the seeded
+    # total and derive "not fixed" from it so banner, progress and summary
+    # never disagree.
+    done_lineages, _, _ = _lineage_progress(tasks_data)
+    done = min(len(done_lineages), expected_total)
     failed = max(expected_total - done, 0)
     return _DemoOutcome(done=done, failed=failed, total=expected_total, cost_usd=total_cost)
 
@@ -692,6 +696,43 @@ def _status_task_rows(payload: Any) -> list[dict[str, Any]]:
     return [t for t in raw_tasks if isinstance(t, dict)]
 
 
+def _lineage_id(row: dict[str, Any]) -> str:
+    """Return the retry-lineage root for a ``/status`` task row.
+
+    The server exposes ``lineage_id`` (``metadata.original_task_id`` of a
+    retry, or the task's own id). ``title``/``id`` are kept as fallbacks
+    for older payload shapes so counting degrades to at-worst the raw
+    behaviour instead of crashing.
+    """
+    return str(row.get("lineage_id") or row.get("title") or row.get("id") or "")
+
+
+def _lineage_progress(rows: list[dict[str, Any]]) -> tuple[set[str], set[str], set[str]]:
+    """Return ``(done, failed, all)`` lineage-id sets for ``/status`` rows.
+
+    Counting rows double-counts retried work: a failed task's retry is a
+    NEW row with a fresh id, and duplicate ``done`` rows for one lineage
+    were observed live (a "6/8 bugs fixed" frame on a 4-bug demo). A
+    lineage is done when ANY of its rows is done; it is failed only while
+    none is.
+    """
+    done: set[str] = set()
+    failed: set[str] = set()
+    all_ids: set[str] = set()
+    for index, row in enumerate(rows):
+        # A row with no identity at all counts as its own lineage, so
+        # counting degrades to the raw per-row behaviour instead of
+        # silently dropping work from the tally.
+        lid = _lineage_id(row) or f"row-{index}"
+        all_ids.add(lid)
+        status = row.get("status")
+        if status == "done":
+            done.add(lid)
+        elif status == "failed":
+            failed.add(lid)
+    return done, failed - done, all_ids
+
+
 def _poll_demo_completion(server_url: str, deadline: float, *, expected_total: int = 0) -> None:
     """Poll demo server for task completion with live progress output.
 
@@ -700,8 +741,10 @@ def _poll_demo_completion(server_url: str, deadline: float, *, expected_total: i
     as failed tasks spawn retry tasks with fresh ids, and a failed original
     stays ``failed`` forever even after its retry succeeds, so neither
     "all rows done" nor "all rows terminal" can ever hold on a retried
-    run. Done-rows reaching the seeded count is the one exit condition
-    that matches what the summary will report.
+    run. Distinct DONE LINEAGES reaching the seeded count is the one exit
+    condition that matches what the summary will report - done *rows*
+    would double-count a retried lineage and tear the demo down with a
+    seeded bug still unfixed.
     """
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
@@ -731,26 +774,25 @@ def _poll_demo_completion(server_url: str, deadline: float, *, expected_total: i
                     payload = resp.json()
             if payload is not None:
                 tasks_list = _status_task_rows(payload)
-                done_count, failed_count = _emit_task_events(tasks_list, seen_done, seen_failed, progress)
-                total_tasks = len(tasks_list)
+                _emit_task_events(tasks_list, seen_done, seen_failed, progress)
+                done_lineages, failed_lineages, all_lineages = _lineage_progress(tasks_list)
+                target = expected_total if expected_total > 0 else len(all_lineages)
                 progress.update(
                     poll_task,
                     description=(
                         f"Agents working\u2026 "
-                        f"[green]{done_count}[/green]/{total_tasks} bugs fixed"
-                        + (f"  [red]{failed_count} failed[/red]" if failed_count else "")
+                        f"[green]{len(done_lineages)}[/green]/{target} bugs fixed"
+                        + (f"  [red]{len(failed_lineages)} failed[/red]" if failed_lineages else "")
                     ),
                 )
-                # Leave early only when the seeded count is DONE. A failed
-                # row is not terminal (the lifecycle schedules a retry with
-                # a fresh id after retry_delay_s), so exiting on
-                # done+failed tears the demo down while a retry that would
-                # have fixed the bug is still pending; and a retried run
-                # can never have ALL rows done, because the failed original
-                # keeps its status forever. Runs that never reach the
-                # seeded count wait out the deadline, exactly as before.
-                target = expected_total if expected_total > 0 else total_tasks
-                if total_tasks > 0 and done_count >= target:
+                # Leave early only when the seeded count of LINEAGES is
+                # done. A failed row is not terminal (the lifecycle
+                # schedules a retry with a fresh id after retry_delay_s),
+                # so exiting on done+failed tears the demo down while a
+                # retry that would have fixed the bug is still pending.
+                # Runs that never reach the seeded count wait out the
+                # deadline, exactly as before.
+                if target > 0 and len(done_lineages) >= target:
                     break
             time.sleep(2)
 

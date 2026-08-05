@@ -571,3 +571,58 @@ def test_status_rows_unwrap_tolerates_all_known_shapes():
     assert run_confirm._status_task_rows({"tasks": {"count": 1, "items": "bad"}}) == []
     assert run_confirm._status_task_rows({"tasks": "bad"}) == []
     assert run_confirm._status_task_rows(["not-a-dict"]) == []
+
+
+def test_poll_counts_done_lineages_not_done_rows():
+    """Retry/orphan recovery produces several done rows for one seeded
+    lineage (a "6/8 bugs fixed" frame was observed live on a 4-bug demo).
+    Counting rows lets duplicates satisfy the seeded total while another
+    bug has no successful attempt - the poll must count distinct done
+    lineages (finding 3723321829).
+    """
+    import time as _time
+
+    payload = {
+        "tasks": {
+            "count": 3,
+            "items": [
+                {"id": "a", "lineage_id": "a", "title": "bug a", "role": "backend", "status": "done"},
+                {"id": "a2", "lineage_id": "a", "title": "bug a", "role": "backend", "status": "done"},
+                {"id": "b", "lineage_id": "b", "title": "bug b", "role": "qa", "status": "open"},
+            ],
+        },
+    }
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch.object(run_confirm.httpx, "get", return_value=resp):
+        start = _time.monotonic()
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 3.0, expected_total=2)
+        elapsed = _time.monotonic() - start
+    assert elapsed >= 2.9, (
+        f"two done rows of ONE lineage must not satisfy a seeded total of 2; exited after {elapsed:.1f}s"
+    )
+
+
+def test_fetch_outcome_counts_done_lineages_not_done_rows():
+    """The summary's all-fixed verdict must not be reachable by duplicate
+    done rows for one lineage while another seeded bug never succeeded
+    (finding 3723321829).
+    """
+    payload = {
+        "tasks": {
+            "count": 3,
+            "items": [
+                {"id": "a", "lineage_id": "a", "title": "bug a", "status": "done"},
+                {"id": "a2", "lineage_id": "a", "title": "bug a", "status": "done"},
+                {"id": "b", "lineage_id": "b", "title": "bug b", "status": "failed"},
+            ],
+        },
+        "total_cost_usd": 0.0,
+    }
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch.object(run_confirm.httpx, "get", return_value=resp):
+        outcome = run_confirm._fetch_demo_outcome("http://127.0.0.1:1", expected_total=2)
+    assert outcome.done == 1
+    assert outcome.failed == 1
+    assert not outcome.all_fixed

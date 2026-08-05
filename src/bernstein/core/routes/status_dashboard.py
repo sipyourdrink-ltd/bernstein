@@ -313,6 +313,12 @@ def _status_task_items(tasks: list[Task], now: float) -> list[dict[str, Any]]:
         items.append(
             {
                 "id": task.id,
+                # The retry lineage root: a failed task's retry is a NEW task
+                # with a fresh id carrying metadata.original_task_id, so raw
+                # done-row counts double-count a lineage that was retried.
+                # Consumers that compare progress against a seeded total
+                # (demo, quickstart) must count distinct lineage_ids instead.
+                "lineage_id": str(task.metadata.get("original_task_id") or task.id),
                 "title": task.title,
                 "role": task.role,
                 "status": task.status.value,
