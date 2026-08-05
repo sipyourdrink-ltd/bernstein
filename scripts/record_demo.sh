@@ -94,11 +94,25 @@ done
 # ── 3. Pull the receipt of exactly that run out of the demo project. ────────
 PROJECT="$(python3 - "$WORK/seg1.cast" <<'PY'
 import json, re, sys
-text = "".join(
-    json.loads(line)[2]
-    for line in open(sys.argv[1], encoding="utf-8").read().splitlines()[1:]
-    if line.strip()
-)
+
+# Validate each event before use: an asciinema v2 event is
+# [number, code, string]. Only OUTPUT events ("o") may contribute to the
+# text the project path is parsed from - a malformed line fails with a
+# named error instead of a leaked IndexError, and a non-output event
+# (e.g. an input echo) can never supply the selected path.
+chunks = []
+for lineno, line in enumerate(open(sys.argv[1], encoding="utf-8").read().splitlines()[1:], start=2):
+    if not line.strip():
+        continue
+    try:
+        event = json.loads(line)
+    except ValueError:
+        sys.exit(f"error: invalid cast event at line {lineno}: not JSON")
+    if not (isinstance(event, list) and len(event) >= 3 and isinstance(event[2], str)):
+        sys.exit(f"error: invalid cast event at line {lineno}: expected [time, code, text]")
+    if event[1] == "o":
+        chunks.append(event[2])
+text = "".join(chunks)
 m = re.findall(r"Project left at: (\S+)", re.sub(r"\x1b\[[0-9;]*m", "", text))
 if not m:
     sys.exit("error: demo output never printed 'Project left at:'")

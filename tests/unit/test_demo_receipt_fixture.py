@@ -63,7 +63,8 @@ def test_the_recording_and_the_receipt_describe_the_same_run() -> None:
     import re
 
     cast_lines = (_DEMO_RUN / "demo.cast").read_text(encoding="utf-8").splitlines()
-    text = "".join(json.loads(line)[2] for line in cast_lines[1:] if line.strip())
+    events = [json.loads(line) for line in cast_lines[1:] if line.strip()]
+    text = "".join(e[2] for e in events if isinstance(e, list) and len(e) >= 3 and e[1] == "o")
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
     shown = re.search(r"run=(\S+)\s+journal_events=(\d+)", text)
