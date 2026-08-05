@@ -118,6 +118,19 @@ def test_pr_is_opened_with_a_token_that_triggers_workflows(steps: list[dict]) ->
     )
 
 
+def test_pr_step_supplies_base_for_the_detached_checkout(steps: list[dict]) -> None:
+    """The workflow checks out the measured commit - a detached HEAD - and
+    create-pull-request cannot infer a base from a detached HEAD. Without an
+    explicit ``base`` the step hard-fails exactly and only on the runs that
+    actually bump the baseline: the branch is force-pushed, no PR ever opens,
+    and the main round goes red on every genuine coverage increase
+    (issue #3434)."""
+    assert _create_pr_step(steps)["with"].get("base") == "main", (
+        "the ratchet PR's base was always meant to be main - the downward "
+        "guard explicitly reasons about the baseline committed on main"
+    )
+
+
 def test_downward_guard_exists_and_reads_the_ratchet_branch(steps: list[dict]) -> None:
     guard = _step_by_id(steps, "guard")
     assert RATCHET_BRANCH in yaml.safe_dump(guard), (

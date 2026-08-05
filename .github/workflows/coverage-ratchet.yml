@@ -317,6 +317,12 @@ jobs:
           # publish `CI gate` and `review-bot-ack`, so it can never satisfy
           # branch protection. See the header block.
           token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          # The checkout above is a detached commit (the measured SHA), so
+          # create-pull-request cannot infer the base branch and hard-fails
+          # without an explicit one (issue #3434). The ratchet's base was
+          # always main - the guard step reasons about "the baseline
+          # committed on main".
+          base: main
           # Stable branch so create-pull-request UPDATES the single open
           # ratchet PR in place instead of opening a fresh PR every push.
           branch: coverage-ratchet/baseline
