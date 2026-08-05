@@ -700,9 +700,15 @@ def _lineage_id(row: dict[str, Any]) -> str:
     """Return the retry-lineage root for a ``/status`` task row.
 
     The server exposes ``lineage_id`` (``metadata.original_task_id`` of a
-    retry, or the task's own id). ``title``/``id`` are kept as fallbacks
-    for older payload shapes so counting degrades to at-worst the raw
-    behaviour instead of crashing.
+    retry, or the task's own id); modern rows always carry it. The
+    fallbacks exist only for older payload shapes, and their order is
+    deliberate: ``title`` BEFORE ``id``. In that regime a retry keeps its
+    title but gets a fresh id, so id-first would re-open the premature
+    green exit this ordering guards against (duplicate done rows
+    satisfying the seeded total while a bug has no successful attempt).
+    Title-first fails safe instead - distinct same-title rows collapse,
+    the count can only be too LOW, and the poll waits out its deadline
+    rather than tearing the run down early.
     """
     return str(row.get("lineage_id") or row.get("title") or row.get("id") or "")
 

@@ -159,8 +159,15 @@ def _log_task_transitions(
             progress.console.print(f"  [red]\u2717[/red] [{role}] {title}")
 
 
-def _poll_until_done(server_url: str, deadline: float) -> None:
-    """Poll the task server until all tasks finish or the deadline passes."""
+def _poll_until_done(server_url: str, deadline: float, *, expected_total: int = 0) -> None:
+    """Poll the task server until all tasks finish or the deadline passes.
+
+    ``expected_total`` is the seeded task count. The exit must compare
+    done lineages against it - not against the current snapshot's own
+    lineage set, which can be incomplete while rows are still being
+    registered and would let a partial snapshot tear the run down with
+    work remaining.
+    """
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
     seen_done: set[str] = set()
@@ -190,16 +197,20 @@ def _poll_until_done(server_url: str, deadline: float) -> None:
                 tasks_list = _status_task_rows(payload)
                 _log_task_transitions(tasks_list, seen_done, seen_failed, progress)
                 done_lineages, failed_lineages, all_lineages = _lineage_progress(tasks_list)
+                target = expected_total if expected_total > 0 else len(all_lineages)
 
-                desc = f"Agents working\u2026 [green]{len(done_lineages)}[/green]/{len(all_lineages)} tasks done"
+                desc = f"Agents working\u2026 [green]{len(done_lineages)}[/green]/{target} tasks done"
                 if failed_lineages:
                     desc += f"  [red]{len(failed_lineages)} failed[/red]"
                 progress.update(poll_task, description=desc)
-                # Exit early only when every lineage is done. A failed row
-                # is not terminal - its retry spawns as a new row with a
-                # fresh id - so exiting on done+failed would tear the run
-                # down while a fixing retry is still pending.
-                if all_lineages and done_lineages >= all_lineages:
+                # Exit early only when the seeded count of lineages is
+                # done. A failed row is not terminal - its retry spawns as
+                # a new row with a fresh id - so exiting on done+failed
+                # would tear the run down while a fixing retry is still
+                # pending; and the snapshot's own lineage set is not a
+                # valid target either, since an incomplete snapshot would
+                # satisfy it with work remaining.
+                if target > 0 and len(done_lineages) >= target:
                     break
             time.sleep(2)
 
@@ -362,7 +373,11 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
             cli=detected,
         )
 
-        _poll_until_done(server_url, deadline=orchestration_start + timeout)
+        _poll_until_done(
+            server_url,
+            deadline=orchestration_start + timeout,
+            expected_total=len(_QUICKSTART_TASKS),
+        )
         console.print("[green]✓[/green] Orchestration finished")
 
     except KeyboardInterrupt:
