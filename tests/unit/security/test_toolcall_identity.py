@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 from typing import Any
 
 import pytest
 
 from bernstein.core.lineage.identity import AgentCard, sign_detached
-from bernstein.core.security.agent_card_signer import generate_ed25519_keypair, sign_agent_card
+from bernstein.core.security.agent_card_signer import canonicalize_jcs, generate_ed25519_keypair, sign_agent_card
 from bernstein.core.security.agent_identity import AgentIdentityCard
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.identity_spawn_anchor import IdentitySpawnAnchor, IdentitySpawnAnchorError
@@ -17,6 +18,8 @@ from bernstein.core.security.toolcall_identity import (
     LineageToolCallIdentitySigner,
     ToolCallIdentityAttestation,
     ToolCallIdentityError,
+    ToolCallIdentitySignature,
+    identity_attestation_ref,
 )
 from bernstein.core.security.toolcall_interlock import (
     AttestationMode,
@@ -119,7 +122,7 @@ async def test_corrupt_or_gapped_existing_history_fails_before_append(tmp_path: 
     provider = _provider(tmp_path)
     await provider.prepare_dispatch(_intent())
     provider._consume_verified_history()
-    next(event for event in provider._events if event.event_type == "toolcall.attestation").details["call_index"] = 3
+    provider._call_indices[0] = 3
     with pytest.raises(ToolCallIdentityError, match="non-contiguous"):
         await provider.prepare_dispatch(_intent(request_id=8))
 
@@ -304,3 +307,73 @@ def test_identity_dataclass_exact_shape_is_stable() -> None:
         "attested_at_ns",
     }
     assert set(ToolCallIdentityAttestation.__dataclass_fields__) == expected
+
+
+def test_fast_attestation_reference_is_byte_identical_to_full_jcs_envelope() -> None:
+    record = ToolCallIdentityAttestation(
+        1,
+        "bernstein.toolcall.identity-attestation",
+        "r",
+        "a",
+        "s",
+        "server",
+        "tools/call",
+        "tool",
+        "req",
+        "span",
+        "sha256:args",
+        "sha256:intent",
+        1,
+        "journal",
+        "prev",
+        "anchor",
+        "kid",
+        1,
+    )
+    signature = ToolCallIdentitySignature("header..signature", "kid")
+    expected = (
+        "sha256:"
+        + hashlib.sha256(
+            canonicalize_jcs({"detached_jws": signature.detached_jws, "record": record.as_dict(), "version": 1})
+        ).hexdigest()
+    )
+    assert (
+        identity_attestation_ref(
+            record,
+            signature,
+            record_data=record.as_dict(),
+            record_canonical=record.canonical_bytes(),
+        )
+        == expected
+    )
+
+
+def test_cached_lineage_signer_is_byte_identical_and_does_not_repr_private_key() -> None:
+    private, _ = generate_ed25519_keypair()
+    payload = b"fixed-domain-separated-payload"
+    signer = LineageToolCallIdentitySigner(private.decode(), "kid-1")
+    assert signer.sign(payload).detached_jws == sign_detached(payload, private.decode(), kid="kid-1")
+    assert private.decode() not in repr(signer)
+
+
+@pytest.mark.asyncio
+async def test_two_warm_provider_instances_reconcile_before_allocating_indices(tmp_path: Any) -> None:
+    first = _provider(tmp_path)
+    identity = first.run_identity
+    signer = first.signer
+    assert identity is not None and signer is not None
+    second = NativeToolCallEvidenceProvider(
+        AuditChainStore(tmp_path / "audit", key=b"k" * 32),
+        run_identity=identity,
+        signer=signer,
+        run_journal_head=lambda: "journal:fixed",
+        clock_ns=lambda: 123_000_000_001,
+    )
+
+    await first.prepare_dispatch(_intent(request_id=1))
+    await second.prepare_dispatch(_intent(request_id=2))
+    await first.prepare_dispatch(_intent(request_id=3))
+
+    attestations = [event for event in _events(first) if event["event_type"] == "toolcall.attestation"]
+    assert [event["details"]["call_index"] for event in attestations] == [1, 2, 3]
+    assert first.chain.verify() == (True, [])

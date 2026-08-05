@@ -135,14 +135,28 @@ def _measure_cold(history: int, repetitions: int = 5) -> dict[str, float]:
     }
 
 
-async def run(*, calls: int, parallel: int, histories: list[int]) -> dict[str, Any]:
+async def run(*, calls: int, parallel: int, histories: list[int], repetitions: int) -> dict[str, Any]:
     """Return paired measurements at each authenticated-history depth."""
+
+    def medians(measurements: list[dict[str, float]]) -> dict[str, float]:
+        return {key: statistics.median(row[key] for row in measurements) for key in measurements[0]}
+
     rows: list[dict[str, Any]] = []
     for history in histories:
         modes: dict[str, Any] = {}
         for mode in (AttestationMode.ENFORCED, AttestationMode.OBSERVED):
-            baseline = await _measure(signed=False, mode=mode, history=history, calls=calls, parallel=parallel)
-            signed = await _measure(signed=True, mode=mode, history=history, calls=calls, parallel=parallel)
+            baseline = medians(
+                [
+                    await _measure(signed=False, mode=mode, history=history, calls=calls, parallel=parallel)
+                    for _ in range(repetitions)
+                ]
+            )
+            signed = medians(
+                [
+                    await _measure(signed=True, mode=mode, history=history, calls=calls, parallel=parallel)
+                    for _ in range(repetitions)
+                ]
+            )
             modes[mode.value] = {
                 "hmac_only": baseline,
                 "signed_identity": signed,
@@ -162,6 +176,7 @@ async def run(*, calls: int, parallel: int, histories: list[int]) -> dict[str, A
         "schema": "bernstein.toolcall-identity-gateway-benchmark/v1",
         "calls": calls,
         "parallel": parallel,
+        "repetitions": repetitions,
         "thresholds": {"p95_overhead_ms": 1.0, "throughput_regression_percent": 10.0},
         "rows": rows,
     }
@@ -172,10 +187,18 @@ def main() -> None:
     parser.add_argument("--calls", type=int, default=128)
     parser.add_argument("--parallel", type=int, default=32)
     parser.add_argument("--histories", type=int, nargs="+", default=[1, 1000, 10000])
+    parser.add_argument("--repetitions", type=int, default=5)
     args = parser.parse_args()
-    if args.calls < 1 or args.parallel < 1 or any(value < 0 for value in args.histories):
+    if args.calls < 1 or args.parallel < 1 or args.repetitions < 1 or any(value < 0 for value in args.histories):
         parser.error("calls and parallel must be positive; histories must be non-negative")
-    report = asyncio.run(run(calls=args.calls, parallel=min(args.parallel, args.calls), histories=args.histories))
+    report = asyncio.run(
+        run(
+            calls=args.calls,
+            parallel=min(args.parallel, args.calls),
+            histories=args.histories,
+            repetitions=args.repetitions,
+        )
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

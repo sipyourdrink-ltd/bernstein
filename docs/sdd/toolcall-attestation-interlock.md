@@ -95,3 +95,12 @@ provider with the native HMAC-only provider at authenticated history depths 1,
 1,000, and 10,000 under concurrency 32. It reports signed p95 overhead,
 throughput regression, and p95-minus-p50 as a lock-wait proxy against the issue
 budgets (1 ms p95 and 10 percent throughput regression).
+
+The warm identity path preserves those invariants without repeating avoidable
+work: it parses the frozen Ed25519 keys and immutable RFC 7797 header once,
+reuses the already canonical record when hashing the signed envelope, and
+skips rescanning self-written history only while a locked re-read proves the
+audit head is exactly the provider's last known head. A different head resumes
+the authenticated cursor and reconciles other-process attestations before the
+next index is allocated. Offline verification still reconstructs the envelope
+from first principles; no cache is a trust source.

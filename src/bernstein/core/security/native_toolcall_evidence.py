@@ -8,17 +8,19 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.lineage.identity import jws_header_kid
 from bernstein.core.security.audit_chain import (
     EVENT_TOOLCALL_ATTESTATION,
     EVENT_TOOLCALL_ENFORCED_DISPATCH,
     AuditChainStore,
 )
 from bernstein.core.security.toolcall_identity import (
+    TOOLCALL_IDENTITY_DOMAIN,
+    FrozenToolCallIdentityVerifier,
     ToolCallIdentityAttestation,
     ToolCallIdentityError,
     ToolCallIdentitySigner,
     identity_envelope,
-    verify_identity_envelope,
 )
 from bernstein.core.security.toolcall_interlock import (
     ToolCallIntent,
@@ -59,7 +61,12 @@ class NativeToolCallEvidenceProvider:
     run_journal_head: Callable[[], str] | None = None
     clock_ns: Callable[[], int] = time.time_ns
     _cursor: ChainScanCursor | None = field(init=False, default=None)
-    _events: list[Any] = field(init=False, default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    _anchor_events: list[Any] = field(init=False, default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    _call_indices: list[int] = field(init=False, default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    _frozen_verifier: FrozenToolCallIdentityVerifier | None = field(init=False, default=None)
+    _identity_anchor_ref: str = field(init=False, default="")
+    _known_chain_head: str = field(init=False, default="")
+    _seen_event_hmacs: set[str] = field(init=False, default_factory=set)  # pyright: ignore[reportUnknownVariableType]
 
     def __post_init__(self) -> None:
         """Authenticate cold history once for identity-bound construction."""
@@ -77,6 +84,8 @@ class NativeToolCallEvidenceProvider:
                 )
             ):
                 raise ToolCallIdentityError("run anchor has no frozen tool signing identity")
+            self._frozen_verifier = FrozenToolCallIdentityVerifier.from_anchor(anchor, agent_id=identity.agent_id)
+            self._identity_anchor_ref = "hmac:" + self._anchor_events[0].hmac
 
     def _identity_enabled(self) -> bool:
         configured = (self.run_identity, self.signer, self.run_journal_head)
@@ -88,37 +97,41 @@ class NativeToolCallEvidenceProvider:
         result = self.chain.scan_verified(self._cursor)
         if not result.ok:
             raise ToolCallIdentityError(f"audit history verification failed: {'; '.join(result.errors)}")
-        self._events.extend(
-            event
-            for event in result.events
-            if event.event_type in {"identity.spawn_attestation", EVENT_TOOLCALL_ATTESTATION}
-        )
+        identity = self.run_identity
+        for event in result.events:
+            if event.event_type == "identity.spawn_attestation" and (
+                identity is None or event.resource_id == identity.run_id
+            ):
+                if event.hmac in self._seen_event_hmacs:
+                    continue
+                self._seen_event_hmacs.add(event.hmac)
+                self._anchor_events.append(event)
+            elif (
+                identity is not None
+                and event.event_type == EVENT_TOOLCALL_ATTESTATION
+                and event.details.get("run_id") == identity.run_id
+            ):
+                if event.hmac in self._seen_event_hmacs:
+                    continue
+                self._seen_event_hmacs.add(event.hmac)
+                index = event.details.get("call_index")
+                if not isinstance(index, int) or isinstance(index, bool):
+                    raise ToolCallIdentityError("existing run has malformed tool-call identity history")
+                self._call_indices.append(index)
         self._cursor = result.cursor
+        self._known_chain_head = result.cursor.prev_hmac
 
     def _anchor_details(self, identity: AnchoredRunIdentity) -> dict[str, Any]:
-        anchors = [
-            event
-            for event in self._events
-            if event.event_type == "identity.spawn_attestation" and event.resource_id == identity.run_id
-        ]
-        if len(anchors) != 1:
+        if len(self._anchor_events) != 1:
             raise ToolCallIdentityError("run must have exactly one verified identity spawn anchor")
-        details = anchors[0].details
+        details = self._anchor_events[0].details
         for key, value in asdict(identity).items():
             if details.get(key) != value:
                 raise ToolCallIdentityError("configured run identity conflicts with its verified spawn anchor")
         return details
 
-    def _next_call_index(self, run_id: str) -> int:
-        indices: list[int] = []
-        for event in self._events:
-            if event.event_type != EVENT_TOOLCALL_ATTESTATION or event.details.get("run_id") != run_id:
-                continue
-            index = event.details.get("call_index")
-            if not isinstance(index, int) or isinstance(index, bool):
-                raise ToolCallIdentityError("existing run has malformed tool-call identity history")
-            indices.append(index)
-        ordered = sorted(indices)
+    def _next_call_index(self) -> int:
+        ordered = sorted(self._call_indices)
         if ordered != list(range(1, len(ordered) + 1)):
             raise ToolCallIdentityError("existing run has non-contiguous tool-call identity history")
         return len(ordered) + 1
@@ -178,10 +191,13 @@ class NativeToolCallEvidenceProvider:
             raise ToolCallIdentityError("run journal head moved; a new identity-anchored run is required")
 
         with self.chain.chain_transaction():
-            self._consume_verified_history()
-            anchor = self._anchor_details(identity)
-            call_index = self._next_call_index(identity.run_id)
             prev_chain_digest = self.chain.resync_head()
+            if prev_chain_digest != self._known_chain_head:
+                self._consume_verified_history()
+                if self._known_chain_head != prev_chain_digest:
+                    raise ToolCallIdentityError("authenticated scan did not reach the locked audit-chain head")
+            self._anchor_details(identity)
+            call_index = self._next_call_index()
             record = ToolCallIdentityAttestation(
                 v=1,
                 kind="bernstein.toolcall.identity-attestation",
@@ -198,24 +214,25 @@ class NativeToolCallEvidenceProvider:
                 call_index=call_index,
                 run_journal_head=current_journal_head,
                 prev_chain_digest=prev_chain_digest,
-                identity_anchor_ref="hmac:"
-                + next(
-                    event.hmac
-                    for event in self._events
-                    if event.event_type == "identity.spawn_attestation" and event.resource_id == identity.run_id
-                ),
+                identity_anchor_ref=self._identity_anchor_ref,
                 tool_signing_kid=identity.tool_signing_kid or "",
                 attested_at_ns=self.clock_ns(),
             )
-            signature = signer.sign(record.signing_bytes())
-            envelope = identity_envelope(record, signature)
-            attestation_ref = str(envelope["attestation_ref"])
-            verify_identity_envelope(
-                envelope,
-                anchor,
-                expected_intent_digest=intent_digest,
-                expected_attestation_ref=attestation_ref,
+            signing_bytes = record.signing_bytes()
+            signature = signer.sign(signing_bytes)
+            envelope = identity_envelope(
+                record,
+                signature,
+                record_canonical=signing_bytes[len(TOOLCALL_IDENTITY_DOMAIN) :],
             )
+            attestation_ref = str(envelope["attestation_ref"])
+            verifier = self._frozen_verifier
+            if verifier is None:
+                raise ToolCallIdentityError("run has no frozen tool-call identity verifier")
+            if signature.kid != verifier.kid or jws_header_kid(signature.detached_jws) != verifier.kid:
+                raise ToolCallIdentityError("tool signing kid substitution detected")
+            if not verifier.verify(signing_bytes, signature.detached_jws):
+                raise ToolCallIdentityError("locally generated tool-call identity signature did not verify")
             common: dict[str, Any] = {
                 "attestation_ref": attestation_ref,
                 "intent_digest": intent_digest,
@@ -226,13 +243,16 @@ class NativeToolCallEvidenceProvider:
                 "identity_anchor_ref": record.identity_anchor_ref,
                 "identity_envelope": envelope,
             }
-            self.chain.log_with_prev_digest(
+            attestation = self.chain.log_with_prev_digest(
                 event_type=EVENT_TOOLCALL_ATTESTATION,
                 actor=self.actor,
                 resource_type="toolcall_scope",
                 resource_id=intent.scope_id,
                 details=common,
             )
+            self._call_indices.append(call_index)
+            self._seen_event_hmacs.add(attestation.hmac)
+            self._known_chain_head = attestation.hmac
             dispatch = self.chain.log_with_prev_digest(
                 event_type=EVENT_TOOLCALL_ENFORCED_DISPATCH,
                 actor=self.actor,
@@ -240,6 +260,7 @@ class NativeToolCallEvidenceProvider:
                 resource_id=intent.scope_id,
                 details=common,
             )
+            self._known_chain_head = dispatch.hmac
 
         return VerifiedDispatchEvidence(
             attestation_ref=attestation_ref,

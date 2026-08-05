@@ -16,7 +16,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from cryptography.exceptions import InvalidSignature
@@ -47,6 +47,69 @@ class AgentCard:
     kid: str
     public_key_pem: str
     protocol_version: str = "a2a/1.0"
+
+
+@dataclass(frozen=True, slots=True)
+class DetachedJwsSigner:
+    """Parsed Ed25519 signer with one immutable RFC 7797 protected header."""
+
+    kid: str
+    _private_key: Ed25519PrivateKey = field(repr=False)
+    _protected: str = field(repr=False)
+
+    @classmethod
+    def from_pem(cls, private_key_pem: str, *, kid: str) -> DetachedJwsSigner:
+        """Parse and validate private material once at signer construction."""
+        private_key = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
+        if not isinstance(private_key, Ed25519PrivateKey):
+            raise TypeError("detached JWS signing requires an Ed25519 private key")
+        header = {"alg": "EdDSA", "kid": kid, "b64": False, "crit": ["b64"]}
+        protected = _b64url(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+        return cls(kid=kid, _private_key=private_key, _protected=protected)
+
+    def sign(self, payload: bytes) -> str:
+        """Sign one payload without reparsing the same private key or header."""
+        signing_input = self._protected.encode("ascii") + b"." + payload
+        signature = self._private_key.sign(signing_input)
+        return self._protected + ".." + _b64url(signature)
+
+
+@dataclass(frozen=True, slots=True)
+class DetachedJwsVerifier:
+    """Parsed Ed25519 verifier for one frozen key identifier."""
+
+    kid: str
+    _public_key: Ed25519PublicKey = field(repr=False)
+
+    @classmethod
+    def from_card(cls, card: AgentCard) -> DetachedJwsVerifier:
+        """Parse and validate public material once at verifier construction."""
+        public_key = serialization.load_pem_public_key(card.public_key_pem.encode("ascii"))
+        if not isinstance(public_key, Ed25519PublicKey):
+            raise TypeError("detached JWS verification requires an Ed25519 public key")
+        return cls(kid=card.kid, _public_key=public_key)
+
+    def verify(self, payload: bytes, jws: str) -> bool:
+        """Verify the exact EdDSA/``b64=false``/critical-header contract."""
+        try:
+            protected_b64, empty, signature_b64 = jws.split(".", maxsplit=2)
+        except ValueError:
+            return False
+        if empty != "" or "." in signature_b64:
+            return False
+        try:
+            header = json.loads(_b64url_decode(protected_b64))
+        except (ValueError, json.JSONDecodeError, binascii.Error, TypeError):
+            return False
+        expected = {"alg": "EdDSA", "kid": self.kid, "b64": False, "crit": ["b64"]}
+        if header != expected:
+            return False
+        try:
+            signature = _b64url_decode(signature_b64)
+            self._public_key.verify(signature, protected_b64.encode("ascii") + b"." + payload)
+        except (ValueError, binascii.Error, InvalidSignature):
+            return False
+        return True
 
 
 def generate_keypair() -> tuple[str, str]:
@@ -114,14 +177,7 @@ def sign_detached(payload: bytes, private_key_pem: str, *, kid: str) -> str:
     bytes out-of-band. This keeps the on-disk `.jws` file independent of
     the entry it covers and lets the auditor re-canonicalise locally.
     """
-    priv = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
-    if not isinstance(priv, Ed25519PrivateKey):
-        raise TypeError("sign_detached requires an Ed25519 private key")
-    header = {"alg": "EdDSA", "kid": kid, "b64": False, "crit": ["b64"]}
-    protected = _b64url(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-    signing_input = protected.encode("ascii") + b"." + payload
-    sig = priv.sign(signing_input)
-    return protected + ".." + _b64url(sig)
+    return DetachedJwsSigner.from_pem(private_key_pem, kid=kid).sign(payload)
 
 
 def jws_header_kid(jws: str) -> str | None:
@@ -160,34 +216,7 @@ def verify_detached(payload: bytes, jws: str, card: AgentCard) -> bool:
     Never raises on bad input.
     """
     try:
-        protected_b64, empty, sig_b64 = jws.split(".", maxsplit=2)
-    except ValueError:
-        return False
-    if empty != "":
-        return False
-    if "." in sig_b64:
-        return False  # 4+ segments
-    try:
-        header = json.loads(_b64url_decode(protected_b64))
-    except (ValueError, json.JSONDecodeError, binascii.Error, TypeError):
-        return False
-    if header.get("alg") != "EdDSA":
-        return False
-    if header.get("kid") != card.kid:
-        return False
-    try:
-        pub = serialization.load_pem_public_key(card.public_key_pem.encode("ascii"))
+        verifier = DetachedJwsVerifier.from_card(card)
     except (ValueError, TypeError):
         return False
-    if not isinstance(pub, Ed25519PublicKey):
-        return False
-    signing_input = protected_b64.encode("ascii") + b"." + payload
-    try:
-        sig_bytes = _b64url_decode(sig_b64)
-    except (ValueError, binascii.Error):
-        return False
-    try:
-        pub.verify(sig_bytes, signing_input)
-    except InvalidSignature:
-        return False
-    return True
+    return verifier.verify(payload, jws)
