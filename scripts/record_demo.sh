@@ -54,10 +54,14 @@ openssl pkey -in "$KEY" -pubout -out "$OUT/run-receipt.pub.pem"
 # The demo leaves its throwaway project on disk ("Project left at: …"), which
 # is where the auto-signed receipt lands (.sdd/ is never committable, so the
 # receipt is copied out to the published path below).
-export COLUMNS=100 LINES=30
+#
+# The published recording must show a fully successful run - a failing take
+# is discarded and re-recorded (the demo has some run-to-run variance), up
+# to a bounded number of attempts. The demo's own exit code is the truth
+# signal: 0 only when every seeded task succeeded.
 cat > "$WORK/session-run.sh" <<SESSION
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 cd "$ROOT"
 printf '$ bernstein demo\n'
 sleep 0.4
@@ -65,9 +69,23 @@ BERNSTEIN_AUDIT=1 \
 BERNSTEIN_RUN_RECEIPT_SIGNING_KEY_PATH="$KEY" \
 BERNSTEIN_RUN_RECEIPT_SIGNING_KID=bernstein-demo-run-key \
 uv run --frozen bernstein demo
+echo "\$?" > "$WORK/demo-exit-code"
 SESSION
 chmod +x "$WORK/session-run.sh"
-asciinema rec --quiet --overwrite --command "$WORK/session-run.sh" "$WORK/seg1.cast"
+
+attempt=1
+while :; do
+    asciinema rec --quiet --overwrite --cols 100 --rows 30 \
+        --command "$WORK/session-run.sh" "$WORK/seg1.cast"
+    demo_rc="$(cat "$WORK/demo-exit-code" 2>/dev/null || echo 1)"
+    [ "$demo_rc" = "0" ] && break
+    if [ "$attempt" -ge 3 ]; then
+        echo "error: bernstein demo did not fully succeed in $attempt takes (last exit ${demo_rc}); not publishing a failing run" >&2
+        exit 1
+    fi
+    echo "take $attempt ended with exit ${demo_rc}; re-recording" >&2
+    attempt=$((attempt + 1))
+done
 
 # ── 3. Pull the receipt of exactly that run out of the demo project. ────────
 PROJECT="$(python3 - "$WORK/seg1.cast" <<'PY'
@@ -98,7 +116,8 @@ uv run --frozen bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 SESSION
 chmod +x "$WORK/session-verify.sh"
-asciinema rec --quiet --overwrite --command "$WORK/session-verify.sh" "$WORK/seg2.cast"
+asciinema rec --quiet --overwrite --cols 100 --rows 30 \
+    --command "$WORK/session-verify.sh" "$WORK/seg2.cast"
 
 # ── 5. Join the segments into the published cast. ───────────────────────────
 python3 - "$WORK/seg1.cast" "$WORK/seg2.cast" "$OUT/demo.cast" <<'PY'
