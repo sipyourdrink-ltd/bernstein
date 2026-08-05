@@ -51,7 +51,14 @@ envelope whose run, agent, scope, request, arguments, intent, monotonic call
 index, frozen journal head, chain predecessor, anchor reference, key id, and
 attestation time verify against the public key frozen at spawn. Missing,
 reordered, duplicated, substituted, or mismatched evidence deterministically
-downgrades to `observed`.
+downgrades to `observed`. Absence fails closed in both shapes: an attestation
+attributed to a run whose anchor binds a tool signing key but carrying no
+envelope downgrades, and an attestation that cannot be attributed to any
+anchored run while a key-bearing identity anchor exists downgrades the same
+way — emptying `run_id` is not an escape from the per-run rule. A run whose
+anchor binds no tool key keeps its HMAC-only semantics: missing envelopes on
+its attestations do not downgrade a verdict that the chain-derived walk would
+otherwise report.
 
 ## Trust boundary
 
