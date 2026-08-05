@@ -646,6 +646,7 @@ nav:
       - Adapter contracts: contributing/adapter-contracts.md
       - Writing adapters: adapters/ADAPTER_GUIDE.md
       - Flake handling: contributing/flake-handling.md
+      - Demo recording: contributing/demo-recording.md
       - CI apps: maintainers/ci-apps.md
       - Extended static analysis: ci/extended-static-analysis.md
       - Release process: operations/release.md

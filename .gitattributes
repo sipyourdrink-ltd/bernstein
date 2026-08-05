@@ -6,3 +6,6 @@
 # pinned by tests/unit/test_openapi_snapshot_drift.py; edit the routes, not
 # the snapshot.
 docs/reference/openapi.json linguist-generated=true
+docs/assets/demo-run/demo.cast linguist-generated
+docs/assets/demo-run/demo.gif linguist-generated
+docs/assets/demo-run/run-receipt.json linguist-generated

@@ -55,7 +55,16 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 pip, uv, brew, dnf, npm, Docker, and the air-gapped wheelhouse are covered in the [install guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/install.md).
 
-<img alt="Bernstein in action: parallel AI agents orchestrated in real time" src="docs/assets/in-action-small.gif" width="700">
+<img alt="A real bernstein demo run: mock agents fix four seeded bugs in parallel worktrees, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
+
+The recording above is a real run, and it ships with its own proof: the cast, the signed run receipt that exact run produced, and the public key that pins it live together in [`docs/assets/demo-run/`](docs/assets/demo-run/). Verify the run you just watched, offline:
+
+```bash
+bernstein verify receipt docs/assets/demo-run/run-receipt.json \
+    --public-key docs/assets/demo-run/run-receipt.pub.pem
+```
+
+CI re-verifies the committed receipt on every push — and proves a tampered copy fails — so the published evidence cannot rot into a decorative file. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
 
 ### prove a run
 

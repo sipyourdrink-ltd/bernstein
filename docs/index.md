@@ -19,8 +19,8 @@ search:
 **Reproducible multi-agent runs. Verifiable results. Any CLI coding agent.**
 
 <figure markdown>
-  ![Bernstein in action - parallel AI agents orchestrated in real time](assets/in-action-small.gif){ loading=lazy width="700" }
-  <figcaption>Bernstein in action - parallel AI agents orchestrated in real time</figcaption>
+  ![A real bernstein demo run - mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline](assets/demo-run/demo.gif){ loading=lazy width="820" }
+  <figcaption>A real recorded run - its signed receipt and public key ship next to this recording, and CI re-verifies them on every push</figcaption>
 </figure>
 
 ---
