@@ -101,9 +101,23 @@ if not m:
 print(m[-1])
 PY
 )"
-RECEIPT="$(find "$PROJECT/.sdd/runs" -name run-receipt.json | sort | tail -1)"
-[ -n "$RECEIPT" ] || { echo "error: no run-receipt.json under $PROJECT/.sdd/runs - was receipt signing configured?" >&2; exit 1; }
-cp "$RECEIPT" "$OUT/run-receipt.json"
+# Build and sign the receipt post-hoc with the CLI's own offline path.
+# The auto-written receipt only lands when the orchestrator finalizes
+# gracefully, and a fast successful demo is torn down before that happens
+# (SIGKILL after the 3s SIGTERM grace); `bernstein verify run` instead
+# re-derives the receipt from the always-on journal and lineage spine the
+# recorded run left on disk, which is also exactly the flow the README's
+# "prove a run" section documents.
+# .sdd/runs/ holds the timestamp-named orchestrator run alongside task-*
+# per-task journals; a bare `ls | tail -1` picks a task journal (they sort
+# after the digits) and signs a one-event receipt for the wrong journal.
+RUN_ID="$(find "$PROJECT/.sdd/runs" -maxdepth 1 -mindepth 1 -type d -name '[0-9]*' -printf '%f\n' | sort | tail -1)"
+[ -n "$RUN_ID" ] || { echo "error: no timestamp-named run under $PROJECT/.sdd/runs" >&2; exit 1; }
+uv run --frozen bernstein verify run "$RUN_ID" \
+    -w "$PROJECT" \
+    --signing-key-path "$KEY" \
+    --signing-key-id bernstein-demo-run-key \
+    -o "$OUT/run-receipt.json"
 
 # ── 4. Segment 2: verify the committed receipt offline, on camera. ──────────
 cat > "$WORK/session-verify.sh" <<SESSION
