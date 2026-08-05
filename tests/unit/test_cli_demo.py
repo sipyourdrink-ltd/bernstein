@@ -454,3 +454,120 @@ def test_demo_restores_the_operators_prior_merge_policy(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert os.environ[ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH] == "0"
+
+
+# ---------------------------------------------------------------------------
+# _poll_demo_completion - the /status shape and the early exit (issue #3433)
+# ---------------------------------------------------------------------------
+
+
+def test_poll_exits_early_on_the_dict_shaped_status_payload():
+    """``/status`` returns tasks as ``{"count": N, "items": [...]}``. The
+    poll used to iterate that dict, crash on its string keys inside
+    ``_emit_task_events``, and have the crash eaten by ``suppress()`` on
+    every tick - so the early-exit condition was unreachable and every
+    demo run burned the full timeout with a blank spinner (issue #3433).
+    """
+    import time as _time
+
+    payload = {
+        "tasks": {
+            "count": 2,
+            "items": [
+                {"id": "t1", "title": "a", "role": "backend", "status": "done"},
+                {"id": "t2", "title": "b", "role": "qa", "status": "done"},
+            ],
+        },
+    }
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch.object(run_confirm.httpx, "get", return_value=resp):
+        start = _time.monotonic()
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 6.0)
+        elapsed = _time.monotonic() - start
+    assert elapsed < 2.0, f"poll must exit on the first tick when all tasks are done; took {elapsed:.1f}s"
+
+
+def test_poll_processing_crashes_are_loud():
+    """The suppress covers only the HTTP fetch. A crash while processing
+    rows must propagate: silently eating it on every tick is exactly how
+    the dead early-exit hid inside a green-looking demo (issue #3433).
+    """
+    import time as _time
+
+    import pytest as _pytest
+
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"tasks": {"count": 1, "items": [{"id": "t", "status": "done"}]}}
+    with (
+        patch.object(run_confirm.httpx, "get", return_value=resp),
+        patch.object(run_confirm, "_emit_task_events", side_effect=RuntimeError("boom")),
+        _pytest.raises(RuntimeError, match="boom"),
+    ):
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", _time.monotonic() + 4.0)
+
+
+def test_poll_keeps_waiting_while_a_failed_task_may_still_be_retried():
+    """A failed task is not terminal: the lifecycle schedules a retry with a
+    fresh task id after ``retry_delay_s``. Exiting on ``done + failed``
+    tears the demo down while the retry that would have fixed the bug is
+    still pending (observed live: 3/4 at 21 s instead of 4/4). Only an
+    all-done snapshot may end the poll early.
+    """
+    import time as _time
+
+    payload = {
+        "tasks": {
+            "count": 2,
+            "items": [
+                {"id": "t1", "title": "a", "role": "backend", "status": "done"},
+                {"id": "t2", "title": "b", "role": "qa", "status": "failed"},
+            ],
+        },
+    }
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch.object(run_confirm.httpx, "get", return_value=resp):
+        start = _time.monotonic()
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 3.0, expected_total=2)
+        elapsed = _time.monotonic() - start
+    assert elapsed >= 2.9, f"a failed task must keep the poll alive for retries; exited after {elapsed:.1f}s"
+
+
+def test_poll_exits_once_the_seeded_count_is_done_despite_failed_rows():
+    """A retried run can never have all rows done - the failed original
+    keeps its status forever while its retry (fresh id) succeeds - so the
+    exit must compare done rows against the seeded count, the same
+    denominator the summary clamps to. Observed live pre-fix: a retried
+    4/4 run still burned the full deadline.
+    """
+    import time as _time
+
+    payload = {
+        "tasks": {
+            "count": 3,
+            "items": [
+                {"id": "t1", "title": "a", "role": "backend", "status": "done"},
+                {"id": "t2", "title": "b", "role": "qa", "status": "failed"},
+                {"id": "t2r", "title": "b", "role": "qa", "status": "done"},
+            ],
+        },
+    }
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = payload
+    with patch.object(run_confirm.httpx, "get", return_value=resp):
+        start = _time.monotonic()
+        run_confirm._poll_demo_completion("http://127.0.0.1:1", start + 6.0, expected_total=2)
+        elapsed = _time.monotonic() - start
+    assert elapsed < 2.0, f"seeded count reached: poll must exit despite the failed original; took {elapsed:.1f}s"
+
+
+def test_status_rows_unwrap_tolerates_all_known_shapes():
+    """One shared unwrap for both /status consumers: the wrapped dict form,
+    the bare-list form, and garbage all resolve without raising."""
+    rows = [{"id": "t"}]
+    assert run_confirm._status_task_rows({"tasks": {"count": 1, "items": rows}}) == rows
+    assert run_confirm._status_task_rows({"tasks": rows}) == rows
+    assert run_confirm._status_task_rows({"tasks": {"count": 1, "items": "bad"}}) == []
+    assert run_confirm._status_task_rows({"tasks": "bad"}) == []
+    assert run_confirm._status_task_rows(["not-a-dict"]) == []

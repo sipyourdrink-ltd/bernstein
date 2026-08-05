@@ -540,15 +540,7 @@ def _fetch_demo_outcome(server_url: str, *, expected_total: int) -> _DemoOutcome
         resp = httpx.get(f"{server_url}/status", timeout=3.0, headers=auth_headers())
         if resp.status_code == 200:
             payload = resp.json()
-            # /status returns tasks as {"count": N, "items": [...]}; tolerate a
-            # bare list too. Iterating the dict form would yield its string keys
-            # and crash on ``t.get`` (the historical AttributeError, #2075), so
-            # unwrap to the items list and keep only dict rows.
-            raw_tasks = payload.get("tasks", [])
-            if isinstance(raw_tasks, dict):
-                raw_tasks = raw_tasks.get("items", [])
-            if isinstance(raw_tasks, list):
-                tasks_data = [t for t in raw_tasks if isinstance(t, dict)]
+            tasks_data = _status_task_rows(payload)
             total_cost = float(payload.get("total_cost_usd", 0.0) or 0.0)
 
     # Count done against the seeded set. A failed task spawns a retry task with a
@@ -678,8 +670,39 @@ def cook(
         console.print("[yellow]Recipe monitor timed out before a final status snapshot was available.[/yellow]")
 
 
-def _poll_demo_completion(server_url: str, deadline: float) -> None:
-    """Poll demo server for task completion with live progress output."""
+def _status_task_rows(payload: Any) -> list[dict[str, Any]]:
+    """Unwrap the ``/status`` payload's task rows.
+
+    ``/status`` returns ``tasks`` as ``{"count": N, "items": [...]}``;
+    tolerate a bare list too. Iterating the dict form yields its string
+    keys and crashes on ``t.get`` - the historical AttributeError
+    (#2075), fixed in ``_fetch_demo_outcome`` but re-grown in the
+    completion poll, where the enclosing ``suppress()`` ate the crash on
+    every tick and the demo always ran to its full timeout (issue
+    #3433). One shared unwrap, so the next ``/status`` shape change
+    breaks one place, loudly, under test.
+    """
+    if not isinstance(payload, dict):
+        return []
+    raw_tasks = payload.get("tasks", [])
+    if isinstance(raw_tasks, dict):
+        raw_tasks = raw_tasks.get("items", [])
+    if not isinstance(raw_tasks, list):
+        return []
+    return [t for t in raw_tasks if isinstance(t, dict)]
+
+
+def _poll_demo_completion(server_url: str, deadline: float, *, expected_total: int = 0) -> None:
+    """Poll demo server for task completion with live progress output.
+
+    ``expected_total`` is the seeded task count - the same denominator
+    ``_fetch_demo_outcome`` clamps against. The live list balloons past it
+    as failed tasks spawn retry tasks with fresh ids, and a failed original
+    stays ``failed`` forever even after its retry succeeds, so neither
+    "all rows done" nor "all rows terminal" can ever hold on a retried
+    run. Done-rows reaching the seeded count is the one exit condition
+    that matches what the summary will report.
+    """
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
     seen_done: set[str] = set()
@@ -696,23 +719,39 @@ def _poll_demo_completion(server_url: str, deadline: float) -> None:
         poll_task = progress.add_task("Agents working\u2026", total=None)
 
         while time.monotonic() < deadline:
-            with suppress(Exception):
+            # Suppress only the fetch (server not up yet, transient HTTP
+            # errors, non-JSON body). Row processing runs OUTSIDE the
+            # suppress: a payload-shape crash here must be loud - eating
+            # it silently is exactly how the early-exit condition below
+            # became unreachable for every demo run (issue #3433).
+            payload: Any = None
+            with suppress(httpx.HTTPError, ValueError):
                 resp = httpx.get(f"{server_url}/status", timeout=3.0, headers=auth_headers())
                 if resp.status_code == 200:
                     payload = resp.json()
-                    tasks_list: list[dict[str, Any]] = payload.get("tasks", [])
-                    done_count, failed_count = _emit_task_events(tasks_list, seen_done, seen_failed, progress)
-                    total_tasks = len(tasks_list)
-                    progress.update(
-                        poll_task,
-                        description=(
-                            f"Agents working\u2026 "
-                            f"[green]{done_count}[/green]/{total_tasks} bugs fixed"
-                            + (f"  [red]{failed_count} failed[/red]" if failed_count else "")
-                        ),
-                    )
-                    if total_tasks > 0 and done_count + failed_count >= total_tasks:
-                        break
+            if payload is not None:
+                tasks_list = _status_task_rows(payload)
+                done_count, failed_count = _emit_task_events(tasks_list, seen_done, seen_failed, progress)
+                total_tasks = len(tasks_list)
+                progress.update(
+                    poll_task,
+                    description=(
+                        f"Agents working\u2026 "
+                        f"[green]{done_count}[/green]/{total_tasks} bugs fixed"
+                        + (f"  [red]{failed_count} failed[/red]" if failed_count else "")
+                    ),
+                )
+                # Leave early only when the seeded count is DONE. A failed
+                # row is not terminal (the lifecycle schedules a retry with
+                # a fresh id after retry_delay_s), so exiting on
+                # done+failed tears the demo down while a retry that would
+                # have fixed the bug is still pending; and a retried run
+                # can never have ALL rows done, because the failed original
+                # keeps its status forever. Runs that never reach the
+                # seeded count wait out the deadline, exactly as before.
+                target = expected_total if expected_total > 0 else total_tasks
+                if total_tasks > 0 and done_count >= target:
+                    break
             time.sleep(2)
 
 
@@ -892,7 +931,7 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
             cli=detected,
         )
 
-        _poll_demo_completion(server_url, orchestration_start + timeout)
+        _poll_demo_completion(server_url, orchestration_start + timeout, expected_total=len(DEMO_TASKS))
         # Snapshot the outcome while the server is still alive: cleanup below
         # tears it down, so a query after that would read an empty list.
         outcome = _fetch_demo_outcome(server_url, expected_total=len(DEMO_TASKS))
