@@ -397,3 +397,80 @@ def test_mock_without_git_repo_degrades_to_log_evidence(tmp_path: Path) -> None:
     text = log_path.read_text(encoding="utf-8")
     assert any(line.startswith("Modified: app.py") for line in text.splitlines())
     assert "commit skipped" in text
+
+
+def test_noop_task_neither_commits_nor_claims_evidence(tmp_path: Path) -> None:
+    """A task whose fix pattern is absent (already fixed) must not commit
+    anything - especially not unrelated worktree edits swept up by broad
+    staging - and must not emit a ``Modified:`` evidence line for work it
+    did not do (finding 3722894413).
+    """
+
+    def _count(project: Path) -> int:
+        out = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=project,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return int(out.strip())
+
+    project = _make_demo_workdir(tmp_path)
+    # First run applies the fix and commits it; the rerun sees no pattern.
+    _run_mock_script(project, "off_by_one", tmp_path)
+    after_first = _count(project)
+    # An unrelated edit a resumed worktree might carry.
+    unrelated = project / "requirements.txt"
+    unrelated.write_text(unrelated.read_text() + "\n# unrelated local edit\n")
+
+    log_path = project / ".sdd" / "runtime" / "agent-rerun.log"
+    task_info = json.dumps({"workdir": str(project), "task_name": "off_by_one", "log_path": str(log_path)})
+    script = tmp_path / "mock_script.py"
+    subprocess.run([sys.executable, str(script), task_info], check=True, timeout=60, capture_output=True)
+
+    assert _count(project) == after_first
+    assert "Modified:" not in log_path.read_text(encoding="utf-8")
+    porcelain = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert " M requirements.txt" in porcelain
+
+
+def test_commit_contains_only_the_fixed_file(tmp_path: Path) -> None:
+    """The task's commit must carry exactly the file the fix mutated; an
+    unrelated dirty file in the worktree stays uncommitted (finding
+    3722894413), and the evidence line lands only after the commit
+    (finding 3722894421 - ordering pinned via the log).
+    """
+    project = _make_demo_workdir(tmp_path)
+    unrelated = project / "requirements.txt"
+    unrelated.write_text(unrelated.read_text() + "\n# unrelated local edit\n")
+
+    log_path = _run_mock_script(project, "health_status", tmp_path)
+
+    committed = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert committed == ["app.py"]
+    porcelain = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert " M requirements.txt" in porcelain
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    committed_at = next(i for i, ln in enumerate(lines) if "Committed fix:" in ln)
+    evidence_at = next(i for i, ln in enumerate(lines) if ln.startswith("Modified: app.py"))
+    assert committed_at < evidence_at
