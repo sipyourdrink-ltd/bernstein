@@ -69,16 +69,18 @@ class RuleSelectableTask(Protocol):
     """The narrow slice of a task the rule layer matches against.
 
     Deliberately not a widening of ``RoutableTask`` (which the TF-IDF
-    auto-route owns): rules read only ``owned_files`` and ``task_type``.
-    The resolver reads ``task_type`` via ``getattr`` and normalizes it to
-    its lowercase token (an enum member's ``value``, or a bare string),
-    defaulting to ``"standard"``, so callers whose task type lacks the
-    field (e.g. the injector's local ``Task`` protocol) still resolve
-    deterministically.
+    auto-route owns), and deliberately requiring only ``owned_files`` —
+    the one field every caller must have. ``task_type`` is read
+    dynamically via ``getattr`` and normalized to its lowercase token (an
+    enum member's ``value``, or a bare string): an absent field defaults
+    to ``"standard"``, a present-but-unrecognized value matches no typed
+    rule. Requiring ``task_type`` here would force callers like the
+    injector (whose local ``Task`` protocol has no such field) into a
+    cast that silences exactly the shape mismatches static checking
+    should catch. Design rationale: ``docs/sdd/skill-selection-rules.md``.
     """
 
     owned_files: list[str]
-    task_type: object
 
 
 @dataclass(frozen=True)

@@ -42,10 +42,7 @@ from bernstein.core.skills.selection_rules import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from bernstein.core.skills.routing import RoutableTask
-    from bernstein.core.skills.selection_rules import RuleSelectableTask
 
     class Task(RoutableTask, Protocol):
         """Task fields used by the skill injector."""
@@ -273,12 +270,10 @@ def inject_skills(
     # Declarative selection rules (issue #3383): a corpus-immune rule layer
     # between role binding and the opt-in TF-IDF auto-route. Existence is a
     # single cheap stat - when the table is absent the loader is never
-    # invoked and behaviour is byte-identical to a rule-less install. The
-    # cast is safe: the local Task protocol lacks ``task_type``, and the
-    # resolver reads it via ``getattr`` with a ``TaskType.STANDARD`` default.
+    # invoked and behaviour is byte-identical to a rule-less install.
     if (skills_source_dir / SELECTION_RULES_FILENAME).is_file():
         rules = load_selection_rules(skills_source_dir)
-        for rule_template in resolve_rule_templates(rules, cast("Sequence[RuleSelectableTask]", tasks)):
+        for rule_template in resolve_rule_templates(rules, tasks):
             if rule_template in trigger_by_template:
                 # Role binding wins for templates selected by both layers.
                 continue
