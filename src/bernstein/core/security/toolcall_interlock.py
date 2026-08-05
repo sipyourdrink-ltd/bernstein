@@ -217,6 +217,22 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
             intent_digest = str(payload.get("intent_digest", "")).strip()
             run_id = str(payload.get("run_id", "")).strip()
             envelope = payload.get("identity_envelope")
+            if envelope is None:
+                # Absence downgrades: an identity-anchored run must carry a
+                # verified envelope on every attestation, or stripping the
+                # envelope from a retained event would silently upgrade the
+                # run to ``complete``. An attestation that cannot be
+                # attributed to any anchored run while an identity anchor
+                # exists fails closed the same way -- emptying ``run_id``
+                # must not be an escape from the per-run rule. Runs whose
+                # anchor binds no tool key keep their legacy semantics.
+                anchored = anchored_runs.get(run_id)
+                if anchored is not None and anchored.get("tool_signing_kid") is not None:
+                    return AttestationVerdict.OBSERVED
+                if anchored is None and any(
+                    prior.get("tool_signing_kid") is not None for prior in anchored_runs.values()
+                ):
+                    return AttestationVerdict.OBSERVED
             if envelope is not None:
                 if run_id not in anchored_runs or anchored_runs[run_id].get("tool_signing_kid") is None:
                     return AttestationVerdict.OBSERVED

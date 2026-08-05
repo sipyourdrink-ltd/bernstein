@@ -152,6 +152,50 @@ async def test_duplicate_dispatch_and_any_signed_binding_mutation_downgrade(tmp_
         assert derive_attestation_verdict(mutated) is AttestationVerdict.OBSERVED
 
 
+@pytest.mark.asyncio
+async def test_identity_anchored_run_downgrades_when_an_attestation_lacks_its_envelope(tmp_path: Any) -> None:
+    """Absence downgrades: stripping the envelope must never upgrade to complete."""
+    provider = _provider(tmp_path)
+    await provider.prepare_dispatch(_intent())
+    events = _events(provider)
+    assert derive_attestation_verdict(events) is AttestationVerdict.COMPLETE
+
+    stripped = deepcopy(events)
+    del stripped[-2]["details"]["identity_envelope"]
+    assert derive_attestation_verdict(stripped) is AttestationVerdict.OBSERVED
+
+
+@pytest.mark.asyncio
+async def test_unattributable_attestation_downgrades_while_an_identity_anchor_exists(tmp_path: Any) -> None:
+    """Emptying run_id is not an escape from the per-run envelope rule."""
+    provider = _provider(tmp_path)
+    await provider.prepare_dispatch(_intent())
+    events = _events(provider)
+
+    unattributable = deepcopy(events)
+    del unattributable[-2]["details"]["identity_envelope"]
+    unattributable[-2]["details"]["run_id"] = ""
+    assert derive_attestation_verdict(unattributable) is AttestationVerdict.OBSERVED
+
+
+@pytest.mark.asyncio
+async def test_legacy_run_without_envelopes_keeps_its_verdict(tmp_path: Any) -> None:
+    """A run whose anchor binds no tool key keeps HMAC-only semantics."""
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    private, public = generate_ed25519_keypair()
+    card = AgentIdentityCard(
+        agent_id="agent-1", role="coder", adapter="codex", model="gpt", created_at=100, expires_at=200
+    )
+    signature = sign_agent_card(card, private, kid="spawn-key")
+    IdentitySpawnAnchor(chain, {"spawn-key": public}, clock=lambda: 150).anchor(
+        run_id="run-1", card=card, signature=signature, run_journal_head="journal:fixed"
+    )
+    provider = NativeToolCallEvidenceProvider(chain)
+    await provider.prepare_dispatch(_intent())
+    events = _events(provider)
+    assert derive_attestation_verdict(events) is AttestationVerdict.COMPLETE
+
+
 def test_domain_separation_rejects_a_valid_lineage_signature() -> None:
     private, _ = generate_ed25519_keypair()
     record = ToolCallIdentityAttestation(
