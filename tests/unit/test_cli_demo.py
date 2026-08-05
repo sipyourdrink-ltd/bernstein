@@ -390,3 +390,67 @@ def test_demo_tasks_content_includes_role():
     """Every demo task must specify a **Role:** field."""
     for task in DEMO_TASKS:
         assert "**Role:**" in task["content"], task["filename"]
+
+
+# ---------------------------------------------------------------------------
+# demo command - default-branch merge escape hatch (issue #3431)
+# ---------------------------------------------------------------------------
+
+
+def test_demo_opts_into_default_branch_merges_for_the_run(tmp_path, monkeypatch):
+    """Demo merges target the throwaway repo's default branch; without the
+    escape hatch every merge is refused as ``target-is-default-branch`` and
+    the summary can only ever report 0 fixed bugs (issue #3431). The opt-in
+    must be live when bootstrap spawns and must not leak past the command.
+    """
+    import os
+
+    from bernstein.core.agents.spawner_merge import ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH
+
+    monkeypatch.delenv(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH, raising=False)
+    seen: dict[str, str | None] = {}
+
+    def _capture_env(*args, **kwargs):
+        seen["at_bootstrap"] = os.environ.get(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH)
+
+    outcome = run_confirm._DemoOutcome(done=4, failed=0, total=4, cost_usd=0.0)
+    runner = CliRunner()
+    with (
+        patch.object(run_confirm, "setup_demo_project"),
+        patch.object(run_confirm, "_poll_demo_completion"),
+        patch.object(run_confirm, "_stop_demo_processes"),
+        patch.object(run_confirm, "_fetch_demo_outcome", return_value=outcome),
+        patch("bernstein.core.bootstrap.bootstrap_from_goal", side_effect=_capture_env),
+        patch("tempfile.mkdtemp", return_value=str(tmp_path)),
+    ):
+        result = runner.invoke(cli, ["demo", "--timeout", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert seen["at_bootstrap"] == "1"
+    assert ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH not in os.environ
+
+
+def test_demo_restores_the_operators_prior_merge_policy(tmp_path, monkeypatch):
+    """An operator's explicit merge-policy setting must survive a demo run
+    unchanged - the demo's opt-in is scoped to the run, not a global flip.
+    """
+    import os
+
+    from bernstein.core.agents.spawner_merge import ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH
+
+    monkeypatch.setenv(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH, "0")
+
+    outcome = run_confirm._DemoOutcome(done=4, failed=0, total=4, cost_usd=0.0)
+    runner = CliRunner()
+    with (
+        patch.object(run_confirm, "setup_demo_project"),
+        patch.object(run_confirm, "_poll_demo_completion"),
+        patch.object(run_confirm, "_stop_demo_processes"),
+        patch.object(run_confirm, "_fetch_demo_outcome", return_value=outcome),
+        patch("bernstein.core.bootstrap.bootstrap_from_goal"),
+        patch("tempfile.mkdtemp", return_value=str(tmp_path)),
+    ):
+        result = runner.invoke(cli, ["demo", "--timeout", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert os.environ[ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH] == "0"

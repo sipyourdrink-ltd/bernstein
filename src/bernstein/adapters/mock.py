@@ -207,6 +207,43 @@ def write_log(path: Path, message: str) -> None:
         f.write(f"{time.time()} {message}\n")
 
 
+def record_modified(log_path: Path, rel_path: str) -> None:
+    """Write the completion-evidence line the orchestrator parses.
+
+    The log aggregator's ``file_modified`` pattern is ^-anchored
+    (``^(?:Modified|Created|Wrote|Updated): <path>``), so this line must
+    start the log line - the usual timestamp prefix would defeat it.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a") as f:
+        f.write(f"Modified: {rel_path}\n")
+
+
+def commit_fix(workdir: Path, log_path: Path, message: str) -> None:
+    """Commit the applied fix on the worktree branch.
+
+    Real agents land their work as commits; the reaper's completion
+    evidence and the merge path both key off them. Degrades to
+    log-evidence only when git is unavailable, the workdir is not a
+    repository, or nothing changed.
+    """
+    import subprocess
+
+    git = [
+        "git",
+        "-c",
+        "user.name=bernstein-mock-agent",
+        "-c",
+        "user.email=mock-agent@bernstein.invalid",
+    ]
+    try:
+        subprocess.run([*git, "add", "-A"], cwd=workdir, check=True, capture_output=True, timeout=30)
+        subprocess.run([*git, "commit", "-m", message], cwd=workdir, check=True, capture_output=True, timeout=30)
+        write_log(log_path, f"Committed fix: {message}")
+    except Exception as exc:
+        write_log(log_path, f"⚠ commit skipped: {exc}")
+
+
 def fix_off_by_one(workdir: Path, log_path: Path) -> None:
     """Fix ITEMS[n] -> ITEMS[n - 1] off-by-one in app.py."""
     app_file = workdir / "app.py"
@@ -225,6 +262,7 @@ def fix_off_by_one(workdir: Path, log_path: Path) -> None:
             ),
         )
         app_file.write_text(content)
+        record_modified(log_path, "app.py")
         write_log(log_path, "✓ Fixed off-by-one: ITEMS[n] → ITEMS[n - 1] + bounds check")
     else:
         write_log(log_path, "⚠ off-by-one pattern not found (already fixed?)")
@@ -247,6 +285,7 @@ def fix_missing_import(workdir: Path, log_path: Path) -> None:
             "    msg = request.args.get(\"msg\", \"\")",
         )
         app_file.write_text(content)
+        record_modified(log_path, "app.py")
         write_log(log_path, "✓ Fixed missing import: added 'request' to flask imports")
     elif "from flask import Flask, jsonify" in content and "request" not in content.split("\n")[1]:
         content = content.replace(
@@ -255,6 +294,7 @@ def fix_missing_import(workdir: Path, log_path: Path) -> None:
             1,
         )
         app_file.write_text(content)
+        record_modified(log_path, "app.py")
         write_log(log_path, "✓ Fixed missing import: added 'request' to flask imports")
     else:
         write_log(log_path, "⚠ missing import pattern not found (already fixed?)")
@@ -272,6 +312,7 @@ def fix_health_status(workdir: Path, log_path: Path) -> None:
     if old_line in content:
         content = content.replace(old_line, new_line)
         app_file.write_text(content)
+        record_modified(log_path, "app.py")
         write_log(log_path, "✓ Fixed health status code: 201 → 200")
     else:
         write_log(log_path, "⚠ health status code pattern not found (already fixed?)")
@@ -295,6 +336,7 @@ def fix_broken_test(workdir: Path, log_path: Path) -> None:
             '\n    ',
         )
         test_file.write_text(content)
+        record_modified(log_path, "tests/test_app.py")
         write_log(log_path, "✓ Fixed broken test: status_code 404 → 200")
     else:
         write_log(log_path, "⚠ broken test pattern not found (already fixed?)")
@@ -390,6 +432,9 @@ def main():
         fix_broken_test(workdir, log_path)
     else:
         write_log(log_path, f"Unknown task type: {task_name} - no-op")
+
+    if task_name in ("off_by_one", "missing_import", "health_status", "broken_test"):
+        commit_fix(workdir, log_path, f"demo: {task_name.replace('_', ' ')}")
 
     time.sleep(0.5)
     write_log(log_path, "Mock agent completed successfully")

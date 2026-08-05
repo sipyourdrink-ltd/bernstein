@@ -865,6 +865,16 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
     server_url = f"http://127.0.0.1:{_DEMO_PORT}"
     orchestration_start = time.monotonic()
 
+    # The demo project is a throwaway temp repo whose default branch IS the
+    # intended integration target: without the documented escape hatch every
+    # agent merge is refused with ``target-is-default-branch`` and the summary
+    # can only ever report 0 fixed bugs (issue #3431). Scoped to this run and
+    # restored on exit so an in-process caller does not inherit demo policy.
+    from bernstein.core.agents.spawner_merge import ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH
+
+    prior_allow_merge = os.environ.get(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH)
+    os.environ[ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH] = "1"
+
     outcome: _DemoOutcome | None = None
     bootstrap_error: Exception | None = None
     try:
@@ -894,6 +904,10 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
         bootstrap_failed(exc).print()
         bootstrap_error = exc
     finally:
+        if prior_allow_merge is None:
+            os.environ.pop(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH, None)
+        else:
+            os.environ[ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH] = prior_allow_merge
         _stop_demo_processes(project_dir)
 
     if outcome is not None and outcome.all_fixed:

@@ -7,6 +7,9 @@ and can be used for integration-style tests without real API calls.
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -297,3 +300,100 @@ def test_mock_default_model_coerces_claude_tier_instead_of_refusing() -> None:
         adapter_default_model=MockAgentAdapter.default_model,
     )
     assert coerced.model == MockAgentAdapter.default_model
+
+
+# ---------------------------------------------------------------------------
+# Completion evidence - the mock must present what real agents present
+# (issue #3431)
+# ---------------------------------------------------------------------------
+
+
+def _make_demo_workdir(tmp_path: Path) -> Path:
+    """Seed the real demo fixture project (Flask app + git repo with HEAD)."""
+    from bernstein.cli.run_confirm import setup_demo_project
+
+    project = tmp_path / "demo-project"
+    project.mkdir()
+    setup_demo_project(project, "mock")
+    return project
+
+
+def _run_mock_script(workdir: Path, task_name: str, tmp_path: Path) -> Path:
+    """Execute the embedded mock-agent script exactly as ``spawn()`` does."""
+    from bernstein.adapters.mock import MockAgentAdapter
+
+    script = tmp_path / "mock_script.py"
+    script.write_text(MockAgentAdapter._build_mock_script())
+    log_path = workdir / ".sdd" / "runtime" / "agent-mock-test.log"
+    task_info = json.dumps({"workdir": str(workdir), "task_name": task_name, "log_path": str(log_path)})
+    subprocess.run(
+        [sys.executable, str(script), task_info],
+        check=True,
+        timeout=60,
+        capture_output=True,
+    )
+    return log_path
+
+
+def test_mock_fix_evidence_parses_into_files_modified(tmp_path: Path) -> None:
+    """The dead-agent reap path auto-completes only when the log aggregator
+    extracts a non-empty ``files_modified``. Prose-only, timestamp-prefixed
+    lines never match its ^-anchored ``file_modified`` pattern - which is how
+    every demo task ended up failed as unverified (issue #3431). The assertion
+    runs through the real consumer, not a string grep of the log.
+    """
+    from bernstein.core.agents.agent_log_aggregator import AgentLogAggregator
+
+    project = _make_demo_workdir(tmp_path)
+    log_path = _run_mock_script(project, "off_by_one", tmp_path)
+
+    summary = AgentLogAggregator(project).parse_log("agent-mock-test", log_path=log_path)
+    assert "app.py" in summary.files_modified
+
+
+def test_mock_fix_commits_on_the_worktree_branch(tmp_path: Path) -> None:
+    """The reap path's second evidence check and the merge path both key off
+    commits on the branch; an edit left uncommitted can never merge back into
+    the demo project (issue #3431).
+    """
+
+    def _count(project: Path) -> int:
+        out = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=project,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return int(out.strip())
+
+    project = _make_demo_workdir(tmp_path)
+    before = _count(project)
+    _run_mock_script(project, "health_status", tmp_path)
+
+    assert _count(project) == before + 1
+    porcelain = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert porcelain.strip() == "", porcelain
+
+
+def test_mock_without_git_repo_degrades_to_log_evidence(tmp_path: Path) -> None:
+    """A workdir that is not a git repository must not crash the agent: the
+    fix is still applied, the ``Modified:`` evidence line still parses, and
+    the skipped commit is recorded instead of raised.
+    """
+    import shutil
+
+    project = _make_demo_workdir(tmp_path)
+    shutil.rmtree(project / ".git")
+
+    log_path = _run_mock_script(project, "off_by_one", tmp_path)
+
+    text = log_path.read_text(encoding="utf-8")
+    assert any(line.startswith("Modified: app.py") for line in text.splitlines())
+    assert "commit skipped" in text
