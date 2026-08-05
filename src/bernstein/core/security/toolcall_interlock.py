@@ -22,6 +22,7 @@ from enum import StrEnum
 from typing import Any, Protocol, cast
 
 from bernstein.core.security.sanitize import sanitize_log
+from bernstein.core.security.toolcall_identity import ToolCallIdentityError, verify_identity_envelope
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,24 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
     Receipt fields such as ``claimed_mode`` are intentionally ignored.
     """
     attestations: dict[str, str] = {}
+    anchored_runs: dict[str, Mapping[str, Any]] = {}
+    anchor_refs: dict[str, str] = {}
+    call_indices: dict[str, int] = {}
+    dispatched: set[str] = set()
     dispatch_count = 0
+    for event in events:
+        event_type = str(event.get("event_type", event.get("event", "")))
+        details = event.get("details")
+        payload: Mapping[str, Any] = cast("Mapping[str, Any]", details) if isinstance(details, Mapping) else event
+        if event_type != "identity.spawn_attestation":
+            continue
+        run_id = str(payload.get("run_id", event.get("resource_id", ""))).strip()
+        if not run_id or run_id in anchored_runs:
+            return AttestationVerdict.OBSERVED
+        anchored_runs[run_id] = payload
+        event_hmac = str(event.get("hmac", "")).strip()
+        if event_hmac:
+            anchor_refs[run_id] = "hmac:" + event_hmac
     for event in events:
         event_type = str(event.get("event_type", event.get("event", "")))
         details = event.get("details")
@@ -197,7 +215,52 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
         if event_type == "toolcall.attestation":
             reference = str(payload.get("attestation_ref", "")).strip()
             intent_digest = str(payload.get("intent_digest", "")).strip()
+            run_id = str(payload.get("run_id", "")).strip()
+            envelope = payload.get("identity_envelope")
+            if envelope is not None:
+                if run_id not in anchored_runs or anchored_runs[run_id].get("tool_signing_kid") is None:
+                    return AttestationVerdict.OBSERVED
+                if not isinstance(envelope, Mapping):
+                    return AttestationVerdict.OBSERVED
+                typed_envelope = cast("Mapping[str, Any]", envelope)
+                try:
+                    record = verify_identity_envelope(
+                        typed_envelope,
+                        anchored_runs[run_id],
+                        expected_intent_digest=intent_digest,
+                        expected_attestation_ref=reference,
+                    )
+                except ToolCallIdentityError:
+                    return AttestationVerdict.OBSERVED
+                expected_index = call_indices.get(run_id, 0) + 1
+                if record.call_index != expected_index:
+                    return AttestationVerdict.OBSERVED
+                call_indices[run_id] = expected_index
+                if (
+                    record.run_journal_head != anchored_runs[run_id].get("run_journal_head")
+                    or record.tool_signing_kid != anchored_runs[run_id].get("tool_signing_kid")
+                    or record.prev_chain_digest != payload.get("prev_chain_digest")
+                    or (run_id in anchor_refs and record.identity_anchor_ref != anchor_refs[run_id])
+                ):
+                    return AttestationVerdict.OBSERVED
+                bindings = {
+                    "run_id": record.run_id,
+                    "agent_id": record.agent_id,
+                    "scope_id": record.scope_id,
+                    "server_name": record.server_name,
+                    "method": record.method,
+                    "tool_name": record.tool_name,
+                    "request_id": record.request_id,
+                    "span_id": record.span_id,
+                    "args_digest": record.args_digest,
+                    "call_index": record.call_index,
+                    "identity_anchor_ref": record.identity_anchor_ref,
+                }
+                if any(payload.get(key) != value for key, value in bindings.items()):
+                    return AttestationVerdict.OBSERVED
             if reference and intent_digest:
+                if reference in attestations:
+                    return AttestationVerdict.OBSERVED
                 attestations[reference] = intent_digest
             continue
         if event_type != "toolcall.enforced_dispatch":
@@ -205,8 +268,14 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
         dispatch_count += 1
         reference = str(payload.get("attestation_ref", "")).strip()
         intent_digest = str(payload.get("intent_digest", "")).strip()
-        if not reference or not intent_digest or attestations.get(reference) != intent_digest:
+        if (
+            not reference
+            or not intent_digest
+            or reference in dispatched
+            or attestations.get(reference) != intent_digest
+        ):
             return AttestationVerdict.OBSERVED
+        dispatched.add(reference)
     if dispatch_count == 0:
         return AttestationVerdict.OBSERVED
     return AttestationVerdict.COMPLETE

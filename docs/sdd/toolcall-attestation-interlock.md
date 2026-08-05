@@ -45,7 +45,12 @@ reports `observed`; a caller-supplied `complete` label has no authority.
 
 `complete` requires at least one `toolcall.enforced_dispatch` marker and a
 preceding `toolcall.attestation` with the same attestation reference and intent
-digest. Missing, reordered, or mismatched evidence deterministically
+digest. Each attestation reference may authorize at most one dispatch. For an
+identity-anchored run, every attestation must also carry a valid signed identity
+envelope whose run, agent, scope, request, arguments, intent, monotonic call
+index, frozen journal head, chain predecessor, anchor reference, key id, and
+attestation time verify against the public key frozen at spawn. Missing,
+reordered, duplicated, substituted, or mismatched evidence deterministically
 downgrades to `observed`.
 
 ## Trust boundary
@@ -58,10 +63,19 @@ SHA-256 digest is recorded. If the second append fails, no evidence handle is
 returned, the connector remains unreachable in enforced mode, and the lone
 attestation projects as `observed` rather than `complete`.
 
-This native provider proves host-enforced capture and durable chain ordering.
-It does **not** claim per-agent signed identity, issue an identity, or evaluate
-agent policy. Those remain a separate provider layer. External providers can
-implement the same contract without becoming core dependencies.
+With a run identity, lineage signer, and journal-head reader configured, the
+native provider additionally creates a versioned, JCS-canonicalized Ed25519
+identity envelope before either marker is appended. Its signature input is
+domain separated with `bernstein.toolcall.identity-attestation/v1`, so a valid
+signature from another Bernstein evidence family cannot be replayed here. The
+private key remains behind the narrow signer protocol and is never serialized.
+The signed `attested_at_ns` comes from an injected clock, making replay tests
+byte-deterministic.
+
+Legacy HMAC-only construction remains supported. The identity extension does
+**not** issue identities, evaluate policy, provide revocation, require hardware
+keys, or introduce Nxtlinq (or any vendor) as a dependency. External providers
+can implement the same interlock contract without becoming core dependencies.
 
 This boundary does not contain direct filesystem, process, network, or
 connector effects that bypass the host hook. A completeness statement is valid
@@ -75,3 +89,9 @@ parallel load. The bundled in-process provider isolates host overhead; it does
 not measure future signature verification or durable-chain storage. When a
 native provider lands, use the same gateway-level harness so the measured path
 still includes the actual interlock location.
+
+`scripts/bench_toolcall_identity.py` separately compares the native signed
+provider with the native HMAC-only provider at authenticated history depths 1,
+1,000, and 10,000 under concurrency 32. It reports signed p95 overhead,
+throughput regression, and p95-minus-p50 as a lock-wait proxy against the issue
+budgets (1 ms p95 and 10 percent throughput regression).
