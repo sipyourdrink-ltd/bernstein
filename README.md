@@ -57,7 +57,7 @@ pip, uv, brew, dnf, npm, Docker, and the air-gapped wheelhouse are covered in th
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs in parallel worktrees, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
-The recording above is a real run, and it ships with its own proof: the cast, the signed run receipt that exact run produced, and the public key that pins it live together in [`docs/assets/demo-run/`](docs/assets/demo-run/). Verify the run you just watched, offline:
+The recording above is a real run, and it ships with its own proof: the cast, the signed run receipt that exact run produced, and the public key that pins it live together in [`docs/assets/demo-run/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/docs/assets/demo-run). Verify the run you just watched, offline:
 
 ```bash
 bernstein verify receipt docs/assets/demo-run/run-receipt.json \
