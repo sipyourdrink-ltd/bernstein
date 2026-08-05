@@ -51,3 +51,27 @@ def test_a_tampered_copy_of_the_published_receipt_fails_closed(tmp_path: Path) -
     assert result.exit_code == 2, result.output
     assert "TAMPER DETECTED" in result.output
     assert "divergent journal step" in result.output
+
+
+def test_the_recording_and_the_receipt_describe_the_same_run() -> None:
+    """The committed cast ends on an on-camera verification whose header
+    names the run and its journal event count. Those values must equal what
+    the committed receipt declares - otherwise the cast and the receipt can
+    be replaced independently and CI would bless a recording whose proof
+    belongs to some other run (finding 3723934551).
+    """
+    import re
+
+    cast_lines = (_DEMO_RUN / "demo.cast").read_text(encoding="utf-8").splitlines()
+    text = "".join(json.loads(line)[2] for line in cast_lines[1:] if line.strip())
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+
+    shown = re.search(r"run=(\S+)\s+journal_events=(\d+)", text)
+    assert shown is not None, "the cast never shows the receipt verification header"
+
+    receipt = json.loads(_RECEIPT.read_text(encoding="utf-8"))
+    assert shown.group(1) == receipt["run_id"]
+    assert int(shown.group(2)) == receipt["journal"]["event_count"]
+
+    # The verdict the loop rests on must be the provenance-grade one.
+    assert "OK (provenance: pinned key)" in text

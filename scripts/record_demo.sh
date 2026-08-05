@@ -45,10 +45,14 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$OUT"
 
-# ── 1. Mint the receipt keypair. Private key never leaves $WORK. ────────────
+# ── 1. Mint the receipt keypair, STAGED. Private key never leaves $WORK, and
+# the public key is not published yet either: a failed regeneration must
+# never leave $OUT holding a new key next to an old receipt (the pair only
+# moves together, after it verifies - see step 4).
 KEY="$WORK/demo-receipt.key.pem"
+PUB="$WORK/run-receipt.pub.pem"
 openssl genpkey -algorithm Ed25519 -out "$KEY"
-openssl pkey -in "$KEY" -pubout -out "$OUT/run-receipt.pub.pem"
+openssl pkey -in "$KEY" -pubout -out "$PUB"
 
 # ── 2. Segment 1: the real run, recorded. ───────────────────────────────────
 # The demo leaves its throwaway project on disk ("Project left at: …"), which
@@ -117,9 +121,21 @@ uv run --frozen bernstein verify run "$RUN_ID" \
     -w "$PROJECT" \
     --signing-key-path "$KEY" \
     --signing-key-id bernstein-demo-run-key \
-    -o "$OUT/run-receipt.json"
+    -o "$WORK/run-receipt.json"
 
-# ── 4. Segment 2: verify the committed receipt offline, on camera. ──────────
+# ── 3b. Verify the STAGED pair, then publish it as one unit. ────────────────
+# The receipt and its public key only reach $OUT together, and only after
+# the exact offline check a reader will run has succeeded against the
+# staged copies - a failure anywhere above leaves the previously committed
+# pair untouched (finding: a half-regenerated $OUT held a fresh key beside
+# a stale receipt, which cannot verify).
+uv run --frozen bernstein verify receipt "$WORK/run-receipt.json" --public-key "$PUB"
+cp "$WORK/run-receipt.json" "$OUT/run-receipt.json"
+cp "$PUB" "$OUT/run-receipt.pub.pem"
+
+# ── 4. Segment 2: verify the just-published pair offline, on camera. ────────
+# This must run against the real committed paths - the command shown in the
+# recording is the command the README tells the reader to run.
 cat > "$WORK/session-verify.sh" <<SESSION
 #!/usr/bin/env bash
 set -euo pipefail
@@ -133,8 +149,8 @@ chmod +x "$WORK/session-verify.sh"
 asciinema rec --quiet --overwrite --cols 100 --rows 30 \
     --command "$WORK/session-verify.sh" "$WORK/seg2.cast"
 
-# ── 5. Join the segments into the published cast. ───────────────────────────
-python3 - "$WORK/seg1.cast" "$WORK/seg2.cast" "$OUT/demo.cast" <<'PY'
+# ── 5. Join the segments, staged. ───────────────────────────────────────────
+python3 - "$WORK/seg1.cast" "$WORK/seg2.cast" "$WORK/demo.cast" <<'PY'
 import json, sys
 
 def load(path):
@@ -159,7 +175,7 @@ PY
 # Speed is derived from the cast so one loop stays near the ~12 s budget
 # regardless of how long the live run took; the last frame (the verify
 # verdict) holds for 3 s so the loop rests on the proof.
-SPEED="$(python3 - "$OUT/demo.cast" <<'PY'
+SPEED="$(python3 - "$WORK/demo.cast" <<'PY'
 import json, sys
 events = [json.loads(ln) for ln in open(sys.argv[1], encoding="utf-8").read().splitlines()[1:] if ln.strip()]
 duration = events[-1][0] if events else 1.0
@@ -173,7 +189,12 @@ agg --theme dracula \
     --speed "$SPEED" \
     --fps-cap 24 \
     --last-frame-duration 3 \
-    "$OUT/demo.cast" "$OUT/demo.gif"
+    "$WORK/demo.cast" "$WORK/demo.gif"
+
+# Publish the recording last: cast and gif land together, after the render
+# succeeded, so a failed render never leaves $OUT with a cast/gif mismatch.
+mv "$WORK/demo.cast" "$OUT/demo.cast"
+mv "$WORK/demo.gif" "$OUT/demo.gif"
 
 echo
 echo "published to docs/assets/demo-run/:"
