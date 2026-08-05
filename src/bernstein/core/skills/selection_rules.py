@@ -15,9 +15,11 @@ A rule has two axes:
 
 - ``owned_files`` (required): one glob or a list of globs, matched
   fnmatch-style against each task's ``owned_files`` entries.
-- ``task_type`` (optional): one of the :class:`~bernstein.core.tasks.models.TaskType`
-  values (``standard``, ``upgrade_proposal``, ``fix``, ``research``).
-  When present, both axes must match on the same task.
+- ``task_type`` (optional): one of the task-type tokens ``standard``,
+  ``upgrade_proposal``, ``fix``, ``research`` (the ``value`` spellings of
+  the scheduler's ``TaskType`` enum, matched by token so this module never
+  imports scheduler internals). When present, both axes must match on the
+  same task.
 
 There is deliberately no ``role`` axis - role -> skill binding is owned
 by ``ROLE_SKILL_MAP`` in the injector, and the schema rejects a ``role``
@@ -38,8 +40,6 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 
 import yaml
 
-from bernstein.core.tasks.models import TaskType
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
@@ -50,9 +50,14 @@ SELECTION_RULES_FILENAME: Final[str] = "selection-rules.yaml"
 #: Keys a rule mapping may carry. Anything else is rejected at load.
 _ALLOWED_RULE_KEYS: Final[frozenset[str]] = frozenset({"owned_files", "task_type", "skills"})
 
-#: Lowercase task-type token -> enum member, derived from the enum so the
-#: schema can never drift from :class:`TaskType`.
-_TASK_TYPE_BY_TOKEN: Final[dict[str, TaskType]] = {member.value: member for member in TaskType}
+#: Lowercase task-type tokens the schema accepts - the ``value`` spellings of
+#: ``bernstein.core.tasks.models.TaskType``. Restated here rather than
+#: imported: this module is reached from the adapters layer through the skill
+#: injector, and the import-linter contract forbids adapters importing
+#: scheduler internals, so task types are matched by token, never by enum
+#: identity. ``test_known_task_type_tokens_track_the_scheduler_enum`` pins
+#: this set against the real enum so the two cannot drift silently.
+_KNOWN_TASK_TYPE_TOKENS: Final[frozenset[str]] = frozenset({"standard", "upgrade_proposal", "fix", "research"})
 
 
 class SelectionRuleError(ValueError):
@@ -64,14 +69,15 @@ class RuleSelectableTask(Protocol):
 
     Deliberately not a widening of ``RoutableTask`` (which the TF-IDF
     auto-route owns): rules read only ``owned_files`` and ``task_type``.
-    The resolver reads ``task_type`` via ``getattr`` with a
-    ``TaskType.STANDARD`` default, so callers whose task type lacks the
+    The resolver reads ``task_type`` via ``getattr`` and normalizes it to
+    its lowercase token (an enum member's ``value``, or a bare string),
+    defaulting to ``"standard"``, so callers whose task type lacks the
     field (e.g. the injector's local ``Task`` protocol) still resolve
     deterministically.
     """
 
     owned_files: list[str]
-    task_type: TaskType
+    task_type: object
 
 
 @dataclass(frozen=True)
@@ -79,7 +85,7 @@ class SelectionRule:
     """One validated rule: globs (+ optional task type) -> skill templates."""
 
     owned_files: tuple[str, ...]
-    task_type: TaskType | None
+    task_type: str | None
     templates: tuple[str, ...]
 
 
@@ -185,18 +191,22 @@ def _rule_matches_task(rule: SelectionRule, task: RuleSelectableTask) -> bool:
     return any(fnmatchcase(entry, pattern) for pattern in rule.owned_files for entry in owned)
 
 
-def _coerce_task_type(value: object) -> TaskType:
-    """Normalize a task's ``task_type`` field to a :class:`TaskType`.
+def _coerce_task_type(value: object) -> str:
+    """Normalize a task's ``task_type`` field to its lowercase token.
 
-    The injector's local ``Task`` protocol does not carry ``task_type``,
-    so missing or unrecognized values deterministically default to
-    ``TaskType.STANDARD``.
+    An enum member normalizes through its ``value``; a bare string through
+    itself. The injector's local ``Task`` protocol does not carry
+    ``task_type``, so missing or unrecognized values deterministically
+    default to ``"standard"``. Matching by token rather than enum identity
+    keeps this module import-free of scheduler internals (see
+    ``_KNOWN_TASK_TYPE_TOKENS``).
     """
-    if isinstance(value, TaskType):
-        return value
-    if isinstance(value, str):
-        return _TASK_TYPE_BY_TOKEN.get(value.strip().lower(), TaskType.STANDARD)
-    return TaskType.STANDARD
+    token = getattr(value, "value", value)
+    if isinstance(token, str):
+        normalized = token.strip().lower()
+        if normalized in _KNOWN_TASK_TYPE_TOKENS:
+            return normalized
+    return "standard"
 
 
 def _parse_rule(
@@ -251,19 +261,18 @@ def _parse_owned_files(value: object, *, label: str) -> tuple[str, ...]:
     return tuple(globs)
 
 
-def _parse_task_type(value: object, *, label: str) -> TaskType | None:
-    """Validate the optional ``task_type`` axis against :class:`TaskType`."""
+def _parse_task_type(value: object, *, label: str) -> str | None:
+    """Validate the optional ``task_type`` axis against the known tokens."""
     if value is None:
         return None
     if not isinstance(value, str):
         raise SelectionRuleError(f"{label}: 'task_type' must be a string, got {type(value).__name__}")
     token = value.strip().lower()
-    task_type = _TASK_TYPE_BY_TOKEN.get(token)
-    if task_type is None:
+    if token not in _KNOWN_TASK_TYPE_TOKENS:
         raise SelectionRuleError(
-            f"{label}: unknown task_type {value!r}; valid values are {sorted(_TASK_TYPE_BY_TOKEN)}"
+            f"{label}: unknown task_type {value!r}; valid values are {sorted(_KNOWN_TASK_TYPE_TOKENS)}"
         )
-    return task_type
+    return token
 
 
 def _parse_skills(value: object, *, label: str, skills_source_dir: Path) -> tuple[str, ...]:

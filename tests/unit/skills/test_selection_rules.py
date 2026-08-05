@@ -306,3 +306,17 @@ def test_multi_task_union_semantics(tmp_path: Path) -> None:
     )
     # No task matches -> nothing selected.
     assert resolve_rule_templates(rules, [unrelated]) == ()
+
+
+def test_known_task_type_tokens_track_the_scheduler_enum() -> None:
+    """The restated token set cannot drift from TaskType.
+
+    selection_rules matches task types by token instead of importing the
+    scheduler's enum, because the module is reached from the adapters layer
+    and the import-linter contract forbids adapters importing scheduler
+    internals. This pin is what makes the restatement safe: adding or
+    renaming a TaskType member fails here until the token set follows.
+    """
+    from bernstein.core.skills.selection_rules import _KNOWN_TASK_TYPE_TOKENS
+
+    assert {member.value for member in TaskType} == _KNOWN_TASK_TYPE_TOKENS
