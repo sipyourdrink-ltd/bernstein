@@ -69,6 +69,8 @@ from bernstein.core.tasks.artifacts import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bernstein.core.lineage.artifact_record import ArtifactReceipt
     from bernstein.core.lineage.identity import AgentCard
     from bernstein.core.lineage.signed_write import SignedLineageLog
@@ -157,6 +159,28 @@ def is_artifact_mode(task: Task) -> bool:
     answers ``False`` and keeps the git path untouched.
     """
     return task.artifact_spec.kind is not ArtifactKind.CODE_DIFF
+
+
+def needs_git_worktree(tasks: Sequence[Task]) -> bool:
+    """Return ``True`` when the session spawned for ``tasks`` needs a git worktree.
+
+    The single decision point for git-vs-plain workspace allocation
+    (issue #2996), kept next to :func:`is_artifact_mode` so worktree
+    allocation, batch admission, and the completion path all read one
+    resolver and the two output modes cannot drift.
+
+    A batch containing any ``code_diff`` task completes through the git path
+    (commit, merge-back), so the session must run inside a per-session git
+    worktree. A batch that is artifact-mode throughout completes on signed
+    lineage receipts and never writes through git - it needs an isolated
+    working directory, not a checkout on an agent branch. An empty batch is
+    answered conservatively with ``True``: the callers reject empty batches
+    before allocation, so the value only matters for not weakening isolation
+    if that ever changes.
+    """
+    if not tasks:
+        return True
+    return any(not is_artifact_mode(task) for task in tasks)
 
 
 def artifact_output_path(task: Task) -> str:
@@ -509,5 +533,6 @@ __all__ = [
     "is_artifact_mode",
     "load_artifact",
     "load_artifact_identity",
+    "needs_git_worktree",
     "verify_task_completion",
 ]

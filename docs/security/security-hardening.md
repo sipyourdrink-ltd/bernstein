@@ -332,10 +332,19 @@ command_policy:
 
 ### Git worktree isolation
 
-By default, each agent runs in an isolated git worktree under `.sdd/worktrees/`. This means:
+By default, each coding agent runs in an isolated git worktree under `.sdd/worktrees/`. This means:
 - Agents cannot access each other's in-progress changes
 - A failing agent cannot corrupt the main branch
 - Merge to main only happens after the janitor verifies the output
+
+An artifact-mode task - one that completes on a signed lineage receipt
+rather than a commit - runs in an isolated plain directory under
+`.sdd/workspaces/` instead: a per-session working directory with no
+checkout and no agent branch, so there is nothing to merge back. That
+directory provides the same thing the worktree it replaces provides:
+working-directory separation between agents, not kernel-level isolation.
+The sandbox and network enforcement layers described elsewhere in this
+document are unchanged and orthogonal to a task's output mode.
 
 To inspect an agent's worktree before merge:
 

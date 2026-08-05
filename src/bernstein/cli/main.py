@@ -50,7 +50,8 @@ from bernstein.cli.aliases import ALIASES, aliases_cmd
 from bernstein.cli.audit_cmd import audit_group
 from bernstein.cli.auth_cmd import auth_group, auth_login
 from bernstein.cli.cache_cmd import cache_group
-from bernstein.cli.changelog_cmd import changelog_cmd
+from bernstein.cli.changelog_cmd import changelog_group as changelog_cmd
+from bernstein.cli.changelog_cmd import changelog_run_alias
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
@@ -118,7 +119,9 @@ from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
 from bernstein.cli.recipes_cmd import recipes_group
 from bernstein.cli.report_cmd import report_cmd
-from bernstein.cli.run_changelog_cmd import run_changelog_cmd
+from bernstein.cli.run_changelog_cmd import (
+    run_changelog_default,  # used by changelog group default and run-changelog alias
+)
 from bernstein.cli.scaffold_cmd import scaffold_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
 from bernstein.cli.slo_cmd import slo_cmd
@@ -228,7 +231,13 @@ __all__ = [
     "retro",
     "return_claimed_to_open",
     "review_cmd",
+    # #3142: ``run_changelog_cmd`` was renamed to ``run_changelog_default`` and
+    # the click command moved inside the ``changelog`` group. Re-export under
+    # the old name so any out-of-tree import (``from bernstein.cli.main import
+    # run_changelog_cmd``) keeps working for as long as the deprecated alias
+    # lives; both go away together in a release after the 4.0 line.
     "run_changelog_cmd",
+    "run_changelog_default",
     "save_session_on_stop",
     "scaffold_cmd",
     "security_review_cmd",
@@ -1146,8 +1155,13 @@ cli.add_command(worktrees_group, "worktrees")
 cli.add_command(diff_cmd, "diff")
 cli.add_command(merge_cmd, "merge")
 cli.add_command(migrate_cmd, "migrate")
+# #3142: ``bernstein changelog`` is now a group (default = run-changelog
+# behaviour). ``bernstein run-changelog`` stays as a top-level deprecated
+# alias — removed in a release after the 4.0 line that introduced it — so
+# existing scripts print a notice on stderr rather than silently changing
+# meaning at the bare name.
 cli.add_command(changelog_cmd, "changelog")
-cli.add_command(run_changelog_cmd, "run-changelog")
+cli.add_command(changelog_run_alias, "run-changelog")
 cli.add_command(run_lookup_cmd, "run-lookup")
 cli.add_command(dr_group, "dr")
 cli.add_command(incident_alias, "incident")
@@ -1420,3 +1434,10 @@ cli.add_command(run_service_group, "run-service")
 from bernstein.cli.commands.tournament_cmd import tournament_group  # noqa: E402
 
 cli.add_command(tournament_group, "tournament")
+
+# #3142: ``run_changelog_cmd`` was renamed to ``run_changelog_default`` and its
+# click command moved inside the ``changelog`` group. Re-export under the
+# old name here so any out-of-tree import (``from bernstein.cli.main import
+# run_changelog_cmd``) keeps working for as long as the deprecated alias
+# lives; both go away together in a release after the 4.0 line.
+run_changelog_cmd = run_changelog_default  # intentional back-compat alias (#3142)

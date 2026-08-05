@@ -46,6 +46,7 @@ from bernstein.adapters.plugin_sdk import (
     PluginAdapter,
 )
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
+from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
 
 # --- spawn_for_tasks ---
 
@@ -1260,6 +1261,176 @@ class TestWorktreeIntegration:
         with patch.object(spawner, "_merge_worktree_branch") as mock_merge:
             spawner.reap_completed_agent(session)
             mock_merge.assert_not_called()
+
+
+# --- Artifact-mode workspace allocation (issue #2996) ---
+
+
+class TestArtifactModeWorkspace:
+    """Worktree allocation branches on the batch's resolved output mode.
+
+    An artifact-mode task completes on a signed lineage receipt, never a
+    commit, so its session gets an isolated plain directory instead of a git
+    worktree. These tests inspect what was actually allocated - the worktree
+    manager's call log, the on-disk layout, and the spawner's tracking maps -
+    rather than only the spawn result.
+    """
+
+    @staticmethod
+    def _artifact_task(make_task, *, id: str = "T-report-1", role: str = "analyst"):
+        task = make_task(id=id, role=role, title="Produce the weekly report")
+        task.artifact_spec = ArtifactSpec(kind=ArtifactKind.REPORT, output_path="reports/weekly.md")
+        return task
+
+    def _spawner(self, tmp_path: Path, adapter) -> AgentSpawner:
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        return AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True, default_model="mock-model")
+
+    def test_artifact_task_completes_without_git_worktree_allocated(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        adapter = mock_adapter_factory(pid=500)
+        spawner = self._spawner(tmp_path, adapter)
+
+        with patch.object(spawner._worktree_mgr, "create") as mock_create:
+            task = self._artifact_task(make_task)
+            session = spawner.spawn_for_tasks([task])
+
+        # No git worktree was allocated for the session, anywhere:
+        mock_create.assert_not_called()
+        assert session.id not in spawner._worktree_paths
+        assert not (tmp_path / ".sdd" / "worktrees" / session.id).exists()
+        branches = subprocess.run(
+            ["git", "branch", "--list", f"agent/{session.id}"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert branches.stdout.strip() == ""
+
+        # What it got instead: an isolated plain directory, not a checkout.
+        workspace = tmp_path / ".sdd" / "workspaces" / session.id
+        assert workspace.is_dir()
+        assert not (workspace / ".git").exists()
+        assert spawner._artifact_workdirs[session.id] == workspace
+        assert adapter.spawn.call_args.kwargs["workdir"] == workspace
+
+    def test_code_diff_task_still_allocates_git_worktree(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=501)
+        spawner = self._spawner(tmp_path, adapter)
+
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "pinned"
+        worktree_path.mkdir(parents=True)
+        with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path) as mock_create:
+            session = spawner.spawn_for_tasks([make_task()])
+
+        mock_create.assert_called_once_with(session.id)
+        assert spawner._worktree_paths[session.id] == worktree_path
+        assert session.id not in spawner._artifact_workdirs
+        assert not (tmp_path / ".sdd" / "workspaces" / session.id).exists()
+
+    def test_mixed_batch_keeps_git_worktree(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        """One code_diff task in the batch forces the git path for the session."""
+        adapter = mock_adapter_factory(pid=502)
+        spawner = self._spawner(tmp_path, adapter)
+
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "mixed"
+        worktree_path.mkdir(parents=True)
+        tasks = [
+            self._artifact_task(make_task, id="T-mixed-report", role="backend"),
+            make_task(id="T-mixed-code", role="backend"),
+        ]
+        with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path) as mock_create:
+            session = spawner.spawn_for_tasks(tasks)
+
+        mock_create.assert_called_once_with(session.id)
+        assert session.id not in spawner._artifact_workdirs
+
+    def test_artifact_workspace_cleaned_up_on_reap(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=503)
+        spawner = self._spawner(tmp_path, adapter)
+
+        with patch.object(spawner._worktree_mgr, "create"):
+            session = spawner.spawn_for_tasks([self._artifact_task(make_task)])
+        workspace = spawner._artifact_workdirs[session.id]
+        assert workspace.is_dir()
+        spawner._procs[session.id] = MagicMock()
+
+        with patch.object(spawner, "_merge_worktree_branch") as mock_merge:
+            spawner.reap_completed_agent(session)
+            mock_merge.assert_not_called()
+
+        assert not workspace.exists()
+        assert session.id not in spawner._artifact_workdirs
+
+    def test_cleanup_worktree_removes_artifact_workspace(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        """The dead-agent cleanup entry point covers artifact-mode sessions too."""
+        adapter = mock_adapter_factory(pid=504)
+        spawner = self._spawner(tmp_path, adapter)
+
+        with patch.object(spawner._worktree_mgr, "create"):
+            session = spawner.spawn_for_tasks([self._artifact_task(make_task)])
+        workspace = spawner._artifact_workdirs[session.id]
+
+        with patch.object(spawner._worktree_mgr, "cleanup") as mock_wt_cleanup:
+            spawner.cleanup_worktree(session.id)
+            mock_wt_cleanup.assert_not_called()
+
+        assert not workspace.exists()
+        assert session.id not in spawner._artifact_workdirs
+
+    def test_a_preflight_refusal_after_allocation_leaves_no_orphan_workspace(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """An exception that escapes the spawn after allocation removes the workspace.
+
+        The hard-stop preflights (security floor, admission, sampling-params)
+        run after the workspace is allocated and raise out of the spawn; the
+        leak guard must remove the directory and the tracking entry as the
+        refusal propagates, or a fan-out of refused artifact tasks litters
+        .sdd/workspaces with orphans.
+        """
+        adapter = mock_adapter_factory(pid=505)
+        spawner = self._spawner(tmp_path, adapter)
+
+        with (
+            patch.object(spawner._worktree_mgr, "create"),
+            patch.object(
+                spawner,
+                "_preflight_adapter_security_floor",
+                side_effect=SpawnError("adapter below security floor"),
+            ),
+            pytest.raises(SpawnError, match="below security floor"),
+        ):
+            spawner.spawn_for_tasks([self._artifact_task(make_task)])
+
+        assert spawner._artifact_workdirs == {}
+        workspaces_dir = tmp_path / ".sdd" / "workspaces"
+        assert not workspaces_dir.exists() or list(workspaces_dir.iterdir()) == []
+
+    def test_disabling_worktrees_keeps_artifact_tasks_in_the_checkout_like_code_diff(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """use_worktrees=False means "run in my checkout" for every mode.
+
+        The artifact-mode branch is scoped to worktree-enabled runs on
+        purpose: an operator who disables worktrees asked for in-tree
+        execution, and silently isolating one mode would break that
+        expectation. An artifact task then spawns in the shared workdir
+        exactly like a code_diff task, and no workspace dir is allocated.
+        """
+        adapter = mock_adapter_factory(pid=506)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
+
+        session = spawner.spawn_for_tasks([self._artifact_task(make_task)])
+
+        assert adapter.spawn.call_args.kwargs["workdir"] == tmp_path
+        assert session.id not in spawner._artifact_workdirs
+        assert not (tmp_path / ".sdd" / "workspaces").exists()
 
 
 # --- cleanup_worktree ---

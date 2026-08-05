@@ -22,6 +22,7 @@ scanner.
 | LEVEL 2 - total ratchet | total coverage may never drop below the committed high-water mark |
 | Baseline file | `.coverage-baseline.json` (repo root) |
 | Ratchet script | `scripts/coverage_ratchet.py` |
+| Baseline provenance | records `line_rate`, `head_sha`, `run_id`; re-derive offline with `coverage_ratchet.py verify` |
 | Posture | both ADVISORY (report red, never block) until promoted |
 | Weekly bump | `coverage-ratchet-weekly.yml` raises the diff floor; opens a review PR |
 | Promotion | remove `continue-on-error` (LEVEL 1) / add to required checks (LEVEL 2) |
@@ -39,8 +40,11 @@ to the repo and updated by the ratchet, never hand-edited in normal flow.
 ```json
 {
   "diff_coverage_floor_percent": 85,
-  "total_coverage_percent": 77.51,
-  "updated_at": "2026-05-22T00:00:00+00:00"
+  "head_sha": "11eb64d14162fd69e060811efe193f87cd36b9cc",
+  "line_rate": 0.8281,
+  "run_id": "30886183592",
+  "total_coverage_percent": 82.81,
+  "updated_at": "2026-08-04T06:14:04+00:00"
 }
 ```
 
@@ -55,10 +59,54 @@ too steep for the current trunk.
 | `total_coverage_percent` | high-water mark of total line coverage on `main` | LEVEL 2 ratchet, on a rise |
 | `diff_coverage_floor_percent` | minimum diff coverage every PR must hit | weekly bump PR |
 | `updated_at` | ISO-8601 UTC timestamp of the last write | every write |
+| `line_rate` | raw Cobertura root `line-rate` (0-1) the percentage was rounded from | LEVEL 2 ratchet, with the mark |
+| `head_sha` | commit on `main` the measurement was taken against | LEVEL 2 ratchet, with the mark |
+| `run_id` | CI run whose `coverage-report` artifact supplied the measurement | LEVEL 2 ratchet, with the mark |
 
 `total_coverage_percent` is seeded from a real measurement of `main` (the
 full per-file isolated unit-suite coverage run, identical to the CI shard),
 not a guess, so the ratchet starts honest.
+
+### Provenance: the committed number must be reproducible
+
+`total_coverage_percent` is a *generated* value, so the file records what
+generated it. The last three keys are that record:
+
+- `line_rate` is the report's own unrounded figure, so the committed
+  percentage can be recomputed - `round(line_rate * 100, 2)` - from the
+  committed file alone, with no coverage report and no network.
+- `head_sha` and `run_id` name the tree and the run behind the number, so
+  a mark can be traced back to a measurement instead of being taken on
+  trust.
+
+Worked example - the 82.81 mark above came from CI run `30886183592` on
+`main` at `11eb64d1`, whose Cobertura root reads
+`line-rate="0.8281" lines-valid="233551" lines-covered="193411"`. Both
+routes agree, which is why one stored fraction is enough:
+
+| Route | Arithmetic | Result |
+|---|---|---|
+| stored `line_rate` | `round(0.8281 × 100, 2)` | **82.81** |
+| raw counters | `193411 / 233551 × 100` = 82.8132 | **82.81** |
+
+Check it yourself, offline:
+
+```bash
+uv run python scripts/coverage_ratchet.py verify \
+    --baseline .coverage-baseline.json --require-provenance
+```
+
+**These fields are checked, not decorative.** `check` refuses to run
+against a baseline whose `total_coverage_percent` is not what its own
+`line_rate` rounds to (exit 2, writes nothing), the ratchet re-verifies a
+bumped baseline before opening its PR, and a unit test asserts the
+committed file carries provenance and re-derives. A hand-edited or
+half-updated baseline therefore fails loudly rather than silently
+becoming the new truth.
+
+A baseline written before these fields existed has no `line_rate`. That
+is a warning, not an error - the ratchet still runs, and the next click
+records provenance.
 
 Note: this measured total can differ from the figure a static-analysis
 dashboard reports. The dashboard ingests whatever `coverage.xml` the CI
@@ -90,20 +138,19 @@ is reported as a warning and in the step summary; it does not fail the PR.
 
 ---
 
-## LEVEL 2 - total-coverage monotonic ratchet (per push to main)
+## LEVEL 2 - total-coverage monotonic ratchet (per CI run on main)
 
 Prevents backsliding: total coverage may only hold or rise.
 
-Flow (`.github/workflows/coverage-ratchet.yml`, triggered on push to
-`main`):
+Flow (`.github/workflows/coverage-ratchet.yml`, triggered when a **CI run
+on `main` completes** - `workflow_run`, any conclusion):
 
-1. Resolve the freshest CI run that actually uploaded a `coverage-report`
-   artifact and download it (the same `coverage.xml` the shard produced).
-   Under the rapid-merge cadence ci.yml's
-   `cancel-in-progress` concurrency cancels most main CI runs, so a
-   `workflow_run`/`conclusion == success` trigger almost never fires;
-   searching recent runs for the artifact (cancelled runs may still carry
-   it) is the robust pattern.
+1. Take the `coverage-report` from the CI run that just finished, and
+   check out the commit that run measured
+   (`github.event.workflow_run.head_sha`). Because the run has completed,
+   the artifact either exists now or never will - there is nothing to wait
+   for. See
+   [Which run supplies the measurement](#which-run-supplies-the-measurement).
 2. `scripts/coverage_ratchet.py check` parses the root `line-rate` and
    compares it to `total_coverage_percent`:
    - **measured < baseline** (beyond a 0.05 pp float-jitter tolerance):
@@ -123,6 +170,61 @@ to record the new high-water mark.
 
 The baseline write lives in this separate workflow (not in `ci.yml`) so
 `ci.yml`'s gate jobs never need `contents: write`.
+
+### Which run supplies the measurement
+
+The ratchet may only bump on a measurement of the commit being ratcheted.
+Two things have to be true at once, and they pull against each other:
+
+- **The right commit.** Resolving by "freshest recent run that happens to
+  have a `coverage-report`" takes whatever report exists, including one
+  belonging to a different commit. That records a high-water mark for a
+  tree nobody can identify and makes the next honest measurement look like
+  a regression.
+- **A run that has actually finished.** On a `push` trigger the ratchet
+  and the CI run start from the same event, so the artifact does not exist
+  yet when the ratchet looks. Pinning the commit *without* moving the
+  trigger would leave the ratchet correct and permanently idle - it would
+  skip every commit.
+
+So the trigger is CI completion, not the push:
+
+```yaml
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+```
+
+`types: [completed]` deliberately does **not** filter on conclusion.
+`ci.yml`'s `cancel-in-progress` concurrency cancels most `main` runs under
+the rapid-merge cadence, so firing only on `success` would idle the
+ratchet almost permanently - the reason the original implementation
+avoided `workflow_run` altogether. A cancelled run has usually already
+uploaded `coverage-report` before it was cut, and the event still hands us
+an exact `head_sha` and run id.
+
+From there, two ordered passes:
+
+| Pass | Accepts | Why |
+|---|---|---|
+| 1 | the triggering run itself | the ordinary case; its id and `head_sha` come straight from the event |
+| 2 | any **other completed** run for the same `head_sha` | fallback when the triggering run was cut before the shard uploaded |
+
+Pass 2 widens *which run*, never *which commit*, and ignores runs still in
+flight (they have not finished uploading). So the worst case is a
+**partial** report for the right commit, which understates coverage and
+can therefore cost a bump but never manufacture one.
+
+If no completed run for this commit carries a `coverage-report` (a
+docs-only push, say), the workflow logs a notice and skips. Skipping is
+the correct outcome - the alternative is measuring something else - and
+the next commit's CI completion gets its own chance.
+
+> A `workflow_run` workflow always executes the copy of the file on the
+> default branch, so edits to this workflow take effect only once merged
+> to `main`.
 
 ### Why a missing coverage.xml is not a drop
 
@@ -195,13 +297,31 @@ total coverage. Options, least to most invasive:
 | Situation | Override |
 |---|---|
 | LEVEL 1 false-positive on a PR | gate is advisory by default - no action needed; if promoted, add the missing tests or split the refactor from the behaviour change |
-| LEVEL 2 reports a drop from a *partial* CI run | when the resolved CI run was cancelled mid-shard, its `coverage.xml` understates coverage and the ratchet flags a spurious drop. This is advisory (warning only) and self-heals on the next complete run. Do **not** lower the baseline for this - it is a measurement artifact, not a real regression. Promote LEVEL 2 to blocking only once full-run artifacts are reliable. |
-| Total dips on a pure deletion | the deletion removes covered *and* uncovered lines; if the percentage genuinely dropped, add a test or accept the lower baseline by editing `total_coverage_percent` down in the same PR, with a one-line justification in the PR body |
-| Need to reset the baseline after a large legitimate change | run `scripts/coverage_ratchet.py init --coverage-xml coverage.xml --baseline .coverage-baseline.json` against a fresh measurement and commit the result |
+| LEVEL 2 reports a drop from a *partial* CI run | when the resolved CI run was cancelled mid-shard, its `coverage.xml` understates coverage and the ratchet flags a spurious drop. The run is still the right commit (resolution filters on `head_sha`), so this is a partial measurement, not a mismatched one. Advisory (warning only) and self-heals on the next complete run. Do **not** lower the baseline for this - it is a measurement artifact, not a real regression. Promote LEVEL 2 to blocking only once full-run artifacts are reliable. |
+| Total dips on a pure deletion | the deletion removes covered *and* uncovered lines; if the percentage genuinely dropped, add a test or accept the lower mark - see **Lowering the baseline by hand** below |
+| Need to reset the baseline after a large legitimate change | run `scripts/coverage_ratchet.py init --coverage-xml coverage.xml --baseline .coverage-baseline.json --head-sha "$(git rev-parse HEAD)"` against a fresh measurement and commit the result. This is the preferred reset: it rewrites the mark *and* its provenance together. |
 
-Editing `total_coverage_percent` downward is the explicit, auditable escape
-hatch: it is a committed file change, visible in review, with the
-`updated_at` stamp showing when and (via git blame) who.
+### Lowering the baseline by hand
+
+Still the explicit, auditable escape hatch - a committed file change,
+visible in review, with `updated_at` and `git blame` showing when and who.
+One extra rule now applies:
+
+> **Move `line_rate` with `total_coverage_percent`.** The two must agree
+> (`round(line_rate * 100, 2) == total_coverage_percent`), and `head_sha`
+> should name the commit you measured. Editing one and leaving the other
+> is exactly the half-applied edit the consistency check exists to catch:
+> `check` will exit 2 and the unit test will fail.
+
+Confirm the edit before you push it:
+
+```bash
+uv run python scripts/coverage_ratchet.py verify \
+    --baseline .coverage-baseline.json --require-provenance
+```
+
+If you would rather not hand-maintain the pair, use the `init` reset in
+the table above instead - it derives both from a real report.
 
 ---
 
@@ -212,16 +332,27 @@ hatch: it is a committed file change, visible in review, with the
 uv run python scripts/coverage_ratchet.py check \
     --coverage-xml coverage.xml --baseline .coverage-baseline.json --no-bump
 
+# Re-derive the committed percentage from the baseline alone.
+# Needs no coverage.xml and no network - this is the offline check.
+uv run python scripts/coverage_ratchet.py verify \
+    --baseline .coverage-baseline.json --require-provenance
+
 # Print the current diff-coverage floor.
 uv run python scripts/coverage_ratchet.py show-floor --baseline .coverage-baseline.json
 
 # Re-seed the baseline from a fresh measurement.
 uv run python scripts/coverage_ratchet.py init \
-    --coverage-xml coverage.xml --baseline .coverage-baseline.json --diff-floor 80
+    --coverage-xml coverage.xml --baseline .coverage-baseline.json --diff-floor 80 \
+    --head-sha "$(git rev-parse HEAD)"
 ```
 
-Exit codes: `0` held/rose, `1` dropped (advisory), `2` misconfiguration,
-`3` missing/malformed `coverage.xml` (soft-skip).
+Exit codes: `0` held/rose, `1` dropped (advisory), `2` misconfiguration
+(including a baseline that does not re-derive), `3` missing/malformed
+`coverage.xml` (soft-skip).
+
+`--require-provenance` also fails when the baseline records no `line_rate`
+or no `head_sha`; without the flag those are a warning, so a baseline
+predating provenance still verifies.
 
 ---
 

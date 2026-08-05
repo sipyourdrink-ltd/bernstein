@@ -55,10 +55,30 @@ tasks scored.
 - **Efficiency** — computed from per-task telemetry (`bernstein.eval.metrics.compute_efficiency`).
 - **Reliability** — degrades with crash count, orphan count, and any task
   missing telemetry.
-- **Safety** — zero when the failure taxonomy recorded any test regression.
+- **Safety** — zero when the failure taxonomy recorded any test regression,
+  or when any task's clean-run attestation carries a `DIRTY` verdict (see
+  below).
 
 `eval report` prints the composite score plus this five-way breakdown and the
 per-tier pass rates (smoke/standard/stretch/adversarial).
+
+## Clean-run attestation
+
+A score is only meaningful when the agent never saw the answer. Passing a
+sealed `CleanRunAttestation` (`bernstein.eval.clean_run`) to `evaluate_task`
+attaches it to the task result: the attestation commits to the task's
+ground-truth as keyed HMAC digests (never plaintext) — deriving the task's
+own golden-source material automatically and sealing coverage counts, so
+reference content can neither be silently omitted nor silently absent —
+scans the run's Merkle-chained journal activity against that commitment and
+against the worktree/network scope boundary, and anchors the verdict in the
+`eval-clean-run` lineage spine with a mirror in the HMAC audit chain. A
+`DIRTY` verdict zeroes the `Safety` gate exactly like a test regression;
+without an attestation, scoring is unchanged. Verify offline with
+`bernstein eval clean-run verify <attestation-hash>` — verification
+re-derives the verdict from the embedded evidence and rejects an activity
+set that does not chain to the recorded journal head. Architecture:
+[`docs/sdd/clean-run-attestation.md`](../sdd/clean-run-attestation.md).
 
 ## Failure taxonomy
 
@@ -96,6 +116,7 @@ directory — they do not take a run ID argument.
 - `src/bernstein/eval/golden.py` — golden task loading.
 - `src/bernstein/eval/taxonomy.py` — failure taxonomy.
 - `src/bernstein/eval/metrics.py` — efficiency/reliability/safety component math.
+- `src/bernstein/eval/clean_run.py` — clean-run attestation build/scan/verify.
 - `src/bernstein/cli/commands/eval_benchmark_cmd.py` — `eval run` / `eval report` / `eval failures` commands.
 
 ## Related

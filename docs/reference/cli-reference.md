@@ -442,6 +442,18 @@ The two groups share most flags:
 
 `bernstein eval run` is the typical command for SWE-bench-style evaluations; `bernstein benchmark run` for Bernstein-internal performance benchmarks. See `cli/commands/eval_benchmark_cmd.py:127+` and `:426+`.
 
+`bernstein eval` additionally accepts group-level reliability options — a pass^k alias for `bench run --reliability` that cannot be combined with an eval subcommand:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--reliability K` | none | Run each suite task K times under fixed coordination; emit a signed pass^k reliability receipt. |
+| `--suite NAME` | `golden-v1` | Suite name or `.json` path (`--reliability` mode only). |
+| `--out PATH` | `reliability.json` | Output path for the reliability receipt. |
+| `--scheduler NAME` | `default` | Scheduler name embedded in the receipt. |
+| `--stub-signer` | off | Stub signer instead of the install identity (testing). |
+
+Verification stays on `bernstein bench reliability-verify` / `bernstein bench reliability-check`. (`cli/commands/eval_benchmark_cmd.py:800+`.)
+
 #### `bernstein api-check`
 
 | Flag | Default | Meaning |
@@ -1243,8 +1255,8 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein graph` | Dependency graph (group). | `cli/graph_cmd.py:19` |
 | `bernstein profile` | Task profiling. | `cli/profile_cmd.py:73` |
 | `bernstein evolve` | Self-improvement loop (see [Adapters & agents](#adapters-agents)). | `cli/evolve_cmd.py:48` |
-| `bernstein changelog` | Generate a CHANGELOG entry. | `cli/changelog_cmd.py:314` |
-| `bernstein run-changelog` | Changelog from runs. | `cli/run_changelog_cmd.py:25` |
+| `bernstein changelog` | Changelog from runs (group: bare = agent-produced diffs, `conventional` subcommand = from conventional commits). | `cli/changelog_cmd.py:405` |
+| `bernstein run-changelog` | Deprecated alias for `bernstein changelog` (removed in a later release). | `cli/changelog_cmd.py:533` |
 | `bernstein checkpoint` | Save progress (see [Run & control](#run-control)). | `cli/commands/checkpoint_cmd.py:49` |
 | `bernstein voice` / `bernstein listen` | Voice control (experimental). | `cli/voice_cmd.py:437` |
 | `bernstein install-hooks` | Install git hooks. | `cli/commands/advanced_cmd.py:448` |

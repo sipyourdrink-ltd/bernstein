@@ -32,7 +32,7 @@
 
 ---
 
-Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination loop - so runs are reproducible end to end. Every task runs in its own git worktree behind lint/type/test gates. Results stay checkable after the fact: an always-on lineage spine and replay journal, plus an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) with receipts you can verify offline. Air-gap install profile included. Apache-2.0.
+Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the coordination loop - so runs are reproducible end to end. Every coding task runs in its own git worktree behind lint/type/test gates; artifact-mode tasks, which complete on a signed lineage receipt instead of a commit, get a plain working directory instead. Results stay checkable after the fact: an always-on lineage spine and replay journal, plus an opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) with receipts you can verify offline. Air-gap install profile included. Apache-2.0.
 
 ### at a glance
 
@@ -40,7 +40,7 @@ Four things set it apart; everything after is detail.
 
 - **No LLM in the coordination loop.** Scheduling is plain Python, so a run is reproducible end to end. Replay yesterday's plan and get yesterday's task graph.
 - **Checkable after the fact.** The lineage spine and replay journal record every run; the opt-in audit chain adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run. Non-code deliverables get the same treatment: a task can declare an artifact contract (report, dataset, action log, ops result) on a plan step, a backlog entry, or the task CLI and complete on a signed lineage receipt instead of a git commit.
-- **Isolated by construction.** Each task gets its own git worktree behind merge gates. No shared mutable state between agents.
+- **Isolated by construction.** Each coding task gets its own git worktree behind merge gates; artifact-mode tasks get working-directory separation under `.sdd/workspaces/`. Under this default isolation there is no shared mutable state between agents; filesystem enforcement beyond that separation is opt-in, from the [sandbox backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) (disabling worktrees runs every task in the shared checkout).
 - **Broad and local.** 40+ CLI agent adapters plus a generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
 
 The full list is on the [capabilities page](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); the [feature matrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
@@ -77,14 +77,14 @@ The journal and the lineage spine are written on every run. `bernstein audit ver
 
 The run receipt binds the journal head and the lineage-spine head (plus, opt-in, an audit-chain range) under one Ed25519-signed subject with the public key embedded, so a reviewer holding the file and the operator's public key can confirm the recorded actions are exactly what executed - no HMAC key, no live `.sdd/`, exit `2` naming the first divergent step on tamper. With the file alone (no `--public-key` pin) the check is integrity-only: it proves the receipt is internally consistent, not who signed it, and the verdict says so. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
-The same checkability applies to evaluation numbers: `bernstein bench run <suite> --reliability k` runs every task `k` times under fixed coordination and reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling, sealed in a signed receipt that `bernstein bench reliability-verify` recomputes offline — a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+The same checkability applies to evaluation numbers: `bernstein bench run <suite> --reliability k` (also spelled `bernstein eval --reliability k`) runs every task `k` times under fixed coordination and reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling, sealed in a signed receipt that `bernstein bench reliability-verify` recomputes offline — a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 ### how it works
 
 Each goal moves through four stages:
 
 1. **Decompose**. The manager breaks your goal into tasks with roles, owned files, and completion signals. One LLM call, then plain Python from there.
-2. **Spawn**. Agents start in isolated [git worktrees](https://git-scm.com/docs/git-worktree), one per task. Main branch stays clean.
+2. **Spawn**. Agents start in isolated [git worktrees](https://git-scm.com/docs/git-worktree), one per coding task; an artifact-mode task gets a plain working directory instead. Main branch stays clean.
 3. **Verify**. The janitor checks concrete signals: tests pass, files exist, lint clean, types correct.
 4. **Merge**. Verified work lands in main. Failed tasks get retried or routed to a different model.
 

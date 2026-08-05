@@ -26,6 +26,8 @@ from bernstein.core.security.audit_chain import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from bernstein.core.lineage.identity import AgentCard
+
 
 class IdentitySpawnAnchorError(RuntimeError):
     """Raised when a run identity cannot be anchored or reconstructed."""
@@ -65,6 +67,9 @@ class AnchoredRunIdentity:
     signed_card_digest: str
     svid_reference: str
     run_journal_head: str
+    tool_signing_kid: str | None = None
+    tool_verification_key_jwk: dict[str, Any] | None = None
+    tool_verification_key_digest: str | None = None
 
 
 @dataclass(slots=True)
@@ -80,6 +85,7 @@ class IdentitySpawnAnchor:
         card: AgentIdentityCard,
         signature: AgentCardSignature,
         run_journal_head: str,
+        tool_signing_card: AgentCard | None = None,
     ) -> AnchoredRunIdentity:
         snapshot = deepcopy(card)
         kid = _jws_kid(signature.detached_jws)
@@ -95,6 +101,21 @@ class IdentitySpawnAnchor:
         envelope = {"card": asdict(snapshot), "signature": asdict(signature)}
         digest = _sha256_digest(envelope)
         public_jwk = ed25519_public_jwk(public_key, kid=kid)
+        tool_jwk: dict[str, Any] | None = None
+        tool_jwk_digest: str | None = None
+        tool_kid: str | None = None
+        if tool_signing_card is not None:
+            if tool_signing_card.agent_id != snapshot.agent_id or not tool_signing_card.kid.strip():
+                raise IdentitySpawnAnchorError("lineage tool signing identity does not match the spawned agent")
+            try:
+                tool_jwk = ed25519_public_jwk(
+                    tool_signing_card.public_key_pem.encode("ascii"),
+                    kid=tool_signing_card.kid,
+                )
+            except (ValueError, TypeError, UnicodeEncodeError) as exc:
+                raise IdentitySpawnAnchorError("lineage tool verification key is not valid Ed25519 material") from exc
+            tool_kid = tool_signing_card.kid
+            tool_jwk_digest = _sha256_digest(tool_jwk)
         identity = AnchoredRunIdentity(
             run_id=run_id,
             agent_id=snapshot.agent_id,
@@ -103,6 +124,9 @@ class IdentitySpawnAnchor:
             signed_card_digest=digest,
             svid_reference=snapshot.svid_reference,
             run_journal_head=run_journal_head,
+            tool_signing_kid=tool_kid,
+            tool_verification_key_jwk=tool_jwk,
+            tool_verification_key_digest=tool_jwk_digest,
         )
         details = {
             **asdict(identity),
@@ -180,7 +204,37 @@ class IdentitySpawnAnchor:
         identity_mismatch = signature.kid != kid or kid != details.get("agent_card_kid")
         if identity_mismatch or not verify_agent_card(card, signature, public_key):
             raise IdentitySpawnAnchorError("historical signed-card verification failed")
-        return AnchoredRunIdentity(**{field: details[field] for field in AnchoredRunIdentity.__dataclass_fields__})
+        tool_kid = details.get("tool_signing_kid")
+        tool_jwk = details.get("tool_verification_key_jwk")
+        tool_digest = details.get("tool_verification_key_digest")
+        if any(value is not None for value in (tool_kid, tool_jwk, tool_digest)):
+            if not isinstance(tool_kid, str) or not isinstance(tool_jwk, dict) or not isinstance(tool_digest, str):
+                raise IdentitySpawnAnchorError("frozen tool verification identity is incomplete")
+            typed_tool_jwk = cast("dict[str, Any]", tool_jwk)
+            if typed_tool_jwk.get("kid") != tool_kid or _sha256_digest(typed_tool_jwk) != tool_digest:
+                raise IdentitySpawnAnchorError("frozen tool verification identity mismatch")
+            try:
+                ed25519_pem_from_jwk(typed_tool_jwk)
+            except ValueError as exc:
+                raise IdentitySpawnAnchorError("frozen tool verification key is malformed") from exc
+        required = {
+            field: details[field]
+            for field in (
+                "run_id",
+                "agent_id",
+                "agent_card_kid",
+                "card_hash",
+                "signed_card_digest",
+                "svid_reference",
+                "run_journal_head",
+            )
+        }
+        return AnchoredRunIdentity(
+            **required,
+            tool_signing_kid=cast("str | None", tool_kid),
+            tool_verification_key_jwk=cast("dict[str, Any] | None", tool_jwk),
+            tool_verification_key_digest=cast("str | None", tool_digest),
+        )
 
 
 __all__ = ["AnchoredRunIdentity", "IdentitySpawnAnchor", "IdentitySpawnAnchorError"]

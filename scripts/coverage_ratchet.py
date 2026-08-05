@@ -9,6 +9,12 @@ LEVEL 2 - total coverage ratchet (this script's ``check`` command).
     that the CI coverage shard already produces, and compares it to the
     committed high-water mark in ``.coverage-baseline.json``.
 
+    Every mark the ratchet writes records the raw ``line-rate`` it was
+    rounded from, plus the commit and CI run it was measured on, so the
+    committed percentage can be re-derived and checked from the committed
+    file alone (``verify``). ``check`` refuses to run against a baseline
+    whose percentage does not follow from its own line-rate.
+
     - measured < baseline (beyond a small float tolerance): the ratchet
       reports a drop and exits non-zero. The CI job keeps this advisory
       via ``continue-on-error`` so a drop never wedges the merge queue.
@@ -33,7 +39,13 @@ Usage
     python scripts/coverage_ratchet.py check \\
         --coverage-xml coverage.xml \\
         --baseline .coverage-baseline.json \\
+        [--head-sha <sha>] [--run-id <id>] \\
         [--tolerance 0.05] [--no-bump]
+
+    # Re-derive the committed percentage offline (no coverage.xml needed).
+    python scripts/coverage_ratchet.py verify \\
+        --baseline .coverage-baseline.json \\
+        [--require-provenance]
 
     # LEVEL 1: raise the committed diff-coverage floor by one step.
     python scripts/coverage_ratchet.py bump-floor \\
@@ -66,6 +78,7 @@ import argparse
 import dataclasses
 import datetime as _dt
 import json
+import math
 import os
 import sys
 import tempfile
@@ -98,6 +111,10 @@ class CoverageParseError(Exception):
     """Raised when ``coverage.xml`` is missing, malformed, or unreadable."""
 
 
+class BaselineConsistencyError(ValueError):
+    """Raised when a baseline's percentage does not follow from its line-rate."""
+
+
 @dataclasses.dataclass
 class Baseline:
     """The committed coverage high-water mark and diff floor.
@@ -108,11 +125,24 @@ class Baseline:
         diff_coverage_floor_percent: Minimum diff coverage every PR's
             changed lines must hit, as an integer percentage (0-100).
         updated_at: ISO-8601 UTC timestamp of the last write, for audit.
+        line_rate: The raw Cobertura root ``line-rate`` (a 0-1 fraction)
+            that ``total_coverage_percent`` was rounded from. Storing the
+            unrounded input is what makes the committed percentage
+            re-derivable offline; see :func:`verify_baseline_consistency`.
+        head_sha: Commit on ``main`` the measurement was taken against.
+        run_id: GitHub Actions run id whose ``coverage-report`` artifact
+            supplied the measurement, as an opaque string.
+
+    The three provenance fields are optional so a baseline written before
+    they existed still loads. They are absent, never null, when unknown.
     """
 
     total_coverage_percent: float
     diff_coverage_floor_percent: int
     updated_at: str | None = None
+    line_rate: float | None = None
+    head_sha: str | None = None
+    run_id: str | None = None
 
 
 @dataclasses.dataclass
@@ -127,22 +157,23 @@ class Decision:
     exit_code: int
 
 
-def parse_total_coverage(coverage_xml: Path) -> float:
-    """Read the total line-coverage percentage from a Cobertura report.
+def parse_line_rate(coverage_xml: Path) -> float:
+    """Read the raw root ``line-rate`` fraction from a Cobertura report.
 
-    The Cobertura ``coverage.xml`` produced by ``coverage xml`` carries a
-    ``line-rate`` attribute on the root ``<coverage>`` element as a 0-1
-    fraction; this returns it as a 0-100 percentage.
+    This is the unrounded number the report itself states, kept separate
+    from the percentage so the baseline can store the input alongside the
+    rounded output and stay checkable without the report.
 
     Args:
         coverage_xml: Path to the ``coverage.xml`` file.
 
     Returns:
-        Total line coverage as a percentage in the range [0, 100].
+        The root ``line-rate`` as a fraction in the range [0, 1].
 
     Raises:
         CoverageParseError: If the file is missing, not valid XML, lacks a
-            ``line-rate`` attribute, or that attribute is not numeric.
+            ``line-rate`` attribute, or that attribute is not a finite
+            number in ``[0, 1]``.
     """
     if not coverage_xml.exists():
         raise CoverageParseError(f"coverage report not found: {coverage_xml}")
@@ -165,7 +196,83 @@ def parse_total_coverage(coverage_xml: Path) -> float:
     except ValueError as exc:
         raise CoverageParseError(f"coverage report line-rate is not numeric: {raw!r}") from exc
 
-    return round(fraction * 100.0, 2)
+    # ``float()`` happily returns nan/inf and any magnitude, none of which
+    # is a coverage fraction. Left unchecked they reach the baseline: nan
+    # makes every comparison in decide() false (so the ratchet silently
+    # does nothing forever), and a value like 2.0 derives to 200%, clears
+    # the high-water mark, and is written as the new one - after which
+    # every honest measurement reads as a catastrophic drop. Reject here,
+    # where it is still a parse error the workflow soft-skips on.
+    if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
+        raise CoverageParseError(f"coverage report line-rate is not a fraction in [0, 1]: {raw!r}")
+
+    return fraction
+
+
+def derive_percent_from_line_rate(line_rate: float) -> float:
+    """Convert a Cobertura 0-1 ``line-rate`` into the committed percentage.
+
+    The single place the rounding happens, so the value the ratchet writes
+    and the value a verifier re-derives cannot drift apart.
+
+    Args:
+        line_rate: Root ``line-rate`` fraction in the range [0, 1].
+
+    Returns:
+        Total line coverage as a percentage in the range [0, 100],
+        rounded to two decimal places.
+    """
+    return round(line_rate * 100.0, 2)
+
+
+def parse_total_coverage(coverage_xml: Path) -> float:
+    """Read the total line-coverage percentage from a Cobertura report.
+
+    Args:
+        coverage_xml: Path to the ``coverage.xml`` file.
+
+    Returns:
+        Total line coverage as a percentage in the range [0, 100].
+
+    Raises:
+        CoverageParseError: If the file is missing, not valid XML, lacks a
+            ``line-rate`` attribute, or that attribute is not numeric.
+    """
+    return derive_percent_from_line_rate(parse_line_rate(coverage_xml))
+
+
+def verify_baseline_consistency(baseline: Baseline) -> None:
+    """Check that the stored percentage follows from the stored line-rate.
+
+    The baseline is a generated value, so it should be reproducible from
+    what is committed. Re-deriving the percentage from the recorded
+    ``line_rate`` catches a hand-edited number, and a half-applied edit
+    that moved one field without the other.
+
+    A baseline with no ``line_rate`` predates provenance and has nothing
+    to check; that is a warning at the call site, not an error here.
+
+    Args:
+        baseline: The baseline to check.
+
+    Raises:
+        BaselineConsistencyError: If ``total_coverage_percent`` is not what
+            ``line_rate`` rounds to.
+    """
+    if baseline.line_rate is None:
+        return
+
+    derived = derive_percent_from_line_rate(baseline.line_rate)
+    # Both sides are round(_, 2) results, so equality is exact; the epsilon
+    # only absorbs JSON float round-tripping.
+    if abs(derived - baseline.total_coverage_percent) > 1e-9:
+        raise BaselineConsistencyError(
+            f"baseline is not self-consistent: line_rate {baseline.line_rate!r} re-derives to "
+            f"{derived:.2f}%, but total_coverage_percent says "
+            f"{baseline.total_coverage_percent:.2f}%. The committed percentage must be "
+            f"reproducible from the committed line-rate; re-run the ratchet against a real "
+            f"coverage.xml rather than editing either field by hand."
+        )
 
 
 def read_baseline(baseline_path: Path) -> Baseline:
@@ -190,10 +297,17 @@ def read_baseline(baseline_path: Path) -> Baseline:
         raise ValueError(f"coverage baseline is not valid JSON: {baseline_path}: {exc}") from exc
 
     try:
+        raw_line_rate = data.get("line_rate")
+        raw_run_id = data.get("run_id")
         return Baseline(
             total_coverage_percent=float(data["total_coverage_percent"]),
             diff_coverage_floor_percent=int(data["diff_coverage_floor_percent"]),
             updated_at=data.get("updated_at"),
+            line_rate=None if raw_line_rate is None else float(raw_line_rate),
+            head_sha=data.get("head_sha"),
+            # Written as a string, but tolerate a JSON number so a
+            # hand-seeded run id still loads instead of failing the read.
+            run_id=None if raw_run_id is None else str(raw_run_id),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"coverage baseline is missing or has bad keys: {baseline_path}: {exc}") from exc
@@ -215,11 +329,20 @@ def write_baseline(baseline_path: Path, baseline: Baseline) -> None:
             if any, is left untouched because the temp file is discarded
             before the replace).
     """
-    payload = {
+    payload: dict[str, Any] = {
         "total_coverage_percent": baseline.total_coverage_percent,
         "diff_coverage_floor_percent": baseline.diff_coverage_floor_percent,
         "updated_at": baseline.updated_at or _utc_now_iso(),
     }
+    # Provenance is omitted rather than written as null, so "absent" reads
+    # unambiguously as "this measurement predates provenance" instead of
+    # "we had a run id and lost it".
+    if baseline.line_rate is not None:
+        payload["line_rate"] = baseline.line_rate
+    if baseline.head_sha is not None:
+        payload["head_sha"] = baseline.head_sha
+    if baseline.run_id is not None:
+        payload["run_id"] = baseline.run_id
     # Serialise first so a TypeError aborts before we touch the filesystem.
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
@@ -327,14 +450,29 @@ def _cmd_check(args: argparse.Namespace) -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
 
+    # Before trusting the committed mark, confirm it is the number its own
+    # line-rate produces. A baseline that cannot be re-derived is a broken
+    # input, not a coverage verdict, so it exits 2 and writes nothing.
     try:
-        measured = parse_total_coverage(Path(args.coverage_xml))
+        verify_baseline_consistency(baseline)
+    except BaselineConsistencyError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 2
+    if baseline.line_rate is None:
+        print(
+            "::warning::baseline carries no line_rate, so its percentage cannot be "
+            "re-derived from the committed file; the next ratchet click records one."
+        )
+
+    try:
+        measured_line_rate = parse_line_rate(Path(args.coverage_xml))
     except CoverageParseError as exc:
         # A missing/broken report is NOT a coverage drop. Soft-skip (exit 3)
         # so the advisory workflow can decide to ignore rather than fail red.
         print(f"::warning::{exc}; skipping coverage ratchet for this run")
         return 3
 
+    measured = derive_percent_from_line_rate(measured_line_rate)
     decision = decide(baseline.total_coverage_percent, measured, tolerance=args.tolerance)
 
     print(f"baseline total coverage : {baseline.total_coverage_percent:.2f}%")
@@ -351,10 +489,20 @@ def _cmd_check(args: argparse.Namespace) -> int:
         return decision.exit_code
 
     if decision.should_bump and not args.no_bump:
+        if not args.head_sha:
+            print(
+                "::warning::bumping without --head-sha; the new baseline will not name the commit it was measured on."
+            )
         bumped = dataclasses.replace(
             baseline,
             total_coverage_percent=decision.new_total_pct,
             updated_at=_utc_now_iso(),
+            # Provenance always travels with the measurement it describes,
+            # so the file never states a percentage from one run next to a
+            # line-rate or commit from another.
+            line_rate=measured_line_rate,
+            head_sha=args.head_sha or None,
+            run_id=args.run_id or None,
         )
         write_baseline(baseline_path, bumped)
         print(f"ratchet click: baseline bumped to {decision.new_total_pct:.2f}%")
@@ -394,19 +542,67 @@ def _cmd_bump_floor(args: argparse.Namespace) -> int:
 
 def _cmd_init(args: argparse.Namespace) -> int:
     try:
-        measured = parse_total_coverage(Path(args.coverage_xml))
+        line_rate = parse_line_rate(Path(args.coverage_xml))
     except CoverageParseError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 3
 
+    measured = derive_percent_from_line_rate(line_rate)
     baseline_path = Path(args.baseline)
     baseline = Baseline(
         total_coverage_percent=measured,
         diff_coverage_floor_percent=args.diff_floor,
         updated_at=_utc_now_iso(),
+        line_rate=line_rate,
+        head_sha=args.head_sha or None,
+        run_id=args.run_id or None,
     )
     write_baseline(baseline_path, baseline)
     print(f"seeded baseline at {baseline_path}: total={measured:.2f}%, diff_floor={args.diff_floor}%")
+    return 0
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    """Re-derive the committed percentage from the committed file alone.
+
+    Needs no ``coverage.xml`` and no network: everything it checks is in
+    ``.coverage-baseline.json``. That is the point - the high-water mark
+    should be reproducible by anyone holding the repo.
+    """
+    baseline_path = Path(args.baseline)
+    try:
+        baseline = read_baseline(baseline_path)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 2
+
+    if baseline.line_rate is None:
+        message = f"{baseline_path} has no line_rate, so its percentage cannot be re-derived"
+        if args.require_provenance:
+            print(f"::error::{message}", file=sys.stderr)
+            return 2
+        print(f"::warning::{message}")
+        return 0
+
+    try:
+        verify_baseline_consistency(baseline)
+    except BaselineConsistencyError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 2
+
+    if args.require_provenance and not baseline.head_sha:
+        print(
+            f"::error::{baseline_path} does not record the head_sha it was measured on",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"line-rate              : {baseline.line_rate!r}")
+    print(f"re-derived coverage    : {derive_percent_from_line_rate(baseline.line_rate):.2f}%")
+    print(f"committed coverage     : {baseline.total_coverage_percent:.2f}%")
+    print(f"measured at head_sha   : {baseline.head_sha or '(not recorded)'}")
+    print(f"from CI run            : {baseline.run_id or '(not recorded)'}")
+    print("baseline is self-consistent.")
     return 0
 
 
@@ -445,6 +641,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--baseline", default=".coverage-baseline.json", help="path to baseline JSON")
     p_check.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE, help="flat-band in pp")
     p_check.add_argument("--no-bump", action="store_true", help="report only; never rewrite the baseline")
+    p_check.add_argument("--head-sha", default="", help="commit the coverage report was measured on")
+    p_check.add_argument("--run-id", default="", help="CI run id the coverage artifact came from")
     p_check.set_defaults(func=_cmd_check)
 
     p_bump = sub.add_parser("bump-floor", help="raise the diff-coverage floor by one step (weekly)")
@@ -457,7 +655,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--coverage-xml", default="coverage.xml", help="path to Cobertura coverage.xml")
     p_init.add_argument("--baseline", default=".coverage-baseline.json", help="path to baseline JSON")
     p_init.add_argument("--diff-floor", type=int, default=DEFAULT_DIFF_FLOOR, help="initial diff floor pp")
+    p_init.add_argument("--head-sha", default="", help="commit the coverage report was measured on")
+    p_init.add_argument("--run-id", default="", help="CI run id the coverage artifact came from")
     p_init.set_defaults(func=_cmd_init)
+
+    p_verify = sub.add_parser("verify", help="re-derive the committed percentage from the baseline alone")
+    p_verify.add_argument("--baseline", default=".coverage-baseline.json", help="path to baseline JSON")
+    p_verify.add_argument(
+        "--require-provenance",
+        action="store_true",
+        help="also fail when the baseline records no line_rate/head_sha",
+    )
+    p_verify.set_defaults(func=_cmd_verify)
 
     p_show = sub.add_parser("show-floor", help="print the current diff-coverage floor")
     p_show.add_argument("--baseline", default=".coverage-baseline.json", help="path to baseline JSON")

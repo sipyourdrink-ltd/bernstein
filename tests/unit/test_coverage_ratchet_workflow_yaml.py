@@ -1,8 +1,8 @@
 """Structural assertions on the total-coverage ratchet workflow.
 
-``.github/workflows/coverage-ratchet.yml`` fires on every push to ``main``
-whose measured total coverage exceeds the committed baseline, and opens a
-pull request carrying the new high-water mark.
+``.github/workflows/coverage-ratchet.yml`` fires when a CI run on ``main``
+completes, and opens a pull request carrying the new high-water mark when
+that run's measured total coverage exceeds the committed baseline.
 
 The failures this module exists to prevent
 ------------------------------------------
@@ -33,6 +33,22 @@ The failures this module exists to prevent
    branch must serialise, not cancel: a run cancelled between the
    force-push and the PR call leaves a pushed branch with no pull
    request.
+
+5. **A baseline measured on some other commit.** Resolving the coverage
+   artifact by "first recent run that has one" accepts a report for a
+   commit unrelated to the tree being checked out, so the committed
+   high-water mark describes a tree nobody can identify and the next
+   honest measurement reads as a drop. Every candidate run must match the
+   measured ``head_sha``.
+
+6. **A ratchet that is correct and never fires.** (4) and (5) interact:
+   on a ``push`` trigger the ratchet and the CI run start from the same
+   event, so the coverage artifact does not exist yet when the ratchet
+   looks. Pinning ``head_sha`` without moving the trigger makes every
+   commit skip. The trigger must therefore be CI *completion*, and it
+   must not narrow to ``conclusion == success`` - ``cancel-in-progress``
+   cancels most ``main`` runs, so that filter would idle the ratchet just
+   as thoroughly.
 """
 
 from __future__ import annotations
@@ -134,6 +150,124 @@ def test_concurrency_serialises_and_never_cancels(workflow: dict) -> None:
     )
 
 
-def test_still_fires_on_push_to_main(workflow: dict) -> None:
+def test_fires_on_ci_completion_not_on_the_push(workflow: dict) -> None:
+    """A `push` trigger races the CI run it wants to measure.
+
+    Both start from the same event, so the resolve step reaches the
+    artifact API long before the coverage shard has uploaded. On `push`
+    the only way to find *any* artifact is to accept a different commit's
+    - exactly the mismatch this workflow exists to prevent. Waiting for CI
+    to complete is what lets the head_sha pin hold without idling the
+    ratchet forever.
+    """
     on = workflow.get("on", workflow.get(True))
-    assert on["push"]["branches"] == ["main"]
+
+    assert "push" not in on, "a push trigger fires before the coverage artifact exists"
+    assert on["workflow_run"]["workflows"] == ["CI"]
+    assert on["workflow_run"]["branches"] == ["main"]
+
+
+def test_completion_trigger_is_not_narrowed_to_successful_runs(workflow: dict) -> None:
+    """`types: [completed]` must stay unfiltered by conclusion.
+
+    ci.yml's cancel-in-progress concurrency cancels most main runs. A
+    trigger that only fired on success would leave the ratchet idle
+    almost permanently - the reason the original implementation avoided
+    workflow_run altogether.
+    """
+    on = workflow.get("on", workflow.get(True))
+
+    assert on["workflow_run"]["types"] == ["completed"]
+
+
+def test_self_retrigger_guard_reads_the_triggering_run(workflow: dict) -> None:
+    """On workflow_run the commit lives under the triggering run."""
+    guard = workflow["jobs"]["ratchet"]["if"]
+
+    assert "github.event.workflow_run.head_commit.message" in guard, (
+        "github.event.head_commit is empty on a workflow_run event, so the guard "
+        "would never match and the ratchet would retrigger on its own bump"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# the measurement must belong to the commit being checked out
+# --------------------------------------------------------------------------- #
+
+
+def _checkout_step(steps: list[dict]) -> dict:
+    for step in steps:
+        if "actions/checkout" in str(step.get("uses", "")):
+            return step
+    raise AssertionError("coverage-ratchet.yml no longer checks out the repo")
+
+
+def test_checkout_pins_the_measured_commit(steps: list[dict]) -> None:
+    """Neither `main` nor `github.sha` is the commit CI measured.
+
+    `main` has usually moved on, and on a workflow_run event `github.sha`
+    is the default-branch head rather than the triggering run's commit.
+    """
+    assert _checkout_step(steps)["with"]["ref"] == "${{ github.event.workflow_run.head_sha }}"
+
+
+def test_run_resolution_targets_the_triggering_run(steps: list[dict]) -> None:
+    step = _step_by_id(steps, "ci_run")
+
+    assert step["env"]["TARGET_SHA"] == "${{ github.event.workflow_run.head_sha }}"
+    assert step["env"]["TRIGGERING_RUN"] == "${{ github.event.workflow_run.id }}"
+    assert 'has_coverage_artifact "${TRIGGERING_RUN}"' in step["run"], (
+        "the run the event handed us is the primary candidate"
+    )
+
+
+def test_sibling_fallback_stays_inside_the_head_sha_filter(steps: list[dict]) -> None:
+    """The fallback is deliberate, but it may not reach another commit.
+
+    If the triggering run was cancelled before the coverage shard
+    uploaded, another completed run for the SAME commit may still carry a
+    usable report. Widening past head_sha would reintroduce the mismatch.
+    """
+    script = _step_by_id(steps, "ci_run")["run"]
+
+    assert "select(.headSha == env.TARGET_SHA" in script, (
+        "the sibling search must be filtered to the measured commit; without it a "
+        "coverage artifact from an unrelated commit can justify a baseline bump"
+    )
+    assert '.status == "completed"' in script, (
+        "an in-flight sibling has not finished uploading; only completed runs count"
+    )
+
+
+def test_resolution_never_filters_on_conclusion(steps: list[dict]) -> None:
+    """Insisting on a successful run would idle the ratchet permanently."""
+    script = _step_by_id(steps, "ci_run")["run"]
+
+    assert 'select(.conclusion == "success")' not in script
+    assert "conclusion ==" not in script.replace("TRIGGERING_CONCLUSION", "")
+
+
+def test_ratchet_step_records_the_resolved_provenance(steps: list[dict]) -> None:
+    """The bump has to name the commit and run it came from."""
+    step = _step_by_id(steps, "ratchet")
+
+    assert step["env"]["HEAD_SHA"] == "${{ steps.ci_run.outputs.head_sha }}"
+    assert step["env"]["RUN_ID"] == "${{ steps.ci_run.outputs.run_id }}"
+    assert "--head-sha" in step["run"]
+    assert "--run-id" in step["run"]
+
+
+def test_a_bumped_baseline_is_verified_before_the_pr_opens(steps: list[dict]) -> None:
+    """A value that cannot be re-derived must not reach a pull request."""
+    verify_steps = [s for s in steps if "coverage_ratchet.py verify" in str(s.get("run", ""))]
+    assert verify_steps, "nothing re-derives the bumped baseline before the PR step"
+
+    verify = verify_steps[0]
+    assert "--require-provenance" in verify["run"]
+    assert verify["if"] == "steps.ratchet.outputs.baseline_bumped == 'true'"
+    assert verify.get("continue-on-error") is not True, (
+        "an unverifiable baseline must block the PR, not warn and open it anyway"
+    )
+    assert steps.index(verify) < steps.index(_create_pr_step(steps)), (
+        "the verify step must run before create-pull-request"
+    )

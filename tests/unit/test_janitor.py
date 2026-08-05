@@ -1870,3 +1870,165 @@ class TestFiguresGroundedSignal:
         _desc, passed, detail = results[0]
         assert passed is False
         assert "report bundle" in detail
+
+
+# --- verifier ladder wiring (#2927) ---
+
+
+class TestVerifierLadderWiring:
+    """run_janitor() emits one sealed record per tier that actually ran and
+    returns the composite ladder receipt hash on JanitorResult -- only when
+    the opt-in ladder context is supplied. Disabled means byte-for-byte
+    unchanged behaviour."""
+
+    _KEY = b"k" * 32
+    _TS = 1_700_000_000
+
+    def _ladder(self, tmp_path: Path):
+        from bernstein.core.quality.verifier_ladder import VerifierLadderContext
+
+        return VerifierLadderContext(
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=self._KEY,
+            timestamp=self._TS,
+        )
+
+    def _patch_judge(self, monkeypatch: pytest.MonkeyPatch, verdict) -> None:  # type: ignore[no-untyped-def]
+        async def fake_judge(task, workdir, criteria, *, judge_model=None, judge_provider=None):  # type: ignore[no-untyped-def]
+            return verdict
+
+        monkeypatch.setattr("bernstein.core.quality.janitor.judge_task", fake_judge)
+
+    @pytest.mark.asyncio
+    async def test_disabled_ladder_is_noop(self, tmp_path: Path) -> None:
+        (tmp_path / "a.py").write_text("x")
+        task = _make_task(id="T-001", signals=[CompletionSignal(type="path_exists", value="a.py")])
+
+        results = await run_janitor([task], tmp_path)
+
+        assert results[0].passed is True
+        assert results[0].ladder_receipt_hash is None
+        assert not (tmp_path / ".sdd" / "lineage" / "verifier-ladder").exists()
+        assert not (tmp_path / ".sdd" / "quality" / "ladder").exists()
+
+    @pytest.mark.asyncio
+    async def test_ladder_covers_exactly_the_tiers_that_ran(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.models import JudgeVerdict
+
+        from bernstein.core.quality.verifier_ladder import (
+            VerifierTier,
+            read_ladder_receipt,
+            verify_ladder_receipt,
+        )
+
+        (tmp_path / "a.py").write_text("x")
+        task = _make_task(
+            id="T-001",
+            signals=[
+                CompletionSignal(type="path_exists", value="a.py"),
+                CompletionSignal(type="llm_judge", value="code quality"),
+            ],
+        )
+        self._patch_judge(monkeypatch, JudgeVerdict(verdict="accept", confidence=0.9, feedback="fine"))
+
+        results = await run_janitor([task], tmp_path, ladder=self._ladder(tmp_path))
+
+        assert results[0].passed is True
+        receipt_hash = results[0].ladder_receipt_hash
+        assert receipt_hash
+        receipt = read_ladder_receipt(tmp_path, receipt_hash)
+        assert receipt is not None
+        # Exactly the tiers that executed: deterministic + judge, no human.
+        assert [r.tier for r in receipt.records] == [VerifierTier.DETERMINISTIC, VerifierTier.JUDGE]
+        assert [r.verdict for r in receipt.records] == ["pass", "pass"]
+        assert receipt.merge_eligible is True
+        assert receipt.task_id == "T-001"
+
+        verified = verify_ladder_receipt(
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=self._KEY,
+            receipt_hash=receipt_hash,
+        )
+        assert verified.ok, verified.reason
+
+    @pytest.mark.asyncio
+    async def test_degraded_judge_records_skip_not_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.models import JudgeVerdict
+
+        from bernstein.core.quality.verifier_ladder import VerifierTier, read_ladder_receipt
+
+        (tmp_path / "a.py").write_text("x")
+        task = _make_task(
+            id="T-001",
+            signals=[
+                CompletionSignal(type="path_exists", value="a.py"),
+                CompletionSignal(type="llm_judge", value="code quality"),
+            ],
+        )
+        # The canned shape judge_task() returns when the tier degraded to a
+        # stub: breaker tripped / LLM call failed / unparseable output.
+        tripped = JudgeVerdict(
+            verdict="retry",
+            confidence=0.0,
+            feedback="Judge LLM call failed: circuit breaker tripped",
+            flagged_for_review=True,
+        )
+        self._patch_judge(monkeypatch, tripped)
+
+        results = await run_janitor([task], tmp_path, ladder=self._ladder(tmp_path))
+
+        receipt_hash = results[0].ladder_receipt_hash
+        assert receipt_hash
+        receipt = read_ladder_receipt(tmp_path, receipt_hash)
+        assert receipt is not None
+        judge_records = [r for r in receipt.records if r.tier is VerifierTier.JUDGE]
+        assert len(judge_records) == 1, "a degraded judge tier must record, not vanish"
+        assert judge_records[0].verdict == "skip"
+        assert receipt.merge_eligible is False
+
+    @pytest.mark.asyncio
+    async def test_judge_rejection_records_fail(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.models import JudgeVerdict
+
+        from bernstein.core.quality.verifier_ladder import VerifierTier, read_ladder_receipt
+
+        (tmp_path / "a.py").write_text("x")
+        task = _make_task(
+            id="T-001",
+            signals=[
+                CompletionSignal(type="path_exists", value="a.py"),
+                CompletionSignal(type="llm_judge", value="code quality"),
+            ],
+        )
+        self._patch_judge(
+            monkeypatch,
+            JudgeVerdict(verdict="retry", confidence=0.8, feedback="missing tests"),
+        )
+
+        results = await run_janitor([task], tmp_path, ladder=self._ladder(tmp_path))
+
+        receipt = read_ladder_receipt(tmp_path, results[0].ladder_receipt_hash or "")
+        assert receipt is not None
+        judge_records = [r for r in receipt.records if r.tier is VerifierTier.JUDGE]
+        assert judge_records[0].verdict == "fail"
+        assert receipt.merge_eligible is False
+
+    @pytest.mark.asyncio
+    async def test_deterministic_failure_records_fail_and_no_judge_record(self, tmp_path: Path) -> None:
+        from bernstein.core.quality.verifier_ladder import VerifierTier, read_ladder_receipt
+
+        task = _make_task(id="T-001", signals=[CompletionSignal(type="path_exists", value="missing.py")])
+
+        results = await run_janitor([task], tmp_path, ladder=self._ladder(tmp_path))
+
+        assert results[0].passed is False
+        receipt = read_ladder_receipt(tmp_path, results[0].ladder_receipt_hash or "")
+        assert receipt is not None
+        assert [r.tier for r in receipt.records] == [VerifierTier.DETERMINISTIC]
+        assert receipt.records[0].verdict == "fail"
+        assert receipt.merge_eligible is False

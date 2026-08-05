@@ -28,6 +28,10 @@ from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
+from bernstein.core.agents.context_attachments import (
+    collect_declared_context_files,
+    resolve_context_attachments,
+)
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
 from bernstein.core.agents.response_style import (
@@ -73,14 +77,16 @@ from bernstein.core.agents.spawner_warm_pool import (
     _should_use_router,
 )
 from bernstein.core.agents.spawner_worktree import (
+    cleanup_artifact_workspace,
+    create_artifact_workspace,
+    release_warm_pool_slot,
+    worktree_manager_for_repo,
+)
+from bernstein.core.agents.spawner_worktree import (
     cleanup_worktree as _cleanup_worktree,
 )
 from bernstein.core.agents.spawner_worktree import (
     prune_orphan_worktrees as _prune_orphan_worktrees,
-)
-from bernstein.core.agents.spawner_worktree import (
-    release_warm_pool_slot,
-    worktree_manager_for_repo,
 )
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -106,6 +112,7 @@ from bernstein.core.prometheus import (
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.sandbox.selector import SandboxSelectionError
+from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -1501,6 +1508,11 @@ class AgentSpawner:
                 logger.info("Cleaned %d stale worktree(s) from prior run", cleaned)
         self._worktree_paths: dict[str, Path] = {}
         self._worktree_roots: dict[str, Path] = {}
+        # Artifact-mode sessions (issue #2996): plain isolated working
+        # directories allocated instead of git worktrees. Kept out of the
+        # worktree maps on purpose - there is no branch to merge back, so the
+        # merge/salvage paths must stay structural no-ops for these sessions.
+        self._artifact_workdirs: dict[str, Path] = {}
         self._warm_pool = warm_pool
         self._warm_pool_entries: dict[str, PoolSlot] = {}
         # Per-repo lock to serialize pushes and prevent non-fast-forward races
@@ -1761,7 +1773,15 @@ class AgentSpawner:
         return self._sandbox_backend is not None and self._sandbox_manifest_factory is not None
 
     def cleanup_worktree(self, session_id: str) -> None:
-        """Remove the worktree and branch for a dead agent session."""
+        """Remove the worktree and branch for a dead agent session.
+
+        Artifact-mode sessions (issue #2996) have no worktree; their plain
+        workspace directory is removed instead, through the same entry point
+        so every caller that cleans a dead session covers both modes.
+        """
+        if session_id in self._artifact_workdirs:
+            cleanup_artifact_workspace(session_id, artifact_workdirs=self._artifact_workdirs)
+            return
         _cleanup_worktree(
             session_id,
             worktree_roots=self._worktree_roots,
@@ -1778,6 +1798,7 @@ class AgentSpawner:
             worktree_managers=self._worktree_managers,
             worktree_paths=self._worktree_paths,
             worktree_roots=self._worktree_roots,
+            artifact_workdirs=self._artifact_workdirs,
         )
 
     def _release_warm_pool_slot(self, session_id: str) -> None:
@@ -1924,6 +1945,11 @@ class AgentSpawner:
             trace_store=self._trace_store,
             merge_queue=self._merge_queue,
         )
+        # Artifact-mode session (issue #2996): no worktree, so the merge path
+        # above was a structural no-op; remove the plain workspace directory
+        # unless the caller asked to keep it for inspection.
+        if not defer_cleanup:
+            cleanup_artifact_workspace(session.id, artifact_workdirs=self._artifact_workdirs)
         # Reap-time write-boundary sweep (#2793): keep the operator checkout
         # clean after a planning agent exits. Best-effort; never fails a reap.
         with suppress(Exception):
@@ -3951,7 +3977,23 @@ class AgentSpawner:
                 )
 
         worktree_mgr = self._worktree_manager_for_repo(worktree_repo_root)
-        if self._use_worktrees and worktree_mgr is not None:
+        if self._use_worktrees and worktree_mgr is not None and not needs_git_worktree(tasks):
+            # Artifact-mode batch (issue #2996): every task in it completes on
+            # a signed lineage receipt, never a commit, so the session gets an
+            # isolated plain directory instead of a git worktree - no checkout,
+            # no agent branch, nothing to merge back. The warm pool is skipped
+            # too: its slots are pre-provisioned git worktrees. The decision
+            # itself lives in ``needs_git_worktree`` next to the completion
+            # path's mode resolver, so allocation and completion cannot drift.
+            try:
+                spawn_cwd = create_artifact_workspace(worktree_repo_root, session_id)
+            except OSError as exc:
+                raise SpawnError(
+                    f"Cannot create artifact workspace for agent {session_id}: {exc}. "
+                    "Fix: remove the stale directory under .sdd/workspaces/ and retry"
+                ) from exc
+            self._artifact_workdirs[session_id] = spawn_cwd
+        elif self._use_worktrees and worktree_mgr is not None:
             # Try acquiring a pre-provisioned worktree from the warm pool first.
             # This avoids the 5-15s ``git worktree add`` overhead on hot paths.
             #
@@ -3984,204 +4026,209 @@ class AgentSpawner:
                         "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
                     ) from exc
 
-        # Manager/planning write-boundary preflight (#2793). Once the working
-        # directory is resolved, refuse a planning agent that would run directly
-        # in the operator checkout with no OS sandbox: prompt text is not a
-        # boundary, and an ungated CLI adapter that ignores it writes straight
-        # into the operator tree. A per-session worktree or an OS sandbox both
-        # satisfy the boundary, so the default (worktree) flow is unaffected.
-        _boundary_error = manager_write_boundary_error(
-            role,
-            spawn_cwd,
-            self._workdir,
-            has_os_sandbox=(
-                self._sandbox is not None or self._container_mgr is not None or self._sandbox_backend is not None
-            ),
-        )
-        if _boundary_error is not None:
-            raise SpawnError(_boundary_error)
-
-        # Second write-boundary layer (#2793): a worktree cwd confines only
-        # relative writes, so snapshot the operator checkout's untracked set
-        # before the planning agent runs. Any untracked path that appears by
-        # reap time (an absolute/`..` write an ungated adapter made past its
-        # worktree) is swept in _sweep_manager_write_boundary. Snapshot only
-        # for the write-boundary roles and never let it block a spawn.
-        if role in _WRITE_BOUNDARY_ROLES:
-            with suppress(Exception):
-                self._manager_write_baselines[session_id] = operator_tree_untracked(self._workdir)
-
-        # Install the in-process verification-gate policy for this session so a
-        # gate-capable adapter (Claude Code) can refuse a failing completion or
-        # an out-of-scope write in-session (#2360). Fail-open: installing the
-        # policy must never block a spawn, and the authoritative scheduler-side
-        # gate runs regardless. The task's owned_files become the write
-        # allowlist and its required evidence_producers the completion check.
-        with suppress(Exception):
-            from bernstein.core.security.hook_gate import policy_from_task_fields, write_policy
-
-            gate_owned: list[str] = []
-            gate_producers: list[dict[str, Any]] = []
-            for gate_task in tasks:
-                gate_owned.extend(getattr(gate_task, "owned_files", []) or [])
-                gate_producers.extend(getattr(gate_task, "evidence_producers", []) or [])
-            gate_policy = policy_from_task_fields(session_id, owned_files=gate_owned, evidence_producers=gate_producers)
-            if gate_policy.is_active:
-                write_policy(spawn_cwd, session_id, gate_policy)
-
-        # Build per-task MCP config: auto-detected servers merged with base config
-        effective_mcp = self._mcp_config
-        if self._mcp_registry is not None:
-            effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
-
-        # Layer MCPManager servers on top (task-requested MCP servers)
-        if self._mcp_manager is not None:
-            # Collect MCP server names requested by tasks in this batch
-            task_server_names: list[str] = []
-            for t in tasks:
-                task_server_names.extend(t.mcp_servers)
-            # Deduplicate while preserving order
-            seen: set[str] = set()
-            unique_names: list[str] = []
-            for n in task_server_names:
-                if n not in seen:
-                    seen.add(n)
-                    unique_names.append(n)
-            # Pass None to get all servers when no specific ones requested
-            requested = unique_names or None
-            effective_mcp = self._mcp_manager.build_mcp_config_for_task(
-                task_mcp_servers=requested,
-                base_config=effective_mcp,
-            )
-            # Validate that MCP servers are ready before spawning the agent.
-            # A non-ready server is logged as a warning but does not block spawn
-            # so that a single failing optional server does not halt all work.
-            try:
-                from bernstein.core.mcp_readiness import validate_mcp_readiness
-
-                validate_mcp_readiness(
-                    self._mcp_manager,
-                    server_names=unique_names or None,
-                    fail_on_error=False,
-                )
-            except Exception:
-                logger.warning("MCP readiness probe raised unexpectedly (non-fatal)", exc_info=True)
-
-        # Layer per-role endpoint overrides and mode-profile sampling params
-        # onto the per-spawn config. Both feed the same ``SAMPLING_PARAM_KEYS``
-        # slots the adapter manifest reads, and both are opt-in: absent config
-        # leaves ``effective_mcp`` byte-identical to today. An explicit value
-        # already present in ``mcp_config`` always wins over these derived
-        # defaults, so operator-set overrides are never silently replaced.
-        effective_mcp = self._apply_sampling_overrides(
-            effective_mcp,
-            role_policy=role_policy,
-            model_config=model_config,
-            tasks=tasks,
-            provider_name=provider_name,
-        )
-
-        log_dir = spawn_cwd / ".sdd" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        preferred_log_path = log_dir / f"{session_id}.log"
-
-        # Write a task-specific CLAUDE.md at the worktree root so the agent
-        # inherits its assigned tasks, role constraints, owned file paths,
-        # and context files instead of only the generic project CLAUDE.md
-        # . The helper also marks the file as skip-worktree so
-        # the override never lands in merge commits.
-        _task_context_files: list[str] = []
-        for _t in tasks:
-            _cfs = _t.metadata.get("context_files") if isinstance(_t.metadata, dict) else None
-            if isinstance(_cfs, list):
-                for _cf in _cfs:
-                    if isinstance(_cf, str) and _cf not in _task_context_files:
-                        _task_context_files.append(_cf)
+        # Leak guard (issue #2996): from here to the success return, any
+        # exception that escapes this spawn - a sampling-params refusal, a
+        # security-floor or admission refusal, a write-boundary error, an
+        # adapter failure that exhausts its retries - must not orphan the
+        # artifact-mode workspace allocated above. The cleanup pops the
+        # session from its tracking map, so it is idempotent and a no-op
+        # for sessions that allocated a git worktree (or nothing at all).
         try:
-            write_claude_md(
+            # Manager/planning write-boundary preflight (#2793). Once the working
+            # directory is resolved, refuse a planning agent that would run directly
+            # in the operator checkout with no OS sandbox: prompt text is not a
+            # boundary, and an ungated CLI adapter that ignores it writes straight
+            # into the operator tree. A per-session worktree or an OS sandbox both
+            # satisfy the boundary, so the default (worktree) flow is unaffected.
+            _boundary_error = manager_write_boundary_error(
+                role,
                 spawn_cwd,
-                tasks,
-                session_id=session_id,
-                role=role,
-                workdir=self._workdir,
-                context_files=_task_context_files or None,
+                self._workdir,
+                has_os_sandbox=(
+                    self._sandbox is not None or self._container_mgr is not None or self._sandbox_backend is not None
+                ),
             )
-        except Exception as exc:  # pragma: no cover - best-effort, never blocks spawn
-            logger.warning("Failed to write task-specific CLAUDE.md for %s: %s", session_id, exc)
+            if _boundary_error is not None:
+                raise SpawnError(_boundary_error)
 
-        # Inject role-specific skills into the worktree before spawn so the
-        # agent picks up orchestration protocol and role-specific instructions.
-        # Skills survive context compaction and reduce prompt boilerplate.
-        inject_skills(
-            workdir=spawn_cwd,
-            role=role,
-            tasks=tasks,
-            session_id=session_id,
-            templates_dir=self._templates_dir,
-        )
-        _inject_scheduled_tasks(
-            workdir=spawn_cwd,
-            session_id=session_id,
-            health_interval_minutes=_health_check_interval(tasks),
-        )
+            # Second write-boundary layer (#2793): a worktree cwd confines only
+            # relative writes, so snapshot the operator checkout's untracked set
+            # before the planning agent runs. Any untracked path that appears by
+            # reap time (an absolute/`..` write an ungated adapter made past its
+            # worktree) is swept in _sweep_manager_write_boundary. Snapshot only
+            # for the write-boundary roles and never let it block a spawn.
+            if role in _WRITE_BOUNDARY_ROLES:
+                with suppress(Exception):
+                    self._manager_write_baselines[session_id] = operator_tree_untracked(self._workdir)
 
-        remote_spawned = False
-        if self._runtime_bridge is not None:
-            # Same capability gate as the local adapter loop below: the
-            # bridge spawn request has no way to carry sampling/endpoint
-            # overrides, so requesting them alongside a configured bridge
-            # must fail loudly instead of running the task remotely with
-            # provider defaults.
-            _bridge_sampling_keys = tuple(
-                key for key in SAMPLING_PARAM_KEYS if effective_mcp is not None and effective_mcp.get(key) is not None
+            # Install the in-process verification-gate policy for this session so a
+            # gate-capable adapter (Claude Code) can refuse a failing completion or
+            # an out-of-scope write in-session (#2360). Fail-open: installing the
+            # policy must never block a spawn, and the authoritative scheduler-side
+            # gate runs regardless. The task's owned_files become the write
+            # allowlist and its required evidence_producers the completion check.
+            with suppress(Exception):
+                from bernstein.core.security.hook_gate import policy_from_task_fields, write_policy
+
+                gate_owned: list[str] = []
+                gate_producers: list[dict[str, Any]] = []
+                for gate_task in tasks:
+                    gate_owned.extend(getattr(gate_task, "owned_files", []) or [])
+                    gate_producers.extend(getattr(gate_task, "evidence_producers", []) or [])
+                gate_policy = policy_from_task_fields(
+                    session_id, owned_files=gate_owned, evidence_producers=gate_producers
+                )
+                if gate_policy.is_active:
+                    write_policy(spawn_cwd, session_id, gate_policy)
+
+            # Build per-task MCP config: auto-detected servers merged with base config
+            effective_mcp = self._mcp_config
+            if self._mcp_registry is not None:
+                effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
+
+            # Layer MCPManager servers on top (task-requested MCP servers)
+            if self._mcp_manager is not None:
+                # Collect MCP server names requested by tasks in this batch
+                task_server_names: list[str] = []
+                for t in tasks:
+                    task_server_names.extend(t.mcp_servers)
+                # Deduplicate while preserving order
+                seen: set[str] = set()
+                unique_names: list[str] = []
+                for n in task_server_names:
+                    if n not in seen:
+                        seen.add(n)
+                        unique_names.append(n)
+                # Pass None to get all servers when no specific ones requested
+                requested = unique_names or None
+                effective_mcp = self._mcp_manager.build_mcp_config_for_task(
+                    task_mcp_servers=requested,
+                    base_config=effective_mcp,
+                )
+                # Validate that MCP servers are ready before spawning the agent.
+                # A non-ready server is logged as a warning but does not block spawn
+                # so that a single failing optional server does not halt all work.
+                try:
+                    from bernstein.core.mcp_readiness import validate_mcp_readiness
+
+                    validate_mcp_readiness(
+                        self._mcp_manager,
+                        server_names=unique_names or None,
+                        fail_on_error=False,
+                    )
+                except Exception:
+                    logger.warning("MCP readiness probe raised unexpectedly (non-fatal)", exc_info=True)
+
+            # Layer per-role endpoint overrides and mode-profile sampling params
+            # onto the per-spawn config. Both feed the same ``SAMPLING_PARAM_KEYS``
+            # slots the adapter manifest reads, and both are opt-in: absent config
+            # leaves ``effective_mcp`` byte-identical to today. An explicit value
+            # already present in ``mcp_config`` always wins over these derived
+            # defaults, so operator-set overrides are never silently replaced.
+            effective_mcp = self._apply_sampling_overrides(
+                effective_mcp,
+                role_policy=role_policy,
+                model_config=model_config,
+                tasks=tasks,
+                provider_name=provider_name,
             )
-            if _bridge_sampling_keys:
-                raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
+
+            log_dir = spawn_cwd / ".sdd" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            preferred_log_path = log_dir / f"{session_id}.log"
+
+            # Write a task-specific CLAUDE.md at the worktree root so the agent
+            # inherits its assigned tasks, role constraints, owned file paths,
+            # and context files instead of only the generic project CLAUDE.md
+            # . The helper also marks the file as skip-worktree so
+            # the override never lands in merge commits.
+            _task_context_files = self._resolve_and_stamp_context_files(session, tasks, spawn_cwd)
             try:
-                remote_spawned = self._spawn_via_runtime_bridge(
-                    session=session,
-                    prompt=prompt,
-                    spawn_cwd=spawn_cwd,
-                    model_config=model_config,
-                    preferred_log_path=preferred_log_path,
+                write_claude_md(
+                    spawn_cwd,
+                    tasks,
+                    session_id=session_id,
+                    role=role,
+                    workdir=self._workdir,
+                    context_files=_task_context_files or None,
                 )
-            except BridgeError as exc:
-                fallback_allowed = bool(self._runtime_bridge.config.extra.get("fallback_to_local", True))
-                if not fallback_allowed:
-                    raise SpawnError(f"OpenClaw bridge rejected spawn for {session_id}: {exc}") from exc
-                logger.warning(
-                    "OpenClaw bridge failed before acceptance for %s, falling back to local adapter: %s",
-                    session_id,
-                    exc,
+            except Exception as exc:  # pragma: no cover - best-effort, never blocks spawn
+                logger.warning("Failed to write task-specific CLAUDE.md for %s: %s", session_id, exc)
+
+            # Inject role-specific skills into the worktree before spawn so the
+            # agent picks up orchestration protocol and role-specific instructions.
+            # Skills survive context compaction and reduce prompt boilerplate.
+            inject_skills(
+                workdir=spawn_cwd,
+                role=role,
+                tasks=tasks,
+                session_id=session_id,
+                templates_dir=self._templates_dir,
+            )
+            _inject_scheduled_tasks(
+                workdir=spawn_cwd,
+                session_id=session_id,
+                health_interval_minutes=_health_check_interval(tasks),
+            )
+
+            remote_spawned = False
+            if self._runtime_bridge is not None:
+                # Same capability gate as the local adapter loop below: the
+                # bridge spawn request has no way to carry sampling/endpoint
+                # overrides, so requesting them alongside a configured bridge
+                # must fail loudly instead of running the task remotely with
+                # provider defaults.
+                _bridge_sampling_keys = tuple(
+                    key
+                    for key in SAMPLING_PARAM_KEYS
+                    if effective_mcp is not None and effective_mcp.get(key) is not None
                 )
+                if _bridge_sampling_keys:
+                    raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
+                try:
+                    remote_spawned = self._spawn_via_runtime_bridge(
+                        session=session,
+                        prompt=prompt,
+                        spawn_cwd=spawn_cwd,
+                        model_config=model_config,
+                        preferred_log_path=preferred_log_path,
+                    )
+                except BridgeError as exc:
+                    fallback_allowed = bool(self._runtime_bridge.config.extra.get("fallback_to_local", True))
+                    if not fallback_allowed:
+                        raise SpawnError(f"OpenClaw bridge rejected spawn for {session_id}: {exc}") from exc
+                    logger.warning(
+                        "OpenClaw bridge failed before acceptance for %s, falling back to local adapter: %s",
+                        session_id,
+                        exc,
+                    )
 
-        # Spawn via adapter with runtime provider/adapter failover.
-        # This is critical for real-world rate-limit handling where a chosen
-        # provider may fail at process-start time.
-        #
-        # In unattended mode, wrap the spawn with persistent retry
-        # (exponential backoff + heartbeats) for rate-limit errors.
-        from bernstein.core.rate_limit_tracker import (
-            UnattendedRetryPolicy,
-            is_unattended_mode,
-        )
+            # Spawn via adapter with runtime provider/adapter failover.
+            # This is critical for real-world rate-limit handling where a chosen
+            # provider may fail at process-start time.
+            #
+            # In unattended mode, wrap the spawn with persistent retry
+            # (exponential backoff + heartbeats) for rate-limit errors.
+            from bernstein.core.rate_limit_tracker import (
+                UnattendedRetryPolicy,
+                is_unattended_mode,
+            )
 
-        _unattended_policy: UnattendedRetryPolicy | None = None
-        if is_unattended_mode():
-            _unattended_policy = UnattendedRetryPolicy()
-            logger.info("Unattended mode: retry rate-limit errors with backoff")
+            _unattended_policy: UnattendedRetryPolicy | None = None
+            if is_unattended_mode():
+                _unattended_policy = UnattendedRetryPolicy()
+                logger.info("Unattended mode: retry rate-limit errors with backoff")
 
-        _unattended_max = _unattended_policy.max_retries if _unattended_policy is not None else 1
-        _unattended_attempt = 0
-        result: SpawnResult | None = None
+            _unattended_max = _unattended_policy.max_retries if _unattended_policy is not None else 1
+            _unattended_attempt = 0
+            result: SpawnResult | None = None
 
-        self._touch_prespawn_heartbeat(session_id)
+            self._touch_prespawn_heartbeat(session_id)
 
-        while True:
-            # Remote spawn already succeeded - skip the local adapter loop entirely
-            if remote_spawned:
-                break
-            if not remote_spawned:
+            while True:
+                # Remote spawn already succeeded - skip the local adapter loop entirely
+                if remote_spawned:
+                    break
                 attempt_errors: list[str] = []
                 disabled_providers: dict[str, bool] = {}
                 attempted: set[tuple[str | None, str, str]] = set()
@@ -4512,72 +4559,115 @@ class AgentSpawner:
                                     model_config = _decision.model_config
                             continue
                     # Release warm pool slot before raising so the pre-provisioned
-                    # worktree is not permanently leaked (BUG-19).
+                    # worktree is not permanently leaked (BUG-19). An
+                    # artifact-mode session's plain workspace is removed by
+                    # the surrounding leak guard as this raise propagates.
                     self._release_warm_pool_slot(session_id)
                     raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
                 # Success - exit the retry loop
                 break
 
-        # Post-spawn session setup
-        if result is not None:
-            session.pid = result.pid
-            session.abort_reason = result.abort_reason
-            session.abort_detail = result.abort_detail
-            session.finish_reason = result.finish_reason
-            if result.log_path:
-                session.log_path = str(result.log_path)
+            # Post-spawn session setup
+            if result is not None:
+                session.pid = result.pid
+                session.abort_reason = result.abort_reason
+                session.abort_detail = result.abort_detail
+                session.finish_reason = result.finish_reason
+                if result.log_path:
+                    session.log_path = str(result.log_path)
 
-        if session.status != "working":
-            transition_agent(
-                session,
-                "working",
-                actor="spawner",
-                reason="agent process started",
+            if session.status != "working":
+                transition_agent(
+                    session,
+                    "working",
+                    actor="spawner",
+                    reason="agent process started",
+                )
+            if result is not None and result.proc is not None:
+                self._procs[session_id] = result.proc  # type: ignore[assignment]
+                # Register stdin pipe for real-time IPC (if available)
+                proc_stdin = getattr(result.proc, "stdin", None)
+                if proc_stdin is not None:
+                    from bernstein.core.agents.agent_ipc import register_stdin_pipe
+
+                    register_stdin_pipe(session_id, proc_stdin)
+
+            # Create and persist the initial trace
+            # Serialize task fields to JSON-safe types (convert Enums to their values)
+            import dataclasses
+
+            def _task_to_dict(t: Task) -> dict[str, Any]:
+                d: dict[str, Any] = {}
+                for fld in dataclasses.fields(t):
+                    val: Any = getattr(t, fld.name)
+                    if hasattr(val, "value"):  # Enum
+                        val = val.value
+                    elif isinstance(val, list):
+                        val = [v.value if hasattr(v, "value") else v for v in cast("list[Any]", val)]
+                    d[fld.name] = val
+                return d
+
+            task_snapshots: list[dict[str, Any]] = [_task_to_dict(t) for t in tasks]
+            trace = new_trace(
+                session_id=session_id,
+                task_ids=[t.id for t in tasks],
+                role=role,
+                model=model_config.model,
+                effort=model_config.effort,
+                log_path=session.log_path,
+                task_snapshots=task_snapshots,
             )
-        if result is not None and result.proc is not None:
-            self._procs[session_id] = result.proc  # type: ignore[assignment]
-            # Register stdin pipe for real-time IPC (if available)
-            proc_stdin = getattr(result.proc, "stdin", None)
-            if proc_stdin is not None:
-                from bernstein.core.agents.agent_ipc import register_stdin_pipe
+            self._traces[session_id] = trace
+            try:
+                self._trace_store.write(trace)
+            except Exception as exc:
+                logger.warning("Failed to write initial trace for %s: %s", session_id, exc)
 
-                register_stdin_pipe(session_id, proc_stdin)
+            get_plugin_manager().fire_agent_spawned(
+                session_id=session.id, role=session.role, model=session.model_config.model
+            )
+            return session
+        except BaseException:
+            cleanup_artifact_workspace(session_id, artifact_workdirs=self._artifact_workdirs)
+            raise
 
-        # Create and persist the initial trace
-        # Serialize task fields to JSON-safe types (convert Enums to their values)
-        import dataclasses
+    def _resolve_and_stamp_context_files(
+        self,
+        session: AgentSession,
+        tasks: list[Task],
+        root: Path,
+    ) -> list[str]:
+        """Content-address declared context files at dispatch onto *session*.
 
-        def _task_to_dict(t: Task) -> dict[str, Any]:
-            d: dict[str, Any] = {}
-            for fld in dataclasses.fields(t):
-                val: Any = getattr(t, fld.name)
-                if hasattr(val, "value"):  # Enum
-                    val = val.value
-                elif isinstance(val, list):
-                    val = [v.value if hasattr(v, "value") else v for v in cast("list[Any]", val)]
-                d[fld.name] = val
-            return d
+        Issue #3375: shared by the fresh-spawn and crash-resume paths so a
+        resumed worker's declared context is recorded exactly like a fresh
+        one's - resume goes straight to the adapter and previously bypassed
+        this flow entirely, silently dropping the declaration from the run
+        record. Resolution runs against *root*, the worktree the worker
+        actually reads the files from; on resume that pins the bytes as they
+        exist after the crashed agent's edits. An unresolvable path is
+        recorded in its declared position with a reason code and a log
+        warning - never skipped, and never a spawn abort. The stamped
+        entries are what ``_record_spawned_events`` journals as the
+        ``context.files_attached`` event next to ``agent_spawned``.
 
-        task_snapshots: list[dict[str, Any]] = [_task_to_dict(t) for t in tasks]
-        trace = new_trace(
-            session_id=session_id,
-            task_ids=[t.id for t in tasks],
-            role=role,
-            model=model_config.model,
-            effort=model_config.effort,
-            log_path=session.log_path,
-            task_snapshots=task_snapshots,
-        )
-        self._traces[session_id] = trace
-        try:
-            self._trace_store.write(trace)
-        except Exception as exc:
-            logger.warning("Failed to write initial trace for %s: %s", session_id, exc)
-
-        get_plugin_manager().fire_agent_spawned(
-            session_id=session.id, role=session.role, model=session.model_config.model
-        )
-        return session
+        Returns the declared list so the fresh-spawn path can hand it to
+        ``write_claude_md``. The resume path ignores the return value: it
+        never rewrites the preserved worktree's CLAUDE.md, which still
+        carries the context section the original spawn wrote.
+        """
+        declared = collect_declared_context_files(tasks)
+        if declared:
+            session.context_attachments = resolve_context_attachments(root=root, declared=declared)
+            for entry in session.context_attachments:
+                if entry["reason_code"]:
+                    logger.warning(
+                        "Context file %s for session %s did not resolve (%s); recorded with reason code",
+                        entry["path"],
+                        session.id,
+                        entry["reason_code"],
+                    )
+        return declared
 
     def spawn_for_resume(
         self,
@@ -4688,6 +4778,15 @@ class AgentSpawner:
             model_config=model_config,
             status="starting",
         )
+
+        # Record declared context on resume exactly like a fresh spawn
+        # (#3375): the resumed worker reads its context from the preserved
+        # worktree - the task-specific CLAUDE.md the original spawn wrote
+        # survives the crash, so nothing is rewritten here - but the
+        # attachment set must be re-resolved against that worktree so the
+        # run journal pins the bytes this session actually sees, including
+        # any edits the crashed agent made to the declared files.
+        self._resolve_and_stamp_context_files(session, tasks, worktree_path)
 
         _scope_order = {"small": 0, "medium": 1, "large": 2}
         resume_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))

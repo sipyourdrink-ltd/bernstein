@@ -34,7 +34,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/codeql.yml | CodeQL Security Analysis | pull_request, push, schedule | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/coverage-ratchet-weekly.yml | Coverage ratchet (weekly floor bump) | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "coverage-ratchet-weekly"} | 1 |
-| .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | push | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
+| .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | workflow_run | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |

@@ -21,66 +21,16 @@ from bernstein.core.run_changelog import (
     generate_run_changelog,
 )
 
+# The original ``run_changelog_cmd`` click command was the top-level
+# ``bernstein run-changelog``. In v4.0.0 the bare name ``bernstein changelog``
+# took over this behaviour (issue #3142), so the click registration now lives
+# in ``bernstein.cli.commands.changelog_cmd`` under the ``changelog`` group.
+# The pure-Python implementation stays here as ``run_changelog_default`` so
+# the group default callback and the deprecated ``run-changelog`` alias can
+# both call it without going through click.
 
-@click.command("run-changelog")
-@click.option(
-    "--since",
-    "since_ref",
-    default=None,
-    metavar="REF",
-    help="Git ref (tag or SHA) marking the start of the run window. Only commits after this ref are included.",
-)
-@click.option(
-    "--hours",
-    "since_hours",
-    default=None,
-    type=float,
-    metavar="N",
-    help="Limit to tasks completed in the last N hours (default: 24). Ignored when --since is provided.",
-)
-@click.option(
-    "--format",
-    "fmt",
-    type=click.Choice(["console", "markdown"]),
-    default="console",
-    show_default=True,
-    help="Output format.",
-)
-@click.option(
-    "--output",
-    "-o",
-    "output_path",
-    default=None,
-    type=click.Path(dir_okay=False),
-    help="Write Markdown output to this file (implies --format markdown).",
-)
-@click.option(
-    "--repo-url",
-    default=None,
-    metavar="URL",
-    help="Repository URL used to generate task links in Markdown output.",
-)
-@click.option(
-    "--include-no-commits",
-    is_flag=True,
-    default=False,
-    help="Include tasks that have no matching git commits (useful to surface tasks that completed without committing).",
-)
-@click.option(
-    "--server-url",
-    "server_url",
-    default=None,
-    metavar="URL",
-    help="Bernstein task server URL (default: $BERNSTEIN_SERVER_URL or http://localhost:8052).",
-)
-@click.option(
-    "--workdir",
-    default=".",
-    show_default=True,
-    type=click.Path(exists=True, file_okay=False),
-    help="Project root (git repository).",
-)
-def run_changelog_cmd(
+
+def run_changelog_default(
     since_ref: str | None,
     since_hours: float | None,
     fmt: str,
@@ -94,15 +44,17 @@ def run_changelog_cmd(
 
     Queries the task server for completed tasks, maps each task to its git
     commits (via the ``Refs: #<task_id>`` footer added by ``bernstein``), and
-    produces a human-readable changelog grouped by component.
+    produces a human-readable changelog grouped by component. Invoked by
+    ``bernstein changelog`` (the new bare name, see issue #3142) and by the
+    deprecated ``bernstein run-changelog`` alias.
 
     \b
     Examples:
-      bernstein run-changelog                          # last 24 h, console
-      bernstein run-changelog --hours 48               # last 48 h
-      bernstein run-changelog --since v1.2.0           # since a tag
-      bernstein run-changelog -o CHANGELOG-run.md      # write to file
-      bernstein run-changelog --format markdown        # markdown to stdout
+      bernstein changelog                              # last 24 h, console
+      bernstein changelog --hours 48                   # last 48 h
+      bernstein changelog --since v1.2.0               # since a tag
+      bernstein changelog -o CHANGELOG-run.md          # write to file
+      bernstein changelog --format markdown            # markdown to stdout
     """
     effective_server_url = server_url or SERVER_URL
     cwd = Path(workdir).resolve()

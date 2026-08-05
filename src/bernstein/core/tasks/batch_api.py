@@ -22,6 +22,7 @@ from bernstein.core.janitor import verify_task
 from bernstein.core.metrics import get_collector
 from bernstein.core.quality_gates import run_quality_gates
 from bernstein.core.router import route_task
+from bernstein.core.tasks.artifact_completion import is_artifact_mode
 from bernstein.core.tasks.batch_router import BATCH_DISCOUNT_FACTOR, BatchMode, classify_batch_mode
 from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.tasks.models import AgentSession, ModelConfig, Task
@@ -332,9 +333,28 @@ class ProviderBatchManager:
         }
 
     def try_submit(self, orch: Any, task: Task) -> BatchSubmissionResult:
-        """Submit a single task to a provider batch API when eligible."""
+        """Submit a single task to a provider batch API when eligible.
+
+        Provider batch is git-diff-only by construction: the prompt asks for a
+        unified diff and the completion path applies, stages, and commits it.
+        An artifact-mode task (issue #2996) is therefore refused up front -
+        before eligibility checks, routing, worktree creation, or any provider
+        call - and falls through to the realtime spawn path, whose artifact
+        completion path records the signed lineage receipt the task completes
+        on. Accepting it here could only end in a git-shaped completion the
+        task's contract says it must not have.
+        """
         if not self._config.enabled:
             return BatchSubmissionResult(handled=False, submitted=False)
+        if is_artifact_mode(task):
+            reason = (
+                f"provider batch is git-diff-only; artifact-mode task {task.id} "
+                f"(kind={task.artifact_spec.kind.value}) must run through the realtime "
+                "spawn path and complete via the artifact completion path "
+                "(core/tasks/artifact_completion.py), not a commit"
+            )
+            logger.info("Refusing provider batch submission: %s", reason)
+            return BatchSubmissionResult(handled=False, submitted=False, reason=reason)
         if self._store.has_realtime_fallback(task.id):
             return BatchSubmissionResult(handled=False, submitted=False)
         if classify_batch_mode(task).mode != BatchMode.BATCH:

@@ -292,6 +292,48 @@ def test_poll_failure_marks_task_for_realtime_fallback(tmp_path: Path, make_task
     assert retry.submitted is False
 
 
+def test_try_submit_refuses_artifact_mode_task_naming_supported_path(tmp_path: Path, make_task: Any) -> None:
+    """Provider batch is git-diff-only: an artifact-mode task is refused before
+    routing, worktree creation, or any provider call, with the refusal naming
+    the supported path - it can never end in a silent git commit (#2996).
+
+    The task is otherwise fully batch-eligible (keyword match, enabled config,
+    reachable provider), so the mode gate is the only thing standing between it
+    and a submission that would commit by construction.
+    """
+    from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+    router = _RouterStub()
+    provider_client = _ProviderClientStub()
+    manager = ProviderBatchManager(
+        tmp_path,
+        BatchConfig(enabled=True, eligible=["docs"]),
+        provider_clients={"openai": provider_client},
+    )
+    manager._trace_store = MagicMock()
+    collector = _CollectorStub()
+    orch = _make_orch(tmp_path, router)
+    task = make_task(id="T-artifact-report", title="Update docs report", description="Summarize the API docs.")
+    task.artifact_spec = ArtifactSpec(kind=ArtifactKind.REPORT, output_path="reports/summary.md")
+
+    with patch("bernstein.core.tasks.batch_api.get_collector", return_value=collector):
+        result = manager.try_submit(orch, task)
+
+    # Refused, and the refusal names the supported path.
+    assert result.handled is False
+    assert result.submitted is False
+    assert "git-diff-only" in result.reason
+    assert "artifact completion path" in result.reason
+
+    # Nothing git-shaped happened: no provider call, no job record, no
+    # worktree, no session claim.
+    assert provider_client.submissions == []
+    assert not (tmp_path / ".sdd" / "runtime" / "batch_jobs").exists()
+    assert not (tmp_path / "batch-worktree").exists()
+    assert orch._task_to_session == {}
+    assert orch._spawner._worktree_paths == {}
+
+
 def test_try_submit_uses_anthropic_provider_for_claude_batch_task(tmp_path: Path, make_task: Any) -> None:
     """Claude-model non-urgent work should submit through the Anthropic batch path."""
     router = _RouterStub(provider="anthropic")

@@ -48,7 +48,7 @@ git init
 git commit --allow-empty -m "init"
 ```
 
-Bernstein needs a git repo because each agent works in its own git worktree.
+Bernstein needs a git repo because each coding agent works in its own git worktree.
 
 ---
 

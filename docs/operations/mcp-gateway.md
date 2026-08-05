@@ -111,6 +111,14 @@ tool, request id, and argument digest into one call-intent digest. Returned
 evidence must bind that exact digest; stale evidence for a different call is a
 hard failure in enforced mode.
 
+Bernstein's native provider may be configured with the run identity and its
+spawn-frozen lineage signer. In that mode, changing the run journal head or
+signing key requires a newly anchored run; the provider never silently rotates
+identity mid-run. Offline receipt projection validates every signed envelope
+and rejects duplicate dispatch of the same attestation. Operators should treat
+`observed` as an honest loss of completeness, never as a softer spelling of
+`complete`.
+
 This initial integration seam is programmatic. The CLI does not select a
 provider yet, and an unwired gateway retains its existing observe-only
 behavior. The boundary covers calls that cross the gateway; it cannot contain

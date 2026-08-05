@@ -4,7 +4,9 @@
 > Codex, Gemini CLI, and 40+ more). Scheduling is plain Python - no LLM in the
 > coordination loop - so runs are reproducible end to end.
 >
-> Every task runs in its own git worktree behind lint/type/test gates. An
+> Every coding task runs in its own git worktree behind lint/type/test gates;
+> artifact-mode tasks complete on a signed lineage receipt in an isolated
+> plain directory instead. An
 > always-on lineage spine and replay journal record what happened; an opt-in
 > HMAC-chained audit log and signed receipts make results independently
 > checkable after the fact. `bernstein artifact verify` and `bernstein audit

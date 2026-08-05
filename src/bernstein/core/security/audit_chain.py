@@ -907,6 +907,16 @@ EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
 EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
 EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
+#: Issue #2930 -- emitted whenever an eval run seals a clean-run attestation
+#: (:mod:`bernstein.eval.clean_run`). The event mirrors the attestation's
+#: identity into the HMAC chain: the attestation hash, the verdict, the sealed
+#: task commitment, the journal head anchoring the scanned activity set, and
+#: the lineage-spine anchor -- hashes and the verdict only, never the plaintext
+#: ground-truth, the read contents, or the match spans. A tampered attestation
+#: therefore fails ``bernstein audit verify`` exactly like any tampered chain
+#: entry.
+EVENT_CLEAN_RUN_ATTESTATION = "eval.clean_run_attestation"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -3586,6 +3596,58 @@ def record_evidence_bundle(
             "bundle_hash": bundle_hash,
             "item_count": item_count,
             "gate_passed": gate_passed,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_clean_run_attestation(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    attestation_hash: str,
+    verdict: str,
+    task_commitment: str,
+    journal_head: str,
+    journal_entry_hash: str,
+    actor: str = "eval_clean_run",
+) -> AuditEvent:
+    """Append an ``eval.clean_run_attestation`` event into *chain* (#2930).
+
+    Mirrors a sealed, spine-anchored clean-run attestation into the
+    HMAC-chained audit log so an operator can prove, from the chain alone,
+    that an eval run's activity was scanned against the task's ground-truth
+    commitment and what the verdict was. Only the attestation hash, the
+    verdict, the keyed task commitment, the journal-head anchor, and the
+    spine anchor are recorded -- never the plaintext ground-truth, the read
+    contents, or the matched spans. Mirrors :func:`record_evidence_bundle`
+    (#2362) and :func:`record_eval_gate_verdict` (#2520).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The eval run the attestation was sealed for.
+        attestation_hash: ``sha256:`` hash of the canonical attestation body.
+        verdict: ``"clean"`` or ``"dirty"``.
+        task_commitment: Keyed digest of the task identity (never the id).
+        journal_head: Merkle head of the scanned run journal.
+        journal_entry_hash: The eval-clean-run spine entry hash.
+        actor: Recorded actor; defaults to ``"eval_clean_run"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CLEAN_RUN_ATTESTATION,
+        actor=actor,
+        resource_type="clean_run_attestation",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "attestation_hash": attestation_hash,
+            "verdict": verdict,
+            "task_commitment": task_commitment,
+            "journal_head": journal_head,
             "journal_entry_hash": journal_entry_hash,
         },
     )
@@ -7954,6 +8016,81 @@ def record_self_update_receipt(
     )
 
 
+# ---------------------------------------------------------------------------
+# Verifier-ladder tier records (#2927)
+# ---------------------------------------------------------------------------
+
+#: Issue #2927 -- emitted once per verifier-ladder tier that actually ran
+#: against a task's attributed diff. The event is the ladder-level binder: it
+#: carries the composite ladder receipt hash, the task id, the tier name, the
+#: tier's configuration / inputs / evidence hashes, its verdict
+#: (``pass`` / ``fail`` / ``skip``), and the lineage-spine entry hash under
+#: which the tier's canonical record bytes are sealed. Only hashes, ids, and
+#: the verdict are recorded -- never the raw diff, rubric, or model output.
+#: Tier-local receipts (``gate.adjudication``, ``review.receipt``) remain
+#: separate; this event binds coverage across the whole ladder.
+EVENT_VERIFIER_TIER = "verifier.tier"
+
+
+def record_verifier_tier(
+    *,
+    chain: AuditChainStore,
+    receipt_hash: str,
+    task_id: str,
+    tier: str,
+    config_hash: str,
+    inputs_hash: str,
+    evidence_hash: str,
+    verdict: str,
+    spine_entry_hash: str,
+    actor: str = "verifier_ladder",
+) -> AuditEvent:
+    """Append a ``verifier.tier`` event into *chain* (#2927).
+
+    Mirrors one sealed verifier-ladder tier record into the HMAC chain so an
+    operator can prove, from the chain alone, that a given tier executed
+    against a named body of evidence: the tier's own configuration, the
+    attributed inputs it saw, and the structured findings it produced -- each
+    as a ``sha256:`` hash. A verifier holding the ``verifier-ladder`` lineage
+    spine confirms the ``spine_entry_hash`` seals exactly these hashes, so a
+    tier that silently degraded or was skipped cannot later read as coverage.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_hash: Content hash of the composite ladder receipt this tier
+            record belongs to (the ladder's identity).
+        task_id: The task whose work the ladder verified.
+        tier: The tier name (``deterministic`` / ``judge`` / ``human``).
+        config_hash: ``sha256:`` hash of the tier's own configuration.
+        inputs_hash: ``sha256:`` hash of the attributed inputs the tier saw.
+        evidence_hash: ``sha256:`` hash of the tier's structured findings.
+        verdict: The tier verdict (``pass`` / ``fail`` / ``skip``).
+        spine_entry_hash: Lineage-spine entry hash sealing the tier record's
+            canonical bytes under the ``verifier-ladder`` run.
+        actor: Recorded actor; defaults to ``"verifier_ladder"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_VERIFIER_TIER,
+        actor=actor,
+        resource_type="verifier_tier",
+        resource_id=receipt_hash,
+        details={
+            "receipt_hash": receipt_hash,
+            "task_id": task_id,
+            "tier": tier,
+            "config_hash": config_hash,
+            "inputs_hash": inputs_hash,
+            "evidence_hash": evidence_hash,
+            "verdict": verdict,
+            "spine_entry_hash": spine_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -7976,6 +8113,7 @@ __all__ = [
     "EVENT_CACHE_MISS",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_CLAIM_JOURNAL_RECEIPT",
+    "EVENT_CLEAN_RUN_ATTESTATION",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COMPUTER_USE_ACTION",
@@ -8074,6 +8212,7 @@ __all__ = [
     "EVENT_TOURNAMENT_SELECTION",
     "EVENT_TRAJECTORY_RECEIPT",
     "EVENT_UPDATE_ADVISORY",
+    "EVENT_VERIFIER_TIER",
     "EVENT_WEBHOOK_NODE_RECEIPT",
     "EVENT_WEBHOOK_PAYLOAD_ANCHOR",
     "EVENT_WORK_LEDGER_ANCHOR",
@@ -8112,6 +8251,7 @@ __all__ = [
     "record_capability_selection",
     "record_checkpoint_retry",
     "record_claim_journal_receipt",
+    "record_clean_run_attestation",
     "record_computer_use_action",
     "record_context_capsule",
     "record_cost_batch_route",
@@ -8206,6 +8346,7 @@ __all__ = [
     "record_tournament_selection",
     "record_trajectory_receipt",
     "record_update_advisory",
+    "record_verifier_tier",
     "record_webhook_node_receipt",
     "record_webhook_payload_anchor",
     "record_work_ledger_anchor",

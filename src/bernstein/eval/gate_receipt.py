@@ -29,6 +29,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
@@ -46,7 +47,6 @@ from bernstein.eval.significance import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     from bernstein.core.security.audit_chain import AuditChainStore
 
@@ -65,20 +65,82 @@ _GATE_SUBPATH = (".sdd", "eval", "gate")
 _RECEIPT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+def _refuse_unprobeable_or_linked(probe: Path) -> None:
+    """Fail-closed link probe for one gate-store component.
+
+    Deliberately not ``is_filesystem_link``: that shared helper answers
+    ``False`` when the probe itself fails (a best-effort contract that
+    serves the worktree GC sweep), and a store walk that cannot prove a
+    component is not a link must refuse rather than continue. A component
+    that does not exist yet is fine -- ``is_symlink`` / ``is_junction``
+    return ``False`` without raising for a missing path -- so sealing into
+    a fresh workdir still creates the store.
+
+    Raises:
+        ValueError: The component is a symlink or junction, or the probe
+            itself failed.
+    """
+    try:
+        linked = probe.is_symlink()
+        if not linked:
+            probe_junction = getattr(probe, "is_junction", None)
+            linked = probe_junction is not None and bool(probe_junction())
+    except OSError as exc:
+        msg = f"gate receipt store component could not be probed for links; refusing: {probe}: {exc.errno}"
+        raise ValueError(msg) from exc
+    if linked:
+        msg = f"gate receipt store path is a symlink or junction; refusing to follow it: {probe}"
+        raise ValueError(msg)
+
+
+def _read_leaf_text(path: Path) -> str:
+    """Read one receipt leaf without following a symlink planted there.
+
+    Opens with ``O_NOFOLLOW`` so a symlink swapped in at the receipt
+    filename after path validation is rejected atomically by the read
+    itself -- a separate pre-check would leave a TOCTOU window. Mirrors the
+    CAS blob read (:mod:`bernstein.core.persistence.cas_store`). The flag
+    is POSIX-only; where it is absent it degrades to 0. A symlinked leaf
+    surfaces as ``OSError`` (``ELOOP``), which callers classify as
+    unreadable, never parsed.
+    """
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
 def verdict_receipt_path(workdir: Path, receipt_hash: str) -> Path:
     """Return the on-disk receipt path for *receipt_hash* under *workdir*.
 
     The hash is validated against ``sha256:<64 hex>`` and the resolved path is
     asserted to stay under the gate directory, so a caller-influenced hash can
-    never escape the receipt store (path-injection defense in depth).
+    never escape the receipt store (path-injection defense in depth). A
+    receipt store relocated via a filesystem link is refused outright: with
+    ``.sdd``, ``.sdd/eval``, or the gate directory itself symlinked (or, on
+    Windows, junctioned -- ``Path.is_symlink()`` is ``False`` for NTFS
+    junctions) elsewhere, base and candidate both resolve into the link's
+    target and a realpath containment check passes vacuously, so the store
+    would follow attacker-placed content. The probe fails closed: a
+    component that cannot be probed for links refuses by name rather than
+    continuing. Same posture as the verifier-ladder receipt store and the
+    MCP shutdown barrier's refusal of a ``.sdd`` symlinked elsewhere
+    (#3080). The returned path is the *resolved* candidate.
+    Directory-component races are accepted; leaf opens are no-follow per
+    :mod:`bernstein.core.persistence.cas_store`.
 
     Raises:
-        ValueError: The hash is not a canonical ``sha256:`` digest, or the
-            resolved path escapes the gate directory.
+        ValueError: The hash is not a canonical ``sha256:`` digest, a
+            component of the gate directory is a symlink or junction or
+            could not be probed, or the resolved path escapes the gate
+            directory.
     """
     if not _RECEIPT_HASH_RE.match(receipt_hash):
         msg = f"receipt_hash is not a canonical sha256 digest: {receipt_hash!r}"
         raise ValueError(msg)
+    probe = workdir
+    for part in _GATE_SUBPATH:
+        probe = probe / part
+        _refuse_unprobeable_or_linked(probe)
     base = workdir.joinpath(*_GATE_SUBPATH)
     candidate = base / f"{receipt_hash}.json"
     base_real = os.path.realpath(base)
@@ -86,7 +148,7 @@ def verdict_receipt_path(workdir: Path, receipt_hash: str) -> Path:
     if os.path.commonpath([base_real, cand_real]) != base_real:
         msg = f"receipt path escapes gate directory: {receipt_hash!r}"
         raise ValueError(msg)
-    return candidate
+    return Path(cand_real)
 
 
 def _hash_obj(obj: Any) -> str:
@@ -341,10 +403,15 @@ def read_verdict_receipt(workdir: Path, receipt_hash: str) -> VerdictReceipt | N
         path = verdict_receipt_path(workdir, receipt_hash)
     except ValueError:
         return None
-    if not path.is_file():
+    try:
+        raw = _read_leaf_text(path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        logger.warning("eval: verdict receipt leaf refused a no-follow open at %s", path)
         return None
     try:
-        return VerdictReceipt.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        return VerdictReceipt.from_dict(json.loads(raw))
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         logger.warning("eval: malformed verdict receipt at %s", path)
         return None

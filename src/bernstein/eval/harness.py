@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from bernstein.eval.clean_run import CleanRunAttestation, CleanRunVerdict
 from bernstein.eval.golden import GoldenTask, Tier, load_golden_tasks
 from bernstein.eval.metrics import (
     EvalScoreComponents,
@@ -127,6 +128,9 @@ class TaskEvalResult:
         failure: Classified failure record (if task failed).
         duration_s: Wall-clock seconds for this task.
         cost_usd: Estimated cost for this task.
+        clean_run: Clean-run attestation sealed for this task's run, when one
+            was requested (#2930). ``None`` leaves scoring unchanged; a
+            ``DIRTY`` verdict zeroes the multiplicative Safety factor.
     """
 
     task_id: str
@@ -137,6 +141,7 @@ class TaskEvalResult:
     failure: FailureRecord | None = None
     duration_s: float = 0.0
     cost_usd: float = 0.0
+    clean_run: CleanRunAttestation | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +363,7 @@ class EvalHarness:
         task: GoldenTask,
         telemetry_raw: dict[str, object] | None = None,
         judge_verdict: JudgeVerdict | None = None,
+        clean_run_attestation: CleanRunAttestation | None = None,
     ) -> TaskEvalResult:
         """Evaluate a single task against its golden expectations.
 
@@ -368,11 +374,15 @@ class EvalHarness:
             task: The golden task to evaluate.
             telemetry_raw: Raw telemetry dict from agent output.
             judge_verdict: Pre-computed judge verdict.
+            clean_run_attestation: Sealed clean-run attestation for this
+                task's run (#2930), attached to the result so a ``DIRTY``
+                verdict zeroes the Safety factor at scoring time. ``None``
+                (no attestation requested) changes nothing.
 
         Returns:
             TaskEvalResult with pass/fail and classified failure.
         """
-        result = TaskEvalResult(task_id=task.id, tier=task.tier)
+        result = TaskEvalResult(task_id=task.id, tier=task.tier, clean_run=clean_run_attestation)
         start = time.monotonic()
 
         # Parse and validate telemetry
@@ -468,9 +478,15 @@ class EvalHarness:
             telemetry_valid=all_telemetry_valid,
         )
 
-        # Safety gate
+        # Safety gate. A DIRTY clean-run attestation (#2930) means the score
+        # was potentially earned by reading the answer, so it zeroes the
+        # multiplicative factor exactly like a test regression; tasks without
+        # an attestation are scored as before.
         has_regressions = self._taxonomy.has_test_regressions()
-        safety = compute_safety(has_regressions)
+        contaminated = any(
+            r.clean_run is not None and r.clean_run.verdict == CleanRunVerdict.DIRTY.value for r in task_results
+        )
+        safety = 0.0 if contaminated else compute_safety(has_regressions)
 
         # Assemble components
         mc = EvalScoreComponents(

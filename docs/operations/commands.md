@@ -73,7 +73,7 @@ bernstein doctor     # pre-flight checks
 bernstein recap      # post-run summary
 bernstein export     # shareable HTML/Markdown report of the latest run
 bernstein trace <ID> # agent decision trace
-bernstein run-changelog --hours 48  # changelog from agent-produced diffs
+bernstein changelog --hours 48  # changelog from agent-produced diffs
 bernstein explain <cmd>  # detailed help with examples
 bernstein dry-run    # preview tasks without executing
 bernstein dep-impact # API breakage + downstream caller impact

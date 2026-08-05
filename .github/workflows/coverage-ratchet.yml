@@ -37,17 +37,41 @@ name: Coverage ratchet (total)
 # secret-less environments working; there the PR still needs a manual
 # close-and-reopen to collect its checks.
 #
-# Trigger: push to main, then resolve the freshest CI run that actually
-# uploaded a coverage-report artifact. Under the rapid-merge cadence
-# ci.yml's cancel-in-progress concurrency cancels
-# most main CI runs, so a `workflow_run`/`conclusion == success` trigger
-# almost never fires. Searching recent runs for the artifact (cancelled
-# runs may still have uploaded it) is the robust pattern. Keeping the
-# baseline-write here (not in ci.yml) means ci.yml's gate jobs never need
-# `contents: write`.
+# Trigger: CI *completion* on main, not the push that started it.
+#
+# On a `push` trigger this workflow races the CI run it wants to measure:
+# both start from the same event, and the resolve step reaches the
+# artifact API long before the coverage shard has uploaded anything. The
+# push-triggered version only ever found an artifact because it accepted
+# whichever recent run happened to have one - i.e. a *different* commit's
+# measurement. That is the mismatch this workflow exists to avoid, so the
+# race and the provenance bug have to be fixed together: pinning the
+# commit without moving the trigger would leave the ratchet correct and
+# permanently idle.
+#
+# `types: [completed]` fires on every conclusion, cancelled included.
+# That matters here: ci.yml's cancel-in-progress concurrency cancels most
+# main runs, so filtering on `conclusion == success` would almost never
+# fire - the reason the original implementation avoided `workflow_run`
+# altogether. Not filtering on conclusion keeps the fallback while the
+# event still hands us an exact `head_sha` and run id.
+#
+# Keeping the baseline-write here (not in ci.yml) means ci.yml's gate jobs
+# never need `contents: write`.
+#
+# The baseline the ratchet commits records the raw Cobertura line-rate,
+# the head_sha and the CI run id behind it, so the percentage in
+# .coverage-baseline.json can be re-derived from the committed file alone
+# (`scripts/coverage_ratchet.py verify`). A generated value should be
+# reproducible from what is committed.
+#
+# Note: a `workflow_run` workflow always executes the copy of this file on
+# the default branch, so edits here take effect only once merged to main.
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
 
 concurrency:
@@ -64,8 +88,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Skip the merge of a baseline-bump PR this workflow opened (avoids a
-    # self-retrigger loop on its own change).
-    if: "!contains(github.event.head_commit.message, 'ratchet coverage baseline')"
+    # self-retrigger loop on its own change). On workflow_run the commit
+    # lives under the triggering run, not the top-level event.
+    if: "!contains(github.event.workflow_run.head_commit.message, 'ratchet coverage baseline')"
     permissions:
       contents: write  # create the bump branch
       pull-requests: write  # open the baseline-bump PR
@@ -78,42 +103,94 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: main
+          # The commit the triggering CI run measured - NOT `main`, which
+          # has usually moved on by now, and not `github.sha`, which on a
+          # workflow_run event is the default-branch head rather than the
+          # measured commit. The tree we check out and the tree CI measured
+          # must be the same commit.
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - uses: ./.github/actions/bootstrap
 
-      - name: Resolve latest CI run with a coverage artifact
+      - name: Resolve the CI run that measured this commit
         id: ci_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGERING_RUN: ${{ github.event.workflow_run.id }}
+          TRIGGERING_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
           set -euo pipefail
-          # Search the last 20 main CI runs for one that uploaded the
-          # coverage-report artifact. Cancelled runs can still have
-          # uploaded it if the coverage step ran before cancellation, so
-          # we do not filter by status.
+          # The triggering run has finished, so its coverage-report either
+          # exists now or never will - no polling, no racing the upload.
+          #
+          # Every candidate must have head_sha == TARGET_SHA. Matching on
+          # the artifact alone is what let a report for one commit justify
+          # a bump recorded against another: the committed high-water mark
+          # then described a tree nobody could identify, and the next
+          # honest measurement read as a drop.
+          #
+          # Two ordered passes:
+          #
+          #   1. the triggering run itself - the ordinary case, and the
+          #      one whose id and head_sha the event handed us directly.
+          #   2. any *other* completed run for the same commit - the
+          #      deliberate fallback. ci.yml's cancel-in-progress
+          #      concurrency means the triggering run may have been
+          #      cancelled before the coverage shard uploaded; a re-run or
+          #      a superseded attempt on the same commit can still carry a
+          #      usable report. Conclusion is not filtered in either pass,
+          #      because insisting on `success` would idle the ratchet
+          #      almost permanently under that same concurrency.
+          #
+          # Neither pass can reach a run for a different commit, so the
+          # worst case is a *partial* report for the right commit. A
+          # partial report understates coverage: it can cost a bump, never
+          # manufacture one, and never attribute a measurement to the
+          # wrong tree.
+          has_coverage_artifact() {
+            gh api "repos/${REPO}/actions/runs/$1/artifacts" --jq '.artifacts[].name' 2>/dev/null \
+              | grep -qx coverage-report
+          }
+
           found=""
-          for run_id in $(gh run list \
-              --repo "${{ github.repository }}" \
-              --workflow ci.yml \
-              --branch main \
-              --limit 20 \
-              --json databaseId \
-              --jq '.[].databaseId'); do
-            artifacts=$(gh api "repos/${{ github.repository }}/actions/runs/$run_id/artifacts" \
-                --jq '.artifacts[].name' 2>/dev/null || true)
-            if printf '%s\n' "$artifacts" | grep -qx coverage-report; then
-              found="$run_id"
-              break
-            fi
-          done
-          if [ -n "$found" ]; then
-            echo "Found coverage-report artifact in CI run: $found"
-            echo "run_id=$found" >> "$GITHUB_OUTPUT"
+          found_class=""
+          if has_coverage_artifact "${TRIGGERING_RUN}"; then
+            found="${TRIGGERING_RUN}"
+            found_class="triggering"
           else
-            echo "::notice::No recent CI run with a coverage-report artifact; skipping ratchet."
+            echo "::notice::triggering CI run ${TRIGGERING_RUN} (${TRIGGERING_CONCLUSION}) has no coverage-report; looking for another run of ${TARGET_SHA}."
+            siblings=$(gh run list \
+                --repo "${REPO}" \
+                --workflow ci.yml \
+                --branch main \
+                --limit 40 \
+                --json databaseId,headSha,status \
+                --jq '[.[] | select(.headSha == env.TARGET_SHA and .status == "completed") | .databaseId] | .[]')
+            for run_id in ${siblings}; do
+              if [ "${run_id}" = "${TRIGGERING_RUN}" ]; then
+                continue
+              fi
+              if has_coverage_artifact "${run_id}"; then
+                found="${run_id}"
+                found_class="sibling"
+                break
+              fi
+            done
+          fi
+
+          if [ -n "${found}" ]; then
+            echo "coverage-report for ${TARGET_SHA} found in CI run ${found} (${found_class})"
+            if [ "${found_class}" = "sibling" ]; then
+              echo "::notice::using CI run ${found} rather than the triggering run; accepted because its head_sha still matches ${TARGET_SHA}."
+            fi
+            echo "run_id=${found}" >> "$GITHUB_OUTPUT"
+            echo "head_sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::no completed CI run for ${TARGET_SHA} carries a coverage-report artifact; skipping ratchet. The next commit's CI completion gets its own chance."
           fi
 
       - name: Download coverage report from the CI run
@@ -128,14 +205,30 @@ jobs:
       - name: Run total-coverage ratchet
         id: ratchet
         continue-on-error: true  # ADVISORY: a drop reports red but never blocks
+        env:
+          HEAD_SHA: ${{ steps.ci_run.outputs.head_sha }}
+          RUN_ID: ${{ steps.ci_run.outputs.run_id }}
         run: |
           if [ ! -f coverage.xml ] || [ ! -s coverage.xml ]; then
             echo "::warning::No usable coverage.xml available; skipping coverage ratchet for this push."
             exit 0
           fi
+          # --head-sha / --run-id are recorded next to the measurement, so a
+          # bumped baseline names the commit and run it came from.
           uv run python scripts/coverage_ratchet.py check \
             --coverage-xml coverage.xml \
-            --baseline .coverage-baseline.json
+            --baseline .coverage-baseline.json \
+            --head-sha "${HEAD_SHA}" \
+            --run-id "${RUN_ID}"
+
+      - name: Verify the bumped baseline re-derives
+        # Not continue-on-error: if the value we are about to commit cannot
+        # be reproduced from the file that carries it, the PR must not open.
+        if: steps.ratchet.outputs.baseline_bumped == 'true'
+        run: |
+          uv run python scripts/coverage_ratchet.py verify \
+            --baseline .coverage-baseline.json \
+            --require-provenance
 
       - name: Guard the open ratchet PR against a downward move
         id: guard
@@ -237,6 +330,18 @@ jobs:
             Total line coverage rose on `main`, so the monotonic ratchet
             bumped the committed high-water mark in `.coverage-baseline.json`
             to **${{ steps.ratchet.outputs.measured }}%**.
+
+            Measured on `${{ steps.ci_run.outputs.head_sha }}` from the
+            `coverage-report` artifact of CI run
+            [${{ steps.ci_run.outputs.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.ci_run.outputs.run_id }}).
+            Those, and the raw Cobertura `line-rate` the percentage was
+            rounded from, are recorded in the baseline, so the number in the
+            diff can be re-derived from the file itself:
+
+            ```bash
+            uv run python scripts/coverage_ratchet.py verify \
+                --baseline .coverage-baseline.json --require-provenance
+            ```
 
             From here, any later push whose total coverage falls below this
             mark is flagged by the LEVEL 2 ratchet. The gate stays advisory

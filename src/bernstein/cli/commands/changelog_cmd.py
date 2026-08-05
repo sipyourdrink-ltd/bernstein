@@ -308,7 +308,207 @@ def _render_to_console(entries: list[CommitEntry], version: str, since_ref: str 
 # ---------------------------------------------------------------------------
 
 
-@click.command("changelog")
+def _changelog_conventional_inner(
+    since_ref: str | None,
+    until_ref: str,
+    version_label: str | None,
+    include_all: bool,
+    fmt: str,
+    output_path: str | None,
+    repo_url: str | None,
+    workdir: str,
+) -> None:
+    """Auto-generate a changelog from conventional commits.
+
+    By default, shows commits since the latest semver tag. Use --since to
+    specify a different starting point, or --all for the full history.
+
+    \b
+    Examples:
+      bernstein changelog conventional            # since latest tag, console
+      bernstein changelog conventional --since v1.0.0
+      bernstein changelog conventional --all      # full history
+      bernstein changelog conventional -o CHANGELOG.md
+      bernstein changelog conventional --format keepachangelog
+    """
+    cwd = Path(workdir).resolve()
+
+    # ------------------------------------------------------------------
+    # 1. Resolve since_ref
+    # ------------------------------------------------------------------
+    effective_since: str | None
+    if include_all:
+        effective_since = None
+    elif since_ref is not None:
+        effective_since = since_ref
+    else:
+        effective_since = _latest_tag(cwd)
+        if effective_since:
+            console.print(f"[dim]Using latest tag: {effective_since}[/dim]")
+        else:
+            console.print("[dim]No tags found: showing all commits.[/dim]")
+
+    # ------------------------------------------------------------------
+    # 2. Fetch commits
+    # ------------------------------------------------------------------
+    entries = _commits_since(cwd, effective_since, until_ref)
+    if not entries:
+        console.print("[yellow]No commits found in the specified range.[/yellow]")
+        return
+
+    # ------------------------------------------------------------------
+    # 3. Resolve version label
+    # ------------------------------------------------------------------
+    if version_label is None:
+        from bernstein.core.git_basic import version_from_commits
+
+        version_label = "v" + version_from_commits(cwd)
+
+    # ------------------------------------------------------------------
+    # 4. Determine format
+    # ------------------------------------------------------------------
+    effective_fmt = fmt
+    if output_path and fmt == "console":
+        effective_fmt = "keepachangelog"
+
+    # ------------------------------------------------------------------
+    # 5. Render
+    # ------------------------------------------------------------------
+    if effective_fmt == "console":
+        _render_to_console(entries, version_label, effective_since)
+        return
+
+    if effective_fmt == "keepachangelog":
+        text = _format_keepachangelog(entries, version_label, effective_since, until_ref, repo_url)
+    else:  # simple
+        text = _format_simple(entries, version_label, effective_since, until_ref)
+
+    if output_path:
+        _write_changelog_file(output_path, text, len(entries), version_label)
+    else:
+        click.echo(text)
+
+
+# ---------------------------------------------------------------------------
+# CLI group -- ``bernstein changelog`` (#3142)
+#
+# v4.0.0 swap: the orchestration-specific command (``run-changelog``) now owns
+# the bare name ``bernstein changelog``, and the conventional-commit command is
+# a subcommand ``bernstein changelog conventional``. The old ``run-changelog``
+# name stays as a deprecated alias — removed in a release after the 4.0 line
+# that introduced it — so existing scripts
+# emit a notice rather than silently changing meaning (#3142, #3147). Both
+# commands had zero tests before this issue; coverage is added in
+# ``tests/unit/cli/test_changelog_swap.py``.
+# ---------------------------------------------------------------------------
+
+
+@click.group("changelog", invoke_without_command=True)
+@click.option(
+    "--since",
+    "since_ref",
+    default=None,
+    metavar="REF",
+    help="Git ref (tag or SHA) marking the start of the run window. Only commits after this ref are included.",
+)
+@click.option(
+    "--hours",
+    "since_hours",
+    default=None,
+    type=float,
+    metavar="N",
+    help="Limit to tasks completed in the last N hours (default: 24). Ignored when --since is provided.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["console", "markdown"]),
+    default="console",
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Write Markdown output to this file (implies --format markdown).",
+)
+@click.option(
+    "--repo-url",
+    default=None,
+    metavar="URL",
+    help="Repository URL used to generate task links in Markdown output.",
+)
+@click.option(
+    "--include-no-commits",
+    is_flag=True,
+    default=False,
+    help="Include tasks that have no matching git commits (useful to surface tasks that completed without committing).",
+)
+@click.option(
+    "--server-url",
+    "server_url",
+    default=None,
+    metavar="URL",
+    help="Bernstein task server URL (default: $BERNSTEIN_SERVER_URL or http://localhost:8052).",
+)
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Project root (git repository).",
+)
+@click.pass_context
+def changelog_group(
+    ctx: click.Context,
+    since_ref: str | None,
+    since_hours: float | None,
+    fmt: str,
+    output_path: str | None,
+    repo_url: str | None,
+    include_no_commits: bool,
+    server_url: str | None,
+    workdir: str,
+) -> None:
+    """Changelog generation.
+
+    \b
+    With no subcommand, ``bernstein changelog`` summarises what Bernstein
+    agents actually changed during a run (the previous ``run-changelog``
+    command). Use ``bernstein changelog conventional`` to generate a
+    changelog from conventional commits in the project history.
+
+    \b
+    Examples:
+      bernstein changelog                  # agent-produced diffs, last 24 h
+      bernstein changelog --hours 48       # wider window
+      bernstein changelog conventional     # from conventional commits
+      bernstein changelog conventional --since v1.0.0
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    # Bare ``bernstein changelog`` (no subcommand) defaults to the run-changelog
+    # behaviour: agent-produced diffs over the last 24 h. Forward the flags
+    # declared on the group so ``--hours`` / ``--server-url`` etc. keep working
+    # exactly as they did under ``bernstein run-changelog`` (#3142).
+    from bernstein.cli.commands.run_changelog_cmd import run_changelog_default
+
+    run_changelog_default(
+        since_ref=since_ref,
+        since_hours=since_hours,
+        fmt=fmt,
+        output_path=output_path,
+        repo_url=repo_url,
+        include_no_commits=include_no_commits,
+        server_url=server_url,
+        workdir=workdir,
+    )
+
+
+@changelog_group.command("conventional")
 @click.option(
     "--since",
     "since_ref",
@@ -367,7 +567,7 @@ def _render_to_console(entries: list[CommitEntry], version: str, since_ref: str 
     type=click.Path(),
     help="Project root.",
 )
-def changelog_cmd(
+def changelog_conventional(
     since_ref: str | None,
     until_ref: str,
     version_label: str | None,
@@ -379,70 +579,126 @@ def changelog_cmd(
 ) -> None:
     """Auto-generate a changelog from conventional commits.
 
-    By default, shows commits since the latest semver tag. Use --since to
-    specify a different starting point, or --all for the full history.
+    \b
+    Examples:
+      bernstein changelog conventional            # since latest tag, console
+      bernstein changelog conventional --since v1.0.0
+      bernstein changelog conventional --all      # full history
+      bernstein changelog conventional -o CHANGELOG.md
+      bernstein changelog conventional --format keepachangelog
+    """
+    _changelog_conventional_inner(
+        since_ref=since_ref,
+        until_ref=until_ref,
+        version_label=version_label,
+        include_all=include_all,
+        fmt=fmt,
+        output_path=output_path,
+        repo_url=repo_url,
+        workdir=workdir,
+    )
+
+
+@click.command("run-changelog")
+@click.option(
+    "--since",
+    "since_ref",
+    default=None,
+    metavar="REF",
+    help="Git ref (tag or SHA) marking the start of the run window. Only commits after this ref are included.",
+)
+@click.option(
+    "--hours",
+    "since_hours",
+    default=None,
+    type=float,
+    metavar="N",
+    help="Limit to tasks completed in the last N hours (default: 24). Ignored when --since is provided.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["console", "markdown"]),
+    default="console",
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Write Markdown output to this file (implies --format markdown).",
+)
+@click.option(
+    "--repo-url",
+    default=None,
+    metavar="URL",
+    help="Repository URL used to generate task links in Markdown output.",
+)
+@click.option(
+    "--include-no-commits",
+    is_flag=True,
+    default=False,
+    help="Include tasks that have no matching git commits (useful to surface tasks that completed without committing).",
+)
+@click.option(
+    "--server-url",
+    "server_url",
+    default=None,
+    metavar="URL",
+    help="Bernstein task server URL (default: $BERNSTEIN_SERVER_URL or http://localhost:8052).",
+)
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Project root (git repository).",
+)
+def changelog_run_alias(
+    since_ref: str | None,
+    since_hours: float | None,
+    fmt: str,
+    output_path: str | None,
+    repo_url: str | None,
+    include_no_commits: bool,
+    server_url: str | None,
+    workdir: str,
+) -> None:
+    """Generate a changelog from what Bernstein agents actually changed. [Deprecated, removed in a later release]
+
+    The command name changed in v4.0.0 to free up ``bernstein changelog`` for
+    the orchestration-specific changelog (#3142): it now lives at
+    ``bernstein changelog`` (same behaviour, same flags including ``--hours``).
+    The ``run-changelog`` name stays registered as a deprecated alias with
+    this deprecation notice so existing scripts print a warning rather than
+    silently changing meaning; it is removed in a release after the 4.0 line
+    that introduced it.
 
     \b
     Examples:
-      bernstein changelog                         # since latest tag, console
-      bernstein changelog --since v1.0.0          # since specific tag
-      bernstein changelog --all                   # full history
-      bernstein changelog -o CHANGELOG.md         # write to file
-      bernstein changelog --format keepachangelog  # Markdown output to stdout
+      bernstein run-changelog                          # last 24 h, console
+      bernstein run-changelog --hours 48               # last 48 h
+      bernstein run-changelog --since v1.2.0           # since a tag
+      bernstein run-changelog --format markdown        # markdown to stdout
     """
-    cwd = Path(workdir).resolve()
+    click.echo(
+        "WARNING: 'bernstein run-changelog' is deprecated and will be removed "
+        "in a later release (#3142): it now lives at 'bernstein changelog' "
+        "(same flags, including --hours).",
+        err=True,
+    )
+    from bernstein.cli.commands.run_changelog_cmd import run_changelog_default
 
-    # ------------------------------------------------------------------
-    # 1. Resolve since_ref
-    # ------------------------------------------------------------------
-    effective_since: str | None
-    if include_all:
-        effective_since = None
-    elif since_ref is not None:
-        effective_since = since_ref
-    else:
-        effective_since = _latest_tag(cwd)
-        if effective_since:
-            console.print(f"[dim]Using latest tag: {effective_since}[/dim]")
-        else:
-            console.print("[dim]No tags found: showing all commits.[/dim]")
-
-    # ------------------------------------------------------------------
-    # 2. Fetch commits
-    # ------------------------------------------------------------------
-    entries = _commits_since(cwd, effective_since, until_ref)
-    if not entries:
-        console.print("[yellow]No commits found in the specified range.[/yellow]")
-        return
-
-    # ------------------------------------------------------------------
-    # 3. Resolve version label
-    # ------------------------------------------------------------------
-    if version_label is None:
-        from bernstein.core.git_basic import version_from_commits
-
-        version_label = "v" + version_from_commits(cwd)
-
-    # ------------------------------------------------------------------
-    # 4. Determine format
-    # ------------------------------------------------------------------
-    effective_fmt = fmt
-    if output_path and fmt == "console":
-        effective_fmt = "keepachangelog"
-
-    # ------------------------------------------------------------------
-    # 5. Render
-    # ------------------------------------------------------------------
-    if effective_fmt == "console":
-        _render_to_console(entries, version_label, effective_since)
-        return
-
-    if effective_fmt == "keepachangelog":
-        text = _format_keepachangelog(entries, version_label, effective_since, until_ref, repo_url)
-    else:  # simple
-        text = _format_simple(entries, version_label, effective_since, until_ref)
-
-    if output_path:
-        _write_changelog_file(output_path, text, len(entries), version_label)
-    else:
-        click.echo(text)
+    run_changelog_default(
+        since_ref=since_ref,
+        since_hours=since_hours,
+        fmt=fmt,
+        output_path=output_path,
+        repo_url=repo_url,
+        include_no_commits=include_no_commits,
+        server_url=server_url,
+        workdir=workdir,
+    )
