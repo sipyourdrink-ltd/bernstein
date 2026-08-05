@@ -57,17 +57,23 @@ def test_no_readme_link_depends_on_the_repository_around_it() -> None:
 def test_readme_absolute_links_point_at_paths_this_repo_actually_has() -> None:
     """An absolute link is not automatically a working one.
 
-    Rewriting a relative path to a blob URL is a mechanical edit, and a typo in
-    it fails in exactly the place nobody looks: rendered on PyPI, months later.
-    Checking the path component against the working tree catches that here
-    instead, without needing the network.
+    Rewriting a relative path to a blob or tree URL is a mechanical edit, and a
+    typo in it fails in exactly the place nobody looks: rendered on PyPI,
+    months later. Checking the path component against the working tree catches
+    that here instead, without needing the network. Both GitHub path forms are
+    validated - files (``/blob/main/``) and directories (``/tree/main/``) - so
+    neither form can carry a destination this repository does not contain.
     """
-    blob = "https://github.com/sipyourdrink-ltd/bernstein/blob/main/"
+    prefixes = (
+        "https://github.com/sipyourdrink-ltd/bernstein/blob/main/",
+        "https://github.com/sipyourdrink-ltd/bernstein/tree/main/",
+    )
     broken: list[str] = []
     for link in _links():
-        if not link.startswith(blob):
+        prefix = next((p for p in prefixes if link.startswith(p)), None)
+        if prefix is None:
             continue
-        path = link[len(blob) :].split("#", 1)[0]
+        path = link[len(prefix) :].split("#", 1)[0]
         if not (REPO_ROOT / path).exists():
             broken.append(link)
     assert not broken, f"README links to paths this repository does not contain: {broken}"
