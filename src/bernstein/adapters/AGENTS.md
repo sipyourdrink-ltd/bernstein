@@ -13,6 +13,7 @@ invocation and streams results back; flat layout, one module per tool.
 | `capability_profile.py` | Declarative adapter capability profiles and profile factory |
 | `skills_injector.py` | Copies sanitized skill markdown into the worktree at dispatch |
 | `canary.py` | Nightly conformance canary matrix over adapter contracts |
+| `mock.py` | Mock agent for zero-API-key demos; produces the same completion evidence real agents do (`Modified:` log lines plus a per-fix commit scoped to the mutated file) |
 
 ## Invariants
 
