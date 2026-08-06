@@ -22,8 +22,27 @@ from bernstein.cli.visual_theme import PALETTE, role_color, sample_gradient
 
 logger = logging.getLogger(__name__)
 
+#: Fallback only, and kept because other modules import it. The server the TUI
+#: actually talks to is resolved per call by :func:`server_url` - a run whose
+#: port was taken writes the real one to ``.sdd/runtime/server.port``, and
+#: polling a constant instead renders an empty dashboard that looks like an
+#: idle one (issue #3444).
 SERVER_URL = "http://127.0.0.1:8052"
 _SPARK_CHARS = "▁▂▃▄▅▆▇█"
+
+
+def server_url() -> str:
+    """Resolve the task server the way the rest of the CLI resolves it.
+
+    ``BERNSTEIN_SERVER_URL`` first, then the port the running orchestrator
+    persisted for this workspace, then the default. Resolved per call rather
+    than at import so a dashboard started before the server, or restarted onto
+    a different port, follows it.
+    """
+    from bernstein.cli.helpers import resolve_server_url
+
+    return resolve_server_url()
+
 
 # -- Data fetching (sync -- called via run_worker in a thread) -----
 
@@ -53,7 +72,7 @@ def _get(path: str) -> Any:
 
     try:
         return httpx.get(
-            f"{SERVER_URL}{path}",
+            f"{server_url()}{path}",
             timeout=10.0,
             headers=_auth_headers(),
         ).json()
@@ -67,7 +86,7 @@ def _post(path: str, body: dict[str, Any] | None = None) -> Any:
 
     try:
         return httpx.post(
-            f"{SERVER_URL}{path}",
+            f"{server_url()}{path}",
             json=body or {},
             timeout=2.0,
             headers=_auth_headers(),
@@ -110,6 +129,9 @@ def _fetch_all() -> dict[str, Any]:
         verification_nudge = status.get("verification_nudge", {}) or {}
 
     return {
+        # An unreachable server and an idle one produce the same empty panels,
+        # so the difference is carried explicitly rather than left to the log.
+        "server_unreachable": status is None,
         "tasks": tasks,
         "status": status,
         "agents": agents,
@@ -331,8 +353,19 @@ def _build_runtime_subtitle(
     total: int,
     worktrees: int,
     restart_count: int,
+    unreachable_url: str = "",
 ) -> str:
-    """Build the compact runtime subtitle shown in the TUI header."""
+    """Build the compact runtime subtitle shown in the TUI header.
+
+    Args:
+        unreachable_url: Server the last poll failed against, if it failed. An
+            unreachable server empties every panel, which is indistinguishable
+            on screen from an orchestrator with nothing to do - so when the
+            poll fails the subtitle says so instead of describing a run that
+            may not exist (issue #3444).
+    """
+    if unreachable_url:
+        return f"No connection to {unreachable_url} - showing no data, not an idle run"
     progress_pct = int(done / total * 100) if total > 0 else 0
     parts = [f"Running for {_format_elapsed_label(elapsed_s)}"]
     if git_branch:

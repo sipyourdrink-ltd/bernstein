@@ -292,6 +292,8 @@ Compact one-screen project view.
 
 The default is the 3-column Textual TUI: Agents | Tasks | Activity feed. `--classic` falls back to a single-pane Rich Live view.
 
+Both views resolve the task server the same way as the rest of the CLI: `BERNSTEIN_SERVER_URL`, then the port the running orchestrator persisted in `.sdd/runtime/server.port`, then `http://localhost:8052`. When the poll cannot reach that server the header says `No connection to <url>` rather than drawing empty panels, which would be indistinguishable from an orchestrator with nothing to do.
+
 #### `bernstein dashboard`
 
 | Flag | Default | Meaning |

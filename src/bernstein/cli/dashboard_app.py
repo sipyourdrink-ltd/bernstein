@@ -45,7 +45,6 @@ from bernstein.cli.dashboard_header import (
 )
 from bernstein.cli.dashboard_polling import (
     ROLE_COLORS,
-    SERVER_URL,
     _build_runtime_subtitle,
     _fetch_all,
     _format_activity_line,
@@ -60,6 +59,7 @@ from bernstein.cli.dashboard_polling import (
     _summarize_agent_errors,
     _tail_log,
     _task_retry_count,
+    server_url,
 )
 from bernstein.cli.icons import get_icons
 from bernstein.cli.visual_theme import role_color
@@ -281,6 +281,9 @@ class BernsteinApp(App[None]):
         self._history: deque[float] = deque(maxlen=60)
         self._cost_history: deque[float] = deque(maxlen=10)
         self._evolve = False
+        #: True when the last poll could not reach the task server, so the
+        #: header can say so instead of showing an empty run (issue #3444).
+        self._server_unreachable = False
         self._activity_visible = True
         self._expert_mode = False
         self._task_titles: dict[str, str] = {}
@@ -539,6 +542,7 @@ class BernsteinApp(App[None]):
         status = data.get("status") or {}
         self._log_phase_transitions(status, data.get("agents") or [])
 
+        self._server_unreachable = bool(data.get("server_unreachable"))
         self._update_tasks(data.get("tasks"))
         tasks = data.get("tasks") or []
         costs: dict[str, Any] = data.get("costs") or {}
@@ -816,6 +820,7 @@ class BernsteinApp(App[None]):
             total=bar.total,
             worktrees=bar.active_worktrees,
             restart_count=bar.restart_count,
+            unreachable_url=server_url() if self._server_unreachable else "",
         )
 
         if costs:
@@ -1196,7 +1201,7 @@ class BernsteinApp(App[None]):
             if _shutdown_token:
                 _shutdown_headers["Authorization"] = f"Bearer {_shutdown_token}"
             httpx.post(
-                f"{SERVER_URL}/shutdown",
+                f"{server_url()}/shutdown",
                 json={"reason": "hot restart"},
                 timeout=2.0,
                 headers=_shutdown_headers,
@@ -1410,7 +1415,7 @@ class BernsteinApp(App[None]):
         role = self._detect_role(text)
         try:
             resp = httpx.post(
-                f"{SERVER_URL}/tasks",
+                f"{server_url()}/tasks",
                 json={
                     "title": text,
                     "description": f"User request (P1): {text}",
