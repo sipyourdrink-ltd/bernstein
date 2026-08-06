@@ -257,3 +257,42 @@ def test_the_classic_view_also_withholds_the_run_token_from_a_remote_host(tmp_pa
 
     assert view._get("/status") is None  # nothing there, and nothing sent
     assert dashboard_polling._auth_headers(view._resolved_url()) == {}
+
+
+def test_one_dashboard_update_reads_from_one_server(live_server: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run restarting onto another port must not blend two servers into one frame.
+
+    The resolution happens once per batch, so a port file that changes midway
+    lands in the next update rather than half of this one.
+    """
+    persist_server_port(live_server)
+    seen: list[str] = []
+    real_get = dashboard_polling._get
+
+    def recording(path: str, url: str | None = None):  # type: ignore[no-untyped-def]
+        seen.append(url or "<resolved per call>")
+        # Move the target under the batch's feet, the way a restart would.
+        persist_server_port(1)
+        return real_get(path, url)
+
+    monkeypatch.setattr(dashboard_polling, "_get", recording)
+    data = dashboard_polling._fetch_all()
+
+    assert len(set(seen)) == 1, seen
+    assert data["status"] == STATUS_PAYLOAD
+
+
+def test_the_classic_view_says_no_connection_too(live_server: int) -> None:
+    """The empty-panels problem is the same in both views, so is the answer."""
+    from bernstein.cli.live import LiveView
+
+    view = LiveView(server_url=f"http://127.0.0.1:{live_server}")
+    view._render(view._fetch())
+    assert view._unreachable_url == ""
+
+    dead = LiveView(server_url="http://127.0.0.1:1")
+    frame = dead._render(dead._fetch())
+
+    assert dead._unreachable_url == "http://127.0.0.1:1"
+    rendered = "".join(segment.text for segment in frame.renderables[0].render(None))  # type: ignore[attr-defined]
+    assert "No connection to http://127.0.0.1:1" in rendered

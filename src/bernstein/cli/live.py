@@ -112,6 +112,10 @@ class LiveView:
         self._start_ts = time.time()
         self._cost_history: deque[float] = deque(maxlen=60)
         self._done_history: deque[float] = deque(maxlen=60)
+        #: Set when the last fetch got nothing at all. An empty dashboard and a
+        #: dead server look identical otherwise, in this view as much as in the
+        #: Textual one (issue #3444).
+        self._unreachable_url = ""
 
     # -- Data fetching --
 
@@ -124,7 +128,7 @@ class LiveView:
         """
         return self._server_url or resolve_server_url()
 
-    def _get(self, path: str) -> dict[str, Any] | list[Any] | None:
+    def _get(self, path: str, url: str | None = None) -> dict[str, Any] | list[Any] | None:
         """GET from the task server, returning parsed JSON or None.
 
         Args:
@@ -133,7 +137,7 @@ class LiveView:
         Returns:
             Parsed JSON response, or None on error.
         """
-        url = self._resolved_url()
+        url = url or self._resolved_url()
         try:
             resp = httpx.get(f"{url}{path}", timeout=2.0, headers=poll_auth_headers(url))
             resp.raise_for_status()
@@ -148,14 +152,17 @@ class LiveView:
         Returns:
             Dict with ``status``, ``tasks``, ``agents``, ``costs`` keys.
         """
-        status_resp = self._get("/status")
+        url = self._resolved_url()
+        status_resp = self._get("/status", url)
         status: dict[str, Any] = status_resp if isinstance(status_resp, dict) else {}
 
-        tasks_resp = self._get("/tasks")
+        tasks_resp = self._get("/tasks", url)
         tasks: list[dict[str, Any]] = tasks_resp if isinstance(tasks_resp, list) else []  # type: ignore[assignment]
 
-        costs_resp = self._get("/costs/live")
+        costs_resp = self._get("/costs/live", url)
         costs: dict[str, Any] = costs_resp if isinstance(costs_resp, dict) else {}  # type: ignore[assignment]
+
+        self._unreachable_url = "" if any(x is not None for x in (status_resp, tasks_resp, costs_resp)) else url
 
         return {
             "status": status,
@@ -222,7 +229,7 @@ class LiveView:
         # Stats bar
         stats_bar = _build_stats_text(summary, elapsed, len(agents))
 
-        return Group(
+        panels = [
             agents_table,
             tasks_table,
             Panel(progress_text, title="Progress", border_style="cyan"),
@@ -230,7 +237,19 @@ class LiveView:
             cost_spark_panel,
             spark_panel,
             stats_bar,
-        )
+        ]
+
+        if self._unreachable_url:
+            # Same wording as the Textual header, because it is the same fact:
+            # empty panels here mean nothing arrived, not that nothing is
+            # happening.
+            banner = Text(
+                f"No connection to {self._unreachable_url} - showing no data, not an idle run",
+                style="bold red",
+            )
+            return Group(banner, *panels)
+
+        return Group(*panels)
 
     # -- Public API --
 

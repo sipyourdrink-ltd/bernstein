@@ -93,10 +93,16 @@ def _auth_headers(url: str) -> dict[str, str]:
     return {}
 
 
-def _get(path: str) -> Any:
+def _get(path: str, url: str | None = None) -> Any:
+    """GET *path*, from *url* when the caller has already resolved one.
+
+    A batch passes its resolved URL in so every read in one dashboard update
+    comes from the same server: re-resolving per request lets a run that
+    restarts onto another port mid-batch mix two servers into one frame.
+    """
     import httpx
 
-    url = server_url()
+    url = url or server_url()
     try:
         response = httpx.get(f"{url}{path}", timeout=10.0, headers=_auth_headers(url))
         # A 4xx/5xx with a JSON body would otherwise be handed to the widgets
@@ -131,6 +137,9 @@ def _fetch_all() -> dict[str, Any]:
     """
     from typing import cast
 
+    # One resolution for the whole batch: see _get.
+    url = server_url()
+
     # Fast path: local files (instant, no HTTP)
     agents = _load_agents()
     quarantine = _load_quarantine()
@@ -139,12 +148,12 @@ def _fetch_all() -> dict[str, Any]:
     activity_summaries = _load_activity_summaries()
 
     # Slow path: HTTP to task server (may take 1-3s with many tasks)
-    status = _get("/status")
-    costs = _get("/costs")
-    quality = _get("/quality")
-    bandit = _get("/routing/bandit")
+    status = _get("/status", url)
+    costs = _get("/costs", url)
+    quality = _get("/quality", url)
+    bandit = _get("/routing/bandit", url)
     # Use /status for task counts instead of fetching all 400+ task objects
-    tasks = _get("/tasks")
+    tasks = _get("/tasks", url)
     pending_approval = 0
     if isinstance(tasks, list):
         task_dicts = cast("list[dict[str, Any]]", tasks)
