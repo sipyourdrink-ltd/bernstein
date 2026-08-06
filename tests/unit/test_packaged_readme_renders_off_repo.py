@@ -31,6 +31,8 @@ LINK = re.compile(r"\]\(([^)]+)\)")
 OFF_REPO_SAFE = ("http://", "https://", "#", "mailto:")
 
 #: ``![alt](target)`` - the form used where the surrounding cell sizes the image.
+#: The captured group is the whole destination *and* any optional title, which
+#: :func:`markdown_destination` separates.
 MARKDOWN_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 #: Raw-content prefix an absolute image URL has to carry to render off-repo.
 RAW_ASSET_PREFIX = "https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/"
@@ -48,6 +50,25 @@ ALLOWED_IMAGE_HOSTS = frozenset(
         "mcptoplist.com",
     }
 )
+
+
+def markdown_destination(raw: str) -> str:
+    """Return just the URL from a markdown link destination.
+
+    ``![alt](url "title")`` and ``![alt](<url>)`` are both valid and both
+    render; a check that treats the title as part of the path reports a working
+    image as broken. A gate that fails on correct input is worse than a missing
+    one - it gets an exception added, and the exception is where the next real
+    break hides.
+    """
+    stripped = raw.strip()
+    if stripped.startswith("<"):
+        end = stripped.find(">")
+        return stripped[1:end] if end != -1 else stripped[1:]
+    # A destination cannot contain unescaped whitespace unless it is wrapped in
+    # angle brackets, so the first token is the URL and the rest is the title.
+    parts = stripped.split()
+    return parts[0] if parts else ""
 
 
 class _ImageSourceCollector(HTMLParser):
@@ -166,7 +187,7 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
     dependency set from growing silently.
     """
     text = README.read_text(encoding="utf-8")
-    sources = _html_image_sources(text) + [target for _, target in MARKDOWN_IMAGE.findall(text)]
+    sources = _html_image_sources(text) + [markdown_destination(target) for _, target in MARKDOWN_IMAGE.findall(text)]
     assert sources, "expected the README to reference at least one image"
 
     broken: list[str] = []
@@ -217,6 +238,18 @@ def test_the_image_scan_sees_every_html_attribute_form() -> None:
         "https://four.example/d.png",
         "https://five.example/e.png",
     ]
+
+
+def test_a_markdown_title_is_not_read_as_part_of_the_destination() -> None:
+    """``![alt](url "title")`` is valid markdown that renders.
+
+    Reading the title as part of the path turns a working image into a
+    reported break, which is the failure mode that gets a gate switched off.
+    """
+    assert markdown_destination('docs/a.png "a title"') == "docs/a.png"
+    assert markdown_destination("<https://example.com/a.png>") == "https://example.com/a.png"
+    assert markdown_destination("  https://example.com/a.png  ") == "https://example.com/a.png"
+    assert markdown_destination('<docs/a.png> "titled and bracketed"') == "docs/a.png"
 
 
 def test_python_classifiers_match_the_versions_the_project_supports() -> None:
