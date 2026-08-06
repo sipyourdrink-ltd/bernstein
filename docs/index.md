@@ -66,6 +66,12 @@ Then run:
 bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 ```
 
+A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other.
+
+| ![A three-column terminal dashboard: agents with their live logs on the left, the task board on the right, an activity feed and a cost line underneath](assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](assets/webui-agents-diffs.png) |
+|:---:|:---:|
+| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the same run in a browser |
+
 ## Why Bernstein?
 
 <div class="grid cards" markdown>

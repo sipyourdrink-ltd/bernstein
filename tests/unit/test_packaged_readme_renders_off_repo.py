@@ -28,6 +28,17 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 LINK = re.compile(r"\]\(([^)]+)\)")
 OFF_REPO_SAFE = ("http://", "https://", "#", "mailto:")
 
+#: ``<img src="...">`` - the form the demo GIF uses, because it needs a width.
+HTML_IMG_SRC = re.compile(r"<img\b[^>]*?\bsrc=\"([^\"]+)\"", re.IGNORECASE)
+#: ``<source srcset="...">`` - the theme-switching half of a ``<picture>``.
+#: Easy to miss when rewriting paths, because the ``<img>`` fallback next to it
+#: keeps the page looking correct in whichever theme the author is using.
+HTML_SRCSET = re.compile(r"<source\b[^>]*?\bsrcset=\"([^\"]+)\"", re.IGNORECASE)
+#: ``![alt](target)`` - the form used where the surrounding cell sizes the image.
+MARKDOWN_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+#: Raw-content prefix an absolute image URL has to carry to render off-repo.
+RAW_ASSET_PREFIX = "https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/"
+
 
 def _links() -> list[str]:
     return LINK.findall(README.read_text(encoding="utf-8"))
@@ -80,6 +91,41 @@ def test_readme_absolute_links_point_at_paths_this_repo_actually_has() -> None:
         if ".." in PurePosixPath(path).parts or not (REPO_ROOT / path).exists():
             broken.append(link)
     assert not broken, f"README links to paths this repository does not contain: {broken}"
+
+
+def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> None:
+    """Images have the link problem too, and one renderer further to fall through.
+
+    A repo-relative ``src`` fails on PyPI exactly like a repo-relative link,
+    except it fails silently as a broken-image icon rather than a dead click.
+    An absolute ``raw.githubusercontent.com`` URL survives that render but
+    still 404s when the path is wrong or the asset is later renamed - and the
+    only place that shows is the published page, which nobody re-reads.
+
+    Both the HTML ``<img>`` form (used for the demo GIF, which needs a width)
+    and the markdown form (used inside the surface table, where the cell sizes
+    the image) are checked, because the README uses both.
+    """
+    text = README.read_text(encoding="utf-8")
+    sources = (
+        HTML_IMG_SRC.findall(text) + HTML_SRCSET.findall(text) + [target for _, target in MARKDOWN_IMAGE.findall(text)]
+    )
+    assert sources, "expected the README to reference at least one image"
+
+    broken: list[str] = []
+    for src in sources:
+        if src.startswith(RAW_ASSET_PREFIX):
+            path = src[len(RAW_ASSET_PREFIX) :].split("?", 1)[0]
+            if ".." in PurePosixPath(path).parts or not (REPO_ROOT / path).exists():
+                broken.append(src)
+        elif not src.startswith(OFF_REPO_SAFE):
+            # Resolves against pypi.org/project/bernstein/ when PyPI renders
+            # the long description, so it can only ever be a broken image.
+            broken.append(src)
+    assert not broken, (
+        "these README image sources do not resolve to a committed asset, so they "
+        f"render as a broken image on PyPI, on GitHub, or on both: {sorted(set(broken))}"
+    )
 
 
 def test_python_classifiers_match_the_versions_the_project_supports() -> None:
