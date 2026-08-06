@@ -72,18 +72,21 @@ def test_the_committed_render_matches_what_the_dashboard_draws(snapshot: Any) ->
     )
 
 
-#: (label, substring to edit) per region. The same seeded task title appears in
-#: both side-by-side panels - once as a row of the tasks table, once inside the
-#: agent's log - which is exactly the case a row-only attribution gets wrong.
+#: (label, text to edit, what to edit it to) per region. The same seeded task
+#: title appears in both side-by-side panels - once as a row of the tasks
+#: table, once inside the agent's log - which is exactly the case a row-only
+#: attribution gets wrong, so the two are distinguished by their surroundings.
 REGION_PROBES = (
-    ("TASKS", ">&#160;Fix&#160;off-by-one"),
-    ("AGENTS", ">&#160;&#160;&#160;→&#160;Fix&#160;off-by-one"),
-    ("ACTIVITY", "config&#160;reloaded"),
+    ("TASKS", ">&#160;Fix&#160;off-by-one", ">&#160;Fix&#160;off-by-two"),
+    ("AGENTS", ">&#160;&#160;&#160;→&#160;Fix&#160;off-by-one", ">&#160;&#160;&#160;→&#160;Fix&#160;off-by-two"),
+    ("ACTIVITY", "config&#160;reloaded", "config&#160;refreshed"),
 )
 
 
-@pytest.mark.parametrize(("region", "probe"), REGION_PROBES, ids=[name for name, _ in REGION_PROBES])
-def test_drift_is_attributed_to_the_region_it_happened_in(snapshot: Any, region: str, probe: str) -> None:
+@pytest.mark.parametrize(("region", "probe", "replacement"), REGION_PROBES, ids=[name for name, _, _ in REGION_PROBES])
+def test_drift_is_attributed_to_the_region_it_happened_in(
+    snapshot: Any, region: str, probe: str, replacement: str
+) -> None:
     """ "The SVG differs" tells the reader nothing about where to look.
 
     The dashboard draws AGENTS and TASKS side by side, so a terminal row spans
@@ -92,7 +95,7 @@ def test_drift_is_attributed_to_the_region_it_happened_in(snapshot: Any, region:
     """
     committed = RENDER_PATH.read_text(encoding="utf-8")
     assert probe in committed, f"the {region} probe no longer matches the render"
-    mutated = committed.replace(probe, probe.replace("one", "two").replace("reloaded", "reloadeD"), 1)
+    mutated = committed.replace(probe, replacement, 1)
     assert mutated != committed
 
     assert snapshot.regions_changed(mutated, committed) == [region]
