@@ -18,7 +18,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from bernstein.cli.helpers import auth_headers, resolve_server_url
+from bernstein.cli.dashboard_polling import _auth_headers as poll_auth_headers
+from bernstein.cli.helpers import resolve_server_url
 from bernstein.cli.ui import (
     STATUS_COLORS,
     AgentInfo,
@@ -132,8 +133,10 @@ class LiveView:
         Returns:
             Parsed JSON response, or None on error.
         """
+        url = self._resolved_url()
         try:
-            resp = httpx.get(f"{self._resolved_url()}{path}", timeout=2.0, headers=auth_headers())
+            resp = httpx.get(f"{url}{path}", timeout=2.0, headers=poll_auth_headers(url))
+            resp.raise_for_status()
             result: dict[str, Any] | list[Any] = resp.json()
             return result
         except Exception:

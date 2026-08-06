@@ -34,8 +34,19 @@ class _Handler(BaseHTTPRequestHandler):
     #: When set, `/status` answers 500 while every other route stays healthy -
     #: a broken route on a reachable server, which must not read as offline.
     status_route_broken = False
+    #: When set, every route answers 401 with a JSON body - the shape that
+    #: looks like data to a client that does not check the status code.
+    every_route_rejects = False
 
     def do_GET(self) -> None:
+        if type(self).every_route_rejects:
+            rejection = json.dumps({"detail": "Unauthorized"}).encode()
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(rejection)))
+            self.end_headers()
+            self.wfile.write(rejection)
+            return
         if self.path.startswith("/status") and type(self).status_route_broken:
             self.send_response(500)
             self.send_header("Content-Length", "0")
@@ -192,3 +203,57 @@ def test_an_explicit_url_still_wins_for_the_classic_view(live_server: int) -> No
     persist_server_port(1)
 
     assert LiveView(server_url=f"http://127.0.0.1:{live_server}")._get("/status") == STATUS_PAYLOAD
+
+
+def test_a_json_error_body_is_not_mistaken_for_data(live_server: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 401 carrying JSON is the shape that slips past an unchecked read.
+
+    Without a status check the widgets would render `{"detail": ...}` as
+    dashboard state, and every route answering that way would still count as a
+    reachable server.
+    """
+    persist_server_port(live_server)
+    monkeypatch.setattr(_Handler, "every_route_rejects", True)
+
+    data = dashboard_polling._fetch_all()
+
+    assert data["server_unreachable"] is True
+    assert data["status"] is None
+    assert data["tasks"] is None
+
+
+def test_the_run_token_is_only_sent_to_this_machine(
+    live_server: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The persisted token is a credential minted for a local run.
+
+    Now that the destination comes from `BERNSTEIN_SERVER_URL`, attaching it
+    unconditionally would hand that credential to whatever host the variable
+    names - including one set by something other than the operator.
+    """
+    from bernstein.core.run_auth_token import persist_run_auth_token
+
+    persist_run_auth_token(Path.cwd(), "secret-run-token")
+
+    assert dashboard_polling._auth_headers(f"http://127.0.0.1:{live_server}") == {
+        "Authorization": "Bearer secret-run-token"
+    }
+    assert dashboard_polling._auth_headers("https://elsewhere.example/api") == {}
+
+    # A token the operator set themselves is theirs to aim.
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "operator-token")
+    assert dashboard_polling._auth_headers("https://elsewhere.example/api") == {
+        "Authorization": "Bearer operator-token"
+    }
+
+
+def test_the_classic_view_also_withholds_the_run_token_from_a_remote_host(tmp_path: Path) -> None:
+    """Both views share one policy, because they now share one resolver."""
+    from bernstein.cli.live import LiveView
+    from bernstein.core.run_auth_token import persist_run_auth_token
+
+    persist_run_auth_token(Path.cwd(), "secret-run-token")
+    view = LiveView(server_url="https://elsewhere.example")
+
+    assert view._get("/status") is None  # nothing there, and nothing sent
+    assert dashboard_polling._auth_headers(view._resolved_url()) == {}

@@ -6,6 +6,7 @@ that are used by the TUI widgets and application.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from rich.markup import escape
 from rich.text import Text
@@ -47,8 +49,24 @@ def server_url() -> str:
 # -- Data fetching (sync -- called via run_worker in a thread) -----
 
 
-def _auth_headers() -> dict[str, str]:
-    """Return the Authorization header for dashboard polling.
+def is_loopback(url: str) -> bool:
+    """Whether *url* addresses this machine.
+
+    Hostname-based rather than DNS-resolving on purpose: a resolver answer can
+    change between the check and the request, and this decides what a
+    credential is attached to.
+    """
+    host = (urlsplit(url).hostname or "").lower()
+    if host in {"localhost", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _auth_headers(url: str) -> dict[str, str]:
+    """Return the Authorization header for a poll against *url*.
 
     The TUI usually runs inside the main Bernstein process, so it inherits the
     token that ``_resolve_auth_token`` stashes into ``os.environ`` during
@@ -56,9 +74,17 @@ def _auth_headers() -> dict[str, str]:
     it falls back to the persisted run token file under ``.sdd/runtime``
     (issue #2794). Without this header the SSO middleware rejects every
     request with 401, leaving the Tasks panel empty.
+
+    The persisted token is only ever sent to a loopback address. It is a
+    credential this machine minted for its own run, and the destination is now
+    resolvable from ``BERNSTEIN_SERVER_URL``: attaching it to whatever that
+    points at would hand the run credential to any host an operator - or
+    anything that can set an environment variable - names. A token the
+    operator set in the environment themselves is theirs to aim, so it goes
+    where they point it.
     """
     token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
-    if not token:
+    if not token and is_loopback(url):
         from bernstein.core.run_auth_token import read_run_auth_token
 
         token = read_run_auth_token(Path.cwd())
@@ -70,12 +96,14 @@ def _auth_headers() -> dict[str, str]:
 def _get(path: str) -> Any:
     import httpx
 
+    url = server_url()
     try:
-        return httpx.get(
-            f"{server_url()}{path}",
-            timeout=10.0,
-            headers=_auth_headers(),
-        ).json()
+        response = httpx.get(f"{url}{path}", timeout=10.0, headers=_auth_headers(url))
+        # A 4xx/5xx with a JSON body would otherwise be handed to the widgets
+        # as data, and would count as a successful read when deciding whether
+        # the server is reachable at all.
+        response.raise_for_status()
+        return response.json()
     except Exception as exc:
         logger.warning("Dashboard GET %s failed: %s", path, exc)
         return None
@@ -84,13 +112,11 @@ def _get(path: str) -> Any:
 def _post(path: str, body: dict[str, Any] | None = None) -> Any:
     import httpx
 
+    url = server_url()
     try:
-        return httpx.post(
-            f"{server_url()}{path}",
-            json=body or {},
-            timeout=2.0,
-            headers=_auth_headers(),
-        ).json()
+        response = httpx.post(f"{url}{path}", json=body or {}, timeout=2.0, headers=_auth_headers(url))
+        response.raise_for_status()
+        return response.json()
     except Exception as exc:
         logger.warning("Dashboard POST %s failed: %s", path, exc)
         return None
