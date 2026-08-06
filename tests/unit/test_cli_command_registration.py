@@ -14,16 +14,14 @@ is observable.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+from pathlib import Path
 
 import click
 import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _command_names() -> list[str]:
@@ -103,3 +101,65 @@ def test_man_pages_completes(tmp_path: Path) -> None:
     result = CliRunner().invoke(cli, ["man-pages", "--output-dir", str(tmp_path)])
     assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
     assert list(tmp_path.glob("bernstein-merge.1")), sorted(p.name for p in tmp_path.iterdir())[:20]
+
+
+# ---------------------------------------------------------------------------
+# Documented surface must be reachable (#3139)
+# ---------------------------------------------------------------------------
+#
+# The mirror image of #3134: there the registered object was not a command;
+# here the command was never registered at all.  ``api-check`` and ``ab-test``
+# each shipped a complete ``@click.command`` module, sat in the lazy-import
+# map, and were documented twice in the CLI reference -- and ``dep-impact``'s
+# help text told the reader to use ``api-check``.  Following that pointer
+# produced "No such command", and nothing in the suite could see it, because
+# every test drove command implementations directly.
+#
+# This walks the reference in the other direction: for every command the docs
+# name, resolve it through the real ``cli`` object.  A command that is
+# documented but unreachable now fails here instead of in a user's terminal.
+
+_DOC_COMMAND_HEADING = re.compile(r"^#+\s+`bernstein ([a-z0-9][a-z0-9 _-]*)`\s*$", re.M)
+
+
+def _documented_command_paths() -> list[str]:
+    """Command paths the CLI reference documents, as space-separated words.
+
+    Headings carrying an option (``bernstein doctor --failover-drill``) are
+    excluded: they document a flag on a command, not a command.
+    """
+    reference = Path(__file__).resolve().parents[2] / "docs" / "reference" / "cli-reference.md"
+    text = reference.read_text(encoding="utf-8")
+    return sorted({name for name in _DOC_COMMAND_HEADING.findall(text) if "--" not in name})
+
+
+def _resolve(path: str) -> click.Command | None:
+    """Walk ``path`` through the real CLI, returning None at the first miss."""
+    node: click.Command | None = cli
+    for word in path.split():
+        if not isinstance(node, click.Group):
+            return None
+        node = node.get_command(click.Context(node), word)
+        if node is None:
+            return None
+    return node
+
+
+def test_documented_commands_are_registered() -> None:
+    """Every command the CLI reference documents resolves through ``cli``."""
+    unreachable = [path for path in _documented_command_paths() if _resolve(path) is None]
+    assert not unreachable, (
+        f"documented in docs/reference/cli-reference.md but not registered on the CLI: {unreachable}"
+    )
+
+
+@pytest.mark.parametrize("name", ["api-check", "ab-test"])
+def test_previously_orphaned_command_resolves(name: str) -> None:
+    """The two commands #3139 measured as unregistered are reachable.
+
+    Kept separate from the sweep above so a regression names the command
+    rather than only the fact that some command went missing.
+    """
+    command = _resolve(name)
+    assert command is not None, f"`bernstein {name}` is documented but not registered"
+    assert isinstance(command, click.Command)

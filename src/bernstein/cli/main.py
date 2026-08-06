@@ -1446,3 +1446,14 @@ cli.add_command(tournament_group, "tournament")
 # run_changelog_cmd``) keeps working for as long as the deprecated alias
 # lives; both go away together in a release after the 4.0 line.
 run_changelog_cmd = run_changelog_default  # intentional back-compat alias (#3142)
+
+# Documented-but-unregistered commands (#3139). Both modules shipped complete,
+# were listed in the lazy-import map, and were documented in the CLI reference,
+# but no ``add_command`` call ever made them reachable. ``dep-impact``'s own
+# help text cross-references ``api-check``, so following that pointer produced
+# "No such command" until this registration landed.
+from bernstein.cli.commands.ab_test_cmd import ab_test_cmd  # noqa: E402
+from bernstein.cli.commands.api_check_cmd import api_check_cmd  # noqa: E402
+
+cli.add_command(api_check_cmd, "api-check")
+cli.add_command(ab_test_cmd, "ab-test")
