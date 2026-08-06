@@ -462,9 +462,8 @@ Verification stays on `bernstein bench reliability-verify` / `bernstein bench re
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--baseline REF` | `origin/main` | Git ref for the baseline schema. |
-| `--head REF` | `HEAD` | Git ref for the candidate schema. |
-| `--threshold {patch\|minor\|major}` | minor | Maximum allowed delta. |
+| `--base REF` | `HEAD~1` | Git ref to compare the working tree against. |
+| `--workdir PATH` | current directory | Repository to inspect. |
 
 #### `bernstein dep-impact`
 
@@ -1300,9 +1299,10 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 |---|---|---|
 | `--model-a NAME` | required | First model. |
 | `--model-b NAME` | required | Second model. |
-| `--task FILE` | required | Task file or backlog ID. |
-| `--runs N` | 5 | Repeats per model. |
-| `--metric {success\|cost\|latency}` | success | What to compare on. |
+| `--task TEXT` | required | Task description handed to both models. |
+| `--role NAME` | `backend` | Agent role. |
+| `--scope {small\|medium\|large}` | `medium` | Task scope. |
+| `--timeout SECONDS` | `1800` | Per-model timeout. |
 
 #### `bernstein acp serve`
 

@@ -163,3 +163,49 @@ def test_previously_orphaned_command_resolves(name: str) -> None:
     command = _resolve(name)
     assert command is not None, f"`bernstein {name}` is documented but not registered"
     assert isinstance(command, click.Command)
+
+
+# Registering a command is only half of making it usable.  The first cut of
+# this gate proved the *name* resolved and stopped there, so `api-check` and
+# `ab-test` became reachable while every flag the reference documented for
+# them still failed with "No such option" -- the same class of failure the
+# registration fix was meant to remove, one layer down.
+#
+# Scoped to the two commands this change makes reachable.  A sweep across the
+# whole reference measures 23 commands carrying documented flags that do not
+# exist; widening the gate is tracked separately so it lands with the fixes
+# rather than as a red build.
+
+_FLAG_ROW = re.compile(r"^\|\s*`(--[a-z][a-z0-9-]*)", re.M)
+
+
+def _documented_flags(command_path: str) -> set[str]:
+    """Long options the CLI reference lists in ``command_path``'s flag table."""
+    reference = Path(__file__).resolve().parents[2] / "docs" / "reference" / "cli-reference.md"
+    sections = re.split(
+        r"^#+\s+`bernstein ([a-z0-9][a-z0-9 _-]*)`\s*$",
+        reference.read_text(encoding="utf-8"),
+        flags=re.M,
+    )
+    for name, body in zip(sections[1::2], sections[2::2], strict=False):
+        if name == command_path:
+            return set(_FLAG_ROW.findall(body))
+    return set()
+
+
+@pytest.mark.parametrize("name", ["api-check", "ab-test"])
+def test_documented_flags_exist(name: str) -> None:
+    """Every flag the reference documents is accepted by the command.
+
+    A documented flag the parser rejects fails at ``No such option`` before
+    the command body runs, which reads to the user exactly like the command
+    being missing.
+    """
+    command = _resolve(name)
+    assert command is not None
+    real = {opt for param in command.params for opt in param.opts if opt.startswith("--")}
+    documented = _documented_flags(name)
+    assert documented, f"no flag table found for `bernstein {name}` in the CLI reference"
+    assert not (documented - real), (
+        f"`bernstein {name}` documents flags it does not accept: {sorted(documented - real)}"
+    )
