@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 README = REPO_ROOT / "README.md"
@@ -38,6 +39,20 @@ HTML_SRCSET = re.compile(r"<source\b[^>]*?\bsrcset=\"([^\"]+)\"", re.IGNORECASE)
 MARKDOWN_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 #: Raw-content prefix an absolute image URL has to carry to render off-repo.
 RAW_ASSET_PREFIX = "https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/"
+#: Hosts the front page is allowed to load an image from. Everything here is a
+#: status badge whose URL cannot be checked offline; the point of the list is
+#: that the set of third parties the front page depends on is a decision, not
+#: something that grows by accident. A new host has to be added here on
+#: purpose, in a diff someone reads.
+ALLOWED_IMAGE_HOSTS = frozenset(
+    {
+        "raw.githubusercontent.com",
+        "github.com",
+        "img.shields.io",
+        "api.securityscorecards.dev",
+        "mcptoplist.com",
+    }
+)
 
 
 def _links() -> list[str]:
@@ -105,6 +120,12 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
     Both the HTML ``<img>`` form (used for the demo GIF, which needs a width)
     and the markdown form (used inside the surface table, where the cell sizes
     the image) are checked, because the README uses both.
+
+    An image on a host this repository does not ship from cannot be verified
+    offline at all, so the rule there is different in kind: the host has to be
+    one the front page already depends on deliberately. That does not prove a
+    badge URL is spelled correctly - nothing offline can - but it does stop the
+    dependency set from growing silently.
     """
     text = README.read_text(encoding="utf-8")
     sources = (
@@ -113,18 +134,28 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
     assert sources, "expected the README to reference at least one image"
 
     broken: list[str] = []
+    foreign: list[str] = []
     for src in sources:
         if src.startswith(RAW_ASSET_PREFIX):
             path = src[len(RAW_ASSET_PREFIX) :].split("?", 1)[0]
             if ".." in PurePosixPath(path).parts or not (REPO_ROOT / path).exists():
                 broken.append(src)
-        elif not src.startswith(OFF_REPO_SAFE):
+        elif src.startswith(("http://", "https://")):
+            host = urlsplit(src).hostname or ""
+            if host not in ALLOWED_IMAGE_HOSTS:
+                foreign.append(src)
+        else:
             # Resolves against pypi.org/project/bernstein/ when PyPI renders
             # the long description, so it can only ever be a broken image.
             broken.append(src)
     assert not broken, (
         "these README image sources do not resolve to a committed asset, so they "
         f"render as a broken image on PyPI, on GitHub, or on both: {sorted(set(broken))}"
+    )
+    assert not foreign, (
+        "the front page would load these images from hosts it does not already "
+        "depend on; add the host to ALLOWED_IMAGE_HOSTS if that dependency is "
+        f"intended: {sorted(set(foreign))}"
     )
 
 
