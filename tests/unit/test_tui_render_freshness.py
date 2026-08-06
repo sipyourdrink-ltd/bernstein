@@ -187,3 +187,22 @@ def test_dropping_the_remote_font_keeps_the_local_one(snapshot: Any) -> None:
 
     assert "https://" not in stripped
     assert 'src: local("FiraCode-Regular");' in stripped
+
+
+def test_the_page_that_documents_this_gate_is_reachable_and_names_the_real_commands() -> None:
+    """A gate whose regeneration command is undocumented gets guessed at.
+
+    Both halves are checked: the page has to be in the MkDocs nav (an
+    unreferenced page is one nobody finds), and the commands it prints have to
+    be the scripts that exist - a renamed script leaves the documentation
+    telling the next operator to run something that is gone, which is exactly
+    when they reach for `--no-verify` instead.
+    """
+    page = REPO_ROOT / "docs" / "contributing" / "render-freshness.md"
+    assert page.exists(), "the gate's own documentation is missing"
+    assert "contributing/render-freshness.md" in (REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+
+    text = page.read_text(encoding="utf-8")
+    for script in ("scripts/render_tui_snapshot.py", "scripts/bind_webui_renders.py"):
+        assert f"{script} --update" in text, f"the page does not name {script}'s regeneration command"
+        assert (REPO_ROOT / script).exists(), f"the page names {script}, which does not exist"
