@@ -194,7 +194,11 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
     foreign: list[str] = []
     for src in sources:
         if src.startswith(RAW_ASSET_PREFIX):
-            path = src[len(RAW_ASSET_PREFIX) :].split("?", 1)[0]
+            # Take the path component from the parsed URL rather than trimming
+            # suffixes by hand: `?raw=true` and GitHub's `#gh-dark-mode-only`
+            # are both idiomatic on an image URL, and either one left attached
+            # turns a working asset into a reported break.
+            path = urlsplit(src[len(RAW_ASSET_PREFIX) :]).path
             if ".." in PurePosixPath(path).parts or not (REPO_ROOT / path).exists():
                 broken.append(src)
         elif src.startswith(("http://", "https://")):
@@ -238,6 +242,19 @@ def test_the_image_scan_sees_every_html_attribute_form() -> None:
         "https://four.example/d.png",
         "https://five.example/e.png",
     ]
+
+
+def test_a_query_or_fragment_is_not_read_as_part_of_the_asset_path() -> None:
+    """`?raw=true` and `#gh-dark-mode-only` are both idiomatic on an image URL.
+
+    Neither changes which file is fetched, so neither may change whether the
+    gate finds it - a gate that fails on correct input gets switched off.
+    """
+    asset = "docs/assets/tui-agents.png"
+    assert (REPO_ROOT / asset).exists(), "the probe asset has moved"
+    for suffix in ("", "?raw=true", "#gh-dark-mode-only", "?raw=true#gh-dark-mode-only"):
+        path = urlsplit(f"{RAW_ASSET_PREFIX}{asset}{suffix}"[len(RAW_ASSET_PREFIX) :]).path
+        assert (REPO_ROOT / path).exists(), suffix
 
 
 def test_a_markdown_title_is_not_read_as_part_of_the_destination() -> None:
