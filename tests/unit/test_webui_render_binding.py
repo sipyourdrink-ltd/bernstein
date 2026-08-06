@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any
 
@@ -123,3 +124,22 @@ def test_the_digest_covers_file_contents_too(binder: Any, tmp_path: Path) -> Non
 
     assert binder.bundle_digest(first)[0] != binder.bundle_digest(second)[0]
     assert binder.bundle_digest(first)[0] != hashlib.sha256(b"").hexdigest()
+
+
+def test_the_documented_update_flag_writes_the_binding(
+    binder: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The command the docs print has to reach the code that writes the file.
+
+    Asserting the string appears in a markdown page proves the sentence, not
+    the behaviour: the flag could be renamed and the page would still read
+    correctly while the operator's copy-paste failed.
+    """
+    written = tmp_path / "webui-renders.json"
+    monkeypatch.setattr(binder, "BINDING", written)
+
+    assert binder.main(["--update"]) == 0
+
+    rebound = json.loads(written.read_text(encoding="utf-8"))
+    assert rebound["spa_bundle_sha256"] == binder.bundle_digest()[0]
+    assert sorted(rebound["renders"]) == binder.committed_renders()
