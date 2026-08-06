@@ -1,0 +1,658 @@
+{
+  "activity_summaries": {},
+  "agents": [
+    {
+      "abort_detail": "",
+      "abort_reason": "",
+      "agent_source": "agency",
+      "bridge_run_id": null,
+      "bridge_session_key": null,
+      "cell_id": null,
+      "context_utilization_alert": false,
+      "context_utilization_pct": 0.0,
+      "context_window_tokens": 0,
+      "exit_code": null,
+      "finish_reason": "",
+      "id": "backend-5dafcef8",
+      "log_path": "/tmp/bernstein-demo-project/.sdd/worktrees/backend-5dafcef8/.sdd/runtime/agent-backend-5dafcef8.log",
+      "model": "mock",
+      "parent_id": null,
+      "pid": 4242,
+      "provider": null,
+      "role": "backend",
+      "runtime_backend": "local",
+      "runtime_s": 0,
+      "spawn_ts": 1785996435.8879883,
+      "status": "working",
+      "task_ids": [
+        "aacc5aac61e8",
+        "e9a73a1cf0fd"
+      ],
+      "token_budget": 0,
+      "tokens_used": 0,
+      "transition_reason": "",
+      "worktree_path": ""
+    },
+    {
+      "abort_detail": "",
+      "abort_reason": "",
+      "agent_source": "agency",
+      "bridge_run_id": null,
+      "bridge_session_key": null,
+      "cell_id": null,
+      "context_utilization_alert": false,
+      "context_utilization_pct": 0.0,
+      "context_window_tokens": 0,
+      "exit_code": null,
+      "finish_reason": "",
+      "id": "qa-5462036f",
+      "log_path": "/tmp/bernstein-demo-project/.sdd/worktrees/qa-5462036f/.sdd/runtime/agent-qa-5462036f.log",
+      "model": "mock",
+      "parent_id": null,
+      "pid": 4242,
+      "provider": null,
+      "role": "qa",
+      "runtime_backend": "local",
+      "runtime_s": 0,
+      "spawn_ts": 1785996435.992559,
+      "status": "working",
+      "task_ids": [
+        "d243e913369f"
+      ],
+      "token_budget": 0,
+      "tokens_used": 0,
+      "transition_reason": "",
+      "worktree_path": ""
+    }
+  ],
+  "bandit": {
+    "active": false,
+    "mode": "static"
+  },
+  "cache_stats": {
+    "hit_rate": 0.0,
+    "hits": 0,
+    "misses": 1
+  },
+  "costs": {
+    "attainment_pct": 0.0,
+    "per_agent": {},
+    "per_model": {},
+    "runs": [],
+    "tenant_id": "default",
+    "timestamp": 1785996437.828142,
+    "total_budget_usd": 0.0,
+    "total_spent_usd": 0.0
+  },
+  "frozen_now": 1785996437.828142,
+  "guardrails": {
+    "count": 0,
+    "last": null
+  },
+  "pending_approval": 0,
+  "quality": {
+    "gate_stats": {},
+    "generated_at": 1785996437.8826473,
+    "guardrail_pass_rate": 1.0,
+    "overall": {
+      "avg_completion_seconds": 0.0,
+      "p50_completion_seconds": 0.0,
+      "p90_completion_seconds": 0.0,
+      "p99_completion_seconds": 0.0,
+      "success_rate": 1.0,
+      "total_tasks": 0
+    },
+    "per_model": {},
+    "review_rejection_rate": 0.0
+  },
+  "quarantine": {
+    "count": 0,
+    "tasks": []
+  },
+  "status": {
+    "agents": {
+      "count": 2,
+      "items": [
+        {
+          "context_utilization_pct": 0.0,
+          "cost_usd": 0.0,
+          "id": "backend-5dafcef8",
+          "model": "mock",
+          "provider": null,
+          "role": "backend",
+          "runtime_s": 0,
+          "status": "working",
+          "task_ids": [
+            "aacc5aac61e8",
+            "e9a73a1cf0fd"
+          ],
+          "tokens_used": 0
+        },
+        {
+          "context_utilization_pct": 0.0,
+          "cost_usd": 0.0,
+          "id": "qa-5462036f",
+          "model": "mock",
+          "provider": null,
+          "role": "qa",
+          "runtime_s": 0,
+          "status": "working",
+          "task_ids": [
+            "d243e913369f"
+          ],
+          "tokens_used": 0
+        }
+      ]
+    },
+    "alerts": [],
+    "bandit": {
+      "active": false,
+      "mode": "static"
+    },
+    "claimed": 3,
+    "costs": {
+      "budget_usd": 0.0,
+      "per_agent": {},
+      "per_model": {},
+      "percentage_used": 0.0,
+      "should_stop": false,
+      "should_warn": false,
+      "spent_usd": 0.0
+    },
+    "done": 0,
+    "failed": 0,
+    "lineage": {},
+    "open": 1,
+    "per_role": [
+      {
+        "claimed": 2,
+        "done": 0,
+        "failed": 0,
+        "open": 1,
+        "role": "backend"
+      },
+      {
+        "claimed": 1,
+        "done": 0,
+        "failed": 0,
+        "open": 0,
+        "role": "qa"
+      }
+    ],
+    "refused": 0,
+    "runtime": {
+      "active_worktrees": 0,
+      "config_hash": "52a368c5d6aac5f44e4e06ca06853e1b99fd5b59c94a035ac0bff79f5f7a0eec",
+      "config_last_diff": {
+        "added": 4,
+        "changed": true,
+        "changes": [
+          {
+            "after": "$2.00",
+            "before": "",
+            "kind": "added",
+            "path": "budget"
+          },
+          {
+            "after": "auto",
+            "before": "",
+            "kind": "added",
+            "path": "cli"
+          },
+          {
+            "after": "Demo: implement a Flask REST API with health check, echo endpoint, and tests",
+            "before": "",
+            "kind": "added",
+            "path": "goal"
+          },
+          {
+            "after": "2",
+            "before": "",
+            "kind": "added",
+            "path": "max_agents"
+          }
+        ],
+        "modified": 0,
+        "removed": 0,
+        "truncated": false
+      },
+      "config_provenance": {
+        "budget": {
+          "source": "seed",
+          "source_chain": [
+            {
+              "path": "/tmp/bernstein-demo-project/bernstein.yaml",
+              "redacted_value": 2.0,
+              "source": "seed",
+              "value": 2.0
+            },
+            {
+              "path": null,
+              "redacted_value": null,
+              "source": "default",
+              "value": null
+            }
+          ],
+          "value": 2.0
+        },
+        "cli": {
+          "source": "project",
+          "source_chain": [
+            {
+              "path": ".sdd/config.yaml",
+              "redacted_value": "mock",
+              "source": "project",
+              "value": "mock"
+            },
+            {
+              "path": null,
+              "redacted_value": "claude",
+              "source": "default",
+              "value": "claude"
+            }
+          ],
+          "value": "mock"
+        },
+        "effort": {
+          "source": "default",
+          "source_chain": [
+            {
+              "path": null,
+              "redacted_value": "max",
+              "source": "default",
+              "value": "max"
+            }
+          ],
+          "value": "max"
+        },
+        "max_agents": {
+          "source": "seed",
+          "source_chain": [
+            {
+              "path": "/tmp/bernstein-demo-project/bernstein.yaml",
+              "redacted_value": 2,
+              "source": "seed",
+              "value": 2
+            },
+            {
+              "path": null,
+              "redacted_value": 6,
+              "source": "default",
+              "value": 6
+            }
+          ],
+          "value": 2
+        },
+        "model": {
+          "source": "default",
+          "source_chain": [
+            {
+              "path": null,
+              "redacted_value": null,
+              "source": "default",
+              "value": null
+            }
+          ],
+          "value": null
+        }
+      },
+      "config_reloaded_at": 1785996430.6499298,
+      "config_source_chain": [
+        {
+          "checksum": "",
+          "exists": false,
+          "label": "user",
+          "path": "/root/.bernstein/config.yaml"
+        },
+        {
+          "checksum": "52a368c5d6aa...",
+          "exists": true,
+          "label": "project",
+          "path": "bernstein.yaml"
+        },
+        {
+          "checksum": "",
+          "exists": false,
+          "label": "project_alt",
+          "path": "bernstein.yml"
+        },
+        {
+          "checksum": "",
+          "exists": false,
+          "label": "local",
+          "path": ".bernstein/config.yaml"
+        },
+        {
+          "checksum": "",
+          "exists": false,
+          "label": "cli_overrides",
+          "path": ".sdd/config/cli_overrides.json"
+        },
+        {
+          "checksum": "",
+          "exists": false,
+          "label": "managed",
+          "path": ".sdd/config/managed_settings.json"
+        }
+      ],
+      "disk_usage_mb": 0.05,
+      "git_branch": "main",
+      "last_completed": null,
+      "memory_mb": 150.51,
+      "restart_count": 0
+    },
+    "summary": {
+      "agents": 0,
+      "claimed": 3,
+      "cost_usd": 0.0,
+      "done": 0,
+      "failed": 0,
+      "max_agents": 2,
+      "open": 1,
+      "refused": 0,
+      "total": 4
+    },
+    "tasks": {
+      "count": 4,
+      "items": [
+        {
+          "assigned_agent": null,
+          "blocked_reason": "",
+          "created_at": 1785996431.102634,
+          "depends_on_count": 0,
+          "elapsed": "6s",
+          "estimated_cost_usd": 0.0,
+          "flagged_unverified": false,
+          "id": "e9a73a1cf0fd",
+          "lineage_id": "e9a73a1cf0fd",
+          "model": "",
+          "owned_files_count": 0,
+          "priority": 1,
+          "progress": 10,
+          "retry_count": 0,
+          "role": "backend",
+          "status": "claimed",
+          "title": "Fix off-by-one in get_item route",
+          "verification_count": 0
+        },
+        {
+          "assigned_agent": null,
+          "blocked_reason": "",
+          "created_at": 1785996431.1051283,
+          "depends_on_count": 0,
+          "elapsed": "6s",
+          "estimated_cost_usd": 0.0,
+          "flagged_unverified": false,
+          "id": "aacc5aac61e8",
+          "lineage_id": "aacc5aac61e8",
+          "model": "",
+          "owned_files_count": 0,
+          "priority": 1,
+          "progress": 10,
+          "retry_count": 0,
+          "role": "backend",
+          "status": "claimed",
+          "title": "Fix missing `request` import",
+          "verification_count": 0
+        },
+        {
+          "assigned_agent": null,
+          "blocked_reason": "",
+          "created_at": 1785996431.1098473,
+          "depends_on_count": 0,
+          "elapsed": "6s",
+          "estimated_cost_usd": 0.0,
+          "flagged_unverified": false,
+          "id": "8cd4a3d109d6",
+          "lineage_id": "8cd4a3d109d6",
+          "model": "",
+          "owned_files_count": 0,
+          "priority": 2,
+          "progress": 0,
+          "retry_count": 0,
+          "role": "backend",
+          "status": "open",
+          "title": "Fix health endpoint returns 201 instead of 200",
+          "verification_count": 0
+        },
+        {
+          "assigned_agent": null,
+          "blocked_reason": "",
+          "created_at": 1785996431.1109416,
+          "depends_on_count": 0,
+          "elapsed": "6s",
+          "estimated_cost_usd": 0.0,
+          "flagged_unverified": false,
+          "id": "d243e913369f",
+          "lineage_id": "d243e913369f",
+          "model": "",
+          "owned_files_count": 0,
+          "priority": 2,
+          "progress": 10,
+          "retry_count": 0,
+          "role": "qa",
+          "status": "claimed",
+          "title": "Fix broken assertion in test_hello_returns_200",
+          "verification_count": 0
+        }
+      ]
+    },
+    "total": 4,
+    "total_cost_usd": 0
+  },
+  "tasks": [
+    {
+      "approval_required": false,
+      "artifact_spec": {
+        "canonicalisation": "",
+        "criteria": [],
+        "kind": "code_diff",
+        "output_path": ""
+      },
+      "assigned_agent": null,
+      "batch_eligible": false,
+      "cell_id": null,
+      "claimed_at": 1785996434.5269554,
+      "cli": null,
+      "closed_at": null,
+      "completed_at": null,
+      "completion_signals": [],
+      "complexity": "low",
+      "created_at": 1785996431.102634,
+      "deadline": null,
+      "depends_on": [],
+      "depends_on_repo": null,
+      "description": "# Fix off-by-one in get_item route\n\n**Role:** backend\n**Priority:** 1\n**Scope:** small\n**Complexity:** low\n\nBUG: `get_item(n)` in `app.py` accesses `ITEMS[n]` (zero-indexed) but the `/items/<n>` route is 1-indexed. Fix: use `ITEMS[n - 1]` and return 404 when `n` is out of range.\n\n<!-- source: 1-fix-off-by-one.md -->",
+      "effort": null,
+      "estimated_minutes": 45,
+      "eu_ai_act_risk": "limited",
+      "id": "e9a73a1cf0fd",
+      "max_output_tokens": null,
+      "max_retries": 3,
+      "max_turns": null,
+      "meta_messages": [],
+      "metadata": {},
+      "model": null,
+      "owned_files": [],
+      "parent_session_id": null,
+      "parent_task_id": null,
+      "priority": 1,
+      "progress_log": [],
+      "repo": null,
+      "result_summary": null,
+      "retry_count": 0,
+      "retry_delay_s": 0.0,
+      "risk_level": "medium",
+      "role": "backend",
+      "scope": "small",
+      "slack_context": null,
+      "status": "claimed",
+      "task_type": "standard",
+      "tenant_id": "default",
+      "terminal_reason": null,
+      "title": "Fix off-by-one in get_item route",
+      "upgrade_details": null,
+      "version": 2
+    },
+    {
+      "approval_required": false,
+      "artifact_spec": {
+        "canonicalisation": "",
+        "criteria": [],
+        "kind": "code_diff",
+        "output_path": ""
+      },
+      "assigned_agent": null,
+      "batch_eligible": false,
+      "cell_id": null,
+      "claimed_at": 1785996434.5219033,
+      "cli": null,
+      "closed_at": null,
+      "completed_at": null,
+      "completion_signals": [],
+      "complexity": "low",
+      "created_at": 1785996431.1051283,
+      "deadline": null,
+      "depends_on": [],
+      "depends_on_repo": null,
+      "description": "# Fix missing `request` import\n\n**Role:** backend\n**Priority:** 1\n**Scope:** small\n**Complexity:** low\n\nBUG: `app.py` uses `request.args` in the `/echo` endpoint but `request` is not imported from flask. Add `request` to the `from flask import ...` line.\n\n<!-- source: 2-fix-missing-import.md -->",
+      "effort": null,
+      "estimated_minutes": 45,
+      "eu_ai_act_risk": "limited",
+      "id": "aacc5aac61e8",
+      "max_output_tokens": null,
+      "max_retries": 3,
+      "max_turns": null,
+      "meta_messages": [],
+      "metadata": {},
+      "model": null,
+      "owned_files": [],
+      "parent_session_id": null,
+      "parent_task_id": null,
+      "priority": 1,
+      "progress_log": [],
+      "repo": null,
+      "result_summary": null,
+      "retry_count": 0,
+      "retry_delay_s": 0.0,
+      "risk_level": "medium",
+      "role": "backend",
+      "scope": "small",
+      "slack_context": null,
+      "status": "claimed",
+      "task_type": "standard",
+      "tenant_id": "default",
+      "terminal_reason": null,
+      "title": "Fix missing `request` import",
+      "upgrade_details": null,
+      "version": 2
+    },
+    {
+      "approval_required": true,
+      "artifact_spec": {
+        "canonicalisation": "",
+        "criteria": [],
+        "kind": "code_diff",
+        "output_path": ""
+      },
+      "assigned_agent": null,
+      "batch_eligible": true,
+      "cell_id": null,
+      "claimed_at": null,
+      "cli": null,
+      "closed_at": null,
+      "completed_at": null,
+      "completion_signals": [],
+      "complexity": "low",
+      "created_at": 1785996431.1098473,
+      "deadline": null,
+      "depends_on": [],
+      "depends_on_repo": null,
+      "description": "# Fix health endpoint returns 201 instead of 200\n\n**Role:** backend\n**Priority:** 2\n**Scope:** small\n**Complexity:** low\n\nBUG: the `/health` endpoint in `app.py` returns HTTP 201 (Created) instead of 200 (OK). Remove the explicit status code so it defaults to 200 and `test_health_returns_200` passes.\n\n<!-- source: 3-fix-health-status-code.md -->",
+      "effort": null,
+      "estimated_minutes": 20,
+      "eu_ai_act_risk": "high",
+      "id": "8cd4a3d109d6",
+      "max_output_tokens": null,
+      "max_retries": 3,
+      "max_turns": null,
+      "meta_messages": [],
+      "metadata": {},
+      "model": null,
+      "owned_files": [],
+      "parent_session_id": null,
+      "parent_task_id": null,
+      "priority": 2,
+      "progress_log": [],
+      "repo": null,
+      "result_summary": null,
+      "retry_count": 0,
+      "retry_delay_s": 0.0,
+      "risk_level": "high",
+      "role": "backend",
+      "scope": "small",
+      "slack_context": null,
+      "status": "open",
+      "task_type": "standard",
+      "tenant_id": "default",
+      "terminal_reason": null,
+      "title": "Fix health endpoint returns 201 instead of 200",
+      "upgrade_details": null,
+      "version": 1
+    },
+    {
+      "approval_required": false,
+      "artifact_spec": {
+        "canonicalisation": "",
+        "criteria": [],
+        "kind": "code_diff",
+        "output_path": ""
+      },
+      "assigned_agent": null,
+      "batch_eligible": true,
+      "cell_id": null,
+      "claimed_at": 1785996435.9556875,
+      "cli": null,
+      "closed_at": null,
+      "completed_at": null,
+      "completion_signals": [],
+      "complexity": "low",
+      "created_at": 1785996431.1109416,
+      "deadline": null,
+      "depends_on": [],
+      "depends_on_repo": null,
+      "description": "# Fix broken assertion in test_hello_returns_200\n\n**Role:** qa\n**Priority:** 2\n**Scope:** small\n**Complexity:** low\n\nBUG: `tests/test_app.py::test_hello_returns_200` asserts `resp.status_code == 404`: wrong, it should assert 200. Fix the assertion so the test suite goes green.\n\n<!-- source: 4-fix-broken-test.md -->",
+      "effort": null,
+      "estimated_minutes": 20,
+      "eu_ai_act_risk": "limited",
+      "id": "d243e913369f",
+      "max_output_tokens": null,
+      "max_retries": 3,
+      "max_turns": null,
+      "meta_messages": [],
+      "metadata": {},
+      "model": null,
+      "owned_files": [],
+      "parent_session_id": null,
+      "parent_task_id": null,
+      "priority": 2,
+      "progress_log": [],
+      "repo": null,
+      "result_summary": null,
+      "retry_count": 0,
+      "retry_delay_s": 0.0,
+      "risk_level": "medium",
+      "role": "qa",
+      "scope": "small",
+      "slack_context": null,
+      "status": "claimed",
+      "task_type": "standard",
+      "tenant_id": "default",
+      "terminal_reason": null,
+      "title": "Fix broken assertion in test_hello_returns_200",
+      "upgrade_details": null,
+      "version": 2
+    }
+  ],
+  "verification_nudge": {}
+}

@@ -72,6 +72,13 @@ extend-exclude = [
     # the scanner reads base64 slices like "izRV" as words. The
     # human-authored docs around the evidence stay in scope.
     "docs/assets/demo-run/**",
+    # Operator-surface renders (issue #3427) - both are machine-generated from
+    # a captured run: the SVG carries Rich's own class namespace and the
+    # fixture carries task ids and hex session identifiers, which the scanner
+    # reads as words. Regenerating them is a command, not an edit, so a
+    # spelling fix here would be reverted by the next --update.
+    "docs/assets/tui-live.svg",
+    "tests/fixtures/tui_live_frame.json",
     # Lineage demo fixtures are 100% deterministic hex content (sha256 hashes,
     # JWS base64url, Ed25519 PEM). The scanner reads three-char hex slices like
     # "abd"/"caf"/"dbe" as misspellings of and/calf/be. Path-exclude the entire
