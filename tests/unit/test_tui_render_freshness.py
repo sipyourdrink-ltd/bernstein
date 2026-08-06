@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "render_tui_snapshot.py"
@@ -189,20 +190,66 @@ def test_dropping_the_remote_font_keeps_the_local_one(snapshot: Any) -> None:
     assert 'src: local("FiraCode-Regular");' in stripped
 
 
-def test_the_page_that_documents_this_gate_is_reachable_and_names_the_real_commands() -> None:
+class _MkDocsLoader(yaml.SafeLoader):
+    """Read mkdocs.yml without executing its Python-object tags.
+
+    The config carries `!!python/object/apply:` tags for the slugifier, which
+    the safe loader refuses and the unsafe one would import. Neither is needed
+    to read the nav, so unknown tags resolve to None.
+    """
+
+
+_MkDocsLoader.add_multi_constructor("", lambda loader, suffix, node: None)
+
+
+def _nav_targets(node: object) -> list[str]:
+    """Flatten every page target in a MkDocs nav tree."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, list):
+        return [target for item in node for target in _nav_targets(item)]
+    if isinstance(node, dict):
+        return [target for value in node.values() for target in _nav_targets(value)]
+    return []
+
+
+def test_the_page_that_documents_this_gate_is_reachable_and_names_the_real_commands(tmp_path: Path) -> None:
     """A gate whose regeneration command is undocumented gets guessed at.
 
-    Both halves are checked: the page has to be in the MkDocs nav (an
-    unreferenced page is one nobody finds), and the commands it prints have to
-    be the scripts that exist - a renamed script leaves the documentation
-    telling the next operator to run something that is gone, which is exactly
-    when they reach for `--no-verify` instead.
+    Three things have to hold together, and each fails silently on its own:
+    the page exists, MkDocs actually navigates to it (parsed out of the nav
+    tree, not matched as a substring - a path in a comment or an unrelated
+    value would satisfy that and leave the page orphaned), and the commands it
+    prints do what it says they do. A renamed flag leaves the documentation
+    telling the next operator to run something that no longer works, which is
+    when they reach for a bypass instead.
     """
     page = REPO_ROOT / "docs" / "contributing" / "render-freshness.md"
     assert page.exists(), "the gate's own documentation is missing"
-    assert "contributing/render-freshness.md" in (REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+
+    config = yaml.load((REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8"), Loader=_MkDocsLoader)
+    assert "contributing/render-freshness.md" in _nav_targets(config.get("nav")), (
+        "the page is not reachable from the MkDocs nav"
+    )
 
     text = page.read_text(encoding="utf-8")
     for script in ("scripts/render_tui_snapshot.py", "scripts/bind_webui_renders.py"):
         assert f"{script} --update" in text, f"the page does not name {script}'s regeneration command"
         assert (REPO_ROOT / script).exists(), f"the page names {script}, which does not exist"
+
+
+def test_the_documented_update_flag_regenerates_the_render(snapshot: Any, tmp_path: Path) -> None:
+    """The command in the docs has to reach the code that writes the artefact.
+
+    Asserting the string appears in a markdown file proves the sentence, not
+    the behaviour: `--update` could be renamed and the page would still read
+    correctly while the operator's copy-paste fails.
+    """
+    written = tmp_path / "tui-live.svg"
+    snapshot.RENDER = written
+    try:
+        assert snapshot.main(["--update"]) == 0
+    finally:
+        snapshot.RENDER = RENDER_PATH
+
+    assert written.read_text(encoding="utf-8") == RENDER_PATH.read_text(encoding="utf-8")

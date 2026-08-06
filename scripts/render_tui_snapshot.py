@@ -80,6 +80,14 @@ _CLIP_DEF = re.compile(
 _CLIP_REF = re.compile(r'clip-path="url\(#' + _STABLE_ID + r'-line-(\d+)\)"')
 
 
+def _display(path: Path) -> str:
+    """Path as the reader knows it: repo-relative when it is inside the repo."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _load_fixture() -> tuple[dict[str, object], float]:
     """Return the frozen dashboard payload and the instant it was captured."""
     payload: dict[str, object] = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -275,20 +283,20 @@ def main(argv: list[str] | None = None) -> int:
     current = render()
     if args.update:
         RENDER.write_text(current, encoding="utf-8")
-        print(f"wrote {RENDER.relative_to(REPO_ROOT)} ({len(current)} bytes)")
+        print(f"wrote {_display(RENDER)} ({len(current)} bytes)")
         return 0
 
     if not RENDER.exists():
-        print(f"error: {RENDER.relative_to(REPO_ROOT)} does not exist; run with --update", file=sys.stderr)
+        print(f"error: {_display(RENDER)} does not exist; run with --update", file=sys.stderr)
         return 1
 
     committed = RENDER.read_text(encoding="utf-8")
     if committed == current:
-        print(f"{RENDER.relative_to(REPO_ROOT)} matches what the dashboard draws")
+        print(f"{_display(RENDER)} matches what the dashboard draws")
         return 0
 
     print(
-        f"error: {RENDER.relative_to(REPO_ROOT)} no longer matches what the dashboard draws.\n"
+        f"error: {_display(RENDER)} no longer matches what the dashboard draws.\n"
         f"{drift_report(committed, current)}\n\n"
         "Regenerate with: uv run python scripts/render_tui_snapshot.py --update",
         file=sys.stderr,
