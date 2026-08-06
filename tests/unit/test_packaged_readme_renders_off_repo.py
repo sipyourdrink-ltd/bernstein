@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -29,12 +30,6 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 LINK = re.compile(r"\]\(([^)]+)\)")
 OFF_REPO_SAFE = ("http://", "https://", "#", "mailto:")
 
-#: ``<img src="...">`` - the form the demo GIF uses, because it needs a width.
-HTML_IMG_SRC = re.compile(r"<img\b[^>]*?\bsrc=\"([^\"]+)\"", re.IGNORECASE)
-#: ``<source srcset="...">`` - the theme-switching half of a ``<picture>``.
-#: Easy to miss when rewriting paths, because the ``<img>`` fallback next to it
-#: keeps the page looking correct in whichever theme the author is using.
-HTML_SRCSET = re.compile(r"<source\b[^>]*?\bsrcset=\"([^\"]+)\"", re.IGNORECASE)
 #: ``![alt](target)`` - the form used where the surrounding cell sizes the image.
 MARKDOWN_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 #: Raw-content prefix an absolute image URL has to carry to render off-repo.
@@ -53,6 +48,42 @@ ALLOWED_IMAGE_HOSTS = frozenset(
         "mcptoplist.com",
     }
 )
+
+
+class _ImageSourceCollector(HTMLParser):
+    """Collect every image URL the HTML in a markdown file points at.
+
+    Parsed rather than pattern-matched because ``src='…'`` and bare ``src=…``
+    are as valid as ``src="…"``, and a policy that silently skips the forms it
+    did not anticipate is worse than no policy: it reports success over the
+    markup it could not see.
+
+    ``srcset`` carries a comma-separated candidate list where each entry is a
+    URL followed by an optional descriptor, so entries are split before the URL
+    is taken.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.sources: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "img" and values.get("src"):
+            self.sources.append(str(values["src"]).strip())
+        srcset = values.get("srcset") if tag in {"source", "img"} else None
+        if srcset:
+            for candidate in str(srcset).split(","):
+                url = candidate.strip().split(" ", 1)[0]
+                if url:
+                    self.sources.append(url)
+
+
+def _html_image_sources(text: str) -> list[str]:
+    collector = _ImageSourceCollector()
+    collector.feed(text)
+    collector.close()
+    return collector.sources
 
 
 def _links() -> list[str]:
@@ -121,6 +152,13 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
     and the markdown form (used inside the surface table, where the cell sizes
     the image) are checked, because the README uses both.
 
+    ``<source srcset>`` inside the logo's ``<picture>`` is checked too. PyPI's
+    sanitiser keeps only the ``<img>`` fallback, which is what a fallback is
+    for - the theme switch is a GitHub enhancement, and dropping it there costs
+    the reader nothing. On GitHub it is the element that actually renders in
+    dark mode, so a broken URL in it is invisible to whoever committed it and
+    visible to half the readers.
+
     An image on a host this repository does not ship from cannot be verified
     offline at all, so the rule there is different in kind: the host has to be
     one the front page already depends on deliberately. That does not prove a
@@ -128,9 +166,7 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
     dependency set from growing silently.
     """
     text = README.read_text(encoding="utf-8")
-    sources = (
-        HTML_IMG_SRC.findall(text) + HTML_SRCSET.findall(text) + [target for _, target in MARKDOWN_IMAGE.findall(text)]
-    )
+    sources = _html_image_sources(text) + [target for _, target in MARKDOWN_IMAGE.findall(text)]
     assert sources, "expected the README to reference at least one image"
 
     broken: list[str] = []
@@ -157,6 +193,30 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
         "depend on; add the host to ALLOWED_IMAGE_HOSTS if that dependency is "
         f"intended: {sorted(set(foreign))}"
     )
+
+
+def test_the_image_scan_sees_every_html_attribute_form() -> None:
+    """The scan is only a policy over what it can see.
+
+    ``src='…'`` and bare ``src=…`` render exactly like ``src="…"``, so a scan
+    that reads only the third form passes a README full of images it never
+    looked at - the failure mode where a gate is worse than no gate, because
+    it reports success.
+    """
+    markup = (
+        '<img src="https://one.example/a.png">'
+        "<img src='https://two.example/b.png'>"
+        "<img src=https://three.example/c.png>"
+        "<picture><source srcset='https://four.example/d.png 2x, https://five.example/e.png'></picture>"
+    )
+
+    assert _html_image_sources(markup) == [
+        "https://one.example/a.png",
+        "https://two.example/b.png",
+        "https://three.example/c.png",
+        "https://four.example/d.png",
+        "https://five.example/e.png",
+    ]
 
 
 def test_python_classifiers_match_the_versions_the_project_supports() -> None:
