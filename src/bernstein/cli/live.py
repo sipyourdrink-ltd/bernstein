@@ -6,7 +6,6 @@ from task-server data, plus a simple sparkline renderer for cost over time.
 
 from __future__ import annotations
 
-import os
 import time
 from collections import deque
 from contextlib import suppress
@@ -19,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from bernstein.cli.helpers import auth_headers, resolve_server_url
 from bernstein.cli.ui import (
     STATUS_COLORS,
     AgentInfo,
@@ -72,6 +72,7 @@ def render_sparkline(values: list[float], *, width: int = 40) -> Text:
 # LiveView
 # ---------------------------------------------------------------------------
 
+#: Kept for callers importing it; the view itself resolves per request.
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 
 
@@ -95,10 +96,15 @@ class LiveView:
 
     def __init__(
         self,
-        server_url: str = _DEFAULT_SERVER_URL,
+        server_url: str | None = None,
         interval: float = 2.0,
         console: Console | None = None,
     ) -> None:
+        #: ``None`` means "resolve per request", which is the default: a
+        #: workspace whose run took another port persists it, and a view
+        #: pinned at construction polls a port with nothing behind it and
+        #: renders an empty dashboard (issue #3444). An explicit URL is still
+        #: honoured, for a caller pointing at a server elsewhere.
         self._server_url = server_url
         self._interval = interval
         self._console = console or make_console()
@@ -107,6 +113,15 @@ class LiveView:
         self._done_history: deque[float] = deque(maxlen=60)
 
     # -- Data fetching --
+
+    def _resolved_url(self) -> str:
+        """Return the server for this request.
+
+        Resolved here rather than at construction so the classic view and the
+        Textual one answer the same question the same way: environment
+        variable, then the port this workspace persisted, then the default.
+        """
+        return self._server_url or resolve_server_url()
 
     def _get(self, path: str) -> dict[str, Any] | list[Any] | None:
         """GET from the task server, returning parsed JSON or None.
@@ -117,12 +132,8 @@ class LiveView:
         Returns:
             Parsed JSON response, or None on error.
         """
-        headers: dict[str, str] = {}
-        token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         try:
-            resp = httpx.get(f"{self._server_url}{path}", timeout=2.0, headers=headers)
+            resp = httpx.get(f"{self._resolved_url()}{path}", timeout=2.0, headers=auth_headers())
             result: dict[str, Any] | list[Any] = resp.json()
             return result
         except Exception:

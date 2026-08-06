@@ -128,10 +128,15 @@ def _fetch_all() -> dict[str, Any]:
     if isinstance(status, dict):
         verification_nudge = status.get("verification_nudge", {}) or {}
 
+    # An unreachable server and an idle one produce the same empty panels, so
+    # the difference is carried explicitly rather than left to the log. Every
+    # HTTP read has to have failed before the whole server is called
+    # unreachable: one route erroring is a broken route, and blanking a
+    # working dashboard over it would hide the data that did arrive.
+    server_unreachable = all(result is None for result in (status, costs, quality, bandit, tasks))
+
     return {
-        # An unreachable server and an idle one produce the same empty panels,
-        # so the difference is carried explicitly rather than left to the log.
-        "server_unreachable": status is None,
+        "server_unreachable": server_unreachable,
         "tasks": tasks,
         "status": status,
         "agents": agents,

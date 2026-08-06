@@ -26,7 +26,6 @@ import click
 import httpx
 
 from bernstein.cli.helpers import (
-    SERVER_URL,
     ServerAuthError,
     console,
     find_seed_file,
@@ -111,7 +110,8 @@ def live(interval: float, classic: bool, no_splash: bool) -> None:
 
     (
         LiveView(
-            server_url=SERVER_URL,
+            # No explicit URL: the view resolves the server per request, so a
+            # run on a non-default port is followed rather than missed.
             interval=interval,
         )
     ).run()

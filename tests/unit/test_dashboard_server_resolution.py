@@ -31,7 +31,16 @@ STATUS_PAYLOAD = {"total": 7, "done": 3, "agents": [{"id": "backend-fixture", "s
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's contract
+    #: When set, `/status` answers 500 while every other route stays healthy -
+    #: a broken route on a reachable server, which must not read as offline.
+    status_route_broken = False
+
+    def do_GET(self) -> None:
+        if self.path.startswith("/status") and type(self).status_route_broken:
+            self.send_response(500)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         body = json.dumps(STATUS_PAYLOAD if self.path.startswith("/status") else []).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -72,7 +81,9 @@ def test_the_dashboard_polls_the_port_this_run_persisted(live_server: int) -> No
     assert dashboard_polling._get("/status") == STATUS_PAYLOAD
 
 
-def test_the_environment_variable_outranks_the_persisted_port(live_server: int, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_environment_variable_outranks_the_persisted_port(
+    live_server: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Same precedence as `resolve_server_url`, so one command cannot disagree.
 
     The persisted port here is deliberately dead: if it won, the fetch would
@@ -141,3 +152,43 @@ def test_a_reachable_server_keeps_the_ordinary_subtitle() -> None:
 
     assert "No connection" not in subtitle
     assert "3/7 tasks" in subtitle
+
+
+def test_a_broken_route_on_a_reachable_server_is_not_reported_offline(
+    live_server: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One route erroring is a broken route, not a dead server.
+
+    Blanking the header over it would hide the panels that did load, which is
+    the opposite of what the unreachable state is for.
+    """
+    persist_server_port(live_server)
+    monkeypatch.setattr(_Handler, "status_route_broken", True)
+
+    data = dashboard_polling._fetch_all()
+
+    assert data["server_unreachable"] is False
+    assert data["status"] is None  # the broken route still reports nothing
+    assert data["tasks"] == []  # ...while the healthy ones still answer
+
+
+def test_the_classic_view_polls_the_same_server_as_the_textual_one(live_server: int) -> None:
+    """`bernstein live --classic` was pinned to the default port too.
+
+    It resolved through a different import, which is how one command ended up
+    answering the same question two ways.
+    """
+    from bernstein.cli.live import LiveView
+
+    persist_server_port(live_server)
+
+    assert LiveView()._get("/status") == STATUS_PAYLOAD
+
+
+def test_an_explicit_url_still_wins_for_the_classic_view(live_server: int) -> None:
+    """Resolving per request must not take away pointing it somewhere."""
+    from bernstein.cli.live import LiveView
+
+    persist_server_port(1)
+
+    assert LiveView(server_url=f"http://127.0.0.1:{live_server}")._get("/status") == STATUS_PAYLOAD
