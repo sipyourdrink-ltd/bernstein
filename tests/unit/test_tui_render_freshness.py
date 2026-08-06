@@ -121,3 +121,69 @@ def test_text_layer_recovers_the_rows_the_dashboard_drew(snapshot: Any) -> None:
     # The fixture is a real demo frame: its seeded task titles have to survive
     # the round trip from SVG text nodes back into rows.
     assert any("get_item route" in line for line in lines)
+
+
+def test_the_published_render_fetches_nothing_from_a_third_party(snapshot: Any) -> None:
+    """A render that phones home on view is not a self-contained artefact.
+
+    Rich's export points its webfont at a CDN. Published in a repository, that
+    tells the CDN who is reading the docs and lets a third party change how the
+    committed asset looks without the committed bytes changing - and it breaks
+    on the air-gapped installs this project ships a profile for.
+    """
+    committed = RENDER_PATH.read_text(encoding="utf-8")
+
+    # Scoped to things a renderer would fetch. The SVG namespace declaration
+    # and Rich's generator comment are both plain text that names something,
+    # not a request, and removing them would break the document.
+    fetched = re.findall(r"""url\(["']?(https?://[^"')]+)""", committed)
+    fetched += re.findall(r"""(?:xlink:)?href=["'](https?://[^"']+)""", committed)
+
+    assert fetched == []
+    assert 'local("FiraCode-Regular")' in committed, "the local font source is what still names the face"
+
+
+def test_every_clip_path_the_render_references_is_defined(snapshot: Any) -> None:
+    """A dangling clip reference is resolved by not clipping at all."""
+    committed = RENDER_PATH.read_text(encoding="utf-8")
+    defined = {int(match.group(1)) for match in snapshot._CLIP_DEF.finditer(committed)}
+    referenced = {int(match.group(1)) for match in snapshot._CLIP_REF.finditer(committed)}
+
+    assert referenced - defined == set()
+
+
+def test_a_missing_row_clip_is_derived_from_the_grid_above_it(snapshot: Any) -> None:
+    """The repair extrapolates the row, rather than guessing a rectangle."""
+    stable = snapshot._STABLE_ID
+    rows = "\n".join(
+        f'<clipPath id="{stable}-line-{index}">\n'
+        f'    <rect x="0" y="{100.0 + index * 10.0}" width="500" height="9.5"/>\n'
+        f"            </clipPath>"
+        for index in range(3)
+    )
+    svg = f'{rows}\n<g clip-path="url(#{stable}-line-3)"></g>'
+
+    repaired = snapshot.complete_line_clips(svg)
+
+    assert f'<clipPath id="{stable}-line-3">' in repaired
+    assert '<rect x="0" y="130.0" width="500" height="9.5"/>' in repaired
+    # Nothing to repair leaves the bytes untouched, or the gate would rewrite
+    # every render it verified.
+    assert snapshot.complete_line_clips(repaired) == repaired
+
+
+def test_dropping_the_remote_font_keeps_the_local_one(snapshot: Any) -> None:
+    """The face still has a name to match against an installed font."""
+    block = (
+        "    @font-face {\n"
+        '        font-family: "Fira Code";\n'
+        '        src: local("FiraCode-Regular"),\n'
+        '                url("https://cdn.example/FiraCode-Regular.woff2") format("woff2"),\n'
+        '                url("https://cdn.example/FiraCode-Regular.woff") format("woff");\n'
+        "    }\n"
+    )
+
+    stripped = snapshot.drop_remote_fonts(block)
+
+    assert "https://" not in stripped
+    assert 'src: local("FiraCode-Regular");' in stripped

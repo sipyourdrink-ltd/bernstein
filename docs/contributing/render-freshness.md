@@ -39,6 +39,21 @@ non-determinism are pinned:
 | the activity log's wall-clock stamps | a frozen `datetime.now()`, so a UTC runner and a laptop agree |
 | Rich's per-export id namespace | rewritten to a constant; it changes every process and describes nothing |
 
+Two things are repaired in the export before it is written, so the published
+asset is self-contained and internally consistent:
+
+- **The CDN webfont is dropped.** Rich points `@font-face` at cdnjs. A
+  published asset that fetches from a third party on view tells that party who
+  is reading the docs, lets them change how the committed render looks without
+  the committed bytes changing, and breaks on the air-gapped installs this
+  project ships a profile for. The `local()` source and the stylesheet's
+  `monospace` fallback cover rendering; every glyph carries its own x
+  coordinate, so layout does not depend on the font metrics either way.
+- **The footer's clip path is defined.** Rich emits one clip path per terminal
+  row but numbers the footer one past the last definition, so the export
+  references an id it never declares and the footer renders unclipped. The
+  rows are a uniform grid, so the missing one is derived from the two above it.
+
 ### The fixture
 
 `tests/fixtures/tui_live_frame.json` is a real frame — four seeded tasks, two

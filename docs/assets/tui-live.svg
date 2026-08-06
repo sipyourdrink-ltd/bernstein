@@ -4,17 +4,13 @@
 
     @font-face {
         font-family: "Fira Code";
-        src: local("FiraCode-Regular"),
-                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Regular.woff2") format("woff2"),
-                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Regular.woff") format("woff");
+        src: local("FiraCode-Regular");
         font-style: normal;
         font-weight: 400;
     }
     @font-face {
         font-family: "Fira Code";
-        src: local("FiraCode-Bold"),
-                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Bold.woff2") format("woff2"),
-                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Bold.woff") format("woff");
+        src: local("FiraCode-Bold");
         font-style: bold;
         font-weight: 700;
     }
@@ -184,6 +180,9 @@
             </clipPath>
 <clipPath id="terminal-bernstein-live-line-38">
     <rect x="0" y="928.7" width="1464" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-bernstein-live-line-39">
+    <rect x="0" y="953.1" width="1464" height="24.65"/>
             </clipPath>
     </defs>
 

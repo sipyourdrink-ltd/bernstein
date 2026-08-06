@@ -64,6 +64,21 @@ _TEXT_NODE = re.compile(r"<text[^>]*\bx=\"([\d.]+)\"[^>]*\by=\"([\d.]+)\"[^>]*>(
 _EXPORT_ID = re.compile(r"terminal-\d+")
 _STABLE_ID = "terminal-bernstein-live"
 
+#: Rich's SVG export declares its own webfont and points it at a CDN. A
+#: published asset that fetches from a third party on view tells that third
+#: party who is reading the docs, and lets them change how the committed render
+#: looks without the committed bytes changing. The ``local()`` source and the
+#: ``monospace`` fallback in the stylesheet cover rendering; every glyph carries
+#: its own x coordinate, so layout does not depend on the metrics either way.
+_REMOTE_FONT_SRC = re.compile(r',\s*\n\s*url\("https?://[^"]+"\) format\("[^"]+"\)')
+
+#: Rich writes one clip path per terminal row, each a rect on a uniform grid.
+_CLIP_DEF = re.compile(
+    r'<clipPath id="' + _STABLE_ID + r'-line-(\d+)">\s*\n\s*'
+    r'<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/>'
+)
+_CLIP_REF = re.compile(r'clip-path="url\(#' + _STABLE_ID + r'-line-(\d+)\)"')
+
 
 def _load_fixture() -> tuple[dict[str, object], float]:
     """Return the frozen dashboard payload and the instant it was captured."""
@@ -126,10 +141,53 @@ async def _export(payload: dict[str, object], frozen_now: float) -> str:
             return app.export_screenshot()
 
 
+def drop_remote_fonts(svg: str) -> str:
+    """Remove the CDN font sources Rich writes into every export."""
+    return _REMOTE_FONT_SRC.sub("", svg)
+
+
+def complete_line_clips(svg: str) -> str:
+    """Define the clip paths the export references but never declares.
+
+    Rich emits one clipPath per terminal row but numbers the footer row one
+    past the last definition, so the exported SVG carries a ``clip-path``
+    pointing at an id that does not exist. A renderer resolves that by not
+    clipping at all, which is how a footer overflows the terminal frame in the
+    published asset while looking correct in the terminal it came from.
+
+    The rows are a uniform grid, so a missing one is derived from the two
+    before it rather than guessed.
+    """
+    defined = {int(match.group(1)): match for match in _CLIP_DEF.finditer(svg)}
+    referenced = {int(match.group(1)) for match in _CLIP_REF.finditer(svg)}
+    missing = sorted(referenced - set(defined))
+    if not missing or len(defined) < 2:
+        return svg
+
+    last, previous = max(defined), max(defined) - 1
+    if previous not in defined:
+        return svg
+    _, x, y_last, width, height = defined[last].groups()
+    step = round(float(y_last) - float(defined[previous].group(3)), 4)
+
+    additions = []
+    for index in missing:
+        y = round(float(y_last) + step * (index - last), 4)
+        additions.append(
+            f'<clipPath id="{_STABLE_ID}-line-{index}">\n'
+            f'    <rect x="{x}" y="{y}" width="{width}" height="{height}"/>\n'
+            f"            </clipPath>"
+        )
+    anchor = defined[last].group(0)
+    tail = "\n            </clipPath>"
+    return svg.replace(anchor + tail, anchor + tail + "\n" + "\n".join(additions), 1)
+
+
 def render() -> str:
     """Return the SVG the current code draws for the committed fixture."""
     payload, frozen_now = _load_fixture()
-    return _EXPORT_ID.sub(_STABLE_ID, asyncio.run(_export(payload, frozen_now)))
+    exported = _EXPORT_ID.sub(_STABLE_ID, asyncio.run(_export(payload, frozen_now)))
+    return complete_line_clips(drop_remote_fonts(exported))
 
 
 def text_layer(svg: str) -> list[str]:
