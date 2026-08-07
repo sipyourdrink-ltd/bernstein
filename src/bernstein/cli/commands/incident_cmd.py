@@ -231,19 +231,3 @@ def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window
         console.print(Panel(root_cause, title="Root Cause", border_style="red"))
     if remediation:
         console.print(Panel(remediation, title="Remediation", border_style="green"))
-
-
-@click.command(
-    "incident_alias",
-    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
-    help="(Deprecated) Legacy alias for `bernstein report incident`.",
-)
-@click.pass_context
-def incident_alias(ctx: click.Context) -> None:
-    """Backward compatibility alias for `bernstein incident`."""
-    click.echo(
-        "WARNING: 'bernstein incident' is deprecated and will be removed in v4.0.0. "
-        "Use 'bernstein report incident' instead.",
-        err=True,
-    )
-    incident_cmd.main(args=ctx.args, prog_name="bernstein incident", standalone_mode=False)
