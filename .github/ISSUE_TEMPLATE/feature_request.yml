@@ -15,7 +15,7 @@ body:
     attributes:
       label: Proposed solution
       description: How should it work? CLI examples welcome.
-      placeholder: "`bernstein conduct --parallel 4 --goal '...'`"
+      placeholder: "`bernstein run plan.yaml --max-parallel 4`"
     validations:
       required: false
   - type: dropdown
@@ -32,3 +32,18 @@ body:
         - Other
     validations:
       required: true
+  - type: textarea
+    id: property
+    attributes:
+      label: What must stay true
+      description: >
+        Optional, and the most useful box on this form. Bernstein's value
+        rests on a few properties - a run replays to the same task graph,
+        an artifact stays checkable offline, tasks stay isolated from each
+        other. If your idea touches one of them, say which and how it
+        survives. If it plainly touches none, leave this empty.
+      placeholder: >
+        This adds a new source of input at spawn time, so the run would need
+        to record it for replay to stay honest.
+    validations:
+      required: false

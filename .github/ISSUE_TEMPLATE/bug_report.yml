@@ -1,73 +1,103 @@
-name: Bug Report
-description: Something isn't working
+name: Bug report
+description: Something does not work the way it is documented
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Every command below is one you can run today. If one of them fails
+        with `No such command`, that is itself a bug worth reporting.
+
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened?
-      description: Describe the bug. What did you expect vs what actually happened?
-      placeholder: "I ran `bernstein conduct --goal '...'` and got..."
+      label: What happened
+      description: >
+        The command you ran and what it did. Paste the command and its output
+        rather than describing them - a summary loses the detail that
+        identifies the cause.
+      placeholder: |
+        $ bernstein -g "fix the failing test in tests/test_foo.py"
+        ...
+      render: shell
     validations:
       required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: >
+        If a documentation page led you to expect it, link the page. A
+        mismatch between the docs and the behaviour is a bug in one of them,
+        and knowing which one you read tells us which.
+    validations:
+      required: true
+
   - type: textarea
     id: reproduce
     attributes:
       label: Steps to reproduce
-      description: Minimal steps to reproduce the issue
+      description: >
+        The smallest sequence that shows it. If it only happens on your own
+        repository, say so - that is useful, not disqualifying.
       value: |
         1.
         2.
         3.
     validations:
       required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `bernstein --version`
+      placeholder: "bernstein 3.13.0"
+    validations:
+      required: true
+
   - type: textarea
-    id: env
+    id: doctor
     attributes:
       label: Environment
-      description: OS, Python version, bernstein version, which CLI agents you use
-      value: |
-        - OS:
-        - Python:
-        - Bernstein:
-        - Agent CLI: Claude Code / Codex / Gemini CLI / Other
-    validations:
-      required: false
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs
-      description: Paste relevant logs from `bernstein notes` or `.sdd/runtime/`
+      description: >
+        Output of `bernstein doctor`. It reports the Python version, the
+        installed agent CLIs and their versions, and the workspace state -
+        which is most of what we would otherwise ask you for one item at a
+        time.
       render: shell
     validations:
       required: false
+
   - type: textarea
     id: debug-bundle
     attributes:
       label: Debug bundle
       description: |
-        Run `bernstein debug bundle --last` and attach the generated zip
-        file. The bundle contains a redacted `bernstein.yaml`, a
-        `doctor.json` snapshot, recent traces and metrics, and the tail
-        of `.sdd/runtime/*.log`. Secrets (API keys, tokens, passwords,
-        bearer headers, JWTs, SSH keys) are removed and `$HOME` paths
-        are collapsed to `~` before the zip is written.
+        Run `bernstein debug bundle` and attach the generated zip.
 
-        Quick check before sharing: `unzip -p bernstein-debug-*.zip manifest.json`
-        prints the manifest with version, OS, and file list.
+        It contains a redacted `bernstein.yaml`, a `doctor` snapshot, recent
+        traces and metrics, and the tail of `.sdd/runtime/*.log`. API keys,
+        tokens, passwords, bearer headers, JWTs and SSH keys are removed, and
+        `$HOME` paths are collapsed to `~`, before the zip is written.
 
-        If you cannot run the command, attach any relevant files from
-        `.sdd/runtime/`.
-      placeholder: "Drag and drop the bernstein-debug-*.zip file here"
+        Check what you are about to share:
+        `unzip -p bernstein-debug-*.zip manifest.json`
+
+        If the command will not run, attach whatever is in `.sdd/runtime/`.
+      placeholder: "Drag the bernstein-debug-*.zip here"
     validations:
       required: false
+
   - type: dropdown
     id: severity
     attributes:
-      label: Severity
+      label: Impact
       options:
-        - Crash / data loss
-        - Feature broken
-        - Minor / cosmetic
+        - Data loss, or a wrong result reported as correct
+        - A documented capability does not work
+        - Works, but not as documented
+        - Cosmetic
     validations:
-      required: false
+      required: true

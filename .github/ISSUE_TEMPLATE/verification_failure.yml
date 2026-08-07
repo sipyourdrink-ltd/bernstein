@@ -1,0 +1,106 @@
+name: Verification failure
+description: A replay, lineage, audit or receipt check reports a result you did not expect
+labels: ["bug", "verifiability"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when a verifier disagrees with reality in either direction:
+        it reports a divergence you believe is not real, or it passes a run
+        you know was tampered with. Both are the same severity here. A
+        verifier that says "clean" when it should not is worse than one that
+        crashes, because nothing downstream can tell.
+
+        If a verifier merely crashed, the bug report template is the right
+        one.
+
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Which way is it wrong
+      options:
+        - Reports a failure that is not real (false alarm)
+        - Reports success on something that should have failed (missed detection)
+        - Two runs of the same check disagree with each other
+        - The verdict is right but names the wrong step or artifact
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which check
+      options:
+        - "bernstein replay latest --verify"
+        - "bernstein lineage verify <run_id>"
+        - "bernstein audit verify"
+        - "bernstein audit diagnose <run_id>"
+        - "bernstein verify run / bernstein verify receipt"
+        - "bernstein bench reliability-verify"
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and full output
+      description: >
+        The exact invocation and everything it printed, including the exit
+        code. Exit codes carry meaning here - `2` names a divergent step,
+        `3` a missing key - so a truncated paste loses the diagnosis.
+      placeholder: |
+        $ bernstein replay latest --verify
+        ...
+        $ echo $?
+        2
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-wrong
+    attributes:
+      label: Why you believe the verdict is wrong
+      description: >
+        What you know about the run that the verdict contradicts. "The two
+        runs were identical" is a claim; "I ran the same plan twice with the
+        same seed and diffed the journals" is evidence. Either is welcome -
+        say which one it is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Receipt or journal
+      description: |
+        If the check produced a receipt, attach it - it is designed to be
+        verifiable by someone who does not have your machine, which is
+        exactly this situation.
+
+        `.sdd/runs/<run_id>/run-receipt.json`, plus the public key if you
+        signed with one.
+
+        Do not attach the audit HMAC key. Nothing here needs it, and a
+        verifier that appears to require it is itself the bug.
+      placeholder: "Attach run-receipt.json, or paste the journal head"
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `bernstein --version`
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: reproducible
+    attributes:
+      label: Reproducibility
+      options:
+        - label: The same check gives the same verdict when I run it again
+        - label: I can reproduce this from a fresh clone or a new run
+        - label: This happened once and I still have the artifacts
