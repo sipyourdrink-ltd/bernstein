@@ -129,8 +129,15 @@ def _strip_argument_placeholders(heading: str) -> str:
     ``cost policy verify`` taking one positional argument.  Without this the
     heading matched nothing and the command escaped the gate silently, which
     is the failure mode the gate exists to remove.
+
+    Only a contiguous *trailing* run is dropped.  Removing every ALL-CAPS
+    word would let an uppercase token earlier in the path disappear, turning
+    ``GROUP verify DECISION_HASH`` into ``verify`` -- resolving a different
+    command than the heading names, which is worse than not matching at all.
     """
-    words = [w for w in heading.split() if not (w.isupper() and w.replace("_", "").isalpha())]
+    words = heading.split()
+    while words and words[-1].isupper() and words[-1].replace("_", "").isalpha():
+        words.pop()
     return " ".join(words)
 
 
