@@ -1009,8 +1009,6 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `bernstein cache` | Prompt-cache mgmt (group). | `cli/commands/cache_cmd.py:45` |
 | `bernstein notify` | Outbound notification drivers (group). | `cli/commands/notify_cmd.py:63` |
 | `bernstein triggers` | Trigger sources (group). | `cli/commands/triggers_cmd.py:17` |
-| `bernstein consensus` | Cross-cycle relay inspection (**deprecated**, unregistered in 4.0.0 — #3144). | `cli/commands/consensus_cmd.py:consensus_group` |
-| `bernstein issue-to-pr` | Issue -> PR pipeline inspection (**deprecated**, unregistered in 4.0.0 — #3144). | `cli/commands/issue_to_pr_cmd.py:issue_to_pr_group` |
 
 #### `bernstein doctor`
 
