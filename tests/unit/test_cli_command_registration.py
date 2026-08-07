@@ -119,7 +119,19 @@ def test_man_pages_completes(tmp_path: Path) -> None:
 # name, resolve it through the real ``cli`` object.  A command that is
 # documented but unreachable now fails here instead of in a user's terminal.
 
-_DOC_COMMAND_HEADING = re.compile(r"^#+\s+`bernstein ([a-z0-9][a-z0-9 _-]*)`\s*$", re.M)
+_DOC_COMMAND_HEADING = re.compile(r"^#+\s+`bernstein ([a-z0-9][A-Za-z0-9 _-]*)`\s*$", re.M)
+
+
+def _strip_argument_placeholders(heading: str) -> str:
+    """Drop trailing ALL-CAPS argument placeholders from a heading.
+
+    ``bernstein cost policy verify DECISION_HASH`` documents the command
+    ``cost policy verify`` taking one positional argument.  Without this the
+    heading matched nothing and the command escaped the gate silently, which
+    is the failure mode the gate exists to remove.
+    """
+    words = [w for w in heading.split() if not (w.isupper() and w.replace("_", "").isalpha())]
+    return " ".join(words)
 
 
 def _documented_command_paths() -> list[str]:
@@ -130,7 +142,9 @@ def _documented_command_paths() -> list[str]:
     """
     reference = Path(__file__).resolve().parents[2] / "docs" / "reference" / "cli-reference.md"
     text = reference.read_text(encoding="utf-8")
-    return sorted({name for name in _DOC_COMMAND_HEADING.findall(text) if "--" not in name})
+    return sorted(
+        {_strip_argument_placeholders(name) for name in _DOC_COMMAND_HEADING.findall(text) if "--" not in name} - {""}
+    )
 
 
 def _resolve(path: str) -> click.Command | None:
