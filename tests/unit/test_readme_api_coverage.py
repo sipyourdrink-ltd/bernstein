@@ -164,7 +164,6 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "help-all",
         "cleanup",
         "history",
-        "commit-stats",
         "test",
         "test-adapter",
         "quickstart",
@@ -174,8 +173,6 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "undo",
         "worker",
         "dr",
-        "incident",
-        "postmortem",
         "slo",
         "triggers",
         # Debugging
@@ -257,7 +254,6 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "cost-envelopes",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "bom",
-        "consensus",
         "knowledge",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "integrations",
@@ -268,7 +264,6 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Playwright-based self-testing for UI/web agent runs
         "sandbox",
         # Bot-added: drift autofix (regen_contract_drift.py)
-        "issue-to-pr",
         "pipeline",
         "secrets",
         "trackers",
