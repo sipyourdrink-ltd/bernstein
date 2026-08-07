@@ -39,6 +39,11 @@ import pytest
 
 DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
     {
+        # Change-impact analysis (#3139). Both shipped complete and documented
+        # in the CLI reference but were never registered, so following the
+        # documented invocation returned "No such command".
+        "api-check",
+        "ab-test",
         # Core workflow
         "run",
         "stop",
