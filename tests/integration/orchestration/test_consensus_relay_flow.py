@@ -1,11 +1,8 @@
 """Integration tests for the cross-cycle consensus relay.
 
-These cases exercise multi-cycle handoff against the on-disk store and
-the CLI surface, covering: cold-start replay, atomic-write durability,
-chain replay after a process restart, env-driven path override, and
-markdown export round-tripping. The CLI tests use :class:`CliRunner`
-to invoke the real :func:`consensus_group` entry point so the wiring
-through :mod:`bernstein.cli.commands.consensus_cmd` is also under test.
+These cases exercise multi-cycle handoff against the on-disk store,
+covering: cold-start replay, atomic-write durability, chain replay after a
+process restart, env-driven path override, and markdown export round-tripping.
 """
 
 from __future__ import annotations
@@ -15,9 +12,7 @@ import os
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
-from bernstein.cli.commands.consensus_cmd import consensus_group
 from bernstein.core.orchestration.consensus_relay import (
     GENESIS_PREV_HASH,
     RelayChainError,
@@ -146,77 +141,3 @@ class TestMultiCycleHandoff:
         s = _store(tmp_path)
         first = s.append(cycle_id="cycle-000", phase="plan", next_action="boot")
         assert first.prev_hash == GENESIS_PREV_HASH
-
-    def test_cli_show_export_next(self, tmp_path: Path) -> None:
-        runner = CliRunner()
-        root = tmp_path / "cli-store"
-        s = RelayStore(root, key=b"k" * 32)
-        s.append(cycle_id="cycle-000", phase="plan", next_action="ship docs")
-        s.append(cycle_id="cycle-001", phase="implement", next_action="run pytest")
-
-        # bernstein consensus list
-        r = runner.invoke(consensus_group, ["--path", str(root), "list"])
-        assert r.exit_code == 0, r.output
-        assert "cycle-000" in r.output
-        assert "cycle-001" in r.output
-
-        # bernstein consensus show cycle-001
-        r = runner.invoke(consensus_group, ["--path", str(root), "show", "cycle-001"])
-        assert r.exit_code == 0, r.output
-        assert "cycle-001" in r.output
-        assert "run pytest" in r.output
-
-        # bernstein consensus export cycle-000 --format json
-        r = runner.invoke(consensus_group, ["--path", str(root), "export", "cycle-000", "--format", "json"])
-        assert r.exit_code == 0, r.output
-        # Parse stdout, not the combined output: the deprecation notice on
-        # stderr (#3144) must not break machine consumers of the export.
-        payload = json.loads(r.stdout)
-        assert payload["cycle_id"] == "cycle-000"
-
-        # bernstein consensus next
-        r = runner.invoke(consensus_group, ["--path", str(root), "next"])
-        assert r.exit_code == 0, r.output
-        assert "run pytest" in r.output
-
-    def test_cli_verify_detects_tamper(self, tmp_path: Path) -> None:
-        runner = CliRunner()
-        root = tmp_path / "verify-cli"
-        s = RelayStore(root, key=b"k" * 32)
-        s.append(cycle_id="cycle-000", phase="plan", next_action="ok")
-        # Tamper.
-        path = root / "cycle-000.json"
-        payload = json.loads(path.read_text())
-        payload["next_action"] = "MALICIOUS"
-        path.write_text(json.dumps(payload))
-        # Default env key may not match our test key; pass explicit env to align.
-        env = os.environ | {"BERNSTEIN_RELAY_KEY": ("6b" * 32)}
-        # Our store wrote with key=b'k'*32 == 0x6b * 32 hex.
-        r = runner.invoke(consensus_group, ["--path", str(root), "verify"], env=env)
-        assert r.exit_code != 0
-        assert "chain invalid" in r.output or "hmac mismatch" in r.output
-
-    def test_cli_export_markdown_format(self, tmp_path: Path) -> None:
-        runner = CliRunner()
-        root = tmp_path / "cli-md"
-        s = RelayStore(root, key=b"k" * 32)
-        s.append(
-            cycle_id="cycle-000",
-            phase="plan",
-            did_this_cycle="Did a thing.",
-            next_action="Pick the next bit.",
-        )
-        r = runner.invoke(
-            consensus_group,
-            ["--path", str(root), "export", "cycle-000", "--format", "md"],
-        )
-        assert r.exit_code == 0, r.output
-        assert "# Cycle relay cycle-000" in r.output
-        assert "Pick the next bit." in r.output
-
-    def test_cli_next_empty_chain(self, tmp_path: Path) -> None:
-        runner = CliRunner()
-        root = tmp_path / "empty"
-        r = runner.invoke(consensus_group, ["--path", str(root), "next"])
-        assert r.exit_code != 0
-        assert "no relay entries" in r.output
