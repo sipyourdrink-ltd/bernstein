@@ -433,3 +433,128 @@ def test_malformed_document_is_rejected() -> None:
 def test_unknown_document_version_is_rejected() -> None:
     with pytest.raises(ValueError, match="unsupported graph document version"):
         graph_from_document(b'{"version":999,"nodes":[],"edges":[]}')
+
+
+# ---------------------------------------------------------------------------
+# One task id, one attribution
+# ---------------------------------------------------------------------------
+
+
+def test_serial_groups_rejects_two_attributions_for_one_task() -> None:
+    """The partition is keyed by task id, so two under one name is not a set.
+
+    Without this the union-find collapses them into a single node and emits a
+    group listing the id twice: a scheduling instruction naming a task that
+    has two different boundaries, which nobody downstream can act on.
+    """
+    tasks = [_proven("a", ("f.py::one",)), _proven("a", ("g.py::two",))]
+
+    with pytest.raises(ValueError, match="same task more than once"):
+        serial_groups(tasks)
+
+
+def test_receipt_rejects_two_attributions_for_one_task() -> None:
+    """The receipt is refused where it is built, not after it is projected."""
+    tasks = [_proven("a", ("f.py::one",)), _proven("a", ("g.py::two",))]
+
+    with pytest.raises(ValueError, match="same task more than once"):
+        build_admission_receipt("sha256:abc", tasks)
+
+
+def test_duplicate_ids_in_a_recorded_receipt_are_a_divergence_not_a_crash() -> None:
+    """A verifier owes the caller a verdict, including on a receipt no run produced."""
+    receipt = build_admission_receipt("sha256:abc", [_proven("a", ("f.py::one",))])
+    receipt["tasks"].append(dict(receipt["tasks"][0]))  # type: ignore[attr-defined,index,arg-type]
+
+    result = verify_admission_receipt(receipt, graph_digest_value="sha256:abc")
+
+    assert result.status == RECEIPT_DIVERGED
+    assert not result.ok
+
+
+# ---------------------------------------------------------------------------
+# Verification covers the whole projection, not only the verdicts
+# ---------------------------------------------------------------------------
+
+
+def test_edited_receipt_version_is_a_divergence() -> None:
+    """The version travels inside the bytes, so it has to be re-derived too.
+
+    Leaving it out lets a receipt claim a shape it was not written in while
+    every verdict still reproduces, which is exactly the comparison a future
+    reader would rely on to know the two documents are the same kind of thing.
+    """
+    receipt = build_admission_receipt("sha256:abc", [_proven("a", ("f.py::one",))])
+    receipt["version"] = 999
+
+    result = verify_admission_receipt(receipt, graph_digest_value="sha256:abc")
+
+    assert result.status == RECEIPT_DIVERGED
+    assert any("version" in d for d in result.divergences)
+
+
+def test_padded_task_entry_is_a_divergence() -> None:
+    """A ``tasks`` list that is not the canonical projection does not verify.
+
+    The verdicts follow from four of the recorded fields, so everything else in
+    an entry could be edited freely while ``pairs`` and ``serial_groups`` still
+    reproduced. A receipt is either the document the run produced or it is not.
+    """
+    receipt = build_admission_receipt("sha256:abc", [_proven("a", ("f.py::one",))])
+    receipt["tasks"][0]["owner"] = "someone-else"  # type: ignore[index]
+
+    result = verify_admission_receipt(receipt, graph_digest_value="sha256:abc")
+
+    assert result.status == RECEIPT_DIVERGED
+    assert any("tasks" in d for d in result.divergences)
+
+
+# ---------------------------------------------------------------------------
+# A tampered document cannot borrow the untampered digest
+# ---------------------------------------------------------------------------
+
+
+def test_fabricated_edge_in_the_document_does_not_verify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An edge the loader would drop must not let the document keep its digest.
+
+    ``SemanticGraph.add_edge`` discards an edge whose endpoints it does not
+    know. Reconstructing through it means the digest is taken over a graph the
+    document does not describe, so a document carrying fabricated edges hashes
+    to the original and reads as the graph the decision was taken over.
+    """
+    graph = _graph_for(tmp_path, _DISJOINT, monkeypatch)
+    receipt = build_admission_receipt(graph.digest(), [attribute_task(graph, "a", ["src/pkg/alpha.py"])])
+
+    payload = json.loads(graph.document())
+    payload["edges"].append(
+        {
+            "source": "src/pkg/alpha.py::alpha_helper",
+            "target": "src/pkg/ghost.py::ghost",
+            "kind": "calls",
+            "origin": "EXTRACTED",
+        }
+    )
+    tampered = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    result = verify_admission_receipt(
+        receipt,
+        graph_digest_value=graph.digest(),
+        graph_document_bytes=tampered,
+    )
+
+    assert result.status == RECEIPT_GRAPH_MISMATCH
+    assert not result.ok
+
+
+def test_unloadable_document_is_a_mismatch_not_an_exception() -> None:
+    """A document the loader refuses is reported, not raised through."""
+    receipt = build_admission_receipt("sha256:abc", [_proven("a", ("f.py::one",))])
+
+    result = verify_admission_receipt(
+        receipt,
+        graph_digest_value="sha256:abc",
+        graph_document_bytes=b"{not json",
+    )
+
+    assert result.status == RECEIPT_GRAPH_MISMATCH
+    assert any("could not be loaded" in d for d in result.divergences)

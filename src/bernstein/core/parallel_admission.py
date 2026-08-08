@@ -148,6 +148,38 @@ def _pairwise(items: Sequence[TaskNodeSet]) -> Iterable[tuple[TaskNodeSet, TaskN
             yield left, right
 
 
+def _duplicate_task_ids(tasks: Sequence[TaskNodeSet]) -> tuple[str, ...]:
+    """Return the task ids appearing more than once in *tasks*, sorted."""
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for task in tasks:
+        if task.task_id in seen:
+            duplicates.add(task.task_id)
+        seen.add(task.task_id)
+    return tuple(sorted(duplicates))
+
+
+def _reject_duplicate_task_ids(tasks: Sequence[TaskNodeSet]) -> None:
+    """Refuse an attribution set that names the same task twice.
+
+    Two attributions sharing a task id are two different node sets under one
+    name. The partition below is keyed by id, so it would silently keep one of
+    them and emit a group listing the id twice -- a scheduling instruction that
+    cannot be followed, and one a verifier reproduces exactly because it makes
+    the same collapse. The set has to be rejected where it is built, not
+    reported after it has been turned into groups.
+
+    Args:
+        tasks: The attribution set.
+
+    Raises:
+        ValueError: If any task id appears more than once.
+    """
+    duplicates = _duplicate_task_ids(tasks)
+    if duplicates:
+        raise ValueError(f"attributions name the same task more than once: {list(duplicates)}")
+
+
 def serial_groups(attributions: Iterable[TaskNodeSet]) -> tuple[tuple[str, ...], ...]:
     """Partition tasks into groups whose members must not run concurrently.
 
@@ -168,8 +200,12 @@ def serial_groups(attributions: Iterable[TaskNodeSet]) -> tuple[tuple[str, ...],
     Returns:
         Groups, each sorted, ordered by first member. Deterministic for any
         input order.
+
+    Raises:
+        ValueError: If two attributions share a task id.
     """
     tasks = sorted(attributions, key=lambda t: t.task_id)
+    _reject_duplicate_task_ids(tasks)
     parent = {t.task_id: t.task_id for t in tasks}
 
     def find(node: str) -> str:
@@ -228,8 +264,8 @@ class ReceiptVerification:
     """Outcome of re-deriving an admission receipt.
 
     Attributes:
-        status: :data:`RECEIPT_VERIFIED`, :data:`RECEIPT_DIVERGED` or
-            :data:`RECEIPT_GRAPH_MISMATCH`.
+        status: :data:`RECEIPT_VERIFIED`, :data:`RECEIPT_CONSISTENT_ONLY`,
+            :data:`RECEIPT_DIVERGED` or :data:`RECEIPT_GRAPH_MISMATCH`.
         divergences: Human-readable descriptions of each mismatch, sorted.
             Empty when verified.
     """
@@ -267,8 +303,12 @@ def build_admission_receipt(
     Returns:
         A canonically-ordered mapping ready to be serialised into the lineage
         record.
+
+    Raises:
+        ValueError: If two attributions share a task id.
     """
     ordered = sorted(attributions, key=lambda t: t.task_id)
+    _reject_duplicate_task_ids(ordered)
     verdicts = [admit_pair(left, right).to_dict() for left, right in _pairwise(ordered)]
     return {
         "version": ADMISSION_RECEIPT_VERSION,
@@ -300,6 +340,16 @@ def verify_admission_receipt(
     is False for it, so the weaker guarantee cannot be mistaken for the
     stronger one by a caller writing ``if result.ok``.
 
+    Either way the comparison covers the whole canonical projection, not only
+    the verdicts: a receipt that reproduces its ``pairs`` while claiming a
+    different ``version`` or carrying an edited ``tasks`` entry is not the
+    document the run produced.
+
+    Nothing here raises. A receipt no honest run could have produced is a
+    divergence and a document the loader refuses is a mismatch, because a
+    caller asking whether a decision holds is owed an answer rather than a
+    traceback.
+
     Args:
         receipt: The recorded receipt.
         graph_digest_value: Digest of the graph to check it against.
@@ -320,6 +370,16 @@ def verify_admission_receipt(
     entries = [e for e in (raw_tasks if isinstance(raw_tasks, list) else []) if isinstance(e, dict)]
     recorded = [_task_from_entry(entry) for entry in entries]
 
+    duplicates = _duplicate_task_ids(recorded)
+    if duplicates:
+        # Re-deriving would raise here, and a verifier owes the caller a
+        # verdict rather than a traceback: a receipt naming one task twice is
+        # a receipt no honest run produced.
+        return ReceiptVerification(
+            status=RECEIPT_DIVERGED,
+            divergences=(f"receipt names the same task more than once: {list(duplicates)}",),
+        )
+
     divergences: list[str] = []
     rebuilt = recorded
     full = False
@@ -328,7 +388,17 @@ def verify_admission_receipt(
         from bernstein.core.knowledge.ast_symbol_graph import graph_digest, graph_from_document
         from bernstein.core.knowledge.code_graph import SemanticCodeGraph, attribute_task
 
-        graph = graph_from_document(graph_document_bytes)
+        try:
+            graph = graph_from_document(graph_document_bytes)
+        except ValueError as exc:
+            # A document the loader refuses is not a divergence: nothing about
+            # the recorded decision was contradicted, the operator was simply
+            # handed something that is not the graph. Same next move as a
+            # digest mismatch -- go and find the right one.
+            return ReceiptVerification(
+                status=RECEIPT_GRAPH_MISMATCH,
+                divergences=(f"supplied graph document could not be loaded: {exc}",),
+            )
         if graph_digest(graph) != graph_digest_value:
             return ReceiptVerification(
                 status=RECEIPT_GRAPH_MISMATCH,
@@ -352,7 +422,12 @@ def verify_admission_receipt(
         full = True
 
     expected = build_admission_receipt(graph_digest_value, rebuilt)
-    for key in ("pairs", "serial_groups"):
+    # Every projected field, not only the verdicts. A receipt whose verdicts
+    # survive an edit elsewhere -- a rewritten ``version``, a reordered or
+    # padded ``tasks`` list -- is still a receipt that does not say what the
+    # run produced, and comparing the whole canonical projection is what makes
+    # "verified" mean the document reproduces byte for byte.
+    for key in ("version", "tasks", "pairs", "serial_groups"):
         if receipt.get(key) != expected[key]:
             divergences.append(f"{key} recorded as {receipt.get(key)!r}, re-derived {expected[key]!r}")
 
