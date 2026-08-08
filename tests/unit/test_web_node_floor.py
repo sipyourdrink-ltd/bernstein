@@ -17,6 +17,23 @@ So the check is that every workflow which runs ``npm`` against ``web/``
 installs a Node that satisfies the declared floor. That is verifiable from
 the repository alone, with no install step.
 
+The comparison contract, since "satisfies" is not obvious once a pin is
+looser than the floor:
+
+============================  ==========  ==================================
+Pin                           Verdict     Why
+============================  ==========  ==================================
+``24`` (major above floor)    satisfied   cannot resolve below the floor
+``22.22.0`` / ``22.30.1``     satisfied   compared as a whole version
+``22.0.0``                    fails       same major, below the floor
+``22`` (the floor's major)    fails       which 22.x it installs decides it
+``lts/*``, ``22.x``, ``>=22`` fails       not resolvable from the tree
+============================  ==========  ==================================
+
+Rows four and five fail because they are *unprovable here*, not because they
+are known-bad. A pin this cannot reason about is where a silent pass would do
+the most damage, so it fails and names itself instead.
+
 What this deliberately does not check is whether the declared floor still
 matches the tree - that needs ``node_modules``, and asserting it here would
 mean an install in a unit test. It is enforced where the install already
@@ -111,19 +128,60 @@ def _resolve(value: Any, cell: dict[str, str]) -> str:
     return text
 
 
-def _node_major(steps: list[Any]) -> int | None:
+def _node_pin(steps: list[Any]) -> str | None:
+    """The ``node-version`` a job's ``setup-node`` step requests, verbatim."""
     versions = [
-        str(step.get("with", {}).get("node-version", ""))
+        str(step.get("with", {}).get("node-version", "")).strip()
         for step in steps
         if isinstance(step, dict) and "actions/setup-node" in str(step.get("uses", ""))
     ]
-    pinned = [v for v in versions if v.strip().split(".")[0].isdigit()]
-    return int(pinned[0].strip().split(".")[0]) if pinned else None
+    present = [version for version in versions if version]
+    return present[0] if present else None
 
 
-def _web_building_workflows() -> list[tuple[Path, int]]:
-    """Workflows that run ``npm`` in ``web/``, paired with the Node major."""
-    found: list[tuple[Path, int]] = []
+def _pin_satisfies(pin: str, floor: tuple[int, int, int]) -> tuple[bool, str]:
+    """Whether *pin* provably installs a Node at or above *floor*.
+
+    The contract is deliberately narrow, because the interesting failure is a
+    pin that *might* resolve below the floor:
+
+    * a pin whose major exceeds the floor's satisfies it whatever it resolves
+      to - ``24`` cannot produce a ``22.x``;
+    * a pin on the floor's own major has to state minor and patch. ``22``
+      means "newest 22.x", which is only above ``22.22.0`` as a fact about
+      what upstream has released, not one this repository can check. ``22.0.0``
+      is below the floor outright;
+    * anything not of the form ``MAJOR[.MINOR.PATCH]`` - ``lts/*``, ``node``,
+      ``22.x``, a range, a ``.nvmrc`` indirection - is not provable here.
+
+    Unprovable is reported as unsatisfied. A pin this cannot reason about is
+    exactly the case where a silent pass would be worst.
+    """
+    parts = pin.split(".")
+    if not all(part.isdigit() for part in parts) or len(parts) not in {1, 3}:
+        return False, (
+            f"{pin!r} is not an exact `MAJOR` or `MAJOR.MINOR.PATCH` pin, so it "
+            "cannot be shown to satisfy the floor. Pin an exact version, or "
+            "teach this check the form you need."
+        )
+
+    numbers = tuple(int(part) for part in parts)
+    if numbers[0] > floor[0]:
+        return True, ""
+    if numbers[0] < floor[0]:
+        return False, f"Node {pin} is below the declared floor"
+    if len(numbers) == 1:
+        return False, (
+            f"{pin!r} pins only the major that the floor itself sits on, so which "
+            "release it installs decides whether the floor holds - state minor and "
+            "patch, or raise the pin to a higher major"
+        )
+    return (numbers >= floor), ("" if numbers >= floor else f"Node {pin} is below the declared floor")
+
+
+def _web_building_workflows() -> list[tuple[Path, str]]:
+    """Workflows that run ``npm`` in ``web/``, paired with their Node pin."""
+    found: list[tuple[Path, str]] = []
     for path, doc in _workflow_docs():
         jobs = doc.get("jobs")
         if not isinstance(jobs, dict):
@@ -139,9 +197,9 @@ def _web_building_workflows() -> list[tuple[Path, int]]:
             )
             if not builds_web:
                 continue
-            major = _node_major(steps)
-            assert major is not None, f"{path.name} runs npm in web/ without pinning a Node version"
-            found.append((path, major))
+            pin = _node_pin(steps)
+            assert pin is not None, f"{path.name} runs npm in web/ without pinning a Node version"
+            found.append((path, pin))
             break
     return found
 
@@ -203,11 +261,41 @@ def test_the_structural_scan_finds_every_lane_a_text_scan_can_see() -> None:
 
 def test_ci_installs_a_node_that_satisfies_the_declared_floor() -> None:
     """Otherwise the lane that builds `web/` is not the environment we support."""
-    floor_major = _declared_floor()[0]
-    for path, pinned_major in _web_building_workflows():
-        assert pinned_major >= floor_major, (
-            f"{path.name} pins Node {pinned_major}, below the floor "
-            f"web/package.json declares (>={floor_major}). Either the pin is "
-            "stale or the floor was raised by a dependency bump; CI must run "
-            "on a version the package claims to support."
+    floor = _declared_floor()
+    for path, pin in _web_building_workflows():
+        satisfied, why = _pin_satisfies(pin, floor)
+        assert satisfied, (
+            f"{path.name} pins Node {pin!r} against a declared floor of "
+            f">={'.'.join(str(part) for part in floor)}: {why}. Either the pin is "
+            "stale or the floor was raised by a dependency bump; CI must run on a "
+            "version the package claims to support."
         )
+
+
+@pytest.mark.parametrize(
+    ("pin", "satisfied"),
+    [
+        ("24", True),  # a higher major cannot resolve below the floor
+        ("22.22.0", True),  # exactly the floor
+        ("22.30.1", True),
+        ("23.0.0", True),
+        ("22.0.0", False),  # same major, below the floor - the case majors miss
+        ("22.21.9", False),
+        ("21", False),
+        ("20.19.0", False),
+        ("22", False),  # floor's own major, unpinned minor: not provable
+        ("lts/*", False),  # not provable
+        ("22.x", False),
+        ("node", False),
+        (">=22", False),
+        ("", False),
+    ],
+)
+def test_the_pin_comparison_uses_the_whole_version(pin: str, *, satisfied: bool) -> None:
+    """Comparing majors alone accepts `22.0.0` against a `>=22.22.0` floor.
+
+    The unprovable cases are asserted as unsatisfied on purpose. A pin this
+    cannot reason about is where a silent pass would do the most damage, so it
+    fails and names itself rather than being waved through.
+    """
+    assert _pin_satisfies(pin, (22, 22, 0))[0] is satisfied
