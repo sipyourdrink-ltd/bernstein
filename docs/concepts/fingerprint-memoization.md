@@ -49,7 +49,7 @@ The decorator is already applied at three call sites:
 |---|---|
 | `quality/cross_model_verifier.py` | `(model_id, prompt, output, verifier_fn_hash)` |
 | `knowledge/knowledge_graph.py` | `(file_sha, extractor_fn_hash, ast_symbol_graph_source_hash)` |
-| `knowledge/rag.py` | `(chunk_sha, embedder_id, chunker_fn_hash)` |
+| `knowledge/rag.py` | `(chunk_sha, rel_path, chunker_fn_hash, rag_source_hash)` |
 
 ## Declaring code dependencies
 
@@ -76,6 +76,21 @@ neither of which a per-callable hash can see, and the second of which
 would otherwise surface as an `AttributeError` on an unpickled entry.
 The cost is over-invalidation: an unrelated edit anywhere in the module
 rebuilds that site's cache. That is the safe direction.
+
+The delegate does not have to live in another file. `knowledge/rag.py`
+dispatches to two chunkers defined beside the shim, and the shim's body
+is just as blind to a rewrite of either; it declares its own module with
+`sys.modules[__name__]`:
+
+```python
+@memoize_persistent(store, site="rag", depends_on=(sys.modules[__name__],))
+def _chunk_for_memo(*, chunk_sha: str, rel_path: str, source: str, is_python: bool):
+    return _extract_python_chunks(source, rel_path) if is_python else _line_chunks(source, rel_path)
+```
+
+Resolve the module through `sys.modules` rather than importing the file
+into itself, so the reference is the canonical module object whichever
+import path loaded it first.
 
 Omitting `depends_on` leaves keys byte-identical to the previous scheme,
 so adding the parameter did not invalidate existing stores.

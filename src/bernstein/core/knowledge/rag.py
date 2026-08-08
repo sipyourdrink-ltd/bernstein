@@ -16,6 +16,7 @@ import hashlib
 import logging
 import os
 import sqlite3
+import sys
 import threading as _threading
 import time
 from dataclasses import dataclass
@@ -176,9 +177,20 @@ _memoized_chunker: Any = None
 def _chunk_for_memo(*, chunk_sha: str, rel_path: str, source: str, is_python: bool) -> list[dict[str, object]]:
     """Memoization shim around the AST/line chunker.
 
-    Fingerprint key = (chunk_sha, rel_path, this-function-body-hash).
-    A change to the chunker invalidates the cached chunks, so a bug fix
-    in chunk shaping correctly re-derives.
+    Keyed by (chunk_sha, rel_path, this-function-body-hash, hash of this
+    module's source).  ``chunk_sha`` forces invalidation when a file's
+    own bytes change.
+
+    The last component is what makes chunker fixes take effect: this
+    shim only dispatches, so its body is byte-identical before and after
+    any rewrite of :func:`_extract_python_chunks` or :func:`_line_chunks`,
+    and the function-body component of the fingerprint cannot see the
+    change.  ``_get_memoized_chunker`` therefore declares this module as
+    a memo dependency.  Declaring the whole module rather than the two
+    chunkers alone also covers the fallback edge between them (a syntax
+    error routes AST chunking to :func:`_line_chunks`) and the chunk-size
+    and overlap defaults, none of which a per-callable hash spanning only
+    the entry point can see.
     """
     if is_python:
         return _extract_python_chunks(source, rel_path)
@@ -190,7 +202,16 @@ def _get_memoized_chunker(workdir: Path) -> Any:
     global _rag_memo_store, _memoized_chunker
     if _memoized_chunker is None:
         _rag_memo_store = default_store(workdir)
-        _memoized_chunker = memoize_persistent(_rag_memo_store, site="rag")(_chunk_for_memo)
+        # The chunkers live in this module, so declare it as the memo
+        # dependency: ``_chunk_for_memo`` is a dispatch shim whose own body
+        # never moves when their behaviour does.  Resolved through
+        # ``sys.modules`` rather than a self-import so the reference is the
+        # canonical module object however this file was first imported.
+        _memoized_chunker = memoize_persistent(
+            _rag_memo_store,
+            site="rag",
+            depends_on=(sys.modules[__name__],),
+        )(_chunk_for_memo)
     return _memoized_chunker
 
 
