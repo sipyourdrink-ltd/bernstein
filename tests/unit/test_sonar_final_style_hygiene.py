@@ -15,7 +15,8 @@ def test_fingerprint_memoize_uses_pep695_generic_syntax() -> None:
     """The memoize decorator should not rely on module-level TypeVar boilerplate."""
     source = _read_source("src/bernstein/core/persistence/fingerprint.py")
 
-    assert 'def memoize_persistent[F: Callable[..., Any]](store: MemoStore, *, site: str = "default")' in source
+    assert "def memoize_persistent[F: Callable[..., Any]](" in source
+    assert 'site: str = "default"' in source
     assert "F = TypeVar" not in source
     assert "def decorator(fn: F)" not in source
 

@@ -48,8 +48,37 @@ The decorator is already applied at three call sites:
 | Site | Key |
 |---|---|
 | `quality/cross_model_verifier.py` | `(model_id, prompt, output, verifier_fn_hash)` |
-| `knowledge/knowledge_graph.py` | `(file_sha, extractor_fn_hash)` |
+| `knowledge/knowledge_graph.py` | `(file_sha, extractor_fn_hash, ast_symbol_graph_source_hash)` |
 | `knowledge/rag.py` | `(chunk_sha, embedder_id, chunker_fn_hash)` |
+
+## Declaring code dependencies
+
+The function-body component covers the decorated function's *own*
+source and nothing else. A thin shim that delegates the real work
+elsewhere therefore keeps a byte-identical body when the code it calls
+is rewritten, and its cached entries survive the fix - the exact
+failure this module exists to prevent, reintroduced one level down.
+
+Name the delegated code with `depends_on`:
+
+```python
+from bernstein.core.knowledge import ast_symbol_graph
+
+@memoize_persistent(store, site="knowledge_graph", depends_on=(ast_symbol_graph,))
+def _extract_symbols_for_memo(*, file_sha: str, rel_path: str, abs_path: str):
+    return ast_symbol_graph.parse_file_symbols(Path(abs_path), rel_path)
+```
+
+Prefer passing the **module** over individual callables. A module hashes
+its whole file, so the key also moves when a private helper changes, or
+when a dataclass the cached value is an instance of gains a field -
+neither of which a per-callable hash can see, and the second of which
+would otherwise surface as an `AttributeError` on an unpickled entry.
+The cost is over-invalidation: an unrelated edit anywhere in the module
+rebuilds that site's cache. That is the safe direction.
+
+Omitting `depends_on` leaves keys byte-identical to the previous scheme,
+so adding the parameter did not invalidate existing stores.
 
 ## Configuration
 
@@ -68,8 +97,12 @@ Metrics exposed on `/metrics`:
 
 - Single host. The store is on-disk and not shared across machines.
 - The fingerprint hashes the *immediate* function body only - not the
-  transitive closure of called helpers. If you rely on a helper that
-  changed, decorate that helper too, or invalidate manually.
+  transitive closure of called helpers. Declare the code you delegate
+  to with `depends_on` (above); it is not inferred, so a call site that
+  forgets it silently serves stale entries.
+- `depends_on` covers the declared modules, not *their* imports. A
+  parser that changes behaviour because a library it calls was upgraded
+  still needs manual invalidation (`bernstein cache clear`).
 - Functions with hidden state (env vars read at call time, file IO,
   network calls) are unsafe to memoize. Restrict use to pure
   functions.

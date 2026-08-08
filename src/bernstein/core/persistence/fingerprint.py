@@ -8,6 +8,12 @@ cached entries whenever the function that produced them changes.  Plain
 ``hash(input)`` keys (as used by most of Bernstein's ad-hoc caches)
 silently keep stale outputs after the producer is rewritten.
 
+The body component only covers the memoised function's *own* source.  A
+thin shim that delegates to a helper module keeps a byte-identical body
+when that helper is rewritten, so its cached entries survive the fix.
+Such call sites must name the code they delegate to via
+``memoize_persistent(..., depends_on=...)``; see :func:`code_digest`.
+
 Prior art: ``cocoindex/python/cocoindex/_internal/memo_fingerprint.py``
 (https://github.com/cocoindex-io/cocoindex/blob/main/python/cocoindex/_internal/memo_fingerprint.py).
 That implementation is ~400 LOC of Apache-2.0 Python+Rust tightly
@@ -35,12 +41,11 @@ import pickle
 import textwrap
 import threading
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from types import ModuleType
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,12 @@ _DIGEST_BYTES = 32
 _DEFAULT_MAX_MB = 200
 _AST_CACHE: dict[str, bytes] = {}
 _AST_CACHE_LOCK = threading.Lock()
+#: Per-process source digests for :func:`code_digest` targets, keyed by
+#: ``__name__`` for modules and ``<module>.<qualname>`` for callables.
+_SOURCE_DIGEST_CACHE: dict[str, bytes] = {}
+
+#: A callable or module whose source participates in a memo key.
+CodeDependency = Callable[..., Any] | ModuleType
 
 
 def _canonicalize(value: Any) -> Any:
@@ -117,6 +128,67 @@ def _function_ast_bytes(fn: Callable[..., Any]) -> bytes:
     with _AST_CACHE_LOCK:
         _AST_CACHE[cache_key] = body
     return body
+
+
+def _source_cache_key(target: CodeDependency) -> str:
+    """Return the stable per-process cache key for *target*.
+
+    Modules key on ``__name__`` rather than ``repr`` so the key does not
+    embed an install path (which differs per machine and would defeat
+    the cache on every process).
+    """
+    if isinstance(target, ModuleType):
+        return getattr(target, "__name__", repr(target))
+    inner = inspect.unwrap(target)
+    module = getattr(inner, "__module__", "?")
+    qualname = getattr(inner, "__qualname__", repr(inner))
+    return f"{module}.{qualname}"
+
+
+def _module_source_bytes(module: ModuleType) -> bytes:
+    """Return the on-disk bytes of *module*, or its name when unreadable.
+
+    Reads the file directly rather than going through ``inspect``: the
+    latter serves from ``linecache``, which can hand back a previous
+    revision of a file rewritten within the same mtime granularity.
+    """
+    path = getattr(module, "__file__", None)
+    if path:
+        try:
+            return Path(path).read_bytes()
+        except OSError:
+            pass
+    try:
+        return inspect.getsource(module).encode("utf-8")
+    except (OSError, TypeError):
+        return _source_cache_key(module).encode("utf-8")
+
+
+def code_digest(*targets: CodeDependency) -> bytes:
+    """Return a 32-byte digest over the source of every target.
+
+    Callables hash via their dedented source; modules hash via their
+    whole on-disk bytes.  Module granularity is deliberate - a memoised
+    value produced by ``mod.f`` is also invalidated by an edit to a
+    private helper ``f`` calls, or to a dataclass the value is an
+    instance of, neither of which a per-callable hash can see.  The cost
+    is over-invalidation (an unrelated edit to the module rebuilds the
+    cache), which is the safe direction.
+
+    Digests are cached per process; module source cannot change beneath
+    a running interpreter.
+    """
+    hasher = hashlib.sha256()
+    for target in targets:
+        key = _source_cache_key(target)
+        digest = _SOURCE_DIGEST_CACHE.get(key)
+        if digest is None:
+            body = _module_source_bytes(target) if isinstance(target, ModuleType) else _function_ast_bytes(target)
+            digest = hashlib.sha256(body).digest()
+            with _AST_CACHE_LOCK:
+                _SOURCE_DIGEST_CACHE[key] = digest
+        hasher.update(key.encode("utf-8") + b"\0" + digest)
+    return hasher.digest()
 
 
 def fingerprint(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> bytes:
@@ -269,20 +341,40 @@ class MemoStore:
             return MemoStats(hits=self._hits, misses=self._misses, bytes_used=self.total_bytes())
 
 
-def memoize_persistent[F: Callable[..., Any]](store: MemoStore, *, site: str = "default") -> Callable[[F], F]:
+def memoize_persistent[F: Callable[..., Any]](
+    store: MemoStore,
+    *,
+    site: str = "default",
+    depends_on: Sequence[CodeDependency] = (),
+) -> Callable[[F], F]:
     """Decorator that caches function results in *store* keyed by fingerprint.
 
     Use *site* as a stable label for metrics (e.g.
     ``"cross_model_verifier"``).  The label ensures Prometheus counters
     can be partitioned per call-site without forcing a global registry.
+
+    Pass *depends_on* whenever the decorated function is a shim over code
+    living elsewhere: the fingerprint sees only the decorated body, so a
+    rewrite of the delegate would otherwise leave every cached entry in
+    place.  Each entry is a callable or - preferably - the module that
+    owns the real work; see :func:`code_digest`.  Leaving it empty keeps
+    keys byte-identical to the pre-``depends_on`` scheme, so existing
+    stores are not invalidated wholesale.
     """
+    dependencies = tuple(depends_on)
+
+    def _key(target: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> bytes:
+        base = fingerprint(target, *args, **kwargs)
+        if not dependencies:
+            return base
+        return bytes(a ^ b for a, b in zip(base, code_digest(*dependencies), strict=True))
 
     def decorator(target: F) -> F:
         if inspect.iscoroutinefunction(target):
 
             @functools.wraps(target)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                digest = fingerprint(target, *args, **kwargs)
+                digest = _key(target, args, kwargs)
                 cached = store.get(digest)
                 if cached is not None:
                     _record_metric("hit", site)
@@ -294,11 +386,12 @@ def memoize_persistent[F: Callable[..., Any]](store: MemoStore, *, site: str = "
 
             async_wrapper.__memo_store__ = store  # type: ignore[attr-defined]
             async_wrapper.__memo_site__ = site  # type: ignore[attr-defined]
+            async_wrapper.__memo_depends_on__ = dependencies  # type: ignore[attr-defined]
             return cast("F", async_wrapper)
 
         @functools.wraps(target)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            digest = fingerprint(target, *args, **kwargs)
+            digest = _key(target, args, kwargs)
             cached = store.get(digest)
             if cached is not None:
                 _record_metric("hit", site)
@@ -310,6 +403,7 @@ def memoize_persistent[F: Callable[..., Any]](store: MemoStore, *, site: str = "
 
         wrapper.__memo_store__ = store  # type: ignore[attr-defined]
         wrapper.__memo_site__ = site  # type: ignore[attr-defined]
+        wrapper.__memo_depends_on__ = dependencies  # type: ignore[attr-defined]
         return cast("F", wrapper)
 
     return decorator
@@ -344,8 +438,10 @@ def default_store(workdir: Path, max_mb: int | None = None) -> MemoStore:
 
 
 __all__ = [
+    "CodeDependency",
     "MemoStats",
     "MemoStore",
+    "code_digest",
     "default_store",
     "fingerprint",
     "memoize_persistent",

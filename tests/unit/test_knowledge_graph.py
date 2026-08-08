@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
@@ -18,6 +19,7 @@ from bernstein.core.knowledge.knowledge_graph import (
     get_or_build_knowledge_graph,
     query_impact,
 )
+from bernstein.core.persistence import fingerprint as fingerprint_mod
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
@@ -88,6 +90,72 @@ class TestKnowledgeGraphBuild:
         monkeypatch.setattr(knowledge_graph, "build_knowledge_graph", _should_not_build)
         reused_path = get_or_build_knowledge_graph(tmp_path)
         assert reused_path == db_path
+
+
+class TestSymbolMemoInvalidation:
+    """A parser fix must not be masked by memoised symbol data.
+
+    ``_extract_symbols_for_memo`` is a one-line shim, so its own body is
+    identical before and after any edit to ``ast_symbol_graph``.  Unless
+    the extractor module is a declared memo dependency, every file whose
+    bytes did not change keeps serving symbols built by the old parser.
+    """
+
+    @staticmethod
+    def _fake_parser(marker: str) -> Any:
+        def _parse(_filepath: Path, rel_path: str) -> semantic_graph.FileSymbols:
+            return semantic_graph.FileSymbols(path=rel_path, imports={"marker": marker})
+
+        return _parse
+
+    def test_extractor_change_invalidates_cached_entry_for_unchanged_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Force a fresh memo store rooted under tmp_path; monkeypatch restores
+        # the process-wide extractor afterwards.
+        monkeypatch.setattr(knowledge_graph, "_kg_memo_store", None)
+        monkeypatch.setattr(knowledge_graph, "_memoized_extract", None)
+        monkeypatch.setattr(
+            fingerprint_mod,
+            "_SOURCE_DIGEST_CACHE",
+            dict(fingerprint_mod._SOURCE_DIGEST_CACHE),
+        )
+
+        source = tmp_path / "pkg" / "mod.py"
+        _write(source, "def run() -> int:\n    return 1\n")
+        rel_path = "pkg/mod.py"
+
+        monkeypatch.setattr(knowledge_graph, "parse_file_symbols", self._fake_parser("old"))
+        first = knowledge_graph._parse_file_symbols_memoized(tmp_path, source, rel_path)
+        assert first is not None
+        assert first.imports == {"marker": "old"}
+
+        # Same bytes, same extractor: the second call must be a cache hit.
+        monkeypatch.setattr(knowledge_graph, "parse_file_symbols", self._fake_parser("not-called"))
+        cached = knowledge_graph._parse_file_symbols_memoized(tmp_path, source, rel_path)
+        assert cached is not None
+        assert cached.imports == {"marker": "old"}
+
+        # Simulate an edit to ast_symbol_graph.py.  Shifting its source digest
+        # is what a real edit does on the next interpreter start.
+        fingerprint_mod._SOURCE_DIGEST_CACHE[semantic_graph.__name__] = hashlib.sha256(b"edited").digest()
+
+        monkeypatch.setattr(knowledge_graph, "parse_file_symbols", self._fake_parser("new"))
+        refreshed = knowledge_graph._parse_file_symbols_memoized(tmp_path, source, rel_path)
+        assert refreshed is not None
+        assert refreshed.imports == {"marker": "new"}, "stale symbols served after the extractor changed"
+
+    def test_extractor_module_is_a_declared_memo_dependency(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(knowledge_graph, "_kg_memo_store", None)
+        monkeypatch.setattr(knowledge_graph, "_memoized_extract", None)
+
+        extractor = knowledge_graph._get_memoized_extract(tmp_path)
+
+        assert semantic_graph in extractor.__memo_depends_on__
 
 
 class TestKnowledgeGraphIntegrations:

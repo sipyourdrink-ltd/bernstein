@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from bernstein.core.git_context import ls_files as _git_ls_files
+from bernstein.core.knowledge import ast_symbol_graph as _ast_symbol_graph
 from bernstein.core.knowledge.ast_symbol_graph import (
     FileSymbols,
     build_semantic_graph,
@@ -88,10 +89,19 @@ _memoized_extract: Any = None
 def _extract_symbols_for_memo(*, file_sha: str, rel_path: str, abs_path: str) -> FileSymbols | None:
     """Memoization shim around :func:`parse_file_symbols`.
 
-    Keyed by (file_sha, rel_path, this-function-body-hash).  The
-    file_sha argument forces invalidation when the source bytes change;
-    a change to *this* function or to ``parse_file_symbols`` is captured
-    by the function-body component of the fingerprint.
+    Keyed by (file_sha, rel_path, this-function-body-hash, hash of the
+    ``ast_symbol_graph`` source).  ``file_sha`` forces invalidation when
+    a file's own bytes change.
+
+    The last component is what makes parser fixes take effect: this shim
+    is one line, so its body is byte-identical before and after any
+    rewrite of the extractor, and the function-body component of the
+    fingerprint cannot see the change.  ``_get_memoized_extract``
+    therefore declares the extractor module as a memo dependency.
+    Hashing the whole module (rather than ``parse_file_symbols`` alone)
+    also covers its private helpers - the import-resolution rules live
+    in one of them - and the :class:`FileSymbols` dataclass itself, so a
+    new field cannot be missing from an unpickled entry.
     """
     return parse_file_symbols(Path(abs_path), rel_path)
 
@@ -101,7 +111,11 @@ def _get_memoized_extract(workdir: Path) -> Any:
     global _kg_memo_store, _memoized_extract
     if _memoized_extract is None:
         _kg_memo_store = default_store(workdir)
-        _memoized_extract = memoize_persistent(_kg_memo_store, site="knowledge_graph")(_extract_symbols_for_memo)
+        _memoized_extract = memoize_persistent(
+            _kg_memo_store,
+            site="knowledge_graph",
+            depends_on=(_ast_symbol_graph,),
+        )(_extract_symbols_for_memo)
     return _memoized_extract
 
 
