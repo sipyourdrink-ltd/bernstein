@@ -18,7 +18,7 @@ from bernstein.core.knowledge.ast_symbol_graph import (
     build_semantic_graph,
     parse_file_symbols,
 )
-from bernstein.core.persistence.fingerprint import MemoStore, default_store, memoize_persistent
+from bernstein.core.persistence.fingerprint import MemoStore, code_digest, default_store, memoize_persistent
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +218,10 @@ def _write_graph(
         connection.execute("DELETE FROM nodes")
         connection.execute("DELETE FROM edges")
         connection.execute("INSERT INTO metadata(key, value) VALUES(?, ?)", ("built_at", built_at))
+        connection.execute(
+            "INSERT INTO metadata(key, value) VALUES(?, ?)",
+            ("extractor_revision", _extractor_revision()),
+        )
         connection.executemany(
             "INSERT INTO nodes(id, kind, name, file_path, line_start, line_end) VALUES(?, ?, ?, ?, ?, ?)",
             [(node.id, node.kind, node.name, node.file_path, node.line_start, node.line_end) for node in nodes],
@@ -226,6 +230,24 @@ def _write_graph(
             "INSERT INTO edges(source_id, target_id, kind) VALUES(?, ?, ?)",
             [(edge.source_id, edge.target_id, edge.kind) for edge in edges],
         )
+
+
+def _extractor_revision() -> str:
+    """Return a hex digest identifying the current symbol extractor.
+
+    Deliberately :func:`code_digest` over the same module that ``depends_on``
+    names for the memo store, so the freshness window and the memo layer
+    cannot disagree about which extractor is current.
+    """
+    return code_digest(_ast_symbol_graph).hex()
+
+
+def _read_metadata(connection: sqlite3.Connection, key: str) -> str | None:
+    row = connection.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+    if row is None:
+        return None
+    value = row["value"]
+    return value if isinstance(value, str) else None
 
 
 def _read_built_at(connection: sqlite3.Connection) -> str | None:
@@ -342,6 +364,14 @@ def build_knowledge_graph(workdir: Path) -> Path:
 def get_or_build_knowledge_graph(workdir: Path, max_age_minutes: int = 30) -> Path:
     """Return a fresh-enough knowledge graph database.
 
+    The age window alone is not sufficient. ``depends_on`` invalidates memo
+    entries only when the memoised extractor is actually called, and this
+    fast path returns before that happens - so an extractor fix would be
+    masked for the whole window, with ``query_impact`` and
+    ``export_graph_summary`` serving symbols and import edges the fix was
+    meant to correct. The stored extractor revision must match as well, which
+    is the same gate ``knowledge/rag.py`` applies to its index.
+
     Args:
         workdir: Repository root directory.
         max_age_minutes: Cache freshness window.
@@ -354,8 +384,15 @@ def get_or_build_knowledge_graph(workdir: Path, max_age_minutes: int = 30) -> Pa
         connection = _connect(db_path)
         try:
             built_at = _read_built_at(connection)
+            stored_revision = _read_metadata(connection, "extractor_revision")
         finally:
             connection.close()
+        if stored_revision != _extractor_revision():
+            # Rebuilt regardless of age: a graph produced by a different
+            # extractor is stale no matter how recently it was written. A
+            # database from before this key existed reads as ``None`` and
+            # rebuilds once.
+            return build_knowledge_graph(workdir)
         if built_at is not None:
             try:
                 built_time = datetime.fromisoformat(built_at)

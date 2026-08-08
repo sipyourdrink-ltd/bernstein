@@ -202,3 +202,75 @@ class TestKnowledgeGraphIntegrations:
 
         assert result.exit_code == 0, result.output
         assert "src/pkg/service.py" in result.output
+
+
+class TestFreshnessWindowRespectsExtractorRevision:
+    """A recent graph built by a different extractor is still stale.
+
+    ``depends_on`` invalidates memo entries only when the memoised extractor
+    is called, and the age fast path returns before that happens. Without a
+    stored revision to compare, an extractor fix is masked for the whole
+    window while ``query_impact`` and ``export_graph_summary`` keep serving
+    symbols the fix was meant to correct.
+    """
+
+    def test_graph_within_the_age_window_rebuilds_when_the_extractor_moves(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write(tmp_path / "pkg" / "mod.py", "def run() -> int:\n    return 1\n")
+        monkeypatch.setattr(knowledge_graph, "_git_ls_files", lambda _workdir: ["pkg/mod.py"])
+
+        db_path = knowledge_graph.build_knowledge_graph(tmp_path)
+        connection = knowledge_graph._connect(db_path)
+        try:
+            built_at = knowledge_graph._read_built_at(connection)
+            revision = knowledge_graph._read_metadata(connection, "extractor_revision")
+        finally:
+            connection.close()
+        assert built_at is not None
+        assert revision == knowledge_graph._extractor_revision()
+
+        # Unchanged extractor, well inside the window: no rebuild.
+        calls: list[int] = []
+        real_build = knowledge_graph.build_knowledge_graph
+        monkeypatch.setattr(
+            knowledge_graph,
+            "build_knowledge_graph",
+            lambda workdir: (calls.append(1), real_build(workdir))[1],
+        )
+        knowledge_graph.get_or_build_knowledge_graph(tmp_path, max_age_minutes=30)
+        assert calls == [], "a current graph inside the window must not be rebuilt"
+
+        # Same graph, same age - but a different extractor revision.
+        monkeypatch.setattr(knowledge_graph, "_extractor_revision", lambda: "0" * 64)
+        knowledge_graph.get_or_build_knowledge_graph(tmp_path, max_age_minutes=30)
+        assert calls == [1], "a graph built by a different extractor must be rebuilt"
+
+    def test_a_database_without_the_key_rebuilds_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Databases written before this key existed must not be trusted."""
+        _write(tmp_path / "pkg" / "mod.py", "def run() -> int:\n    return 1\n")
+        monkeypatch.setattr(knowledge_graph, "_git_ls_files", lambda _workdir: ["pkg/mod.py"])
+
+        db_path = knowledge_graph.build_knowledge_graph(tmp_path)
+        connection = knowledge_graph._connect(db_path)
+        try:
+            with connection:
+                connection.execute("DELETE FROM metadata WHERE key = 'extractor_revision'")
+        finally:
+            connection.close()
+
+        calls: list[int] = []
+        real_build = knowledge_graph.build_knowledge_graph
+        monkeypatch.setattr(
+            knowledge_graph,
+            "build_knowledge_graph",
+            lambda workdir: (calls.append(1), real_build(workdir))[1],
+        )
+        knowledge_graph.get_or_build_knowledge_graph(tmp_path, max_age_minutes=30)
+        assert calls == [1], "a graph with no recorded extractor revision must be rebuilt"
