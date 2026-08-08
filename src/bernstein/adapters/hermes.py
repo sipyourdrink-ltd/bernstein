@@ -24,11 +24,25 @@ _ONESHOT_FLAG = "--oneshot"
 
 #: Provider credentials forwarded into the spawned environment.
 #:
-#: Taken from the names Hermes documents in its own ``.env.example`` rather
-#: than inferred from the vendor's name. ``HOME`` arrives via the base
-#: allowlist, which is what lets ``~/.hermes/config.yaml`` resolve and carry
-#: whatever the operator configured interactively.
+#: Taken from the variables Hermes documents for its own providers - its
+#: ``.env.example`` and the provider table in ``cli-config.yaml.example`` -
+#: rather than inferred from the vendor's name. A credential missing from this
+#: list is not an error the operator can see: the agent starts, fails to
+#: authenticate, and the run looks like a model problem.
+#:
+#: ``NOUS_API_KEY`` is the documented key for the ``nous-api`` provider and is
+#: forwarded for that reason. ``HERMES_API_KEY`` was previously forwarded and
+#: is not: it appears in neither file, so nothing reads it.
+#:
+#: ``GITHUB_TOKEN`` is deliberately absent although the ``copilot`` provider
+#: reads it. Forwarding a repository-scoped token to an agent whose approvals
+#: are auto-bypassed is a separate decision from forwarding a model
+#: credential, and not one to make implicitly here.
+#:
+#: ``HOME`` arrives via the base allowlist, which is what lets the operator's
+#: own config resolve and carry whatever was configured interactively.
 _PROVIDER_ENV_VARS = (
+    "NOUS_API_KEY",
     "OPENROUTER_API_KEY",
     "FIREWORKS_API_KEY",
     "NOVITA_API_KEY",
@@ -37,8 +51,17 @@ _PROVIDER_ENV_VARS = (
     "GEMINI_API_KEY",
     "GLM_API_KEY",
     "KIMI_API_KEY",
+    "KIMI_CN_API_KEY",
     "MINIMAX_API_KEY",
+    "MINIMAX_CN_API_KEY",
     "HF_TOKEN",
+    "NVIDIA_API_KEY",
+    "ARCEEAI_API_KEY",
+    "XIAOMI_API_KEY",
+    "OLLAMA_API_KEY",
+    "KILOCODE_API_KEY",
+    "AI_GATEWAY_API_KEY",
+    "LM_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "HERMES_HOME",

@@ -112,18 +112,29 @@ class TestHermesAdapterSpawn:
         popen.assert_not_called()
 
     def test_provider_credentials_reach_the_agent(self, tmp_path: Path) -> None:
-        """Names come from what hermes documents, not from the vendor's name."""
+        """Names come from what the agent documents, not from the vendor's name.
+
+        A credential missing here is invisible to the operator: the agent
+        starts, fails to authenticate, and the run reads as a model problem.
+        """
         with patch("bernstein.adapters.hermes.build_filtered_env", return_value={}) as build_env:
             _spawn(HermesAdapter(), tmp_path, "ship the feature", "hermes-env")
 
         forwarded = set(build_env.call_args.args[0])
-        assert "OPENROUTER_API_KEY" in forwarded, (
-            "the documented API-key path for this agent; without it a configured "
-            "operator credential never reaches the spawned process"
+        assert {"OPENROUTER_API_KEY", "NOUS_API_KEY"} <= forwarded, (
+            "both are documented provider credentials - OPENROUTER_API_KEY in "
+            "the agent's .env.example, NOUS_API_KEY for its `nous-api` provider "
+            "in cli-config.yaml.example. Dropping either silently deauthenticates "
+            "an operator who configured it"
         )
-        assert not {"HERMES_API_KEY", "NOUS_API_KEY"} & forwarded, (
-            "neither name appears in the agent's own .env.example - forwarding "
-            "them suggests a credential path that does not exist"
+        assert "HERMES_API_KEY" not in forwarded, (
+            "this name appears in neither documented config, so nothing reads it; "
+            "forwarding it advertises a credential path that does not exist"
+        )
+        assert "GITHUB_TOKEN" not in forwarded, (
+            "forwarding a repository-scoped token to an agent whose approvals are "
+            "auto-bypassed is a separate decision from forwarding a model "
+            "credential, and is not made implicitly here"
         )
 
     def test_spawn_translates_missing_cli(self, tmp_path: Path) -> None:
