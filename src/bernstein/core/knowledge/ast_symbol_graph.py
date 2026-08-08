@@ -14,11 +14,13 @@ Usage::
 from __future__ import annotations
 
 import ast
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.git_context import ls_files as _git_ls_files
+from bernstein.core.lineage.spine import content_hash_of
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,6 +32,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _MAX_FILES = 500
+
+#: An edge whose target was resolved by locating the file the import names and
+#: finding a symbol of that name defined in it. The only origin a disjointness
+#: verdict may rely on.
+EDGE_ORIGIN_EXTRACTED = "EXTRACTED"
+
+#: An edge whose target was reached through :meth:`SemanticGraph.resolve_name`,
+#: which returns ``candidates[0]`` when a name is defined in more than one file.
+#: The edge may be correct; nothing here establishes that it is. This is the
+#: default for a reason -- an edge that never states its origin must not be
+#: mistaken for an extracted one.
+EDGE_ORIGIN_INFERRED = "INFERRED"
 
 
 @dataclass
@@ -77,14 +91,24 @@ class SymbolEdge:
         source: Source symbol ID.
         target: Target symbol ID.
         kind: Relationship type.
+        origin: How the target was resolved -- :data:`EDGE_ORIGIN_EXTRACTED`
+            when the import named a file that defines the symbol, or
+            :data:`EDGE_ORIGIN_INFERRED` when it was reached by name lookup
+            that may have picked one of several same-named symbols.
     """
 
     source: str
     target: str
     kind: str  # "calls" | "imports" | "inherits" | "references"
+    origin: str = EDGE_ORIGIN_INFERRED
 
     def to_dict(self) -> dict[str, Any]:
-        return {"source": self.source, "target": self.target, "kind": self.kind}
+        return {
+            "source": self.source,
+            "target": self.target,
+            "kind": self.kind,
+            "origin": self.origin,
+        }
 
 
 @dataclass
@@ -115,6 +139,12 @@ class SemanticGraph:
     nodes: dict[str, SymbolNode] = field(default_factory=dict)
     edges: list[SymbolEdge] = field(default_factory=list)
     file_symbols: dict[str, list[str]] = field(default_factory=dict)  # file → [symbol_ids]
+
+    #: Python files the enumeration found, before the ``_MAX_FILES`` cut.
+    source_file_count: int = 0
+    #: Python files actually parsed. Lower than ``source_file_count`` when the
+    #: cut applied, which means the graph is missing edges it cannot know about.
+    indexed_file_count: int = 0
 
     # Name → symbol ID index for resolution
     _name_index: dict[str, list[str]] = field(default_factory=dict, repr=False)
@@ -430,9 +460,9 @@ def _resolve_call_edge(graph: SemanticGraph, fs: FileSymbols, caller_id: str, ca
     """
     imported_module = fs.imports.get(callee_name)
     if imported_module:
-        target = _resolve_import_target(graph, imported_module, callee_name)
+        target, origin = _resolve_import_target(graph, imported_module, callee_name)
         if target:
-            graph.add_edge(SymbolEdge(source=caller_id, target=target, kind="calls"))
+            graph.add_edge(SymbolEdge(source=caller_id, target=target, kind="calls", origin=origin))
             return
 
     target = graph.resolve_name(callee_name, prefer_file=fs.path)
@@ -444,7 +474,9 @@ def _resolve_call_edge(graph: SemanticGraph, fs: FileSymbols, caller_id: str, ca
     caller_node = graph.nodes.get(caller_id)
     if target_node and target_node.kind == "class" and caller_node and caller_node.kind == "class":
         kind = "inherits"
-    graph.add_edge(SymbolEdge(source=caller_id, target=target, kind=kind))
+    # Reached through resolve_name, which resolves ambiguity by taking the
+    # first candidate -- never EXTRACTED.
+    graph.add_edge(SymbolEdge(source=caller_id, target=target, kind=kind, origin=EDGE_ORIGIN_INFERRED))
 
 
 def build_semantic_graph(workdir: Path) -> SemanticGraph:
@@ -464,7 +496,10 @@ def build_semantic_graph(workdir: Path) -> SemanticGraph:
     graph = SemanticGraph()
 
     all_files = _git_ls_files(workdir)
-    py_files = [f for f in all_files if f.endswith(".py")][:_MAX_FILES]
+    all_py_files = [f for f in all_files if f.endswith(".py")]
+    py_files = all_py_files[:_MAX_FILES]
+    graph.source_file_count = len(all_py_files)
+    graph.indexed_file_count = len(py_files)
 
     if not py_files:
         logger.info("No Python files found, returning empty graph")
@@ -491,7 +526,7 @@ def build_semantic_graph(workdir: Path) -> SemanticGraph:
     return graph
 
 
-def _resolve_import_target(graph: SemanticGraph, module_path: str, name: str) -> str | None:
+def _resolve_import_target(graph: SemanticGraph, module_path: str, name: str) -> tuple[str | None, str]:
     """Resolve an imported name to a symbol ID in the graph.
 
     Tries to find the symbol in the file that corresponds to *module_path*.
@@ -502,19 +537,37 @@ def _resolve_import_target(graph: SemanticGraph, module_path: str, name: str) ->
         name: The imported name to resolve.
 
     Returns:
-        Symbol ID or None.
+        ``(symbol_id, origin)``. ``origin`` is :data:`EDGE_ORIGIN_EXTRACTED`
+        only when one of the candidate files actually defines *name*; the
+        by-name fallback below cannot distinguish two same-named symbols and
+        so reports :data:`EDGE_ORIGIN_INFERRED`.
     """
     # The import might be "bernstein.core.models.Task" → name="Task"
     # Or "bernstein.core.models" → name="models" (less useful)
     # Try to find the file containing this module
 
-    # Convert module path to possible file paths
-    parts = module_path.replace(".", "/")
+    # ``from pkg.helpers import helper`` is recorded as ``pkg.helpers.helper``
+    # -- the module path with the imported name appended (see
+    # ``_process_import_from_node``). Mapping that straight to a path looks for
+    # ``pkg/helpers/helper.py``, which does not exist, so for the most common
+    # import form in Python the exact match below never fired and every such
+    # edge fell through to the by-name guess. Try the parent module too when
+    # the last segment is the name being imported.
+    module_paths = [module_path]
+    prefix, _, last = module_path.rpartition(".")
+    if prefix and last == name:
+        module_paths.append(prefix)
+
     candidates = [
-        f"src/{parts}.py",
-        f"src/{parts}/__init__.py",
-        f"{parts}.py",
-        f"{parts}/__init__.py",
+        candidate
+        for path in module_paths
+        for parts in (path.replace(".", "/"),)
+        for candidate in (
+            f"src/{parts}.py",
+            f"src/{parts}/__init__.py",
+            f"{parts}.py",
+            f"{parts}/__init__.py",
+        )
     ]
 
     for file_path in candidates:
@@ -522,10 +575,75 @@ def _resolve_import_target(graph: SemanticGraph, module_path: str, name: str) ->
         for sid in sym_ids:
             node = graph.nodes[sid]
             if node.name == name:
-                return sid
+                return sid, EDGE_ORIGIN_EXTRACTED
 
-    # Fallback: just search by name
-    return graph.resolve_name(name)
+    # Fallback: just search by name. resolve_name returns candidates[0] when a
+    # name is defined in more than one file, so the result is a guess even when
+    # it happens to be right.
+    return graph.resolve_name(name), EDGE_ORIGIN_INFERRED
+
+
+# ---------------------------------------------------------------------------
+# Content-addressed graph document
+# ---------------------------------------------------------------------------
+
+#: Bumped when the document's shape changes. A digest is only comparable to
+#: another digest of the same version, so the version travels inside the bytes
+#: rather than beside them.
+GRAPH_DOCUMENT_VERSION = 1
+
+
+def graph_document(graph: SemanticGraph) -> bytes:
+    """Serialise *graph* to canonical JSON bytes.
+
+    Two builds over the same tree produce identical bytes. That does not hold
+    for the in-memory structure: ``nodes`` is insertion-ordered by parse order
+    and ``edges`` is an append list, so both follow whatever order the file
+    enumeration happened to yield. Everything is sorted here instead.
+
+    The coverage counts are part of the document, not metadata beside it. A
+    graph that hit the ``_MAX_FILES`` cut is missing edges it has no way to
+    know about, and must not be able to produce a digest indistinguishable
+    from a complete one over the same files.
+
+    Args:
+        graph: Graph to serialise.
+
+    Returns:
+        UTF-8 canonical JSON. Keys sorted, no insignificant whitespace.
+    """
+    document = {
+        "version": GRAPH_DOCUMENT_VERSION,
+        "coverage": {
+            "source_file_count": graph.source_file_count,
+            "indexed_file_count": graph.indexed_file_count,
+            "truncated": graph.indexed_file_count < graph.source_file_count,
+            "max_files": _MAX_FILES,
+        },
+        "nodes": [graph.nodes[nid].to_dict() for nid in sorted(graph.nodes)],
+        "edges": sorted(
+            (edge.to_dict() for edge in graph.edges),
+            key=lambda e: (e["source"], e["target"], e["kind"], e["origin"]),
+        ),
+        "file_symbols": {path: sorted(symbol_ids) for path, symbol_ids in sorted(graph.file_symbols.items())},
+    }
+    return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def graph_digest(graph: SemanticGraph) -> str:
+    """Return the ``sha256:``-prefixed digest of *graph*'s canonical document.
+
+    Uses the same hash the lineage spine uses, so a digest recorded here and a
+    digest recorded there are the same kind of value and can be compared
+    without a conversion step.
+
+    Args:
+        graph: Graph to digest.
+
+    Returns:
+        ``sha256:<hex>``.
+    """
+    return content_hash_of(graph_document(graph))
 
 
 # ---------------------------------------------------------------------------
