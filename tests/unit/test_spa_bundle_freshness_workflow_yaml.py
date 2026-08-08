@@ -116,10 +116,29 @@ def test_comparison_sees_untracked_replacement_assets() -> None:
 
 
 def test_workflow_installs_from_the_lockfile_before_rebuilding() -> None:
-    """``npm ci`` (not ``npm install``) - the point is the pinned tree."""
-    runs = [str(step.get("run", "")) for step in _steps()]
-    assert any(r.strip() == "npm ci" for r in runs), "the gate must install from the lockfile"
-    assert any("npm run build" in r for r in runs), "the gate must rebuild the bundle"
+    """``npm ci`` (not ``npm install``) - the point is the pinned tree.
+
+    Presence alone is not the property: a build that runs before the install,
+    or either step running outside ``web/``, rebuilds against something other
+    than the lockfile and the gate compares the wrong bundle. So the order
+    and the working directory are asserted, not just that both steps exist.
+    """
+    steps = _steps()
+    install = [i for i, step in enumerate(steps) if str(step.get("run", "")).strip() == "npm ci"]
+    build = [i for i, step in enumerate(steps) if "npm run build" in str(step.get("run", ""))]
+
+    assert install, "the gate must install from the lockfile"
+    assert build, "the gate must rebuild the bundle"
+    assert install[0] < build[0], (
+        "`npm ci` must run before `npm run build`, otherwise the rebuild uses "
+        "whatever tree is already on the runner rather than the pinned one"
+    )
+
+    for index in (install[0], build[0]):
+        step = steps[index]
+        assert step.get("working-directory") == "web", (
+            f"step {step.get('name', step.get('run'))!r} must run in `web/`, the only directory the lockfile pins"
+        )
 
 
 def test_no_job_emits_the_required_check_name() -> None:
