@@ -72,37 +72,98 @@ def _workflow_docs() -> list[tuple[Path, dict[str, Any]]]:
     return docs
 
 
-def _steps(doc: dict[str, Any]) -> list[dict[str, Any]]:
-    jobs = doc.get("jobs")
-    if not isinstance(jobs, dict):
-        return []
-    return [
-        step
-        for job in jobs.values()
-        if isinstance(job, dict)
-        for step in job.get("steps", [])
-        if isinstance(step, dict)
+def _matrix_cells(job: dict[str, Any]) -> list[dict[str, str]]:
+    """The ``matrix.<key>`` bindings a job's steps can be expanded against.
+
+    A step field is often an expression rather than a literal - ``web`` shows
+    up as ``working-directory: ${{ matrix.package }}`` under a ``package: web``
+    cell. Matching the literal alone silently skips those jobs, which is the
+    opposite of what a coverage check should do when it does not understand
+    something.
+    """
+    strategy = job.get("strategy")
+    matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
+    if not isinstance(matrix, dict):
+        return [{}]
+
+    axes = {
+        key: value for key, value in matrix.items() if key not in {"include", "exclude"} and isinstance(value, list)
+    }
+    cells: list[dict[str, str]] = [{}]
+    for key, values in axes.items():
+        cells = [{**cell, key: str(value)} for cell in cells for value in values]
+
+    include = matrix.get("include")
+    if isinstance(include, list):
+        entries = [{str(k): str(v) for k, v in entry.items()} for entry in include if isinstance(entry, dict)]
+        # Close enough for a coverage check: an ``include`` entry that does not
+        # extend an existing cell stands on its own, which is the case here.
+        cells = entries if axes == {} else [*cells, *entries]
+    return cells or [{}]
+
+
+def _resolve(value: Any, cell: dict[str, str]) -> str:
+    """Substitute ``${{ matrix.key }}`` with the cell's binding."""
+    text = str(value or "")
+    for key, bound in cell.items():
+        for expression in (f"${{{{ matrix.{key} }}}}", f"${{{{matrix.{key}}}}}"):
+            text = text.replace(expression, bound)
+    return text
+
+
+def _node_major(steps: list[Any]) -> int | None:
+    versions = [
+        str(step.get("with", {}).get("node-version", ""))
+        for step in steps
+        if isinstance(step, dict) and "actions/setup-node" in str(step.get("uses", ""))
     ]
+    pinned = [v for v in versions if v.strip().split(".")[0].isdigit()]
+    return int(pinned[0].strip().split(".")[0]) if pinned else None
 
 
 def _web_building_workflows() -> list[tuple[Path, int]]:
     """Workflows that run ``npm`` in ``web/``, paired with the Node major."""
     found: list[tuple[Path, int]] = []
     for path, doc in _workflow_docs():
-        steps = _steps(doc)
-        runs_npm_in_web = any(
-            step.get("working-directory") == "web" and "npm" in str(step.get("run", "")) for step in steps
-        )
-        if not runs_npm_in_web:
+        jobs = doc.get("jobs")
+        if not isinstance(jobs, dict):
             continue
-        versions = [
-            str(step.get("with", {}).get("node-version", ""))
-            for step in steps
-            if "actions/setup-node" in str(step.get("uses", ""))
-        ]
-        pinned = [v for v in versions if v.strip().split(".")[0].isdigit()]
-        assert pinned, f"{path.name} runs npm in web/ without pinning a Node version"
-        found.append((path, int(pinned[0].strip().split(".")[0])))
+        for job in jobs.values():
+            if not isinstance(job, dict):
+                continue
+            steps = [step for step in job.get("steps", []) if isinstance(step, dict)]
+            builds_web = any(
+                _resolve(step.get("working-directory"), cell) == "web" and "npm" in _resolve(step.get("run"), cell)
+                for cell in _matrix_cells(job)
+                for step in steps
+            )
+            if not builds_web:
+                continue
+            major = _node_major(steps)
+            assert major is not None, f"{path.name} runs npm in web/ without pinning a Node version"
+            found.append((path, major))
+            break
+    return found
+
+
+def _workflows_mentioning_web_literally() -> set[Path]:
+    """A crude text scan, used only to catch the structural pass under-matching.
+
+    The two methods have to agree. If the resolver above stops recognising a
+    lane - a new expression form, a matrix shape it does not expand - it would
+    otherwise fail by quietly checking fewer workflows, and every assertion
+    would still pass.
+    """
+    found: set[Path] = set()
+    for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        if "actions/setup-node" not in text:
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped in {"- package: web", "package: web", "working-directory: web"}:
+                found.add(path)
+                break
     return found
 
 
@@ -118,6 +179,25 @@ def test_at_least_one_workflow_builds_web() -> None:
     """If nothing builds `web/` in CI, the next test passes vacuously."""
     assert _web_building_workflows(), (
         "no workflow runs npm in web/; the Node-pin check below would pass by finding nothing rather than by agreeing"
+    )
+
+
+def test_the_structural_scan_finds_every_lane_a_text_scan_can_see() -> None:
+    """A resolver that under-matches fails by checking less, which looks green.
+
+    ``typecheck-ts.yml`` reaches ``web`` through ``${{ matrix.package }}``, so
+    a matcher comparing the literal string finds only the other lane - and the
+    non-vacuity check above still passes, because one lane was found. Two
+    independent methods have to agree on the set.
+    """
+    structural = {path for path, _ in _web_building_workflows()}
+    textual = _workflows_mentioning_web_literally()
+    missed = textual - structural
+    assert not missed, (
+        f"{sorted(p.name for p in missed)} name `web` and pin a Node version, "
+        "but the structural scan did not find them - so their pin is not "
+        "checked against the declared floor. Teach `_matrix_cells` / `_resolve` "
+        "the shape they use rather than narrowing this assertion."
     )
 
 
