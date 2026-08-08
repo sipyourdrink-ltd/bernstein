@@ -95,5 +95,12 @@ without evidence it was captured from one — the state the existing renders
 started in. Mark a render `captured` when you take it from the bundle it is
 bound to.
 
+This gate assumes the committed bundle is the one the lockfile builds. That is
+a separate claim, and it is checked separately: `spa-bundle-freshness.yml`
+rebuilds `web/` and fails when the result differs from
+`src/bernstein/gui/static/`. Without it a dependency bump moves neither the
+bundle nor the renders, so both checks stay green while the wheel ships a UI
+built from versions the lockfile no longer pins.
+
 `web-dashboard.png` is deliberately outside this: it shows the server-rendered
 `/dashboard` page, a different surface with a different source of truth.
