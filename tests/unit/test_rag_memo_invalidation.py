@@ -188,3 +188,69 @@ class TestIndexChunkerRevision:
 
     def test_revision_matches_the_memo_dependency_digest(self) -> None:
         assert rag._chunker_revision() == fingerprint_mod.code_digest(rag).hex()
+
+
+class TestConcurrentBuildSerialization:
+    """The revision read and the rows it authorises must be one step.
+
+    Two processes can hold different chunker revisions - an upgrade while
+    a long-lived process is still running.  On a deferred transaction the
+    older one reads the revision the newer one just committed, concludes
+    the chunker changed, reindexes with its own older chunker and records
+    that as current, undoing the newer build.
+    """
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "mod.py").write_text("def alpha() -> int:\n    return 1\n", encoding="utf-8")
+        return project
+
+    def test_write_lock_is_taken_before_the_revision_is_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_caches(monkeypatch)
+        monkeypatch.setattr(rag, "_extract_python_chunks", _fake_chunker("old"))
+
+        indexer = rag.CodebaseIndexer(self._project(tmp_path))
+        conn = indexer._connect()
+        statements: list[str] = []
+        conn.set_trace_callback(statements.append)
+        try:
+            indexer._build_inner(conn)
+        finally:
+            conn.set_trace_callback(None)
+            conn.close()
+
+        begin_at = next(i for i, sql in enumerate(statements) if "BEGIN IMMEDIATE" in sql.upper())
+        read_at = next(i for i, sql in enumerate(statements) if "index_meta" in sql and "SELECT" in sql.upper())
+        assert begin_at < read_at, "revision read on a deferred transaction; a concurrent build can undo it"
+
+    def test_a_second_builder_cannot_write_while_a_build_is_in_flight(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_caches(monkeypatch)
+        indexer = rag.CodebaseIndexer(self._project(tmp_path))
+        observed: list[str] = []
+
+        def _chunk_and_probe(source: str, rel_path: str) -> list[dict[str, object]]:
+            # A rival builder, mid-build.  timeout=0 so the probe fails fast
+            # instead of waiting out the default five seconds.
+            rival = sqlite3.connect(str(indexer.db_path), timeout=0)
+            try:
+                rival.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                observed.append(str(exc))
+            else:  # pragma: no cover - only on a regression
+                observed.append("acquired")
+                rival.rollback()
+            finally:
+                rival.close()
+            return _fake_chunker("old")(source, rel_path)
+
+        monkeypatch.setattr(rag, "_extract_python_chunks", _chunk_and_probe)
+        assert indexer.build() == 1
+
+        assert observed, "chunker never ran, so the probe proved nothing"
+        assert all("locked" in message for message in observed), f"rival builder was not blocked: {observed}"

@@ -359,6 +359,11 @@ class CodebaseIndexer:
         conn = self._connect()
         try:
             return self._build_inner(conn)
+        except Exception:
+            # Release the write lock taken in _build_inner without recording a
+            # revision the index does not actually reflect.
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -370,6 +375,16 @@ class CodebaseIndexer:
         for fpath, mtime in current_files:
             rel = str(fpath.relative_to(self._root))
             current_paths[rel] = mtime
+
+        # Everything from the revision read to the commit is one read-decide-
+        # write step, so take the write lock up front rather than letting it be
+        # acquired implicitly at the first DELETE below.  Two processes can hold
+        # different chunker revisions - an upgrade while a long-lived process is
+        # still running - and on a deferred transaction the older one would read
+        # the revision the newer one just committed, conclude the chunker
+        # changed, reindex with its own older chunker and record that as
+        # current.  BEGIN IMMEDIATE makes SQLite serialize the whole step.
+        conn.execute("BEGIN IMMEDIATE")
 
         # A chunker edit reshapes every chunk, but the mtime gate below only
         # re-reads files whose own bytes moved, so rows written by the previous
