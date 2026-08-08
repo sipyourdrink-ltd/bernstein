@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 _PROBE_MODULE = "memo_dependency_probe"
+#: Fixed base mtime so probe revisions get distinct, deterministic stamps.
+_BASE_MTIME = 1_600_000_000
 
 
 def _fn_v1(x: int, y: int) -> int:
@@ -163,24 +166,42 @@ class TestDependencyAwareMemoization:
             _SOURCE_DIGEST_CACHE.update(preserved)
 
     @staticmethod
-    def _install_probe(tmp_path: Path, body: str) -> ModuleType:
+    def _install_probe(tmp_path: Path, body: str, *, revision: int = 1) -> ModuleType:
         """Write *body* to the probe module and (re)import it.
 
-        Clearing the digest cache mirrors what a fresh interpreter does;
-        source cannot change beneath a running process in production, so
-        the cache is only an obstacle here.
+        The digest cache is deliberately *not* cleared: these tests are
+        about an interpreter that keeps running across the rewrite.
+        ``revision`` stamps a distinct mtime so two same-length bodies
+        cannot look unchanged to a stat-based check.
         """
-        (tmp_path / f"{_PROBE_MODULE}.py").write_text(body, encoding="utf-8")
-        _SOURCE_DIGEST_CACHE.clear()
+        path = tmp_path / f"{_PROBE_MODULE}.py"
+        path.write_text(body, encoding="utf-8")
+        stamp = _BASE_MTIME + revision
+        os.utime(path, (stamp, stamp))
         existing = sys.modules.get(_PROBE_MODULE)
         if existing is not None:
             return importlib.reload(existing)
         return importlib.import_module(_PROBE_MODULE)
 
     def test_code_digest_tracks_module_source(self, tmp_path: Path) -> None:
-        first = code_digest(self._install_probe(tmp_path, 'MARKER = "v1"\n'))
-        second = code_digest(self._install_probe(tmp_path, 'MARKER = "v2"\n'))
+        first = code_digest(self._install_probe(tmp_path, 'MARKER = "v1"\n', revision=1))
+        second = code_digest(self._install_probe(tmp_path, 'MARKER = "v2"\n', revision=2))
         assert first != second
+
+    def test_code_digest_recomputes_after_in_process_module_reload(self, tmp_path: Path) -> None:
+        """A long-running process must not pin the digest it first saw.
+
+        ``plugin_hotreload`` swaps module code via ``importlib.reload``
+        without restarting, so a name-keyed digest cache would keep
+        folding the pre-reload source into every subsequent memo key.
+        """
+        module = self._install_probe(tmp_path, 'MARKER = "v1"\n', revision=1)
+        before = code_digest(module)
+
+        reloaded = self._install_probe(tmp_path, 'MARKER = "v2"\n', revision=2)
+
+        assert reloaded.MARKER == "v2", "probe did not actually reload"
+        assert code_digest(reloaded) != before
 
     def test_code_digest_is_stable_for_unchanged_source(self, tmp_path: Path) -> None:
         module = self._install_probe(tmp_path, 'MARKER = "v1"\n')
@@ -202,12 +223,12 @@ class TestDependencyAwareMemoization:
 
             return shim
 
-        self._install_probe(tmp_path, 'def extract(name):\n    return "v1:" + name\n')
+        self._install_probe(tmp_path, 'def extract(name):\n    return "v1:" + name\n', revision=1)
         assert build()(name="a") == "v1:a"
         # Nothing changed - must be a cache hit, not a recompute.
         assert build()(name="a") == "v1:a"
 
-        self._install_probe(tmp_path, 'def extract(name):\n    return "v2:" + name\n')
+        self._install_probe(tmp_path, 'def extract(name):\n    return "v2:" + name\n', revision=2)
         assert build()(name="a") == "v2:a"
 
     def test_absent_depends_on_leaves_existing_keys_untouched(self, tmp_path: Path) -> None:
