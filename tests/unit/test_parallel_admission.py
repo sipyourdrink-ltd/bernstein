@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import bernstein.core.knowledge.ast_symbol_graph as semantic_graph
-from bernstein.core.knowledge.ast_symbol_graph import build_semantic_graph
+from bernstein.core.knowledge.ast_symbol_graph import build_semantic_graph, graph_from_document
 from bernstein.core.knowledge.code_graph import (
     ATTRIBUTION_PROVEN,
     ATTRIBUTION_UNPROVEN,
@@ -28,8 +28,10 @@ from bernstein.core.knowledge.code_graph import (
 )
 from bernstein.core.parallel_admission import (
     ADMIT_PARALLEL,
+    RECEIPT_CONSISTENT_ONLY,
     RECEIPT_DIVERGED,
     RECEIPT_GRAPH_MISMATCH,
+    RECEIPT_VERIFIED,
     SERIALISE_OVERLAP,
     SERIALISE_UNPROVEN,
     admit_pair,
@@ -276,7 +278,8 @@ def test_receipt_round_trips_and_verifies() -> None:
     receipt = build_admission_receipt("sha256:abc", tasks)
 
     assert receipt["graph_digest"] == "sha256:abc"
-    assert verify_admission_receipt(receipt, graph_digest_value="sha256:abc").ok
+    # No document supplied, so this is the weaker check by construction.
+    assert verify_admission_receipt(receipt, graph_digest_value="sha256:abc").status == (RECEIPT_CONSISTENT_ONLY)
 
 
 def test_receipt_is_byte_identical_for_the_same_inputs() -> None:
@@ -324,3 +327,109 @@ def test_receipt_carries_the_serial_groups_it_implies() -> None:
     ]
     receipt = build_admission_receipt("sha256:abc", tasks)
     assert receipt["serial_groups"] == [["a", "b"], ["c"]]
+
+
+# ---------------------------------------------------------------------------
+# Offline re-derivation (#3237, step 4 completed)
+# ---------------------------------------------------------------------------
+
+
+def test_graph_document_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A document rebuilds into a graph that serialises back to the same bytes.
+
+    This is what a verifier depends on: a document that rebuilt into something
+    serialising differently would let a tampered graph pass as the original.
+    """
+    graph = _graph_for(tmp_path, _DISJOINT, monkeypatch)
+    document = graph.document()
+    rebuilt = SemanticCodeGraph(graph_from_document(document))
+
+    assert rebuilt.document() == document
+    assert rebuilt.digest() == graph.digest()
+
+
+def test_full_verification_re_derives_the_node_sets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the document, attribution itself is recomputed, not read."""
+    graph = _graph_for(tmp_path, _DISJOINT, monkeypatch)
+    tasks = [
+        attribute_task(graph, "alpha", ["src/pkg/alpha_main.py", "src/pkg/alpha.py"]),
+        attribute_task(graph, "beta", ["src/pkg/beta_main.py", "src/pkg/beta.py"]),
+    ]
+    receipt = build_admission_receipt(graph.digest(), tasks)
+
+    result = verify_admission_receipt(
+        receipt,
+        graph_digest_value=graph.digest(),
+        graph_document_bytes=graph.document(),
+    )
+    assert result.ok
+    assert result.status == RECEIPT_VERIFIED
+
+
+def test_edited_node_set_is_caught_only_with_the_document(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The two verification strengths differ exactly where it matters.
+
+    Widening a node set so two tasks stop intersecting is invisible to a
+    consistency check -- the recorded verdicts still follow from the recorded
+    sets. Only re-deriving the sets from the graph catches it.
+    """
+    graph = _graph_for(tmp_path, _DISJOINT, monkeypatch)
+    tasks = [
+        attribute_task(graph, "alpha", ["src/pkg/alpha_main.py", "src/pkg/alpha.py"]),
+        attribute_task(graph, "beta", ["src/pkg/beta_main.py", "src/pkg/beta.py"]),
+    ]
+    receipt = build_admission_receipt(graph.digest(), tasks)
+    receipt["tasks"][0]["neighborhood"] = ["src/pkg/fabricated.py::ghost"]  # type: ignore[index]
+
+    without = verify_admission_receipt(receipt, graph_digest_value=graph.digest())
+    assert without.status == RECEIPT_CONSISTENT_ONLY
+    assert not without.ok
+
+    with_document = verify_admission_receipt(
+        receipt,
+        graph_digest_value=graph.digest(),
+        graph_document_bytes=graph.document(),
+    )
+    assert with_document.status == RECEIPT_DIVERGED
+    assert any("alpha" in d for d in with_document.divergences)
+
+
+def test_document_not_matching_its_digest_is_a_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A document handed in under the wrong digest is rejected before use."""
+    graph = _graph_for(tmp_path, _DISJOINT, monkeypatch)
+    receipt = build_admission_receipt(graph.digest(), [attribute_task(graph, "a", ["src/pkg/alpha.py"])])
+
+    # ``truncated`` is derived from the two counts at serialisation time rather
+    # than stored, so editing it does not survive the round trip and is not a
+    # tamper the digest can see. Edit an edge's origin instead: that is read
+    # back verbatim and is exactly the field a disjointness verdict rests on.
+    # ``origin`` is read back verbatim and is exactly the field a disjointness
+    # verdict rests on. This fixture is all EXTRACTED (which is why it is
+    # provable), so the edit goes the other way; the dangerous direction --
+    # promoting a guess to EXTRACTED -- is caught by the same digest.
+    tampered = graph.document().replace(b'"origin":"EXTRACTED"', b'"origin":"INFERRED"', 1)
+    assert tampered != graph.document(), "fixture must contain an edge to tamper with"
+    result = verify_admission_receipt(
+        receipt,
+        graph_digest_value=graph.digest(),
+        graph_document_bytes=tampered,
+    )
+    assert result.status == RECEIPT_GRAPH_MISMATCH
+
+
+def test_consistency_only_is_not_ok() -> None:
+    """The weaker guarantee cannot be obtained by writing ``if result.ok``."""
+    receipt = build_admission_receipt("sha256:abc", [_proven("a", ("f.py::one",))])
+    result = verify_admission_receipt(receipt, graph_digest_value="sha256:abc")
+    assert result.status == RECEIPT_CONSISTENT_ONLY
+    assert not result.ok
+
+
+def test_malformed_document_is_rejected() -> None:
+    with pytest.raises(ValueError, match="not valid JSON"):
+        graph_from_document(b"{not json")
+
+
+def test_unknown_document_version_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unsupported graph document version"):
+        graph_from_document(b'{"version":999,"nodes":[],"edges":[]}')

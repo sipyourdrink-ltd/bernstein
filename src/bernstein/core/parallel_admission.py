@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ADMISSION_RECEIPT_VERSION",
     "ADMIT_PARALLEL",
+    "RECEIPT_CONSISTENT_ONLY",
     "RECEIPT_DIVERGED",
     "RECEIPT_GRAPH_MISMATCH",
     "RECEIPT_VERIFIED",
@@ -201,8 +202,16 @@ def serial_groups(attributions: Iterable[TaskNodeSet]) -> tuple[tuple[str, ...],
 #: documents that only look alike. Travels inside the bytes, not beside them.
 ADMISSION_RECEIPT_VERSION = 1
 
-#: Every recorded verdict was reproduced from the stored graph document.
+#: Every recorded verdict and every node set was reproduced from the stored
+#: graph document. The only status that establishes the decision was correct.
 RECEIPT_VERIFIED = "verified"
+
+#: The recorded verdicts follow from the recorded node sets, but no graph
+#: document was supplied, so the node sets themselves were not re-derived.
+#: Reported distinctly rather than as success: it proves the receipt is
+#: internally consistent and belongs to a named graph, and nothing about
+#: whether those node sets are the ones that graph yields.
+RECEIPT_CONSISTENT_ONLY = "consistent_only"
 
 #: At least one recorded verdict differs from what the graph document yields.
 #: Either the receipt was edited or it was not taken over this graph.
@@ -230,7 +239,12 @@ class ReceiptVerification:
 
     @property
     def ok(self) -> bool:
-        """Whether the receipt reproduced exactly."""
+        """Whether the receipt fully reproduced from the graph document.
+
+        Deliberately False for :data:`RECEIPT_CONSISTENT_ONLY`. A caller that
+        wants the weaker guarantee has to ask for it by name, so nobody gets
+        it by writing ``if result.ok``.
+        """
         return self.status == RECEIPT_VERIFIED
 
 
@@ -269,23 +283,27 @@ def verify_admission_receipt(
     receipt: dict[str, object],
     *,
     graph_digest_value: str,
+    graph_document_bytes: bytes | None = None,
 ) -> ReceiptVerification:
-    """Re-derive every verdict in *receipt* and compare it to what was recorded.
+    """Re-derive a receipt and compare it to what was recorded.
 
-    The recorded verdicts are never trusted. Each pair is recomputed from the
-    node sets the receipt carries, so an edited verdict, an edited node set, or
-    a receipt taken over a different graph all surface here rather than in a
-    merge conflict weeks later.
+    Nothing recorded is trusted. With *graph_document_bytes* the check is
+    complete: the graph is rebuilt from the document, each task is
+    re-attributed from its declared paths, and both the node sets and the
+    verdicts must match. That is what makes an admission decision checkable by
+    someone who has the receipt and the document and nothing else -- no
+    workspace, no network, no live ``.sdd/``.
 
-    What this does not establish: that the node sets themselves match the
-    graph. That requires the graph document, and re-deriving attribution from
-    it is the remaining half of scope step 4. Until then a caller holding only
-    the receipt learns that it is internally consistent and belongs to a named
-    graph -- which is strictly more than trusting it, and less than proving it.
+    Without the document only the recorded node sets can be re-folded into
+    verdicts, which catches an edited verdict but not an edited node set. That
+    outcome is :data:`RECEIPT_CONSISTENT_ONLY` and :attr:`ReceiptVerification.ok`
+    is False for it, so the weaker guarantee cannot be mistaken for the
+    stronger one by a caller writing ``if result.ok``.
 
     Args:
         receipt: The recorded receipt.
         graph_digest_value: Digest of the graph to check it against.
+        graph_document_bytes: The canonical graph document, when available.
 
     Returns:
         The verification outcome.
@@ -299,27 +317,75 @@ def verify_admission_receipt(
         )
 
     raw_tasks = receipt.get("tasks")
-    tasks = raw_tasks if isinstance(raw_tasks, list) else []
-    rebuilt = [
-        TaskNodeSet(
-            task_id=str(entry.get("task_id", "")),
-            declared_paths=tuple(entry.get("declared_paths", []) or []),
-            seed_symbols=tuple(entry.get("seed_symbols", []) or []),
-            neighborhood=tuple(entry.get("neighborhood", []) or []),
-            depth=int(entry.get("depth", 0) or 0),
-            verdict=str(entry.get("verdict", "")),
-            reasons=tuple(entry.get("reasons", []) or []),
-        )
-        for entry in tasks
-        if isinstance(entry, dict)
-    ]
+    entries = [e for e in (raw_tasks if isinstance(raw_tasks, list) else []) if isinstance(e, dict)]
+    recorded = [_task_from_entry(entry) for entry in entries]
+
+    divergences: list[str] = []
+    rebuilt = recorded
+    full = False
+
+    if graph_document_bytes is not None:
+        from bernstein.core.knowledge.ast_symbol_graph import graph_digest, graph_from_document
+        from bernstein.core.knowledge.code_graph import SemanticCodeGraph, attribute_task
+
+        graph = graph_from_document(graph_document_bytes)
+        if graph_digest(graph) != graph_digest_value:
+            return ReceiptVerification(
+                status=RECEIPT_GRAPH_MISMATCH,
+                divergences=("supplied graph document does not hash to the digest it was given",),
+            )
+
+        code_graph = SemanticCodeGraph(graph)
+        rederived = [
+            attribute_task(
+                code_graph,
+                task.task_id,
+                task.declared_paths,
+                depth=task.depth,
+            )
+            for task in recorded
+        ]
+        for was, now in zip(recorded, rederived, strict=True):
+            if was != now:
+                divergences.append(f"task {was.task_id!r} recorded {was.to_dict()!r}, re-derived {now.to_dict()!r}")
+        rebuilt = rederived
+        full = True
 
     expected = build_admission_receipt(graph_digest_value, rebuilt)
-    divergences: list[str] = []
     for key in ("pairs", "serial_groups"):
         if receipt.get(key) != expected[key]:
             divergences.append(f"{key} recorded as {receipt.get(key)!r}, re-derived {expected[key]!r}")
 
     if divergences:
         return ReceiptVerification(status=RECEIPT_DIVERGED, divergences=tuple(sorted(divergences)))
-    return ReceiptVerification(status=RECEIPT_VERIFIED, divergences=())
+    return ReceiptVerification(
+        status=RECEIPT_VERIFIED if full else RECEIPT_CONSISTENT_ONLY,
+        divergences=(),
+    )
+
+
+def _str_tuple(value: object) -> tuple[str, ...]:
+    """Coerce a recorded field to a tuple of strings, tolerating absence."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in value)
+
+
+def _task_from_entry(entry: dict[str, object]) -> TaskNodeSet:
+    """Rebuild one :class:`TaskNodeSet` from its recorded mapping.
+
+    Every field is coerced rather than trusted: the receipt may have been
+    edited, and a verifier that raises on a malformed value reports a crash
+    where it should report a divergence.
+    """
+    raw_depth = entry.get("depth", 0)
+    depth = raw_depth if isinstance(raw_depth, int) and not isinstance(raw_depth, bool) else 0
+    return TaskNodeSet(
+        task_id=str(entry.get("task_id", "")),
+        declared_paths=_str_tuple(entry.get("declared_paths")),
+        seed_symbols=_str_tuple(entry.get("seed_symbols")),
+        neighborhood=_str_tuple(entry.get("neighborhood")),
+        depth=depth,
+        verdict=str(entry.get("verdict", "")),
+        reasons=_str_tuple(entry.get("reasons")),
+    )

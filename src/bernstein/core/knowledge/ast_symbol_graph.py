@@ -646,6 +646,70 @@ def graph_digest(graph: SemanticGraph) -> str:
     return content_hash_of(graph_document(graph))
 
 
+def graph_from_document(document: bytes) -> SemanticGraph:
+    """Rebuild a graph from the bytes :func:`graph_document` emitted.
+
+    The round trip is what makes an admission decision checkable by someone
+    who does not have the workspace: they hold the document and the receipt,
+    rebuild the graph, and re-derive. Without it the strongest claim a receipt
+    could make is that it is internally consistent.
+
+    ``graph_document(graph_from_document(d)) == d`` holds for any *d* this
+    module produced, which is the property the verifier depends on -- a
+    document that rebuilds into something serialising differently would let a
+    tampered graph pass as the original.
+
+    Args:
+        document: Canonical JSON from :func:`graph_document`.
+
+    Returns:
+        A graph equivalent to the one the document was taken over.
+
+    Raises:
+        ValueError: If the document is malformed or its version is unknown.
+    """
+    try:
+        payload = json.loads(document.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"graph document is not valid JSON: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("graph document must be a JSON object")
+
+    version = payload.get("version")
+    if version != GRAPH_DOCUMENT_VERSION:
+        raise ValueError(f"unsupported graph document version {version!r}")
+
+    graph = SemanticGraph()
+    for raw in payload.get("nodes", []):
+        graph.add_node(
+            SymbolNode(
+                id=str(raw["id"]),
+                name=str(raw["name"]),
+                kind=str(raw["kind"]),
+                file=str(raw["file"]),
+                line_start=int(raw.get("line_start", 0)),
+                line_end=int(raw.get("line_end", 0)),
+                signature=str(raw.get("signature", "")),
+                docstring=str(raw.get("docstring", "")),
+            )
+        )
+    for raw in payload.get("edges", []):
+        graph.add_edge(
+            SymbolEdge(
+                source=str(raw["source"]),
+                target=str(raw["target"]),
+                kind=str(raw["kind"]),
+                origin=str(raw.get("origin", EDGE_ORIGIN_INFERRED)),
+            )
+        )
+
+    coverage = payload.get("coverage", {})
+    graph.source_file_count = int(coverage.get("source_file_count", 0))
+    graph.indexed_file_count = int(coverage.get("indexed_file_count", 0))
+    return graph
+
+
 # ---------------------------------------------------------------------------
 # Context extraction - the core of context routing
 # ---------------------------------------------------------------------------
