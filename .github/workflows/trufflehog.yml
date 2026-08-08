@@ -48,4 +48,21 @@ jobs:
           # `postgres://user:pass@host` that trufflehog cannot probe but
           # are not real credentials; gating on those forced every push
           # to main red without a real leak.
-          extra_args: --results=verified
+          #
+          # `lob` is excluded because its verifier reports a positive for
+          # any `test_`-prefixed string of exactly 35 further characters,
+          # which is a shape ordinary Python test names land on. Three
+          # randomly generated names of that shape - which cannot be keys -
+          # scanned as `verified_secrets: 3`, so the verdict carries no
+          # information about whether a credential is present. It has twice
+          # turned main red: on `test_public_key_jwk_embedded_and_correct`,
+          # and on `test_required_check_canary_workflow_yaml`, the latter a
+          # test *filename* quoted in `docs/operations/merge-queue.md`.
+          # Since the detector cannot distinguish a key from prose, and
+          # this project has no Lob integration to leak a key for, keeping
+          # it enabled only teaches contributors to disregard the gate.
+          #
+          # This is the whole exclusion list, and
+          # `tests/unit/test_trufflehog_workflow_yaml.py` fails if it grows
+          # - a detector for a service we do use must not be dropped here.
+          extra_args: --results=verified --exclude-detectors=lob
