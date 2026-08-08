@@ -43,6 +43,7 @@ from bernstein.core.orchestration.supervisor_receipt import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AGGREGATOR_SCHEMA_VERSION",
+    "ParkedSessions",
     "SupervisorSnapshot",
     "WorkerSupervisionSnapshot",
     "aggregator_snapshot",
@@ -91,6 +93,7 @@ class SupervisorSnapshot:
     schema_version: str
     generated_ts: float
     workers: tuple[WorkerSupervisionSnapshot, ...]
+    parked_available: bool = True
 
     @property
     def stuck_count(self) -> int:
@@ -160,21 +163,53 @@ def load_heartbeat(workdir: Path, session_id: str) -> dict[str, Any] | None:
     return cast(dict[str, Any], payload_any)
 
 
-def load_parked_sessions(workdir: Path) -> set[str]:
+@dataclass(frozen=True, slots=True)
+class ParkedSessions:
+    """Result of :func:`load_parked_sessions`.
+
+    ``available`` is False only when this run found no record of the
+    spawn supervisor's parked-session store at all (the marker file is
+    absent and the failures-log fallback found nothing), so a caller
+    can render "0 parked" and "parked state unavailable" differently
+    instead of treating both as the same silent zero.
+    """
+
+    available: bool
+    session_ids: frozenset[str]
+
+    def __bool__(self) -> bool:
+        return bool(self.session_ids)
+
+    def __len__(self) -> int:
+        return len(self.session_ids)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.session_ids)
+
+    def __contains__(self, session_id: object) -> bool:
+        return session_id in self.session_ids
+
+
+def load_parked_sessions(workdir: Path) -> ParkedSessions:
     """Return the ids of sessions the spawn supervisor parked.
 
     Reads the marker file at
     ``.sdd/runtime/spawn_supervisor/parked.json`` written by the
     in-process supervisor. Falls back to the lifecycle-event log when
-    the marker file is absent.
+    the marker file is absent. ``ParkedSessions.available`` reflects
+    whether either source found a run of this workspace's supervisor at
+    all, not just whether it found any parked ids.
     """
     parked: set[str] = set()
+    available = False
     marker = workdir / ".sdd" / "runtime" / "spawn_supervisor" / "parked.json"
     if marker.exists():
         try:
             payload_any: Any = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             payload_any = None
+        else:
+            available = True
         if isinstance(payload_any, dict):
             payload = cast(dict[str, Any], payload_any)
             ids = payload.get("session_ids")
@@ -193,8 +228,9 @@ def load_parked_sessions(workdir: Path) -> set[str]:
                         if record.get("kind") == "respawn_exhausted":
                             sid = record.get("session_id")
                             if isinstance(sid, str):
+                                available = True
                                 parked.add(sid)
-    return parked
+    return ParkedSessions(available=available, session_ids=frozenset(parked))
 
 
 def load_recent_failures(
@@ -389,6 +425,7 @@ def aggregator_snapshot(
         schema_version=AGGREGATOR_SCHEMA_VERSION,
         generated_ts=resolved_now,
         workers=tuple(rows),
+        parked_available=parked.available,
     )
 
 
@@ -420,6 +457,7 @@ def snapshot_to_dict(snapshot: SupervisorSnapshot) -> dict[str, Any]:
         "generated_ts": snapshot.generated_ts,
         "stuck_count": snapshot.stuck_count,
         "oldest_stall_age_s": snapshot.oldest_stall_age_s,
+        "parked_available": snapshot.parked_available,
         "workers": [
             {
                 "worker_id": w.worker_id,
@@ -447,11 +485,17 @@ def format_summary_line(snapshot: SupervisorSnapshot) -> str:
 
         supervisor: 2 stuck (oldest 95s)
         supervisor: 0 stuck
+        supervisor: 0 stuck, parked state unavailable
+
+    The ``parked state unavailable`` suffix appears whenever this run
+    found no record of the spawn supervisor's parked-session store, so
+    "0 stuck" alone never has to stand in for "never checked".
     """
     stuck = snapshot.stuck_count
+    suffix = "" if snapshot.parked_available else ", parked state unavailable"
     if stuck == 0:
-        return "supervisor: 0 stuck"
+        return f"supervisor: 0 stuck{suffix}"
     oldest = snapshot.oldest_stall_age_s
     if oldest is None:
-        return f"supervisor: {stuck} stuck"
-    return f"supervisor: {stuck} stuck (oldest {int(oldest)}s)"
+        return f"supervisor: {stuck} stuck{suffix}"
+    return f"supervisor: {stuck} stuck (oldest {int(oldest)}s){suffix}"
