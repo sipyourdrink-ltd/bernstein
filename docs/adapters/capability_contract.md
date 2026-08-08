@@ -133,7 +133,7 @@ adapters at a glance.
 | `generic` | unsupported | unsupported | text-signals |
 | `goose` | unsupported | unsupported | text-signals |
 | `gptme` | unsupported | unsupported | text-signals |
-| `hermes` | unsupported | unsupported | text-signals |
+| `hermes` | unsupported | always-on | text-signals |
 | `iac` | unsupported | unsupported | text-signals |
 | `junie` | unsupported | unsupported | text-signals |
 | `kilo` | unsupported | unsupported | text-signals |

@@ -13,13 +13,57 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 
+#: The prompt travels attached to its flag, never as a separate argument.
+#:
+#: ``hermes`` has no top-level positional parameter - the only positional slot
+#: is the subcommand, so a bare prompt is parsed as a command name and the
+#: process exits 2 before a model is contacted. Using ``--oneshot=<prompt>``
+#: rather than ``-z <prompt>`` additionally keeps a prompt that begins with a
+#: dash from being read as a flag.
+_ONESHOT_FLAG = "--oneshot"
+
+#: Provider credentials forwarded into the spawned environment.
+#:
+#: Taken from the names Hermes documents in its own ``.env.example`` rather
+#: than inferred from the vendor's name. ``HOME`` arrives via the base
+#: allowlist, which is what lets ``~/.hermes/config.yaml`` resolve and carry
+#: whatever the operator configured interactively.
+_PROVIDER_ENV_VARS = (
+    "OPENROUTER_API_KEY",
+    "FIREWORKS_API_KEY",
+    "NOVITA_API_KEY",
+    "DEEPINFRA_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "GLM_API_KEY",
+    "KIMI_API_KEY",
+    "MINIMAX_API_KEY",
+    "HF_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "HERMES_HOME",
+)
+
 
 class HermesAdapter(CLIAdapter):
     """Spawn and monitor Hermes Agent CLI sessions.
 
-    Hermes Agent is Nous Research's CLI coding agent. For non-interactive
-    spawn the prompt is passed positionally; the interactive TUI's
-    keystroke-injection mode is bypassed here.
+    Hermes Agent is Nous Research's agent CLI. It is driven here through its
+    one-shot mode, which runs a single prompt with approvals auto-bypassed,
+    edits files in the process working directory, prints the final response
+    and exits - the shape this orchestrator needs. The interactive TUI is
+    never entered.
+
+    Two properties of that mode decide how the process is spawned:
+
+    * an empty prompt is not treated as an error. Dispatch tests the prompt
+      for truthiness, so a blank one falls through to the interactive path,
+      which then waits on stdin for the whole timeout. Both halves are
+      guarded here - the prompt is rejected before spawning, and stdin is
+      closed so an unforeseen interactive path fails fast instead of hanging.
+    * one-shot suppresses tool previews and progress, so the log this returns
+      holds the final response and little else. Progress is not pollable from
+      it; the diff in the worktree is the outcome to inspect.
     """
 
     def spawn(
@@ -53,14 +97,23 @@ class HermesAdapter(CLIAdapter):
             A :class:`SpawnResult` describing the spawned process.
 
         Raises:
+            ValueError: If *prompt* is empty or only whitespace.
             RuntimeError: If the ``hermes`` binary cannot be found or
                 executed.
         """
         self.refuse_multimodal_if_needed(multimodal_context)
+        if not prompt.strip():
+            msg = (
+                "hermes requires a non-empty prompt: one-shot mode dispatches on "
+                "the prompt being truthy, so a blank one starts an interactive "
+                "session that waits for input until the task times out"
+            )
+            raise ValueError(msg)
+
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = ["hermes", prompt]
+        cmd = ["hermes", f"{_ONESHOT_FLAG}={prompt}"]
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
@@ -73,13 +126,14 @@ class HermesAdapter(CLIAdapter):
             model=model_config.model,
         )
 
-        env = build_filtered_env(["HERMES_API_KEY", "NOUS_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"])
+        env = build_filtered_env(_PROVIDER_ENV_VARS)
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
                     wrapped_cmd,
                     cwd=workdir,
                     env=env,
+                    stdin=subprocess.DEVNULL,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
