@@ -24,7 +24,7 @@ from enum import Enum as _Enum
 from pathlib import Path
 from typing import Any
 
-from bernstein.core.persistence.fingerprint import MemoStore, default_store, memoize_persistent
+from bernstein.core.persistence.fingerprint import MemoStore, code_digest, default_store, memoize_persistent
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +215,16 @@ def _get_memoized_chunker(workdir: Path) -> Any:
     return _memoized_chunker
 
 
+def _chunker_revision() -> str:
+    """Return a hex digest identifying the current chunker.
+
+    Deliberately the same :func:`code_digest` over the same module that
+    keys the memo store, so the two caching layers cannot disagree about
+    what "the current chunker" is.
+    """
+    return code_digest(sys.modules[__name__]).hex()
+
+
 def _chunk_with_memo(workdir: Path, source: str, rel_path: str, *, is_python: bool) -> list[dict[str, object]]:
     """Compute chunk_sha and dispatch to the memoized chunker."""
     chunk_sha = hashlib.sha256(source.encode("utf-8", errors="replace")).hexdigest()
@@ -290,6 +300,14 @@ class CodebaseIndexer:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS index_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
                 file_path,
                 line_start UNINDEXED,
@@ -353,16 +371,29 @@ class CodebaseIndexer:
             rel = str(fpath.relative_to(self._root))
             current_paths[rel] = mtime
 
+        # A chunker edit reshapes every chunk, but the mtime gate below only
+        # re-reads files whose own bytes moved, so rows written by the previous
+        # chunker would sit in FTS until each file happened to be touched.
+        # Memoising on the chunker source cannot help here - for an unchanged
+        # file the chunker is never called at all.  Retire the whole index
+        # instead when the revision moves.
+        revision = _chunker_revision()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'chunker_revision'").fetchone()
+        chunker_changed = meta_row is None or meta_row[0] != revision
+
         # Load stored mtimes.
         stored: dict[str, float] = {}
         for row in conn.execute("SELECT path, mtime FROM file_meta"):
             stored[row[0]] = row[1]
 
+        if chunker_changed and stored:
+            logger.info("Chunker revision changed; reindexing all %d file(s).", len(stored))
+
         # Determine which files need re-indexing.
         to_index: list[str] = []
         for rel, mtime in current_paths.items():
             old_mtime = stored.get(rel)
-            if old_mtime is None or mtime > old_mtime:
+            if chunker_changed or old_mtime is None or mtime > old_mtime:
                 to_index.append(rel)
 
         # Determine deleted files.
@@ -401,6 +432,13 @@ class CodebaseIndexer:
                 (rel, current_paths[rel]),
             )
             indexed += 1
+
+        if chunker_changed:
+            conn.execute(
+                "INSERT INTO index_meta (key, value) VALUES ('chunker_revision', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (revision,),
+            )
 
         conn.commit()
         return indexed

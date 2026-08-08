@@ -115,6 +115,13 @@ Metrics exposed on `/metrics`:
   transitive closure of called helpers. Declare the code you delegate
   to with `depends_on` (above); it is not inferred, so a call site that
   forgets it silently serves stale entries.
+- `depends_on` only fires when the memoised function is *called*. A
+  cache upstream of it - an incremental index that skips inputs whose
+  bytes did not move, say - never reaches the memo layer at all, so it
+  needs its own revision gate. `knowledge/rag.py` records
+  `code_digest(rag)` in the index's `index_meta` table and reprocesses
+  every file when it moves; both layers read the same digest, so they
+  cannot disagree about which chunker is current.
 - `depends_on` covers the declared modules, not *their* imports. A
   parser that changes behaviour because a library it calls was upgraded
   still needs manual invalidation (`bernstein cache clear`).
