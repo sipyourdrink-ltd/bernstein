@@ -318,19 +318,54 @@ def _process_import_node(node: ast.Import, imports: dict[str, str]) -> None:
         imports[local_name] = alias.name
 
 
-def _process_import_from_node(node: ast.ImportFrom, imports: dict[str, str]) -> None:
+def _relative_import_prefix(rel_path: str, module: str, level: int) -> str | None:
+    """Anchor a relative import's module against the importing file's package.
+
+    ``from .helpers import helper`` in ``src/pkg/foo.py`` names
+    ``src/pkg/helpers.py``. Dropping the leading dots and keeping only
+    ``helpers`` makes the module look root-level, so the resolver could find an
+    unrelated ``helpers.py`` elsewhere in the tree and report the edge as
+    directly extracted -- a boundary attributed to the wrong symbol, which is
+    the one thing an ``EXTRACTED`` origin is supposed to rule out.
+
+    Args:
+        rel_path: Repository-relative path of the importing file.
+        module: The dotted module after the dots, empty for ``from . import x``.
+        level: Number of leading dots. Always >= 1 here.
+
+    Returns:
+        The anchored dotted path, or None when the import walks above the
+        indexed tree. None means "record nothing", so the name falls through to
+        the by-name fallback and the edge is reported as inferred.
+    """
+    package = tuple(part for part in rel_path.split("/")[:-1] if part)
+    if level - 1 > len(package):
+        return None
+    base = package[: len(package) - (level - 1)]
+    return ".".join((*base, *(module.split(".") if module else ())))
+
+
+def _process_import_from_node(node: ast.ImportFrom, imports: dict[str, str], rel_path: str) -> None:
     """Add entries from a ``from x import y`` statement to the imports dict."""
     module = node.module or ""
+    level = node.level or 0
+    if level:
+        anchored = _relative_import_prefix(rel_path, module, level)
+        if anchored is None:
+            return
+        module = anchored
     for alias in node.names:
         local_name = alias.asname or alias.name
         imports[local_name] = f"{module}.{alias.name}" if module else alias.name
 
 
-def _extract_imports_from_tree(tree: ast.Module) -> dict[str, str]:
+def _extract_imports_from_tree(tree: ast.Module, rel_path: str = "") -> dict[str, str]:
     """Extract import mappings from an AST module.
 
     Args:
         tree: Parsed AST module.
+        rel_path: Repository-relative path of the file, used to anchor relative
+            imports against their own package.
 
     Returns:
         Dict mapping local name -> full module path.
@@ -340,7 +375,7 @@ def _extract_imports_from_tree(tree: ast.Module) -> dict[str, str]:
         if isinstance(node, ast.Import):
             _process_import_node(node, imports)
         elif isinstance(node, ast.ImportFrom):
-            _process_import_from_node(node, imports)
+            _process_import_from_node(node, imports, rel_path)
     return imports
 
 
@@ -430,7 +465,7 @@ def parse_file_symbols(filepath: Path, rel_path: str) -> FileSymbols | None:
         return None
 
     total_lines = len(source.split("\n"))
-    result = FileSymbols(path=rel_path, imports=_extract_imports_from_tree(tree))
+    result = FileSymbols(path=rel_path, imports=_extract_imports_from_tree(tree, rel_path))
 
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -592,6 +627,23 @@ def _resolve_import_target(graph: SemanticGraph, module_path: str, name: str) ->
 #: rather than beside them.
 GRAPH_DOCUMENT_VERSION = 1
 
+#: Largest document :func:`graph_from_document` will parse. The bytes come from
+#: whoever wants a decision checked, so their size is an input from outside and
+#: has to be bounded before ``json.loads`` sees them -- parsing amplifies, so
+#: the cap is what bounds peak memory. A ``_MAX_FILES``-capped index of this
+#: repository serialises to under 4 MiB, so this leaves roughly four times the
+#: headroom the builder can currently produce; raise it alongside
+#: ``_MAX_FILES``, never below what a full index yields.
+MAX_GRAPH_DOCUMENT_BYTES = 16 * 1024 * 1024
+
+#: Collection and field bounds applied before anything is reconstructed. They
+#: sit far above what the builder emits (roughly 5k nodes and 10k edges for 500
+#: files) and exist so a document that claims otherwise is refused by name
+#: rather than by running out of memory.
+MAX_GRAPH_NODES = 100_000
+MAX_GRAPH_EDGES = 250_000
+MAX_GRAPH_FIELD_CHARS = 64 * 1024
+
 
 def graph_document(graph: SemanticGraph) -> bytes:
     """Serialise *graph* to canonical JSON bytes.
@@ -646,6 +698,67 @@ def graph_digest(graph: SemanticGraph) -> str:
     return content_hash_of(graph_document(graph))
 
 
+def _bounded_array(value: object, *, field: str, limit: int) -> list[Any]:
+    """Return *value* as a list, refusing anything longer than *limit*."""
+    if not isinstance(value, list):
+        raise ValueError(f"graph document {field!r} must be a JSON array")
+    if len(value) > limit:
+        raise ValueError(f"graph document {field!r} has {len(value)} entries, over the {limit} limit")
+    return value
+
+
+def _entry_str(raw: dict[str, Any], key: str, *, required: bool = True) -> str:
+    """Read one string field, refusing a wrong type or an unbounded length."""
+    if key not in raw:
+        if required:
+            raise ValueError(f"graph document entry is missing {key!r}")
+        return ""
+    value = raw[key]
+    if not isinstance(value, str):
+        raise ValueError(f"graph document field {key!r} must be a string")
+    if len(value) > MAX_GRAPH_FIELD_CHARS:
+        raise ValueError(
+            f"graph document field {key!r} is {len(value)} characters, over the {MAX_GRAPH_FIELD_CHARS} limit"
+        )
+    return value
+
+
+def _entry_int(raw: dict[str, Any], key: str) -> int:
+    """Read one integer field. ``bool`` is rejected; it is not a line number."""
+    value = raw.get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"graph document field {key!r} must be an integer")
+    return value
+
+
+def _node_from_entry(raw: object) -> SymbolNode:
+    """Rebuild one node, validating every field rather than coercing it."""
+    if not isinstance(raw, dict):
+        raise ValueError("graph document node entries must be JSON objects")
+    return SymbolNode(
+        id=_entry_str(raw, "id"),
+        name=_entry_str(raw, "name"),
+        kind=_entry_str(raw, "kind"),
+        file=_entry_str(raw, "file"),
+        line_start=_entry_int(raw, "line_start"),
+        line_end=_entry_int(raw, "line_end"),
+        signature=_entry_str(raw, "signature", required=False),
+        docstring=_entry_str(raw, "docstring", required=False),
+    )
+
+
+def _edge_from_entry(raw: object) -> SymbolEdge:
+    """Rebuild one edge, validating every field rather than coercing it."""
+    if not isinstance(raw, dict):
+        raise ValueError("graph document edge entries must be JSON objects")
+    return SymbolEdge(
+        source=_entry_str(raw, "source"),
+        target=_entry_str(raw, "target"),
+        kind=_entry_str(raw, "kind"),
+        origin=_entry_str(raw, "origin", required=False) or EDGE_ORIGIN_INFERRED,
+    )
+
+
 def graph_from_document(document: bytes) -> SemanticGraph:
     """Rebuild a graph from the bytes :func:`graph_document` emitted.
 
@@ -655,9 +768,25 @@ def graph_from_document(document: bytes) -> SemanticGraph:
     could make is that it is internally consistent.
 
     ``graph_document(graph_from_document(d)) == d`` holds for any *d* this
-    module produced, which is the property the verifier depends on -- a
-    document that rebuilds into something serialising differently would let a
-    tampered graph pass as the original.
+    module produced, and this function *enforces* it rather than assuming it.
+    The bytes arrive from whoever wants the decision checked, so they are an
+    input from outside, and every way a loader can quietly repair one is a way
+    a tampered document passes as the original:
+
+    * ``SemanticGraph.add_edge`` drops an edge whose endpoints it does not
+      know. A document carrying such an edge would rebuild into a graph that
+      re-serialises without it, and the digest taken over that rebuild would
+      still match the untampered one.
+    * ``file_symbols`` is derived from the nodes, so a document is free to
+      claim a different mapping. Reading the claimed mapping instead would let
+      the document contradict its own nodes; requiring it to agree is the
+      stronger check, and the canonical comparison below makes it.
+
+    Size is bounded before the parser sees the bytes, and collection and field
+    sizes before anything is reconstructed, so a document that is merely
+    enormous is refused by name instead of by exhausting the verifier. Nesting
+    is bounded by the parser itself, which gives up quickly and cheaply; all
+    this does is turn giving up into a rejection.
 
     Args:
         document: Canonical JSON from :func:`graph_document`.
@@ -666,12 +795,22 @@ def graph_from_document(document: bytes) -> SemanticGraph:
         A graph equivalent to the one the document was taken over.
 
     Raises:
-        ValueError: If the document is malformed or its version is unknown.
+        ValueError: If the document is malformed, oversized, not canonical, or
+            its version is unknown.
     """
+    if len(document) > MAX_GRAPH_DOCUMENT_BYTES:
+        raise ValueError(f"graph document is {len(document)} bytes, over the {MAX_GRAPH_DOCUMENT_BYTES} limit")
+
     try:
         payload = json.loads(document.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"graph document is not valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        # The scanner stops at the recursion limit rather than running out of
+        # memory, so nesting is already bounded -- but it escapes as a
+        # RecursionError, and a verifier that propagates one reports a crash
+        # where it owes the caller a rejection.
+        raise ValueError("graph document nests too deeply to parse") from exc
 
     if not isinstance(payload, dict):
         raise ValueError("graph document must be a JSON object")
@@ -680,33 +819,32 @@ def graph_from_document(document: bytes) -> SemanticGraph:
     if version != GRAPH_DOCUMENT_VERSION:
         raise ValueError(f"unsupported graph document version {version!r}")
 
+    raw_nodes = _bounded_array(payload.get("nodes", []), field="nodes", limit=MAX_GRAPH_NODES)
+    raw_edges = _bounded_array(payload.get("edges", []), field="edges", limit=MAX_GRAPH_EDGES)
+
     graph = SemanticGraph()
-    for raw in payload.get("nodes", []):
-        graph.add_node(
-            SymbolNode(
-                id=str(raw["id"]),
-                name=str(raw["name"]),
-                kind=str(raw["kind"]),
-                file=str(raw["file"]),
-                line_start=int(raw.get("line_start", 0)),
-                line_end=int(raw.get("line_end", 0)),
-                signature=str(raw.get("signature", "")),
-                docstring=str(raw.get("docstring", "")),
+    for raw in raw_nodes:
+        node = _node_from_entry(raw)
+        if node.id in graph.nodes:
+            raise ValueError(f"graph document defines symbol {node.id!r} more than once")
+        graph.add_node(node)
+
+    for raw in raw_edges:
+        edge = _edge_from_entry(raw)
+        if edge.source not in graph.nodes or edge.target not in graph.nodes:
+            raise ValueError(
+                f"graph document edge {edge.source!r} -> {edge.target!r} names a symbol it does not define"
             )
-        )
-    for raw in payload.get("edges", []):
-        graph.add_edge(
-            SymbolEdge(
-                source=str(raw["source"]),
-                target=str(raw["target"]),
-                kind=str(raw["kind"]),
-                origin=str(raw.get("origin", EDGE_ORIGIN_INFERRED)),
-            )
-        )
+        graph.add_edge(edge)
 
     coverage = payload.get("coverage", {})
-    graph.source_file_count = int(coverage.get("source_file_count", 0))
-    graph.indexed_file_count = int(coverage.get("indexed_file_count", 0))
+    if not isinstance(coverage, dict):
+        raise ValueError("graph document 'coverage' must be a JSON object")
+    graph.source_file_count = _entry_int(coverage, "source_file_count")
+    graph.indexed_file_count = _entry_int(coverage, "indexed_file_count")
+
+    if graph_document(graph) != document:
+        raise ValueError("graph document is not the canonical serialisation of the graph it describes")
     return graph
 
 

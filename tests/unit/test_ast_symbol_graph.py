@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from bernstein.core.knowledge.ast_symbol_graph import (
     extract_context_for_files,
     graph_digest,
     graph_document,
+    graph_from_document,
     parse_file_symbols,
 )
 
@@ -223,3 +225,207 @@ def test_edge_origin_defaults_to_inferred() -> None:
     edge = SymbolEdge(source="a.py::x", target="b.py::y", kind="calls")
     assert edge.origin == EDGE_ORIGIN_INFERRED
     assert edge.to_dict()["origin"] == EDGE_ORIGIN_INFERRED
+
+
+# ---------------------------------------------------------------------------
+# Relative imports resolve against their own package
+# ---------------------------------------------------------------------------
+
+
+def _shadowed_helpers_tree(root: Path, import_line: str) -> list[str]:
+    """A package-local ``helpers`` shadowed by an unrelated root-level one."""
+    _write(root / "helpers.py", "def helper() -> int:\n    return 99\n")
+    _write(root / "src" / "pkg" / "helpers.py", "def helper() -> int:\n    return 1\n")
+    _write(
+        root / "src" / "pkg" / "service.py",
+        f"{import_line}\n\ndef run() -> int:\n    return helper()\n",
+    )
+    return ["helpers.py", "src/pkg/helpers.py", "src/pkg/service.py"]
+
+
+def test_relative_import_resolves_within_its_own_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``from .helpers import helper`` names the package's helpers, not the root's.
+
+    Dropping the leading dot makes the module look root-level, so an unrelated
+    same-named module elsewhere in the tree can be found first and the edge
+    reported as directly extracted. That is a boundary attributed to the wrong
+    symbol wearing the one label a disjointness verdict is allowed to trust.
+    """
+    files = _shadowed_helpers_tree(tmp_path, "from .helpers import helper")
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: files)
+
+    graph = build_semantic_graph(tmp_path)
+    extracted = [e for e in graph.edges if e.source == "src/pkg/service.py::run" and e.origin == EDGE_ORIGIN_EXTRACTED]
+
+    assert [e.target for e in extracted] == ["src/pkg/helpers.py::helper"]
+    assert not any(e.target == "helpers.py::helper" for e in extracted)
+
+
+def test_relative_import_above_the_tree_is_never_extracted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An import walking above the indexed tree cannot be resolved, so it is inferred.
+
+    ``src/pkg`` is two packages deep, so four dots leave the tree entirely.
+    Nothing in the graph establishes what that names, and the by-name fallback
+    reports the guess as a guess instead of borrowing the root module.
+    """
+    files = _shadowed_helpers_tree(tmp_path, "from ....helpers import helper")
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: files)
+
+    graph = build_semantic_graph(tmp_path)
+    edges = [e for e in graph.edges if e.source == "src/pkg/service.py::run"]
+
+    assert edges, "expected the unresolvable call to still produce an edge"
+    assert all(e.origin == EDGE_ORIGIN_INFERRED for e in edges)
+
+
+# ---------------------------------------------------------------------------
+# The loader refuses documents it would otherwise quietly repair
+# ---------------------------------------------------------------------------
+
+
+def _canonical(payload: dict[str, object]) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def test_graph_from_document_rejects_a_dangling_edge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An edge naming an undefined symbol is refused, not silently dropped.
+
+    ``SemanticGraph.add_edge`` discards such an edge. A loader that let it
+    would rebuild a graph the document does not describe, and the digest taken
+    over that rebuild still matches the untampered original -- so a document
+    carrying fabricated edges would verify against the real decision.
+    """
+    files = _two_module_tree(tmp_path)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: files)
+    document = graph_document(build_semantic_graph(tmp_path))
+
+    payload = json.loads(document)
+    payload["edges"].append(
+        {
+            "source": "src/pkg/service.py::run",
+            "target": "src/pkg/ghost.py::ghost",
+            "kind": "calls",
+            "origin": "EXTRACTED",
+        }
+    )
+
+    with pytest.raises(ValueError, match="names a symbol it does not define"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_rejects_a_rewritten_file_symbols_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``file_symbols`` has to agree with the nodes it claims to index.
+
+    The mapping is derived from the nodes rather than read, so a document is
+    free to claim a different one and be reconstructed as if it had not. It is
+    also the mapping attribution starts from, so a lie there redirects which
+    task owns which symbol.
+    """
+    files = _two_module_tree(tmp_path)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: files)
+    document = graph_document(build_semantic_graph(tmp_path))
+
+    payload = json.loads(document)
+    payload["file_symbols"]["src/pkg/service.py"] = ["src/pkg/helpers.py::helper"]
+
+    with pytest.raises(ValueError, match="canonical serialisation"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_rejects_a_duplicated_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One symbol defined twice is a document no build produced."""
+    files = _two_module_tree(tmp_path)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: files)
+    document = graph_document(build_semantic_graph(tmp_path))
+
+    payload = json.loads(document)
+    payload["nodes"].append(dict(payload["nodes"][0]))
+
+    with pytest.raises(ValueError, match="more than once"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_rejects_an_oversized_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Size is checked before the parser sees the bytes."""
+    monkeypatch.setattr(semantic_graph, "MAX_GRAPH_DOCUMENT_BYTES", 16)
+
+    with pytest.raises(ValueError, match="over the 16 limit"):
+        graph_from_document(b'{"version":1,"nodes":[],"edges":[]}')
+
+
+def test_graph_from_document_rejects_too_many_nodes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Collection sizes are checked before anything is reconstructed."""
+    monkeypatch.setattr(semantic_graph, "MAX_GRAPH_NODES", 1)
+    payload = {
+        "version": 1,
+        "coverage": {"source_file_count": 0, "indexed_file_count": 0, "truncated": False, "max_files": 1},
+        "nodes": [
+            {
+                "id": "a.py::x",
+                "name": "x",
+                "kind": "function",
+                "file": "a.py",
+                "line_start": 1,
+                "line_end": 1,
+                "signature": "",
+                "docstring": "",
+            },
+            {
+                "id": "a.py::y",
+                "name": "y",
+                "kind": "function",
+                "file": "a.py",
+                "line_start": 2,
+                "line_end": 2,
+                "signature": "",
+                "docstring": "",
+            },
+        ],
+        "edges": [],
+        "file_symbols": {"a.py": ["a.py::x", "a.py::y"]},
+    }
+
+    with pytest.raises(ValueError, match="'nodes' has 2 entries"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_rejects_deeply_nested_json() -> None:
+    """Nesting that stops the parser is reported as a rejection, not a crash.
+
+    The scanner gives up at its recursion limit rather than running out of
+    memory, so the resource is already bounded -- but it gives up by raising
+    ``RecursionError``, and a verifier that propagates one reports a crash
+    where it owes the caller a verdict.
+    """
+    nested = b"[" * 1_000_000 + b"]" * 1_000_000
+    assert len(nested) < semantic_graph.MAX_GRAPH_DOCUMENT_BYTES, "must be refused for nesting, not for size"
+
+    with pytest.raises(ValueError, match="nests too deeply"):
+        graph_from_document(nested)
+
+
+def test_graph_from_document_rejects_a_non_string_field() -> None:
+    """Fields are validated, not coerced: ``str(...)`` invents a value."""
+    payload = {
+        "version": 1,
+        "coverage": {"source_file_count": 0, "indexed_file_count": 0, "truncated": False, "max_files": 1},
+        "nodes": [
+            {
+                "id": 17,
+                "name": "x",
+                "kind": "function",
+                "file": "a.py",
+                "line_start": 1,
+                "line_end": 1,
+                "signature": "",
+                "docstring": "",
+            }
+        ],
+        "edges": [],
+        "file_symbols": {},
+    }
+
+    with pytest.raises(ValueError, match="must be a string"):
+        graph_from_document(_canonical(payload))
