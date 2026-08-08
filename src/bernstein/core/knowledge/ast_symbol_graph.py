@@ -759,6 +759,58 @@ def _edge_from_entry(raw: object) -> SymbolEdge:
     )
 
 
+def _coverage_from_payload(payload: dict[str, Any]) -> tuple[int, int]:
+    """Validate the serialised coverage block and return its two counters.
+
+    These two numbers decide whether an attribution can be ``PROVEN``: a graph
+    that hit the file cap is missing edges it has no way to know about, and
+    ``SemanticCodeGraph.is_truncated`` reads exactly this pair.
+
+    A canonical round trip does not police them, because a document claiming a
+    pair the builder could never produce is perfectly self-consistent -- more
+    files indexed than were found, or more indexed than the cap allows, still
+    re-serialises to itself. That is the shape a forgery takes here: a
+    truncated index rewritten as a complete one turns every ``UNPROVEN``
+    attribution into a ``PROVEN`` one. So the producer's invariants are checked
+    rather than inferred from the bytes agreeing with themselves.
+
+    Args:
+        payload: The parsed document.
+
+    Returns:
+        ``(source_file_count, indexed_file_count)``.
+
+    Raises:
+        ValueError: If the block is missing, malformed, or claims counts
+            :func:`build_semantic_graph` could not have produced.
+    """
+    coverage = payload.get("coverage", {})
+    if not isinstance(coverage, dict):
+        raise ValueError("graph document 'coverage' must be a JSON object")
+
+    source = _entry_int(coverage, "source_file_count")
+    indexed = _entry_int(coverage, "indexed_file_count")
+    max_files = _entry_int(coverage, "max_files")
+
+    if source < 0 or indexed < 0:
+        raise ValueError(f"graph document coverage counts must not be negative, got {source} and {indexed}")
+    if max_files != _MAX_FILES:
+        # The cap travels in the document, so a build under a different one is
+        # a different document -- said by name here rather than left to the
+        # canonical comparison, which would only report the bytes differing.
+        raise ValueError(f"graph document was indexed under a file cap of {max_files}, this build caps at {_MAX_FILES}")
+    if indexed > source:
+        raise ValueError(f"graph document claims {indexed} files indexed of {source} found")
+    if indexed > max_files:
+        raise ValueError(f"graph document claims {indexed} files indexed under a cap of {max_files}")
+
+    truncated = coverage.get("truncated")
+    if not isinstance(truncated, bool) or truncated != (indexed < source):
+        raise ValueError(f"graph document claims truncated={truncated!r} for {indexed} files indexed of {source}")
+
+    return source, indexed
+
+
 def graph_from_document(document: bytes) -> SemanticGraph:
     """Rebuild a graph from the bytes :func:`graph_document` emitted.
 
@@ -781,6 +833,10 @@ def graph_from_document(document: bytes) -> SemanticGraph:
       claim a different mapping. Reading the claimed mapping instead would let
       the document contradict its own nodes; requiring it to agree is the
       stronger check, and the canonical comparison below makes it.
+    * The coverage counters are self-consistent under any values, so a
+      truncated index rewritten as a complete one survives the canonical
+      comparison. They are checked against the builder's own invariants
+      instead -- see :func:`_coverage_from_payload`.
 
     Size is bounded before the parser sees the bytes, and collection and field
     sizes before anything is reconstructed, so a document that is merely
@@ -837,11 +893,7 @@ def graph_from_document(document: bytes) -> SemanticGraph:
             )
         graph.add_edge(edge)
 
-    coverage = payload.get("coverage", {})
-    if not isinstance(coverage, dict):
-        raise ValueError("graph document 'coverage' must be a JSON object")
-    graph.source_file_count = _entry_int(coverage, "source_file_count")
-    graph.indexed_file_count = _entry_int(coverage, "indexed_file_count")
+    graph.source_file_count, graph.indexed_file_count = _coverage_from_payload(payload)
 
     if graph_document(graph) != document:
         raise ValueError("graph document is not the canonical serialisation of the graph it describes")

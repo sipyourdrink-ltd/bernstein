@@ -429,3 +429,86 @@ def test_graph_from_document_rejects_a_non_string_field() -> None:
 
     with pytest.raises(ValueError, match="must be a string"):
         graph_from_document(_canonical(payload))
+
+
+# ---------------------------------------------------------------------------
+# Coverage counters are checked against the builder's invariants
+# ---------------------------------------------------------------------------
+
+
+def _truncated_document(root: Path, monkeypatch: pytest.MonkeyPatch) -> bytes:
+    """A document from an index that hit the file cap."""
+    files = _two_module_tree(root)
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: files)
+    monkeypatch.setattr(semantic_graph, "_MAX_FILES", 1)
+    return graph_document(build_semantic_graph(root))
+
+
+def test_graph_from_document_rejects_an_index_larger_than_the_file_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A truncated index cannot be rewritten into a complete one.
+
+    Coverage is self-consistent under any pair of counts, so claiming every
+    file was indexed re-serialises to itself and survives the canonical
+    comparison. It is also the claim that flips every attribution from
+    ``UNPROVEN`` to ``PROVEN``, because ``is_truncated`` reads exactly these
+    counters. `build_semantic_graph` cannot index more files than the cap, so
+    a document saying it did is refused.
+    """
+    document = _truncated_document(tmp_path, monkeypatch)
+    payload = json.loads(document)
+    assert payload["coverage"]["truncated"] is True, "fixture must be a truncated index"
+
+    payload["coverage"]["indexed_file_count"] = payload["coverage"]["source_file_count"]
+    payload["coverage"]["truncated"] = False
+
+    with pytest.raises(ValueError, match="under a cap of"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_rejects_more_indexed_than_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Indexing more files than were enumerated is not a state the builder reaches."""
+    document = _truncated_document(tmp_path, monkeypatch)
+    payload = json.loads(document)
+    payload["coverage"]["source_file_count"] = 0
+    payload["coverage"]["truncated"] = False
+
+    with pytest.raises(ValueError, match="files indexed of 0 found"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_rejects_a_forged_truncation_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``truncated`` is derived, so a document may not disagree with its counts."""
+    document = _truncated_document(tmp_path, monkeypatch)
+    payload = json.loads(document)
+    payload["coverage"]["truncated"] = False
+
+    with pytest.raises(ValueError, match="claims truncated=False"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_rejects_a_foreign_file_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A document built under another cap is a different document, and says so."""
+    document = _truncated_document(tmp_path, monkeypatch)
+    payload = json.loads(document)
+    payload["coverage"]["max_files"] = 999
+
+    with pytest.raises(ValueError, match="file cap of 999"):
+        graph_from_document(_canonical(payload))
+
+
+def test_graph_from_document_still_accepts_an_honestly_truncated_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The invariants reject forgeries, not truncation itself.
+
+    Without this the tests above pass by refusing every truncated document,
+    which would make a capped index unverifiable rather than provably partial.
+    """
+    document = _truncated_document(tmp_path, monkeypatch)
+
+    rebuilt = graph_from_document(document)
+
+    assert graph_document(rebuilt) == document
+    assert rebuilt.indexed_file_count < rebuilt.source_file_count
