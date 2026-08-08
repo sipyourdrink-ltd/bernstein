@@ -137,6 +137,26 @@ class TestHermesAdapterSpawn:
             "credential, and is not made implicitly here"
         )
 
+    def test_network_policy_is_enforced_before_spawning(self, tmp_path: Path) -> None:
+        """This adapter forwards provider credentials for a dozen hosted APIs.
+
+        Under a restricted or air-gapped policy that has to be checked before
+        the process starts, not after it has already reached out.
+        """
+        adapter = HermesAdapter()
+        with (
+            patch.object(HermesAdapter, "enforce_network_policy", side_effect=RuntimeError("blocked")),
+            patch("bernstein.adapters.hermes.subprocess.Popen") as popen,
+            pytest.raises(RuntimeError, match="blocked"),
+        ):
+            adapter.spawn(
+                prompt="ship the feature",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="hermes-net",
+            )
+        popen.assert_not_called()
+
     def test_spawn_translates_missing_cli(self, tmp_path: Path) -> None:
         adapter = HermesAdapter()
         with (

@@ -125,6 +125,7 @@ class HermesAdapter(CLIAdapter):
                 executed.
         """
         self.refuse_multimodal_if_needed(multimodal_context)
+        self.enforce_network_policy()
         if not prompt.strip():
             msg = (
                 "hermes requires a non-empty prompt: one-shot mode dispatches on "
