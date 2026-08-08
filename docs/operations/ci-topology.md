@@ -65,6 +65,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-nightly.yml | soc2-evidence-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
+| .github/workflows/spa-bundle-freshness.yml | SPA bundle freshness | pull_request, push | {"cancel-in-progress": "true", "group": "spa-bundle-freshness-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
 | .github/workflows/static-analysis-extended.yml | static-analysis (extended) | merge_group, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
@@ -131,6 +132,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/soc2-evidence-nightly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
+| .github/workflows/spa-bundle-freshness.yml | rebuild: shipped bundle matches the lockfile |
 | .github/workflows/spiffe-extra-e2e.yml | spiffe-extra-e2e: SPIFFE extra E2E (built wheel, extra-present + no-extra suites) |
 | .github/workflows/stale.yml | stale |
 | .github/workflows/static-analysis-extended.yml | perflint: perflint (hot-path antipatterns)<br>refurb: refurb (idioms)<br>semgrep: Semgrep (CE rules)<br>trivy-fs: Trivy (filesystem)<br>trivy-iac: Trivy (IaC)<br>vulture: vulture (dead code) |
@@ -197,6 +199,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
 | .github/workflows/soc2-evidence-nightly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED |
+| .github/workflows/spa-bundle-freshness.yml | workflow: {"contents": "read"}<br>rebuild: {"contents": "read"} | - |
 | .github/workflows/spiffe-extra-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/stale.yml | workflow: {"contents": "read"}<br>stale: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/static-analysis-extended.yml | workflow: {"contents": "read"}<br>perflint: {"contents": "read", "security-events": "write"}<br>refurb: {"contents": "read", "security-events": "write"}<br>semgrep: {"contents": "read", "security-events": "write"}<br>trivy-fs: {"contents": "read", "security-events": "write"}<br>trivy-iac: {"contents": "read", "security-events": "write"}<br>vulture: {"contents": "read", "security-events": "write"} | - |

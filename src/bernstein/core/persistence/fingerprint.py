@@ -53,9 +53,13 @@ _DIGEST_BYTES = 32
 _DEFAULT_MAX_MB = 200
 _AST_CACHE: dict[str, bytes] = {}
 _AST_CACHE_LOCK = threading.Lock()
-#: Per-process source digests for :func:`code_digest` targets, keyed by
-#: ``__name__`` for modules and ``<module>.<qualname>`` for callables.
-_SOURCE_DIGEST_CACHE: dict[str, bytes] = {}
+#: Source digests for :func:`code_digest` targets, keyed by ``__name__``
+#: for modules and ``<module>.<qualname>`` for callables.  The value
+#: carries the ``(mtime_ns, size)`` the digest was computed from, so a
+#: module rewritten under a running interpreter is re-hashed rather than
+#: served from the name alone; ``None`` marks a target with no statable
+#: file.
+_SOURCE_DIGEST_CACHE: dict[str, tuple[tuple[int, int] | None, bytes]] = {}
 
 #: A callable or module whose source participates in a memo key.
 CodeDependency = Callable[..., Any] | ModuleType
@@ -164,6 +168,23 @@ def _module_source_bytes(module: ModuleType) -> bytes:
         return _source_cache_key(module).encode("utf-8")
 
 
+def _module_stat_token(module: ModuleType) -> tuple[int, int] | None:
+    """Return ``(mtime_ns, size)`` for *module*'s file, or ``None``.
+
+    ``None`` means the module has no statable file (namespace package,
+    frozen or zipped import), in which case the digest falls back to
+    being computed once per process.
+    """
+    path = getattr(module, "__file__", None)
+    if not path:
+        return None
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
 def code_digest(*targets: CodeDependency) -> bytes:
     """Return a 32-byte digest over the source of every target.
 
@@ -175,19 +196,25 @@ def code_digest(*targets: CodeDependency) -> bytes:
     is over-invalidation (an unrelated edit to the module rebuilds the
     cache), which is the safe direction.
 
-    Digests are cached per process; module source cannot change beneath
-    a running interpreter.
+    Module digests are cached against the file's ``(mtime_ns, size)`` and
+    re-derived when that moves, so a module swapped in by
+    ``importlib.reload`` under a long-running process (see
+    ``plugins_core.plugin_hotreload``) does not keep folding its
+    pre-reload source into new keys.  Callable targets inherit
+    :func:`fingerprint`'s per-process source cache; prefer passing the
+    owning module when a target may be reloaded.
     """
     hasher = hashlib.sha256()
     for target in targets:
         key = _source_cache_key(target)
-        digest = _SOURCE_DIGEST_CACHE.get(key)
-        if digest is None:
+        token = _module_stat_token(target) if isinstance(target, ModuleType) else None
+        entry = _SOURCE_DIGEST_CACHE.get(key)
+        if entry is None or entry[0] != token:
             body = _module_source_bytes(target) if isinstance(target, ModuleType) else _function_ast_bytes(target)
-            digest = hashlib.sha256(body).digest()
+            entry = (token, hashlib.sha256(body).digest())
             with _AST_CACHE_LOCK:
-                _SOURCE_DIGEST_CACHE[key] = digest
-        hasher.update(key.encode("utf-8") + b"\0" + digest)
+                _SOURCE_DIGEST_CACHE[key] = entry
+        hasher.update(key.encode("utf-8") + b"\0" + entry[1])
     return hasher.digest()
 
 

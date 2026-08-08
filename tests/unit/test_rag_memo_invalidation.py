@@ -50,12 +50,18 @@ def _isolate_caches(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _edit_chunker_source() -> None:
-    """Simulate an edit to rag.py.
+    """Simulate an edit to rag.py by shifting its cached source digest.
 
-    Shifting its source digest is what a real edit does on the next
-    interpreter start.
+    The cache entry is ``(freshness_token, digest)``. The existing token
+    is kept alongside the substitute digest so the entry still looks
+    current - replacing it with a fresh token would make the next lookup
+    recompute the digest from the unedited file on disk and undo the
+    simulated edit.
     """
-    fingerprint_mod._SOURCE_DIGEST_CACHE[rag.__name__] = hashlib.sha256(b"edited").digest()
+    cache = fingerprint_mod._SOURCE_DIGEST_CACHE
+    entry = cache.get(rag.__name__)
+    token = entry[0] if entry is not None else fingerprint_mod._module_stat_token(rag)
+    cache[rag.__name__] = (token, hashlib.sha256(b"edited").digest())
 
 
 class TestChunkerMemoInvalidation:

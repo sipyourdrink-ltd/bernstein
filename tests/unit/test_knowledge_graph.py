@@ -138,9 +138,13 @@ class TestSymbolMemoInvalidation:
         assert cached is not None
         assert cached.imports == {"marker": "old"}
 
-        # Simulate an edit to ast_symbol_graph.py.  Shifting its source digest
-        # is what a real edit does on the next interpreter start.
-        fingerprint_mod._SOURCE_DIGEST_CACHE[semantic_graph.__name__] = hashlib.sha256(b"edited").digest()
+        # Simulate an edit to ast_symbol_graph.py by shifting its source
+        # digest, which is what a real edit does.  The cached freshness token
+        # is kept so the substitute digest survives the staleness check
+        # instead of being immediately recomputed from the unedited file.
+        cache = fingerprint_mod._SOURCE_DIGEST_CACHE
+        token = cache[semantic_graph.__name__][0]
+        cache[semantic_graph.__name__] = (token, hashlib.sha256(b"edited").digest())
 
         monkeypatch.setattr(knowledge_graph, "parse_file_symbols", self._fake_parser("new"))
         refreshed = knowledge_graph._parse_file_symbols_memoized(tmp_path, source, rel_path)

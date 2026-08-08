@@ -1,0 +1,113 @@
+name: SPA bundle freshness
+
+# The SPA that ships in the wheel is a build artefact, and nothing rebuilt it.
+#
+# Problem
+# -------
+# ``web/vite.config.ts`` sets ``build.outDir`` to
+# ``../src/bernstein/gui/static``, so the committed bundle is the output of
+# ``npm run build`` over ``web/package-lock.json``. It is the only generated
+# artefact in the tree with no check that it still matches its input.
+#
+# The gap is not theoretical. The bundle was last rebuilt in #3155; the
+# lockfile then took nineteen dependency updates - including recharts
+# 3.9.2 -> 3.10.1, which moves the chart theme context and the axis helpers -
+# with no rebuild. The wheel shipped a UI built from dependency versions the
+# lockfile no longer pinned, and every check stayed green.
+#
+# The render-freshness gate (#3427) does not cover this. It binds
+# ``docs/assets/webui-*.png`` to a hash of the committed bundle, so it only
+# fires once somebody has already rebuilt; a dependency bump that leaves the
+# bundle behind moves neither side and passes.
+#
+# Fix
+# ---
+# Rebuild ``web/`` from the lockfile and fail if the result differs from what
+# is committed. A Renovate bump to a bundled dependency then fails here until
+# the same PR carries the rebuilt bundle.
+#
+# No job here is named ``CI gate``: the required-check name canary
+# allow-lists exactly two emitters of that string and rejects a third. See
+# docs/operations/ci.md.
+#
+# It also has no ``merge_group`` trigger, so it must not be made a required
+# context as it stands - a required context that cannot report on a queued
+# ref wedges the merge queue (see docs/operations/merge-queue.md). Add the
+# trigger first if branch protection is ever meant to require it.
+
+on:
+  pull_request:
+    paths:
+      - "web/**"
+      - "src/bernstein/gui/static/**"
+      - ".github/workflows/spa-bundle-freshness.yml"
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "src/bernstein/gui/static/**"
+      - ".github/workflows/spa-bundle-freshness.yml"
+
+concurrency:
+  group: spa-bundle-freshness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    name: shipped bundle matches the lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7 # zizmor: ignore[cache-poisoning]
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Rebuild the shipped bundle
+        working-directory: web
+        run: npm run build
+
+      - name: Compare against what is committed
+        run: |
+          # --untracked-files=all matters: `emptyOutDir` deletes the old
+          # content-hashed asset and writes a new one, so the replacement
+          # arrives untracked and `git diff` alone would not see it.
+          STATUS="$(git status --porcelain --untracked-files=all -- src/bernstein/gui/static)"
+          if [ -z "$STATUS" ]; then
+            echo "The committed SPA bundle matches a clean rebuild from web/package-lock.json."
+            exit 0
+          fi
+          echo "::error::The committed SPA bundle does not match a rebuild from web/package-lock.json, so the wheel would ship a UI built from dependency versions the lockfile no longer pins."
+          echo
+          echo "Files that differ:"
+          echo "$STATUS"
+          echo
+          git --no-pager diff --stat -- src/bernstein/gui/static
+          echo
+          echo "Fix locally:"
+          echo "  cd web && npm ci && npm run type-check && npm run build"
+          echo "  git add src/bernstein/gui/static"
+          echo
+          echo "That moves the hash the browser renders are bound to, so also"
+          echo "re-capture the affected screens and rebind them:"
+          echo "  uv run bernstein gui serve --no-open"
+          echo "  uv run python scripts/bind_webui_renders.py --update"
+          echo "See docs/contributing/render-freshness.md."
+          exit 1
