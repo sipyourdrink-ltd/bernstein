@@ -8,7 +8,6 @@ process restart, env-driven path override, and markdown export round-tripping.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
