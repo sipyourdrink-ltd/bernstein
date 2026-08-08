@@ -2,14 +2,14 @@
   "renders": {
     "webui-agents-diffs.png": "adopted",
     "webui-agents-panel.png": "adopted",
-    "webui-agents.png": "adopted",
-    "webui-approvals.png": "adopted",
-    "webui-audit.png": "adopted",
-    "webui-costs.png": "adopted",
-    "webui-fleet.png": "adopted",
-    "webui-settings.png": "adopted",
-    "webui-tasks.png": "adopted"
+    "webui-agents.png": "captured",
+    "webui-approvals.png": "captured",
+    "webui-audit.png": "captured",
+    "webui-costs.png": "captured",
+    "webui-fleet.png": "captured",
+    "webui-settings.png": "captured",
+    "webui-tasks.png": "captured"
   },
   "spa_bundle_files": 4,
-  "spa_bundle_sha256": "d6f39b20e4a8d7c6d6c1f5c6228286554fff110ef1ac2f7dd8402da17d4a3bb3"
+  "spa_bundle_sha256": "7cdf9cc37d379c985417a9df475c26f564400a8fffeb893b2ef71aac5ebb46ff"
 }
