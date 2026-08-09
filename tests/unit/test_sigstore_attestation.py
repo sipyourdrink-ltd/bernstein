@@ -8,6 +8,7 @@ the Ed25519 fallback and the data model / persistence layer.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -377,6 +378,80 @@ class TestVerifyPublicKeyContainment:
         bundle_path = Path(record.bundle_path)
         assert json.loads(bundle_path.read_text())["public_key_file"] == "ed25519-public-key.pem"
         assert verify_local_attestation(bundle_path, attest_dir) is True
+
+
+# ---------------------------------------------------------------------------
+# How the contained key file is opened
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyPublicKeyOpen:
+    """Containment validates a path; the open must reach the same object.
+
+    Checking a path string and later opening that string are two separate
+    lookups, so anything that can write into ``attestation_dir`` could swap a
+    symlink in between them.  The open therefore refuses to follow a link at
+    the named component and insists on a regular file, which removes the
+    window instead of narrowing it.
+    """
+
+    @pytest.fixture
+    def attest_dir(self, tmp_path: Path) -> Path:
+        return tmp_path / "attestations"
+
+    def _bundle_naming(self, attest_dir: Path, key_name: str) -> Path:
+        """Write a genuine bundle whose ``public_key_file`` is ``key_name``."""
+        with patch(
+            "bernstein.core.sigstore_attestation._sigstore_available",
+            return_value=False,
+        ):
+            record = attest_task_completion(
+                task_id="task-open",
+                agent_id="a",
+                diff_sha256="d" * 64,
+                event_hmac="e" * 64,
+                attestation_dir=attest_dir,
+            )
+
+        bundle_path = Path(record.bundle_path)
+        bundle = json.loads(bundle_path.read_text())
+        bundle["public_key_file"] = key_name
+        bundle_path.write_text(json.dumps(bundle))
+        return bundle_path
+
+    @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="O_NOFOLLOW is POSIX-only")
+    def test_refuses_symlink_at_the_named_component(self, attest_dir: Path) -> None:
+        """A symlink is refused even when it points at the real, contained key.
+
+        The link resolves inside the directory, so containment alone is happy
+        with it.  Refusing to follow it is what makes the checked path and the
+        opened file the same object.
+        """
+        bundle_path = self._bundle_naming(attest_dir, "linked-key.pem")
+        (attest_dir / "linked-key.pem").symlink_to(attest_dir / "ed25519-public-key.pem")
+
+        with pytest.raises(ValueError, match="symlink"):
+            verify_local_attestation(bundle_path, attest_dir)
+
+    def test_refuses_non_regular_file(self, attest_dir: Path) -> None:
+        """A directory at the named component is a ValueError, not an OSError.
+
+        Callers already handle ``ValueError`` from this function; letting an
+        ``IsADirectoryError`` escape would make a crafted bundle look like a
+        local I/O fault.
+        """
+        bundle_path = self._bundle_naming(attest_dir, "key-dir")
+        (attest_dir / "key-dir").mkdir()
+
+        with pytest.raises(ValueError, match="not a regular file"):
+            verify_local_attestation(bundle_path, attest_dir)
+
+    def test_missing_key_file_still_raises_oserror(self, attest_dir: Path) -> None:
+        """A genuinely absent key stays an OSError -- that is a local fault."""
+        bundle_path = self._bundle_naming(attest_dir, "no-such-key.pem")
+
+        with pytest.raises(FileNotFoundError):
+            verify_local_attestation(bundle_path, attest_dir)
 
 
 # ---------------------------------------------------------------------------

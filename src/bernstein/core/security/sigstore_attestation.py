@@ -30,11 +30,13 @@ Usage::
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import json
 import logging
 import os
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -470,7 +472,9 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
     if os.path.isabs(raw_key_name) or not pub_key_file.is_relative_to(attestation_root):
         msg = f"Path traversal detected in public_key_file: {raw_key_name!r}"
         raise ValueError(msg)
-    public_key = serialization.load_pem_public_key(pub_key_file.read_bytes())
+    public_key = serialization.load_pem_public_key(
+        _read_contained_key_bytes(attestation_dir, raw_key_name, pub_key_file)
+    )
 
     payload_bytes = AttestationPayload(**bundle["payload"]).canonical_json().encode()
     signature = bytes.fromhex(bundle["signature_hex"])
@@ -485,6 +489,66 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _read_contained_key_bytes(attestation_dir: Path, raw_key_name: str, resolved: Path) -> bytes:
+    """Read the bundle-named public key without following a link at its name.
+
+    The containment check in :func:`verify_local_attestation` validates a path
+    *string*; this open has to reach the object that string was checked
+    against.  Two lookups are two chances to resolve, so anything able to
+    write into ``attestation_dir`` could drop a symlink at the name between
+    the check and the read and steer the verifier onto a key it owns.
+
+    The open is therefore anchored to a descriptor for the attestation
+    directory where the platform offers one, and refuses a symlink at the
+    final component, which closes that window rather than narrowing it.  A
+    non-regular file is rejected too, so a crafted bundle surfaces as the
+    ``ValueError`` callers already handle instead of a stray ``OSError``.
+
+    Args:
+        attestation_dir: Directory the key must be read from.
+        raw_key_name: Bundle-supplied name, already checked for containment.
+        resolved: The resolved path, used where ``dir_fd`` is unavailable.
+
+    Returns:
+        The bytes of the key file.
+
+    Raises:
+        ValueError: If the name is a symlink or not a regular file.
+    """
+    # ``O_BINARY`` matters on Windows, where ``os.open`` would otherwise
+    # translate line endings and hand ``load_pem_public_key`` altered bytes.
+    open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    dir_fd: int | None = None
+    try:
+        if os.open in os.supports_dir_fd:
+            dir_fd = os.open(attestation_dir, os.O_RDONLY)
+            fd = os.open(raw_key_name, open_flags, dir_fd=dir_fd)
+        else:  # pragma: no cover - Windows has neither dir_fd nor O_NOFOLLOW
+            fd = os.open(resolved, open_flags)
+    except OSError as exc:
+        # O_NOFOLLOW reports a symlink at the final component as ELOOP.  Every
+        # other OSError (a missing or unreadable key) is a genuine local fault
+        # and keeps propagating as it did before.
+        if exc.errno == errno.ELOOP:
+            msg = f"public_key_file is a symlink, refusing to follow it: {raw_key_name!r}"
+            raise ValueError(msg) from exc
+        raise
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
+
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            msg = f"public_key_file is not a regular file: {raw_key_name!r}"
+            raise ValueError(msg)
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
 
 
 def _save_record_index(attestation_dir: Path, record: AttestationRecord) -> None:
