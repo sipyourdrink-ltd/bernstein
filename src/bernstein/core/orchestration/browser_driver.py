@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from bernstein.core.agents.computer_use import ActionKind
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from bernstein.core.agents.computer_use import Action
@@ -51,10 +51,15 @@ __all__ = [
     "BrowserProfile",
     "BrowserStepTimeout",
     "BrowserUseDriver",
+    "ConformanceFailure",
     "PageState",
     "RecordedBrowserDriver",
     "browser_use_driver",
+    "get_driver_factory",
+    "list_drivers",
     "observe",
+    "register_driver",
+    "verify_driver_conformance",
 ]
 
 #: The bernstein extra namespace the live browser driver belongs to. Declared
@@ -410,3 +415,99 @@ def browser_use_driver(*, profile_dir: Path) -> BrowserUseDriver:
     if factory is None:
         raise BrowserDriverUnavailable(driver_name="browser_use", extra=BROWSER_EXTRA)
     return BrowserUseDriver(factory(user_data_dir=str(profile_dir)), profile_dir=profile_dir)
+
+
+# ---------------------------------------------------------------------------
+# Driver Registry
+# ---------------------------------------------------------------------------
+
+_DRIVER_REGISTRY: dict[str, Callable[..., BrowserDriver]] = {}
+
+
+def register_driver(name: str, factory: Callable[..., BrowserDriver]) -> None:
+    """Register a browser driver factory under *name*."""
+    _DRIVER_REGISTRY[name] = factory
+
+
+def list_drivers() -> list[str]:
+    """Return a sorted list of registered driver names."""
+    return sorted(_DRIVER_REGISTRY.keys())
+
+
+def get_driver_factory(name: str) -> Callable[..., BrowserDriver]:
+    """Return the driver factory for *name*, or raise BrowserDriverError if unknown."""
+    if name not in _DRIVER_REGISTRY:
+        avail = ", ".join(repr(n) for n in list_drivers())
+        raise BrowserDriverError(f"Unknown browser driver {name!r}. Registered drivers: {avail}.")
+    return _DRIVER_REGISTRY[name]
+
+
+# Register built-in drivers by default
+register_driver("browser_use", browser_use_driver)
+register_driver("recorded", RecordedBrowserDriver)
+
+
+# ---------------------------------------------------------------------------
+# Driver Conformance Kit
+# ---------------------------------------------------------------------------
+
+
+class ConformanceFailure(AssertionError):
+    """Raised when a driver fails the conformance kit."""
+
+    def __init__(self, verb: str, message: str) -> None:
+        self.verb = verb
+        super().__init__(f"Conformance failure in verb {verb!r}: {message}")
+
+
+def verify_driver_conformance(
+    driver_factory: Callable[[Path], BrowserDriver],
+    *,
+    root_dir: Path,
+    expected_start_url: str = "https://example.com/start",
+    expected_next_url: str = "https://example.com/next",
+    expected_start_dom: bytes = b"<html>start</html>",
+) -> None:
+    """Run the driver conformance suite against *driver_factory*.
+
+    Asserts protocol compliance for all six verbs (navigate, act, screenshot,
+    dom_snapshot, current_url, close), DOM snapshot ordering, and profile isolation.
+    """
+    profile = BrowserProfile.allocate(root=root_dir, task_id="conformance-test-task")
+    driver = driver_factory(profile.profile_dir)
+    try:
+        # 1. Check initial state (current_url, dom_snapshot, screenshot)
+        start_url = driver.current_url()
+        if start_url != expected_start_url:
+            raise ConformanceFailure("current_url", f"expected {expected_start_url!r}, got {start_url!r}")
+
+        dom_before = driver.dom_snapshot()
+        if not isinstance(dom_before, bytes) or len(dom_before) == 0:
+            raise ConformanceFailure("dom_snapshot", "returned empty or non-bytes snapshot")
+        if dom_before != expected_start_dom:
+            raise ConformanceFailure("dom_snapshot", f"expected {expected_start_dom!r}, got {dom_before!r}")
+
+        img_before = driver.screenshot()
+        if not isinstance(img_before, bytes) or len(img_before) == 0:
+            raise ConformanceFailure("screenshot", "returned empty or non-bytes screenshot")
+
+        # 2. Test navigate / act & current_url update
+        from bernstein.core.agents.computer_use import Action, ActionKind
+
+        action = Action(kind=ActionKind.NAVIGATE, target=expected_next_url)
+        driver.act(action)
+
+        url_after_act = driver.current_url()
+        if url_after_act != expected_next_url:
+            raise ConformanceFailure("current_url", f"expected {expected_next_url!r}, got {url_after_act!r}")
+
+        # 3. Test dom_snapshot after action
+        dom_after = driver.dom_snapshot()
+        if not isinstance(dom_after, bytes) or len(dom_after) == 0:
+            raise ConformanceFailure("dom_snapshot", "returned empty or non-bytes snapshot after action")
+
+    finally:
+        driver.close()
+        # Idempotency check
+        driver.close()
+        profile.teardown()

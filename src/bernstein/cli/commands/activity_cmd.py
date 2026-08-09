@@ -303,6 +303,12 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     help="Drive a recorded observation tape instead of a live browser (offline, deterministic).",
 )
 @click.option(
+    "--driver",
+    "driver_name",
+    default=None,
+    help="Select browser driver backend by registered name (e.g. browser_use).",
+)
+@click.option(
     "--workdir",
     "-w",
     type=click.Path(file_okay=False, exists=True),
@@ -316,6 +322,7 @@ def browser_run_cmd(
     run_id: str,
     stage_id: str,
     recording_path: str | None,
+    driver_name: str | None,
     workdir: str,
     as_json: bool,
 ) -> None:
@@ -332,8 +339,9 @@ def browser_run_cmd(
     from bernstein.core.orchestration.activity_modalities import ContentStore
     from bernstein.core.orchestration.browser_driver import (
         BrowserDriver,
+        BrowserDriverError,
         RecordedBrowserDriver,
-        browser_use_driver,
+        get_driver_factory,
     )
     from bernstein.core.orchestration.browser_worker import BrowserBudgetExceeded, BrowserWorker
     from bernstein.core.replay.journal import EventJournal
@@ -348,9 +356,14 @@ def browser_run_cmd(
         def build(profile_dir: Path) -> BrowserDriver:
             return RecordedBrowserDriver(frames, profile_dir=profile_dir)
     else:
+        dname = driver_name or "browser_use"
+        try:
+            factory = get_driver_factory(dname)
+        except BrowserDriverError as exc:
+            raise click.BadParameter(str(exc)) from exc
 
         def build(profile_dir: Path) -> BrowserDriver:
-            return browser_use_driver(profile_dir=profile_dir)
+            return factory(profile_dir=profile_dir)
 
     worker = BrowserWorker(
         store=ContentStore(sdd_dir / "cas"),
