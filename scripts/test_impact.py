@@ -7,7 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).parent.parent
 CACHE_PATH = ROOT / ".sdd" / "test_deps.json"
@@ -56,9 +56,12 @@ def load_or_build_dep_map() -> dict[str, Any]:
     """Return the cached dependency map, rebuilding it if stale."""
     if CACHE_PATH.exists():
         try:
-            cached: dict[str, Any] = json.loads(CACHE_PATH.read_text())
-            if _cache_is_fresh(cached):
-                return cached
+            # A cache whose root is not an object reaches `.get` as an
+            # AttributeError, which this handler does not catch: a truncated or
+            # hand-edited file would abort the selector rather than rebuild.
+            cached: object = json.loads(CACHE_PATH.read_text())
+            if isinstance(cached, dict) and _cache_is_fresh(cast("dict[str, Any]", cached)):
+                return cast("dict[str, Any]", cached)
         except (json.JSONDecodeError, KeyError, OSError):
             pass
 

@@ -611,3 +611,24 @@ class TestGetAffectedTests:
             ti.ROOT = orig_root
 
         assert affected == []
+
+
+class TestCacheLoading:
+    def test_a_cache_whose_root_is_not_an_object_rebuilds_instead_of_raising(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`.get` on a list raises AttributeError, which the loader does not catch.
+
+        A truncated or hand-edited cache would abort the selector rather than
+        fall back to rebuilding it, so every consumer of `--affected` fails on a
+        file the tool itself is free to discard.
+        """
+        import test_impact as ti  # type: ignore[import]
+
+        cache = tmp_path / "test_deps.json"
+        cache.write_text("[]", encoding="utf-8")
+        rebuilt = {"version": ti.CACHE_VERSION, "test_deps": {}, "source_imports": {}}
+        monkeypatch.setattr(ti, "CACHE_PATH", cache)
+        monkeypatch.setattr(ti, "build_dep_map", lambda: rebuilt)
+
+        assert ti.load_or_build_dep_map() == rebuilt
