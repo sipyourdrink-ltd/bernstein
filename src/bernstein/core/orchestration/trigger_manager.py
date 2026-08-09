@@ -12,6 +12,7 @@ import fnmatch
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import asdict
@@ -100,10 +101,24 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
         if not isinstance(raw, dict) or "name" not in raw or "source" not in raw:
             logger.warning("Skipping malformed trigger entry: %r", raw)
             continue
-        # The evaluator skips these on a falsy check every tick, which is silent.
-        # Say so once, at load, so an operator learns the trigger is inert.
-        if raw["source"] == "cron" and not raw.get("schedule"):
-            logger.warning("Cron trigger %r has no usable schedule and will never fire", raw["name"])
+        # TriggerConfig.schedule is str | None, but YAML hands back whatever was
+        # written: `schedule: 30` unquoted arrives as an int and used to be
+        # carried in unchecked, making the declared type a fiction and deferring
+        # the failure to croniter. Drop non-strings here so the dataclass tells
+        # the truth. Syntax is still the evaluator's business - validating it
+        # needs croniter, which is optional.
+        schedule = raw.get("schedule")
+        if raw["source"] == "cron":
+            if schedule is not None and not isinstance(schedule, str):
+                logger.warning(
+                    "Cron trigger %r has a %s schedule, not a string; it will never fire",
+                    raw["name"],
+                    type(schedule).__name__,
+                )
+                schedule = None
+            elif not schedule:
+                # The evaluator skips these on a falsy check every tick, silently.
+                logger.warning("Cron trigger %r has no usable schedule and will never fire", raw["name"])
         task_raw = raw.get("task", {})
         configs.append(
             TriggerConfig(
@@ -113,7 +128,7 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
                 filters=dict(raw.get("filters", {})),
                 conditions=dict(raw.get("conditions", {})),
                 task=_parse_task_template(task_raw),
-                schedule=raw.get("schedule"),
+                schedule=schedule,
             )
         )
     return configs
@@ -514,8 +529,19 @@ class TriggerManager:
     def _save_cron_state(self) -> None:
         path = self._runtime_dir / "cron_state.json"
         data = {k: {"last_fire_minute": v, "last_fired": time.time()} for k, v in self._cron_state.items()}
-        with path.open("w") as f:
-            json.dump(data, f)
+        # Write to a sibling and rename over the target. Opening the real file
+        # "w" truncates it before the content lands, and _load_cron_state reads
+        # a corrupt file as empty state - so an interrupted write did not lose
+        # one entry, it replayed every cron trigger on the next start.
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            with tmp.open("w") as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     # -- Fire log -----------------------------------------------------------
 

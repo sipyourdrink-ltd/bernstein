@@ -187,6 +187,26 @@ class TestLoadTriggerConfigs:
         with pytest.raises(ValueError, match="triggers"):
             load_trigger_configs(path)
 
+    def test_non_string_cron_schedule_is_rejected_at_load(
+        self, sdd_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``TriggerConfig.schedule`` is ``str | None``; YAML must not smuggle an int in.
+
+        ``schedule: 30`` unquoted decodes as an int and was carried into the
+        dataclass unchecked, so the declared type was a fiction and the value
+        only failed much later, inside croniter.
+        """
+        path = sdd_dir / "config" / "triggers.yaml"
+        entry = {"name": "int-schedule", "source": "cron", "schedule": 30, "task": {"title": "t", "role": "qa"}}
+        with open(path, "w") as f:
+            yaml.dump({"version": 1, "triggers": [entry]}, f)
+
+        with caplog.at_level("WARNING"):
+            configs = load_trigger_configs(path)
+
+        assert configs[0].schedule is None
+        assert "int-schedule" in caplog.text
+
     @pytest.mark.parametrize("schedule", [None, "", 0])
     def test_cron_trigger_without_usable_schedule_is_reported(
         self, sdd_dir: Path, caplog: pytest.LogCaptureFixture, schedule: Any
@@ -872,6 +892,37 @@ class TestCronEvaluation:
         assert len(attempts) == 2, "the dropped write was never retried"
         state = json.loads((sdd_dir / "runtime" / "triggers" / "cron_state.json").read_text())
         assert "every-minute" in state
+
+    def test_interrupted_state_write_leaves_the_previous_file_intact(
+        self, sdd_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A half-finished write must not degrade to "no state at all".
+
+        _load_cron_state treats a corrupt file as empty, so a truncating write
+        that dies mid-serialisation would replay every cron fire on restart.
+        """
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+        assert len(mgr.evaluate_cron_triggers()) == 1
+
+        state_path = sdd_dir / "runtime" / "triggers" / "cron_state.json"
+        good = state_path.read_text()
+        assert json.loads(good)
+
+        from bernstein.core.orchestration import trigger_manager as module
+
+        def _dump_then_die(obj: Any, fp: Any, *args: Any, **kwargs: Any) -> None:
+            fp.write('{"every-minute": {"last_fire_min')  # truncated on purpose
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(module.json, "dump", _dump_then_die)
+
+        mgr._cron_state["late-arrival"] = "2023-11-15T00:14"
+        mgr._cron_state_dirty = True
+        mgr._flush_cron_state()
+
+        assert state_path.read_text() == good, "the previous state was clobbered"
+        assert mgr._cron_state_dirty is True, "a failed write must stay pending"
 
     def test_malformed_schedule_does_not_block_other_triggers(self, sdd_dir: Path) -> None:
         _write_triggers(
