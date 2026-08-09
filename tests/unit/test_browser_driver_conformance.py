@@ -632,6 +632,7 @@ def test_kit_refuses_a_tape_that_is_not_three_frames(tmp_path: Path) -> None:
 def test_driver_registry_lists_the_built_ins() -> None:
     drivers = list_drivers()
     assert "browser_use" in drivers
+    assert "playwright" in drivers
     assert "recorded" in drivers
     assert drivers == sorted(drivers)
 
@@ -718,8 +719,16 @@ def test_cli_refuses_the_recorded_driver_selected_by_name(tmp_path: Path) -> Non
     assert "driver_error" not in res.output
 
 
-def test_cli_refuses_driver_together_with_recording(tmp_path: Path) -> None:
-    """--recording must not silently win and leave an unknown --driver unrefused."""
+@pytest.mark.parametrize("driver_name", ["unknown_driver", "playwright"])
+def test_cli_refuses_driver_together_with_recording(tmp_path: Path, driver_name: str) -> None:
+    """--recording must not silently win and leave an unknown --driver unrefused.
+
+    Parametrised over a name the registry does not know and a live backend it
+    does: both name the backend a second time, so the refusal cannot depend on
+    whether the name happens to resolve. Accepting a resolvable live driver and
+    then driving the tape would report a run as having used a backend it never
+    touched.
+    """
     flow_file = tmp_path / "flow.json"
     flow_file.write_text('{"flow_id": "f1", "start_url": "https://example.com", "steps": []}')
     tape_file = tmp_path / "tape.json"
@@ -738,7 +747,7 @@ def test_cli_refuses_driver_together_with_recording(tmp_path: Path) -> None:
             "--recording",
             str(tape_file),
             "--driver",
-            "unknown_driver",
+            driver_name,
         ],
     )
     assert res.exit_code != 0

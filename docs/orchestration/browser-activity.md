@@ -132,7 +132,7 @@ The worker never imports a concrete browser tool. It drives a `BrowserDriver`:
 maps its own vocabulary onto `ActionKind` before handing an action in, so a second
 driver is added without touching the activity boundary.
 
-Two drivers ship:
+Three drivers ship:
 
 - `browser_use_driver(profile_dir=...)` builds the live driver backed by the
   optional `browser-use` package. The backend is not vendored into the project
@@ -141,6 +141,17 @@ Two drivers ship:
   `BrowserDriverUnavailable` naming the install target
   (`pip install 'browser-use>=0.7'`), never an `ImportError` surfacing from
   inside a run.
+- `playwright_browser_driver(profile_dir=...)` builds the live driver backed by
+  the optional `playwright` package. It hands the per-task profile directory to
+  `launch_persistent_context` as the browser's `user_data_dir`, so the cookie jar
+  and local storage are scoped by the browser process itself rather than by
+  convention, and it records the build identity it launched
+  (`"<browser_type>-<version>"`, or `chromium-unknown` when the backend cannot
+  name its own version -- an unpinned run says so rather than reporting a
+  plausible number). A missing install refuses with the two steps that actually
+  fix it (`pip install 'playwright>=1.40' && playwright install chromium`); a
+  backend that is installed but failed to launch is a `BrowserDriverError`, not a
+  refusal with an install hint the operator does not need.
 - `RecordedBrowserDriver(frames)` drives a fixed tape of recorded observations.
   This is the offline replay driver, and it is what makes replay determinism a
   checkable property: re-running a flow over the same tape must reproduce a

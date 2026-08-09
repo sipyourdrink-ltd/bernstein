@@ -306,7 +306,7 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     "--driver",
     "driver_name",
     default=None,
-    help="Select browser driver backend by registered name (e.g. browser_use).",
+    help="Select browser driver backend by registered name (e.g. browser_use, playwright).",
 )
 @click.option(
     "--workdir",

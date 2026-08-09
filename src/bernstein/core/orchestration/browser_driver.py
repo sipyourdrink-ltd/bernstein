@@ -6,7 +6,7 @@ The browser worker never imports a concrete browser tool. It drives a
 added without touching the activity boundary, and so the whole determinism and
 tamper-evidence suite runs against a recorded observation tape with no network.
 
-Three pieces live here:
+The pieces that live here:
 
 * :class:`BrowserDriver` -- the protocol, and :func:`observe`, the helper that
   folds one driver's three read verbs into a single :class:`PageState`.
@@ -21,6 +21,10 @@ Three pieces live here:
   coordination) even when they drive the same flow document, and the profile is
   torn down when the task reaches a terminal state so no cookie survives into
   another task.
+* :class:`PlaywrightBrowserDriver` -- a second live backend (#3115). It hands the
+  per-task profile directory to ``launch_persistent_context`` as the browser's
+  ``user_data_dir``, so isolation is enforced by the browser process rather than
+  by convention on our side, and it pins the build identity it ran under.
 
 Failure is typed, never free text. :class:`BrowserDriverUnavailable` names the
 pip package to install, :class:`BrowserStepTimeout` marks a step that did not
@@ -33,9 +37,9 @@ from __future__ import annotations
 
 import hashlib
 import shutil
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 from uuid import uuid4
 
 from bernstein.core.agents.computer_use import Action, ActionKind
@@ -45,6 +49,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "UNKNOWN_BUILD_VERSION",
     "BrowserDriver",
     "BrowserDriverError",
     "BrowserDriverUnavailable",
@@ -53,11 +58,14 @@ __all__ = [
     "BrowserUseDriver",
     "ConformanceFailure",
     "PageState",
+    "PlaywrightBrowserDriver",
     "RecordedBrowserDriver",
     "browser_use_driver",
     "get_driver_factory",
     "list_drivers",
     "observe",
+    "playwright_browser_driver",
+    "record_tape_from_driver",
     "register_driver",
     "verify_driver_conformance",
 ]
@@ -67,9 +75,22 @@ __all__ = [
 #: lock stay lean and license-clean; the live backend is installed on demand.
 BROWSER_EXTRA = "browser"
 
-#: The pip package that backs the live driver. Named in the typed refusal so an
-#: operator is told exactly what to install rather than left to guess.
+#: The pip package that backs the live ``browser-use`` driver.
 BROWSER_DRIVER_PACKAGE = "browser-use>=0.7"
+
+#: The pip package that backs the Playwright driver. Installing it is two steps:
+#: the wheel does not bring a browser, so a run that stopped at the wheel refuses
+#: again at launch with a message about a missing executable.
+PLAYWRIGHT_DRIVER_PACKAGE = "playwright>=1.40"
+
+#: How each live backend is installed, keyed by registered driver name. Named in
+#: the typed refusal so an operator is told exactly what to install rather than
+#: left to guess, and keyed by driver so a second backend does not inherit the
+#: first one's install command.
+_INSTALL_COMMANDS: dict[str, str] = {
+    "browser_use": f"pip install '{BROWSER_DRIVER_PACKAGE}'",
+    "playwright": f"pip install '{PLAYWRIGHT_DRIVER_PACKAGE}' && playwright install chromium",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -98,9 +119,11 @@ class BrowserDriverUnavailable(BrowserDriverError):
     """The requested driver is not installed.
 
     Mapped onto :attr:`~bernstein.core.orchestration.activity.TerminalState.REFUSED`
-    with the ``driver_unavailable`` reason code. The message names the pip package
-    to install so the refusal is actionable -- the backend is not vendored via a
-    bernstein extra, so pointing at the extra alone would install nothing.
+    with the ``driver_unavailable`` reason code. The message names the install
+    command for *the driver that was asked for* so the refusal is actionable --
+    no backend is vendored via a bernstein extra, so pointing at the extra alone
+    would install nothing, and quoting one backend's command for another sends
+    the operator to install a package that will not make their run work.
 
     Attributes:
         driver_name: The driver that could not be constructed.
@@ -110,9 +133,11 @@ class BrowserDriverUnavailable(BrowserDriverError):
     def __init__(self, *, driver_name: str, extra: str) -> None:
         self.driver_name = driver_name
         self.extra = extra
-        super().__init__(
-            f"Browser driver {driver_name!r} is not installed. Install it with: pip install '{BROWSER_DRIVER_PACKAGE}'."
-        )
+        install = _INSTALL_COMMANDS.get(driver_name)
+        # A third-party backend registered from outside this module has no entry
+        # here. Saying nothing beats quoting a built-in's command at it.
+        hint = f" Install it with: {install}." if install is not None else ""
+        super().__init__(f"Browser driver {driver_name!r} is not installed.{hint}")
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +443,349 @@ def browser_use_driver(*, profile_dir: Path) -> BrowserUseDriver:
 
 
 # ---------------------------------------------------------------------------
+# Optional Playwright driver
+# ---------------------------------------------------------------------------
+
+
+class _SyncPlaywrightManager(Protocol):
+    """The slice of Playwright's sync context manager this module drives.
+
+    ``sync_playwright()`` returns a context manager. Calling ``start()`` enters
+    it without a ``with`` block, so the *driver* owns the runtime's lifetime and
+    stops it on ``close`` rather than a lexical scope ending it mid-flow.
+    """
+
+    def start(self) -> object:
+        """Start the Playwright runtime and return it."""
+        ...
+
+
+def _import_playwright() -> Callable[[], _SyncPlaywrightManager] | None:
+    """Return ``playwright.sync_api.sync_playwright``, or ``None`` when absent.
+
+    Split out so the availability probe is a single seam, the same way
+    :func:`_import_browser_use` is: the refusal path is exercised without
+    depending on whether the backend happens to be installed.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    # The backend ships no stubs this build resolves, so the import lands as an
+    # unknown symbol. Naming the slice we use keeps the callers checked instead
+    # of letting the whole factory decay into ``Any``.
+    return cast("Callable[[], _SyncPlaywrightManager]", sync_playwright)
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    """Report whether *exc* is a step deadline rather than a driver fault.
+
+    ``playwright.sync_api.TimeoutError`` derives from Playwright's own ``Error``
+    base, not from the builtin :class:`TimeoutError`, so an ``isinstance`` check
+    against the builtin alone never fires: every Playwright deadline would reach
+    the worker as :class:`BrowserDriverError` and land on ``FAILED`` instead of
+    ``TIMED_OUT``. Matching the class by name and root package keeps the check
+    honest without importing the optional backend at module scope.
+
+    Args:
+        exc: The exception raised by a Playwright call.
+
+    Returns:
+        ``True`` when the exception denotes an expired step deadline.
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    cls = type(exc)
+    return cls.__name__ == "TimeoutError" and cls.__module__.partition(".")[0] == "playwright"
+
+
+#: The action kinds :meth:`PlaywrightBrowserDriver.act` maps onto a concrete
+#: Playwright call. The rest are refused at the boundary rather than guessed at,
+#: so the implemented set is a closed, readable list instead of whatever the page
+#: object happens to expose under a matching attribute name.
+_PLAYWRIGHT_ACTION_KINDS: frozenset[ActionKind] = frozenset({ActionKind.NAVIGATE, ActionKind.CLICK, ActionKind.KEY})
+
+#: Build-identity component used when the backend cannot name its own version.
+#: Deliberately not version-shaped: a run whose evidence cannot name the renderer
+#: that produced it has to say so, not report a plausible number nobody pinned.
+UNKNOWN_BUILD_VERSION = "unknown"
+
+
+class PlaywrightBrowserDriver:
+    """Live driver backed by Playwright with per-task profile isolation (#3115).
+
+    Constructed through :func:`playwright_browser_driver`, which is where the
+    isolation and the refusal live: it launches the context against the per-task
+    profile directory as the browser's ``user_data_dir`` and turns a missing
+    backend into :class:`BrowserDriverUnavailable`. Constructing this class
+    directly binds it to whatever context the caller already has.
+
+    The driver owns what the factory started. :meth:`close` closes the context and
+    stops the Playwright runtime, and is idempotent as the protocol requires.
+
+    Args:
+        context: The Playwright ``BrowserContext`` the session runs in.
+        page: The page within *context* the verbs act on.
+        profile_dir: The isolated per-task profile directory the context was
+            launched against. Kept so isolation assertions can read it back.
+        build_id: The build identity of the browser behind *context*, as
+            ``"<browser_type>-<version>"``. Recorded on the driver; not yet
+            carried into the anchored activity report.
+        playwright_obj: The Playwright runtime to stop on close, when this driver
+            owns one.
+    """
+
+    def __init__(
+        self,
+        context: object,
+        page: object,
+        *,
+        profile_dir: Path,
+        build_id: str = UNKNOWN_BUILD_VERSION,
+        playwright_obj: object | None = None,
+    ) -> None:
+        self.context = context
+        self.page = page
+        self.profile_dir = profile_dir
+        self.build_id = build_id
+        self._playwright_obj = playwright_obj
+        self.closed = False
+
+    def _invoke(self, label: str, method: Callable[..., object], *args: object, **kwargs: object) -> object:
+        """Call *method*, mapping any failure onto the typed driver errors."""
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            if _is_timeout_error(exc):
+                raise BrowserStepTimeout(f"Playwright {label} timed out") from exc
+            raise BrowserDriverError(f"Playwright {label} failed: {type(exc).__name__}") from exc
+
+    def _call_page(self, name: str, *args: object, **kwargs: object) -> object:
+        """Invoke a page method by name, mapping any failure onto a typed error."""
+        method = getattr(self.page, name, None)
+        if method is None:
+            raise BrowserDriverError(f"Playwright page does not expose {name!r}")
+        return self._invoke(name, method, *args, **kwargs)
+
+    def navigate(self, url: str) -> None:
+        """Navigate to *url*."""
+        self._call_page("goto", url)
+
+    def _press_key(self, key: str) -> None:
+        """Press *key* through the page keyboard."""
+        press = getattr(getattr(self.page, "keyboard", None), "press", None)
+        if press is None:
+            raise BrowserDriverError("Playwright page does not expose 'keyboard.press'")
+        self._invoke("keyboard.press", press, key)
+
+    def act(self, action: Action) -> None:
+        """Map *action* onto a Playwright call, or refuse with a typed error.
+
+        Only the kinds whose Playwright call is fully determined by
+        ``(kind, target)`` are mapped. Every other kind raises
+        :class:`BrowserDriverError` rather than resolving
+        ``getattr(page, str(action.kind))``: a dynamic lookup turns ``select`` or
+        ``submit`` into whatever page attribute happens to share the name, with
+        an argument shape nobody checked, and an unmapped kind then fails
+        somewhere inside the browser instead of at this boundary.
+
+        ``TYPE`` is refused deliberately. The anchored action vocabulary carries
+        only :attr:`~bernstein.core.agents.computer_use.Action.value_digest` --
+        the SHA-256 of the typed value, never the keystrokes -- so the text to
+        fill does not exist at this boundary. Filling the digest would type 64
+        hex characters into the field and call it a successful step.
+
+        Args:
+            action: The canonicalised action to perform.
+
+        Raises:
+            BrowserDriverError: When the kind has no determined Playwright call.
+            BrowserStepTimeout: When the underlying call exceeded its deadline.
+        """
+        if action.kind is ActionKind.NAVIGATE:
+            self.navigate(action.target)
+            return
+        if action.kind is ActionKind.CLICK:
+            self._call_page("click", action.target)
+            return
+        if action.kind is ActionKind.KEY:
+            self._press_key(action.target)
+            return
+        if action.kind is ActionKind.TYPE:
+            raise BrowserDriverError(
+                "Playwright driver cannot perform a 'type' action: the anchored action carries only "
+                "value_digest, never the typed value, so there is no text to fill."
+            )
+        raise BrowserDriverError(
+            f"Playwright driver does not implement action kind {action.kind.value!r}. "
+            f"Implemented kinds: {', '.join(sorted(k.value for k in _PLAYWRIGHT_ACTION_KINDS))}."
+        )
+
+    def screenshot(self) -> bytes:
+        """Return the current viewport screenshot bytes.
+
+        The viewport, not the whole document: the observation hash binds a
+        decision to the bytes it was made on, and ``full_page=True`` would fold
+        content below the fold into that hash.
+        """
+        raw = self._call_page("screenshot")
+        return raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
+
+    def dom_snapshot(self) -> bytes:
+        """Return the serialized DOM bytes."""
+        raw = self._call_page("content")
+        if isinstance(raw, bytes):
+            return raw
+        return raw.encode("utf-8") if isinstance(raw, str) else str(raw).encode("utf-8")
+
+    def current_url(self) -> str:
+        """Return the current page URL."""
+        return str(getattr(self.page, "url", ""))
+
+    def close(self) -> None:
+        """Close the context and stop the runtime this driver owns. Idempotent."""
+        if self.closed:
+            return
+        self.closed = True
+        close_ctx = getattr(self.context, "close", None)
+        if close_ctx is not None:
+            with suppress(Exception):
+                close_ctx()
+        if self._playwright_obj is not None:
+            stop_pw = getattr(self._playwright_obj, "stop", None)
+            if stop_pw is not None:
+                with suppress(Exception):
+                    stop_pw()
+
+
+def _playwright_build_id(context: object, *, browser_type: str) -> str:
+    """Return the pinned build identity of the browser behind *context*."""
+    browser_obj = getattr(context, "browser", None)
+    version = str(getattr(browser_obj, "version", "") or "").strip() if browser_obj is not None else ""
+    return f"{browser_type}-{version or UNKNOWN_BUILD_VERSION}"
+
+
+def _stop_quietly(target: object, method: str) -> None:
+    """Best-effort teardown used while unwinding a failed construction."""
+    call = getattr(target, method, None)
+    if call is not None:
+        with suppress(Exception):
+            call()
+
+
+def playwright_browser_driver(
+    *,
+    profile_dir: Path,
+    browser_type: str = "chromium",
+    headless: bool = True,
+) -> PlaywrightBrowserDriver:
+    """Build the Playwright driver bound to *profile_dir*, or refuse with a typed error.
+
+    The profile directory is handed to ``launch_persistent_context`` as the
+    browser's ``user_data_dir``, so the cookie jar and local storage are scoped
+    by the browser process itself rather than by convention on our side.
+
+    Everything started here is owned by the returned driver. If any later step
+    fails, the runtime and the context are torn down before the error leaves, so
+    a refused construction does not strand a Playwright node process.
+
+    *profile_dir* is keyword-only and the remaining arguments are defaulted, so
+    the function satisfies the registry calling contract -- every registered
+    factory is invoked as ``factory(profile_dir=...)`` and nothing else -- while
+    still being usable directly with a different browser type.
+
+    Args:
+        profile_dir: The isolated per-task profile directory to launch against.
+        browser_type: The Playwright browser type attribute to launch.
+        headless: Whether to launch the browser headless.
+
+    Returns:
+        A :class:`PlaywrightBrowserDriver` bound to *profile_dir*.
+
+    Raises:
+        BrowserDriverUnavailable: When the backend is not installed, or does not
+            expose *browser_type*. Mapped onto ``REFUSED``.
+        BrowserDriverError: When the backend is installed but the runtime or the
+            browser failed to start. A browser that crashed on launch is not an
+            uninstalled backend, so the two never collapse onto one terminal
+            state and onto one install instruction the operator does not need.
+    """
+    sync_pw = _import_playwright()
+    if sync_pw is None:
+        raise BrowserDriverUnavailable(driver_name="playwright", extra=BROWSER_EXTRA)
+    try:
+        pw: object = sync_pw().start()
+    except Exception as exc:
+        raise BrowserDriverError(f"Playwright runtime failed to start: {type(exc).__name__}") from exc
+
+    with ExitStack() as stack:
+        stack.callback(_stop_quietly, pw, "stop")
+        b_type = getattr(pw, browser_type, None)
+        if b_type is None:
+            raise BrowserDriverUnavailable(driver_name="playwright", extra=BROWSER_EXTRA)
+        try:
+            context = b_type.launch_persistent_context(str(profile_dir), headless=headless)
+        except Exception as exc:
+            raise BrowserDriverError(f"Playwright {browser_type} failed to launch: {type(exc).__name__}") from exc
+        stack.callback(_stop_quietly, context, "close")
+        try:
+            pages = tuple(getattr(context, "pages", ()) or ())
+            page = pages[0] if pages else context.new_page()
+        except Exception as exc:
+            raise BrowserDriverError(f"Playwright {browser_type} exposed no usable page: {type(exc).__name__}") from exc
+        driver = PlaywrightBrowserDriver(
+            context=context,
+            page=page,
+            profile_dir=profile_dir,
+            build_id=_playwright_build_id(context, browser_type=browser_type),
+            playwright_obj=pw,
+        )
+        # Construction succeeded: the driver owns the context and the runtime now,
+        # so the unwind callbacks must not also close them.
+        stack.pop_all()
+    return driver
+
+
+def record_tape_from_driver(
+    driver: BrowserDriver,
+    steps: Sequence[Action],
+    *,
+    start_url: str | None = None,
+) -> tuple[PageState, ...]:
+    """Record a tape of :class:`PageState` frames from a live driver session.
+
+    One observation is captured before each action in *steps*, plus one after the
+    final action, so the tape holds ``len(steps) + 1`` frames and frame *i* is
+    exactly the state that justified ``steps[i]``. That is the ordering
+    :class:`RecordedBrowserDriver` replays and the one the worker anchors, so a
+    tape recorded here replays to the same head anchor as the live session.
+
+    The optional *start_url* navigation happens *before* the first observation
+    and is not itself a frame: it puts the session at the flow's starting state
+    rather than recording a step. A replay therefore starts at frame 0 already
+    and must not re-issue that navigation, or it advances the tape by one and
+    reads every state one step late.
+
+    Args:
+        driver: The live driver to read.
+        steps: The actions to issue, in order.
+        start_url: When set, navigated to before the first observation.
+
+    Returns:
+        The recorded frames, in capture order, ready for
+        :class:`RecordedBrowserDriver`.
+    """
+    if start_url is not None:
+        driver.navigate(start_url)
+
+    frames: list[PageState] = [observe(driver)]
+    for action in steps:
+        driver.act(action)
+        frames.append(observe(driver))
+    return tuple(frames)
+
+
+# ---------------------------------------------------------------------------
 # Driver Registry
 # ---------------------------------------------------------------------------
 
@@ -509,6 +877,7 @@ def _recorded_driver_needs_a_tape(*, profile_dir: Path) -> BrowserDriver:
 
 # Register built-in drivers by default
 register_driver("browser_use", browser_use_driver)
+register_driver("playwright", playwright_browser_driver)
 register_driver(RECORDED_DRIVER_NAME, _recorded_driver_needs_a_tape)
 
 
