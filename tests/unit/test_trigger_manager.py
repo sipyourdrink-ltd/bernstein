@@ -921,6 +921,29 @@ class TestCronEvaluation:
 
         assert mgr.evaluate_cron_triggers() == []
 
+    @pytest.mark.parametrize(
+        ("offset", "due"), [(0.0, False), (10.0, False), (29.0, False), (30.0, True), (45.0, True)]
+    )
+    def test_sub_minute_schedule_keeps_its_phase(
+        self, sdd_dir: Path, monkeypatch: pytest.MonkeyPatch, offset: float, due: bool
+    ) -> None:
+        """A 6-field schedule fires at the second it names, not at the minute's start.
+
+        croniter's 6-field form puts seconds last, so ``* * * * * 30`` fires at
+        :30 of every minute. Fixing the minute boundary by anchoring the search
+        on the *start of the next minute* would report that fire for any tick in
+        the minute, moving it up to 59s early. The boundary check is a question
+        about ``now`` alone, so it leaves the phase intact.
+        """
+        from bernstein.core.orchestration import trigger_manager as module
+
+        boundary = _FROZEN_NOW - (_FROZEN_NOW % 60)
+        monkeypatch.setattr(module, "time", _FrozenTime(boundary + offset))
+        _write_triggers(sdd_dir, [_cron_trigger("half-past", "* * * * * 30")])
+        mgr = TriggerManager(sdd_dir)
+
+        assert bool(mgr.evaluate_cron_triggers()) is due
+
     def test_trigger_not_due_does_not_fire(self, sdd_dir: Path) -> None:
         off_minute = (time.localtime(_FROZEN_NOW).tm_min + 30) % 60
         _write_triggers(sdd_dir, [_cron_trigger("off-minute", f"{off_minute} * * * *")])
