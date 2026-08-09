@@ -162,3 +162,16 @@ def validate_plan(plan_file: Path) -> None:
 
     stage_count, max_parallel = _compute_stage_stats(plan_file)
     _print_validation_results(errors, warnings, len(tasks), stage_count, max_parallel)
+
+
+@click.command("validate", help="[Deprecated] Use 'bernstein plan validate' instead.")
+@click.argument("plan_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.pass_context
+def validate_alias_cmd(ctx: click.Context, plan_file: Path) -> None:
+    """[Deprecated] Use 'bernstein plan validate' instead."""
+    click.echo(
+        "WARNING: 'bernstein validate' is deprecated and will be removed in v4.0.0 (#3140): "
+        "use 'bernstein plan validate' instead.",
+        err=True,
+    )
+    ctx.invoke(validate_plan, plan_file=plan_file)

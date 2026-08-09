@@ -102,7 +102,7 @@ from bernstein.cli.fingerprint_cmd import fingerprint_group
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
 from bernstein.cli.incident_cmd import incident_cmd
-from bernstein.cli.init_wizard_cmd import init_wizard_cmd
+from bernstein.cli.init_wizard_cmd import init_wizard_alias_cmd
 from bernstein.cli.logs_group_cmd import logs_group
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
 from bernstein.cli.man_page import man_pages_cmd
@@ -114,12 +114,12 @@ from bernstein.cli.plan_archive_cmd import plan_ls, plan_show
 from bernstein.cli.plan_compile_cmd import plan_compile
 from bernstein.cli.plan_dag_cmd import plan_dag
 from bernstein.cli.plan_generate_cmd import plan_generate
-from bernstein.cli.plan_validate_cmd import validate_plan
+from bernstein.cli.plan_validate_cmd import validate_alias_cmd, validate_plan
 from bernstein.cli.policy_cmd import policy_group
 from bernstein.cli.postmortem_cmd import postmortem_cmd
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
-from bernstein.cli.quickstart_cmd import quickstart_cmd
+from bernstein.cli.quickstart_cmd import quickstart_alias_cmd
 from bernstein.cli.recipes_cmd import recipes_group
 from bernstein.cli.report_cmd import report_cmd
 from bernstein.cli.run_changelog_cmd import (
@@ -224,7 +224,7 @@ __all__ = [
     "print_banner",
     "print_dry_run_table",
     "quarantine_group",
-    "quickstart_cmd",
+    "quickstart_alias_cmd",
     "read_pid",
     "recap",
     "recover_orphaned_claims",
@@ -968,6 +968,7 @@ plan.add_command(plan_compile)
 plan.add_command(plan_ls)
 plan.add_command(plan_show)
 plan.add_command(plan_dag)
+plan.add_command(validate_plan, "validate")
 cli.add_command(plan)
 cli.add_command(plan, "tasks")
 cli.add_command(spec_group)
@@ -1132,7 +1133,7 @@ cli.add_command(man_pages_cmd, "man-pages")
 cli.add_command(workflow_group, "workflow")
 cli.add_command(recipes_group, "recipes")
 cli.add_command(knowledge_group, "knowledge")
-cli.add_command(quickstart_cmd, "quickstart")
+cli.add_command(quickstart_alias_cmd, "quickstart")
 cli.add_command(scaffold_cmd, "scaffold")
 cli.add_command(watch_cmd, "watch")
 cli.add_command(wiki_group, "wiki")
@@ -1161,7 +1162,7 @@ cli.add_command(run_lookup_cmd, "run-lookup")
 cli.add_command(dr_group, "dr")
 cli.add_command(profile_cmd, "profile")
 cli.add_command(templates_group, "templates")
-cli.add_command(validate_plan, "validate")
+cli.add_command(validate_alias_cmd, "validate")
 cli.add_command(dep_impact_cmd, "dep-impact")
 cli.add_command(fingerprint_group, "fingerprint")
 cli.add_command(fleet_group, "fleet")
@@ -1186,7 +1187,7 @@ cli.add_command(dry_run_cmd, "dry-run")
 cli.add_command(explain_help_cmd, "explain")
 cli.add_command(config_path_cmd, "config-path")
 cli.add_command(desktop_register_cmd, "desktop-register")
-cli.add_command(init_wizard_cmd, "init-wizard")
+cli.add_command(init_wizard_alias_cmd, "init-wizard")
 cli.add_command(aliases_cmd, "aliases")
 cli.add_command(debug_cmd, "debug-bundle")
 
@@ -1310,9 +1311,9 @@ from bernstein.cli.commands.wheelhouse_cmd import wheelhouse_group  # noqa: E402
 cli.add_command(wheelhouse_group, "wheelhouse")
 
 # rt-003: Claude Code Routine <-> scenario bridge.
-from bernstein.cli.commands.routine_cmd import routine_group  # noqa: E402
+from bernstein.cli.commands.routine_cmd import routine_alias_group  # noqa: E402
 
-cli.add_command(routine_group, "routine")
+cli.add_command(routine_alias_group, "routine")
 
 # Cluster lifecycle helpers (mTLS bootstrap, etc.)
 from bernstein.cli.commands.cluster_cmd import cluster_group  # noqa: E402

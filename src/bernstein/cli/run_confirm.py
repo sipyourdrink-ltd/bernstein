@@ -873,7 +873,14 @@ def _demo_exit_code(outcome: _DemoOutcome | None, *, bootstrap_error: Exception 
     show_default=True,
     help="Maximum seconds to wait for tasks to complete.",
 )
-def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
+@click.option(
+    "--flask-todo",
+    "flask_todo",
+    is_flag=True,
+    default=False,
+    help="Run the Flask TODO API quickstart demo (3 tasks on a Flask TODO API).",
+)
+def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int, flask_todo: bool = False) -> None:
     """Zero-config demo: fix 4 bugs in a Flask app with mock agents.
 
     \b
@@ -886,8 +893,15 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
       bernstein demo              # mock agents (no API key)
       bernstein demo --real       # real agents (requires API key, ~$0.15)
       bernstein demo --dry-run    # preview the plan without spawning
-      bernstein demo --real --timeout 180
+      bernstein demo --flask-todo # run the Flask TODO API quickstart demo
     """
+    if flask_todo:
+        from bernstein.cli.commands.quickstart_cmd import quickstart_cmd
+
+        ctx = click.get_current_context()
+        ctx.invoke(quickstart_cmd, keep=False, timeout=timeout, adapter=adapter)
+        return
+
     import tempfile
 
     print_banner()

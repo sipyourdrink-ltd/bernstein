@@ -868,14 +868,30 @@ def is_codespace_runtime() -> bool:
         "Skips local-binary checks that would fail in a fresh container."
     ),
 )
+@click.option(
+    "--wizard",
+    "-w",
+    "wizard",
+    is_flag=True,
+    default=False,
+    help="Run interactive setup wizard to configure the workspace.",
+)
 def init(
     target_dir: str,
     *,
     add_badge: bool = False,
     badge_variant: str = "signed",
     remote: bool = False,
+    wizard: bool = False,
 ) -> None:
     """Init workspace -- create .sdd/ structure."""
+    if wizard:
+        from bernstein.cli.commands.init_wizard_cmd import init_wizard_cmd
+
+        ctx = click.get_current_context()
+        ctx.invoke(init_wizard_cmd, target_dir=target_dir, non_interactive=False)
+        return
+
     try:
         _init_impl(
             target_dir,

@@ -29,7 +29,7 @@ ALIASES: dict[str, str] = {
     "p": "plan",
     "c": "cost",
     "w": "watch",
-    "i": "init-wizard",
+    "i": "init",
     "st": "stop",
     "rc": "recap",
 }
