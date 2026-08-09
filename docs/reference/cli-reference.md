@@ -381,8 +381,10 @@ set. (`cli/commands/advanced_cmd.py`, `core/observability/otel_projection.py`.)
 | `bernstein chaos` | Chaos engineering (group). | `cli/commands/chaos_cmd.py:33` |
 | `bernstein eval` | Evaluation pipelines (group). | `cli/commands/eval_benchmark_cmd.py:426` |
 | `bernstein benchmark` | Benchmark pipelines (group). | `cli/commands/eval_benchmark_cmd.py:29` |
-| `bernstein api-check` | Detect breaking-API changes. | `cli/api_check_cmd.py:22` |
-| `bernstein dep-impact` | Dependency change impact. | `cli/dep_impact_cmd.py:25` |
+| `bernstein impact` | Change-impact analysis (group): API compatibility, caller sites, blast radius. | `cli/commands/impact_cmd.py:23` |
+| `bernstein api-check` | Detect breaking-API changes. Second spelling of `bernstein impact api`. | `cli/commands/api_check_cmd.py:22` |
+| `bernstein dep-impact` | Deprecated alias of `bernstein impact deps`; removed in v4.0.0. | `cli/commands/impact_cmd.py:39` |
+| `bernstein blast-radius` | Deprecated alias of `bernstein impact blast`; removed in v4.0.0. | `cli/commands/impact_cmd.py:57` |
 | `bernstein diff` | Task-state diff. | `cli/diff_cmd.py:504` |
 
 #### `bernstein verify`
@@ -458,7 +460,46 @@ The two groups share most flags:
 
 Verification stays on `bernstein bench reliability-verify` / `bernstein bench reliability-check`. (`cli/commands/eval_benchmark_cmd.py:800+`.)
 
+#### `bernstein impact`
+
+Change-impact analysis for a working tree. Three subcommands, each answering a
+different question about the same change.
+
+```bash
+bernstein impact api --base main     # do the changed files break their own signatures?
+bernstein impact deps --base main    # which callers elsewhere in the repo break?
+bernstein impact blast score --file src/db/migrate.py   # how irreversible is it?
+```
+
+#### `bernstein impact api`
+
+Compares Python function signatures between the working tree and a base ref.
+Exits 1 when breaking changes are found.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--base REF` | `HEAD~1` | Git ref to compare the working tree against. |
+| `--workdir PATH` | current directory | Repository to inspect. |
+
+#### `bernstein impact deps`
+
+Finds every call site in the repository that the changed signatures break.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--base REF` | `HEAD~1` | Git ref to compare the working tree against. |
+| `--workdir PATH` | current directory | Repository to inspect. |
+| `--strict` | off | Exit 1 on any call-site impact, even without an API break. |
+| `--json` | off | Emit the report as JSON on stdout. |
+
+#### `bernstein impact blast`
+
+Group. `score` scores a change described on the command line; `show TASK_ID`
+pretty-prints a saved report from `.sdd/metrics/blast_radius/`.
+
 #### `bernstein api-check`
+
+Second spelling of `bernstein impact api`. Same flags, same exit codes.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -467,11 +508,23 @@ Verification stays on `bernstein bench reliability-verify` / `bernstein bench re
 
 #### `bernstein dep-impact`
 
+Deprecated alias of `bernstein impact deps`, kept registered through the 3.x
+line and removed in v4.0.0. Prints a deprecation notice to stderr, then runs
+`bernstein impact deps` with the arguments it was given, so `--json` output on
+stdout stays parseable.
+
 | Flag | Default | Meaning |
 |---|---|---|
-| `--package NAME` | required | Package whose version change to analyse. |
-| `--from VERSION` | required | Old version. |
-| `--to VERSION` | required | New version. |
+| `--base REF` | `HEAD~1` | Git ref to compare the working tree against. |
+| `--workdir PATH` | current directory | Repository to inspect. |
+| `--strict` | off | Exit 1 on any call-site impact, even without an API break. |
+| `--json` | off | Emit the report as JSON on stdout. |
+
+#### `bernstein blast-radius`
+
+Deprecated alias of `bernstein impact blast`, kept registered through the 3.x
+line and removed in v4.0.0. Exposes the same `score` and `show` subcommands and
+prints a deprecation notice to stderr before running them.
 
 #### `bernstein diff`
 

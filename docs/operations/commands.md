@@ -76,7 +76,7 @@ bernstein trace <ID> # agent decision trace
 bernstein changelog --hours 48  # changelog from agent-produced diffs
 bernstein explain <cmd>  # detailed help with examples
 bernstein dry-run    # preview tasks without executing
-bernstein dep-impact # API breakage + downstream caller impact
+bernstein impact deps # API breakage + downstream caller impact
 bernstein aliases    # show command shortcuts
 bernstein config-path    # show config file locations
 bernstein init --wizard  # interactive project setup

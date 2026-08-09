@@ -214,7 +214,7 @@ def _documented_flags(command_path: str) -> set[str]:
     return set()
 
 
-@pytest.mark.parametrize("name", ["api-check", "ab-test"])
+@pytest.mark.parametrize("name", ["api-check", "ab-test", "impact api", "impact deps", "dep-impact"])
 def test_documented_flags_exist(name: str) -> None:
     """Every flag the reference documents is accepted by the command.
 

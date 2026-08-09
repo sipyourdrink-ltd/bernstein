@@ -90,10 +90,10 @@ Good fit when you want issue trackers to stay as the source of truth instead of 
 
 ### API-change safety checks before merge
 
-Breaking a function signature is easy; finding every downstream caller is the annoying part. `dep-impact` compares your branch against a base ref and reports affected call sites before the change merges.
+Breaking a function signature is easy; finding every downstream caller is the annoying part. `impact deps` compares your branch against a base ref and reports affected call sites before the change merges.
 
 ```bash
-bernstein dep-impact --base main
+bernstein impact deps --base main
 ```
 
 Good fit when you are doing refactors in shared libraries or internal platforms and want a fast, concrete answer to "what else does this break?"
