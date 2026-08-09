@@ -280,7 +280,7 @@ additionally holds the CLI's server calls to the registered route table.
 | [`bernstein supervisor status/escalate`](../api/supervisor.md) | Full | Supervise stalled workers and seal stall escalation receipts |
 | [`bernstein delegation verify`](../operations/delegation-verify.md) | Full | Reconstruct and verify a run's delegation chain |
 | [`bernstein credential emit/verify`](../operations/content-credentials.md) | Full | Project an artifact's lineage into a signed C2PA credential and verify it |
-| [`bernstein skill provenance/verify`](../operations/skill-provenance.md) | Full | Recompute a skill's install receipt and usage-provenance graph |
+| [`bernstein skills provenance/verify`](../operations/skill-provenance.md) | Full | Recompute a skill's install receipt and usage-provenance graph |
 | [`bernstein schedule verify/audit`, `schedule show --at`](../operations/schedule.md) | Full | Replay recorded fires, chain-check fire receipts, project a schedule at a time |
 | `bernstein sla add/list/show/verify/report` | Full | Attach per-goal SLA contracts; a breach is an offline-verifiable violation receipt |
 | [`bernstein trace project/verify-projection`](../observability/otel-span-projection.md) | Full | Project a run journal into signed OTel GenAI spans and verify the projection |

@@ -54,7 +54,7 @@ The manifest records `redactions_applied`, a total count of substitutions
 made across every text artefact in the bundle, so the operator sending the
 bundle can see at a glance how many patterns were caught.
 
-## Legacy alias: `bernstein debug-bundle`
+## Deprecated: `bernstein debug-bundle`
 
 A separate, older entry point, `bernstein debug-bundle`, still exists
 (`cli/commands/debug_cmd.py`). It runs an interactive confirmation prompt by
@@ -71,7 +71,19 @@ bernstein debug-bundle --extended     # include full (untruncated) logs
 
 It does not support task/run filtering or `--include-source-snippets`.
 `bernstein debug bundle` (the group command above) is the actively developed
-path; the flat `debug-bundle` alias is kept for backward compatibility.
+path. The flat `debug-bundle` spelling prints a deprecation warning on stderr
+and is removed in v4.0.0 (#3138).
+
+Migrating is not a plain rename, because the two are different builders:
+
+| `debug-bundle` | `debug bundle` |
+|---|---|
+| `--output FILE` | `--out FILE` |
+| `--yes` | not needed; there is no confirmation prompt |
+| `--extended` | no equivalent |
+
+The deprecation warning names those three differences, so a script that
+migrates blind does not lose a flag silently.
 
 ## Source
 

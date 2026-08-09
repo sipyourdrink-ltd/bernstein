@@ -2,20 +2,24 @@
 
 The [skill catalog](skills-catalog.md) proves *what a registry claims* about
 a skill — a signed manifest and a content digest. It does not, on its own,
-tie an install to what the skill actually did. `bernstein skill provenance`
-and `bernstein skill verify` add that usage-attestation layer on top of the
+tie an install to what the skill actually did. `bernstein skills provenance`
+and `bernstein skills verify` add that usage-attestation layer on top of the
 content-hash pinning already carried in `skills.lock`.
 
-This is a different CLI group from `bernstein skills catalog` (plural
-`skills`, browse/install/upgrade). `bernstein skill` (singular) only
-inspects usage of an already-installed skill.
+These two subcommands only inspect usage of an already-installed skill; the
+rest of the `bernstein skills` group browses, installs and upgrades.
 
 ## Commands
 
 ```
-bernstein skill provenance SKILL [--workdir DIR]
-bernstein skill verify SKILL [--workdir DIR]
+bernstein skills provenance SKILL [--workdir DIR]
+bernstein skills verify SKILL [--workdir DIR]
 ```
+
+The singular `bernstein skill provenance` / `bernstein skill verify` spellings
+still work and take the same arguments, but they print a deprecation warning on
+stderr and are removed in v4.0.0. See
+[deprecated command names](commands.md#deprecated-command-names).
 
 `SKILL` is either a catalog entry id (resolved to its installed content
 digest via `skills.lock`) or a raw content digest.

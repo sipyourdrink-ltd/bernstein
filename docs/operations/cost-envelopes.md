@@ -40,8 +40,12 @@ appears in reports as an uncapped bucket.
 ## Viewing the rollup
 
 ```
-bernstein cost-envelopes show [--ledger PATH] [--config PATH] [--last 1h|24h|7d|30d] [--json]
+bernstein cost envelopes show [--ledger PATH] [--config PATH] [--last 1h|24h|7d|30d] [--json]
 ```
+
+The top-level `bernstein cost-envelopes` spelling still works and takes the
+same subcommand and flags, but it prints a deprecation warning on stderr and is
+removed in v4.0.0. See [deprecated command names](commands.md#deprecated-command-names).
 
 | Flag | Default | Meaning |
 |---|---|---|

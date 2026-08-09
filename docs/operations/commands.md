@@ -56,7 +56,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein identity keydir` | Prints the install-identity key directory (JWKS) - the Ed25519 public keys that verify the RFC 9421 HTTP Message Signatures Bernstein places on its outbound agent-facing requests (also served at `/.well-known/http-message-signatures-directory`). Set `BERNSTEIN_HTTP_SIGNING_REQUIRED=1` to refuse unsigned outbound paths. |
 | `bernstein security-review [<task>]` | Pattern-scans a unified diff for hardcoded secrets, unsafe `eval`/`exec`, shell injection, weak crypto, path traversal, and SQL injection without calling a model. Scans the working tree against `--base` by default, one agent's task diff when given a task id, or a piped diff with `--diff-file -`. Exits `1` on any critical/high finding so it can gate a pre-commit hook or a CI step, `2` when there is no diff to scan, and `--as-json` emits the findings for a pipeline. |
 | `bernstein delegation verify <run>` | Reconstructs the `principal -> orchestrator -> sub-agent` delegation chain for a run from HMAC-chained per-hop receipts and confirms it is intact offline; exits non-zero on any tamper or deleted hop. |
-| `bernstein artifacts list\|show <task> [<key>]` | Renders a task's agent-posted artifacts (markdown reports, tables, preview links) with per-version verification state. Each artifact is content-addressed, spine-anchored, and journal-chained; a version whose stored blob does not recompute renders as tampered rather than as content, and `bernstein audit verify` walks every artifact so a flipped byte fails naming the key and journal position. |
+| `bernstein artifact list\|show <task> [<key>]` | Renders a task's agent-posted artifacts (markdown reports, tables, preview links) with per-version verification state. Each artifact is content-addressed, spine-anchored, and journal-chained; a version whose stored blob does not recompute renders as tampered rather than as content, and `bernstein audit verify` walks every artifact so a flipped byte fails naming the key and journal position. |
 | `bernstein skills package install\|update\|verify\|status\|conformance` | Installs the bundled cross-vendor `bernstein-run` agent skill into a host's skill directory (`--host claude\|codex\|copilot\|cursor\|gemini`, or `--dest`) and anchors a content-addressed install receipt in the lineage spine and audit chain; `verify` re-hashes the installed tree and proves it against the receipt; `update` supersedes a prior install with a receipt binding the prior content address to the new one; `status` verifies every host install at once; `conformance` installs into several hosts against one install, replays the skill's self-check contract per host, and seals the pass/fail table into a chain-anchored conformance receipt. `--record-only` anchors a plugin checkout the host installed itself. See [agent sessions](../integrations/agent-session.md). |
 | `bernstein datasource register\|query\|verify` | Read-only SQL datasources whose results become content-addressed query receipts: `query` canonicalises the exact result set an agent saw and binds its SHA-256 into a signed lineage entry (`.jws` sidecar); `verify` proves the signature, chain anchor and stored copy offline, and `verify --re-execute` re-runs the query to report `MATCH` or `DRIFT`. DML/DDL is refused with a typed error and connection secrets never reach a receipt. See [datasources](datasources.md). |
 | `bernstein bench run <suite>\|bench verify <bundle>` | Runs a content-addressed benchmark suite and emits a signed submission bundle in which every task carries the replay receipt its score was derived from. `bench verify` replays those receipts offline with no access to the submitter's machine, recomputes each score, and reports MATCH or names the exact task whose replay diverged. A flipped verdict or a corrupted receipt fails verification, so a published number is only worth the bundle a third party can re-verify. See [bench](../eval/bench.md). |
@@ -80,7 +80,7 @@ bernstein dep-impact # API breakage + downstream caller impact
 bernstein aliases    # show command shortcuts
 bernstein config-path    # show config file locations
 bernstein init-wizard    # interactive project setup
-bernstein debug-bundle   # collect logs, config, and state for bug reports
+bernstein debug bundle   # collect logs, config, and state for bug reports
 bernstein skills list    # discoverable skill packs (progressive disclosure)
 bernstein skills show <name>  # print a skill body with its references
 ```
@@ -89,3 +89,26 @@ bernstein skills show <name>  # print a skill body with its references
 bernstein fingerprint build --corpus-dir ~/oss-corpus  # build local similarity index
 bernstein fingerprint check src/foo.py                 # check generated code against the index
 ```
+
+## Deprecated command names
+
+Five top-level names duplicated a group that already owned the same action
+(#3138). The group spelling is canonical from 3.x on; the top-level spelling
+still resolves, prints a deprecation warning on stderr, and is unregistered in
+v4.0.0. Flags and arguments are unchanged unless noted.
+
+| Deprecated | Use instead | Notes |
+|---|---|---|
+| `bernstein estimate` | `bernstein cost estimate` | Same flags. |
+| `bernstein cost-envelopes show` | `bernstein cost envelopes show` | Same subcommand and flags. |
+| `bernstein artifacts list\|show` | `bernstein artifact list\|show` | Same arguments. `artifact list` with no task keeps its own meaning (lineage-spine keys). |
+| `bernstein skill provenance\|verify` | `bernstein skills provenance\|verify` | Same arguments. |
+| `bernstein debug-bundle` | `bernstein debug bundle` | **Not a rename.** Different builder: `--output` becomes `--out`, `--yes` is unnecessary (no confirmation prompt), and `--extended` has no equivalent. See [debug bundle](debug-bundle.md). |
+
+`bernstein pool` is **not** deprecated. It projects the sandbox-pool registry
+from the audit chain; `bernstein limits pool` governs admission slot pools in
+the work ledger. The two address different stores, so folding one into the
+other would change results rather than just the name.
+
+The warning goes to stderr only, so `bernstein cost-envelopes show --json | jq`
+and friends keep working while a script is migrated.

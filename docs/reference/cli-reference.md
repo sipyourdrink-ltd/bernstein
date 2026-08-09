@@ -919,7 +919,10 @@ With no identifier, the oldest pending approval is resolved.
 | `bernstein cost profile-report` | Content-addressed per-profile cost report, appended to the audit chain. | `cli/commands/cost.py` |
 | `bernstein cost policy preflight` | Surface pool exhaustion before a run starts; exits non-zero when a capped pool is (or would be) exhausted. | `cli/commands/cost.py` |
 | `bernstein cost policy verify DECISION_HASH` | Verify a sealed dispatch receipt offline against the lineage spine. | `cli/commands/cost.py` |
-| `bernstein estimate` | Estimate cost before running. | `cli/commands/cost.py:388` |
+| `bernstein cost estimate` | Estimate cost before running. | `cli/commands/cost.py` |
+| `bernstein cost envelopes show` | Per-quota-envelope cost attribution. | `cli/commands/cost.py` |
+| `bernstein estimate` | Deprecated alias of `bernstein cost estimate`; removed in v4.0.0. | `cli/commands/cost.py` |
+| `bernstein cost-envelopes` | Deprecated alias of `bernstein cost envelopes`; removed in v4.0.0. | `cli/commands/cost.py` |
 
 #### `bernstein cost`
 
@@ -949,7 +952,7 @@ byte-identically. Cross-profile savings are only claimed when both profiles
 have at least 5 tasks with the same role and model; otherwise the report
 states "insufficient comparable runs".
 
-#### `bernstein estimate`
+#### `bernstein cost estimate`
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -994,8 +997,8 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `bernstein cleanup` | Clean worktrees / logs. | `cli/maintenance_cmd.py:162` |
 | `bernstein daemon` | systemd / launchd unit (group). | `cli/commands/daemon_cmd.py:76` |
 | `bernstein dr` | Disaster recovery (group). | `cli/commands/disaster_recovery_cmd.py:12` |
-| `bernstein debug-bundle` | Bug-report bundle. | `cli/debug_cmd.py:81` |
-| `bernstein debug` | (alias of debug-bundle) | `cli/main.py:825` |
+| `bernstein debug bundle` | Bug-report bundle. | `cli/debug_bundle.py:bundle_cmd` |
+| `bernstein debug-bundle` | Deprecated, removed in v4.0.0. A separate, older builder -- not a rename of `debug bundle`. | `cli/commands/debug_cmd.py:debug_cmd` |
 | `bernstein doctor` | Self-diagnostics. | `cli/doctor_cmd.py:281` |
 | `bernstein self` | Provenance-verified update lifecycle (group). | `cli/commands/self_update_cmd.py:self_group` |
 | `bernstein self-update` | Compatibility alias for `bernstein self`. | `cli/commands/self_update_cmd.py:self_update_cmd` |
@@ -1019,14 +1022,27 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 
 (`cli/commands/advanced_cmd.py:536-550` re-exposes `cli/status_cmd.py:doctor`.)
 
-#### `bernstein debug-bundle`
+#### `bernstein debug bundle`
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--workdir` | `.` | Project root. |
-| `--out FILE` | `debug-bundle-<ts>.zip` | Output zip path. |
-| `--include-logs` | on | Include `.sdd/logs/`. |
-| `--include-secrets` | off | (NOT recommended) include credential blobs. |
+| `--task ID` | none | Filter traces/metrics by task. |
+| `--run ID` | none | Filter traces/metrics by run. |
+| `--last / --no-last` | `--last` | Select the most recent run. |
+| `--out FILE` | timestamped file in CWD | Output zip path. |
+| `--manifest-only` | off | Print the manifest JSON instead of writing a ZIP. |
+| `--include-source-snippets N` | `0` | Include the N most-recently-changed `src/` files. |
+
+#### `bernstein debug-bundle` (deprecated)
+
+The older, separate builder. Removed in v4.0.0; `bernstein debug bundle` does
+not accept these flags.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--yes` / `-y` | off | Skip the confirmation prompt. |
+| `--output PATH` / `-o` | timestamped file | Output zip path. |
+| `--extended` | off | Include full (untruncated) logs. No equivalent in `debug bundle`. |
 
 #### `bernstein self`
 
