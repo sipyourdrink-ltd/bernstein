@@ -3,9 +3,12 @@
 Consolidates API compatibility checking, dependency call-site analysis,
 and blast-radius scoring under ``bernstein impact``:
 
-- ``bernstein impact api`` (formerly orphaned ``api-check``)
-- ``bernstein impact deps`` (formerly ``dep-impact``)
-- ``bernstein impact blast`` (formerly ``blast-radius``)
+- ``bernstein impact api`` -- also reachable as top-level ``api-check``,
+  which an earlier change registered after #3139 measured the module as
+  documented-but-orphaned.  The top-level spelling is left in place and is
+  not deprecated here; this change gives the command a home in the group.
+- ``bernstein impact deps`` (was ``dep-impact``, now a deprecated alias)
+- ``bernstein impact blast`` (was ``blast-radius``, now a deprecated alias)
 """
 
 from __future__ import annotations

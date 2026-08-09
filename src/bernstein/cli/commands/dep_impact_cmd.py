@@ -1,15 +1,15 @@
-"""CLI command: ``bernstein dep-impact`` - dependency impact analysis.
+"""CLI command: ``bernstein impact deps`` - dependency impact analysis.
 
 Scans the repository for call sites that will break when a function
-signature changes.  Complements ``bernstein api-check`` (which only
+signature changes.  Complements ``bernstein impact api`` (which only
 inspects the changed files themselves) by finding ALL callers across
 the codebase and validating their compatibility with the new signatures.
 
 Usage::
 
-    bernstein dep-impact                 # compare current HEAD vs HEAD~1
-    bernstein dep-impact --base main     # compare against main branch
-    bernstein dep-impact --strict        # exit 1 even for warnings only
+    bernstein impact deps                # compare current HEAD vs HEAD~1
+    bernstein impact deps --base main    # compare against main branch
+    bernstein impact deps --strict       # exit 1 even for warnings only
 """
 
 from __future__ import annotations
@@ -58,9 +58,9 @@ def dep_impact_cmd(
     """Analyse which call sites break when a function signature changes.
 
     \b
-      bernstein dep-impact                 # vs HEAD~1
-      bernstein dep-impact --base main     # vs main branch
-      bernstein dep-impact --strict        # fail on any call-site impact
+      bernstein impact deps                # vs HEAD~1
+      bernstein impact deps --base main    # vs main branch
+      bernstein impact deps --strict       # fail on any call-site impact
 
     Blocks merge (exit code 1) when breaking API changes are found or when
     downstream callers are incompatible with the new signatures.
