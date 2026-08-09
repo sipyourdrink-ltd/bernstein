@@ -22,6 +22,12 @@ from bernstein.adapters._contract import (
 from bernstein.adapters.conformance import replay_acp_event_fixture
 from bernstein.adapters.kimchi import KimchiAdapter
 from bernstein.adapters.registry import get_adapter, selectable_adapter_names
+from bernstein.core.protocols.acp.client import (
+    ACPEventJournalSink,
+    compare_acp_journals,
+    drive_acp_lifecycle,
+)
+from bernstein.core.protocols.acp.schema import ACPSchemaError
 from bernstein.core.replay.journal import EventJournal
 from bernstein.core.tasks.checkpoint_retry import (
     CheckpointRef,
@@ -263,45 +269,83 @@ def test_detect_tier_from_config_credential(tmp_path: Path, monkeypatch: pytest.
 
 
 # ---------------------------------------------------------------------------
-# ACP fixture replay (rewritten in the next commit)
+# ACP ingress conformance over the shipped fixture
 # ---------------------------------------------------------------------------
 
+#: One expected tuple per shipped fixture frame, in order:
+#: ``(kind, method, stop_reason_or_delta_text)``. Pinned rather than derived,
+#: so a reordered or re-worded fixture fails here instead of replaying against
+#: itself and agreeing.
+_EXPECTED_SEQUENCE = (
+    ("response", None, ""),
+    ("notification", "streamUpdate", "Analyzing repository"),
+    ("notification", "streamUpdate", "Modifying code files"),
+    ("response", None, "end_turn"),
+)
 
-def test_acp_fixture_replay_parity(tmp_path: Path) -> None:
-    dir_1 = tmp_path / "sdd1"
-    dir_2 = tmp_path / "sdd2"
 
-    res1 = replay_acp_event_fixture(FIXTURE, sdd_dir=dir_1)
-    res2 = replay_acp_event_fixture(FIXTURE, sdd_dir=dir_2)
-
-    assert res1.ok is True
-    assert res2.ok is True
-    assert res1.journal_head == res2.journal_head
+def _signature(events: Any) -> tuple[tuple[str, str | None, str], ...]:
+    """Return the ordered (kind, method, stop-reason-or-delta) view of a run."""
+    out: list[tuple[str, str | None, str]] = []
+    for event in events:
+        delta = event.frame.get("params", {}).get("delta", {}).get("text", "") if event.method else ""
+        out.append((event.kind, event.method, event.stop_reason or delta))
+    return tuple(out)
 
 
-def test_acp_stdout_drift_insensitivity(tmp_path: Path) -> None:
-    clean_dir = tmp_path / "clean_sdd"
-    drift_dir = tmp_path / "drift_sdd"
+def test_acp_fixture_replay_is_pinned_to_an_exact_event_order(tmp_path: Path) -> None:
+    """The fixture replay pins the event sequence, not just its self-agreement.
 
-    clean_res = replay_acp_event_fixture(FIXTURE, sdd_dir=clean_dir)
+    Two replays of the same bytes chaining to the same head is true of any
+    fixture, including a reordered one, so on its own it detects nothing. The
+    sequence assertion below is what fails when the recorded lifecycle changes.
+    """
+    first = replay_acp_event_fixture(FIXTURE, sdd_dir=tmp_path / "one")
+    second = replay_acp_event_fixture(FIXTURE, sdd_dir=tmp_path / "two")
 
-    raw_lines = FIXTURE.read_text().splitlines()
-    drift_lines = [
-        "Kimchi v0.1.74 (c) 2026",
-        raw_lines[0],
-        "[progress] Loading model weights...",
-        raw_lines[1],
-        "\033[32mOK\033[0m",
-        raw_lines[2],
-        raw_lines[3],
-    ]
+    assert first.ok is True
+    assert first.terminal is True
+    assert first.stop_reason == "end_turn"
+    assert _signature(first.events) == _EXPECTED_SEQUENCE
+    # Determinism: identical bytes chain to an identical Merkle head.
+    assert first.journal_head == second.journal_head
 
+
+def test_reordered_acp_events_diverge_at_the_exact_step(tmp_path: Path) -> None:
+    """A different event order is a hash divergence named at its step index."""
+    raw = [line for line in FIXTURE.read_text(encoding="utf-8").splitlines() if line.strip()]
+    swapped = [raw[0], raw[2], raw[1], raw[3]]
+
+    recorded = EventJournal("kimchi-recorded", tmp_path / "rec")
+    reference = drive_acp_lifecycle(raw, ACPEventJournalSink(recorded))
+    reordered = EventJournal("kimchi-reordered", tmp_path / "alt")
+    drifted = drive_acp_lifecycle(swapped, ACPEventJournalSink(reordered))
+
+    assert reference.journal_head != drifted.journal_head
+    divergence = compare_acp_journals(recorded.path, reordered.path)
+    assert divergence is not None
+    assert divergence.seq == 1
+    assert divergence.method == "streamUpdate"
+
+
+def test_non_acp_stdout_is_refused_at_the_ingress_boundary(tmp_path: Path) -> None:
+    """A banner interleaved on stdout is refused, not skipped.
+
+    ``iter_process_frames`` yields every non-empty stdout line, so an upstream
+    banner or progress line reaches the schema boundary verbatim. The boundary
+    rejects it and journals nothing for it - the run does not silently keep
+    the same head as a clean session. A test that strips those lines before
+    calling the channel asserts only that its own filter works.
+    """
     from bernstein.adapters.acp_channel import run_acp_channel
 
-    journal = EventJournal("acp-conf-drift", drift_dir)
-    json_lines = (line for line in drift_lines if line.strip().startswith("{"))
-    drift_res = run_acp_channel(json_lines, journal=journal, session_id="kimchi-s1")
+    raw = [line for line in FIXTURE.read_text(encoding="utf-8").splitlines() if line.strip()]
+    with_banner = ["Kimchi v0.1.74 (c) 2026", raw[0], "[progress] Loading model weights...", raw[1], raw[2], raw[3]]
 
-    assert clean_res.ok is True
-    assert drift_res.ok is True
-    assert clean_res.journal_head == journal.head()
+    journal = EventJournal("kimchi-banner", tmp_path / "banner")
+    with pytest.raises(ACPSchemaError):
+        run_acp_channel(iter(with_banner), journal=journal, session_id="kimchi-s1")
+
+    # The refused frame left no partial state: nothing preceded it, so nothing
+    # was journaled at all.
+    assert journal.head() == EventJournal("kimchi-empty", tmp_path / "empty").head()
