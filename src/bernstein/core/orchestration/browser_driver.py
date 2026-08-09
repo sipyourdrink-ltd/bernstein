@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -668,9 +669,15 @@ def verify_driver_conformance(
     profile_a = BrowserProfile.allocate(root=root_dir, task_id="conformance-task-a")
     profile_b = BrowserProfile.allocate(root=root_dir, task_id="conformance-task-b")
     close_error: Exception | None = None
+    # Every driver the factory hands back, recorded as it is built. A session
+    # opened before a failure -- a conformance failure mid-flow, or a factory
+    # that refuses the second build -- still has to be closed on the way out.
+    built: list[BrowserDriver] = []
     try:
         driver = driver_factory(profile_dir=profile_a.profile_dir)
+        built.append(driver)
         other = driver_factory(profile_dir=profile_b.profile_dir)
+        built.append(other)
 
         for name, subject in (("first", driver), ("second", other)):
             for verb in CONFORMANCE_VERBS:
@@ -716,8 +723,16 @@ def verify_driver_conformance(
         if profile_b.profile_dir.exists():
             raise ConformanceFailure("profile", "the profile directory survived its task's teardown")
     finally:
-        # Idempotent, so this is a safety net for the early-exit paths above and
-        # a no-op once the isolation assertions have run.
+        # Close every session on every exit path. On the success path each was
+        # already closed twice above, and close is required to be idempotent, so
+        # this is a no-op there; on a failure path it is the only close that
+        # runs. Errors are suppressed because a non-conforming close must not
+        # replace the failure that is already being reported.
+        for subject in built:
+            with suppress(Exception):
+                subject.close()
+        # Teardown is idempotent, so this is a safety net for the early-exit
+        # paths above and a no-op once the isolation assertions have run.
         profile_a.teardown()
         profile_b.teardown()
 

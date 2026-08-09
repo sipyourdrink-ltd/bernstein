@@ -354,6 +354,55 @@ def test_kit_closes_every_driver_even_when_one_close_raises(tmp_path: Path) -> N
     assert 2 in closed
 
 
+def test_kit_closes_every_session_when_the_run_fails_mid_flow(tmp_path: Path) -> None:
+    """A conformance failure must not leave browser sessions open."""
+    closed: list[int] = []
+    built = 0
+
+    class LeakProbe(TapeDriver):
+        def __init__(self, frames: Sequence[PageState], *, profile_dir: Path | None = None) -> None:
+            super().__init__(frames, profile_dir=profile_dir)
+            nonlocal built
+            built += 1
+            self.ordinal = built
+
+        def current_url(self) -> str:
+            return self._frames[0].url  # stale: fails partway through the flow
+
+        def close(self) -> None:
+            closed.append(self.ordinal)
+            super().close()
+
+    with pytest.raises(ConformanceFailure):
+        verify_driver_conformance(_tape_factory(LeakProbe), root_dir=tmp_path)
+
+    assert built == 2
+    assert sorted(set(closed)) == [1, 2]
+
+
+def test_kit_closes_the_first_session_when_the_factory_refuses_the_second(tmp_path: Path) -> None:
+    """A factory that refuses a second session must not strand the first."""
+    closed: list[int] = []
+    built = 0
+
+    class CloseProbe(TapeDriver):
+        def close(self) -> None:
+            closed.append(1)
+            super().close()
+
+    def factory(*, profile_dir: Path) -> BrowserDriver:
+        nonlocal built
+        built += 1
+        if built == 2:
+            raise BrowserDriverError("second session refused")
+        return CloseProbe(CONFORMANCE_TAPE, profile_dir=profile_dir)
+
+    with pytest.raises(BrowserDriverError):
+        verify_driver_conformance(factory, root_dir=tmp_path)
+
+    assert closed == [1]
+
+
 def test_kit_fails_a_driver_missing_a_verb(tmp_path: Path) -> None:
     with pytest.raises(ConformanceFailure) as exc_info:
         verify_driver_conformance(_tape_factory(NoNavigateDriver), root_dir=tmp_path)
