@@ -39,6 +39,9 @@ if TYPE_CHECKING:
 
 _PLAN_YAML = "stages:\n  - name: test\n    steps: []\n"
 
+_REPO_ROOT = Path(__file__).parent.parent.parent
+_FLASK_TODO_DOC = _REPO_ROOT / "docs" / "getting-started" / "quickstart-demo.md"
+
 
 def _capture(monkeypatch: pytest.MonkeyPatch, command: click.Command) -> list[dict[str, object]]:
     """Replace ``command``'s callback and record every invocation's kwargs.
@@ -191,6 +194,30 @@ def test_demo_flask_todo_refuses_dry_run_instead_of_ignoring_it(monkeypatch: pyt
     assert result.exit_code != 0, result.output
     assert "--dry-run" in result.output
     assert calls == [], "the scenario must not run when the combination is refused"
+
+
+def _doc_section(text: str, heading: str) -> str:
+    """Return the body of a single ``## heading`` section of a markdown page."""
+    body = text.split(f"\n## {heading}\n", 1)[1]
+    return body.split("\n## ", 1)[0]
+
+
+def test_flask_todo_cost_docs_state_the_mock_by_default_rule() -> None:
+    """The page's cost section must not promise adapter auto-detection.
+
+    The scenario body still resolves ``adapter or detect_available_adapter()
+    or "mock"``, but the fold decides the adapter before that runs, so the
+    auto-detect branch is unreachable from ``demo --flask-todo``: without
+    ``--real`` the run is always free, and with it a machine that has no
+    adapter is refused rather than downgraded to mock. The cost section is the
+    paragraph a first-run reader checks before deciding whether the command
+    spends money, so it has to agree with the flag table above it.
+    """
+    cost = _doc_section(_FLASK_TODO_DOC.read_text(encoding="utf-8"), "Cost").lower()
+
+    assert "--real" in cost, "the cost section must name the flag that decides whether money is spent"
+    for stale in ("is detected", "auto-detect", "falls back"):
+        assert stale not in cost, f"cost section still describes the removed auto-detect behaviour: {stale!r}"
 
 
 def test_deprecated_quickstart_warns_and_forwards(monkeypatch: pytest.MonkeyPatch) -> None:

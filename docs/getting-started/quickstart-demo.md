@@ -50,9 +50,10 @@ bernstein demo --flask-todo --real --adapter codex
 
 ## Cost
 
-Before starting, the command prints a cost estimate: roughly `$0.20` for the
-3 tasks when a real adapter is detected, or `$0.00 (mock)` when none is and
-it falls back to the mock adapter.
+Before starting, the command prints a cost estimate. Without `--real` the
+scenario runs on mock agents and prints `$0.00 (mock)` whatever agent CLIs are
+installed on the machine. With `--real` it prints roughly `$0.20` for the 3
+tasks, and if no adapter can be resolved it stops rather than running on mock.
 
 ## Source
 
