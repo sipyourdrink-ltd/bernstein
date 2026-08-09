@@ -77,10 +77,12 @@ The "do work" commands. This is where most operators live.
 | `bernstein cancel TASK_ID` | Cancel a running or queued task. | `cli/commands/task_cmd.py:160` |
 | `bernstein cleanup` | Clean worktrees and old logs. | `cli/maintenance_cmd.py:162` |
 | `bernstein demo --flask-todo` | Zero-config Flask TODO API demo (`bernstein quickstart` is a deprecated alias, removed in 4.0.0). | `cli/quickstart_cmd.py` |
+| `bernstein quickstart` | Deprecated alias of `bernstein demo --flask-todo`; removed in v4.0.0. Keeps its own adapter auto-detection, so it can spend money without `--real`. | `cli/quickstart_cmd.py` |
 | `bernstein demo` | 60-second zero-to-running demo. | `cli/run_confirm.py:demo` |
 | `bernstein cook` | Run a recipe (multi-stage demo). | `cli/run_confirm.py:cook` |
 | `bernstein init` | Initialize project (`.sdd/` + `bernstein.yaml`). | `cli/run_bootstrap.py:394` |
 | `bernstein init --wizard` | Interactive project setup (`bernstein init-wizard` is a deprecated alias, removed in 4.0.0). | `cli/init_wizard_cmd.py` |
+| `bernstein init-wizard` | Deprecated alias of `bernstein init --wizard`; removed in v4.0.0. | `cli/init_wizard_cmd.py` |
 | `bernstein dry-run` | Preview the plan without spawning. | `cli/commands/dry_run_cmd.py:203` |
 | `bernstein replay RUN_ID` | Replay a past run step-by-step. | `cli/commands/advanced_cmd.py:876` |
 | `bernstein undo` | Undo the last operation. | `cli/undo_cmd.py:15` |
@@ -201,6 +203,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein from-ticket FILE` | Generate tasks from a ticket file. | `cli/commands/ticket_cmd.py:231` |
 | `bernstein ticket` | Ticket integration group. | `cli/commands/ticket_cmd.py:246` |
 | `bernstein plan validate PLAN.yaml` | Validate a plan file's schema (`bernstein validate` is a deprecated alias, removed in 4.0.0). | `cli/plan_validate_cmd.py:142` |
+| `bernstein validate PLAN.yaml` | Deprecated alias of `bernstein plan validate`; removed in v4.0.0. | `cli/plan_validate_cmd.py` |
 
 #### `bernstein plan`
 
