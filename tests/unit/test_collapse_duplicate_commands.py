@@ -324,6 +324,20 @@ def test_deprecated_cost_envelopes_alias_still_dispatches_show(tmp_path: Path) -
     assert json.loads(result.stdout)["envelopes"] == {}
 
 
+def test_bare_cost_envelopes_alias_behaves_like_the_group_it_aliases() -> None:
+    """A deliberate change: the bare alias used to exit 0 having done nothing.
+
+    As a leaf command it accepted no arguments, warned, invoked a group callback
+    that dispatches nothing, and returned success. It now reports a missing
+    subcommand exactly as `bernstein cost envelopes` does.
+    """
+    runner = CliRunner()
+    alias = runner.invoke(cli, ["cost-envelopes"])
+    canonical = runner.invoke(cli, ["cost", "envelopes"])
+    assert alias.exit_code == canonical.exit_code, (alias.output, canonical.output)
+    assert alias.exit_code != 0
+
+
 def test_cost_envelopes_alias_exposes_the_same_subcommands_as_the_group() -> None:
     from bernstein.cli.commands.cost import cost_envelopes_alias_cmd, cost_envelopes_group
 
