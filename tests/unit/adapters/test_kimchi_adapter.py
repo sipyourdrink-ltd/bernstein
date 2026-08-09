@@ -13,6 +13,7 @@ from bernstein.core.models import ModelConfig
 
 from bernstein.adapters._contract import (
     STRATEGY_MATRIX,
+    ContractSpec,
     DangerousModeStrategy,
     EventChannel,
     OutputMode,
@@ -127,6 +128,20 @@ def test_orchestrator_spawn_argv_is_pinned(tmp_path: Path) -> None:
         "--model",
         "open-weight-7b",
     ]
+
+
+def test_contract_declares_every_flag_the_spawn_always_passes(tmp_path: Path) -> None:
+    """The shipped contract is the argv the adapter emits, not a subset of it.
+
+    The contract's required flags are what the drift check asserts the CLI's
+    ``--help`` still advertises. A flag the adapter always passes but the
+    contract omits is unguarded: upstream could drop it and nothing would
+    fail until a run stalled.
+    """
+    spec = ContractSpec.load("kimchi")
+    argv = _inner_argv(_spawn_and_capture(KimchiAdapter(), tmp_path)[0])
+    always_passed = {token for token in argv if token.startswith("--")}
+    assert always_passed == set(spec.required_flags)
 
 
 def test_worker_session_flag_is_not_an_adapter_flag(tmp_path: Path) -> None:
