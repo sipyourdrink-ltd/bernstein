@@ -833,6 +833,7 @@ class TriggerManager:
         events: list[TriggerEvent] = []
         now = time.time()
         current_minute = time.strftime("%Y-%m-%dT%H:%M", time.localtime(now))
+        next_minute = now - (now % 60) + 60.0
 
         for trigger in self._configs:
             if not trigger.enabled or trigger.source != "cron" or not trigger.schedule:
@@ -843,10 +844,16 @@ class TriggerManager:
                 continue
 
             try:
-                # croniter accepts a Unix timestamp, a datetime, or None - not a
-                # struct_time. ``now`` is already a float epoch, so pass it as-is.
-                cron = croniter(trigger.schedule, now)
-                # Check if the current minute matches the schedule
+                # croniter accepts a Unix timestamp, a datetime, or None - not
+                # a struct_time; ``now`` is already a float epoch.
+                #
+                # Anchor on the start of the *next* minute, not on ``now``.
+                # get_prev is strictly-before its anchor, so anchoring on now
+                # returns the previous minute whenever a tick lands exactly on
+                # HH:MM:00, silently skipping a trigger due that minute. Cron
+                # fires land on minute boundaries, so the last fire before the
+                # next minute is this minute's if the schedule matches at all.
+                cron = croniter(trigger.schedule, next_minute)
                 prev_fire = cron.get_prev(float)
                 # If the previous fire time is within this minute, fire
                 prev_minute = time.strftime("%Y-%m-%dT%H:%M", time.localtime(prev_fire))

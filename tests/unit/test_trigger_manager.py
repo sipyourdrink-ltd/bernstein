@@ -828,8 +828,9 @@ class TestTriggerManager:
 # Cron evaluation tests
 # ---------------------------------------------------------------------------
 
-# A fixed instant 20s into its minute, so the previous fire of an every-minute
-# schedule always lands inside the current minute regardless of local timezone.
+# A fixed instant 20s into its minute: the ordinary mid-minute tick. The
+# boundary case it used to be chosen to dodge is covered explicitly by
+# test_fires_when_the_tick_lands_exactly_on_the_minute.
 _FROZEN_NOW = 1_700_000_000.0
 
 
@@ -882,6 +883,43 @@ class TestCronEvaluation:
         assert events[0].source == "cron"
         assert events[0].metadata["cron_name"] == "every-minute"
         assert events[0].timestamp == _FROZEN_NOW
+
+    def test_fires_when_the_tick_lands_exactly_on_the_minute(
+        self, sdd_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tick at HH:MM:00 must still fire a schedule due that minute.
+
+        ``get_prev`` is strictly-before its anchor, so anchoring on ``now`` at
+        an exact boundary returns the *previous* minute and the due trigger is
+        skipped. Nothing guarantees a caller's phase, so this is not only a
+        test-determinism concern.
+        """
+        from bernstein.core.orchestration import trigger_manager as module
+
+        boundary = _FROZEN_NOW - (_FROZEN_NOW % 60)
+        assert boundary % 60 == 0, "the fixture must sit exactly on a minute"
+        monkeypatch.setattr(module, "time", _FrozenTime(boundary))
+
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+
+        events = mgr.evaluate_cron_triggers()
+
+        assert [e.metadata["cron_name"] for e in events] == ["every-minute"]
+
+    def test_not_due_trigger_does_not_fire_on_the_minute_either(
+        self, sdd_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The boundary fix must not turn every schedule into an every-minute one."""
+        from bernstein.core.orchestration import trigger_manager as module
+
+        boundary = _FROZEN_NOW - (_FROZEN_NOW % 60)
+        monkeypatch.setattr(module, "time", _FrozenTime(boundary))
+        off_minute = (time.localtime(boundary).tm_min + 30) % 60
+        _write_triggers(sdd_dir, [_cron_trigger("off-minute", f"{off_minute} * * * *")])
+        mgr = TriggerManager(sdd_dir)
+
+        assert mgr.evaluate_cron_triggers() == []
 
     def test_trigger_not_due_does_not_fire(self, sdd_dir: Path) -> None:
         off_minute = (time.localtime(_FROZEN_NOW).tm_min + 30) % 60
