@@ -18,6 +18,16 @@ One JSON object per line, each carrying an ``event`` key:
     Emitted when the module cannot be imported, the entrypoint is missing or
     not callable, or the entrypoint raised. Process exits non-zero.
 
+stdout carries only these events. Anything the configured runtime prints is
+redirected to stderr, so runtime chatter cannot interleave with the JSONL.
+
+Import path
+-----------
+
+The task workdir is appended to ``sys.path`` before the import, so a runtime
+that lives in the checkout resolves. Appended, not prepended: an installed
+distribution keeps precedence over a same-named file in the worktree.
+
 Exit-status contract
 --------------------
 
@@ -30,6 +40,7 @@ exit code therefore never mistakes a failed run for a successful one.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
 import sys
@@ -77,6 +88,15 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
 
+    # ``sys.path[0]`` is this script's directory, and the worker's PYTHONPATH
+    # carries the orchestrator's own path - neither includes the task
+    # worktree, so a runtime that lives in the checkout is unimportable
+    # without help. Append rather than prepend: an installed distribution
+    # keeps precedence, so a file in the worktree cannot shadow a real
+    # package by sharing its name.
+    if str(workdir) not in sys.path:
+        sys.path.append(str(workdir))
+
     try:
         module = importlib.import_module(args.runtime_module)
     except Exception as exc:
@@ -87,9 +107,16 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(f"Entrypoint {args.runtime_entrypoint!r} not found in {args.runtime_module!r}")
 
     try:
-        result = entrypoint(prompt=args.prompt, model=args.model, workdir=workdir)
-    except Exception as exc:
-        return _fail(f"Failed executing {args.runtime_module}: {exc}")
+        # stdout is the protocol channel; anything the runtime prints goes to
+        # stderr so it cannot interleave with - and corrupt - the JSONL.
+        # ``BaseException`` rather than ``Exception``: a runtime that calls
+        # ``sys.exit(0)`` would otherwise unwind past this handler and end the
+        # process with status 0 having emitted no terminal event, which is the
+        # exact false-success this contract exists to prevent.
+        with contextlib.redirect_stdout(sys.stderr):
+            result = entrypoint(prompt=args.prompt, model=args.model, workdir=workdir)
+    except BaseException as exc:
+        return _fail(f"Failed executing {args.runtime_module}: {type(exc).__name__}: {exc}")
 
     _emit({"event": "result", "output": str(result), "status": "completed"})
     return 0

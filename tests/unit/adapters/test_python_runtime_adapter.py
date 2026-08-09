@@ -369,6 +369,82 @@ def test_runner_exits_non_zero_on_every_failure_path(
     assert expected_fragment in str(terminal["error"])
 
 
+def test_runner_imports_a_runtime_living_in_the_workdir(tmp_path: Path) -> None:
+    """``sys.path[0]`` is the runner's own directory, not the task worktree.
+
+    Without appending the workdir, a runtime checked into the task worktree is
+    unimportable no matter how it is configured. Appended rather than
+    prepended, so a worktree file cannot shadow an installed distribution.
+    """
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    (workdir / "worktree_runtime.py").write_text(
+        "def chat(*, prompt, model, workdir):\n    return 'from the worktree'\n",
+        encoding="utf-8",
+    )
+
+    # Empty PYTHONPATH: the workdir is the only place this module exists.
+    proc = _run_runner(tmp_path / "nothing-here", workdir, "--prompt", "p", "--runtime-module", "worktree_runtime")
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _events(proc.stdout)[-1]["output"] == "from the worktree"
+
+
+def test_runtime_stdout_never_corrupts_the_event_stream(tmp_path: Path) -> None:
+    """The runtime is arbitrary code; its prints must not land in the JSONL."""
+    pkg_dir = _write_runtime(
+        tmp_path,
+        """
+        import sys
+
+        def chat(*, prompt, model, workdir):
+            print("not a json event")
+            sys.stdout.write("neither is this\\n")
+            return "done"
+        """,
+    )
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+
+    proc = _run_runner(pkg_dir, workdir, "--prompt", "p", "--runtime-module", "fake_runtime")
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # Every stdout line parses as JSON - the assertion _events() would trip on.
+    events = _events(proc.stdout)
+    assert [e["event"] for e in events] == ["start", "result"]
+    assert "not a json event" not in proc.stdout
+    assert "not a json event" in proc.stderr
+    assert "neither is this" in proc.stderr
+
+
+def test_runner_reports_a_runtime_that_exits_zero_as_failed(tmp_path: Path) -> None:
+    """``SystemExit(0)`` from the runtime must not unwind into a clean exit.
+
+    ``except Exception`` does not catch ``SystemExit``, so a runtime calling
+    ``sys.exit(0)`` would end the process with status 0 and no terminal event -
+    the same false success the error-path exit status exists to prevent.
+    """
+    pkg_dir = _write_runtime(
+        tmp_path,
+        """
+        import sys
+
+        def chat(*, prompt, model, workdir):
+            sys.exit(0)
+        """,
+    )
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+
+    proc = _run_runner(pkg_dir, workdir, "--prompt", "p", "--runtime-module", "fake_runtime")
+
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    terminal = _events(proc.stdout)[-1]
+    assert terminal["event"] == "error"
+    assert terminal["status"] == "failed"
+    assert "SystemExit" in str(terminal["error"])
+
+
 def test_runner_requires_a_runtime_module(tmp_path: Path) -> None:
     """The no-runtime fallback that always reported success is gone."""
     workdir = tmp_path / "work"
