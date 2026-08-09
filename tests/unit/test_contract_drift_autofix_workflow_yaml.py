@@ -194,10 +194,21 @@ def _resolve_node_id(repo_root: Path, file_part: str, node_path: list[str]) -> b
     helper such as ``_documented_commands_from_docs`` exists in the file but is
     never collected, and selecting it fails exactly like a renamed test.
     """
-    target = repo_root / file_part
-    if not target.is_file() or not target.name.startswith("test_"):
+    tests_root = (repo_root / "tests").resolve()
+    try:
+        target = (repo_root / file_part).resolve()
+        # ``file_part`` is workflow text, so it can carry ``..`` or point at a
+        # symlink. Only a real file under tests/ is ever read.
+        target.relative_to(tests_root)
+        if not target.is_file() or not target.name.startswith("test_"):
+            return False
+        source = target.read_text(encoding="utf-8")
+    except (ValueError, OSError):
         return False
-    scope: list[ast.stmt] = list(ast.parse(target.read_text(encoding="utf-8")).body)
+    try:
+        scope: list[ast.stmt] = list(ast.parse(source).body)
+    except SyntaxError:
+        return False
     for index, name in enumerate(node_path):
         match = next(
             (
