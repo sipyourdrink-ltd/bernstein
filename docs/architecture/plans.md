@@ -122,9 +122,9 @@ Source: `plan_schema.py:49-77`, `plan_loader.py:70-97`.
 
 ---
 
-## Plan validation: `bernstein validate`
+## Plan validation: `bernstein plan validate`
 
-`bernstein validate path/to/plan.yaml` runs four checks before the plan is
+`bernstein plan validate path/to/plan.yaml` runs four checks before the plan is
 ever scheduled:
 
 1. **Schema check** - required fields, enum values, integer ranges
@@ -413,7 +413,7 @@ stages:
 Validation:
 
 ```bash
-bernstein validate plans/rate-limit-api.yaml
+bernstein plan validate plans/rate-limit-api.yaml
 # ✓ 6 tasks, 3 stages, max parallel = 3
 ```
 

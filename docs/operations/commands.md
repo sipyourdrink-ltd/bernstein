@@ -79,7 +79,7 @@ bernstein dry-run    # preview tasks without executing
 bernstein dep-impact # API breakage + downstream caller impact
 bernstein aliases    # show command shortcuts
 bernstein config-path    # show config file locations
-bernstein init-wizard    # interactive project setup
+bernstein init --wizard  # interactive project setup
 bernstein debug bundle   # collect logs, config, and state for bug reports
 bernstein skills list    # discoverable skill packs (progressive disclosure)
 bernstein skills show <name>  # print a skill body with its references

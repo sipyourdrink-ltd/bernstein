@@ -1,6 +1,6 @@
-# Zero-config quickstart demo
+# Zero-config Flask TODO demo
 
-`bernstein quickstart` runs a self-contained demo: it creates a temporary
+`bernstein demo --flask-todo` runs a self-contained demo: it creates a temporary
 Flask TODO API project with intentional gaps, seeds three tasks against it,
 runs agents to complete them, and prints a summary — with no `bernstein.yaml`
 and no prior project setup required. It exists to let a new user see
@@ -13,17 +13,20 @@ throwaway demo, see the [interactive tutorial](quickstart-tutorial.md).
 ## Usage
 
 ```bash
-bernstein quickstart                # run and clean up the temp dir
-bernstein quickstart --keep         # keep the temp dir for inspection
-bernstein quickstart --timeout 120  # cap orchestration wait time
-bernstein quickstart --adapter codex
+bernstein demo --flask-todo                # run and clean up the temp dir
+bernstein demo --flask-todo --keep         # keep the temp dir for inspection
+bernstein demo --flask-todo --timeout 120  # cap orchestration wait time
+bernstein demo --flask-todo --real --adapter codex
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--keep` | off | Preserve the temp project directory after completion instead of deleting it. |
 | `--timeout SECONDS` | 300 | Maximum seconds to wait for all seeded tasks to finish. |
-| `--adapter NAME` | auto-detected | CLI adapter to drive the agents (falls back to `mock` if none is detected — no API key needed to see the flow). |
+| `--adapter NAME` | `mock` | CLI adapter to drive the agents. Like the rest of `bernstein demo`, real agents run only behind `--real`; without it the scenario runs on mock agents and costs nothing. |
+
+`bernstein quickstart` remains registered as a deprecated alias for the whole
+3.x line and is unregistered in 4.0.0.
 
 ## What it does
 

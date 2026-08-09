@@ -11,7 +11,7 @@ about five minutes.
 
 ### Direction A - Scenario to Routine (export)
 
-`bernstein routine export <scenario-id> --repo owner/name --output ./out` writes:
+`bernstein schedule routine export <scenario-id> --repo owner/name --output ./out` writes:
 
 ```
 out/
@@ -26,7 +26,7 @@ The prompt instructs the Routine session to call `bernstein_scenario`,
 poll status, and summarise outcomes (including PR comments when a GitHub
 trigger supplied a pull request number).
 
-`bernstein routine provision` is an interactive wrapper around the same
+`bernstein schedule routine provision` is an interactive wrapper around the same
 flow that also registers the trigger id once the operator pastes it back.
 
 ### Direction B - Routine to Scenario (invoke)
@@ -71,13 +71,13 @@ ready-to-use templates covering:
 
 ## Auto-provisioning
 
-Trigger ids resolved through `bernstein routine register --scenario <id>
+Trigger ids resolved through `bernstein schedule routine register --scenario <id>
 --trigger-id <tid> --repo owner/name` are persisted under
 `.sdd/routines/registry.json`. When the Routine webhook arrives at the
 Bernstein server with the matching trigger id, the bridge looks up the
 binding and invokes the scenario without operator intervention.
 
-`bernstein routine bindings` lists all registered bindings.
+`bernstein schedule routine bindings` lists all registered bindings.
 
 ## See also
 

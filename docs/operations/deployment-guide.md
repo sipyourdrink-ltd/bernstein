@@ -109,7 +109,7 @@ bernstein status        # shows task server state
 Run the zero-config demo to confirm everything works end-to-end before using it on real code:
 
 ```bash
-bernstein quickstart --keep    # runs 3 tasks on a demo project, keeps output
+bernstein demo --flask-todo --keep    # runs 3 tasks on a demo project, keeps output
 ```
 
 Expected: all 3 tasks complete and a summary table prints with elapsed time and cost.

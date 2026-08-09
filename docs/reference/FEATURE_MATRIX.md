@@ -225,7 +225,7 @@ additionally holds the CLI's server calls to the registered route table.
 | [`bernstein checkpoint`](../operations/checkpoint.md) | Full | Session snapshot |
 | [`bernstein wrap-up`](../operations/wrap-up.md) | Full | End session with summary |
 | `bernstein demo` | Full | Zero-config demo |
-| [`bernstein quickstart`](../getting-started/quickstart-demo.md) | Full | Flask TODO demo (3 tasks) |
+| [`bernstein demo --flask-todo`](../getting-started/quickstart-demo.md) | Full | Flask TODO demo (3 tasks) |
 | `bernstein agents ...` | Full | Catalog management |
 | `bernstein evolve ...` | Full | Self-improvement |
 | `bernstein ci fix` | Full | CI autofix |
