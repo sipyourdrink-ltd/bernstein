@@ -124,7 +124,7 @@ Repository hygiene gates: `bernstein readme-l10n verify` fails a PR whose transl
 
 ### supported agents
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 29 of them; `bernstein integrations list` enumerates all 49 wired-in adapters from the registry in `src/bernstein/adapters/registry.py`, which is the single source of truth for what resolves; `src/bernstein/adapters/use_cases.py` carries the end-user copy for each one. Anything else with a `--prompt` flag works through the generic wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 29 of them; `bernstein integrations list` enumerates all 50 wired-in adapters from the registry in `src/bernstein/adapters/registry.py`, which is the single source of truth for what resolves; `src/bernstein/adapters/use_cases.py` carries the end-user copy for each one. Anything else with a `--prompt` flag works through the generic wrapper.
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
