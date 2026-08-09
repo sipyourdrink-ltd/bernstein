@@ -72,8 +72,13 @@ def _discover_registered_names() -> list[str]:
       mocks Popen but can't fake an authenticated AWS Builder ID
       session.  Covered by ``test_adapter_q_dev.py`` which monkeypatches
       ``Path.home`` to stand up a fake cache directory.
+    - ``python_runtime`` - spawn() raises RuntimeConfigError unless
+      ``mcp_config`` names the runtime module to drive; the adapter has no
+      runtime of its own, and this suite calls spawn() with no mcp_config.
+      Covered by ``tests/unit/adapters/test_python_runtime_adapter.py``,
+      which exercises both the configured spawn and every refusal.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev"})
+    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime"})
 
 
 def _make_factory(name: str) -> Any:

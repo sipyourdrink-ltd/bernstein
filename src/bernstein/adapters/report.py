@@ -50,6 +50,7 @@ _BINARY_OVERRIDES: dict[str, str] = {
     "q_dev": "q",
     "open_interpreter": "interpreter",
     "openai_agents": "python",
+    "python_runtime": "python",
     "letta_code": "letta",
     "continue": "continue",
     "openhands": "openhands",
