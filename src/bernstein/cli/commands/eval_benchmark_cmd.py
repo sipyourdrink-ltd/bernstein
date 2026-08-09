@@ -336,10 +336,10 @@ def benchmark_programbench(
     """Run Bernstein against ProgramBench tasks with partial-credit scoring.
 
     \b
-      bernstein benchmark programbench --adapter claude
-      bernstein benchmark programbench --adapter mock --tasks 5
-      bernstein benchmark programbench --adapter claude --task programbench-001
-      bernstein benchmark programbench --adapter claude --out report.json
+      bernstein eval programbench --adapter claude
+      bernstein eval programbench --adapter mock --tasks 5
+      bernstein eval programbench --adapter claude --task programbench-001
+      bernstein eval programbench --adapter claude --out report.json
     """
     _run_programbench_command(
         adapter=adapter,
@@ -454,9 +454,9 @@ def benchmark_compare(tasks_dir: str, modes: tuple[str, ...]) -> None:
     """Run comparative benchmark: single-agent vs orchestrated.
 
     \b
-      bernstein benchmark compare                                   # default tasks
-      bernstein benchmark compare --tasks-dir path/to/tasks         # custom tasks
-      bernstein benchmark compare --mode single --mode orchestrated # explicit modes
+      bernstein eval compare                                   # default tasks
+      bernstein eval compare --tasks-dir path/to/tasks         # custom tasks
+      bernstein eval compare --mode single --mode orchestrated # explicit modes
     """
     from bernstein.benchmark.comparative import ComparativeBenchmark, load_benchmark_tasks
 
