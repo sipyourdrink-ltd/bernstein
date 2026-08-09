@@ -256,6 +256,130 @@ class TestFallbackAttestation:
 
 
 # ---------------------------------------------------------------------------
+# Containment of the bundle-supplied public_key_file
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyPublicKeyContainment:
+    """``public_key_file`` is attacker-controlled and must stay inside the dir.
+
+    The bundle is untrusted input: whoever hands us a bundle picks the file
+    the verifier loads its public key from.  If that file can be steered
+    outside ``attestation_dir``, an attacker signs any payload they like with
+    a key they own and the bundle still verifies.  Each rejection case below
+    forges a bundle end-to-end with an attacker keypair, so the containment
+    check is the only thing standing between the forgery and a ``True``
+    verdict.
+    """
+
+    @pytest.fixture
+    def attest_dir(self, tmp_path: Path) -> Path:
+        return tmp_path / "attestations"
+
+    def _forged_bundle(self, attest_dir: Path, key_dir: Path) -> tuple[Path, Path]:
+        """Write a genuine bundle, then re-sign it with an attacker key.
+
+        The attacker public key lands in ``key_dir``; the returned bundle has
+        a tampered payload signed by the matching private key.  Returns the
+        bundle path and the attacker public-key path.
+        """
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        with patch(
+            "bernstein.core.sigstore_attestation._sigstore_available",
+            return_value=False,
+        ):
+            record = attest_task_completion(
+                task_id="task-traversal",
+                agent_id="a",
+                diff_sha256="d" * 64,
+                event_hmac="e" * 64,
+                attestation_dir=attest_dir,
+            )
+
+        evil_private = Ed25519PrivateKey.generate()
+        key_dir.mkdir(parents=True, exist_ok=True)
+        evil_pub = key_dir / "ed25519-public-key.pem"
+        evil_pub.write_bytes(
+            evil_private.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        )
+
+        bundle_path = Path(record.bundle_path)
+        bundle = json.loads(bundle_path.read_text())
+        bundle["payload"]["task_id"] = "FORGED"
+        payload_bytes = AttestationPayload(**bundle["payload"]).canonical_json().encode()
+        bundle["signature_hex"] = evil_private.sign(payload_bytes).hex()
+        bundle_path.write_text(json.dumps(bundle))
+        return bundle_path, evil_pub
+
+    def test_rejects_sibling_directory_with_shared_name_prefix(self, attest_dir: Path) -> None:
+        """``../attestations-evil/key.pem`` is outside the dir despite the prefix.
+
+        A plain string ``startswith`` on the resolved path accepts any sibling
+        directory whose name begins with the allowed directory's name.
+        """
+        evil_dir = attest_dir.parent / f"{attest_dir.name}-evil"
+        bundle_path, _ = self._forged_bundle(attest_dir, evil_dir)
+
+        bundle = json.loads(bundle_path.read_text())
+        bundle["public_key_file"] = f"../{evil_dir.name}/ed25519-public-key.pem"
+        bundle_path.write_text(json.dumps(bundle))
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            verify_local_attestation(bundle_path, attest_dir)
+
+    def test_rejects_absolute_public_key_file_outside_dir(self, attest_dir: Path) -> None:
+        """An absolute path escapes ``attestation_dir / raw`` entirely."""
+        evil_dir = attest_dir.parent / "elsewhere"
+        bundle_path, evil_pub = self._forged_bundle(attest_dir, evil_dir)
+
+        bundle = json.loads(bundle_path.read_text())
+        bundle["public_key_file"] = str(evil_pub)
+        bundle_path.write_text(json.dumps(bundle))
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            verify_local_attestation(bundle_path, attest_dir)
+
+    def test_rejects_absolute_public_key_file_inside_dir(self, attest_dir: Path) -> None:
+        """Absolute values are refused even when they land inside the dir.
+
+        Bundles carry a bare filename (``pub_path.name``), so an absolute
+        value never comes from the writer -- it only comes from a crafted
+        bundle probing the guard.
+        """
+        bundle_path, evil_pub = self._forged_bundle(attest_dir, attest_dir)
+
+        bundle = json.loads(bundle_path.read_text())
+        bundle["public_key_file"] = str(evil_pub)
+        bundle_path.write_text(json.dumps(bundle))
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            verify_local_attestation(bundle_path, attest_dir)
+
+    def test_accepts_plain_filename_inside_dir(self, attest_dir: Path) -> None:
+        """The legitimate shape -- a bare filename -- still verifies."""
+        with patch(
+            "bernstein.core.sigstore_attestation._sigstore_available",
+            return_value=False,
+        ):
+            record = attest_task_completion(
+                task_id="task-contained",
+                agent_id="a",
+                diff_sha256="d" * 64,
+                event_hmac="e" * 64,
+                attestation_dir=attest_dir,
+            )
+
+        bundle_path = Path(record.bundle_path)
+        assert json.loads(bundle_path.read_text())["public_key_file"] == "ed25519-public-key.pem"
+        assert verify_local_attestation(bundle_path, attest_dir) is True
+
+
+# ---------------------------------------------------------------------------
 # Index and listing
 # ---------------------------------------------------------------------------
 

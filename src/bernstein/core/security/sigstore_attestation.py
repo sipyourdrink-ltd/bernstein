@@ -456,10 +456,18 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
         msg = "Not a local Ed25519 attestation bundle"
         raise ValueError(msg)
 
-    # Sanitize public_key_file to prevent path traversal attacks
+    # ``public_key_file`` comes from the untrusted bundle, so it decides which
+    # key the signature is checked against: steer it outside the attestation
+    # directory and any payload signed with an attacker-held key verifies.
+    # It must therefore be a relative name that resolves *under* the directory.
+    # An absolute value would drop the directory entirely
+    # (``attestation_dir / "/etc/x"`` is ``/etc/x``), and containment is a
+    # path-component question -- a string prefix test accepts every sibling
+    # whose name starts with the directory's own name.
     raw_key_name = bundle["public_key_file"]
+    attestation_root = attestation_dir.resolve()
     pub_key_file = (attestation_dir / raw_key_name).resolve()
-    if not str(pub_key_file).startswith(str(attestation_dir.resolve())):
+    if os.path.isabs(raw_key_name) or not pub_key_file.is_relative_to(attestation_root):
         msg = f"Path traversal detected in public_key_file: {raw_key_name!r}"
         raise ValueError(msg)
     public_key = serialization.load_pem_public_key(pub_key_file.read_bytes())
