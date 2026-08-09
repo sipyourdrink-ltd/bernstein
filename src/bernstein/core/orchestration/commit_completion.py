@@ -85,7 +85,10 @@ class RetryLifecycleEmitter(Protocol):
     CLI scripts, doc generators).
     """
 
-    def __call__(self, payload: dict[str, object]) -> None: ...
+    # Positional-only: every emitter is invoked positionally, and binding the
+    # parameter by name would reject implementations that spell it differently
+    # (the module's own ``_noop_emitter`` names it ``_payload``).
+    def __call__(self, payload: dict[str, object], /) -> None: ...
 
 
 def _noop_emitter(_payload: dict[str, object]) -> None:

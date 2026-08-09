@@ -396,7 +396,7 @@ def prioritize_starving_roles(
 
 def _build_file_affinity_groups(
     role_tasks: list[Task],
-    agent_affinity: dict[str, str] | None,
+    agent_affinity: dict[str, str],
 ) -> list[list[Task]]:
     """Group tasks by transitive file-ownership overlap.
 
@@ -432,7 +432,7 @@ def _build_file_affinity_groups(
 
 def _merge_agent_affinity_groups(
     affinity_groups: list[list[Task]],
-    agent_affinity: dict[str, str] | None,
+    agent_affinity: dict[str, str],
 ) -> None:
     """Merge affinity groups that share a preferred agent (in-place).
 
@@ -464,7 +464,7 @@ def _merge_agent_affinity_groups(
 def _pack_affinity_groups_into_batches(
     affinity_groups: list[list[Task]],
     max_per_batch: int,
-    agent_affinity: dict[str, str] | None,
+    agent_affinity: dict[str, str],
 ) -> list[list[Task]]:
     """Pack affinity groups into batches of up to max_per_batch tasks.
 

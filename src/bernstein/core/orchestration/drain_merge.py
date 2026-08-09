@@ -141,7 +141,9 @@ def _parse_report(stdout: str) -> list[MergeResult]:
                 MergeResult(
                     branch=str(item.get("branch", "")),
                     action=str(item.get("action", "skipped")),
-                    files_changed=int(item.get("files_changed", 0)),  # type: ignore[arg-type]
+                    # JSON value is `object`; a non-numeric one raises here and is
+                    # caught by the enclosing `except (TypeError, ValueError)`.
+                    files_changed=int(item.get("files_changed", 0)),  # type: ignore[call-overload]
                     reason=str(item.get("reason", "")),
                 )
             )

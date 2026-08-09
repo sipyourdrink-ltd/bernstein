@@ -181,7 +181,9 @@ def _register_mcp_discovery(workdir: Path) -> None:
         except (ValueError, OSError):
             existing = {}
 
-    servers = dict(existing.get("mcpServers", {}))  # type: ignore[arg-type]
+    # JSON value is `object`; the runtime shape is checked by the isinstance
+    # guards below rather than by the constructor.
+    servers = dict(existing.get("mcpServers", {}))  # type: ignore[call-overload]
     desired_args = ["-m", "bernstein.mcp.server"]
 
     # Self-heal only when the entry is missing or stale. The bernstein entry is

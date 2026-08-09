@@ -493,12 +493,13 @@ class Orchestrator:
         init_telemetry(config.telemetry.otlp_endpoint if hasattr(config, "telemetry") else None)
 
         # Self-evolution feedback loop
+        self._evolution: EvolutionCoordinator | None
         if config.evolution_enabled:
             self._evolution = evolution or EvolutionCoordinator(
                 state_dir=workdir / ".sdd",
             )
         else:
-            self._evolution: EvolutionCoordinator | None = None
+            self._evolution = None
 
         # Adaptive governance: adjusts metric weights each evolution cycle.
         # Always initialize the governor - it's lightweight and evolve mode
@@ -721,6 +722,7 @@ class Orchestrator:
         # held for interactive review, or pushed as a GitHub PR.
         # merge_strategy="pr" activates PR mode by default; "direct" forces auto.
         # An explicit approval override ("review" or "pr") takes precedence.
+        self._approval_gate: ApprovalGate | None
         if config.approval == "workflow":
             self._approval_gate = ApprovalGate(
                 mode=ApprovalMode.AUTO,  # base mode, overridden per-task in task_completion.py
@@ -737,7 +739,7 @@ class Orchestrator:
                 # merge_strategy="pr" (default) -> PR mode
                 _effective_approval = "pr"
             _approval_mode = ApprovalMode(_effective_approval)
-            self._approval_gate: ApprovalGate | None = (
+            self._approval_gate = (
                 ApprovalGate(
                     mode=_approval_mode,
                     workdir=workdir,
@@ -890,7 +892,7 @@ class Orchestrator:
         )
         if self._audit_mode:
             from bernstein.core.audit import AuditLog
-            from bernstein.core.lifecycle import set_audit_log
+            from bernstein.core.tasks.lifecycle import set_audit_log
 
             audit_dir = workdir / ".sdd" / "audit"
             self._audit_log = AuditLog(audit_dir)
@@ -3550,7 +3552,7 @@ class Orchestrator:
         """Dispatch an anomaly signal: log, stop spawning, or kill agent."""
         import contextlib
 
-        from bernstein.core import heartbeat as heartbeat_protocol
+        from bernstein.core.agents import heartbeat as heartbeat_protocol
         from bernstein.core.cost_anomaly import AnomalySignal
 
         assert isinstance(signal, AnomalySignal)
@@ -3841,11 +3843,11 @@ class Orchestrator:
         # _reap_session_heartbeat_loop / Defect-10) so the loop does not
         # outlive the agent it was monitoring.
         with contextlib.suppress(Exception):
-            from bernstein.core import heartbeat as heartbeat_protocol
+            from bernstein.core.agents import heartbeat as heartbeat_protocol
 
             heartbeat_protocol._reap_session_heartbeat_loop(self, session, reason="cost_cap_kill")
 
-        from bernstein.core.lifecycle import transition_agent
+        from bernstein.core.tasks.lifecycle import transition_agent
 
         transition_agent(session, "dead", actor="orchestrator", reason="max_cost_per_agent exceeded")
         self._release_file_ownership(session.id)
@@ -3950,7 +3952,7 @@ class Orchestrator:
             elapsed,
             len(pending_kill),
         )
-        from bernstein.core import heartbeat as heartbeat_protocol
+        from bernstein.core.agents import heartbeat as heartbeat_protocol
 
         for session in pending_kill:
             self._budget_stop_killed_agents.add(session.id)

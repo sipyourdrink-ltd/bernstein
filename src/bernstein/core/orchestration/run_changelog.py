@@ -183,7 +183,8 @@ def _parse_metric_timestamp(ts: object) -> float:
 
         dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
         return dt.timestamp()
-    return float(ts)
+    # `ts` is an arbitrary JSON value; a non-numeric one is meant to raise.
+    return float(ts)  # type: ignore[arg-type]
 
 
 def _parse_metric_line(line: str, since_ts: float) -> dict[str, object] | None:

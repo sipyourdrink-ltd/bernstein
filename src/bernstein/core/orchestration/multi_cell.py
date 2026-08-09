@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 import httpx
 
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, SignalActionFailure
-from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import (
     AgentSession,
     Cell,
@@ -26,6 +25,7 @@ from bernstein.core.models import (
     TaskStatus,
 )
 from bernstein.core.orchestration.orchestrator import TickResult, group_by_role
+from bernstein.core.tasks.lifecycle import transition_agent
 
 if TYPE_CHECKING:
     from pathlib import Path
