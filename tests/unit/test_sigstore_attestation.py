@@ -484,6 +484,26 @@ class TestVerifyPublicKeyOpen:
         with pytest.raises(ValueError, match="symlink"):
             verify_local_attestation(bundle_path, attest_dir)
 
+    @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs a POSIX host to emulate from")
+    def test_refuses_symlink_with_dir_fd_but_no_nofollow(
+        self, attest_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Having ``dir_fd`` is not on its own enough to select the anchored open.
+
+        The anchored branch refuses a symlink only because ``O_NOFOLLOW`` is in
+        its flags, and the best-effort check lives in the other branch.  A
+        platform with one capability and not the other therefore has to reach
+        the best-effort branch, or it gets neither protection.
+        """
+        bundle_path = self._bundle_naming(attest_dir, "linked-key.pem")
+        (attest_dir / "linked-key.pem").symlink_to(attest_dir / "ed25519-public-key.pem")
+        # ``supports_dir_fd`` is deliberately left intact: this is the mixed
+        # capability case, not the no-capability one covered above.
+        monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+
+        with pytest.raises(ValueError, match="symlink"):
+            verify_local_attestation(bundle_path, attest_dir)
+
     def test_missing_key_file_still_raises_oserror(self, attest_dir: Path) -> None:
         """A genuinely absent key stays an OSError -- that is a local fault."""
         bundle_path = self._bundle_naming(attest_dir, "no-such-key.pem")

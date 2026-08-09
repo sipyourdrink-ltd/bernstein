@@ -48,10 +48,10 @@ emit, and consumers may rely on, a narrow shape:
   file, both with ``ValueError``.
 * A missing or unreadable key still raises ``OSError``: that is a local
   fault rather than a hostile bundle, and callers distinguish the two.
-* The symlink refusal is atomic where ``os.open`` supports ``dir_fd`` and
-  ``O_NOFOLLOW``.  On platforms offering neither -- Windows -- it degrades
-  to a best-effort check, since no atomic equivalent exists there.  Name
-  containment is unaffected and holds on every platform.
+* The symlink refusal is atomic only where ``os.open`` supports **both**
+  ``dir_fd`` and ``O_NOFOLLOW``.  Missing either one -- Windows lacks both
+  -- it degrades to a best-effort check, since no atomic equivalent exists
+  there.  Name containment is unaffected and holds on every platform.
 
 None of this depends on ``attestation_dir`` itself being adversary-proof.
 Write access to that directory means control of the stored signing key, at
@@ -576,18 +576,25 @@ def _read_contained_key_bytes(attestation_dir: Path, raw_key_name: str) -> bytes
     # translate line endings and hand ``load_pem_public_key`` altered bytes.
     open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     dir_fd: int | None = None
+    # Both capabilities are required, not just ``dir_fd``: the anchored open
+    # refuses a symlink only because ``O_NOFOLLOW`` is among its flags, so
+    # selecting that branch on ``dir_fd`` alone would, on a platform offering
+    # one without the other, take the branch that has no best-effort check
+    # while dropping the flag that would have made it unnecessary.
+    can_anchor = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")
     try:
-        if os.open in os.supports_dir_fd:
+        if can_anchor:
             dir_fd = os.open(attestation_dir, os.O_RDONLY)
             fd = os.open(raw_key_name, open_flags, dir_fd=dir_fd)
         else:
-            # Windows reaches this branch: no ``dir_fd``, no ``O_NOFOLLOW``.
-            # A single component still cannot escape the directory it is
-            # joined to, so containment holds; what is missing is an atomic
-            # refusal to follow a link at that component. This check is
-            # therefore best effort by construction -- it catches a symlink
-            # that is present, not one planted between here and the open --
-            # and it is the most the platform offers.
+            # Windows reaches this branch, as does any platform missing
+            # either capability. A single component still cannot escape the
+            # directory it is joined to, so containment holds; what is
+            # missing is an atomic refusal to follow a link at that
+            # component. This check is therefore best effort by construction
+            # -- it catches a symlink that is present, not one planted
+            # between here and the open -- and it is the most such a platform
+            # offers.
             key_path = attestation_dir / raw_key_name
             if key_path.is_symlink():
                 msg = f"public_key_file is a symlink, refusing to follow it: {raw_key_name!r}"
