@@ -1726,16 +1726,27 @@ def estimate_alias_cmd(ctx: click.Context, goal: str, role: str, scope: str, com
 cost_cmd.add_command(cost_envelopes_group, "envelopes")
 
 
-@click.command("cost-envelopes", help="[Deprecated] Inspect per-quota-envelope cost attribution.")
+@click.group("cost-envelopes")
 @click.pass_context
 def cost_envelopes_alias_cmd(ctx: click.Context) -> None:
-    """[Deprecated] Use 'bernstein cost envelopes' instead."""
-    click.echo(
-        "WARNING: 'bernstein cost-envelopes' is deprecated and will be removed in v4.0.0 (#3138): "
-        "use 'bernstein cost envelopes' instead.",
-        err=True,
-    )
-    ctx.invoke(cost_envelopes_group)
+    """[Deprecated] Inspect per-quota-envelope cost attribution.
+
+    Use 'bernstein cost envelopes' instead; this spelling goes away in v4.0.0.
+    """
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein cost-envelopes' is deprecated and will be removed in v4.0.0 (#3138): "
+            "use 'bernstein cost envelopes' instead.",
+            err=True,
+        )
+
+
+# The alias has to keep the *group* shape: ``cost-envelopes show`` is the only
+# way this command has ever been useful, and a leaf alias would reject it at
+# parse time. Registering the same command objects (rather than re-declaring
+# them) means the two spellings cannot drift in subcommands or in options.
+for _envelope_sub_name, _envelope_sub_cmd in cost_envelopes_group.commands.items():
+    cost_envelopes_alias_cmd.add_command(_envelope_sub_cmd, _envelope_sub_name)
 
 
 __all__ = [
