@@ -351,6 +351,10 @@ def browser_run_cmd(
     flow_id, start_url, steps, final_checks, budget = _parse_flow(_load_json(Path(flow_path), label="flow document"))
 
     if recording_path is not None:
+        if driver_name is not None:
+            # Both name the backend. Silently letting --recording win would leave
+            # an unknown --driver name unrefused, which AC1 requires refusing.
+            raise click.BadParameter("--driver and --recording both select the backend; pass one or the other.")
         frames = _parse_recording(_load_json(Path(recording_path), label="recording"))
 
         def build(profile_dir: Path) -> BrowserDriver:
