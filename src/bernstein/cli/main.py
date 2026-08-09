@@ -81,7 +81,11 @@ from bernstein.cli.commands.spec_cmd import spec_group
 from bernstein.cli.commands.trackers_cmd import trackers_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
-from bernstein.cli.cost import cost_cmd, cost_envelopes_group, estimate_cmd
+from bernstein.cli.cost import (
+    cost_cmd,
+    cost_envelopes_alias_cmd,
+    estimate_alias_cmd,
+)
 from bernstein.cli.debug_bundle import debug_group
 from bernstein.cli.debug_cmd import debug_cmd
 from bernstein.cli.dep_impact_cmd import dep_impact_cmd
@@ -1083,8 +1087,8 @@ cli.add_command(auth_group, "auth")
 cli.add_command(auth_login, "login")
 cli.add_command(evolve)
 cli.add_command(cost_cmd, "cost")
-cli.add_command(cost_envelopes_group, "cost-envelopes")
-cli.add_command(estimate_cmd, "estimate")
+cli.add_command(cost_envelopes_alias_cmd, "cost-envelopes")
+cli.add_command(estimate_alias_cmd, "estimate")
 cli.add_command(status)
 cli.add_command(ps_cmd, "ps")
 cli.add_command(stop)

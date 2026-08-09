@@ -31,13 +31,20 @@ def _load_hmac_key() -> bytes:
 
 
 @click.group("artifacts")
-def artifacts_group() -> None:
-    """List and render agent-posted, journal-anchored task artifacts.
+@click.pass_context
+def artifacts_group(ctx: click.Context) -> None:
+    """[Deprecated] List and render agent-posted task artifacts (use 'bernstein artifact').
 
     \b
       bernstein artifacts list <task>
       bernstein artifacts show <task> <key>
     """
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein artifacts' is deprecated and will be removed in v4.0.0 (#3138): "
+            "use 'bernstein artifact' instead.",
+            err=True,
+        )
 
 
 @artifacts_group.command("list")

@@ -92,6 +92,17 @@ def pool_create_cmd(name: str, slots: int, posture: str, workdir: Path | None, o
         console.print(f"[green]Pool set:[/green] {name} slots={slots} posture={posture} (row {entry_hash[:16]}...)")
 
 
+from bernstein.cli.commands.pool_cmd import list_cmd as _pool_list_cmd  # noqa: E402
+from bernstein.cli.commands.pool_cmd import register_cmd as _pool_register_cmd  # noqa: E402
+from bernstein.cli.commands.pool_cmd import show_cmd as _pool_show_cmd  # noqa: E402
+from bernstein.cli.commands.pool_cmd import verify_cmd as _pool_verify_cmd  # noqa: E402
+
+pool_group.add_command(_pool_register_cmd, "register")
+pool_group.add_command(_pool_list_cmd, "list")
+pool_group.add_command(_pool_show_cmd, "show")
+pool_group.add_command(_pool_verify_cmd, "verify")
+
+
 # ---------------------------------------------------------------------------
 # tag
 # ---------------------------------------------------------------------------

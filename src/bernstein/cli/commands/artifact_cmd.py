@@ -131,9 +131,16 @@ def _spine_hmac_key() -> bytes:
 
 @artifact_group.command("list")
 @_workdir_option
+@click.argument("task", required=False, default=None)
 @click.option("--output-json", is_flag=True, help="Emit JSON instead of human text.")
-def artifact_list_cmd(workdir: Path, output_json: bool) -> None:
-    """List every artifact key the local lineage spines carry."""
+def artifact_list_cmd(workdir: Path, task: str | None, output_json: bool) -> None:
+    """List every artifact key the local lineage spines carry (or posted artifacts for TASK)."""
+    if task is not None:
+        from bernstein.cli.commands.artifacts_cmd import artifacts_list_cmd
+
+        artifacts_list_cmd.callback(task=task, workdir=str(workdir))
+        return
+
     import json
 
     from bernstein.core.lineage.artifact_health import list_artifact_keys
@@ -149,6 +156,11 @@ def artifact_list_cmd(workdir: Path, output_json: bool) -> None:
         return
     for uri, count in ordered:
         console.print(f"  {count:>4}  {uri}")
+
+
+from bernstein.cli.commands.artifacts_cmd import artifacts_show_cmd  # noqa: E402
+
+artifact_group.add_command(artifacts_show_cmd, "show")
 
 
 @artifact_group.command("log")
