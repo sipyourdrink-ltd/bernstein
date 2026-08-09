@@ -36,6 +36,7 @@ import shutil
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from uuid import uuid4
 
 from bernstein.core.agents.computer_use import Action, ActionKind
 
@@ -432,6 +433,11 @@ _DRIVER_REGISTRY: dict[str, DriverFactory] = {}
 def register_driver(name: str, factory: DriverFactory) -> None:
     """Register a browser driver factory under *name*.
 
+    Registration is last-write-wins and silent: a later call under an existing
+    name replaces the earlier factory, including the built-ins. The registry is
+    module-global and populated at import time, so whichever module imports last
+    decides. There is no unregister verb.
+
     Args:
         name: The name ``--driver`` selects the backend by.
         factory: Builds a driver bound to an isolated profile. It is called as
@@ -666,8 +672,16 @@ def verify_driver_conformance(
     if len(expected_tape) != 3:
         raise ValueError(f"conformance tape must hold exactly 3 frames, got {len(expected_tape)}")
 
-    profile_a = BrowserProfile.allocate(root=root_dir, task_id="conformance-task-a")
-    profile_b = BrowserProfile.allocate(root=root_dir, task_id="conformance-task-b")
+    # Per-invocation task ids. BrowserProfile.allocate is deterministic in the
+    # task id -- which is what the worker wants, so a supervisor can find a
+    # crashed task's profile -- but it means two verifier invocations sharing a
+    # root_dir would resolve to the same two directories and tear down each
+    # other's live profiles mid-run. The nonce keeps the two ids distinct within
+    # an invocation and unique across invocations; nothing here is anchored, so
+    # the profile paths carry no determinism requirement.
+    nonce = uuid4().hex
+    profile_a = BrowserProfile.allocate(root=root_dir, task_id=f"conformance-{nonce}-task-a")
+    profile_b = BrowserProfile.allocate(root=root_dir, task_id=f"conformance-{nonce}-task-b")
     close_error: Exception | None = None
     # Every driver the factory hands back, recorded as it is built. A session
     # opened before a failure -- a conformance failure mid-flow, or a factory

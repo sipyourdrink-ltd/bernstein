@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import inspect
 import shutil
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -460,6 +461,50 @@ def test_kit_leaves_no_profile_behind_when_a_driver_fails(tmp_path: Path) -> Non
     assert list(root.iterdir()) == []
 
 
+def test_two_kit_invocations_on_one_root_get_their_own_directories(tmp_path: Path) -> None:
+    """`BrowserProfile.allocate` is deterministic in the task id.
+
+    Constant task ids therefore resolve two invocations to the same two
+    directories, and the first invocation's teardown removes the second's live
+    profiles mid-run.
+    """
+    seen: list[Path] = []
+
+    class ProfileRecorder(TapeDriver):
+        def __init__(self, frames: Sequence[PageState], *, profile_dir: Path | None = None) -> None:
+            super().__init__(frames, profile_dir=profile_dir)
+            assert profile_dir is not None
+            seen.append(profile_dir)
+
+    verify_driver_conformance(_tape_factory(ProfileRecorder), root_dir=tmp_path)
+    verify_driver_conformance(_tape_factory(ProfileRecorder), root_dir=tmp_path)
+
+    assert len(seen) == 4
+    assert len(set(seen)) == 4, "two invocations shared profile directories"
+
+
+def test_concurrent_kit_invocations_on_one_root_do_not_disturb_each_other(tmp_path: Path) -> None:
+    """The reported harm directly: overlapping runs against a shared root."""
+    errors: list[BaseException] = []
+    start = threading.Barrier(4)
+
+    def run() -> None:
+        try:
+            start.wait(timeout=10)
+            for _ in range(5):
+                verify_driver_conformance(_tape_factory(TapeDriver), root_dir=tmp_path)
+        except BaseException as exc:  # reported from the main thread
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert errors == []
+
+
 def test_kit_refuses_a_tape_that_is_not_three_frames(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="exactly 3 frames"):
         verify_driver_conformance(_tape_factory(TapeDriver), root_dir=tmp_path, expected_tape=CONFORMANCE_TAPE[:2])
@@ -495,6 +540,23 @@ def test_registered_factory_binds_profile_dir_as_a_keyword(name: str) -> None:
     Binding the signature proves the contract without constructing anything.
     """
     inspect.signature(get_driver_factory(name)).bind(profile_dir="/tmp/probe")
+
+
+def test_registration_is_last_write_wins_including_over_a_built_in() -> None:
+    """Documented, not guarded: whichever module imports last decides.
+
+    Pinned so the behaviour is a stated property of the registry rather than an
+    accident a plugin discovers by shadowing a built-in.
+    """
+    before = get_driver_factory("browser_use")
+
+    def replacement(*, profile_dir: Path) -> BrowserDriver:
+        return TapeDriver(CONFORMANCE_TAPE, profile_dir=profile_dir)
+
+    register_driver("browser_use", replacement)
+    assert get_driver_factory("browser_use") is replacement
+    assert get_driver_factory("browser_use") is not before
+    assert list_drivers().count("browser_use") == 1
 
 
 def test_recorded_driver_refuses_selection_by_name_with_a_typed_error() -> None:
