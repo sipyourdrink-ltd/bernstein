@@ -772,14 +772,16 @@ class TriggerManager:
                 continue
 
             try:
-                cron = croniter(trigger.schedule, time.localtime(now))
+                # croniter accepts a Unix timestamp, a datetime, or None - not a
+                # struct_time. ``now`` is already a float epoch, so pass it as-is.
+                cron = croniter(trigger.schedule, now)
                 # Check if the current minute matches the schedule
                 prev_fire = cron.get_prev(float)
                 # If the previous fire time is within this minute, fire
                 prev_minute = time.strftime("%Y-%m-%dT%H:%M", time.localtime(prev_fire))
                 if prev_minute != current_minute:
                     continue
-            except (ValueError, KeyError) as exc:
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
                 logger.error("Invalid cron expression for trigger %s: %s", trigger.name, exc)
                 continue
 

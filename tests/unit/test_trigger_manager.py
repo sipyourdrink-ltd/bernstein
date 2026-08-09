@@ -721,6 +721,96 @@ class TestTriggerManager:
 
 
 # ---------------------------------------------------------------------------
+# Cron evaluation tests
+# ---------------------------------------------------------------------------
+
+# A fixed instant 20s into its minute, so the previous fire of an every-minute
+# schedule always lands inside the current minute regardless of local timezone.
+_FROZEN_NOW = 1_700_000_000.0
+
+
+class _FrozenTime:
+    """Stand-in for the ``time`` module with a pinned ``time()``."""
+
+    def __init__(self, now: float) -> None:
+        self._now = now
+
+    def time(self) -> float:
+        return self._now
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(time, name)
+
+
+def _write_triggers(sdd_dir: Path, triggers: list[dict[str, Any]]) -> None:
+    path = sdd_dir / "config" / "triggers.yaml"
+    with open(path, "w") as f:
+        yaml.dump({"version": 1, "triggers": triggers}, f)
+
+
+def _cron_trigger(name: str, schedule: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "source": "cron",
+        "enabled": True,
+        "schedule": schedule,
+        "task": {"title": f"{name} ({{date}})", "role": "manager"},
+    }
+
+
+class TestCronEvaluation:
+    """Regression coverage for ``TriggerManager.evaluate_cron_triggers``."""
+
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pytest.importorskip("croniter")
+        from bernstein.core.orchestration import trigger_manager as module
+
+        monkeypatch.setattr(module, "time", _FrozenTime(_FROZEN_NOW))
+
+    def test_due_trigger_fires(self, sdd_dir: Path) -> None:
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+
+        events = mgr.evaluate_cron_triggers()
+
+        assert len(events) == 1
+        assert events[0].source == "cron"
+        assert events[0].metadata["cron_name"] == "every-minute"
+        assert events[0].timestamp == _FROZEN_NOW
+
+    def test_trigger_not_due_does_not_fire(self, sdd_dir: Path) -> None:
+        off_minute = (time.localtime(_FROZEN_NOW).tm_min + 30) % 60
+        _write_triggers(sdd_dir, [_cron_trigger("off-minute", f"{off_minute} * * * *")])
+        mgr = TriggerManager(sdd_dir)
+
+        assert mgr.evaluate_cron_triggers() == []
+
+    def test_does_not_refire_within_the_same_minute(self, sdd_dir: Path) -> None:
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+
+        assert len(mgr.evaluate_cron_triggers()) == 1
+        assert mgr.evaluate_cron_triggers() == []
+
+    def test_malformed_schedule_does_not_block_other_triggers(self, sdd_dir: Path) -> None:
+        _write_triggers(
+            sdd_dir,
+            [
+                _cron_trigger("bad-expression", "not a cron expression"),
+                # An unquoted YAML integer reaches croniter as an int, not a str.
+                _cron_trigger("bad-type", 30),
+                _cron_trigger("every-minute", "* * * * *"),
+            ],
+        )
+        mgr = TriggerManager(sdd_dir)
+
+        events = mgr.evaluate_cron_triggers()
+
+        assert [e.metadata["cron_name"] for e in events] == ["every-minute"]
+
+
+# ---------------------------------------------------------------------------
 # Trigger source tests
 # ---------------------------------------------------------------------------
 
