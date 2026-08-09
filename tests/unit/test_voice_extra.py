@@ -30,7 +30,7 @@ def block_imports(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     """
     real_import = builtins.__import__
 
-    def _block(*names: str) -> None:
+    def _block(*names: str, error: BaseException | None = None) -> None:
         blocked = frozenset(names)
 
         def fake_import(
@@ -40,8 +40,9 @@ def block_imports(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             fromlist: tuple[str, ...] = (),
             level: int = 0,
         ) -> Any:
-            if name.partition(".")[0] in blocked:
-                raise ImportError(f"No module named {name.partition('.')[0]!r}")
+            root = name.partition(".")[0]
+            if root in blocked:
+                raise error if error is not None else ImportError(f"No module named {root!r}")
             return real_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
@@ -92,6 +93,28 @@ def test_import_audio_deps_without_extra_gives_informative_error(
     out = capsys.readouterr().out
     assert _INSTALL_HINT in out
     assert "pip install sounddevice numpy" not in out
+
+
+def test_missing_portaudio_is_not_reported_as_a_missing_extra(
+    block_imports: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A PortAudio load failure gets its own instruction, not "install the extra".
+
+    ``sounddevice`` dlopens PortAudio at import time. With the wheel installed
+    but the system library absent - the documented Linux case - it raises
+    ``OSError``, which the ImportError handler does not catch, so the operator
+    got a raw traceback after already waiting through a ~150 MB model download.
+    """
+    block_imports("sounddevice", error=OSError("PortAudio library not found"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        _import_audio_deps()
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "PortAudio" in out
+    assert _INSTALL_HINT not in out, "installing the extra does not fix a missing system library"
 
 
 def test_listen_help_documents_the_voice_extra() -> None:

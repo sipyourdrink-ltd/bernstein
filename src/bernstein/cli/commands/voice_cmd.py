@@ -282,7 +282,18 @@ def _load_whisper_model(model_size: str) -> Any:
 
 
 def _import_audio_deps() -> tuple[Any, Any]:
-    """Import numpy and sounddevice or exit with an error message."""
+    """Import numpy and sounddevice, or exit 1 with an actionable message.
+
+    Two distinct failures are possible and they need different instructions.
+    A missing package raises ``ImportError`` and is fixed by installing the
+    ``voice`` extra. ``sounddevice`` also loads the PortAudio shared library
+    at import time, and when the wheel is installed but the system library is
+    not - the documented Linux case - it raises ``OSError`` instead. Installing
+    the extra again does not fix that one.
+
+    Raises:
+        SystemExit: Always, with code 1, when either import fails.
+    """
     try:
         import numpy as np
         import sounddevice as sd
@@ -293,6 +304,14 @@ def _import_audio_deps() -> tuple[Any, Any]:
             r"[red]Error:[/red] Voice dependencies are not installed."
             "\n"
             r"Install the voice extra with: [bold]pip install 'bernstein\[voice]'[/bold]"
+        )
+        raise SystemExit(1) from exc
+    except OSError as exc:
+        console.print(
+            f"[red]Error:[/red] Voice dependencies are installed but failed to load: {exc}\n"
+            "'sounddevice' needs the PortAudio system library at import time.\n"
+            "Install it with: [bold]apt install libportaudio2[/bold] (Debian/Ubuntu), "
+            "[bold]pacman -S portaudio[/bold] (Arch), or [bold]brew install portaudio[/bold] (macOS)."
         )
         raise SystemExit(1) from exc
 
