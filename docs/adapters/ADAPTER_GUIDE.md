@@ -53,7 +53,7 @@ This means you can run Bernstein with **zero Claude Code dependency** - use `qwe
 | `kilo` | Stackblitz | Any (via provider routing) | Inherited from model | $–$$$ | Full | No | Web development; Stackblitz-integrated teams |
 | `iac` | N/A | N/A (Terraform/Pulumi) | N/A | N/A | IaC plan+apply | No | Infrastructure tasks - pair with LLM adapter for codegen |
 | `generic` | Any | Pass-through | Depends on CLI | Varies | Depends on CLI | No | Unlisted CLIs; prototyping new adapters |
-| `python_runtime` | Python SDK | Pass-through / In-process | Depends on runtime | Varies | Subprocess worker | Stream JSON | Generic Python-invoked agent runtime adapter |
+| `python_runtime` | Any (Python-invoked runtime) | Pass-through to the configured runtime | Depends on runtime | Varies | Depends on runtime | Stream JSON (runner events) | No | Agent runtimes with a Python API and no CLI - configure `runtime_module` + `runtime_entrypoint` |
 | `mock` | None | None (simulated) | N/A | Free | Simulated | Simulated | Unit and integration tests only |
 
 **Reasoning key:** ★★★★★ Exceptional (frontier reasoning) · ★★★★ Strong · ★★★ Good · ★★ Basic · ★ Minimal  
