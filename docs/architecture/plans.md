@@ -125,7 +125,8 @@ Source: `plan_schema.py:49-77`, `plan_loader.py:70-97`.
 ## Plan validation: `bernstein plan validate`
 
 `bernstein plan validate path/to/plan.yaml` runs four checks before the plan is
-ever scheduled:
+ever scheduled. `bernstein validate` remains registered as a deprecated alias
+for the whole 3.x line and is unregistered in 4.0.0.
 
 1. **Schema check** - required fields, enum values, integer ranges
    (`plan_schema.validate_plan()` at `plan_schema.py:428-451`).

@@ -7,6 +7,11 @@ events. The bridge wires them together so a team lead can author one
 scenario in the repo and an operator can stand up the matching Routine in
 about five minutes.
 
+The subcommands live under `bernstein schedule routine`. The older top-level
+`bernstein routine <sub>` spelling remains registered as a deprecated alias for
+the whole 3.x line — same subcommands, same flags, a warning on stderr — and is
+unregistered in 4.0.0.
+
 ## Two directions
 
 ### Direction A - Scenario to Routine (export)

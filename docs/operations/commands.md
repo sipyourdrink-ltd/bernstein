@@ -110,5 +110,17 @@ from the audit chain; `bernstein limits pool` governs admission slot pools in
 the work ledger. The two address different stores, so folding one into the
 other would change results rather than just the name.
 
+Four more top-level names were folded into the domain group that already
+owned the surface (#3140). Same rule: the fold spelling is canonical, the old
+spelling still resolves with a stderr warning, and it is unregistered in
+v4.0.0.
+
+| Deprecated | Use instead | Notes |
+|---|---|---|
+| `bernstein quickstart` | `bernstein demo --flask-todo` | Same demo. The retained alias keeps its own adapter auto-detection; `demo --flask-todo` runs on the mock adapter unless `--real` is passed. |
+| `bernstein init-wizard` | `bernstein init --wizard` | Same wizard. `bernstein i` is the shortcut. |
+| `bernstein validate` | `bernstein plan validate` | Same argument and flags. |
+| `bernstein routine <sub>` | `bernstein schedule routine <sub>` | Same subcommands (`export`, `provision`, `register`, `bindings`) and flags. |
+
 The warning goes to stderr only, so `bernstein cost-envelopes show --json | jq`
 and friends keep working while a script is migrated.

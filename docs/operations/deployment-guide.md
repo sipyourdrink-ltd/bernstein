@@ -114,6 +114,10 @@ bernstein demo --flask-todo --keep    # runs 3 tasks on a demo project, keeps ou
 
 Expected: all 3 tasks complete and a summary table prints with elapsed time and cost.
 
+`bernstein quickstart` remains a deprecated alias for the 3.x line and is
+unregistered in 4.0.0. The two spellings differ on adapter selection — see
+[the demo page](../getting-started/quickstart-demo.md#cost).
+
 ---
 
 ## CI/CD - GitHub Actions
