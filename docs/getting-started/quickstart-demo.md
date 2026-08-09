@@ -50,10 +50,19 @@ bernstein demo --flask-todo --real --adapter codex
 
 ## Cost
 
-Before starting, the command prints a cost estimate. Without `--real` the
-scenario runs on mock agents and prints `$0.00 (mock)` whatever agent CLIs are
-installed on the machine. With `--real` it prints roughly `$0.20` for the 3
-tasks, and if no adapter can be resolved it stops rather than running on mock.
+Before starting, the command prints a cost estimate. The two spellings do not
+reach it the same way.
+
+`bernstein demo --flask-todo` follows `demo`'s rule. Without `--real` it runs on
+mock agents and prints `$0.00 (mock)` whatever agent CLIs are installed on the
+machine. With `--real` it prints roughly `$0.20` for the 3 tasks, and if no
+adapter can be resolved it stops rather than running on mock.
+
+The deprecated `bernstein quickstart` spelling has no `--real` option and keeps
+the behaviour it always had: it picks up an installed agent CLI by itself and
+prints `~$0.20`, falling back to `$0.00 (mock)` only when it finds none. On a
+machine with an agent CLI on PATH it therefore spends money with no flag asked
+for. Pass `--adapter mock` to pin it, or move to `bernstein demo --flask-todo`.
 
 ## Source
 

@@ -29,7 +29,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.init_wizard_cmd import init_wizard_cmd
 from bernstein.cli.commands.plan_validate_cmd import validate_plan
-from bernstein.cli.commands.quickstart_cmd import quickstart_cmd
+from bernstein.cli.commands.quickstart_cmd import quickstart_alias_cmd, quickstart_cmd
 from bernstein.cli.commands.routine_cmd import routine_alias_group, routine_group
 from bernstein.cli.main import cli, demo, init
 from bernstein.cli.utils.aliases import ALIASES, expand_alias
@@ -202,22 +202,29 @@ def _doc_section(text: str, heading: str) -> str:
     return body.split("\n## ", 1)[0]
 
 
-def test_flask_todo_cost_docs_state_the_mock_by_default_rule() -> None:
-    """The page's cost section must not promise adapter auto-detection.
+def test_flask_todo_cost_docs_cover_both_spellings() -> None:
+    """The two spellings do not cost the same, so the cost section must say so.
 
-    The scenario body still resolves ``adapter or detect_available_adapter()
-    or "mock"``, but the fold decides the adapter before that runs, so the
-    auto-detect branch is unreachable from ``demo --flask-todo``: without
-    ``--real`` the run is always free, and with it a machine that has no
-    adapter is refused rather than downgraded to mock. The cost section is the
-    paragraph a first-run reader checks before deciding whether the command
-    spends money, so it has to agree with the flag table above it.
+    ``demo --flask-todo`` decides the adapter before the scenario body runs, so
+    its ``adapter or detect_available_adapter() or "mock"`` branch is
+    unreachable and the run cannot spend money without ``--real``. The retained
+    ``quickstart`` spelling has no ``--real`` option at all and still reaches
+    that branch, so on a machine with an agent CLI on PATH it spends money with
+    no flag asked for. The cost section is the paragraph a first-run reader
+    checks before deciding whether the command bills them; written for only one
+    of the two spellings it misleads whoever is on the other.
     """
-    cost = _doc_section(_FLASK_TODO_DOC.read_text(encoding="utf-8"), "Cost").lower()
+    assert "--real" in _long_opts(demo)
+    assert "--real" not in _long_opts(quickstart_alias_cmd), (
+        "the deprecated spelling gained --real; the cost section needs rewriting to match"
+    )
+
+    cost = _doc_section(_FLASK_TODO_DOC.read_text(encoding="utf-8"), "Cost")
 
     assert "--real" in cost, "the cost section must name the flag that decides whether money is spent"
-    for stale in ("is detected", "auto-detect", "falls back"):
-        assert stale not in cost, f"cost section still describes the removed auto-detect behaviour: {stale!r}"
+    assert "bernstein quickstart" in cost, (
+        "the retained spelling bills without a flag; the cost section must not describe only demo --flask-todo"
+    )
 
 
 def test_deprecated_quickstart_warns_and_forwards(monkeypatch: pytest.MonkeyPatch) -> None:
