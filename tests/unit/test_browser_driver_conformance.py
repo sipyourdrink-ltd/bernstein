@@ -541,6 +541,30 @@ def test_kit_exercises_every_protocol_verb(tmp_path: Path) -> None:
     assert set(CONFORMANCE_VERBS) <= set(called)
 
 
+def test_kit_drives_act_with_a_non_navigation_action(tmp_path: Path) -> None:
+    """The kit's ``act`` payload is pinned: a CLICK, not a disguised navigation.
+
+    The protocol cannot make a driver's *use* of the payload observable -- ``act``
+    returns nothing, and the only readback is the next frame, which a legitimate
+    replay driver advances by cursor rather than by payload. What can be pinned is
+    the kit's own side of the contract: ``act`` is exercised with the
+    non-navigation action ``BrowserWorker`` routes through ``act`` instead of
+    ``navigate``, on every driver it builds. Without this, turning the kit's
+    action into a ``NAVIGATE`` would stop exercising that route silently.
+    """
+    seen: list[Action] = []
+
+    class PayloadRecorder(TapeDriver):
+        def act(self, action: Action) -> None:
+            seen.append(action)
+            super().act(action)
+
+    verify_driver_conformance(_tape_factory(PayloadRecorder), root_dir=tmp_path)
+
+    assert [action.kind for action in seen] == [ActionKind.CLICK, ActionKind.CLICK]
+    assert {action.target for action in seen} == {"#conformance"}
+
+
 def test_kit_leaves_no_profile_behind_when_a_driver_fails(tmp_path: Path) -> None:
     """A failing driver must not leak its profile directory."""
     root = tmp_path / "profiles"

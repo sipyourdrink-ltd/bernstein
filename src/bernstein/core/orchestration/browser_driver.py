@@ -672,8 +672,19 @@ def verify_driver_conformance(
     Non-interference inside the profile root is the strongest claim available
     here; anything more has to be asserted by the backend's own tests.
 
+    What the action check does not prove either. ``act`` returns nothing, and the
+    only readback is the next frame -- which a legitimate replay driver advances
+    by cursor, not by payload. A driver that discards the ``kind`` and ``target``
+    it is handed and simply advances therefore passes, and requiring otherwise
+    would fail :class:`RecordedBrowserDriver`, which exists to replay a tape.
+    Payload handling has to be asserted by the backend's own tests; what is
+    pinned here is that ``act`` is exercised with a non-navigation action, the
+    route ``BrowserWorker`` sends everything but ``NAVIGATE`` down.
+
     *driver_factory* is called as ``factory(profile_dir=...)``, the registry
     calling contract, so a registered backend can be handed to the kit directly.
+    Being callable is not the same as passing: the kit compares against a fixed
+    tape, so a live backend has to be pointed at a fixture that reproduces one.
 
     Args:
         driver_factory: Builds a driver bound to a profile directory.
