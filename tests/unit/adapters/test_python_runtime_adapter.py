@@ -122,6 +122,57 @@ def test_python_runtime_spawn(tmp_path: Path) -> None:
         assert "run_agent" in cmd_list
 
 
+def test_spawn_boundary_matches_the_cross_adapter_process_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restate the shared spawn-boundary contract, which now skips this adapter.
+
+    ``tests/property/test_adapter_spawn_bughunt.py`` pins the process boundary
+    for every adapter - argv is ``list[str]``, never ``shell=True``, ``env=``
+    explicit, ``cwd=`` the worktree, ``SpawnResult.proc`` the live handle - and
+    ``tests/unit/test_adapter_consistency.py`` pins the ``SpawnResult`` shape.
+    All three call ``spawn()`` with no ``mcp_config``, which this adapter now
+    refuses, so they ``skip`` for ``python_runtime`` instead of failing. Nothing
+    else in the tree checks this adapter's boundary; pin it here so the refusal
+    does not silently trade a contract for a skip.
+
+    The env assertion is the load-bearing half: the adapter hands the child an
+    allowlisted environment, so an unrelated orchestrator secret must not reach
+    a runtime that is imported and called with no permission surface.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-provider")
+    monkeypatch.setenv("UNRELATED_DEPLOY_SECRET", "must-not-propagate")
+    adapter = PythonRuntimeAdapter()
+
+    with patch("subprocess.Popen") as mock_popen:
+        mock_popen.return_value = MagicMock(pid=1234)
+        result = adapter.spawn(
+            prompt="probe",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="gpt-4o", effort="normal"),
+            session_id="py-task-6",
+            mcp_config={"runtime_module": "custom_agent"},
+            timeout_seconds=0,
+        )
+
+    args = mock_popen.call_args.args
+    kwargs = mock_popen.call_args.kwargs
+
+    cmd = args[0] if args else kwargs.get("args")
+    assert isinstance(cmd, list)
+    assert all(isinstance(token, str) for token in cmd)
+    assert not kwargs.get("shell", False)
+
+    assert isinstance(kwargs.get("env"), dict)
+    assert "UNRELATED_DEPLOY_SECRET" not in kwargs["env"]
+    assert kwargs["env"].get("OPENAI_API_KEY") == "sk-provider"
+
+    assert Path(kwargs["cwd"]) == tmp_path
+    assert result.proc is mock_popen.return_value
+    assert isinstance(result.log_path, Path)
+
+
 def test_spawn_forwards_system_addendum_into_the_prompt(tmp_path: Path) -> None:
     """A Python runtime has no system channel, so the addendum rides the prompt.
 
