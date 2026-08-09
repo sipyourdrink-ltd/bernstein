@@ -697,6 +697,13 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "openhands": AdapterStrategy(),
     "pi": AdapterStrategy(),
     "plandex": AdapterStrategy(),
+    # Generic Python-invoked agent runtime adapter (#2959).
+    "python_runtime": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.ALWAYS_ON,
+        event_channel=EventChannel.STREAM_JSON,
+        output_mode=OutputMode.GIT_DIFF,
+    ),
     # Built from a declarative capability profile rather than a
     # hand-written module (see
     # :mod:`bernstein.adapters.capability_profile`). The row stays here
