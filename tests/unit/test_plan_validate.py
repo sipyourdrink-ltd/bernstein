@@ -237,6 +237,35 @@ class TestSchemaCheck:
         assert result.exit_code == 0
         assert "warning" in result.output.lower()
 
+    @pytest.mark.parametrize(
+        "role",
+        ["analyst", "ci-fixer", "ml-engineer", "prompt-engineer", "resolver", "retrieval", "visionary", "vp"],
+    )
+    def test_a_role_that_ships_with_the_project_is_not_called_unknown(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        role: str,
+    ) -> None:
+        """Every one of these has a file under ``templates/roles/``.
+
+        The command kept its own copy of the role list, which had drifted to a
+        subset of the shipped roles, so a plan using a role the project itself
+        provides was told that role was unknown.
+        """
+        plan_file = _write_plan(
+            tmp_path,
+            {
+                "name": "Shipped Role Plan",
+                "stages": [{"name": "Stage 1", "steps": [{"title": "Task A", "role": role}]}],
+            },
+        )
+
+        result = runner.invoke(validate_plan, [str(plan_file)])
+
+        assert result.exit_code == 0
+        assert "unknown role" not in result.output.lower()
+
 
 class TestDryRunWithPlanFile:
     """Tests for dry-run mode loading tasks from a plan file."""

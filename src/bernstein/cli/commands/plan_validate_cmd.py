@@ -10,23 +10,16 @@ import yaml
 
 from bernstein.cli.helpers import console
 from bernstein.core.plan_loader import PlanLoadError, load_plan
+from bernstein.core.plan_schema import KNOWN_ROLES
+from bernstein.core.plan_schema import validate_plan as _validate_plan_schema
 
-# Known roles from templates/roles/
-_KNOWN_ROLES: frozenset[str] = frozenset(
-    {
-        "adversary",
-        "manager",
-        "backend",
-        "frontend",
-        "qa",
-        "security",
-        "docs",
-        "devops",
-        "architect",
-        "reviewer",
-        "data",
-    }
-)
+#: The roles that ship with the project, taken from ``plan_schema`` rather than
+#: restated here. A second copy of the list lived in this module and had drifted
+#: to 11 of the 18 roles under ``templates/roles/``, so ``analyst``,
+#: ``ci-fixer``, ``ml-engineer``, ``prompt-engineer``, ``resolver``,
+#: ``retrieval``, ``visionary`` and ``vp`` were each reported as an unknown role
+#: by the command that validates the plans using them.
+_KNOWN_ROLES: frozenset[str] = frozenset(KNOWN_ROLES)
 
 
 def _check_duplicate_titles(
@@ -128,15 +121,13 @@ def _check_schema(plan_file: Path, errors: list[str]) -> None:
         plan_file: The plan being validated.
         errors: Accumulator appended to in place.
     """
-    from bernstein.core.plan_schema import validate_plan as validate_plan_schema
-
     try:
         raw = yaml.safe_load(plan_file.read_text())
     except yaml.YAMLError:
         return
     if not isinstance(raw, dict) or not raw.get("stages"):
         return
-    errors.extend(e for e in validate_plan_schema(raw) if ".role:" not in e)
+    errors.extend(e for e in _validate_plan_schema(raw) if ".role:" not in e)
 
 
 def _raw_step_count(plan_file: Path) -> int:
