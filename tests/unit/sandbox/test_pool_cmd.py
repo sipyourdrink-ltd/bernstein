@@ -45,14 +45,31 @@ class TestPoolCli:
 
         res = _run(["list", "--workdir", str(tmp_path), "--json"])
         assert res.exit_code == 0, res.output
-        pools = json.loads(res.output)["pools"]
+        pools = json.loads(res.stdout)["pools"]
         assert "ci-linux" in pools
 
         res = _run(["show", "ci-linux", "--workdir", str(tmp_path)])
         assert res.exit_code == 0, res.output
-        body = json.loads(res.output)
+        body = json.loads(res.stdout)
         assert body["name"] == "ci-linux"
         assert len(body["pool_hash"]) == 64
+
+    def test_json_output_carries_the_document_and_nothing_else(self, tmp_path: Path):
+        """``--json`` output is piped to ``jq``, so stdout must hold only the document.
+
+        Any prose a future change adds - a banner, a notice, a progress line -
+        belongs on stderr. On stdout it lands inside the document and breaks the
+        pipe, which is why the assertions above read ``stdout`` rather than
+        click's ``output`` (stdout and stderr interleaved).
+        """
+        spec = _write_spec(tmp_path)
+        _run(["register", str(spec), "--workdir", str(tmp_path)])
+
+        res = _run(["list", "--workdir", str(tmp_path), "--json"])
+
+        assert res.exit_code == 0, res.output
+        assert set(json.loads(res.stdout)) == {"pools"}
+        assert res.stdout.lstrip().startswith("{")
 
     def test_verify_passes_for_clean_store(self, tmp_path: Path):
         spec = _write_spec(tmp_path)
