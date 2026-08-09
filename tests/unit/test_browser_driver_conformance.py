@@ -256,6 +256,104 @@ def test_kit_fails_a_driver_returning_an_empty_screenshot(tmp_path: Path) -> Non
     assert "empty" in str(exc_info.value)
 
 
+def test_kit_fails_a_factory_that_hands_out_one_shared_driver(tmp_path: Path) -> None:
+    """Two tasks must get two drivers, not one instance handed out twice."""
+    shared: list[TapeDriver] = []
+
+    def factory(*, profile_dir: Path) -> BrowserDriver:
+        if not shared:
+            shared.append(TapeDriver(CONFORMANCE_TAPE, profile_dir=profile_dir))
+        return shared[0]
+
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(factory, root_dir=tmp_path)
+
+    # The second driver is the same object, already advanced past frame 0.
+    assert "second driver, initial state" in str(exc_info.value)
+
+
+def test_kit_fails_a_factory_whose_second_driver_is_broken(tmp_path: Path) -> None:
+    """A working first session must not cover for a broken second one."""
+    built = 0
+
+    def factory(*, profile_dir: Path) -> BrowserDriver:
+        nonlocal built
+        built += 1
+        cls = TapeDriver if built == 1 else LaggingDomDriver
+        return cls(CONFORMANCE_TAPE, profile_dir=profile_dir)
+
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(factory, root_dir=tmp_path)
+
+    assert exc_info.value.verb == "dom_snapshot"
+    assert "second driver" in str(exc_info.value)
+
+
+def test_kit_fails_when_only_the_second_driver_is_missing_a_verb(tmp_path: Path) -> None:
+    """Both drivers are checked for the verbs, and the failure stays typed.
+
+    Without the check the missing verb surfaces later as a raw ``TypeError``
+    from the drive loop rather than a ``ConformanceFailure`` naming ``navigate``.
+    """
+    built = 0
+
+    def factory(*, profile_dir: Path) -> BrowserDriver:
+        nonlocal built
+        built += 1
+        cls = TapeDriver if built == 1 else NoNavigateDriver
+        return cls(CONFORMANCE_TAPE, profile_dir=profile_dir)
+
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(factory, root_dir=tmp_path)
+
+    assert exc_info.value.verb == "navigate"
+    assert "second driver" in str(exc_info.value)
+
+
+def test_kit_fails_a_driver_that_writes_into_a_sibling_profile(tmp_path: Path) -> None:
+    """Driving one task must leave a concurrent task's profile untouched."""
+
+    class SiblingWritingDriver(TapeDriver):
+        def navigate(self, url: str) -> None:
+            super().navigate(url)
+            assert self.profile_dir is not None
+            for sibling in self.profile_dir.parent.iterdir():
+                if sibling != self.profile_dir:
+                    (sibling / "leaked-cookie.txt").write_text("session=stolen")
+
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(_tape_factory(SiblingWritingDriver), root_dir=tmp_path / "root")
+
+    assert exc_info.value.verb == "profile"
+    assert "changed another task" in str(exc_info.value)
+
+
+def test_kit_closes_every_driver_even_when_one_close_raises(tmp_path: Path) -> None:
+    """A leaked session is the point of the idempotency check, not a side effect."""
+    closed: list[int] = []
+    built = 0
+
+    class CountingCloseDriver(TapeDriver):
+        def __init__(self, frames: Sequence[PageState], *, profile_dir: Path | None = None) -> None:
+            super().__init__(frames, profile_dir=profile_dir)
+            nonlocal built
+            built += 1
+            self.ordinal = built
+
+        def close(self) -> None:
+            closed.append(self.ordinal)
+            if self.ordinal == 1:
+                raise RuntimeError("first driver refuses to close")
+            super().close()
+
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(_tape_factory(CountingCloseDriver), root_dir=tmp_path)
+
+    assert exc_info.value.verb == "close"
+    # The second session was closed despite the first one raising.
+    assert 2 in closed
+
+
 def test_kit_fails_a_driver_missing_a_verb(tmp_path: Path) -> None:
     with pytest.raises(ConformanceFailure) as exc_info:
         verify_driver_conformance(_tape_factory(NoNavigateDriver), root_dir=tmp_path)

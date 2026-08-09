@@ -570,6 +570,45 @@ def _expect_frame(driver: BrowserDriver, expected: PageState, *, phase: str) -> 
         raise ConformanceFailure("screenshot", f"{phase}: expected {expected.screenshot!r}, got {shot!r}")
 
 
+def _drive_tape(driver: BrowserDriver, expected_tape: Sequence[PageState], *, which: str) -> None:
+    """Drive one driver through the fixed flow, checking every observation point.
+
+    Args:
+        driver: The driver to drive.
+        expected_tape: The three frames it is expected to reproduce.
+        which: Which of the kit's two drivers this is, for the failure message.
+
+    Raises:
+        ConformanceFailure: Naming the verb that disagreed.
+    """
+    _expect_frame(driver, expected_tape[0], phase=f"{which} driver, initial state")
+    driver.navigate(expected_tape[1].url)
+    _expect_frame(driver, expected_tape[1], phase=f"{which} driver, after navigate")
+    driver.act(Action(kind=ActionKind.CLICK, target="#conformance"))
+    _expect_frame(driver, expected_tape[2], phase=f"{which} driver, after act")
+
+
+def _close_idempotently(driver: BrowserDriver) -> Exception | None:
+    """Close *driver* twice, returning the failure instead of raising it.
+
+    Returned rather than raised so one driver's non-idempotent ``close`` cannot
+    leave a sibling session open or mask a conformance failure already in flight.
+    """
+    try:
+        driver.close()
+        driver.close()
+    except Exception as exc:
+        return exc
+    return None
+
+
+def _dir_entries(path: Path) -> set[str]:
+    """Return every path under *path*, relative to it. Empty when it is absent."""
+    if not path.exists():
+        return set()
+    return {str(child.relative_to(path)) for child in path.rglob("*")}
+
+
 def verify_driver_conformance(
     driver_factory: DriverFactory,
     *,
@@ -586,15 +625,29 @@ def verify_driver_conformance(
 
     What is asserted:
 
-    * all six members of :data:`CONFORMANCE_VERBS` are present and callable, so a
-      driver missing a verb fails at that verb instead of silently skipping it;
+    * all six members of :data:`CONFORMANCE_VERBS` are present and callable;
     * ``current_url``, ``dom_snapshot`` and ``screenshot`` match the expected
       frame at each of the three observation points;
     * ``navigate`` and ``act`` each advance the driver by exactly one frame;
-    * ``close`` is idempotent, as the protocol requires; and
-    * two tasks built from the same factory hold disjoint
-      :class:`BrowserProfile` directories, and tearing one down leaves the other
-      intact.
+    * ``close`` is idempotent, as the protocol requires, and each driver is
+      closed even when a sibling's ``close`` raises; and
+    * profile isolation, to the extent the six-verb protocol makes it
+      observable -- see below.
+
+    Two drivers are built and *both* are driven through the whole flow. A factory
+    that hands out a shared or stateful instance fails, because the second driver
+    is then already past the start frame; a backend whose second session is
+    broken can no longer hide behind a first session that works.
+
+    What the profile checks do and do not prove. The kit asserts that two tasks
+    are allocated disjoint directories, that both exist while both drivers are
+    live, that driving one task leaves the other's directory byte-for-byte
+    unchanged, and that tearing one down does not remove the other. It cannot
+    prove a backend *uses* the directory it was handed: nothing in the six-verb
+    protocol exposes where a driver puts its state, so a backend that ignores
+    ``profile_dir`` and writes to a fixed location outside ``root_dir`` passes.
+    Non-interference inside the profile root is the strongest claim available
+    here; anything more has to be asserted by the backend's own tests.
 
     *driver_factory* is called as ``factory(profile_dir=...)``, the registry
     calling contract, so a registered backend can be handed to the kit directly.
@@ -619,9 +672,10 @@ def verify_driver_conformance(
         driver = driver_factory(profile_dir=profile_a.profile_dir)
         other = driver_factory(profile_dir=profile_b.profile_dir)
 
-        for verb in CONFORMANCE_VERBS:
-            if not callable(getattr(driver, verb, None)):
-                raise ConformanceFailure(verb, "driver does not expose the verb as a callable")
+        for name, subject in (("first", driver), ("second", other)):
+            for verb in CONFORMANCE_VERBS:
+                if not callable(getattr(subject, verb, None)):
+                    raise ConformanceFailure(verb, f"the {name} driver does not expose the verb as a callable")
 
         # Two live tasks off one factory must not share a profile directory.
         if profile_a.profile_dir == profile_b.profile_dir:
@@ -629,22 +683,28 @@ def verify_driver_conformance(
         if not profile_a.profile_dir.exists() or not profile_b.profile_dir.exists():
             raise ConformanceFailure("profile", "an allocated profile directory does not exist")
 
-        _expect_frame(driver, expected_tape[0], phase="initial state")
-        driver.navigate(expected_tape[1].url)
-        _expect_frame(driver, expected_tape[1], phase="after navigate")
-        driver.act(Action(kind=ActionKind.CLICK, target="#conformance"))
-        _expect_frame(driver, expected_tape[2], phase="after act")
+        # Both drivers are driven, not just the first. A factory that hands out a
+        # shared or stateful instance shows up as a second driver that is already
+        # past the start frame, and a backend whose second session is broken can
+        # no longer hide behind a first session that works.
+        sibling_before = _dir_entries(profile_b.profile_dir)
+        _drive_tape(driver, expected_tape, which="first")
+        if _dir_entries(profile_b.profile_dir) != sibling_before:
+            raise ConformanceFailure("profile", "driving one task changed another task's profile directory")
 
-        # close must be idempotent; a driver that raises on the second call is a
-        # failure of the protocol, not of the run, so it is captured rather than
-        # raised here where it would mask a live conformance failure.
-        try:
-            driver.close()
-            driver.close()
-            other.close()
-            other.close()
-        except Exception as exc:
-            close_error = exc
+        sibling_before = _dir_entries(profile_a.profile_dir)
+        _drive_tape(other, expected_tape, which="second")
+        if _dir_entries(profile_a.profile_dir) != sibling_before:
+            raise ConformanceFailure("profile", "driving one task changed another task's profile directory")
+
+        # close must be idempotent. Each driver is closed independently: a
+        # session that leaks because a sibling's close raised is exactly the
+        # failure this check exists to catch. The first error is reported after
+        # teardown so it cannot mask a live conformance failure.
+        for subject in (driver, other):
+            error = _close_idempotently(subject)
+            if error is not None and close_error is None:
+                close_error = error
 
         # Terminal state for task A: its profile goes, task B's stays.
         profile_a.teardown()
