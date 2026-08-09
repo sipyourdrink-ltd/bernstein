@@ -205,7 +205,14 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
         if not run_id or run_id in anchored_runs:
             return AttestationVerdict.OBSERVED
         anchored_runs[run_id] = payload
-        event_hmac = str(event.get("hmac", "")).strip()
+        # A receipt projection re-chains a contiguous source range and keeps
+        # the source record's authenticated identity in
+        # ``details._original_hmac``. Identity envelopes were signed against
+        # that source anchor, not the projection-local HMAC, so prefer the
+        # witnessed source value when present. Native-chain callers have no
+        # witness field and continue to use the event HMAC directly.
+        original_hmac = payload.get("_original_hmac")
+        event_hmac = str(original_hmac if original_hmac is not None else event.get("hmac", "")).strip()
         if event_hmac:
             anchor_refs[run_id] = "hmac:" + event_hmac
     for event in events:

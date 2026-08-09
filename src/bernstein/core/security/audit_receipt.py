@@ -49,6 +49,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -72,6 +73,7 @@ from bernstein.core.security.audit_multitenant import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from bernstein.core.security.lineage_kms import KMSAdapter
@@ -258,6 +260,9 @@ def _build_intoto_envelope(
     range_block: dict[str, Any],
     key_id: str,
     kms_adapter: KMSAdapter,
+    receipt_type: str = RECEIPT_TYPE,
+    predicate_kind: str = "audit-receipt",
+    predicate_extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a DSSE / in-toto v1 envelope binding the chain head_sha256.
 
@@ -268,12 +273,17 @@ def _build_intoto_envelope(
     subject = Subject(name=subject_name, digest={"sha256": head_sha256})
     predicate: dict[str, Any] = {
         "schema_version": RECEIPT_SCHEMA_VERSION,
-        "kind": "audit-receipt",
+        "kind": predicate_kind,
         "range": range_block,
     }
+    if predicate_extra:
+        collisions = set(predicate).intersection(predicate_extra)
+        if collisions:
+            raise ValueError(f"predicate extension cannot replace core field(s): {sorted(collisions)}")
+        predicate.update(predicate_extra)
     statement = Statement(
         subjects=[subject],
-        predicate_type=RECEIPT_TYPE,
+        predicate_type=receipt_type,
         predicate=predicate,
     )
     payload = _canonical_json_bytes(statement.to_dict())
@@ -423,6 +433,152 @@ def _submit_to_rekor(*, head_sha256: str, key_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def rebuild_receipt_range(
+    events: list[dict[str, Any]],
+    key: bytes,
+) -> tuple[list[dict[str, Any]], str, str]:
+    """Re-chain a preselected source range and return its receipt head."""
+    rebuilt, head_hmac = _rebuild_slice_chain(events, key)
+    head_sha256 = hashlib.sha256(_events_jsonl_bytes(rebuilt)).hexdigest()
+    return rebuilt, head_hmac, head_sha256
+
+
+def receipt_events_head(events: list[dict[str, Any]]) -> str:
+    """Return SHA-256 over canonical embedded receipt-event JSONL."""
+    return hashlib.sha256(_events_jsonl_bytes(events)).hexdigest()
+
+
+def materialize_receipt(
+    audit_dir: Path,
+    *,
+    since: str,
+    until: str,
+    rebuilt: list[dict[str, Any]],
+    head_hmac: str,
+    head_sha256: str,
+    kms_adapter: KMSAdapter,
+    requested: tuple[str, ...],
+    subject_name: str,
+    online_rekor: bool,
+    output_dir: Path | None,
+    write: bool,
+    receipt_type: str = RECEIPT_TYPE,
+    predicate_kind: str = "audit-receipt",
+    predicate_extra: Mapping[str, Any] | None = None,
+    range_extra: Mapping[str, Any] | None = None,
+    receipt_extra: Mapping[str, Any] | None = None,
+    filename_prefix: str = "audit-receipt",
+) -> AuditReceipt:
+    """Sign one already rebuilt chain slice using the shared receipt substrate.
+
+    Higher-level projections may select a range by an authenticated boundary
+    other than timestamp, then reuse the same COSE, DSSE, transparency, and
+    canonical serialization paths without copying their cryptography.
+    """
+    unknown = [name for name in requested if name not in ALL_FORMATS]
+    if unknown:
+        raise ValueError(f"unknown receipt format(s): {unknown}; valid: {list(ALL_FORMATS)}")
+    if not requested:
+        raise ValueError("at least one receipt format is required")
+    if not receipt_type.strip() or not predicate_kind.strip():
+        raise ValueError("receipt_type and predicate_kind must not be empty")
+    if re.fullmatch(r"[A-Za-z0-9._-]+", filename_prefix) is None:
+        raise ValueError("filename_prefix must contain only letters, digits, dot, underscore, or hyphen")
+
+    jwk = kms_adapter.public_key_jwk()
+    key_id = str(jwk.get("kid") or "audit-receipt-key")
+    range_block: dict[str, Any] = {
+        "since": since,
+        "until": until,
+        "genesis_prev_hmac": _GENESIS_HMAC,
+        "head_hmac": head_hmac,
+        "head_sha256": head_sha256,
+        "event_count": len(rebuilt),
+    }
+    if range_extra:
+        collisions = set(range_block).intersection(range_extra)
+        if collisions:
+            raise ValueError(f"range extension cannot replace core field(s): {sorted(collisions)}")
+        range_block.update(range_extra)
+
+    format_blocks: dict[str, Any] = {}
+    if "cose" in requested:
+        format_blocks["cose"] = _build_cose_sign1(
+            subject_digest_bytes=bytes.fromhex(head_sha256),
+            key_id=key_id,
+            kms_adapter=kms_adapter,
+        )
+    if "intoto" in requested:
+        format_blocks["intoto"] = _build_intoto_envelope(
+            subject_name=subject_name,
+            head_sha256=head_sha256,
+            range_block=range_block,
+            key_id=key_id,
+            kms_adapter=kms_adapter,
+            receipt_type=receipt_type,
+            predicate_kind=predicate_kind,
+            predicate_extra=predicate_extra,
+        )
+    if "transparency" in requested:
+        format_blocks["transparency"] = _build_transparency_receipt(
+            rebuilt_events=rebuilt,
+            head_sha256=head_sha256,
+            key_id=key_id,
+            kms_adapter=kms_adapter,
+            online_rekor=online_rekor,
+        )
+
+    receipt: dict[str, Any] = {
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "receipt_type": receipt_type,
+        "subject": {
+            "name": subject_name,
+            "digest": {"sha256": head_sha256},
+        },
+        "range": range_block,
+        "events": rebuilt,
+        "signing": {
+            "alg": "EdDSA",
+            "key_id": key_id,
+            "public_key_jwk": jwk,
+        },
+        "formats": format_blocks,
+    }
+    if receipt_extra:
+        collisions = set(receipt).intersection(receipt_extra)
+        if collisions:
+            raise ValueError(f"receipt extension cannot replace core field(s): {sorted(collisions)}")
+        receipt.update(receipt_extra)
+    receipt_bytes = _canonical_json_bytes(receipt) + b"\n"
+
+    receipt_path: Path | None = None
+    if write:
+        target_dir = output_dir or (audit_dir.parent / "evidence")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_since = since.replace(":", "").replace("/", "_")
+        safe_until = until.replace(":", "").replace("/", "_")
+        receipt_path = target_dir / f"{filename_prefix}-{safe_since}-{safe_until}.json"
+        receipt_path.write_bytes(receipt_bytes)
+        logger.info(
+            "Audit receipt written events=%d formats=%s path=%s",
+            len(rebuilt),
+            ",".join(sorted(format_blocks)),
+            receipt_path,
+        )
+
+    return AuditReceipt(
+        since=since,
+        until=until,
+        event_count=len(rebuilt),
+        head_hmac=head_hmac,
+        head_sha256=head_sha256,
+        formats=tuple(sorted(format_blocks)),
+        receipt=receipt,
+        receipt_bytes=receipt_bytes,
+        receipt_path=receipt_path,
+    )
+
+
 def build_receipt(
     audit_dir: Path,
     *,
@@ -482,86 +638,19 @@ def build_receipt(
         key=key,
     )
     resolved_subject_name = subject_name or f"audit-receipt-{since}-{until}"
-
-    jwk = kms_adapter.public_key_jwk()
-    key_id = str(jwk.get("kid") or "audit-receipt-key")
-
-    range_block: dict[str, Any] = {
-        "since": since,
-        "until": until,
-        "genesis_prev_hmac": _GENESIS_HMAC,
-        "head_hmac": head_hmac,
-        "head_sha256": head_sha256,
-        "event_count": len(rebuilt),
-    }
-
-    format_blocks: dict[str, Any] = {}
-    if "cose" in requested:
-        format_blocks["cose"] = _build_cose_sign1(
-            subject_digest_bytes=bytes.fromhex(head_sha256),
-            key_id=key_id,
-            kms_adapter=kms_adapter,
-        )
-    if "intoto" in requested:
-        format_blocks["intoto"] = _build_intoto_envelope(
-            subject_name=resolved_subject_name,
-            head_sha256=head_sha256,
-            range_block=range_block,
-            key_id=key_id,
-            kms_adapter=kms_adapter,
-        )
-    if "transparency" in requested:
-        format_blocks["transparency"] = _build_transparency_receipt(
-            rebuilt_events=rebuilt,
-            head_sha256=head_sha256,
-            key_id=key_id,
-            kms_adapter=kms_adapter,
-            online_rekor=online_rekor,
-        )
-
-    receipt: dict[str, Any] = {
-        "schema_version": RECEIPT_SCHEMA_VERSION,
-        "receipt_type": RECEIPT_TYPE,
-        "subject": {
-            "name": resolved_subject_name,
-            "digest": {"sha256": head_sha256},
-        },
-        "range": range_block,
-        "events": rebuilt,
-        "signing": {
-            "alg": "EdDSA",
-            "key_id": key_id,
-            "public_key_jwk": jwk,
-        },
-        "formats": format_blocks,
-    }
-    receipt_bytes = _canonical_json_bytes(receipt) + b"\n"
-
-    receipt_path: Path | None = None
-    if write:
-        target_dir = output_dir or (audit_dir.parent / "evidence")
-        target_dir.mkdir(parents=True, exist_ok=True)
-        safe_since = since.replace(":", "").replace("/", "_")
-        safe_until = until.replace(":", "").replace("/", "_")
-        receipt_path = target_dir / f"audit-receipt-{safe_since}-{safe_until}.json"
-        receipt_path.write_bytes(receipt_bytes)
-        logger.info(
-            "Audit receipt written events=%d formats=%s path=%s",
-            len(rebuilt),
-            ",".join(sorted(format_blocks)),
-            receipt_path,
-        )
-
-    return AuditReceipt(
+    return materialize_receipt(
+        audit_dir,
         since=since,
         until=until,
-        event_count=len(rebuilt),
+        rebuilt=rebuilt,
         head_hmac=head_hmac,
         head_sha256=head_sha256,
-        formats=tuple(sorted(format_blocks)),
-        receipt=receipt,
-        receipt_bytes=receipt_bytes,
-        receipt_path=receipt_path,
+        kms_adapter=kms_adapter,
+        requested=requested,
+        subject_name=resolved_subject_name,
+        online_rekor=online_rekor,
+        output_dir=output_dir,
+        write=write,
     )
 
 
@@ -574,4 +663,7 @@ __all__ = [
     "AuditReceiptError",
     "RekorUnavailableError",
     "build_receipt",
+    "materialize_receipt",
+    "rebuild_receipt_range",
+    "receipt_events_head",
 ]
