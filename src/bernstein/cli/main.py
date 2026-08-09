@@ -98,6 +98,7 @@ from bernstein.cli.disaster_recovery_cmd import dr_group
 from bernstein.cli.dry_run_cmd import dry_run_cmd
 from bernstein.cli.eval_benchmark_cmd import (
     benchmark_alias_group,
+    benchmark_group,
     eval_group,
 )
 from bernstein.cli.evolve_cmd import evolve
@@ -188,6 +189,7 @@ __all__ = [
     # Groups and commands from advanced_cmd
     "backlog_group",
     "benchmark_alias_group",
+    "benchmark_group",
     "cache_group",
     "cancel",
     "changelog_cmd",
