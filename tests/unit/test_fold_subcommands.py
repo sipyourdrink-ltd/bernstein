@@ -162,6 +162,23 @@ def test_demo_flask_todo_uses_a_real_adapter_only_behind_real(monkeypatch: pytes
     assert calls[0]["adapter"] == "claude"
 
 
+def test_demo_flask_todo_real_without_an_adapter_fails_like_demo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--real`` with nothing installed must fail, not quietly run on mock.
+
+    ``demo --real`` prints ``no_cli_agent_found()`` and exits 1. The scenario
+    body instead falls through to ``"mock"``, so an operator who explicitly
+    asked for real agents got a mock run reported as a success.
+    """
+    from bernstein.cli import run_confirm
+
+    monkeypatch.setattr(run_confirm, "detect_available_adapter", lambda: None)
+    calls = _capture(monkeypatch, quickstart_cmd)
+    result = CliRunner().invoke(cli, ["demo", "--flask-todo", "--real"])
+
+    assert result.exit_code != 0, result.output
+    assert calls == [], "the scenario must not run when no adapter can be resolved"
+
+
 def test_demo_flask_todo_refuses_dry_run_instead_of_ignoring_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """``--dry-run`` promises no agents are spawned; the scenario has no preview.
 
