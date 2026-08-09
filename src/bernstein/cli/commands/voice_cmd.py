@@ -501,8 +501,8 @@ def listen_cmd(
       deploy prod: bernstein -g "deploy to production"
 
     \b
-    Requirements (install separately):
-      pip install faster-whisper sounddevice numpy
+    Requirements (optional extra, not installed by default):
+      pip install 'bernstein[voice]'
 
     \b
       bernstein listen                   # start voice session

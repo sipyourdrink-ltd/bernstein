@@ -92,3 +92,12 @@ def test_import_audio_deps_without_extra_gives_informative_error(
     out = capsys.readouterr().out
     assert _INSTALL_HINT in out
     assert "pip install sounddevice numpy" not in out
+
+
+def test_listen_help_documents_the_voice_extra() -> None:
+    """``bernstein listen --help`` points at the extra, not the raw packages."""
+    res = CliRunner().invoke(cli, ["listen", "--help"])
+
+    assert res.exit_code == 0
+    assert _INSTALL_HINT in res.output
+    assert "pip install faster-whisper sounddevice numpy" not in res.output
