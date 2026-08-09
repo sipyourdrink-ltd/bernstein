@@ -8,23 +8,70 @@ against ``docs/reference/cli-reference.md`` and an explicit exemption set
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
+CLI_REFERENCE = _REPO_ROOT / "docs" / "reference" / "cli-reference.md"
+
+# One backticked ``bernstein <command> ...`` span, e.g. ``` `bernstein run` ``` or
+# ``` `bernstein cost policy verify DECISION_HASH` ```.
+_COMMAND_SPAN = r"`bernstein\s+[A-Za-z0-9_-][^`\n]*`"
+
+# A heading documents the command(s) its title *ends* with. Three shapes occur
+# in docs/reference/cli-reference.md and all three are documentation:
+#     #### `bernstein run`
+#     ## SPIFFE workload identity: `bernstein spiffe`
+#     #### `bernstein voice` / `bernstein listen`
+# Anchoring on the end of the line is what keeps this from matching a command
+# named in passing halfway through a title.
+_DOC_HEADING = re.compile(
+    # The prefix is lazily optional (``??``) so the run is anchored as early as
+    # the line allows. A greedy-optional prefix would swallow the first half of
+    # ``#### `bernstein voice` / `bernstein listen` `` and lose the alias.
+    rf"^#+[ \t]+(?:[^\n]*?[ \t])??({_COMMAND_SPAN}(?:[ \t]*/[ \t]*{_COMMAND_SPAN})*)[ \t]*$",
+    re.M,
+)
+
+# A table row documents the command(s) its first cell *starts* with. Anchoring
+# on the cell start is load-bearing: description cells mention commands in prose
+# ("see `bernstein adapters list`") and those mentions are not documentation.
+_DOC_TABLE_ROW = re.compile(
+    rf"^\|[ \t]*({_COMMAND_SPAN}(?:[ \t]*/[ \t]*{_COMMAND_SPAN})*)",
+    re.M,
+)
+
+_COMMAND_NAME = re.compile(r"`bernstein\s+([a-zA-Z0-9_-]+)")
+
+
+def _parse_documented_commands(text: str) -> set[str]:
+    """Return the top-level command names ``text`` documents.
+
+    Split out from the file read so the parsing rules can be tested against
+    fixture markdown rather than only against the reference file on disk.
+    """
+    names: set[str] = set()
+    for pattern in (_DOC_HEADING, _DOC_TABLE_ROW):
+        for match in pattern.finditer(text):
+            names.update(_COMMAND_NAME.findall(match.group(1)))
+    return names
 
 
 def _documented_commands_from_docs() -> set[str]:
-    """Extract top-level command names documented in docs/reference/cli-reference.md."""
-    reference = _REPO_ROOT / "docs" / "reference" / "cli-reference.md"
-    if not reference.exists():
-        return set()
+    """Extract top-level command names documented in docs/reference/cli-reference.md.
 
-    text = reference.read_text(encoding="utf-8")
-    headings = re.findall(r"^#+\s+`bernstein\s+([a-zA-Z0-9_-]+)", text, re.M)
-    tables = re.findall(r"\|\s*`bernstein\s+([a-zA-Z0-9_-]+)", text, re.M)
-    return set(headings + tables)
+    A missing reference file is a hard failure, not an empty set: silently
+    treating "no documentation on disk" as "nothing is documented" would leave
+    the exemption tests below passing vacuously.
+    """
+    if not CLI_REFERENCE.is_file():
+        pytest.fail(
+            f"{CLI_REFERENCE} is missing. This gate derives the documented command set from it; "
+            "restore the file rather than letting the gate degrade to an empty set."
+        )
+    return _parse_documented_commands(CLI_REFERENCE.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -63,12 +110,10 @@ UNDOCUMENTED_EXEMPTIONS: dict[str, str] = {
     "git": "Git worktree and repository helper group (#2550)",
     "gui": "Web UI launcher (v2.0.0)",
     "handoff": "Agent session handoff group (#2550)",
-    "hook-gate": "In-process worker hook verification gate (#2360)",
     "integrations": "Third-party integrations list group (#2550)",
     "intent": "Intent recognition group (#2550)",
     "knowledge": "Knowledge base management group (#2550)",
     "limits": "Rate and resource limit inspection group (#2550)",
-    "listen": "Optional voice extra speech-to-text listener (#3145)",
     "migrate": "Database and schema migration group (#2550)",
     "mission": "Mission statement and goal tracking group (#2550)",
     "payment-mandate": "Signed payment mandates group (#2612)",
@@ -87,7 +132,6 @@ UNDOCUMENTED_EXEMPTIONS: dict[str, str] = {
     "simulate": "Simulation and benchmark group (#3143)",
     "sla": "Per-goal SLA contract receipts (#2549)",
     "spec": "Specification renderer group (#2550)",
-    "spiffe": "SPIFFE workload identity group (#2363)",
     "supervisor": "Process supervisor group (#2550)",
     "sync": "Task synchronization helper (#2358)",
     "team": "Agent team coordination group (#2550)",
@@ -98,10 +142,6 @@ UNDOCUMENTED_EXEMPTIONS: dict[str, str] = {
     "wheelhouse": "Wheelhouse package cache group (#2550)",
     "worktrees": "Git worktree management group (#2550)",
 }
-
-# Backwards compatibility alias for code or tools expecting DOCUMENTED_COMMANDS
-DOCUMENTED_COMMANDS: frozenset[str] = frozenset(_documented_commands_from_docs() | set(UNDOCUMENTED_EXEMPTIONS.keys()))
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -116,11 +156,97 @@ def _collect_top_level_commands() -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# The extractor itself
+# ---------------------------------------------------------------------------
+# Everything below hangs off _parse_documented_commands: a command it fails to
+# see is reported as undocumented and picks up an exemption it does not need,
+# and a command it sees where no documentation exists walks through the gate.
+# Both directions are pinned here so a regex edit cannot quietly move them.
+
+
+@pytest.mark.parametrize(
+    ("markdown", "expected"),
+    [
+        pytest.param("#### `bernstein run`\n", {"run"}, id="plain-heading"),
+        pytest.param(
+            "## SPIFFE workload identity: `bernstein spiffe`\n",
+            {"spiffe"},
+            id="heading-with-prose-prefix",
+        ),
+        pytest.param(
+            "#### `bernstein voice` / `bernstein listen`\n",
+            {"voice", "listen"},
+            id="heading-alias-pair",
+        ),
+        pytest.param(
+            "#### `bernstein cost policy verify DECISION_HASH`\n",
+            {"cost"},
+            id="heading-with-subcommand-path",
+        ),
+        pytest.param(
+            "| `bernstein doctor` | Run diagnostics. | `cli/doctor.py` |\n",
+            {"doctor"},
+            id="table-row",
+        ),
+        pytest.param(
+            "| `bernstein voice` / `bernstein listen` | Voice control. | `cli/voice_cmd.py` |\n",
+            {"voice", "listen"},
+            id="table-row-alias-pair",
+        ),
+    ],
+)
+def test_parser_reads_every_documentation_shape(markdown: str, expected: set[str]) -> None:
+    """Each shape the reference actually uses to document a command is recognised."""
+    assert _parse_documented_commands(markdown) == expected
+
+
+@pytest.mark.parametrize(
+    ("markdown", "why"),
+    [
+        pytest.param(
+            "| `--cli NAME` | Any adapter from `bernstein adapters list`. |\n",
+            "a command named inside a description cell is a cross-reference, not documentation",
+            id="prose-mention-in-table-cell",
+        ),
+        pytest.param(
+            "Run `bernstein telemetry export` to dump the buffer.\n",
+            "a command named in body prose is not documentation",
+            id="prose-mention-in-paragraph",
+        ),
+        pytest.param(
+            "## `bernstein pipeline` is covered in the workflow guide\n",
+            "a command named mid-heading is a pointer, not a section documenting it",
+            id="mid-heading-mention",
+        ),
+    ],
+)
+def test_parser_rejects_mere_mentions(markdown: str, why: str) -> None:
+    """A passing mention must not count as documentation -- that would open the gate."""
+    assert _parse_documented_commands(markdown) == set(), why
+
+
+def test_missing_reference_file_fails_instead_of_returning_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing cli-reference.md must fail loudly, not degrade to "nothing is documented".
+
+    Returning an empty set there would leave test_exemptions_are_not_already_documented
+    passing vacuously, so the exemption set would stop shrinking without any signal.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "CLI_REFERENCE",
+        _REPO_ROOT / "docs" / "reference" / "no-such-cli-reference.md",
+        raising=True,
+    )
+    with pytest.raises(pytest.fail.Exception, match="no-such-cli-reference.md is missing"):
+        _documented_commands_from_docs()
+
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
-def test_all_cli_commands_are_documented_in_reference() -> None:
+def test_all_cli_commands_are_documented() -> None:
     """Every top-level CLI command must appear in docs/reference/cli-reference.md or UNDOCUMENTED_EXEMPTIONS.
 
     If this test fails, a new command was added without documenting it. Steps to fix:
