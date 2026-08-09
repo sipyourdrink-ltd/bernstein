@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -11,12 +12,70 @@ from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnRe
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
+#: Credentials and endpoint overrides forwarded into the spawned environment.
+#: ``KIMCHI_API_KEY`` authenticates hosted execution; the two host variables
+#: point local execution at an Ollama endpoint. Nothing else is forwarded.
+_PROVIDER_ENV_VARS = ("KIMCHI_API_KEY", "KIMCHI_OLLAMA_HOST", "OLLAMA_HOST")
+
+#: Keys a Kimchi config file may carry a credential under.
+_CONFIG_CREDENTIAL_KEYS = ("api_key", "apiKey")
+
+
+def _config_path() -> Path:
+    """Return the local Kimchi config file path."""
+    return Path.home() / ".config" / "kimchi" / "config.json"
+
+
+def _config_credential_present() -> bool:
+    """Return whether the local Kimchi config carries a usable credential.
+
+    A file that is missing, unreadable, not JSON, not an object, or carries
+    no non-empty credential key answers ``False``. Existence alone is not
+    evidence: a logged-out or truncated config is exactly the case that must
+    not advertise a working account.
+    """
+    try:
+        raw = _config_path().read_text(encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    return any(str(data.get(key) or "").strip() for key in _CONFIG_CREDENTIAL_KEYS)
+
 
 class KimchiAdapter(CLIAdapter):
     """Spawn and monitor Kimchi CLI sessions (#3100).
 
-    Kimchi runs open-weight / hosted models driven over the ACP event channel:
-    ``kimchi --mode acp --prompt "<task>" [--model <model>] [--session <path>] [--yolo]``
+    Kimchi runs open-weight / hosted models. It is invoked as
+    ``kimchi --mode acp --yolo --prompt "<task>" [--model <model>]``.
+
+    Two properties of an orchestrated run decide how the process is spawned:
+
+    * **Nobody is at the keyboard.** Every Bernstein worker runs unattended,
+      so ``--yolo`` - the flag :class:`~bernstein.adapters._contract.DangerousModeStrategy`
+      ``CLI_FLAG`` names for this adapter - is passed on every spawn. Gating
+      it behind a keyword argument would leave the declaration describing a
+      code path no orchestrator reaches, and the run would stall on the first
+      tool-approval prompt until the timeout watchdog killed it.
+    * **stdin is closed.** ``--mode acp`` puts the CLI in a mode that expects
+      a JSON-RPC peer. Bernstein does not act as that peer here (see below),
+      so the process is given ``DEVNULL`` rather than the orchestrator's own
+      stdin: it fails immediately instead of holding a worker slot open for
+      the whole timeout, and it can never consume the parent's input.
+
+    Event-channel status. Kimchi speaks the Agent Client Protocol, which is
+    what :class:`~bernstein.adapters._contract.EventChannel` ``ACP`` records
+    for it. Bernstein's ACP client transport
+    (:mod:`bernstein.adapters.acp_channel`) is *not* bound to a live Kimchi
+    process by this adapter - as with the other ACP-declaring adapters, the
+    spawn hands back a log file and the completion verdict comes from the
+    commit check (:class:`~bernstein.adapters._contract.OutputMode`
+    ``GIT_DIFF``). The shipped ACP coverage is ingress conformance over a
+    recorded frame fixture, not a live drive.
     """
 
     def spawn(
@@ -32,8 +91,6 @@ class KimchiAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
         multimodal_context: Any | None = None,
-        session_path: Path | str | None = None,
-        dangerous_mode: bool = False,
     ) -> SpawnResult:
         self.refuse_multimodal_if_needed(multimodal_context)
         self.enforce_network_policy()
@@ -44,18 +101,13 @@ class KimchiAdapter(CLIAdapter):
             "kimchi",
             "--mode",
             "acp",
+            "--yolo",
             "--prompt",
             prompt,
         ]
 
         if model_config.model:
             cmd += ["--model", model_config.model]
-
-        if session_path:
-            cmd += ["--session", str(session_path)]
-
-        if dangerous_mode:
-            cmd.append("--yolo")
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
@@ -68,7 +120,7 @@ class KimchiAdapter(CLIAdapter):
             model=model_config.model,
         )
 
-        env = build_filtered_env(["KIMCHI_API_KEY", "KIMCHI_OLLAMA_HOST", "OLLAMA_HOST"])
+        env = build_filtered_env(list(_PROVIDER_ENV_VARS))
         env["KIMCHI_TELEMETRY_ENABLED"] = "0"
 
         with log_path.open("w") as log_file:
@@ -77,12 +129,15 @@ class KimchiAdapter(CLIAdapter):
                     wrapped_cmd,
                     cwd=workdir,
                     env=env,
+                    stdin=subprocess.DEVNULL,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError("kimchi not found in PATH. Install from brew install getkimchi/tap/kimchi") from exc
+                raise RuntimeError(
+                    "kimchi not found in PATH. Install with `brew install getkimchi/tap/kimchi`"
+                ) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing kimchi: {exc}") from exc
 
@@ -95,22 +150,27 @@ class KimchiAdapter(CLIAdapter):
         return "Kimchi"
 
     def detect_tier(self) -> ApiTierInfo | None:
-        """Detect Kimchi tier from environment or local config."""
-        api_key = os.environ.get("KIMCHI_API_KEY", "")
-        config_file = Path.home() / ".config" / "kimchi" / "config.json"
+        """Report a usable Kimchi account, or ``None`` when none is proven.
 
-        if not api_key and not config_file.exists():
+        A tier is reported only when a credential is actually present: a
+        non-empty ``KIMCHI_API_KEY``, or a config file that parses and
+        carries a non-empty key. The CLI does not expose subscription
+        details, so any proven credential reports ``PRO`` (the common paid
+        tier), mirroring the other credential-only adapters.
+
+        Returns:
+            :class:`ApiTierInfo` when a credential is proven, otherwise
+            ``None``.
+        """
+        if not os.environ.get("KIMCHI_API_KEY", "").strip() and not _config_credential_present():
             return None
-
-        tier = ApiTier.PRO
-        rate_limit = RateLimit(
-            requests_per_minute=60,
-            tokens_per_minute=30_000,
-        )
 
         return ApiTierInfo(
             provider=ProviderType.KIMCHI,
-            tier=tier,
-            rate_limit=rate_limit,
+            tier=ApiTier.PRO,
+            rate_limit=RateLimit(
+                requests_per_minute=60,
+                tokens_per_minute=30_000,
+            ),
             is_active=True,
         )

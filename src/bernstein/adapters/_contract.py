@@ -688,11 +688,16 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # lifecycle events arrive as schema-validated JSON-RPC frames rather than
     # a bespoke stdout parser.
     "kilo": AdapterStrategy(event_channel=EventChannel.ACP),
-    # Kimchi runs as an ACP agent over JSON-RPC on stdio (--mode acp), supports
-    # native session resume via --session <path>, --yolo dangerous mode, and
-    # completes by committing in the worktree (GIT_DIFF).
+    # Kimchi runs as an ACP agent over JSON-RPC on stdio (--mode acp) and
+    # completes by committing in the worktree (GIT_DIFF). Dangerous mode is
+    # --yolo, passed on every spawn. The CLI has --session <path> resume, but
+    # no spawn path supplies that file, so resume stays declared unsupported
+    # (fresh-session fallback) - same reasoning as ``agy`` above. Declaring it
+    # here would make checkpoint_retry_capability offer a warm retry, and a
+    # warm retry sends only the corrective instruction on the assumption the
+    # prior session is reattached.
     "kimchi": AdapterStrategy(
-        resume=ResumeStrategy.FLAG,
+        resume=ResumeStrategy.UNSUPPORTED,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.ACP,
         output_mode=OutputMode.GIT_DIFF,
