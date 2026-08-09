@@ -51,6 +51,16 @@ def test_cost_estimate_subcommand_registered() -> None:
     assert "Predict the cost of a task" in result.output
 
 
+def test_cost_estimate_runs_under_the_cost_group() -> None:
+    """The group callback must yield to the subcommand instead of running the report."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "cost", "estimate", "ship it", "--metrics-dir", "nonexistent"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["goal"] == "ship it"
+    assert "estimated_cost_usd" in payload
+
+
 def test_cost_envelopes_subcommand_registered_and_no_issue_tag() -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["cost", "envelopes", "--help"])
@@ -67,6 +77,15 @@ def test_skills_provenance_and_verify_registered() -> None:
     res2 = runner.invoke(cli, ["skills", "verify", "--help"])
     assert res2.exit_code == 0
     assert "install receipt" in res2.output
+
+
+def test_skills_provenance_is_the_same_command_object_as_skill_provenance() -> None:
+    """The move must re-register the implementation, not fork a second copy."""
+    from bernstein.cli.commands.skill_cmd import skill_group
+    from bernstein.cli.commands.skills_cmd import skills_group
+
+    for name in ("provenance", "verify"):
+        assert skills_group.commands[name] is skill_group.commands[name]
 
 
 # ---------------------------------------------------------------------------
@@ -218,19 +237,22 @@ def test_limits_pool_create_is_readable_back_through_limits_status(project: Path
 # ---------------------------------------------------------------------------
 
 
-def test_deprecated_top_level_aliases_emit_warning() -> None:
+def test_deprecated_estimate_alias_warns_on_stderr_and_runs() -> None:
     runner = CliRunner()
-    res_est = runner.invoke(cli, ["estimate", "test goal", "--metrics-dir", "nonexistent"])
-    assert (
-        "WARNING: 'bernstein estimate' is deprecated" in res_est.output
-        or "WARNING: 'bernstein estimate' is deprecated" in res_est.stderr
-    )
+    result = runner.invoke(cli, ["--json", "estimate", "test goal", "--metrics-dir", "nonexistent"])
+    assert result.exit_code == 0, result.output
+    assert "WARNING: 'bernstein estimate' is deprecated" in result.stderr
+    # The warning must not corrupt the machine-readable stream.
+    assert json.loads(result.stdout)["goal"] == "test goal"
 
-    res_skill = runner.invoke(cli, ["skill", "provenance", "--help"])
-    assert (
-        "WARNING: 'bernstein skill' is deprecated" in res_skill.output
-        or "WARNING: 'bernstein skill' is deprecated" in res_skill.stderr
-    )
+
+def test_estimate_alias_accepts_every_option_cost_estimate_declares() -> None:
+    """A flag added to `cost estimate` must not go missing from the alias."""
+    from bernstein.cli.commands.cost import estimate_alias_cmd, estimate_cmd
+
+    target = {param.name for param in estimate_cmd.params}
+    alias = {param.name for param in estimate_alias_cmd.params}
+    assert target <= alias, f"alias is missing {sorted(target - alias)}"
 
 
 def test_deprecated_cost_envelopes_alias_still_dispatches_show(tmp_path: Path) -> None:
@@ -268,3 +290,27 @@ def test_deprecated_artifacts_alias_warns_and_still_lists(project: Path) -> None
     assert result.exit_code == 0, result.output
     assert "WARNING: 'bernstein artifacts' is deprecated" in result.stderr
     assert "summary" in result.stdout
+
+
+def test_deprecated_skill_alias_warns_and_still_runs(project: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli, ["skill", "provenance", "nope", "-w", str(project)])
+    assert "WARNING: 'bernstein skill' is deprecated" in result.stderr
+    assert result.exit_code in (0, 1), result.output
+
+
+def test_deprecated_debug_bundle_alias_names_the_flags_that_do_not_carry_over() -> None:
+    """`debug bundle` is a different builder, so the warning must not promise a rename."""
+    from bernstein.cli.commands.debug_cmd import debug_cmd
+    from bernstein.cli.debug_bundle import bundle_cmd
+
+    legacy = {param.name for param in debug_cmd.params}
+    replacement = {param.name for param in bundle_cmd.params}
+    dropped = legacy - replacement
+    assert dropped, "flag surfaces now match; the warning below should be simplified"
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["debug-bundle"], input="n\n")
+    assert "WARNING: 'bernstein debug-bundle' is deprecated" in result.stderr
+    for flag in sorted(dropped):
+        assert flag.replace("_", "-") in result.stderr, f"warning does not mention --{flag}"

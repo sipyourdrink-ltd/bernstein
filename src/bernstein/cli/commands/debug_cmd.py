@@ -87,9 +87,14 @@ def _load_bundle_module() -> tuple[
 @click.option("--extended", is_flag=True, help="Include full logs (not truncated)")
 def debug_cmd(yes: bool, output: str | None, extended: bool) -> None:
     """[Deprecated] Generate a diagnostic bundle for bug reports (use 'bernstein debug bundle')."""
+    # The replacement is a different bundle builder, not a rename: it takes no
+    # confirmation prompt, spells the destination --out, and has no equivalent
+    # of --extended. Naming that here keeps the warning from promising a
+    # drop-in swap that would silently drop flags from an operator's script.
     click.echo(
         "WARNING: 'bernstein debug-bundle' is deprecated and will be removed in v4.0.0 (#3138): "
-        "use 'bernstein debug bundle' instead.",
+        "use 'bernstein debug bundle' instead. Flag differences: --output becomes --out, "
+        "--yes is unnecessary (no confirmation prompt), --extended has no equivalent.",
         err=True,
     )
     bundle_config_cls, create_fn = _load_bundle_module()
