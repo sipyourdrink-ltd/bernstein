@@ -461,20 +461,19 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
     # ``public_key_file`` comes from the untrusted bundle, so it decides which
     # key the signature is checked against: steer it outside the attestation
     # directory and any payload signed with an attacker-held key verifies.
-    # It must therefore be a relative name that resolves *under* the directory.
-    # An absolute value would drop the directory entirely
-    # (``attestation_dir / "/etc/x"`` is ``/etc/x``), and containment is a
-    # path-component question -- a string prefix test accepts every sibling
-    # whose name starts with the directory's own name.
+    #
+    # Containment is decided from the name alone, with no filesystem lookup.
+    # Resolving a path to prove it is contained and then opening that path are
+    # two separate lookups, and everything between them is a window; a name
+    # that is a single plain component cannot leave the directory it is opened
+    # relative to, so there is no window to begin with. The writer stores
+    # ``pub_path.name``, so nothing legitimate is absolute, descends into a
+    # subdirectory, or walks upwards.
     raw_key_name = bundle["public_key_file"]
-    attestation_root = attestation_dir.resolve()
-    pub_key_file = (attestation_dir / raw_key_name).resolve()
-    if os.path.isabs(raw_key_name) or not pub_key_file.is_relative_to(attestation_root):
+    if _escapes_directory(raw_key_name):
         msg = f"Path traversal detected in public_key_file: {raw_key_name!r}"
         raise ValueError(msg)
-    public_key = serialization.load_pem_public_key(
-        _read_contained_key_bytes(attestation_dir, raw_key_name, pub_key_file)
-    )
+    public_key = serialization.load_pem_public_key(_read_contained_key_bytes(attestation_dir, raw_key_name))
 
     payload_bytes = AttestationPayload(**bundle["payload"]).canonical_json().encode()
     signature = bytes.fromhex(bundle["signature_hex"])
@@ -491,25 +490,50 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _read_contained_key_bytes(attestation_dir: Path, raw_key_name: str, resolved: Path) -> bytes:
-    """Read the bundle-named public key without following a link at its name.
+def _escapes_directory(raw_key_name: object) -> bool:
+    """Whether ``raw_key_name`` could name anything but a file in one directory.
 
-    The containment check in :func:`verify_local_attestation` validates a path
-    *string*; this open has to reach the object that string was checked
-    against.  Two lookups are two chances to resolve, so anything able to
-    write into ``attestation_dir`` could drop a symlink at the name between
-    the check and the read and steer the verifier onto a key it owns.
+    Decided from the string alone -- no ``resolve``, no ``stat``, nothing the
+    filesystem can change underneath the answer.  Only a single plain
+    component passes: anything absolute, drive-qualified, separated, or
+    self/parent-referential is rejected, as is a non-string, which a crafted
+    bundle can carry just as easily as a traversing name.
 
-    The open is therefore anchored to a descriptor for the attestation
-    directory where the platform offers one, and refuses a symlink at the
-    final component, which closes that window rather than narrowing it.  A
-    non-regular file is rejected too, so a crafted bundle surfaces as the
-    ``ValueError`` callers already handle instead of a stray ``OSError``.
+    Args:
+        raw_key_name: The bundle-supplied ``public_key_file`` value.
+
+    Returns:
+        True when the value must be refused.
+    """
+    if not isinstance(raw_key_name, str) or not raw_key_name:
+        return True
+    drive, _ = os.path.splitdrive(raw_key_name)
+    return bool(
+        drive
+        or os.path.isabs(raw_key_name)
+        or raw_key_name in {os.curdir, os.pardir}
+        or "/" in raw_key_name
+        or "\\" in raw_key_name
+    )
+
+
+def _read_contained_key_bytes(attestation_dir: Path, raw_key_name: str) -> bytes:
+    """Read the bundle-named public key from exactly one directory lookup.
+
+    ``attestation_dir`` is resolved once, into a descriptor, and the key is
+    opened relative to that descriptor.  Nothing re-derives the directory
+    afterwards, so there is no interval in which swapping it could redirect
+    the read; :func:`_escapes_directory` has already established that the name
+    is a single component, which is what makes an anchored open sufficient.
+
+    ``O_NOFOLLOW`` then refuses a symlink at that component, and ``fstat``
+    requires a regular file, so a crafted bundle surfaces as the ``ValueError``
+    callers already handle instead of a stray ``OSError``.
 
     Args:
         attestation_dir: Directory the key must be read from.
-        raw_key_name: Bundle-supplied name, already checked for containment.
-        resolved: The resolved path, used where ``dir_fd`` is unavailable.
+        raw_key_name: Bundle-supplied name, already checked by
+            :func:`_escapes_directory`.
 
     Returns:
         The bytes of the key file.
@@ -526,7 +550,9 @@ def _read_contained_key_bytes(attestation_dir: Path, raw_key_name: str, resolved
             dir_fd = os.open(attestation_dir, os.O_RDONLY)
             fd = os.open(raw_key_name, open_flags, dir_fd=dir_fd)
         else:  # pragma: no cover - Windows has neither dir_fd nor O_NOFOLLOW
-            fd = os.open(resolved, open_flags)
+            # A single component cannot escape the directory it is joined to,
+            # so the join is safe without a containment re-check here.
+            fd = os.open(attestation_dir / raw_key_name, open_flags)
     except OSError as exc:
         # O_NOFOLLOW reports a symlink at the final component as ELOOP.  Every
         # other OSError (a missing or unreadable key) is a genuine local fault

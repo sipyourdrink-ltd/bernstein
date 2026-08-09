@@ -361,6 +361,24 @@ class TestVerifyPublicKeyContainment:
         with pytest.raises(ValueError, match="Path traversal detected"):
             verify_local_attestation(bundle_path, attest_dir)
 
+    def test_rejects_a_contained_subdirectory_path(self, attest_dir: Path) -> None:
+        """Even a name that stays inside the directory is refused if it descends.
+
+        Containment is decided from the name alone, with no filesystem lookup,
+        so it cannot be raced.  That only holds for a single plain component:
+        ``sub/key.pem`` would have to resolve ``sub``, and resolving is the
+        step an attacker gets to interfere with.  The writer emits a bare
+        filename, so nothing legitimate descends.
+        """
+        bundle_path, _ = self._forged_bundle(attest_dir, attest_dir / "sub")
+
+        bundle = json.loads(bundle_path.read_text())
+        bundle["public_key_file"] = "sub/ed25519-public-key.pem"
+        bundle_path.write_text(json.dumps(bundle))
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            verify_local_attestation(bundle_path, attest_dir)
+
     def test_accepts_plain_filename_inside_dir(self, attest_dir: Path) -> None:
         """The legitimate shape -- a bare filename -- still verifies."""
         with patch(
