@@ -100,6 +100,10 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
         if not isinstance(raw, dict) or "name" not in raw or "source" not in raw:
             logger.warning("Skipping malformed trigger entry: %r", raw)
             continue
+        # The evaluator skips these on a falsy check every tick, which is silent.
+        # Say so once, at load, so an operator learns the trigger is inert.
+        if raw["source"] == "cron" and not raw.get("schedule"):
+            logger.warning("Cron trigger %r has no usable schedule and will never fire", raw["name"])
         task_raw = raw.get("task", {})
         configs.append(
             TriggerConfig(
@@ -794,9 +798,16 @@ class TriggerManager:
             )
             events.append(event)
 
-            # Mark as fired for this minute
+            # Mark as fired for this minute. The in-memory entry is what
+            # suppresses a re-fire on the next tick; the file only carries that
+            # across a restart, so a failed write must not abort the pass and
+            # strand the triggers after this one. _save_cron_state rewrites the
+            # whole map, so the next tick retries the entries that did not land.
             self._cron_state[trigger.name] = current_minute
-            self._save_cron_state()
+            try:
+                self._save_cron_state()
+            except OSError as exc:
+                logger.error("Could not persist cron state for trigger %s: %s", trigger.name, exc)
 
         return events
 

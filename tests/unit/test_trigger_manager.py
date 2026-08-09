@@ -186,6 +186,28 @@ class TestLoadTriggerConfigs:
         with pytest.raises(ValueError, match="triggers"):
             load_trigger_configs(path)
 
+    @pytest.mark.parametrize("schedule", [None, "", 0])
+    def test_cron_trigger_without_usable_schedule_is_reported(
+        self, sdd_dir: Path, caplog: pytest.LogCaptureFixture, schedule: Any
+    ) -> None:
+        """A cron trigger that can never fire is surfaced at load, not silently dropped.
+
+        The evaluator skips these on a falsy check every tick, so without a
+        load-time diagnostic an operator gets no signal at all.
+        """
+        path = sdd_dir / "config" / "triggers.yaml"
+        entry: dict[str, Any] = {"name": "ghost", "source": "cron", "task": {"title": "t", "role": "qa"}}
+        if schedule is not None:
+            entry["schedule"] = schedule
+        with open(path, "w") as f:
+            yaml.dump({"version": 1, "triggers": [entry]}, f)
+
+        with caplog.at_level("WARNING"):
+            configs = load_trigger_configs(path)
+
+        assert len(configs) == 1
+        assert "ghost" in caplog.text
+
     def test_model_escalation_parsed(self, triggers_yaml_path: Path) -> None:
         configs = load_trigger_configs(triggers_yaml_path)
         ci_fix = next(c for c in configs if c.name == "ci-fix")
@@ -789,6 +811,36 @@ class TestCronEvaluation:
     def test_does_not_refire_within_the_same_minute(self, sdd_dir: Path) -> None:
         _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
         mgr = TriggerManager(sdd_dir)
+
+        assert len(mgr.evaluate_cron_triggers()) == 1
+        assert mgr.evaluate_cron_triggers() == []
+
+    def test_state_save_failure_does_not_abort_the_pass(self, sdd_dir: Path) -> None:
+        """A failed state write must not strand the triggers evaluated after it."""
+        _write_triggers(
+            sdd_dir,
+            [_cron_trigger("first", "* * * * *"), _cron_trigger("second", "* * * * *")],
+        )
+        mgr = TriggerManager(sdd_dir)
+
+        def _boom() -> None:
+            raise OSError("read-only filesystem")
+
+        mgr._save_cron_state = _boom  # type: ignore[method-assign]
+
+        events = mgr.evaluate_cron_triggers()
+
+        assert [e.metadata["cron_name"] for e in events] == ["first", "second"]
+
+    def test_state_save_failure_still_suppresses_same_minute_refire(self, sdd_dir: Path) -> None:
+        """In-memory state survives a failed write, so the fire is not duplicated."""
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+
+        def _boom() -> None:
+            raise OSError("read-only filesystem")
+
+        mgr._save_cron_state = _boom  # type: ignore[method-assign]
 
         assert len(mgr.evaluate_cron_triggers()) == 1
         assert mgr.evaluate_cron_triggers() == []
