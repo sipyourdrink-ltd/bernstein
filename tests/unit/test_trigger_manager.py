@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import stat
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -1005,16 +1006,45 @@ class TestCronEvaluation:
         assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
     def test_malformed_schedule_does_not_block_other_triggers(self, sdd_dir: Path) -> None:
+        """A schedule croniter rejects is logged and skipped, not raised."""
         _write_triggers(
             sdd_dir,
             [
                 _cron_trigger("bad-expression", "not a cron expression"),
-                # An unquoted YAML integer reaches croniter as an int, not a str.
+                # Dropped to None by load_trigger_configs, so it is skipped on
+                # the falsy-schedule guard and never reaches croniter. Kept
+                # here because that is the path an operator's YAML takes.
                 _cron_trigger("bad-type", 30),
                 _cron_trigger("every-minute", "* * * * *"),
             ],
         )
         mgr = TriggerManager(sdd_dir)
+
+        events = mgr.evaluate_cron_triggers()
+
+        assert [e.metadata["cron_name"] for e in events] == ["every-minute"]
+
+    def test_non_string_schedule_reaching_croniter_is_skipped_not_raised(self, sdd_dir: Path) -> None:
+        """The evaluator's own guard, exercised on the value croniter chokes on.
+
+        ``load_trigger_configs`` now drops a non-string schedule, so the YAML
+        path no longer reaches croniter with one - but the loader is not the
+        only way ``_configs`` gets populated, and the evaluator documents that
+        it skips a bad entry rather than aborting the pass. croniter answers a
+        non-string with ``AttributeError`` and a struct_time with
+        ``TypeError``; ``except (ValueError, KeyError)`` caught neither, so a
+        single bad entry stranded every trigger behind it.
+        """
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+        (good,) = mgr._configs
+        # mtime is unchanged since __init__ loaded it, so _try_reload_config
+        # leaves this in place.
+        mgr._configs = [
+            replace(good, name="int-schedule", schedule=30),  # type: ignore[arg-type]
+            replace(good, name="struct-time-schedule", schedule=time.localtime(_FROZEN_NOW)),  # type: ignore[arg-type]
+            good,
+        ]
 
         events = mgr.evaluate_cron_triggers()
 
