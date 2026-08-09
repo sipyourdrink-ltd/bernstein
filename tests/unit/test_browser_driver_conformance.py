@@ -156,6 +156,19 @@ class LeadingDomDriver(TapeDriver):
         return self._frames[index].dom
 
 
+class LaggingScreenshotDriver(TapeDriver):
+    """Broken driver: ``screenshot`` is frozen at the start frame.
+
+    The URL and the DOM advance correctly, so only a byte-exact comparison of the
+    screenshot against the expected frame catches it. Without this case the kit's
+    screenshot equality check is unconstrained: deleting it leaves the suite
+    green, because every other broken driver here is caught by an earlier verb.
+    """
+
+    def screenshot(self) -> bytes:
+        return self._frames[0].screenshot
+
+
 class NoNavigateDriver(TapeDriver):
     """Broken driver: does not implement the ``navigate`` verb at all."""
 
@@ -241,6 +254,20 @@ def test_kit_fails_a_dom_that_leads_the_action(tmp_path: Path) -> None:
     assert "initial state" in str(exc_info.value)
 
 
+def test_kit_fails_a_screenshot_that_lags_the_action(tmp_path: Path) -> None:
+    """The screenshot is compared against the expected frame, not merely non-empty.
+
+    A stale screenshot is the same class of ordering violation as a stale DOM: the
+    evidence a decision was recorded against describes a state the driver has
+    already left.
+    """
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(_tape_factory(LaggingScreenshotDriver), root_dir=tmp_path)
+
+    assert exc_info.value.verb == "screenshot"
+    assert "after navigate" in str(exc_info.value)
+
+
 def test_kit_fails_a_driver_returning_str_where_the_protocol_says_bytes(tmp_path: Path) -> None:
     with pytest.raises(ConformanceFailure) as exc_info:
         verify_driver_conformance(_tape_factory(StringDomDriver), root_dir=tmp_path)
@@ -324,6 +351,69 @@ def test_kit_fails_a_driver_that_writes_into_a_sibling_profile(tmp_path: Path) -
 
     with pytest.raises(ConformanceFailure) as exc_info:
         verify_driver_conformance(_tape_factory(SiblingWritingDriver), root_dir=tmp_path / "root")
+
+    assert exc_info.value.verb == "profile"
+    assert "changed another task" in str(exc_info.value)
+
+
+def test_kit_fails_a_driver_that_rewrites_a_sibling_profile_file(tmp_path: Path) -> None:
+    """Non-interference means unchanged bytes, not an unchanged file listing.
+
+    A profile that already holds a cookie jar -- every real backend writes one
+    when the session opens -- can have it rewritten in place by a concurrent
+    task. The directory listing is identical afterwards, so comparing names alone
+    passes a driver that has just hijacked another task's session.
+    """
+
+    class SiblingRewritingDriver(TapeDriver):
+        def __init__(self, frames: Sequence[PageState], *, profile_dir: Path | None = None) -> None:
+            super().__init__(frames, profile_dir=profile_dir)
+            assert profile_dir is not None
+            (profile_dir / "cookies.txt").write_bytes(b"session=mine")
+
+        def navigate(self, url: str) -> None:
+            super().navigate(url)
+            assert self.profile_dir is not None
+            for sibling in self.profile_dir.parent.iterdir():
+                if sibling != self.profile_dir:
+                    (sibling / "cookies.txt").write_bytes(b"session=stolen")
+
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(_tape_factory(SiblingRewritingDriver), root_dir=tmp_path / "root")
+
+    assert exc_info.value.verb == "profile"
+    assert "changed another task" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("offending_session", [1, 2])
+def test_kit_fails_a_driver_that_interferes_on_only_one_session(tmp_path: Path, offending_session: int) -> None:
+    """Both drive-then-compare checks carry weight; neither is the other's mirror.
+
+    A backend that writes outside its own profile on only one of its two sessions
+    -- a first-run migration on a cold start, or a handler that only fires once
+    another session exists -- is invisible to whichever of the two checks does not
+    bracket it. Parametrised so removing either check fails this test.
+    """
+    built = 0
+
+    class SelectiveStomper(TapeDriver):
+        def __init__(self, frames: Sequence[PageState], *, profile_dir: Path | None = None) -> None:
+            super().__init__(frames, profile_dir=profile_dir)
+            nonlocal built
+            built += 1
+            self.ordinal = built
+
+        def navigate(self, url: str) -> None:
+            super().navigate(url)
+            if self.ordinal != offending_session:
+                return
+            assert self.profile_dir is not None
+            for sibling in self.profile_dir.parent.iterdir():
+                if sibling != self.profile_dir:
+                    (sibling / "leaked-state.txt").write_text("written by a concurrent task")
+
+    with pytest.raises(ConformanceFailure) as exc_info:
+        verify_driver_conformance(_tape_factory(SelectiveStomper), root_dir=tmp_path / "root")
 
     assert exc_info.value.verb == "profile"
     assert "changed another task" in str(exc_info.value)

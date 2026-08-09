@@ -609,11 +609,27 @@ def _close_idempotently(driver: BrowserDriver) -> Exception | None:
     return None
 
 
-def _dir_entries(path: Path) -> set[str]:
-    """Return every path under *path*, relative to it. Empty when it is absent."""
+def _profile_fingerprint(path: Path) -> dict[str, str]:
+    """Fingerprint every entry under *path* by name *and* content.
+
+    A set of names is not enough to say a directory is unchanged: a profile that
+    already holds a cookie jar can have it rewritten in place, which leaves the
+    listing identical and the session hijacked. Files are hashed, so "unchanged"
+    means unchanged bytes. Empty when *path* is absent.
+    """
     if not path.exists():
-        return set()
-    return {str(child.relative_to(path)) for child in path.rglob("*")}
+        return {}
+    fingerprint: dict[str, str] = {}
+    for child in path.rglob("*"):
+        key = str(child.relative_to(path))
+        if child.is_dir():
+            fingerprint[key] = "dir"
+        else:
+            try:
+                fingerprint[key] = f"file:{hashlib.sha256(child.read_bytes()).hexdigest()}"
+            except OSError:
+                fingerprint[key] = "unreadable"
+    return fingerprint
 
 
 def verify_driver_conformance(
@@ -708,14 +724,14 @@ def verify_driver_conformance(
         # shared or stateful instance shows up as a second driver that is already
         # past the start frame, and a backend whose second session is broken can
         # no longer hide behind a first session that works.
-        sibling_before = _dir_entries(profile_b.profile_dir)
+        sibling_before = _profile_fingerprint(profile_b.profile_dir)
         _drive_tape(driver, expected_tape, which="first")
-        if _dir_entries(profile_b.profile_dir) != sibling_before:
+        if _profile_fingerprint(profile_b.profile_dir) != sibling_before:
             raise ConformanceFailure("profile", "driving one task changed another task's profile directory")
 
-        sibling_before = _dir_entries(profile_a.profile_dir)
+        sibling_before = _profile_fingerprint(profile_a.profile_dir)
         _drive_tape(other, expected_tape, which="second")
-        if _dir_entries(profile_a.profile_dir) != sibling_before:
+        if _profile_fingerprint(profile_a.profile_dir) != sibling_before:
             raise ConformanceFailure("profile", "driving one task changed another task's profile directory")
 
         # close must be idempotent. Each driver is closed independently: a
