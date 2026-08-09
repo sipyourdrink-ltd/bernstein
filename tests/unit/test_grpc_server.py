@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -163,3 +164,46 @@ class TestClusterClient:
         assert result["status"] == "online"
         assert result["capacity"]["gpu_available"] is True
         assert result["labels"] == {"gpu": "true"}
+
+
+class TestClusterServiceImplRegisterNode:
+    @staticmethod
+    def _make_request() -> MagicMock:
+        request = MagicMock()
+        request.name = "worker-a"
+        request.url = "http://worker-a:8052"
+        request.labels = {"gpu": "true"}
+        request.cell_ids = ["cell-1"]
+        request.capacity.max_agents = 4
+        request.capacity.available_slots = 3
+        request.capacity.active_agents = 1
+        request.capacity.gpu_available = True
+        request.capacity.supported_models = ["claude-sonnet-4-20250514"]
+        return request
+
+    @pytest.mark.asyncio
+    async def test_register_node_stores_a_real_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.models import ClusterConfig
+
+        from bernstein.core.protocols.cluster import NodeRegistry
+        from bernstein.core.protocols.grpc.grpc_server import ClusterServiceImpl
+
+        monkeypatch.setitem(sys.modules, "bernstein.core.grpc_gen.cluster_pb2", MagicMock())
+
+        registry = NodeRegistry(ClusterConfig())
+        service = ClusterServiceImpl(registry)
+        request = self._make_request()
+
+        await service.RegisterNode(request, context=MagicMock())
+
+        nodes = list(registry._nodes.values())
+        assert len(nodes) == 1
+        node = nodes[0]
+        assert node.name == "worker-a"
+        assert node.url == "http://worker-a:8052"
+        assert node.capacity.max_agents == 4
+        assert node.capacity.available_slots == 3
+        assert node.capacity.gpu_available is True
+        assert node.capacity.supported_models == ["claude-sonnet-4-20250514"]
+        assert node.labels == {"gpu": "true"}
+        assert node.cell_ids == ["cell-1"]
