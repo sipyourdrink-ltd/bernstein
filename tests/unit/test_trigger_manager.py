@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -844,6 +845,33 @@ class TestCronEvaluation:
 
         assert len(mgr.evaluate_cron_triggers()) == 1
         assert mgr.evaluate_cron_triggers() == []
+
+    def test_failed_state_write_is_retried_on_a_later_pass(self, sdd_dir: Path) -> None:
+        """A dropped write is retried even when no trigger fires again.
+
+        The same-minute dedup ``continue`` short-circuits before the write, so
+        a pass with nothing new to fire must still flush the pending state or
+        the failure is only repaired by an unrelated trigger firing later.
+        """
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+        real_save = mgr._save_cron_state
+        attempts: list[int] = []
+
+        def _flaky() -> None:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise OSError("read-only filesystem")
+            real_save()
+
+        mgr._save_cron_state = _flaky  # type: ignore[method-assign]
+
+        assert len(mgr.evaluate_cron_triggers()) == 1  # fires; the write fails
+        assert mgr.evaluate_cron_triggers() == []  # nothing new fires
+
+        assert len(attempts) == 2, "the dropped write was never retried"
+        state = json.loads((sdd_dir / "runtime" / "triggers" / "cron_state.json").read_text())
+        assert "every-minute" in state
 
     def test_malformed_schedule_does_not_block_other_triggers(self, sdd_dir: Path) -> None:
         _write_triggers(

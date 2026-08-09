@@ -412,6 +412,10 @@ class TriggerManager:
 
         # Cron state: {trigger_name: last_fire_minute}
         self._cron_state: dict[str, str] = {}
+        # Set when _cron_state has changes that are not on disk yet, so a
+        # dropped write is retried on the next pass rather than waiting for
+        # the next fire (the same-minute dedup skips before the write).
+        self._cron_state_dirty = False
 
         # Load persisted state
         self._load_dedup_cache()
@@ -800,16 +804,31 @@ class TriggerManager:
 
             # Mark as fired for this minute. The in-memory entry is what
             # suppresses a re-fire on the next tick; the file only carries that
-            # across a restart, so a failed write must not abort the pass and
-            # strand the triggers after this one. _save_cron_state rewrites the
-            # whole map, so the next tick retries the entries that did not land.
+            # across a restart.
             self._cron_state[trigger.name] = current_minute
-            try:
-                self._save_cron_state()
-            except OSError as exc:
-                logger.error("Could not persist cron state for trigger %s: %s", trigger.name, exc)
+            self._cron_state_dirty = True
 
+        self._flush_cron_state()
         return events
+
+    def _flush_cron_state(self) -> None:
+        """Persist pending cron state, tolerating a failed write.
+
+        Runs once per pass rather than per fire, and unconditionally while
+        state is pending, so a dropped write is retried on the next pass
+        instead of waiting for some trigger to fire again. A write that never
+        lands costs at most a duplicate fire after a restart within the same
+        minute; letting the error escape would strand the whole tick, which is
+        the failure this module already fixed once.
+        """
+        if not self._cron_state_dirty:
+            return
+        try:
+            self._save_cron_state()
+        except OSError as exc:
+            logger.error("Could not persist cron state (will retry next pass): %s", exc)
+            return
+        self._cron_state_dirty = False
 
     # -- Summary for CLI ----------------------------------------------------
 
