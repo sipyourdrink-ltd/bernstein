@@ -151,6 +151,21 @@ class TestSchemaCheck:
                 "files",
                 id="scalar-where-a-list-belongs",
             ),
+            pytest.param(
+                lambda p: p["stages"][0]["steps"][0].update({"complexity": "epic"}),
+                "complexity",
+                id="value-outside-an-enum",
+            ),
+            pytest.param(
+                lambda p: p["stages"][0]["steps"][0].update({"estimated_minutes": "30m"}),
+                "estimated_minutes",
+                id="duration-written-as-prose",
+            ),
+            pytest.param(
+                lambda p: p.update({"max_agents": "4 workers"}),
+                "max_agents",
+                id="count-written-as-prose",
+            ),
         ],
     )
     def test_a_schema_error_is_reported_and_fails_the_command(

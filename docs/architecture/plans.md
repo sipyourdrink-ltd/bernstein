@@ -140,7 +140,13 @@ for the whole 3.x line and is unregistered in 4.0.0.
 Plus warnings:
 
 - **Unknown roles** - any role not in the registry-known list is flagged
-  (`_check_unknown_roles`).
+  (`_check_unknown_roles`). Roles come from `templates/roles/`, which a project
+  extends, so an unrecognised role is a warning and never an error.
+
+**Exit code.** `0` when the plan is clean or carries warnings only, `1` when any
+check reports an error - both spellings. A CI gate should branch on that rather
+than grep the output. The schema check runs first and, when it finds anything,
+the command reports those errors and stops without building the task graph.
 
 Common errors:
 

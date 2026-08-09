@@ -111,14 +111,42 @@ def _check_schema(plan_file: Path, errors: list[str]) -> None:
     verdict too would turn a documented warning into a hard failure for every
     plan that names a role of its own.
 
+    It runs before ``load_plan`` because ``load_plan`` is where several schema
+    violations become crashes rather than findings: ``_parse_step`` builds
+    ``Scope(...)`` and ``Complexity(...)`` and calls ``int()`` on
+    ``estimated_minutes`` and ``priority``, so ``complexity: epic`` or
+    ``estimated_minutes: "30m"`` raises a bare ``ValueError`` out of a function
+    documented to raise ``PlanLoadError`` (#3515). Reading the document first is
+    what lets those be reported instead of raised.
+
+    Two cases are left to ``load_plan`` on purpose. An unparseable file and a
+    file with no ``stages`` both get a better message there -- the latter
+    distinguishes a seed config from a plan and says what to do about it -- so
+    this returns quietly and lets that path speak.
+
     Args:
         plan_file: The plan being validated.
         errors: Accumulator appended to in place.
     """
     from bernstein.core.plan_schema import validate_plan as validate_plan_schema
 
-    raw = yaml.safe_load(plan_file.read_text())
+    try:
+        raw = yaml.safe_load(plan_file.read_text())
+    except yaml.YAMLError:
+        return
+    if not isinstance(raw, dict) or not raw.get("stages"):
+        return
     errors.extend(e for e in validate_plan_schema(raw) if ".role:" not in e)
+
+
+def _raw_step_count(plan_file: Path) -> int:
+    """Return the number of steps in the document, for a plan that cannot load."""
+    try:
+        raw: dict[str, Any] = yaml.safe_load(plan_file.read_text()) or {}
+        stages: list[dict[str, Any]] = raw.get("stages", [])
+        return sum(len(cast("list[Any]", s.get("steps", []))) for s in stages)
+    except Exception:
+        return 0
 
 
 def _compute_stage_stats(plan_file: Path) -> tuple[int, int]:
@@ -171,8 +199,24 @@ def _print_validation_results(
 @click.command("validate")
 @click.argument("plan_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 def validate_plan(plan_file: Path) -> None:
-    """Validate a plan file -- check DAG, roles, models, and dependencies."""
+    """Validate a plan file -- check the schema, DAG, roles, and dependencies.
+
+    Exits 1 when any check reports an error, 0 when the plan is clean or carries
+    warnings only, so a CI gate can branch on the exit code.
+    """
     console.print(f"Validating plan: {plan_file}\n")
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    _check_schema(plan_file, errors)
+    if errors:
+        # The document does not satisfy its own schema. Loading it now would
+        # either raise on the offending field or coerce it into a task that
+        # looks fine, so report what is wrong with the document instead.
+        stage_count, max_parallel = _compute_stage_stats(plan_file)
+        _print_validation_results(errors, warnings, _raw_step_count(plan_file), stage_count, max_parallel)
+        return
 
     try:
         _plan_config, tasks = load_plan(plan_file)
@@ -180,10 +224,6 @@ def validate_plan(plan_file: Path) -> None:
         console.print(f"[red]Plan load error:[/red] {exc}")
         raise SystemExit(1) from exc
 
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    _check_schema(plan_file, errors)
     _check_duplicate_titles(tasks, errors)
     _check_dependency_refs(tasks, errors)
     _check_dependency_cycles(tasks, errors)
