@@ -230,6 +230,10 @@ USE_CASES: dict[str, AdapterUseCase] = {
         headline="Kilo CLI by Stackblitz",
         binary="kilo",
     ),
+    "kimchi": AdapterUseCase(
+        headline="Kimchi CLI for open-weight and Ollama-hosted models",
+        binary="kimchi",
+    ),
     "kimi": AdapterUseCase(
         headline="Kimi CLI for Moonshot models",
         binary="kimi",

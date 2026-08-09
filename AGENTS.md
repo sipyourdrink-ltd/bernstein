@@ -138,6 +138,7 @@
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
 | `junie.py`                  | JetBrains Junie CLI adapter |
 | `kilo.py`                   | Kilo CLI adapter (Stackblitz) |
+| `kimchi.py`                 | Kimchi CLI adapter (#3100) |
 | `kimi.py`                   | Kimi CLI adapter |
 | `kiro.py`                   | Kiro CLI adapter |
 | `letta_code.py`             | Letta Code CLI adapter |

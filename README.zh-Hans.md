@@ -127,9 +127,9 @@ bernstein stop                    # graceful shutdown with drain
 完整的操作界面（PR 自动化、定时任务、聊天桥接、autofix 守护进程）见[操作命令](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/commands.md)。
 
 ### 支持的智能体
-<!-- l10n: en="supported agents" hash="sha256:18d0a5218063" -->
+<!-- l10n: en="supported agents" hash="sha256:978d14f9b201" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[适配器索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)为其中 29 个提供安装命令；`bernstein integrations list` 从 `src/bernstein/adapters/registry.py` 中的注册表枚举全部 48 个已接线适配器，该文件是"什么能解析"的唯一事实来源；`src/bernstein/adapters/use_cases.py` 为每个适配器提供面向终端用户的文案。任何带 `--prompt` 旗标的其他工具都可以通过通用包装器工作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[适配器索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)为其中 29 个提供安装命令；`bernstein integrations list` 从 `src/bernstein/adapters/registry.py` 中的注册表枚举全部 49 个已接线适配器，该文件是"什么能解析"的唯一事实来源；`src/bernstein/adapters/use_cases.py` 为每个适配器提供面向终端用户的文案。任何带 `--prompt` 旗标的其他工具都可以通过通用包装器工作。
 
 在同一运行中混用智能体：用便宜的本地模型处理样板，用更重的云模型处理架构。`bernstein integrations list --installed` 显示你的机器上可用的内容。
 
