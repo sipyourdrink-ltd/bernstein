@@ -338,6 +338,8 @@ def browser_run_cmd(
     from bernstein.core.orchestration.activity import ActivityRejected, TerminalState, dispatch_activity
     from bernstein.core.orchestration.activity_modalities import ContentStore
     from bernstein.core.orchestration.browser_driver import (
+        RECORDED_DRIVER_NAME,
+        RECORDED_DRIVER_REFUSAL,
         BrowserDriver,
         BrowserDriverError,
         RecordedBrowserDriver,
@@ -365,6 +367,12 @@ def browser_run_cmd(
             factory = get_driver_factory(dname)
         except BrowserDriverError as exc:
             raise click.BadParameter(str(exc)) from exc
+        if dname == RECORDED_DRIVER_NAME:
+            # The recorded driver needs a tape, so it is not constructible from a
+            # name. Refused here rather than at build time: a refusal raised
+            # inside the worker is classified into a driver_error terminal state,
+            # which never tells the operator to pass --recording.
+            raise click.BadParameter(RECORDED_DRIVER_REFUSAL)
 
         def build(profile_dir: Path) -> BrowserDriver:
             return factory(profile_dir=profile_dir)

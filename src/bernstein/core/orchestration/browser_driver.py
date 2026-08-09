@@ -468,6 +468,19 @@ def get_driver_factory(name: str) -> DriverFactory:
     return _DRIVER_REGISTRY[name]
 
 
+#: The registered name of the recorded-tape driver.
+RECORDED_DRIVER_NAME = "recorded"
+
+#: Why the recorded driver cannot be built from its name alone. Shared so the
+#: activity boundary refuses the selection up front with the same wording the
+#: factory raises with if something builds it anyway -- a refusal that arrives as
+#: a ``driver_error`` terminal state tells the operator nothing about the tape.
+RECORDED_DRIVER_REFUSAL = (
+    "Browser driver 'recorded' replays a recorded observation tape and cannot be selected "
+    "by name alone. Pass the tape instead: --recording <path>."
+)
+
+
 def _recorded_driver_needs_a_tape(*, profile_dir: Path) -> BrowserDriver:
     """Refuse to build :class:`RecordedBrowserDriver` from a name alone.
 
@@ -484,15 +497,12 @@ def _recorded_driver_needs_a_tape(*, profile_dir: Path) -> BrowserDriver:
     Raises:
         BrowserDriverError: Always.
     """
-    raise BrowserDriverError(
-        "Browser driver 'recorded' replays a recorded observation tape and cannot be selected "
-        "by name alone. Pass the tape instead: --recording <path>."
-    )
+    raise BrowserDriverError(RECORDED_DRIVER_REFUSAL)
 
 
 # Register built-in drivers by default
 register_driver("browser_use", browser_use_driver)
-register_driver("recorded", _recorded_driver_needs_a_tape)
+register_driver(RECORDED_DRIVER_NAME, _recorded_driver_needs_a_tape)
 
 
 # ---------------------------------------------------------------------------

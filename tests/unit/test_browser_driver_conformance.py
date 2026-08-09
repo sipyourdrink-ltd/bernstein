@@ -376,6 +376,25 @@ def test_cli_refuses_unknown_driver(tmp_path: Path) -> None:
     assert "'browser_use'" in res.output
 
 
+def test_cli_refuses_the_recorded_driver_selected_by_name(tmp_path: Path) -> None:
+    """The refusal must reach the operator, not arrive as a driver_error state.
+
+    ``--driver recorded`` used to raise ``TypeError`` out of a half-applied
+    constructor. Refusing it inside the worker instead would classify it as a
+    ``driver_error`` terminal state, which never mentions the tape.
+    """
+    flow_file = tmp_path / "flow.json"
+    flow_file.write_text('{"flow_id": "f1", "start_url": "https://example.com", "steps": []}')
+    runner = CliRunner()
+    res = runner.invoke(
+        cli,
+        ["activity", "browser", "run", "--flow", str(flow_file), "--run", "r1", "--driver", "recorded"],
+    )
+    assert res.exit_code != 0
+    assert "--recording" in res.output
+    assert "driver_error" not in res.output
+
+
 def test_cli_refuses_driver_together_with_recording(tmp_path: Path) -> None:
     """--recording must not silently win and leave an unknown --driver unrefused."""
     flow_file = tmp_path / "flow.json"
