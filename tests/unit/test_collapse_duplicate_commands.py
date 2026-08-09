@@ -196,6 +196,39 @@ def test_artifact_show_exits_1_for_an_unknown_key(project: Path) -> None:
     assert "No artifact" in result.output
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["artifact", "list", "task-1"],
+        ["artifact", "show", "task-1", "summary"],
+        ["skills", "provenance", "task-1"],
+        ["skills", "verify", "task-1"],
+    ],
+)
+def test_canonical_spellings_never_print_a_deprecation_warning(project: Path, argv: list[str]) -> None:
+    """The moved commands are shared objects; the warning belongs to the old group only.
+
+    Attaching it to the command instead of its deprecated group would make the
+    replacement nag about itself, which is the one outcome worse than the
+    duplicate name this change removes.
+    """
+    _post(project)
+    result = CliRunner().invoke(cli, [*argv, "-w", str(project)])
+    assert "deprecated" not in result.stderr, result.stderr
+
+
+def test_cost_subcommands_never_print_a_deprecation_warning(tmp_path: Path) -> None:
+    """Same property for the two commands that moved under `cost`."""
+    runner = CliRunner()
+    envelopes = runner.invoke(
+        cli,
+        ["cost", "envelopes", "show", "--ledger", str(tmp_path / "l.jsonl"), "--config", str(tmp_path / "b.yaml")],
+    )
+    assert "deprecated" not in envelopes.stderr, envelopes.stderr
+    estimate = runner.invoke(cli, ["cost", "estimate", "goal", "--metrics-dir", "nonexistent"])
+    assert "deprecated" not in estimate.stderr, estimate.stderr
+
+
 # ---------------------------------------------------------------------------
 # limits pool
 # ---------------------------------------------------------------------------
