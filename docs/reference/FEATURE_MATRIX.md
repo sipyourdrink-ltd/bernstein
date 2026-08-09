@@ -178,7 +178,7 @@ additionally holds the CLI's server calls to the registered route table.
 | Sovereign deployment profile | Full | Signed residency-posture attestation; posture drift at spawn is a signed refusal (`core/security/deployment_profile.py`) |
 | [Workflow DSL](../operations/workflow-manifests.md) | Full | `bernstein workflow validate/list/show` |
 | [Chaos engineering](../operations/chaos-engineering.md) | Full | `bernstein chaos agent-kill/file-remove/status/slo` |
-| Benchmark suite | Full | `bernstein benchmark run/compare/swe-bench` |
+| Benchmark suite | Full | `bernstein eval run/compare/swe-bench/programbench` |
 | [Eval harness](../eval/golden-harness.md) | Full | `bernstein eval run/report/failures` |
 | SWE-Bench harness | Full | Verified eval in `benchmarks/swe_bench/run.py` |
 | [Graduation system](../operations/graduation.md) | Full | Agent promotion stages, routes in `routes/graduation.py` |
@@ -235,7 +235,7 @@ additionally holds the CLI's server calls to the registered route table.
 | [`bernstein chaos`](../operations/chaos-engineering.md) | Full | Fault injection |
 | [`bernstein audit`](../security/audit-log.md) | Full | Cryptographic audit (`seal/verify/export/taint/pack/slice`) |
 | [`bernstein verify`](cli/verify.md) | Full | Merkle/HMAC verification |
-| `bernstein benchmark` | Full | Benchmark suite |
+| `bernstein benchmark` | Full | Deprecated alias for `bernstein eval`, removed in v4.0.0 |
 | [`bernstein eval`](../eval/golden-harness.md) | Full | Evaluation harness |
 | `bernstein workspace` | Full | Multi-repo workspace |
 | [`bernstein config`](../operations/global-config.md) | Full | Configuration management |

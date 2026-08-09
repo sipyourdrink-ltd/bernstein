@@ -380,7 +380,7 @@ set. (`cli/commands/advanced_cmd.py`, `core/observability/otel_projection.py`.)
 | `bernstein ci` | CI integration commands (group). | `cli/commands/ci_cmd.py:49` |
 | `bernstein chaos` | Chaos engineering (group). | `cli/commands/chaos_cmd.py:33` |
 | `bernstein eval` | Evaluation pipelines (group). | `cli/commands/eval_benchmark_cmd.py:426` |
-| `bernstein benchmark` | Benchmark pipelines (group). | `cli/commands/eval_benchmark_cmd.py:29` |
+| `bernstein benchmark` | Benchmark pipelines (group). Deprecated alias until v4.0.0: use `bernstein eval`. | `cli/commands/eval_benchmark_cmd.py:29` |
 | `bernstein impact` | Change-impact analysis (group): API compatibility, caller sites, blast radius. | `cli/commands/impact_cmd.py:23` |
 | `bernstein api-check` | Detect breaking-API changes. Second spelling of `bernstein impact api`. | `cli/commands/api_check_cmd.py:22` |
 | `bernstein dep-impact` | Deprecated alias of `bernstein impact deps`; removed in v4.0.0. | `cli/commands/impact_cmd.py:39` |
@@ -434,6 +434,8 @@ Common flags: `--token` (env: `GITHUB_TOKEN`), `--server`, `--interval`. (`cli/c
 
 #### `bernstein eval` / `bernstein benchmark`
 
+`bernstein benchmark` is a deprecated alias for `bernstein eval` and prints a warning on stderr before running; it keeps every subcommand it carried and is removed in v4.0.0. `benchmark programbench` and `benchmark compare` are served under `eval programbench` and `eval compare`; `benchmark simulate` duplicates the top-level `bernstein simulate`, which is unaffected. `bernstein bench` is a separate command and is not folded in.
+
 The two groups share most flags:
 
 | Flag | Default | Meaning |
@@ -446,7 +448,7 @@ The two groups share most flags:
 | `--save / --no-save` | save | Persist results to disk. |
 | `--compare` | off | Compare against the previous run. |
 
-`bernstein eval run` is the typical command for SWE-bench-style evaluations; `bernstein benchmark run` for Bernstein-internal performance benchmarks. See `cli/commands/eval_benchmark_cmd.py:127+` and `:426+`.
+`bernstein eval run` is the typical command for SWE-bench-style evaluations; `bernstein eval swe-bench` and `bernstein eval golden` cover the harness and the curated golden suite. See `cli/commands/eval_benchmark_cmd.py:127+` and `:426+`.
 
 `bernstein eval` additionally accepts group-level reliability options — a pass^k alias for `bench run --reliability` that cannot be combined with an eval subcommand:
 
