@@ -54,15 +54,8 @@ def _pool_events(workdir: Path) -> list[Any]:
 
 
 @click.group("pool")
-@click.pass_context
-def pool_group(ctx: click.Context) -> None:
-    """[Deprecated] Define and govern named sandbox pools (use 'bernstein limits pool')."""
-    if ctx.invoked_subcommand is not None:
-        click.echo(
-            "WARNING: 'bernstein pool' is deprecated and will be removed in v4.0.0 (#3138): "
-            "use 'bernstein limits pool' instead.",
-            err=True,
-        )
+def pool_group() -> None:
+    """Define and govern named sandbox pools (chain-projected)."""
 
 
 @pool_group.command("register")

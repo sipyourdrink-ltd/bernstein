@@ -182,11 +182,35 @@ def test_artifact_show_exits_1_for_an_unknown_key(project: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_limits_pool_subcommands() -> None:
+def test_limits_pool_subcommands_all_project_the_admission_ledger() -> None:
+    """Every subcommand under `limits pool` must address the store `create` writes.
+
+    `bernstein pool`'s subcommands project the HMAC audit chain into a sandbox-pool
+    registry; `limits pool create` writes slot pools to the admission work ledger.
+    Registering the first set under the second group yields a group in which
+    `limits pool create staging-env --slots 1` is followed by `limits pool list`
+    reporting no pools and `limits pool show staging-env` exiting 1.
+    """
+    from bernstein.cli.commands import limits_cmd
+    from bernstein.cli.commands.limits_cmd import pool_group
+
+    for name, command in pool_group.commands.items():
+        callback = command.callback
+        assert callback is not None, f"'limits pool {name}' has no callback"
+        assert callback.__module__ == limits_cmd.__name__, (
+            f"'limits pool {name}' is implemented in {callback.__module__}, which projects a "
+            "different store than 'limits pool create'"
+        )
+
+
+def test_limits_pool_create_is_readable_back_through_limits_status(project: Path) -> None:
+    """The admission-ledger round trip the group is supposed to own."""
     runner = CliRunner()
-    for sub in ["register", "list", "show", "verify"]:
-        res = runner.invoke(cli, ["limits", "pool", sub, "--help"])
-        assert res.exit_code == 0, f"limits pool {sub} failed"
+    created = runner.invoke(cli, ["limits", "pool", "create", "staging-env", "--slots", "1", "--workdir", str(project)])
+    assert created.exit_code == 0, created.output
+    listed = runner.invoke(cli, ["limits", "status", "--workdir", str(project)])
+    assert listed.exit_code == 0, listed.output
+    assert "staging-env" in listed.output
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +230,6 @@ def test_deprecated_top_level_aliases_emit_warning() -> None:
     assert (
         "WARNING: 'bernstein skill' is deprecated" in res_skill.output
         or "WARNING: 'bernstein skill' is deprecated" in res_skill.stderr
-    )
-
-    res_pool = runner.invoke(cli, ["pool", "list", "--help"])
-    assert (
-        "WARNING: 'bernstein pool' is deprecated" in res_pool.output
-        or "WARNING: 'bernstein pool' is deprecated" in res_pool.stderr
     )
 
 
