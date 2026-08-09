@@ -36,13 +36,11 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from bernstein.core.agents.computer_use import ActionKind
+from bernstein.core.agents.computer_use import Action, ActionKind
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
-
-    from bernstein.core.agents.computer_use import Action
 
 __all__ = [
     "BrowserDriver",
@@ -421,11 +419,27 @@ def browser_use_driver(*, profile_dir: Path) -> BrowserUseDriver:
 # Driver Registry
 # ---------------------------------------------------------------------------
 
-_DRIVER_REGISTRY: dict[str, Callable[..., BrowserDriver]] = {}
+#: A registered driver factory. Every entry is called with exactly one keyword
+#: argument, ``profile_dir`` -- the shape :func:`browser_use_driver` already has
+#: -- so the activity boundary can build any registered driver the same way and
+#: a new backend is a registry entry rather than a branch in the CLI.
+type DriverFactory = Callable[..., BrowserDriver]
+
+_DRIVER_REGISTRY: dict[str, DriverFactory] = {}
 
 
-def register_driver(name: str, factory: Callable[..., BrowserDriver]) -> None:
-    """Register a browser driver factory under *name*."""
+def register_driver(name: str, factory: DriverFactory) -> None:
+    """Register a browser driver factory under *name*.
+
+    Args:
+        name: The name ``--driver`` selects the backend by.
+        factory: Builds a driver bound to an isolated profile. It is called as
+            ``factory(profile_dir=...)`` and nothing else, so every registered
+            entry is interchangeable at the activity boundary. A factory that
+            needs more than a profile directory must refuse with a
+            :class:`BrowserDriverError` rather than expose a constructor that
+            raises :class:`TypeError` when the boundary calls it.
+    """
     _DRIVER_REGISTRY[name] = factory
 
 
@@ -434,17 +448,51 @@ def list_drivers() -> list[str]:
     return sorted(_DRIVER_REGISTRY.keys())
 
 
-def get_driver_factory(name: str) -> Callable[..., BrowserDriver]:
-    """Return the driver factory for *name*, or raise BrowserDriverError if unknown."""
+def get_driver_factory(name: str) -> DriverFactory:
+    """Return the driver factory for *name*.
+
+    Args:
+        name: The registered driver name.
+
+    Returns:
+        The factory, callable as ``factory(profile_dir=...)``.
+
+    Raises:
+        BrowserDriverError: When *name* is not registered. The message lists the
+            registered names, so the refusal happens before a browser is started
+            and tells the operator what they could have asked for.
+    """
     if name not in _DRIVER_REGISTRY:
         avail = ", ".join(repr(n) for n in list_drivers())
         raise BrowserDriverError(f"Unknown browser driver {name!r}. Registered drivers: {avail}.")
     return _DRIVER_REGISTRY[name]
 
 
+def _recorded_driver_needs_a_tape(*, profile_dir: Path) -> BrowserDriver:
+    """Refuse to build :class:`RecordedBrowserDriver` from a name alone.
+
+    The recorded driver replays a fixed observation tape, so unlike a live
+    backend it cannot be constructed from a profile directory alone -- it is
+    selected by handing the tape in, not by naming it. Registered anyway so the
+    name stays discoverable in :func:`list_drivers` and selecting it is a typed
+    refusal instead of a :class:`TypeError` escaping a partially applied
+    constructor.
+
+    Args:
+        profile_dir: Accepted to match the registry calling contract; unused.
+
+    Raises:
+        BrowserDriverError: Always.
+    """
+    raise BrowserDriverError(
+        "Browser driver 'recorded' replays a recorded observation tape and cannot be selected "
+        "by name alone. Pass the tape instead: --recording <path>."
+    )
+
+
 # Register built-in drivers by default
 register_driver("browser_use", browser_use_driver)
-register_driver("recorded", RecordedBrowserDriver)
+register_driver("recorded", _recorded_driver_needs_a_tape)
 
 
 # ---------------------------------------------------------------------------
@@ -452,62 +500,156 @@ register_driver("recorded", RecordedBrowserDriver)
 # ---------------------------------------------------------------------------
 
 
+#: The six protocol members a conforming driver exposes.
+CONFORMANCE_VERBS: tuple[str, ...] = ("navigate", "act", "screenshot", "dom_snapshot", "current_url", "close")
+
+#: The fixed observation tape :func:`verify_driver_conformance` drives by
+#: default: the start state, the state after ``navigate``, and the state after
+#: ``act``. Three *distinct* frames, deliberately -- every read verb is compared
+#: byte-exact against the frame the driver is supposed to be sitting on, so a
+#: driver whose snapshot lags or leads the action (a DOM frozen at the start, or
+#: the post-action DOM returned before the action) diverges from a frame it does
+#: not match and fails at the verb that read it. A tape whose frames repeat would
+#: let an ordering violation pass unnoticed.
+CONFORMANCE_TAPE: tuple[PageState, ...] = (
+    PageState(url="https://example.com/start", screenshot=b"PNG-start", dom=b"<html>start</html>"),
+    PageState(url="https://example.com/next", screenshot=b"PNG-next", dom=b"<html>next</html>"),
+    PageState(url="https://example.com/final", screenshot=b"PNG-final", dom=b"<html>final</html>"),
+)
+
+
 class ConformanceFailure(AssertionError):
-    """Raised when a driver fails the conformance kit."""
+    """Raised when a driver fails the conformance kit.
+
+    Attributes:
+        verb: The protocol member that failed, or ``"profile"`` for a profile
+            isolation violation. Named so a failure points at the surface to fix
+            rather than at the kit.
+    """
 
     def __init__(self, verb: str, message: str) -> None:
         self.verb = verb
         super().__init__(f"Conformance failure in verb {verb!r}: {message}")
 
 
+def _expect_frame(driver: BrowserDriver, expected: PageState, *, phase: str) -> None:
+    """Assert the driver's three read verbs all describe *expected*.
+
+    Args:
+        driver: The driver under test.
+        expected: The frame the driver is supposed to be sitting on.
+        phase: Where in the flow this read happens, for the failure message.
+
+    Raises:
+        ConformanceFailure: Naming the read verb that disagreed.
+    """
+    url = driver.current_url()
+    if url != expected.url:
+        raise ConformanceFailure("current_url", f"{phase}: expected {expected.url!r}, got {url!r}")
+
+    dom = driver.dom_snapshot()
+    if not isinstance(dom, bytes) or not dom:
+        raise ConformanceFailure("dom_snapshot", f"{phase}: returned an empty or non-bytes snapshot")
+    if dom != expected.dom:
+        raise ConformanceFailure("dom_snapshot", f"{phase}: expected {expected.dom!r}, got {dom!r}")
+
+    shot = driver.screenshot()
+    if not isinstance(shot, bytes) or not shot:
+        raise ConformanceFailure("screenshot", f"{phase}: returned an empty or non-bytes screenshot")
+    if shot != expected.screenshot:
+        raise ConformanceFailure("screenshot", f"{phase}: expected {expected.screenshot!r}, got {shot!r}")
+
+
 def verify_driver_conformance(
-    driver_factory: Callable[[Path], BrowserDriver],
+    driver_factory: DriverFactory,
     *,
     root_dir: Path,
-    expected_start_url: str = "https://example.com/start",
-    expected_next_url: str = "https://example.com/next",
-    expected_start_dom: bytes = b"<html>start</html>",
+    expected_tape: Sequence[PageState] = CONFORMANCE_TAPE,
 ) -> None:
     """Run the driver conformance suite against *driver_factory*.
 
-    Asserts protocol compliance for all six verbs (navigate, act, screenshot,
-    dom_snapshot, current_url, close), DOM snapshot ordering, and profile isolation.
+    Drives a fixed flow -- observe, ``navigate``, observe, ``act``, observe --
+    over a fixed three-frame tape and compares every read verb byte-exact against
+    the frame the driver should be sitting on at that point. That is what makes
+    the kit able to fail an ordering violation: a driver whose ``dom_snapshot``
+    lags or leads the action returns bytes belonging to a different frame.
+
+    What is asserted:
+
+    * all six members of :data:`CONFORMANCE_VERBS` are present and callable, so a
+      driver missing a verb fails at that verb instead of silently skipping it;
+    * ``current_url``, ``dom_snapshot`` and ``screenshot`` match the expected
+      frame at each of the three observation points;
+    * ``navigate`` and ``act`` each advance the driver by exactly one frame;
+    * ``close`` is idempotent, as the protocol requires; and
+    * two tasks built from the same factory hold disjoint
+      :class:`BrowserProfile` directories, and tearing one down leaves the other
+      intact.
+
+    *driver_factory* is called as ``factory(profile_dir=...)``, the registry
+    calling contract, so a registered backend can be handed to the kit directly.
+
+    Args:
+        driver_factory: Builds a driver bound to a profile directory.
+        root_dir: Where the kit allocates its throwaway profiles.
+        expected_tape: The three frames the driver is expected to reproduce.
+
+    Raises:
+        ConformanceFailure: When the driver violates the protocol.
+        ValueError: When *expected_tape* does not hold exactly three frames --
+            a caller error in the kit's own arguments, not a driver fault.
     """
-    profile = BrowserProfile.allocate(root=root_dir, task_id="conformance-test-task")
-    driver = driver_factory(profile.profile_dir)
+    if len(expected_tape) != 3:
+        raise ValueError(f"conformance tape must hold exactly 3 frames, got {len(expected_tape)}")
+
+    profile_a = BrowserProfile.allocate(root=root_dir, task_id="conformance-task-a")
+    profile_b = BrowserProfile.allocate(root=root_dir, task_id="conformance-task-b")
+    close_error: Exception | None = None
     try:
-        # 1. Check initial state (current_url, dom_snapshot, screenshot)
-        start_url = driver.current_url()
-        if start_url != expected_start_url:
-            raise ConformanceFailure("current_url", f"expected {expected_start_url!r}, got {start_url!r}")
+        driver = driver_factory(profile_dir=profile_a.profile_dir)
+        other = driver_factory(profile_dir=profile_b.profile_dir)
 
-        dom_before = driver.dom_snapshot()
-        if not isinstance(dom_before, bytes) or len(dom_before) == 0:
-            raise ConformanceFailure("dom_snapshot", "returned empty or non-bytes snapshot")
-        if dom_before != expected_start_dom:
-            raise ConformanceFailure("dom_snapshot", f"expected {expected_start_dom!r}, got {dom_before!r}")
+        for verb in CONFORMANCE_VERBS:
+            if not callable(getattr(driver, verb, None)):
+                raise ConformanceFailure(verb, "driver does not expose the verb as a callable")
 
-        img_before = driver.screenshot()
-        if not isinstance(img_before, bytes) or len(img_before) == 0:
-            raise ConformanceFailure("screenshot", "returned empty or non-bytes screenshot")
+        # Two live tasks off one factory must not share a profile directory.
+        if profile_a.profile_dir == profile_b.profile_dir:
+            raise ConformanceFailure("profile", "two tasks were handed the same profile directory")
+        if not profile_a.profile_dir.exists() or not profile_b.profile_dir.exists():
+            raise ConformanceFailure("profile", "an allocated profile directory does not exist")
 
-        # 2. Test navigate / act & current_url update
-        from bernstein.core.agents.computer_use import Action, ActionKind
+        _expect_frame(driver, expected_tape[0], phase="initial state")
+        driver.navigate(expected_tape[1].url)
+        _expect_frame(driver, expected_tape[1], phase="after navigate")
+        driver.act(Action(kind=ActionKind.CLICK, target="#conformance"))
+        _expect_frame(driver, expected_tape[2], phase="after act")
 
-        action = Action(kind=ActionKind.NAVIGATE, target=expected_next_url)
-        driver.act(action)
+        # close must be idempotent; a driver that raises on the second call is a
+        # failure of the protocol, not of the run, so it is captured rather than
+        # raised here where it would mask a live conformance failure.
+        try:
+            driver.close()
+            driver.close()
+            other.close()
+            other.close()
+        except Exception as exc:
+            close_error = exc
 
-        url_after_act = driver.current_url()
-        if url_after_act != expected_next_url:
-            raise ConformanceFailure("current_url", f"expected {expected_next_url!r}, got {url_after_act!r}")
-
-        # 3. Test dom_snapshot after action
-        dom_after = driver.dom_snapshot()
-        if not isinstance(dom_after, bytes) or len(dom_after) == 0:
-            raise ConformanceFailure("dom_snapshot", "returned empty or non-bytes snapshot after action")
-
+        # Terminal state for task A: its profile goes, task B's stays.
+        profile_a.teardown()
+        if profile_a.profile_dir.exists():
+            raise ConformanceFailure("profile", "the profile directory survived its task's teardown")
+        if not profile_b.profile_dir.exists():
+            raise ConformanceFailure("profile", "tearing down one task's profile removed another task's")
+        profile_b.teardown()
+        if profile_b.profile_dir.exists():
+            raise ConformanceFailure("profile", "the profile directory survived its task's teardown")
     finally:
-        driver.close()
-        # Idempotency check
-        driver.close()
-        profile.teardown()
+        # Idempotent, so this is a safety net for the early-exit paths above and
+        # a no-op once the isolation assertions have run.
+        profile_a.teardown()
+        profile_b.teardown()
+
+    if close_error is not None:
+        raise ConformanceFailure("close", f"close is not idempotent: {type(close_error).__name__}") from close_error
