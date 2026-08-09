@@ -150,20 +150,33 @@ def regen_documented_commands() -> bool:
 
     gate = _load_cli_doc_gate()
     documented = gate._parse_documented_commands(reference_text)
-    exemptions = set(gate.UNDOCUMENTED_EXEMPTIONS)
+    exemptions: dict[str, str] = gate.UNDOCUMENTED_EXEMPTIONS
+    registered = set(cli.commands)
+    reference = CLI_REFERENCE_PATH.name
 
-    missing = sorted(set(cli.commands) - (documented | exemptions))
-    if not missing:
+    # Every invariant the gate enforces, not just the missing-command one:
+    # reporting "nothing to add" while CI is red on a stale or malformed
+    # exemption would send the reader looking in the wrong place.
+    problems: list[str] = []
+    if missing := sorted(registered - (documented | set(exemptions))):
+        problems.append(f"registered, but neither documented in {reference} nor exempt: {', '.join(missing)}")
+    if redundant := sorted(set(exemptions) & documented):
+        problems.append(f"exempt, but now documented in {reference} -- drop the exemption: {', '.join(redundant)}")
+    if phantoms := sorted(set(exemptions) - registered):
+        problems.append(f"exempt, but not a registered command: {', '.join(phantoms)}")
+    if blank := sorted(name for name, reason in exemptions.items() if not reason or not reason.strip()):
+        problems.append(f"exempt without a reason: {', '.join(blank)}")
+
+    if not problems:
         print("[regen] UNDOCUMENTED_EXEMPTIONS: nothing to add")
         return False
 
+    for problem in problems:
+        print(f"[regen] UNDOCUMENTED_EXEMPTIONS: {problem}", file=sys.stderr)
     print(
-        "[regen] UNDOCUMENTED_EXEMPTIONS: "
-        f"{len(missing)} registered command(s) are neither documented in {CLI_REFERENCE_PATH.name} "
-        f"nor exempt: {', '.join(missing)}.\n"
         "[regen] This fixture does not patch itself: an exemption records a decision, and a "
-        "bot-written one records none. Document the command(s) or add an exemption with a reason to "
-        f"{CLI_DOC_GATE_PATH.relative_to(REPO_ROOT)}.",
+        "bot-written one records none. Resolve the above in "
+        f"{CLI_DOC_GATE_PATH.relative_to(REPO_ROOT)} or {CLI_REFERENCE_PATH.relative_to(REPO_ROOT)}.",
         file=sys.stderr,
     )
     return False
