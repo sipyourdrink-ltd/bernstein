@@ -437,6 +437,7 @@ def _verify_ed25519(
     """
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     try:
         signature = base64.b64decode(signature_b64.encode("ascii"), validate=True)
@@ -448,12 +449,19 @@ def _verify_ed25519(
     except (ValueError, TypeError):
         return False
 
+    if not isinstance(public_key, Ed25519PublicKey):
+        # public_key was parsed but is not Ed25519 (e.g. RSA PEM passed in).
+        # Previously this surfaced as the TypeError/AttributeError raised by
+        # the differing verify() signatures of the other key types.
+        return False
+
     try:
-        public_key.verify(signature, signing_input)  # type: ignore[union-attr]
+        public_key.verify(signature, signing_input)
     except InvalidSignature:
         return False
     except (TypeError, AttributeError):
-        # public_key was parsed but is not Ed25519 (e.g. RSA PEM passed in)
+        # Retained so malformed (non-bytes) arguments from untyped callers
+        # keep returning False rather than propagating.
         return False
     return True
 
