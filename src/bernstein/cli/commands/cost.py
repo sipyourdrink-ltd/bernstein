@@ -1701,26 +1701,31 @@ def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir:
     )
 
 
-@click.command("estimate", help="[Deprecated] Predict task cost before running.")
-@click.argument("goal")
-@click.option("--role", default="backend", help="Agent role for the task.")
-@click.option("--scope", type=click.Choice(["small", "medium", "large"]), default="medium", help="Task scope.")
-@click.option("--complexity", type=click.Choice(["low", "medium", "high"]), default="medium", help="Task complexity.")
-@click.option(
-    "--metrics-dir",
-    default=".sdd/metrics",
-    show_default=True,
-    help="Directory containing historical metrics.",
-)
-@click.pass_context
-def estimate_alias_cmd(ctx: click.Context, goal: str, role: str, scope: str, complexity: str, metrics_dir: str) -> None:
-    """[Deprecated] Use 'bernstein cost estimate' instead."""
+def _estimate_alias_callback(**kwargs: Any) -> None:
+    """Warn, then run the canonical command's own callback with the parsed values."""
     click.echo(
         "WARNING: 'bernstein estimate' is deprecated and will be removed in v4.0.0 (#3138): "
         "use 'bernstein cost estimate' instead.",
         err=True,
     )
-    ctx.invoke(estimate_cmd, goal=goal, role=role, scope=scope, complexity=complexity, metrics_dir=metrics_dir)
+    callback = estimate_cmd.callback
+    if callback is None:  # pragma: no cover - a Click command always carries one
+        raise RuntimeError("cost estimate has no callback to delegate to")
+    callback(**kwargs)
+
+
+#: The alias reuses the canonical command's Parameter objects rather than
+#: re-declaring them, so `bernstein estimate` cannot come to parse, default or
+#: reject an invocation differently from `bernstein cost estimate`. Re-declared
+#: options drift silently: a changed Choice set or default reads as identical
+#: under a name-by-name comparison.
+estimate_alias_cmd = click.Command(
+    "estimate",
+    params=list(estimate_cmd.params),
+    callback=_estimate_alias_callback,
+    help="[Deprecated] Predict task cost before running (use 'bernstein cost estimate').",
+    short_help="[Deprecated] Predict task cost before running.",
+)
 
 
 cost_cmd.add_command(cost_envelopes_group, "envelopes")

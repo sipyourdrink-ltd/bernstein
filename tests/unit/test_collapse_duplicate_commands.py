@@ -246,13 +246,29 @@ def test_deprecated_estimate_alias_warns_on_stderr_and_runs() -> None:
     assert json.loads(result.stdout)["goal"] == "test goal"
 
 
-def test_estimate_alias_accepts_every_option_cost_estimate_declares() -> None:
-    """A flag added to `cost estimate` must not go missing from the alias."""
+def test_estimate_alias_shares_the_canonical_parameter_objects() -> None:
+    """Matching parameter *names* would still allow the two to parse differently.
+
+    A re-declared `--scope` with a different Choice set, default or requiredness
+    reads as identical under a name comparison, so assert object identity: the
+    alias holds the same Parameter instances `cost estimate` does.
+    """
     from bernstein.cli.commands.cost import estimate_alias_cmd, estimate_cmd
 
-    target = {param.name for param in estimate_cmd.params}
-    alias = {param.name for param in estimate_alias_cmd.params}
-    assert target <= alias, f"alias is missing {sorted(target - alias)}"
+    assert [param.name for param in estimate_alias_cmd.params] == [param.name for param in estimate_cmd.params]
+    for alias_param, canonical_param in zip(estimate_alias_cmd.params, estimate_cmd.params, strict=True):
+        assert alias_param is canonical_param, f"alias re-declares {canonical_param.name}"
+
+
+def test_estimate_alias_rejects_exactly_what_cost_estimate_rejects() -> None:
+    """The parse-time contract, asserted through the CLI rather than by inspection."""
+    runner = CliRunner()
+    alias = runner.invoke(cli, ["estimate", "goal", "--scope", "huge"])
+    canonical = runner.invoke(cli, ["cost", "estimate", "goal", "--scope", "huge"])
+    assert alias.exit_code == 2, alias.output
+    assert canonical.exit_code == 2, canonical.output
+    assert "'huge' is not one of" in alias.stderr
+    assert "'huge' is not one of" in canonical.stderr
 
 
 def test_deprecated_cost_envelopes_alias_still_dispatches_show(tmp_path: Path) -> None:
