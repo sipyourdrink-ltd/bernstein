@@ -14,6 +14,8 @@ Lock the structural shape so that regression is caught at unit-test time.
 
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -173,3 +175,93 @@ def test_recursion_guard_on_bot_author(workflow: dict[str, object]) -> None:
     cond = job.get("if", "")
     assert isinstance(cond, str)
     assert "github-actions[bot]" in cond, "missing recursion guard: PRs authored by github-actions[bot] must be skipped"
+
+
+_SELECTOR = re.compile(r"(tests/[\w./-]+\.py)((?:::[A-Za-z_]\w*)+)")
+
+# pytest's default collection rules (pyproject.toml sets no overrides). A name
+# that resolves in the AST but does not match these is still ``not found`` at
+# collection time, so name existence alone is not the property under test.
+_COLLECTED_CLASS = "Test"
+_COLLECTED_FUNCTION = "test"
+
+
+def _resolve_node_id(repo_root: Path, file_part: str, node_path: list[str]) -> bool:
+    """Return True if ``node_path`` names a node pytest would actually collect.
+
+    Walks the AST rather than importing, and applies pytest's default
+    ``python_classes`` / ``python_functions`` prefixes at each step: a private
+    helper such as ``_documented_commands_from_docs`` exists in the file but is
+    never collected, and selecting it fails exactly like a renamed test.
+    """
+    target = repo_root / file_part
+    if not target.is_file() or not target.name.startswith("test_"):
+        return False
+    scope: list[ast.stmt] = list(ast.parse(target.read_text(encoding="utf-8")).body)
+    for index, name in enumerate(node_path):
+        match = next(
+            (
+                node
+                for node in scope
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) and node.name == name
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        if isinstance(match, ast.ClassDef):
+            if not name.startswith(_COLLECTED_CLASS):
+                return False
+            scope = list(match.body)
+            continue
+        # A function must be the last segment and must be collectable.
+        return index == len(node_path) - 1 and name.startswith(_COLLECTED_FUNCTION)
+    return False
+
+
+def _pytest_selectors_in_run_steps(workflow: dict[str, object]) -> list[tuple[str, str]]:
+    """Return the node-id selectors that appear in executable ``run:`` blocks.
+
+    Reading the raw file instead would let a comment or a JavaScript issue-body
+    string stand in for a selector that was deleted from the command actually
+    executed, and the test would keep passing over an empty probe.
+    """
+    jobs = workflow.get("jobs", {})
+    assert isinstance(jobs, dict)
+    selectors: list[tuple[str, str]] = []
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            run = step.get("run")
+            if isinstance(run, str):
+                selectors.extend(_SELECTOR.findall(run))
+    return selectors
+
+
+def test_selected_test_node_ids_resolve(workflow: dict[str, object]) -> None:
+    """Every ``tests/...::node`` the workflow *runs* must be collectable.
+
+    The drift probe runs ``pytest <file>::<node>`` for the three contract
+    detectors. pytest exits non-zero with ``ERROR: not found`` when a node id
+    no longer resolves, and the workflow reads any non-zero exit as drift -- so
+    renaming a selected test makes the probe report drift unconditionally and
+    stop detecting the real thing. Observed on this branch before the name was
+    restored (run 31303712728).
+    """
+    repo_root = WORKFLOW.resolve().parent.parent.parent
+    selectors = _pytest_selectors_in_run_steps(workflow)
+    assert selectors, "expected a run: step that selects contract-drift test node ids by name"
+
+    unresolved = [
+        f"{file_part}{node_part}"
+        for file_part, node_part in selectors
+        if not _resolve_node_id(repo_root, file_part, node_part.strip(":").split("::"))
+    ]
+    assert not unresolved, (
+        "contract-drift-autofix.yml runs test node ids pytest cannot collect: "
+        f"{sorted(set(unresolved))}. pytest would exit 'ERROR: not found' and the workflow "
+        "would report drift on every run. Restore the name or update the workflow."
+    )
