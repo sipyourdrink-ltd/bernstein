@@ -364,6 +364,28 @@ def verify_mcp_server(
             failure_reason=str(exc),
         )
 
+    if not isinstance(signature_b64, str):
+        # Declared ``str``, but this is the boundary where a third party's
+        # signature arrives: a JSON ``null`` or a raw ``Path.read_bytes()``
+        # reaches here from callers this module does not type-check. The
+        # contract is to return a verdict, so a non-string is refused rather
+        # than surfacing as an ``AttributeError`` from ``.strip()`` below.
+        #
+        # ``None`` is a signature that was never supplied; anything else is a
+        # supplied signature that cannot be read. Policy maps UNSIGNED and
+        # BAD_SIGNATURE to different outcomes, so the two stay distinct.
+        return MCPVerificationResult(
+            ok=False,
+            verdict=(VerificationVerdict.UNSIGNED if signature_b64 is None else VerificationVerdict.BAD_SIGNATURE),
+            failure_reason=(
+                "no signature provided"
+                if signature_b64 is None
+                else f"signature must be a base64 string, got {type(signature_b64).__name__}"
+            ),
+            manifest=manifest,
+            publisher_fingerprint=manifest.publisher_fingerprint,
+        )
+
     if not signature_b64.strip():
         return MCPVerificationResult(
             ok=False,
