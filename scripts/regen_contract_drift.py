@@ -84,18 +84,16 @@ def _write_if_changed(path: Path, before: str, after: str) -> bool:
 
 
 def regen_documented_commands() -> bool:
-    """Add newly-registered CLI commands to the README allow-list."""
+    """Add newly-registered CLI commands to UNDOCUMENTED_EXEMPTIONS allow-list."""
     from bernstein.cli.main import cli
 
     target = REPO_ROOT / "tests" / "unit" / "test_readme_api_coverage.py"
     source = target.read_text()
 
-    # Extract the existing frozenset literal -- AST gives us the exact names
-    # without us having to teach a regex about Python syntax.
     import ast
 
     tree = ast.parse(source)
-    documented: set[str] = set()
+    exemptions: set[str] = set()
     for node in ast.walk(tree):
         target_name: str | None = None
         rhs: ast.AST | None = None
@@ -105,46 +103,39 @@ def regen_documented_commands() -> bool:
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             target_name = node.target.id
             rhs = node.value
-        if target_name == "DOCUMENTED_COMMANDS" and rhs is not None:
-            # Walk the right-hand-side and harvest every constant string.
+        if target_name == "UNDOCUMENTED_EXEMPTIONS" and rhs is not None:
             for sub in ast.walk(rhs):
                 if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                    documented.add(sub.value)
+                    exemptions.add(sub.value)
             break
 
+    # Parse docs/reference/cli-reference.md for documented commands
+    ref_path = REPO_ROOT / "docs" / "reference" / "cli-reference.md"
+    import re
+
+    ref_text = ref_path.read_text(encoding="utf-8") if ref_path.exists() else ""
+    headings = re.findall(r"^#+\s+`bernstein\s+([a-zA-Z0-9_-]+)", ref_text, re.M)
+    tables = re.findall(r"\|\s*`bernstein\s+([a-zA-Z0-9_-]+)", ref_text, re.M)
+    documented = set(headings + tables)
+
     registered = set(cli.commands.keys())
-    missing = sorted(registered - documented)
+    missing = sorted(registered - (documented | exemptions))
     if not missing:
-        print("[regen] DOCUMENTED_COMMANDS: nothing to add")
+        print("[regen] UNDOCUMENTED_EXEMPTIONS: nothing to add")
         return False
 
-    # Insert before the closing ``}`` of the frozenset({...}) literal.
-    # We anchor on ``_REPO_ROOT = Path`` which is the next top-level statement
-    # after the frozenset -- the closing ``}\n    )`` we want lives just above.
-    anchor = "\n# ---------------------------------------------------------------------------\n# Helpers"
+    anchor = "\n}\n\n# Backwards compatibility alias"
     if anchor not in source:
-        print("[regen] DOCUMENTED_COMMANDS: could not find anchor -- skipping", file=sys.stderr)
+        print("[regen] UNDOCUMENTED_EXEMPTIONS: could not find anchor -- skipping", file=sys.stderr)
         return False
 
-    # Build the insert block. Group new entries under a comment so the diff is
-    # self-explanatory.
-    bot_block_lines = ["        # Bot-added: drift autofix (regen_contract_drift.py)"]
+    bot_block_lines = []
     for name in missing:
-        bot_block_lines.append(f'        "{name}",')
+        bot_block_lines.append(f'    "{name}": "Bot-added exemption (regen_contract_drift.py)",')
     bot_block = "\n".join(bot_block_lines) + "\n"
 
-    # Walk the file forward to locate the ``    }\n)`` that closes the literal.
-    # Start search just before the anchor so we don't accidentally edit a
-    # different frozenset later in the file.
-    pre, _, _ = source.partition(anchor)
-    close_idx = pre.rfind("    }\n)")
-    if close_idx == -1:
-        print(
-            "[regen] DOCUMENTED_COMMANDS: could not locate frozenset close -- skipping",
-            file=sys.stderr,
-        )
-        return False
-    new_source = pre[:close_idx] + bot_block + pre[close_idx:] + source[len(pre) :]
+    pre, _, post = source.partition(anchor)
+    new_source = pre + bot_block + anchor + post
 
     return _write_if_changed(target, source, new_source)
 
