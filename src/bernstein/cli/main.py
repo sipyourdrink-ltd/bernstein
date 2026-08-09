@@ -97,7 +97,7 @@ from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.disaster_recovery_cmd import dr_group
 from bernstein.cli.dry_run_cmd import dry_run_cmd
 from bernstein.cli.eval_benchmark_cmd import (
-    benchmark_group,
+    benchmark_alias_group,
     eval_group,
 )
 from bernstein.cli.evolve_cmd import evolve
@@ -187,7 +187,7 @@ __all__ = [
     "auth_login",
     # Groups and commands from advanced_cmd
     "backlog_group",
-    "benchmark_group",
+    "benchmark_alias_group",
     "cache_group",
     "cancel",
     "changelog_cmd",
@@ -991,7 +991,7 @@ cli.add_command(workspace_group)
 cli.add_command(config_group)
 
 # From advanced_cmd module - groups and commands
-cli.add_command(benchmark_group)
+cli.add_command(benchmark_alias_group, "benchmark")
 cli.add_command(cache_group, "cache")
 cli.add_command(eval_group)
 cli.add_command(best_of_n_group)

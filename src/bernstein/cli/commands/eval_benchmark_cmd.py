@@ -2364,5 +2364,25 @@ def eval_clean_run_verify_cmd(attestation_hash: str, workdir: str, as_json: bool
     raise SystemExit(1)
 
 
+eval_group.add_command(benchmark_programbench, "programbench")
+eval_group.add_command(benchmark_compare, "compare")
+
+
+@click.group("benchmark", help="[Deprecated] Use 'bernstein eval' instead.")
+@click.pass_context
+def benchmark_alias_group(ctx: click.Context) -> None:
+    """[Deprecated] Use 'bernstein eval' instead."""
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein benchmark' is deprecated and will be removed in v4.0.0 (#3143): "
+            "use 'bernstein eval' instead.",
+            err=True,
+        )
+
+
+for _cmd_name, _cmd_obj in benchmark_group.commands.items():
+    benchmark_alias_group.add_command(_cmd_obj, _cmd_name)
+
+
 # ---------------------------------------------------------------------------
 # workspace - multi-repo workspace management
