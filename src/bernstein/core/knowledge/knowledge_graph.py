@@ -210,6 +210,7 @@ def _write_graph(
     connection: sqlite3.Connection,
     *,
     built_at: str,
+    extractor_revision: str,
     nodes: list[KnowledgeNode],
     edges: list[KnowledgeEdge],
 ) -> None:
@@ -220,7 +221,7 @@ def _write_graph(
         connection.execute("INSERT INTO metadata(key, value) VALUES(?, ?)", ("built_at", built_at))
         connection.execute(
             "INSERT INTO metadata(key, value) VALUES(?, ?)",
-            ("extractor_revision", _extractor_revision()),
+            ("extractor_revision", extractor_revision),
         )
         connection.executemany(
             "INSERT INTO nodes(id, kind, name, file_path, line_start, line_end) VALUES(?, ?, ?, ?, ?, ?)",
@@ -337,6 +338,15 @@ def build_knowledge_graph(workdir: Path) -> Path:
     Returns:
         Path to the built SQLite database.
     """
+    # Captured before anything is parsed. Read after the fact it would name
+    # whatever the extractor file says at the end of the build, while the
+    # nodes and edges were produced by the module already resident in memory -
+    # so an edit landing mid-build would stamp the new revision onto output
+    # the old extractor produced, and the freshness gate would trust it
+    # forever. Recording what was current when parsing started means such a
+    # build simply fails to match on the next call and is rebuilt.
+    extractor_revision = _extractor_revision()
+
     all_files = [path for path in _git_ls_files(workdir) if path.endswith(".py")][:_MAX_FILES]
     module_index = _module_index(all_files)
     semantic_graph = build_semantic_graph(workdir)
@@ -353,7 +363,13 @@ def build_knowledge_graph(workdir: Path) -> Path:
     connection = _connect(db_path)
     try:
         _create_schema(connection)
-        _write_graph(connection, built_at=built_at, nodes=nodes, edges=edges)
+        _write_graph(
+            connection,
+            built_at=built_at,
+            extractor_revision=extractor_revision,
+            nodes=nodes,
+            edges=edges,
+        )
     finally:
         connection.close()
 

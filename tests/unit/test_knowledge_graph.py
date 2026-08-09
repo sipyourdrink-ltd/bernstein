@@ -274,3 +274,35 @@ class TestFreshnessWindowRespectsExtractorRevision:
         )
         knowledge_graph.get_or_build_knowledge_graph(tmp_path, max_age_minutes=30)
         assert calls == [1], "a graph with no recorded extractor revision must be rebuilt"
+
+    def test_a_revision_change_during_the_build_is_not_stamped_onto_old_output(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The recorded revision must be the one parsing started under.
+
+        Read after the fact it would name whatever the extractor file says
+        once the build finishes, while the nodes and edges came from the
+        module already resident in memory. That build would then match on the
+        next call and its stale output would be trusted indefinitely.
+        """
+        _write(tmp_path / "pkg" / "mod.py", "def run() -> int:\n    return 1\n")
+        monkeypatch.setattr(knowledge_graph, "_git_ls_files", lambda _workdir: ["pkg/mod.py"])
+
+        before = "a" * 64
+        after = "b" * 64
+        revisions = iter([before, after, after, after])
+        monkeypatch.setattr(knowledge_graph, "_extractor_revision", lambda: next(revisions))
+
+        db_path = knowledge_graph.build_knowledge_graph(tmp_path)
+        connection = knowledge_graph._connect(db_path)
+        try:
+            recorded = knowledge_graph._read_metadata(connection, "extractor_revision")
+        finally:
+            connection.close()
+
+        assert recorded == before, (
+            "the build recorded a revision it did not parse under; the graph "
+            "would then be trusted as current output of the newer extractor"
+        )
