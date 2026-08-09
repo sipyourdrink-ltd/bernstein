@@ -25,8 +25,13 @@ logger = logging.getLogger(__name__)
 # every existing entry potentially short of edges even though its file hashes
 # still match.
 _ANALYZER_CACHE_VERSION = "4"
-_COMPAT_CACHE_VERSION = "4"
+_COMPAT_CACHE_VERSION = "5"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
+
+# Upper bound on a harvested path literal. Long strings in a test are prose,
+# SQL, or embedded fixtures rather than paths; the bound keeps them out of the
+# index without having to decide what each one is.
+_MAX_PATH_LITERAL_LENGTH = 200
 
 # The two forms a test uses to reach a workflow file: the directory spelled out
 # as a posix path, or assembled from path segments (``Path(".github") /
@@ -166,6 +171,69 @@ def extract_project_imports(path: Path, package_prefixes: set[str]) -> set[str]:
     return imports
 
 
+def _is_path_literal(value: str) -> bool:
+    """Return whether a string literal reads as a repo path or file name.
+
+    The discriminator is a dot in the final segment: ``AGENTS.md``,
+    ``docs/adapters/index.md`` and ``.importlinter`` qualify, bare directory
+    names like ``src`` do not. Requiring an extension is what keeps the index
+    from filling with prose; a bare directory name would key selection on words
+    common enough to select most of the suite.
+    """
+    if not value or len(value) > _MAX_PATH_LITERAL_LENGTH:
+        return False
+    if any(char.isspace() for char in value):
+        return False
+    if value.startswith(("http://", "https://")):
+        return False
+    # A repo path never carries a backslash here, while regex sources and
+    # path-traversal fixtures routinely do. Dropping them keeps regex fragments
+    # out of the index and removes the separator mismatch a normalising rule
+    # would otherwise have to reconcile against git's posix output.
+    if "\\" in value:
+        return False
+    return "." in value.rsplit("/", 1)[-1]
+
+
+def extract_path_literals(path: Path) -> set[str]:
+    """Return the repo paths a file names as string literals.
+
+    A structural guard reads its subject rather than importing it: the line
+    budget guard ``read_text()``s ``AGENTS.md`` files, the import-contract
+    guard parses ``.importlinter`` with ``configparser`` and ``registry.py``
+    with ``ast``, the README count guard regexes ``README.md``. None of that
+    produces an import edge, so a map built only from imports cannot connect a
+    diff that breaks such a guard to the guard that catches it.
+
+    Harvesting the string literals recovers the edge without asking the guard
+    to declare anything. A declaration would drift by the same mechanism that
+    makes this necessary -- nothing forces a new guard to add one -- whereas a
+    guard cannot read a path it does not name.
+
+    The literals are stored as written. Matching resolves them against every
+    suffix of the changed path, so ``AGENTS.md`` matches wherever that file
+    lives and ``contributing/render-freshness.md`` matches the file it names
+    under ``docs/``. A literal is therefore matched by any path ending in it at
+    a segment boundary, which can wake a guard for a same-suffix file in an
+    unrelated tree. That direction is deliberate: the cost is running a guard
+    that had nothing to check, while anchoring literals to the repository root
+    would drop the 15 literals in this repository that name a real file by a
+    partial path, and a dropped edge is the failure this map exists to remove.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return set()
+
+    return {
+        stripped
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        for stripped in [node.value.strip().strip("/")]
+        if _is_path_literal(stripped)
+    }
+
+
 def _string_dict_literal(node: ast.expr) -> dict[str, str]:
     """Return the ``str -> str`` pairs of a dict literal, ignoring the rest."""
     if not isinstance(node, ast.Dict):
@@ -286,6 +354,7 @@ def build_compat_dep_map(
             test_deps[rel] = {
                 "hash": _file_hash(test_file),
                 "imports": sorted(resolve_module_aliases(extract_project_imports(test_file, prefixes), aliases)),
+                "paths": sorted(extract_path_literals(test_file)),
             }
 
     source_imports: dict[str, dict[str, Any]] = {}
@@ -297,6 +366,7 @@ def build_compat_dep_map(
             source_imports[module] = {
                 "hash": _file_hash(src_file),
                 "imports": sorted(resolve_module_aliases(extract_project_imports(src_file, prefixes), aliases)),
+                "paths": sorted(extract_path_literals(src_file)),
             }
 
     return {
@@ -306,17 +376,33 @@ def build_compat_dep_map(
     }
 
 
+def _is_string_list(value: object) -> bool:
+    """Return whether a cached value is a list holding only strings."""
+    return isinstance(value, list) and all(isinstance(item, str) for item in cast("list[object]", value))
+
+
 def _check_hashes_fresh(
     file_iter: list[tuple[str, Path]],
     dep_map: dict[str, object],
 ) -> bool:
-    """Return False if any file hash in dep_map is stale for the given files."""
+    """Return False if any entry in dep_map is stale or malformed for these files.
+
+    The shape check is not defensive tidiness. ``_normalize_string_list`` turns
+    anything it does not recognise into an empty list, so a hand-edited or
+    truncated cache whose ``paths`` is a bare string, or holds a null, passes a
+    hash-only freshness check and then contributes no edges -- the selector
+    reports a smaller affected set and nothing anywhere says why. Rejecting the
+    entry rebuilds the map instead, which is cheap and cannot silently
+    under-select.
+    """
     for key, file_path in file_iter:
         entry = dep_map.get(key)
         if not isinstance(entry, dict):
             return False
         entry_dict = cast("_JsonObject", entry)
         if entry_dict.get("hash") != _file_hash(file_path):
+            return False
+        if not _is_string_list(entry_dict.get("imports", [])) or not _is_string_list(entry_dict.get("paths", [])):
             return False
     return True
 
@@ -361,6 +447,72 @@ def _build_module_to_tests_map(test_deps: dict[str, object]) -> dict[str, set[st
         for module in _normalize_string_list(entry_dict.get("imports", [])):
             module_to_tests.setdefault(module, set()).add(test_rel)
     return module_to_tests
+
+
+def _modules_naming_changed_paths(
+    changed_files: list[str],
+    source_imports: dict[str, object],
+) -> set[str]:
+    """Return indexed modules that name any changed path as a string literal.
+
+    A generated artefact is named by the module that generates it, never by the
+    guard that checks it: the agent-context mirrors (``CLAUDE.md``,
+    ``.goosehints``, ``.aider.conf.yml``) are spelled out in
+    ``knowledge/agents_md_bridge.py``, while the guard asks the bridge to render
+    them and compares bytes. Harvesting only the guard's own literals therefore
+    leaves the mirrors uncovered -- editing ``CLAUDE.md`` by hand selected no
+    test that would notice.
+
+    Attributing the change to the module that names the file puts it back on the
+    import graph, where the guard is reachable because it imports that module.
+    """
+    modules: set[str] = set()
+    for module, info in source_imports.items():
+        if not isinstance(info, dict):
+            continue
+        info_dict = cast("_JsonObject", info)
+        literals = set(_normalize_string_list(info_dict.get("paths", [])))
+        if not literals:
+            continue
+        if any(literals & _path_match_keys(rel_path) for rel_path in changed_files):
+            modules.add(module)
+    return modules
+
+
+def _build_path_to_tests_map(test_deps: dict[str, object]) -> dict[str, set[str]]:
+    """Build a reverse map from a harvested path literal to the tests naming it."""
+    path_to_tests: dict[str, set[str]] = {}
+    for test_rel, entry in test_deps.items():
+        if not isinstance(entry, dict):
+            continue
+        entry_dict = cast("_JsonObject", entry)
+        for literal in _normalize_string_list(entry_dict.get("paths", [])):
+            path_to_tests.setdefault(literal, set()).add(test_rel)
+    return path_to_tests
+
+
+def _path_match_keys(rel_path: str) -> set[str]:
+    """Return every suffix of ``rel_path`` a test could have written.
+
+    ``src/bernstein/core/security/AGENTS.md`` yields the whole path, then
+    ``core/security/AGENTS.md`` down to ``AGENTS.md``. A guard that globs for a
+    bare file name matches on the last key; one that pins a single file matches
+    only on the longer key it wrote, so pinning stays specific.
+    """
+    parts = Path(rel_path).as_posix().split("/")
+    return {"/".join(parts[index:]) for index in range(len(parts))}
+
+
+def _tests_reading_changed_paths(
+    changed_files: list[str],
+    path_to_tests: dict[str, set[str]],
+) -> set[str]:
+    """Return tests that name any changed path as a string literal."""
+    affected: set[str] = set()
+    for rel_path in changed_files:
+        for key in _path_match_keys(rel_path):
+            affected.update(path_to_tests.get(key, set()))
+    return affected
 
 
 def _expand_transitive_modules(
@@ -523,6 +675,21 @@ def compat_get_affected_tests(
     affected_tests = _collect_changed_test_files(changed_files, root, test_deps)
     if _has_workflow_change(changed_files):
         affected_tests.update(_workflow_test_files(list(test_deps), root))
+    # Structural guards read their subject instead of importing it, so the
+    # import graph has no edge to offer for them. Selecting on the paths a test
+    # names is what puts a markdown, INI or registry-parsing guard in front of
+    # the diff that breaks it, rather than on main after the merge.
+    affected_tests.update(_tests_reading_changed_paths(changed_files, _build_path_to_tests_map(test_deps)))
+    # A generated file is named by the module that generates it, not by the
+    # guard that checks it. The tests bound directly to that module are the ones
+    # that can notice; its transitive importers cannot, so this edge stops at
+    # the direct mapping rather than joining the expansion above.
+    affected_tests.update(
+        _collect_tests_for_modules(
+            _modules_naming_changed_paths(changed_files, source_imports),
+            module_to_tests,
+        )
+    )
     affected_tests.update(_collect_tests_for_modules(all_affected, module_to_tests))
 
     return sorted(root / rel for rel in affected_tests)
