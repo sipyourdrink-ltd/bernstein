@@ -70,6 +70,11 @@ from bernstein.cli.commands.events_cmd import events_group
 from bernstein.cli.commands.export_cmd import export_cmd
 from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.fork_cmd import fork_cmd
+from bernstein.cli.commands.impact_cmd import (
+    blast_radius_alias_group,
+    dep_impact_alias_cmd,
+    impact_group,
+)
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
 from bernstein.cli.commands.pool_cmd import pool_group
@@ -88,7 +93,6 @@ from bernstein.cli.cost import (
 )
 from bernstein.cli.debug_bundle import debug_group
 from bernstein.cli.debug_cmd import debug_cmd
-from bernstein.cli.dep_impact_cmd import dep_impact_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.disaster_recovery_cmd import dr_group
 from bernstein.cli.dry_run_cmd import dry_run_cmd
@@ -1164,7 +1168,8 @@ cli.add_command(dr_group, "dr")
 cli.add_command(profile_cmd, "profile")
 cli.add_command(templates_group, "templates")
 cli.add_command(validate_alias_cmd, "validate")
-cli.add_command(dep_impact_cmd, "dep-impact")
+cli.add_command(impact_group, "impact")
+cli.add_command(dep_impact_alias_cmd, "dep-impact")
 cli.add_command(fingerprint_group, "fingerprint")
 cli.add_command(fleet_group, "fleet")
 cli.add_command(triggers_group, "triggers")
@@ -1344,9 +1349,7 @@ cli.add_command(delegation_group, "delegation")
 cli.add_command(analyze_cmd, "analyze")  # issue #768
 
 # Blast-radius scorer (issue #1322): inspect + ad-hoc score a change.
-from bernstein.cli.commands.blast_radius_cmd import blast_radius_group  # noqa: E402
-
-cli.add_command(blast_radius_group, "blast-radius")
+cli.add_command(blast_radius_alias_group, "blast-radius")
 
 # Recorded run-session inspection + fork (#1222).
 from bernstein.cli.commands.session_cmd import session_group  # noqa: E402
