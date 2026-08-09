@@ -13,6 +13,7 @@ model calls belong to workers, never to coordination decisions.
 | `run_stall.py` | Pure decision function for zero-terminal run quiescence |
 | `deterministic.py` | Seeded-run LLM record/replay via `.sdd/runs/` journals |
 | `escalation.py` | Journal-anchored, Ed25519-signed stall escalation receipts |
+| `trigger_manager.py` | Evaluates `triggers.yaml` rules into `TriggerEvent`s (event and cron sources) |
 | `worker.py` | `bernstein-worker` process wrapper for spawned CLI agents |
 
 Heavy lifting lives in sibling packages: `../tasks/task_lifecycle.py`
@@ -31,6 +32,13 @@ crash detection, reaping).
   (`deterministic.py`).
 - Prefer pure decision functions (`run_stall.py` is the model) so a
   criterion is testable without a tick loop, server, or real clock.
+- Optional third-party imports degrade to a no-op instead of raising;
+  `trigger_manager.py` yields no events when `croniter` is absent.
+- Operator-supplied config is validated per item inside the loop that
+  consumes it, so one malformed entry is logged and skipped rather than
+  aborting the whole pass. Catch the errors the library actually raises:
+  a bad cron schedule reaches `croniter` as `TypeError` or
+  `AttributeError` as readily as `ValueError`.
 
 ## Testing
 
