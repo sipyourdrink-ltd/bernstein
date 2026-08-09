@@ -434,7 +434,18 @@ Common flags: `--token` (env: `GITHUB_TOKEN`), `--server`, `--interval`. (`cli/c
 
 #### `bernstein eval` / `bernstein benchmark`
 
-`bernstein benchmark` is a deprecated alias for `bernstein eval` and prints a warning on stderr before running; it keeps every subcommand it carried and is removed in v4.0.0. `benchmark programbench` and `benchmark compare` are served under `eval programbench` and `eval compare`; `benchmark simulate` duplicates the top-level `bernstein simulate`, which is unaffected. `bernstein bench` is a separate command and is not folded in.
+`bernstein benchmark` is a deprecated alias for `bernstein eval` and prints a warning on stderr before running; it keeps every subcommand it carried and is removed in v4.0.0. Every one of those subcommands is reachable under `eval` before the removal, so nothing is lost with the spelling:
+
+| Deprecated | Canonical |
+| --- | --- |
+| `benchmark run` | `eval run` (already existed) |
+| `benchmark swe-bench` | `eval swe-bench` (already existed) |
+| `benchmark programbench` | `eval programbench` |
+| `benchmark compare` | `eval compare` |
+| `benchmark simulate` | `eval simulate` |
+| `benchmark receipt emit/verify` | `eval receipt emit/verify` |
+
+`eval simulate` is **not** the top-level `bernstein simulate`. The top-level command is a digital-twin simulation of a plan against historical traces (`--plan`, `--from-traces`, `--traces-dir`); `eval simulate` replays the standard benchmark task set for throughput, cost and quality (`--tasks-dir`, `--task-id`, `--baseline`). They share a verb and no options, and the top-level command is unaffected by this change. `bernstein bench` is a separate command and is not folded in.
 
 The two groups share most flags:
 

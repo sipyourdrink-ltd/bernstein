@@ -527,10 +527,10 @@ def benchmark_simulate(
     comparable across runs with the same seed.
 
     \b
-      bernstein benchmark simulate                             # all tasks, seed=42
-      bernstein benchmark simulate --seed 1                   # different seed
-      bernstein benchmark simulate --task-id bugfix-1         # single task
-      bernstein benchmark simulate --baseline prior.jsonl     # detect regressions
+      bernstein eval simulate                             # all tasks, seed=42
+      bernstein eval simulate --seed 1                   # different seed
+      bernstein eval simulate --task-id bugfix-1         # single task
+      bernstein eval simulate --baseline prior.jsonl     # detect regressions
     """
     from pathlib import Path as _Path
 
@@ -630,7 +630,7 @@ def benchmark_receipt_emit(run_id: str, workdir: str) -> None:
 
     Example:
 
-        bernstein benchmark receipt emit run-2025-07-26-001
+        bernstein eval receipt emit run-2025-07-26-001
     """
     import json
     import math
@@ -761,7 +761,7 @@ def benchmark_receipt_verify(receipt_hash: str, workdir: str) -> None:
 
     Example:
 
-        bernstein benchmark receipt verify sha256:abc123...
+        bernstein eval receipt verify sha256:abc123...
     """
     from pathlib import Path
 
@@ -2364,8 +2364,21 @@ def eval_clean_run_verify_cmd(attestation_hash: str, workdir: str, as_json: bool
     raise SystemExit(1)
 
 
+# Every subcommand the deprecated ``benchmark`` group carries needs a home on
+# ``eval`` before the group is unregistered in v4.0.0, otherwise the removal
+# deletes a capability rather than a spelling.  ``run`` and ``swe-bench``
+# already existed on ``eval``; the remaining four are registered here as the
+# *same* Command objects, so the two spellings cannot drift.
+#
+# ``simulate`` is not the top-level ``bernstein simulate``: that command is a
+# digital-twin simulation of a plan against historical traces (#1374), while
+# this one replays the standard benchmark task set for throughput/cost/quality
+# (disjoint options, disjoint inputs, disjoint outputs).  They share a verb and
+# nothing else, so the top-level command is not a migration target for it.
 eval_group.add_command(benchmark_programbench, "programbench")
 eval_group.add_command(benchmark_compare, "compare")
+eval_group.add_command(benchmark_simulate, "simulate")
+eval_group.add_command(benchmark_receipt_group, "receipt")
 
 
 @click.group("benchmark", help="[Deprecated] Use 'bernstein eval' instead.")
