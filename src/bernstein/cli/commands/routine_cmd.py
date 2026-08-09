@@ -182,7 +182,8 @@ def routine_provision(scenarios_dir: Path | None, bernstein_url: str) -> None:
         console.print(f"[green]Registered {binding.trigger_id} -> {binding.scenario_id}[/green]")
     else:
         console.print(
-            f"[dim]Run `bernstein routine register --scenario {scenario.scenario_id} --trigger-id <id>` later.[/dim]"
+            "[dim]Run `bernstein schedule routine register "
+            f"--scenario {scenario.scenario_id} --trigger-id <id>` later.[/dim]"
         )
 
 

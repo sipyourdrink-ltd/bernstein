@@ -46,7 +46,7 @@ from bernstein.cli.advanced_cmd import (
 from bernstein.cli.agents_cmd import agents_group
 
 # New CLI commands
-from bernstein.cli.aliases import ALIASES, aliases_cmd
+from bernstein.cli.aliases import aliases_cmd, expand_alias
 from bernstein.cli.audit_cmd import audit_group
 from bernstein.cli.auth_cmd import auth_group, auth_login
 from bernstein.cli.cache_cmd import cache_group
@@ -460,7 +460,7 @@ def print_rich_help() -> None:
                 ("worker", "join a cluster as a remote worker node"),
                 ("evolve", "self-improvement proposals"),
                 ("demo", "zero-to-running demo in 60 seconds"),
-                ("quickstart", "zero-config demo: 3 tasks on a Flask TODO API"),
+                ("demo --flask-todo", "3 tasks on a Flask TODO API"),
             ],
         ),
     ]
@@ -510,10 +510,11 @@ class _RichGroup(click.Group):
         print_rich_help()
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
-        # Resolve alias first
-        resolved = ALIASES.get(cmd_name)
-        if resolved is not None:
-            return super().get_command(ctx, resolved)
+        # Resolve alias first. An alias value may carry flags (``i`` ->
+        # ``init --wizard``), so only its first token is a command name.
+        tokens = expand_alias(cmd_name)
+        if tokens is not None:
+            return super().get_command(ctx, tokens[0])
         return super().get_command(ctx, cmd_name)
 
     def resolve_command(
@@ -522,9 +523,9 @@ class _RichGroup(click.Group):
         args: list[str],
     ) -> tuple[str | None, click.Command | None, list[str]]:
         if args:
-            resolved = ALIASES.get(args[0])
-            if resolved is not None:
-                args = [resolved, *args[1:]]
+            tokens = expand_alias(args[0])
+            if tokens is not None:
+                args = [*tokens, *args[1:]]
         return super().resolve_command(ctx, args)
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
