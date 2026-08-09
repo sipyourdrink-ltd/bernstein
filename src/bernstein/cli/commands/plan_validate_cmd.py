@@ -104,6 +104,14 @@ def _check_schema(plan_file: Path, errors: list[str]) -> None:
     verdict too would turn a documented warning into a hard failure for every
     plan that names a role of its own.
 
+    The reach of this check is the reach of ``plan_schema.validate_plan``, which
+    is looser than the ``PLAN_JSON_SCHEMA`` the same module exports: a non-string
+    ``role``, non-string array items, unknown keys and ``max_agents: 0`` all pass
+    it while the schema rejects them. That gap is in the validator rather than
+    here, it affects every consumer of it, and closing the
+    ``additionalProperties`` part of it would reject plans that run today, so it
+    is tracked as its own change in #3516.
+
     It runs before ``load_plan`` because ``load_plan`` is where several schema
     violations become crashes rather than findings: ``_parse_step`` builds
     ``Scope(...)`` and ``Complexity(...)`` and calls ``int()`` on
