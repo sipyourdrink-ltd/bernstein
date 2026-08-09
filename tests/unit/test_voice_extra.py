@@ -2,12 +2,51 @@
 
 from __future__ import annotations
 
+import builtins
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
+from bernstein.cli.commands.voice_cmd import _import_audio_deps
 from bernstein.cli.main import cli
+
+_INSTALL_HINT = "pip install 'bernstein[voice]'"
+
+
+@pytest.fixture
+def block_imports(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """Force ``ImportError`` for named top-level modules.
+
+    The voice code paths are reached only when the ``voice`` extra is absent.
+    Relying on the ambient environment makes the assertion accidental: on a
+    machine that has ``bernstein[voice]`` installed the same test would build a
+    real ``WhisperModel`` (a ~150 MB download) and then block on a live
+    microphone stream. Blocking the import explicitly keeps the branch under
+    test regardless of what is installed.
+    """
+    real_import = builtins.__import__
+
+    def _block(*names: str) -> None:
+        blocked = frozenset(names)
+
+        def fake_import(
+            name: str,
+            globals: dict[str, Any] | None = None,
+            locals: dict[str, Any] | None = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> Any:
+            if name.partition(".")[0] in blocked:
+                raise ImportError(f"No module named {name.partition('.')[0]!r}")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    yield _block
 
 
 def test_voice_optional_dependency_extra_defined() -> None:
@@ -23,8 +62,33 @@ def test_voice_optional_dependency_extra_defined() -> None:
     assert any("numpy" in dep for dep in voice_deps)
 
 
-def test_listen_without_extra_gives_informative_error() -> None:
-    runner = CliRunner()
-    res = runner.invoke(cli, ["listen"])
+def test_listen_without_extra_gives_informative_error(block_imports: Any) -> None:
+    """``bernstein listen`` names the extra when faster-whisper is missing."""
+    block_imports("faster_whisper")
+
+    res = CliRunner().invoke(cli, ["listen"])
+
     assert res.exit_code != 0
-    assert "pip install 'bernstein[voice]'" in res.output or "pip install 'bernstein[voice]'" in res.stderr
+    assert _INSTALL_HINT in res.output
+    assert "pip install faster-whisper" not in res.output
+
+
+def test_import_audio_deps_without_extra_gives_informative_error(
+    block_imports: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The audio-capture import path names the extra too, not the raw packages.
+
+    ``_import_audio_deps`` is reached only after the whisper model loads, so the
+    ``listen`` end-to-end test never exercises it. Without this test its error
+    message can be reverted to the pre-#3145 wording with the suite still green.
+    """
+    block_imports("numpy", "sounddevice")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _import_audio_deps()
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert _INSTALL_HINT in out
+    assert "pip install sounddevice numpy" not in out
