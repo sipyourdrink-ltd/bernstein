@@ -8,12 +8,14 @@ limits), and creates tasks on the task server.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import json
 import logging
 import os
 import re
+import tempfile
 import time
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
@@ -100,6 +102,16 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
     for raw in data["triggers"]:
         if not isinstance(raw, dict) or "name" not in raw or "source" not in raw:
             logger.warning("Skipping malformed trigger entry: %r", raw)
+            continue
+        # Presence is not type. Both fields are load-bearing: name is joined
+        # into the dedup key, where a non-string raises, and source is only
+        # ever compared against string literals, so a non-string one loads
+        # clean and is silently inert.
+        if not isinstance(raw["name"], str) or not raw["name"]:
+            logger.warning("Skipping trigger entry with a non-string or empty name: %r", raw["name"])
+            continue
+        if not isinstance(raw["source"], str) or not raw["source"]:
+            logger.warning("Skipping trigger %r: source must be a non-empty string, got %r", raw["name"], raw["source"])
             continue
         # TriggerConfig.schedule is str | None, but YAML hands back whatever was
         # written: `schedule: 30` unquoted arrives as an int and used to be
@@ -529,19 +541,27 @@ class TriggerManager:
     def _save_cron_state(self) -> None:
         path = self._runtime_dir / "cron_state.json"
         data = {k: {"last_fire_minute": v, "last_fired": time.time()} for k, v in self._cron_state.items()}
-        # Write to a sibling and rename over the target. Opening the real file
-        # "w" truncates it before the content lands, and _load_cron_state reads
-        # a corrupt file as empty state - so an interrupted write did not lose
-        # one entry, it replayed every cron trigger on the next start.
-        tmp = path.with_name(path.name + ".tmp")
+        # Write to a scratch sibling and rename over the target. Opening the
+        # real file "w" truncates it before the content lands, and
+        # _load_cron_state reads a corrupt file as empty state - so an
+        # interrupted write did not lose one entry, it replayed every cron
+        # trigger on the next start.
+        #
+        # mkstemp rather than a fixed ".tmp" name: the name is unique per
+        # writer, so two managers on one runtime dir cannot interleave inside
+        # a single scratch file, and it is created O_EXCL at 0o600, so an
+        # existing path cannot capture the write and the mode carries over to
+        # cron_state.json through the rename.
+        fd, tmp_name = tempfile.mkstemp(dir=self._runtime_dir, prefix="cron_state.", suffix=".tmp")
         try:
-            with tmp.open("w") as f:
+            with os.fdopen(fd, "w") as f:
                 json.dump(data, f)
                 f.flush()
                 os.fsync(f.fileno())
-            tmp.replace(path)
+            os.replace(tmp_name, path)
         finally:
-            tmp.unlink(missing_ok=True)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp_name)
 
     # -- Fire log -----------------------------------------------------------
 

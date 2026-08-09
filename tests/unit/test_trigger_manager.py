@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -186,6 +187,33 @@ class TestLoadTriggerConfigs:
             yaml.dump({"version": 1}, f)
         with pytest.raises(ValueError, match="triggers"):
             load_trigger_configs(path)
+
+    @pytest.mark.parametrize(("field", "value"), [("name", 42), ("name", ""), ("source", 7), ("source", None)])
+    def test_non_string_name_or_source_is_skipped_at_load(
+        self, sdd_dir: Path, caplog: pytest.LogCaptureFixture, field: str, value: Any
+    ) -> None:
+        """Presence checks are not type checks, and both fields are load-bearing.
+
+        A non-string ``name`` reaches ``compute_dedup_key``, whose ``"|".join``
+        raises TypeError. A non-string ``source`` matches no source string, so
+        the trigger loads clean and is silently inert.
+        """
+        entry: dict[str, Any] = {
+            "name": "ok",
+            "source": "cron",
+            "schedule": "* * * * *",
+            "task": {"title": "t", "role": "qa"},
+        }
+        entry[field] = value
+        path = sdd_dir / "config" / "triggers.yaml"
+        with open(path, "w") as f:
+            yaml.dump({"version": 1, "triggers": [entry]}, f)
+
+        with caplog.at_level("WARNING"):
+            configs = load_trigger_configs(path)
+
+        assert configs == []
+        assert caplog.text
 
     def test_non_string_cron_schedule_is_rejected_at_load(
         self, sdd_dir: Path, caplog: pytest.LogCaptureFixture
@@ -923,6 +951,27 @@ class TestCronEvaluation:
 
         assert state_path.read_text() == good, "the previous state was clobbered"
         assert mgr._cron_state_dirty is True, "a failed write must stay pending"
+        assert self._temp_files(sdd_dir) == [], "a failed write left its scratch file behind"
+
+    @staticmethod
+    def _temp_files(sdd_dir: Path) -> list[str]:
+        runtime = sdd_dir / "runtime" / "triggers"
+        return sorted(p.name for p in runtime.iterdir() if p.name.endswith(".tmp"))
+
+    def test_state_write_is_private_and_leaves_no_scratch_file(self, sdd_dir: Path) -> None:
+        """The scratch file is per-writer and private, and never outlives the write.
+
+        A fixed scratch path is shared by every TriggerManager on the box, so
+        two of them interleave inside one file before either renames it into
+        place.
+        """
+        _write_triggers(sdd_dir, [_cron_trigger("every-minute", "* * * * *")])
+        mgr = TriggerManager(sdd_dir)
+        assert len(mgr.evaluate_cron_triggers()) == 1
+
+        state_path = sdd_dir / "runtime" / "triggers" / "cron_state.json"
+        assert self._temp_files(sdd_dir) == []
+        assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
     def test_malformed_schedule_does_not_block_other_triggers(self, sdd_dir: Path) -> None:
         _write_triggers(
