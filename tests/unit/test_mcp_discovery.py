@@ -168,6 +168,31 @@ def test_unregister_noop_when_bernstein_not_present(tmp_path: Path) -> None:
     assert "other" in data["mcpServers"]
 
 
+@pytest.mark.parametrize("payload", ["null", "[]", '"a string"', "5", "true"])
+def test_unregister_tolerates_non_object_json_root(tmp_path: Path, payload: str) -> None:
+    """Shutdown cleanup must survive the same shapes registration self-heals."""
+    mcp_path = tmp_path / ".claude" / "mcp.json"
+    mcp_path.parent.mkdir(parents=True)
+    mcp_path.write_text(payload)
+
+    _unregister_mcp_discovery(tmp_path)  # must not raise
+
+    assert mcp_path.read_text() == payload, "an unusable file is left untouched"
+
+
+@pytest.mark.parametrize("servers", [None, [], "a string", 5, True, [["bernstein", {}]]])
+def test_unregister_tolerates_malformed_mcpservers(tmp_path: Path, servers: object) -> None:
+    """A non-object ``mcpServers`` is a no-op, not a crash, and is left as-is."""
+    mcp_path = tmp_path / ".claude" / "mcp.json"
+    mcp_path.parent.mkdir(parents=True)
+    original = json.dumps({"otherKey": "keep me", "mcpServers": servers})
+    mcp_path.write_text(original)
+
+    _unregister_mcp_discovery(tmp_path)  # must not raise
+
+    assert mcp_path.read_text() == original
+
+
 def test_register_then_unregister_roundtrip(tmp_path: Path) -> None:
     """register followed by unregister leaves file with no bernstein entry."""
     _register_mcp_discovery(tmp_path)
