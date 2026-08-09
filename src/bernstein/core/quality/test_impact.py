@@ -25,8 +25,13 @@ logger = logging.getLogger(__name__)
 # every existing entry potentially short of edges even though its file hashes
 # still match.
 _ANALYZER_CACHE_VERSION = "4"
-_COMPAT_CACHE_VERSION = "4"
+_COMPAT_CACHE_VERSION = "5"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
+
+# Upper bound on a harvested path literal. Long strings in a test are prose,
+# SQL, or embedded fixtures rather than paths; the bound keeps them out of the
+# index without having to decide what each one is.
+_MAX_PATH_LITERAL_LENGTH = 200
 
 # The two forms a test uses to reach a workflow file: the directory spelled out
 # as a posix path, or assembled from path segments (``Path(".github") /
@@ -166,6 +171,57 @@ def extract_project_imports(path: Path, package_prefixes: set[str]) -> set[str]:
     return imports
 
 
+def _is_path_literal(value: str) -> bool:
+    """Return whether a string literal reads as a repo path or file name.
+
+    The discriminator is a dot in the final segment: ``AGENTS.md``,
+    ``docs/adapters/index.md`` and ``.importlinter`` qualify, bare directory
+    names like ``src`` do not. Requiring an extension is what keeps the index
+    from filling with prose; a bare directory name would key selection on words
+    common enough to select most of the suite.
+    """
+    if not value or len(value) > _MAX_PATH_LITERAL_LENGTH:
+        return False
+    if any(char.isspace() for char in value):
+        return False
+    if value.startswith(("http://", "https://")):
+        return False
+    return "." in value.rsplit("/", 1)[-1]
+
+
+def extract_path_literals(path: Path) -> set[str]:
+    """Return the repo paths a file names as string literals.
+
+    A structural guard reads its subject rather than importing it: the line
+    budget guard ``read_text()``s ``AGENTS.md`` files, the import-contract
+    guard parses ``.importlinter`` with ``configparser`` and ``registry.py``
+    with ``ast``, the README count guard regexes ``README.md``. None of that
+    produces an import edge, so a map built only from imports cannot connect a
+    diff that breaks such a guard to the guard that catches it.
+
+    Harvesting the string literals recovers the edge without asking the guard
+    to declare anything. A declaration would drift by the same mechanism that
+    makes this necessary -- nothing forces a new guard to add one -- whereas a
+    guard cannot read a path it does not name.
+
+    The literals are stored as written. Matching resolves them against the
+    changed path's suffixes, so ``AGENTS.md`` matches wherever that file lives
+    and ``docs/adapters/index.md`` matches only that one.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return set()
+
+    return {
+        stripped
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        for stripped in [node.value.strip().strip("/")]
+        if _is_path_literal(stripped)
+    }
+
+
 def _string_dict_literal(node: ast.expr) -> dict[str, str]:
     """Return the ``str -> str`` pairs of a dict literal, ignoring the rest."""
     if not isinstance(node, ast.Dict):
@@ -286,6 +342,7 @@ def build_compat_dep_map(
             test_deps[rel] = {
                 "hash": _file_hash(test_file),
                 "imports": sorted(resolve_module_aliases(extract_project_imports(test_file, prefixes), aliases)),
+                "paths": sorted(extract_path_literals(test_file)),
             }
 
     source_imports: dict[str, dict[str, Any]] = {}
@@ -361,6 +418,42 @@ def _build_module_to_tests_map(test_deps: dict[str, object]) -> dict[str, set[st
         for module in _normalize_string_list(entry_dict.get("imports", [])):
             module_to_tests.setdefault(module, set()).add(test_rel)
     return module_to_tests
+
+
+def _build_path_to_tests_map(test_deps: dict[str, object]) -> dict[str, set[str]]:
+    """Build a reverse map from a harvested path literal to the tests naming it."""
+    path_to_tests: dict[str, set[str]] = {}
+    for test_rel, entry in test_deps.items():
+        if not isinstance(entry, dict):
+            continue
+        entry_dict = cast("_JsonObject", entry)
+        for literal in _normalize_string_list(entry_dict.get("paths", [])):
+            path_to_tests.setdefault(literal, set()).add(test_rel)
+    return path_to_tests
+
+
+def _path_match_keys(rel_path: str) -> set[str]:
+    """Return every suffix of ``rel_path`` a test could have written.
+
+    ``src/bernstein/core/security/AGENTS.md`` yields the whole path, then
+    ``core/security/AGENTS.md`` down to ``AGENTS.md``. A guard that globs for a
+    bare file name matches on the last key; one that pins a single file matches
+    only on the longer key it wrote, so pinning stays specific.
+    """
+    parts = Path(rel_path).as_posix().split("/")
+    return {"/".join(parts[index:]) for index in range(len(parts))}
+
+
+def _tests_reading_changed_paths(
+    changed_files: list[str],
+    path_to_tests: dict[str, set[str]],
+) -> set[str]:
+    """Return tests that name any changed path as a string literal."""
+    affected: set[str] = set()
+    for rel_path in changed_files:
+        for key in _path_match_keys(rel_path):
+            affected.update(path_to_tests.get(key, set()))
+    return affected
 
 
 def _expand_transitive_modules(
@@ -523,6 +616,11 @@ def compat_get_affected_tests(
     affected_tests = _collect_changed_test_files(changed_files, root, test_deps)
     if _has_workflow_change(changed_files):
         affected_tests.update(_workflow_test_files(list(test_deps), root))
+    # Structural guards read their subject instead of importing it, so the
+    # import graph has no edge to offer for them. Selecting on the paths a test
+    # names is what puts a markdown, INI or registry-parsing guard in front of
+    # the diff that breaks it, rather than on main after the merge.
+    affected_tests.update(_tests_reading_changed_paths(changed_files, _build_path_to_tests_map(test_deps)))
     affected_tests.update(_collect_tests_for_modules(all_affected, module_to_tests))
 
     return sorted(root / rel for rel in affected_tests)

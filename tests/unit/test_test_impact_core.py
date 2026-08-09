@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 from bernstein.core.test_impact import TestImpactAnalyzer as ImpactAnalyzer
 
-from bernstein.core.quality.test_impact import compat_get_affected_tests
+from bernstein.core.quality.test_impact import (
+    build_compat_dep_map,
+    compat_get_affected_tests,
+    extract_path_literals,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -347,3 +351,88 @@ def test_get_dependent_source_files_non_source_files_pass_through(tmp_path: Path
     # Non-python files are passed through without modification
     assert "README.md" in result
     assert "pyproject.toml" in result
+
+
+# Structural guards: each reads its subject as data instead of importing it, so
+# the import graph offers no edge from the file to the guard that watches it.
+# Every pair here is a case that reached main red -- the guard was green on the
+# pull request that broke it, because the pull-request lane never selected it.
+_STRUCTURAL_GUARDS = (
+    ("src/bernstein/core/security/AGENTS.md", "tests/unit/test_nested_agents_context.py"),
+    ("src/bernstein/core/orchestration/AGENTS.md", "tests/unit/test_nested_agents_context.py"),
+    (".importlinter", "tests/unit/test_importlinter_contracts.py"),
+    ("src/bernstein/adapters/registry.py", "tests/unit/test_importlinter_contracts.py"),
+    ("README.md", "tests/unit/test_readme_adapter_counts.py"),
+)
+
+
+def _dep_map_for(guards: dict[str, Path]) -> dict[str, object]:
+    """Build a dep map whose path literals are harvested from real guard files."""
+    return {
+        "version": "5",
+        "test_deps": {
+            rel: {"hash": "", "imports": [], "paths": sorted(extract_path_literals(path))}
+            for rel, path in guards.items()
+        },
+        "source_imports": {},
+    }
+
+
+def _select(changed: list[str], dep_map: dict[str, object]) -> list[str]:
+    affected = compat_get_affected_tests(changed, dep_map, root=REPO_ROOT, src_root=REPO_ROOT / "src")
+    return [path.relative_to(REPO_ROOT).as_posix() for path in affected]
+
+
+@pytest.mark.parametrize(("changed", "guard"), _STRUCTURAL_GUARDS)
+def test_a_change_selects_the_guard_that_reads_it(changed: str, guard: str) -> None:
+    """A guard must be selected by the diff it exists to reject."""
+    assert guard in _select([changed], _dep_map_for({guard: REPO_ROOT / guard}))
+
+
+def test_a_guard_that_reads_a_data_file_is_selected_when_that_file_changes(tmp_path: Path) -> None:
+    """The whole path, from indexing a guard to selecting it, on a synthetic repo."""
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / "docs" / "manual.md", "# manual\n")
+    _write(
+        tmp_path / "tests" / "unit" / "test_manual_guard.py",
+        "from pathlib import Path\n\n\ndef test_manual() -> None:\n"
+        '    assert (Path(__file__).parents[2] / "docs" / "manual.md").read_text()\n',
+    )
+
+    dep_map = build_compat_dep_map(tmp_path, tmp_path / "src", [tmp_path / "tests" / "unit"], {"demo"})
+    affected = compat_get_affected_tests(["docs/manual.md"], dep_map, root=tmp_path, src_root=tmp_path / "src")
+
+    assert [path.relative_to(tmp_path).as_posix() for path in affected] == ["tests/unit/test_manual_guard.py"]
+
+
+def test_a_bare_file_name_matches_the_file_wherever_it_lives() -> None:
+    """A guard that globs for a name cannot spell the directory it will find."""
+    dep_map = {
+        "version": "5",
+        "test_deps": {"tests/unit/test_budget.py": {"hash": "", "imports": [], "paths": ["AGENTS.md"]}},
+        "source_imports": {},
+    }
+
+    assert _select(["src/bernstein/core/security/AGENTS.md"], dep_map) == ["tests/unit/test_budget.py"]
+
+
+def test_a_pinned_path_stays_pinned_to_the_file_it_names() -> None:
+    """Matching on suffixes must not turn a specific path into a bare name."""
+    dep_map = {
+        "version": "5",
+        "test_deps": {"tests/unit/test_pinned.py": {"hash": "", "imports": [], "paths": ["docs/adapters/index.md"]}},
+        "source_imports": {},
+    }
+
+    assert _select(["docs/adapters/index.md"], dep_map) == ["tests/unit/test_pinned.py"]
+    assert _select(["docs/guides/index.md"], dep_map) == []
+
+
+def test_prose_and_urls_do_not_become_selection_keys(tmp_path: Path) -> None:
+    """Only literals shaped like a path are indexed; sentences and URLs are not."""
+    _write(
+        tmp_path / "test_noise.py",
+        'DOCS = "https://example.com/README.md"\nNOTE = "see the file README.md for details."\n',
+    )
+
+    assert extract_path_literals(tmp_path / "test_noise.py") == set()
