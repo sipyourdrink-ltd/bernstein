@@ -434,18 +434,18 @@ Common flags: `--token` (env: `GITHUB_TOKEN`), `--server`, `--interval`. (`cli/c
 
 #### `bernstein eval` / `bernstein benchmark`
 
-`bernstein benchmark` is a deprecated alias for `bernstein eval` and prints a warning on stderr before running; it keeps every subcommand it carried and is removed in v4.0.0. Every one of those subcommands is reachable under `eval` before the removal, so nothing is lost with the spelling:
+`bernstein benchmark` is a deprecated alias for `bernstein eval` and prints a warning on stderr before running; it keeps every subcommand it carried and is removed in v4.0.0. Every subcommand name is reachable under `eval` before the removal:
 
-| Deprecated | Canonical |
-| --- | --- |
-| `benchmark run` | `eval run` (already existed; separate implementation — `--benchmarks-dir` has no `eval` equivalent) |
-| `benchmark swe-bench` | `eval swe-bench` (already existed; separate implementation — `--force-lite` has no `eval` equivalent) |
-| `benchmark programbench` | `eval programbench` |
-| `benchmark compare` | `eval compare` |
-| `benchmark simulate` | `eval simulate` |
-| `benchmark receipt emit/verify` | `eval receipt emit/verify` |
+| Deprecated | Canonical | Notes |
+| --- | --- | --- |
+| `benchmark run` | `eval run` | **Different command.** `eval run` drives the golden harness or a YAML eval spec (`--spec`, `--output`, `--compare`, tiers `smoke/standard/stretch/adversarial`); `benchmark run` drives the evolution benchmark tree (`--benchmarks-dir`, tiers `smoke/capability/stretch`). `--benchmarks-dir` has **no `eval` equivalent**. |
+| `benchmark swe-bench` | `eval swe-bench` | Same runner and same options; `benchmark swe-bench --lite` is itself a deprecated alias, so migrate it to `eval swe-bench --subset lite`. |
+| `benchmark programbench` | `eval programbench` | Same command object. |
+| `benchmark compare` | `eval compare` | Same command object. |
+| `benchmark simulate` | `eval simulate` | Same command object. |
+| `benchmark receipt emit/verify` | `eval receipt emit/verify` | Same command object. |
 
-`run` and `swe-bench` overlap by name only: `eval run` takes `--spec`/`--output-json`/`--compare-prev` and `benchmark run` takes `--benchmarks-dir`, and `benchmark swe-bench` additionally takes `--force-lite`. Those two flags stop working when the alias is unregistered in v4.0.0; `tests/unit/test_fold_benchmark_subcommands.py` pins the list so it cannot widen unnoticed.
+One capability does not survive the rename: `bernstein benchmark run --benchmarks-dir DIR` runs the evolution benchmark tree and `eval run` cannot. Until that option is ported onto an `eval` command, `bernstein benchmark run` is the only spelling for it, and v4.0.0 should not unregister the alias without porting it first. `tests/unit/test_fold_benchmark_subcommands.py` declares the list of alias-only options and fails if it widens or if a declared replacement stops being accepted, so this note cannot silently go stale.
 
 `eval simulate` is **not** the top-level `bernstein simulate`. The top-level command is a digital-twin simulation of a plan against historical traces (`--plan`, `--from-traces`, `--traces-dir`); `eval simulate` replays the standard benchmark task set for throughput, cost and quality (`--tasks-dir`, `--task-id`, `--baseline`). They share a verb and no options, and the top-level command is unaffected by this change. `bernstein bench` is a separate command and is not folded in.
 

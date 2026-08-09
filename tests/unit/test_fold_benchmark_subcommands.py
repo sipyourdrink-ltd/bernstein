@@ -87,31 +87,47 @@ def test_every_alias_subcommand_has_an_eval_destination() -> None:
     assert not missing, f"carried only by the deprecated alias: {missing}"
 
 
-#: Options carried only by the deprecated ``benchmark`` spelling of a name that
-#: ``eval`` also serves with a *different* command object.  ``benchmark run``
-#: and ``eval run`` share a verb, not a contract, and the same holds for
-#: ``swe-bench``.  Every entry below is a flag that stops working when the
-#: alias is unregistered in v4.0.0, so the set is pinned: it may shrink when a
-#: flag is ported onto ``eval``, but it must never widen by accident.
-_ALIAS_ONLY_OPTIONS: dict[str, set[str]] = {
-    "run": {"benchmarks_dir"},
-    "swe-bench": {"force_lite"},
+#: Options carried only by the deprecated ``benchmark`` spelling of a name
+#: ``eval`` also serves with a *different* command object, mapped to the
+#: canonical option that replaces them.  ``None`` means there is no ``eval``
+#: equivalent at all: that option stops working when the alias is unregistered
+#: in v4.0.0, and the removal is not a pure rename for its users.
+#:
+#: The declaration is by parameter name; the flag spelling is read back off the
+#: command object, because the two differ (``force_lite`` is spelled
+#: ``--lite``) and hard-coding a guess produces a test that probes an option
+#: neither command has and passes for the wrong reason.
+_ALIAS_ONLY_OPTIONS: dict[str, dict[str, str | None]] = {
+    # `benchmark run` drives bernstein.evolution.benchmark over a tier tree;
+    # `eval run` drives the golden harness or a YAML spec. Different runners,
+    # different tier vocabularies, no equivalent option.
+    "run": {"benchmarks_dir": None},
+    # Both swe-bench commands call the same _run_swe_bench_command; `--lite` is
+    # itself documented as a deprecated alias for `--subset lite`, which `eval
+    # swe-bench` accepts. Nothing is lost here.
+    "swe-bench": {"force_lite": "--subset"},
 }
+
+
+def _flag_for(command: click.Command, param_name: str) -> str:
+    """The CLI spelling of ``param_name`` on ``command``."""
+    for param in command.params:
+        if param.name == param_name:
+            return param.opts[0]
+    raise AssertionError(f"{param_name} is not a parameter of {command.name}")
 
 
 def test_alias_only_options_are_a_declared_list() -> None:
     """Name-level overlap is not contract-level overlap.
 
-    ``bernstein eval run --benchmarks-dir X`` and ``bernstein eval swe-bench
-    --force-lite`` both exit 2 with "No such option": the ``eval`` namesakes
-    are separate implementations.  Treating the two spellings as the same
-    command is what makes the v4.0.0 removal look free, so the divergence is
-    stated here rather than discovered by an operator after the removal.
+    ``benchmark run`` and ``eval run`` share a verb, not a contract, and so do
+    the two ``swe-bench`` commands.  Treating them as one command is what makes
+    the v4.0.0 removal look free, so every divergence is declared here rather
+    than discovered by an operator after the removal.
     """
     eval_group = cli.commands["eval"]
-    alias = _alias_group()
     observed: dict[str, set[str]] = {}
-    for name, alias_cmd in alias.commands.items():
+    for name, alias_cmd in _alias_group().commands.items():
         eval_cmd = eval_group.commands.get(name)  # type: ignore[attr-defined]
         if eval_cmd is None or eval_cmd is alias_cmd:
             continue
@@ -119,18 +135,45 @@ def test_alias_only_options_are_a_declared_list() -> None:
         only.discard("help")
         if only:
             observed[name] = only
-    assert observed == _ALIAS_ONLY_OPTIONS, observed
+    declared = {name: set(params) for name, params in _ALIAS_ONLY_OPTIONS.items()}
+    assert observed == declared, observed
 
 
 def test_alias_only_options_do_not_resolve_under_eval() -> None:
-    """The declared gap is real, not a stale note."""
+    """The declared gap is real, not a stale note.
+
+    The flag is read off the alias command, so this cannot pass by probing an
+    option that exists on neither side.
+    """
     runner = CliRunner()
-    flags = {"benchmarks_dir": "--benchmarks-dir", "force_lite": "--force-lite"}
+    alias = _alias_group()
     for name, params in _ALIAS_ONLY_OPTIONS.items():
         for param in params:
-            res = runner.invoke(cli, ["eval", name, flags[param], "x"])
-            assert res.exit_code == 2, res.output
+            flag = _flag_for(alias.commands[name], param)
+            res = runner.invoke(cli, ["eval", name, flag, "x"])
+            assert res.exit_code == 2, f"eval {name} {flag} -> {res.output}"
             assert "No such option" in res.output, res.output
+
+
+def test_declared_replacements_exist_on_eval() -> None:
+    """Where a replacement is named, ``eval`` must actually accept it.
+
+    ``--lite`` is a deprecated alias for ``--subset lite`` and ``eval
+    swe-bench`` takes ``--subset``, so that entry is a rename, not a loss.  An
+    entry mapped to ``None`` is a capability the v4.0.0 removal drops; the
+    reference has to keep saying so for as long as that stays true.
+    """
+    eval_group = cli.commands["eval"]
+    unmigrated = set()
+    for name, params in _ALIAS_ONLY_OPTIONS.items():
+        eval_cmd = eval_group.commands[name]  # type: ignore[attr-defined]
+        accepted = {opt for p in eval_cmd.params for opt in p.opts}
+        for param, replacement in params.items():
+            if replacement is None:
+                unmigrated.add(f"benchmark {name} {_flag_for(_alias_group().commands[name], param)}")
+                continue
+            assert replacement in accepted, f"eval {name} does not accept {replacement}"
+    assert unmigrated == {"benchmark run --benchmarks-dir"}, unmigrated
 
 
 def test_eval_simulate_is_not_the_top_level_simulate() -> None:
