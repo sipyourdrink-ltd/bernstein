@@ -70,12 +70,11 @@ import os
 import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 _ISO_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
 

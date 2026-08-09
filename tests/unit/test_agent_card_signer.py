@@ -135,6 +135,41 @@ class TestSignVerify:
         sig = sign_agent_card(card, priv)
         assert verify_agent_card(card, sig, other_pub) is False
 
+    def test_a_public_key_of_another_algorithm_returns_false(self) -> None:
+        """The header's `alg` describes the presenter's claim, not the trust store's key.
+
+        `verify_agent_card` documents `False` for anything that does not
+        verify, and `IdentitySpawnAnchor.anchor()`/`.reconstruct()` branch on
+        that. An RSA key from a misconfigured trust store used to reach
+        `public_key.verify(sig, signing_input)` - a call shape only Ed25519
+        has - and the resulting `TypeError` escaped past the `InvalidSignature`
+        handler and out of the verifier, turning a bad key into an unhandled
+        exception rather than a refusal.
+        """
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        priv, _ = generate_ed25519_keypair()
+        rsa_pub = (
+            rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            .public_key()
+            .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        )
+        card = _sample_card()
+        sig = sign_agent_card(card, priv)
+
+        assert verify_agent_card(card, sig, rsa_pub) is False
+
+    def test_a_malformed_public_key_returns_false(self) -> None:
+        """`load_pem_public_key` raising is the same failure wearing a different hat."""
+        priv, _ = generate_ed25519_keypair()
+        card = _sample_card()
+        sig = sign_agent_card(card, priv)
+
+        assert (
+            verify_agent_card(card, sig, b"-----BEGIN PUBLIC KEY-----\nnot a key\n-----END PUBLIC KEY-----\n") is False
+        )
+
     def test_malformed_jws_returns_false(self) -> None:
         _, pub = generate_ed25519_keypair()
         card = _sample_card()
