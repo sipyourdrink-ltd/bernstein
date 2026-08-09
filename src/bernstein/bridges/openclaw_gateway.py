@@ -29,7 +29,7 @@ _DEVICE_TOKEN_FILE = "device-token"
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_OBJ = "dict[str, object]"
+type _CAST_DICT_STR_OBJ = dict[str, object]
 
 
 def _b64url_encode(raw: bytes) -> str:

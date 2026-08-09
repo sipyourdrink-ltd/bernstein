@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_OBJ = "dict[str, object]"
+type _CAST_DICT_STR_OBJ = dict[str, object]
 
 
 class DecisionType(StrEnum):
