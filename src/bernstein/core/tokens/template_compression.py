@@ -360,14 +360,14 @@ def verify_compression_receipts(
         for row in lock_state.compressions:
             if role is not None and row.role != role:
                 continue
-            receipt = receipts.get(row.correlation_id)
-            if receipt is None:
+            pinned = receipts.get(row.correlation_id)
+            if pinned is None:
                 errors.append(
                     f"templates.lock row for role {row.role!r} (correlation={row.correlation_id}) "
                     f"has no chain receipt; verification fails"
                 )
                 continue
-            if receipt.pre_sha256 != row.pre_digest or receipt.post_sha256 != row.post_digest:
+            if pinned.pre_sha256 != row.pre_digest or pinned.post_sha256 != row.post_digest:
                 errors.append(
                     f"templates.lock row for role {row.role!r} pins digests that disagree with "
                     f"chain receipt {row.correlation_id}"

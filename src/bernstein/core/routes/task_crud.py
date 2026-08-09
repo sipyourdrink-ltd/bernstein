@@ -990,7 +990,7 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
         prepared.append(effective)
         assessments.append(assessment)
 
-    created_tasks, skipped_titles = await store.create_batch(prepared, dedup_by_title=True)  # pyright: ignore[reportArgumentType]
+    created_tasks, skipped_titles = await store.create_batch(prepared, dedup_by_title=True)
 
     # Build a title->assessment lookup for created tasks (dedup may have dropped some)
     assessment_by_title = dict(zip([t.title for t in prepared], assessments, strict=False))

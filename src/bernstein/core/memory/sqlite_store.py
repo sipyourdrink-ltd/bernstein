@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    import builtins
     from collections.abc import Iterable, Iterator, Mapping
     from pathlib import Path
 
@@ -202,6 +203,9 @@ class SQLiteMemoryStore:
                 ids.append(rowid)
         return ids
 
+    # NOTE: this method binds the name ``list`` in the class body, which
+    # shadows the builtin for every annotation that follows it. Signatures
+    # below therefore spell the builtin as ``builtins.list``.
     def list(
         self,
         type: MemoryType | None = None,
@@ -241,10 +245,10 @@ class SQLiteMemoryStore:
     def query(
         self,
         type: MemoryType | None = None,
-        tags: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
         limit: int = 50,
         *,
-        read_only_from_adapters: list[str] | None = None,
+        read_only_from_adapters: builtins.list[str] | None = None,
     ) -> Iterator[MemoryEntry]:
         """Yield memory entries with an optional adapter-allowlist filter.
 
@@ -335,11 +339,11 @@ class SQLiteMemoryStore:
 
     def get_relevant(
         self,
-        tags: list[str],
+        tags: builtins.list[str],
         limit: int = 10,
         *,
-        read_only_from_adapters: list[str] | None = None,
-    ) -> list[MemoryEntry]:
+        read_only_from_adapters: builtins.list[str] | None = None,
+    ) -> builtins.list[MemoryEntry]:
         """Find most relevant memories for a set of tags (e.g. from a task).
 
         ``read_only_from_adapters`` mirrors :meth:`query`'s allow-list: when
@@ -400,7 +404,7 @@ class SQLiteMemoryStore:
         task_id: str,
         agent: str = "",
         model: str = "",
-        tags: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
     ) -> int:
         """Record what happened -- task outcomes, failures, discoveries."""
         return self.add(
@@ -416,7 +420,7 @@ class SQLiteMemoryStore:
     def add_semantic(
         self,
         content: str,
-        tags: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
         importance: float = 1.0,
     ) -> int:
         """Record facts about the codebase -- patterns, conventions, architecture."""
@@ -430,7 +434,7 @@ class SQLiteMemoryStore:
     def add_procedural(
         self,
         content: str,
-        tags: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
     ) -> int:
         """Record how to do things -- test patterns, build steps, deploy procedures."""
         return self.add(
@@ -443,9 +447,9 @@ class SQLiteMemoryStore:
     def query_for_task(
         self,
         role: str,
-        context_files: list[str],
+        context_files: builtins.list[str],
         limit: int = 10,
-    ) -> list[MemoryEntry]:
+    ) -> builtins.list[MemoryEntry]:
         """Get relevant memories for a task based on role and file context.
 
         Builds a tag set from the role name and path prefixes of the

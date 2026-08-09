@@ -15,7 +15,7 @@ import operator
 import re
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.tokens.compression_models import CompressionMetrics, CompressionResult
 
@@ -285,16 +285,17 @@ class BM25Ranker:
 
         # Try to use sklearn TF-IDF for better scoring
         self._use_sklearn = False
-        self._tfidf: object = None
-        self._tfidf_matrix: object = None
+        # sklearn is an optional dependency and ships no type stubs, so the
+        # vectorizer and its matrix stay untyped rather than being declared as
+        # ``object`` (which rejects every attribute access on them below).
+        self._tfidf: Any = None
+        self._tfidf_matrix: Any = None
         if self.filenames:
             try:
                 from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore[import-untyped]
 
-                self._tfidf = TfidfVectorizer(lowercase=True, stop_words="english")  # type: ignore[assignment]
-                self._tfidf_matrix = self._tfidf.fit_transform(  # type: ignore[union-attr]
-                    [documents[f] for f in self.filenames]
-                )
+                self._tfidf = TfidfVectorizer(lowercase=True, stop_words="english")
+                self._tfidf_matrix = self._tfidf.fit_transform([documents[f] for f in self.filenames])
                 self._use_sklearn = True
             except Exception:
                 logger.debug("sklearn not available, using fallback TF ranking")
@@ -319,11 +320,10 @@ class BM25Ranker:
             return []
 
         if self._use_sklearn:
-            query_vec = self._tfidf.transform([query])  # type: ignore[union-attr]
-            scores = (query_vec @ self._tfidf_matrix.T).toarray()[0]  # type: ignore[union-attr,operator]
+            query_vec = self._tfidf.transform([query])
+            scores = (query_vec @ self._tfidf_matrix.T).toarray()[0]
             results: list[tuple[str, float]] = [
-                (self.filenames[i], float(scores[i]))  # type: ignore[reportUnknownArgumentType]
-                for i in range(len(self.filenames))
+                (self.filenames[i], float(scores[i])) for i in range(len(self.filenames))
             ]
         else:
             query_terms = set(_tokenize(query))

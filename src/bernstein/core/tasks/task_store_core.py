@@ -1610,7 +1610,7 @@ class TaskStore:
 
     async def create_batch(
         self,
-        requests: list[TaskCreateRequest],
+        requests: Sequence[TaskCreateRequest],
         *,
         dedup_by_title: bool = True,
     ) -> tuple[list[Task], list[str]]:

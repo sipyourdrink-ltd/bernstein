@@ -48,7 +48,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -68,6 +68,9 @@ from bernstein.core.security.agent_card_signer import (
     ed25519_public_jwk,
 )
 from bernstein.core.security.tenanting import DEFAULT_TENANT_ID
+
+if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 router = APIRouter()
 
@@ -440,7 +443,11 @@ def _sign_canonical_body(canonical_body: bytes, private_pem: bytes, *, kid: str)
 
     from cryptography.hazmat.primitives import serialization
 
-    private_key = serialization.load_pem_private_key(private_pem, password=None)
+    # ``load_pem_private_key`` returns the union of every key type cryptography
+    # supports. This helper is documented to take an Ed25519 PKCS#8 key and the
+    # header below hard-codes ``EdDSA``, so the concrete type is known here even
+    # though the loader cannot express it.
+    private_key = cast("Ed25519PrivateKey", serialization.load_pem_private_key(private_pem, password=None))
     header = {"alg": "EdDSA", "typ": "agent-card+jws", "kid": kid}
     header_b64 = base64.urlsafe_b64encode(canonicalize_jcs(header)).rstrip(b"=").decode("ascii")
     body_b64 = base64.urlsafe_b64encode(canonical_body).rstrip(b"=").decode("ascii")

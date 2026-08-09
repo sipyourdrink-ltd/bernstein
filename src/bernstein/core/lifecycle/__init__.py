@@ -19,6 +19,24 @@ including module-level attribute writes used by their tests.
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # The ``sys.modules`` remap at the bottom of this file is invisible to
+    # static analysis, so type checkers see this package rather than the FSM
+    # module it aliases to and report the FSM's public names as missing.
+    # Re-export them (explicit-alias form) so the checker agrees with what
+    # ``from bernstein.core.lifecycle import ...`` actually resolves to at
+    # runtime. Type-only: nothing here executes.
+    from bernstein.core.tasks.lifecycle import (
+        IllegalTransitionError as IllegalTransitionError,
+    )
+    from bernstein.core.tasks.lifecycle import (
+        transition_agent as transition_agent,
+    )
+    from bernstein.core.tasks.lifecycle import (
+        transition_task as transition_task,
+    )
 
 from bernstein.core.lifecycle.hooks import (
     DEFAULT_TIMEOUT_SECONDS,
