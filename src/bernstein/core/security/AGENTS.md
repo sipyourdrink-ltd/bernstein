@@ -22,20 +22,17 @@ subsystems anchor receipts to; treat its write path as load-bearing.
   (`audit.py` module docstring).
 - Event-type constants are append-only: add new `EVENT_*` names, never
   edit or reuse existing ones (`audit_chain.py` module docstring).
-- Chain helpers accept the chain instance as a parameter (no singleton
-  imports) and log through `log_with_prev_digest` so
-  `prev_chain_digest` lands in the payload before the HMAC is computed
-  (`audit_chain.py`).
+- Chain helpers take the chain instance as a parameter (no singleton
+  imports) and log through `log_with_prev_digest`, so `prev_chain_digest`
+  lands in the payload before the HMAC is computed (`audit_chain.py`).
 - The audit chain is opt-in at runtime (`BERNSTEIN_AUDIT=1`, read in
-  `../orchestration/orchestrator.py`); features must degrade cleanly
-  without it.
-- An attestation bundle is untrusted input. Its `public_key_file` names
-  the key the signature is checked against, so it must stay a single
-  plain filename inside `attestation_dir`, decided from the string with
-  no `resolve` or `stat`, and read through a descriptor anchored to that
-  directory. Never reintroduce a path-comparison containment check: it
-  validates one lookup and the open performs another
-  (`sigstore_attestation.py` module docstring, "Local bundle contract").
+  `../orchestration/orchestrator.py`); features must degrade without it.
+- An attestation bundle is untrusted input: `public_key_file` must stay a
+  plain filename inside `attestation_dir`, decided from the string with no
+  `resolve` or `stat`, and read through a descriptor anchored to that
+  directory. A path-comparison containment check validates one lookup while
+  the open performs another (`sigstore_attestation.py`, "Local bundle
+  contract").
 
 ## Testing
 
