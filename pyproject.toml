@@ -224,6 +224,7 @@ dev = [
     "botocore-stubs>=1.43.14",  # botocore, same publisher
 ]
 grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=5.29"]
+voice = ["faster-whisper>=1.0.0", "sounddevice>=0.4.0", "numpy>=1.20.0"]
 k8s = ["kubernetes>=35.0.0"]
 # SPIFFE/SPIRE workload-identity integration
 # (src/bernstein/core/identity/spiffe/workload_api.py). The py-spiffe SDK talks

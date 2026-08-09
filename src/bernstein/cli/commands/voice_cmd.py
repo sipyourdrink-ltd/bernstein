@@ -271,8 +271,9 @@ def _load_whisper_model(model_size: str) -> Any:
         from faster_whisper import WhisperModel
     except ImportError as exc:
         console.print(
-            "[red]Error:[/red] 'faster-whisper' is not installed.\n"
-            "Install it with: [bold]pip install faster-whisper[/bold]"
+            r"[red]Error:[/red] Voice dependencies are not installed."
+            "\n"
+            r"Install the voice extra with: [bold]pip install 'bernstein\[voice]'[/bold]"
         )
         raise SystemExit(1) from exc
 
@@ -288,10 +289,10 @@ def _import_audio_deps() -> tuple[Any, Any]:
 
         return np, sd
     except ImportError as exc:
-        missing = "sounddevice" if "sounddevice" in str(exc) else "numpy"
         console.print(
-            f"[red]Error:[/red] '{missing}' is not installed.\n"
-            f"Install it with: [bold]pip install sounddevice numpy[/bold]"
+            r"[red]Error:[/red] Voice dependencies are not installed."
+            "\n"
+            r"Install the voice extra with: [bold]pip install 'bernstein\[voice]'[/bold]"
         )
         raise SystemExit(1) from exc
 
