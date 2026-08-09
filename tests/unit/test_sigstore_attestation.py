@@ -464,6 +464,26 @@ class TestVerifyPublicKeyOpen:
         with pytest.raises(ValueError, match="not a regular file"):
             verify_local_attestation(bundle_path, attest_dir)
 
+    @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs a POSIX host to emulate from")
+    def test_refuses_symlink_without_dir_fd_or_nofollow(
+        self, attest_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The no-``dir_fd`` branch refuses a symlink too.
+
+        Emulates the platform Windows presents -- no ``dir_fd`` support and no
+        ``O_NOFOLLOW`` -- because a POSIX host would otherwise never reach that
+        branch and it would ship untested.  The check there is best effort: it
+        catches a symlink that is present, not one planted in the instant
+        before the open, which is the most the platform allows.
+        """
+        bundle_path = self._bundle_naming(attest_dir, "linked-key.pem")
+        (attest_dir / "linked-key.pem").symlink_to(attest_dir / "ed25519-public-key.pem")
+        monkeypatch.setattr(os, "supports_dir_fd", set())
+        monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+
+        with pytest.raises(ValueError, match="symlink"):
+            verify_local_attestation(bundle_path, attest_dir)
+
     def test_missing_key_file_still_raises_oserror(self, attest_dir: Path) -> None:
         """A genuinely absent key stays an OSError -- that is a local fault."""
         bundle_path = self._bundle_naming(attest_dir, "no-such-key.pem")

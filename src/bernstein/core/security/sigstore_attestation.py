@@ -25,6 +25,37 @@ Usage::
         event_hmac="deadbeef...",
     )
     print(record.rekor_log_id or "fallback used")
+
+Local bundle contract
+---------------------
+
+A ``bernstein-local-attestation/v1`` bundle is untrusted input: its
+``public_key_file`` field names the key that
+:func:`verify_local_attestation` checks the signature against, so a bundle
+that can steer that name picks its own verdict.  Producers must therefore
+emit, and consumers may rely on, a narrow shape:
+
+* ``public_key_file`` is a **single plain filename** resolved inside
+  ``attestation_dir``.  Absolute paths, drive-qualified paths, anything
+  containing ``/`` or ``\\``, ``.``, ``..``, and non-string values are all
+  rejected with ``ValueError``.  Writers emit ``pub_path.name``, which
+  always satisfies this.
+* Containment is decided from that string alone -- no ``resolve``, no
+  ``stat`` -- so it cannot be raced.  Subdirectories are refused for this
+  reason, not because they are inherently unsafe.
+* The key is read through a descriptor anchored to ``attestation_dir``.  A
+  symlink at the name is refused, as is anything that is not a regular
+  file, both with ``ValueError``.
+* A missing or unreadable key still raises ``OSError``: that is a local
+  fault rather than a hostile bundle, and callers distinguish the two.
+* The symlink refusal is atomic where ``os.open`` supports ``dir_fd`` and
+  ``O_NOFOLLOW``.  On platforms offering neither -- Windows -- it degrades
+  to a best-effort check, since no atomic equivalent exists there.  Name
+  containment is unaffected and holds on every platform.
+
+None of this depends on ``attestation_dir`` itself being adversary-proof.
+Write access to that directory means control of the stored signing key, at
+which point an attacker signs bundles outright rather than steering them.
 """
 
 from __future__ import annotations
@@ -549,10 +580,19 @@ def _read_contained_key_bytes(attestation_dir: Path, raw_key_name: str) -> bytes
         if os.open in os.supports_dir_fd:
             dir_fd = os.open(attestation_dir, os.O_RDONLY)
             fd = os.open(raw_key_name, open_flags, dir_fd=dir_fd)
-        else:  # pragma: no cover - Windows has neither dir_fd nor O_NOFOLLOW
-            # A single component cannot escape the directory it is joined to,
-            # so the join is safe without a containment re-check here.
-            fd = os.open(attestation_dir / raw_key_name, open_flags)
+        else:
+            # Windows reaches this branch: no ``dir_fd``, no ``O_NOFOLLOW``.
+            # A single component still cannot escape the directory it is
+            # joined to, so containment holds; what is missing is an atomic
+            # refusal to follow a link at that component. This check is
+            # therefore best effort by construction -- it catches a symlink
+            # that is present, not one planted between here and the open --
+            # and it is the most the platform offers.
+            key_path = attestation_dir / raw_key_name
+            if key_path.is_symlink():
+                msg = f"public_key_file is a symlink, refusing to follow it: {raw_key_name!r}"
+                raise ValueError(msg)
+            fd = os.open(key_path, open_flags)
     except OSError as exc:
         # O_NOFOLLOW reports a symlink at the final component as ELOOP.  Every
         # other OSError (a missing or unreadable key) is a genuine local fault
