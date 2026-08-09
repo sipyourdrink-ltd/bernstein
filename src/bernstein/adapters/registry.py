@@ -41,6 +41,7 @@ from bernstein.adapters.hermes import HermesAdapter
 from bernstein.adapters.iac import IaCAdapter
 from bernstein.adapters.junie import JunieAdapter
 from bernstein.adapters.kilo import KiloAdapter
+from bernstein.adapters.kimchi import KimchiAdapter
 from bernstein.adapters.kimi import KimiAdapter
 from bernstein.adapters.kiro import KiroAdapter
 from bernstein.adapters.letta_code import LettaCodeAdapter
@@ -118,6 +119,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "iac": IaCAdapter,
     "junie": JunieAdapter,
     "kilo": KiloAdapter,
+    "kimchi": KimchiAdapter,
     "kimi": KimiAdapter,
     "kiro": KiroAdapter,
     "letta_code": LettaCodeAdapter,

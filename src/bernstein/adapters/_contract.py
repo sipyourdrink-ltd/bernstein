@@ -688,6 +688,15 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # lifecycle events arrive as schema-validated JSON-RPC frames rather than
     # a bespoke stdout parser.
     "kilo": AdapterStrategy(event_channel=EventChannel.ACP),
+    # Kimchi runs as an ACP agent over JSON-RPC on stdio (--mode acp), supports
+    # native session resume via --session <path>, --yolo dangerous mode, and
+    # completes by committing in the worktree (GIT_DIFF).
+    "kimchi": AdapterStrategy(
+        resume=ResumeStrategy.FLAG,
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.ACP,
+        output_mode=OutputMode.GIT_DIFF,
+    ),
     "kiro": AdapterStrategy(),
     "mistral": AdapterStrategy(),
     "mock": AdapterStrategy(),

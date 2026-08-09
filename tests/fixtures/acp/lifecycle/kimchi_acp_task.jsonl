@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-04-01","agentCapabilities":{"resume":true}}}
+{"jsonrpc":"2.0","method":"streamUpdate","params":{"sessionId":"kimchi-s1","delta":{"text":"Analyzing repository"}}}
+{"jsonrpc":"2.0","method":"streamUpdate","params":{"sessionId":"kimchi-s1","delta":{"text":"Modifying code files"}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}

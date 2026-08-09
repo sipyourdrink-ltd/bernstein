@@ -1,0 +1,16 @@
+# Contract for the Kimchi CLI (adapter: kimchi).
+adapter: kimchi
+binary: kimchi
+install:
+  method: brew
+  spec: "getkimchi/tap/kimchi"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "KIMCHI_API_KEY"
+required_flags:
+  - "--mode"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

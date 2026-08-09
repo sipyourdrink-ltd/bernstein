@@ -112,6 +112,7 @@ class ProviderType(Enum):
     QWEN = "qwen"
     KIRO = "kiro"
     KILO = "kilo"
+    KIMCHI = "kimchi"
     OLLAMA = "ollama"
     OPENCODE = "opencode"
 
