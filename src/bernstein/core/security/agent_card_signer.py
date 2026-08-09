@@ -29,9 +29,14 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
+
     from .agent_identity import AgentIdentityCard
 
 __all__ = [
@@ -273,7 +278,10 @@ def sign_agent_card(
     """
     from cryptography.hazmat.primitives import serialization
 
-    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    # ``load_pem_private_key`` is typed as the full private-key union. Agent
+    # cards are signed with EdDSA only (see the ``alg`` header below), so
+    # narrow it to the key type whose ``sign(data)`` shape this code uses.
+    private_key = cast("Ed25519PrivateKey", serialization.load_pem_private_key(private_key_pem, password=None))
 
     # Build the JWS protected header (RFC 7515 §4) then base64url it.
     header = {"alg": "EdDSA", "typ": "agent-card+jws", "kid": kid or f"agent-{card.agent_id}"}
@@ -335,7 +343,9 @@ def verify_agent_card(
     if header.get("typ") != "agent-card+jws":
         return False
 
-    public_key = serialization.load_pem_public_key(public_key_pem)
+    # Counterpart to the cast in ``sign_agent_card``: the ``alg``/``typ``
+    # header checks above already restrict this path to EdDSA agent cards.
+    public_key = cast("Ed25519PublicKey", serialization.load_pem_public_key(public_key_pem))
 
     body_b64 = _b64url(canonicalize_jcs(_card_to_dict(card)))
     signing_input = f"{header_b64}.{body_b64}".encode("ascii")

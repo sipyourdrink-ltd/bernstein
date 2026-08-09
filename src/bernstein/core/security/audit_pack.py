@@ -55,11 +55,14 @@ SourceKind = Literal[
 #: not present on disk yet (the operator hasn't run the relevant flow).
 PENDING_EVIDENCE: str = "evidence: pending - artefact not produced"
 
+#: Resolution status of a single evidence source.
+EvidenceStatus = Literal["OK", "PENDING", "STALE"]
+
 #: Pretty-printed status markers to keep the checklist scannable in
 #: terminal output and rendered Markdown alike.
-STATUS_OK: str = "OK"
-STATUS_PENDING: str = "PENDING"
-STATUS_STALE: str = "STALE"
+STATUS_OK: EvidenceStatus = "OK"
+STATUS_PENDING: EvidenceStatus = "PENDING"
+STATUS_STALE: EvidenceStatus = "STALE"
 
 #: Default freshness window in days. Anything older flips a source to
 #: ``STALE``. Operators tune via :func:`generate_audit_pack(stale_after_days=N)`.
@@ -108,7 +111,7 @@ class ResolvedEvidence:
     """
 
     source: EvidenceSource
-    status: Literal["OK", "PENDING", "STALE"]
+    status: EvidenceStatus
     evidence_ref: str
     last_modified: float = 0.0
     details: dict[str, Any] = field(default_factory=dict[str, Any])

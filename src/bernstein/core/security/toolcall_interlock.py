@@ -211,7 +211,7 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
     for event in events:
         event_type = str(event.get("event_type", event.get("event", "")))
         details = event.get("details")
-        payload: Mapping[str, Any] = cast("Mapping[str, Any]", details) if isinstance(details, Mapping) else event
+        payload = cast("Mapping[str, Any]", details) if isinstance(details, Mapping) else event
         if event_type == "toolcall.attestation":
             reference = str(payload.get("attestation_ref", "")).strip()
             intent_digest = str(payload.get("intent_digest", "")).strip()

@@ -643,7 +643,12 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         # scoped token and journaled the authz decision, so honouring it
         # here does not widen the surface - unauthenticated dashboard
         # requests never carry it and fall through to the bearer checks.
-        if path.startswith(("/dashboard", "/api/v1/dashboard")) and getattr(request.state, "dashboard_principal", ""):
+        # ``bool(...)`` is load-bearing for the type checker: as the right
+        # operand of ``and`` in an ``if``, a bare ``getattr`` call inherits a
+        # ``bool`` type context and resolves to the wrong overload.
+        if path.startswith(("/dashboard", "/api/v1/dashboard")) and bool(
+            getattr(request.state, "dashboard_principal", "")
+        ):
             response = await call_next(request)
             return response
 

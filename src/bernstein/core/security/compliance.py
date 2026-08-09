@@ -499,8 +499,8 @@ def parse_period(period: str) -> tuple[str, str]:
     # Year: 2026
     m = re.match(r"^(\d{4})$", period)
     if m:
-        year = m.group(1)
-        return f"{year}-01-01", f"{year}-12-31"
+        year_str = m.group(1)
+        return f"{year_str}-01-01", f"{year_str}-12-31"
 
     msg = f"Cannot parse period: {period!r}. Use Q1-2026, 2026-03, or 2026."
     raise ValueError(msg)

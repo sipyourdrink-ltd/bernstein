@@ -70,10 +70,12 @@ import os
 import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 _ISO_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -504,7 +506,18 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
     if _escapes_directory(raw_key_name):
         msg = f"Path traversal detected in public_key_file: {raw_key_name!r}"
         raise ValueError(msg)
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
     public_key = serialization.load_pem_public_key(_read_contained_key_bytes(attestation_dir, raw_key_name))
+    if not isinstance(public_key, Ed25519PublicKey):
+        # The schema says Ed25519, but the key file is named by the same
+        # untrusted bundle, so the schema is not evidence about the key. Only
+        # ``Ed25519PublicKey.verify`` takes ``(signature, data)``; every other
+        # algorithm needs padding or a hash argument. Without this the mismatch
+        # arrives as a ``TypeError`` swallowed by the ``except Exception``
+        # below, which reaches the same ``False`` by accident rather than by
+        # decision - and leaves nothing for a reader to check.
+        return False
 
     payload_bytes = AttestationPayload(**bundle["payload"]).canonical_json().encode()
     signature = bytes.fromhex(bundle["signature_hex"])

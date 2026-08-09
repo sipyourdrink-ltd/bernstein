@@ -33,6 +33,7 @@ from bernstein.core.models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -117,10 +118,10 @@ def _classify_risk(task: Task) -> tuple[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 # Average tokens per task by scope (empirical estimates).
-_TOKENS_BY_SCOPE: dict[str, int] = PLAN.tokens_by_scope
+_TOKENS_BY_SCOPE: Mapping[str, int] = PLAN.tokens_by_scope
 
 # Model selection heuristic by complexity (when no explicit model set).
-_DEFAULT_MODEL_BY_COMPLEXITY: dict[str, str] = PLAN.model_by_complexity
+_DEFAULT_MODEL_BY_COMPLEXITY: Mapping[str, str] = PLAN.model_by_complexity
 
 # Populated at plan creation time from the seed's role_model_policy.
 _ROLE_MODEL_OVERRIDES: dict[str, str] = {}

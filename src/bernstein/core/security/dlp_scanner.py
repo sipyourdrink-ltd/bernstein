@@ -454,13 +454,13 @@ class DLPScanner:
         return raw_line[1:]  # strip leading "+"
 
     @staticmethod
-    def _build_redacted_excerpt(line: str, m: object) -> str:
+    def _build_redacted_excerpt(line: str, m: re.Match[str]) -> str:
         """Build a redacted excerpt around a regex match."""
-        start = max(0, m.start() - 15)  # type: ignore[union-attr]
-        end = min(len(line), m.end() + 15)  # type: ignore[union-attr]
+        start = max(0, m.start() - 15)
+        end = min(len(line), m.end() + 15)
         raw_excerpt = line[start:end]
-        rel_start = m.start() - start  # type: ignore[union-attr]
-        rel_end = m.end() - start  # type: ignore[union-attr]
+        rel_start = m.start() - start
+        rel_end = m.end() - start
         redacted = raw_excerpt[:rel_start] + "***" + raw_excerpt[rel_end:]
         if len(redacted) > 80:
             redacted = redacted[:77] + "..."

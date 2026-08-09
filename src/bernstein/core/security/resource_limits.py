@@ -19,10 +19,10 @@ import platform
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class ResourceLimits:
     disk_write_mb: int = 0
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> ResourceLimits:
+    def from_dict(cls, data: Mapping[str, Any]) -> ResourceLimits:
         """Parse a config dict into ResourceLimits.
 
         Args:

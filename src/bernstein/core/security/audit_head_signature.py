@@ -49,6 +49,7 @@ byte-identical bundles in v2 just as in v1.
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -199,7 +200,7 @@ def verify_head_signature(
         )
     try:
         signature_bytes = base64.b64decode(sig_b64, validate=True)
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         return HeadSignatureVerification(
             ok=False,
             errors=[f"head_signature.signature_b64 not valid base64: {exc}"],
@@ -240,7 +241,7 @@ def _public_key_from_jwk(jwk: dict[str, Any]) -> Ed25519PublicKey:
     padding = "=" * (-len(x) % 4)
     try:
         raw = base64.urlsafe_b64decode(x + padding)
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         raise ValueError(f"invalid base64url: {exc}") from exc
     if len(raw) != 32:
         raise ValueError(f"Ed25519 public key must be 32 bytes (got {len(raw)})")
