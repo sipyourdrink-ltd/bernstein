@@ -87,6 +87,52 @@ def test_every_alias_subcommand_has_an_eval_destination() -> None:
     assert not missing, f"carried only by the deprecated alias: {missing}"
 
 
+#: Options carried only by the deprecated ``benchmark`` spelling of a name that
+#: ``eval`` also serves with a *different* command object.  ``benchmark run``
+#: and ``eval run`` share a verb, not a contract, and the same holds for
+#: ``swe-bench``.  Every entry below is a flag that stops working when the
+#: alias is unregistered in v4.0.0, so the set is pinned: it may shrink when a
+#: flag is ported onto ``eval``, but it must never widen by accident.
+_ALIAS_ONLY_OPTIONS: dict[str, set[str]] = {
+    "run": {"benchmarks_dir"},
+    "swe-bench": {"force_lite"},
+}
+
+
+def test_alias_only_options_are_a_declared_list() -> None:
+    """Name-level overlap is not contract-level overlap.
+
+    ``bernstein eval run --benchmarks-dir X`` and ``bernstein eval swe-bench
+    --force-lite`` both exit 2 with "No such option": the ``eval`` namesakes
+    are separate implementations.  Treating the two spellings as the same
+    command is what makes the v4.0.0 removal look free, so the divergence is
+    stated here rather than discovered by an operator after the removal.
+    """
+    eval_group = cli.commands["eval"]
+    alias = _alias_group()
+    observed: dict[str, set[str]] = {}
+    for name, alias_cmd in alias.commands.items():
+        eval_cmd = eval_group.commands.get(name)  # type: ignore[attr-defined]
+        if eval_cmd is None or eval_cmd is alias_cmd:
+            continue
+        only = {p.name for p in alias_cmd.params} - {p.name for p in eval_cmd.params}
+        only.discard("help")
+        if only:
+            observed[name] = only
+    assert observed == _ALIAS_ONLY_OPTIONS, observed
+
+
+def test_alias_only_options_do_not_resolve_under_eval() -> None:
+    """The declared gap is real, not a stale note."""
+    runner = CliRunner()
+    flags = {"benchmarks_dir": "--benchmarks-dir", "force_lite": "--force-lite"}
+    for name, params in _ALIAS_ONLY_OPTIONS.items():
+        for param in params:
+            res = runner.invoke(cli, ["eval", name, flags[param], "x"])
+            assert res.exit_code == 2, res.output
+            assert "No such option" in res.output, res.output
+
+
 def test_eval_simulate_is_not_the_top_level_simulate() -> None:
     """The two ``simulate`` commands are different features sharing a verb.
 

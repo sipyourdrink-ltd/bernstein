@@ -438,12 +438,14 @@ Common flags: `--token` (env: `GITHUB_TOKEN`), `--server`, `--interval`. (`cli/c
 
 | Deprecated | Canonical |
 | --- | --- |
-| `benchmark run` | `eval run` (already existed) |
-| `benchmark swe-bench` | `eval swe-bench` (already existed) |
+| `benchmark run` | `eval run` (already existed; separate implementation — `--benchmarks-dir` has no `eval` equivalent) |
+| `benchmark swe-bench` | `eval swe-bench` (already existed; separate implementation — `--force-lite` has no `eval` equivalent) |
 | `benchmark programbench` | `eval programbench` |
 | `benchmark compare` | `eval compare` |
 | `benchmark simulate` | `eval simulate` |
 | `benchmark receipt emit/verify` | `eval receipt emit/verify` |
+
+`run` and `swe-bench` overlap by name only: `eval run` takes `--spec`/`--output-json`/`--compare-prev` and `benchmark run` takes `--benchmarks-dir`, and `benchmark swe-bench` additionally takes `--force-lite`. Those two flags stop working when the alias is unregistered in v4.0.0; `tests/unit/test_fold_benchmark_subcommands.py` pins the list so it cannot widen unnoticed.
 
 `eval simulate` is **not** the top-level `bernstein simulate`. The top-level command is a digital-twin simulation of a plan against historical traces (`--plan`, `--from-traces`, `--traces-dir`); `eval simulate` replays the standard benchmark task set for throughput, cost and quality (`--tasks-dir`, `--task-id`, `--baseline`). They share a verb and no options, and the top-level command is unaffected by this change. `bernstein bench` is a separate command and is not folded in.
 
