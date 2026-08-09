@@ -516,7 +516,13 @@ for deploy steps, the authentication warning, and the stated limitations.
 
 **Install:** `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash`
 
-**Env vars:** `HERMES_API_KEY`, `NOUS_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+**Env vars:** `NOUS_API_KEY` (the `nous-api` provider), `OPENROUTER_API_KEY`, `FIREWORKS_API_KEY`, `NOVITA_API_KEY`, `DEEPINFRA_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GLM_API_KEY`, `KIMI_API_KEY`, `MINIMAX_API_KEY`, `HF_TOKEN`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `HERMES_HOME`. `HOME` is forwarded for every adapter, so a provider configured interactively through the CLI's own setup is picked up from its config file without any of these being set.
+
+**Invocation:** `hermes --oneshot='<prompt>'`. One-shot mode runs a single prompt and exits, printing only the final response. The prompt is passed inside the flag rather than as a following argument for two reasons: this CLI has no top-level positional parameter, so a bare prompt is parsed as a subcommand name and the process exits 2; and a prompt beginning with a dash would otherwise be read as flags. Empty prompts are refused before spawning — one-shot dispatches on the prompt being truthy, so a blank one starts an interactive session — and stdin is closed so no interactive path can block until the task timeout.
+
+**Permissions:** one-shot auto-bypasses approvals and offers no opt-out, which is why the capability contract declares this adapter `always-on` on the permission axis.
+
+Note what that means for containment. Bernstein gives each task its own worktree and spawns the agent with that as its working directory, but the direct spawn path mediates no filesystem access — the wrapper it goes through provides process visibility, not a sandbox. Since this agent will not stop to ask, a run can read or write any path the bernstein process itself can reach. Treat the worktree as where the work is expected to happen, not as a boundary that is enforced. Configure a sandbox backend if the boundary needs to hold; see `docs/sandbox/`.
 
 **Best for:** Teams running Nous Research's Hermes open-weight models.
 

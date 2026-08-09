@@ -676,7 +676,12 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # so its stdout lifecycle parser is bypassed.
     "goose": AdapterStrategy(event_channel=EventChannel.ACP),
     "gptme": AdapterStrategy(),
-    "hermes": AdapterStrategy(),
+    # Hermes is driven through its one-shot mode, which auto-bypasses approvals
+    # rather than exposing a flag to do so - the CLI is unattended by
+    # construction there, so the axis is always-on, not unsupported. Declaring
+    # it unsupported reads as "cannot be driven unattended", which understates
+    # what an operator is authorising when they select this adapter.
+    "hermes": AdapterStrategy(dangerous_mode=DangerousModeStrategy.ALWAYS_ON),
     "iac": AdapterStrategy(),
     "junie": AdapterStrategy(),
     # Kilo documents native ACP support; it declares the ACP event channel so

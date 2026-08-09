@@ -118,14 +118,14 @@ frozen adapter locally, not only in this table.
 | Adapter | Binary | Last-green version | Verified | Receipt |
 |---|---|---|---|---|
 | agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z (stale) | `006fb946868d` |
-| claude | `claude` | 2.1.226 | 2026-08-08T05:35:45Z | `07541c62e285` |
-| codex | `codex` | 0.147.0 | 2026-08-08T05:35:45Z | `95377d4a295c` |
-| copilot | `copilot` | 1.0.78 | 2026-08-08T05:35:45Z | `d1ea894defc7` |
-| gemini | `gemini` | 0.54.4 | 2026-08-08T05:35:45Z | `37f392b88f89` |
-| kimi | `kimi` | 1.49.0 | 2026-08-08T05:35:45Z | `897d0b07c044` |
-| opencode | `opencode` | 1.18.15 | 2026-08-08T05:35:45Z | `eebff8cb2418` |
-| pydantic_ai | `clai` | 2.27.0 | 2026-08-08T05:35:45Z | `766408003797` |
-| qwen | `qwen` | 0.21.7 | 2026-08-08T05:35:45Z | `b1c3f2810380` |
+| claude | `claude` | 2.1.226 | 2026-08-09T05:40:13Z | `d728e5e536d5` |
+| codex | `codex` | 0.147.0 | 2026-08-09T05:40:13Z | `e5147a6c1032` |
+| copilot | `copilot` | 1.0.78 | 2026-08-09T05:40:13Z | `a050ab0bbc14` |
+| gemini | `gemini` | 0.54.4 | 2026-08-09T05:40:13Z | `7acf0d826592` |
+| kimi | `kimi` | 1.49.0 | 2026-08-09T05:40:13Z | `3a7db1f2830e` |
+| opencode | `opencode` | 1.18.15 | 2026-08-09T05:40:13Z | `fbf184104e78` |
+| pydantic_ai | `clai` | 2.27.0 | 2026-08-09T05:40:13Z | `f0bfe6269e99` |
+| qwen | `qwen` | 0.21.8 | 2026-08-09T05:40:13Z | `9dd491c41102` |
 <!-- last-green:end -->
 
 ## Operator knobs
