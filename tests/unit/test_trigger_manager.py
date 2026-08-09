@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
+import sys
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -1003,7 +1004,12 @@ class TestCronEvaluation:
 
         state_path = sdd_dir / "runtime" / "triggers" / "cron_state.json"
         assert self._temp_files(sdd_dir) == []
-        assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+        if sys.platform != "win32":
+            # st_mode carries no POSIX permission bits on Windows: a regular
+            # file reports 0o666 there (0o444 read-only), whatever mode
+            # mkstemp asked for. The scratch-file assertion above holds on
+            # both.
+            assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
     def test_malformed_schedule_does_not_block_other_triggers(self, sdd_dir: Path) -> None:
         """A schedule croniter rejects is logged and skipped, not raised."""

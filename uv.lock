@@ -386,6 +386,7 @@ dev = [
     { name = "beartype" },
     { name = "boto3-stubs" },
     { name = "botocore-stubs" },
+    { name = "croniter" },
     { name = "crosshair-tool" },
     { name = "diff-cover" },
     { name = "hypothesis" },
@@ -489,6 +490,7 @@ dev = [
     { name = "beartype" },
     { name = "boto3-stubs" },
     { name = "botocore-stubs" },
+    { name = "croniter" },
     { name = "crosshair-tool" },
     { name = "diff-cover" },
     { name = "hypothesis" },
@@ -539,6 +541,7 @@ requires-dist = [
     { name = "botocore-stubs", marker = "extra == 'dev'", specifier = ">=1.43.14" },
     { name = "cbor2", specifier = ">=5.6" },
     { name = "click", specifier = ">=8.3.3" },
+    { name = "croniter", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "crosshair-tool", marker = "extra == 'dev'", specifier = ">=0.0.95" },
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "datasets", marker = "extra == 'eval'", specifier = ">=4.8.5" },
@@ -631,6 +634,7 @@ dev = [
     { name = "beartype", specifier = ">=0.21" },
     { name = "boto3-stubs", specifier = ">=1.43.56" },
     { name = "botocore-stubs", specifier = ">=1.43.14" },
+    { name = "croniter", specifier = ">=6.0" },
     { name = "crosshair-tool", specifier = ">=0.0.95" },
     { name = "diff-cover", specifier = ">=9.0" },
     { name = "hypothesis", specifier = ">=6.100" },
@@ -1114,6 +1118,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/db/51/37221f59a111dca5e85be7dbf09696323b5b9f13ff65e0641d535ed06ea8/coverage-7.13.5-cp314-cp314t-win_amd64.whl", hash = "sha256:301e3b7dfefecaca37c9f1aa6f0049b7d4ab8dd933742b607765d757aca77d43", size = 224254, upload-time = "2026-03-17T10:33:11.174Z" },
     { url = "https://files.pythonhosted.org/packages/54/83/6acacc889de8987441aa7d5adfbdbf33d288dad28704a67e574f1df9bcbb/coverage-7.13.5-cp314-cp314t-win_arm64.whl", hash = "sha256:9dacc2ad679b292709e0f5fc1ac74a6d4d5562e424058962c7bb0c658ad25e45", size = 222276, upload-time = "2026-03-17T10:33:13.466Z" },
     { url = "https://files.pythonhosted.org/packages/9e/ee/a4cf96b8ce1e566ed238f0659ac2d3f007ed1d14b181bcb684e19561a69a/coverage-7.13.5-py3-none-any.whl", hash = "sha256:34b02417cf070e173989b3db962f7ed56d2f644307b2cf9d5a0f258e13084a61", size = 211346, upload-time = "2026-03-17T10:33:15.691Z" },
+]
+
+[[package]]
+name = "croniter"
+version = "6.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/37/57/2e2a65aee2a70483cb28e2b7e15a072d00a523207593b44400d4717bb100/croniter-6.2.4.tar.gz", hash = "sha256:fc124f751b1b04805c2a04b061898b436b45ab2320b045e1e052ea895de65189", size = 166267, upload-time = "2026-07-10T09:52:59.955Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/ba/d678e5bd329646ca51d3c92addbc77804e86d21f4b6b6a027218e6abb010/croniter-6.2.4-py3-none-any.whl", hash = "sha256:8ef3d544107a5c05a150a2d78f8bf5a8eb9c5c4d93405a736b824109574e3f4d", size = 46677, upload-time = "2026-07-10T09:52:58.425Z" },
 ]
 
 [[package]]

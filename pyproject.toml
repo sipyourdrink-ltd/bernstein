@@ -192,6 +192,12 @@ dev = [
     # initialised when BERNSTEIN_TELEMETRY_DSN is set. Kept in dev so the
     # test-suite can exercise the no-op + initialised paths.
     "sentry-sdk[fastapi]>=2.20",
+    # Cron expression parser. Optional at runtime - trigger_manager imports it
+    # inside try/except ImportError and yields no events without it - but
+    # required here so the cron-evaluation regression tests execute instead of
+    # being skipped by importorskip. types-croniter below stubs the same
+    # library for mypy.
+    "croniter>=6.0",
     # NOTE: semgrep is intentionally NOT a dev dep. Its transitive pins
     # (click<8.2, opentelemetry-sdk<1.38) collide with our production
     # floors (click>=8.3.3, opentelemetry-sdk>=1.41.1). Install via
@@ -950,6 +956,10 @@ dev = [
     # error sink. Mirror of [project.optional-dependencies].dev; the lazy
     # init in src/bernstein/cli/main.py keeps no-op installs free.
     "sentry-sdk[fastapi]>=2.20",
+    # Cron expression parser. Mirror of [project.optional-dependencies].dev;
+    # optional at runtime, required here so the cron-evaluation tests in
+    # tests/unit/test_trigger_manager.py run rather than importorskip out.
+    "croniter>=6.0",
     # semgrep installed via `uv tool install semgrep` in CI - pins
     # click<8.2 and opentelemetry-sdk<1.38, conflicts with our
     # click>=8.3.3 / opentelemetry-sdk>=1.41.1 floors. Mirror of
