@@ -533,10 +533,27 @@ class TriggerManager:
             try:
                 with path.open() as f:
                     data = json.load(f)
-                self._cron_state = {k: v.get("last_fire_minute", "") for k, v in data.items()}
             except (json.JSONDecodeError, OSError):
                 logger.warning("Corrupt cron state, treating as empty")
                 self._cron_state = {}
+                return
+            # Valid JSON of the wrong shape decodes cleanly, so the guard above
+            # does not fire and .items()/.get() would raise out of __init__ -
+            # taking down every command that builds a TriggerManager. Keep the
+            # entries that parse: discarding the whole map re-fires every
+            # trigger already recorded for this minute.
+            if not isinstance(data, dict):
+                logger.warning("Cron state is not an object, treating as empty")
+                self._cron_state = {}
+                return
+            state: dict[str, str] = {}
+            for key, value in data.items():
+                minute = value.get("last_fire_minute", "") if isinstance(value, dict) else None
+                if not isinstance(key, str) or not isinstance(minute, str):
+                    logger.warning("Dropping unreadable cron state entry %r", key)
+                    continue
+                state[key] = minute
+            self._cron_state = state
 
     def _save_cron_state(self) -> None:
         path = self._runtime_dir / "cron_state.json"

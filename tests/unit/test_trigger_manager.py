@@ -598,6 +598,37 @@ class TestTriggerManager:
         assert len(mgr.configs) == 4
         assert mgr.configs[0].name == "qa-on-push"
 
+    @pytest.mark.parametrize("payload", ["null", "[]", '"a string"', "5", "true"])
+    def test_corrupt_cron_state_root_does_not_break_construction(self, sdd_dir: Path, payload: str) -> None:
+        """Valid JSON of the wrong shape must not abort __init__.
+
+        json.load succeeds, so the (JSONDecodeError, OSError) guard does not
+        fire and .items() raises out of the constructor - taking down every
+        command that builds a TriggerManager, not just cron evaluation.
+        """
+        (sdd_dir / "runtime" / "triggers" / "cron_state.json").write_text(payload)
+
+        mgr = TriggerManager(sdd_dir)  # must not raise
+
+        assert mgr._cron_state == {}
+
+    def test_corrupt_cron_state_drops_bad_entries_not_the_whole_file(self, sdd_dir: Path) -> None:
+        """One unusable entry must not discard the rest.
+
+        Dropping the whole map re-fires every trigger that was already
+        recorded for this minute, so salvage what parses.
+        """
+        state = {
+            "good": {"last_fire_minute": "2023-11-15T00:13"},
+            "not-a-mapping": 5,
+            "value-wrong-type": {"last_fire_minute": 7},
+        }
+        (sdd_dir / "runtime" / "triggers" / "cron_state.json").write_text(json.dumps(state))
+
+        mgr = TriggerManager(sdd_dir)
+
+        assert mgr._cron_state == {"good": "2023-11-15T00:13"}
+
     def test_evaluate_push_happy_path(self, sdd_dir: Path, triggers_yaml_path: Path, push_event: TriggerEvent) -> None:
         mgr = TriggerManager(sdd_dir)
         payloads, suppressed = mgr.evaluate(push_event)
