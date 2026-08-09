@@ -129,7 +129,7 @@ ever scheduled. `bernstein validate` remains registered as a deprecated alias
 for the whole 3.x line and is unregistered in 4.0.0.
 
 1. **Schema check** - required fields, enum values, integer ranges
-   (`plan_schema.validate_plan()` at `plan_schema.py:428-451`).
+   (`plan_schema.validate_plan()`, run by `plan_validate_cmd._check_schema`).
 2. **Duplicate titles** - every step title must be unique within the plan
    (`plan_validate_cmd._check_duplicate_titles`).
 3. **Dependency references** - every `depends_on` entry must point at a

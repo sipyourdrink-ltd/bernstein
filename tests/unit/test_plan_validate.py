@@ -124,6 +124,105 @@ class TestValidatePlan:
         assert "Max parallel width: 5" in result.output
 
 
+class TestSchemaCheck:
+    """The schema check the command's own documentation promises.
+
+    ``load_plan`` parses a plan without judging its fields, and every other
+    check reads the task graph rather than the plan document. A field the
+    scheduler rejects therefore reached "Plan is valid." untouched. These pin
+    each class of schema error to a nonzero exit.
+    """
+
+    @pytest.fixture()
+    def runner(self) -> CliRunner:
+        return CliRunner()
+
+    @pytest.mark.parametrize(
+        ("mutate", "expected"),
+        [
+            pytest.param(lambda p: p.pop("name"), "name", id="missing-name"),
+            pytest.param(
+                lambda p: p["stages"][0]["steps"][0].update({"priority": 0}),
+                "priority",
+                id="priority-below-range",
+            ),
+            pytest.param(
+                lambda p: p["stages"][0]["steps"][0].update({"files": "src/app.py"}),
+                "files",
+                id="scalar-where-a-list-belongs",
+            ),
+        ],
+    )
+    def test_a_schema_error_is_reported_and_fails_the_command(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mutate: object,
+        expected: str,
+    ) -> None:
+        plan: dict[str, object] = {
+            "name": "Schema Plan",
+            "stages": [
+                {
+                    "name": "Stage 1",
+                    "steps": [{"title": "Task A", "role": "backend"}],
+                },
+            ],
+        }
+        mutate(plan)  # type: ignore[operator]
+        plan_file = _write_plan(tmp_path, plan)
+
+        result = runner.invoke(validate_plan, [str(plan_file)])
+
+        assert result.exit_code == 1
+        assert "Plan is valid" not in result.output
+        assert expected in result.output
+
+    def test_a_schema_clean_plan_still_passes(self, runner: CliRunner, tmp_path: Path) -> None:
+        """The check must not start rejecting plans the schema accepts."""
+        plan_file = _write_plan(
+            tmp_path,
+            {
+                "name": "Schema Plan",
+                "stages": [
+                    {
+                        "name": "Stage 1",
+                        "steps": [{"title": "Task A", "role": "backend", "priority": 3}],
+                    },
+                ],
+            },
+        )
+
+        result = runner.invoke(validate_plan, [str(plan_file)])
+
+        assert result.exit_code == 0
+        assert "Plan is valid" in result.output
+
+    def test_an_unrecognised_role_stays_a_warning(self, runner: CliRunner, tmp_path: Path) -> None:
+        """The schema holds role in an enum; this command must not adopt that verdict.
+
+        Roles come from ``templates/roles/``, which an operator extends. Taking
+        the schema's role error would fail every plan naming a role of its own.
+        """
+        plan_file = _write_plan(
+            tmp_path,
+            {
+                "name": "Custom Role Plan",
+                "stages": [
+                    {
+                        "name": "Stage 1",
+                        "steps": [{"title": "Task A", "role": "chaos-monkey"}],
+                    },
+                ],
+            },
+        )
+
+        result = runner.invoke(validate_plan, [str(plan_file)])
+
+        assert result.exit_code == 0
+        assert "warning" in result.output.lower()
+
+
 class TestDryRunWithPlanFile:
     """Tests for dry-run mode loading tasks from a plan file."""
 

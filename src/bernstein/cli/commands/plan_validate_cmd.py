@@ -93,6 +93,34 @@ def _check_unknown_roles(
             warnings.append(f"Task {task.title!r} uses unknown role {task.role!r}")
 
 
+def _check_schema(plan_file: Path, errors: list[str]) -> None:
+    """Append errors for anything the plan schema rejects.
+
+    ``load_plan`` parses a plan; it does not judge it. It reads ``stages`` and
+    ``steps`` and takes whatever it finds, so a plan with no ``name``, a
+    ``priority`` outside 1-5, or a role/model string that is not in the enum
+    parses cleanly and reaches every later check intact -- and those checks look
+    at the task graph, not at the fields. Without this the command answers
+    "Plan is valid." for a plan the scheduler will reject.
+
+    Role is the one field deliberately left to the schema's caller rather than
+    the schema. ``plan_schema`` holds role in an enum and reports an unknown one
+    as an error; roles are loaded from ``templates/roles/``, which an operator
+    extends, so this command reports an unrecognised role through
+    :func:`_check_unknown_roles` as a *warning* instead. Taking the schema's
+    verdict too would turn a documented warning into a hard failure for every
+    plan that names a role of its own.
+
+    Args:
+        plan_file: The plan being validated.
+        errors: Accumulator appended to in place.
+    """
+    from bernstein.core.plan_schema import validate_plan as validate_plan_schema
+
+    raw = yaml.safe_load(plan_file.read_text())
+    errors.extend(e for e in validate_plan_schema(raw) if ".role:" not in e)
+
+
 def _compute_stage_stats(plan_file: Path) -> tuple[int, int]:
     """Return (stage_count, max_parallel_width) from raw YAML."""
     try:
@@ -155,6 +183,7 @@ def validate_plan(plan_file: Path) -> None:
     errors: list[str] = []
     warnings: list[str] = []
 
+    _check_schema(plan_file, errors)
     _check_duplicate_titles(tasks, errors)
     _check_dependency_refs(tasks, errors)
     _check_dependency_cycles(tasks, errors)
