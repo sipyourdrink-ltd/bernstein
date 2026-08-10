@@ -1122,6 +1122,7 @@ receipt that no longer recomputes fails exactly like a tampered chain entry.
 | `bernstein cache` | Prompt-cache mgmt (group). | `cli/commands/cache_cmd.py:45` |
 | `bernstein notify` | Outbound notification drivers (group). | `cli/commands/notify_cmd.py:63` |
 | `bernstein triggers` | Trigger sources (group). | `cli/commands/triggers_cmd.py:17` |
+| `bernstein issue-to-pr trace --repo OWNER/NAME N` | Print the read-only issue-to-PR pipeline state snapshot. | `cli/commands/issue_to_pr_cmd.py:trace_cmd` |
 
 #### `bernstein doctor`
 

@@ -77,6 +77,14 @@ landed since the newest one.
 
 ## Fixed
 
+- `bernstein issue-to-pr trace --repo OWNER/NAME N` is registered again. The
+  orchestration guide continued to advertise this read-only pipeline snapshot
+  after the v4 command cleanup, while the formatter that names the command
+  remained in the core API, so following the guide failed with `No such
+  command`. A fixture-backed CLI regression now runs the documented command
+  through the top-level group and pins its rendered summary. Docs:
+  `docs/orchestration/issue-to-pr.md`, `docs/reference/cli-reference.md`. Refs
+  #3595.
 - Adapter admission can produce an `ADMIT` verdict on a pip install (#3547).
   The verdict is a projection of the pinned contract's bytes and the
   golden-transcript replay, but both trees live under `tests/` and were

@@ -76,6 +76,7 @@ from bernstein.cli.commands.impact_cmd import (
     impact_group,
 )
 from bernstein.cli.commands.integrations_cmd import integrations_group
+from bernstein.cli.commands.issue_to_pr_cmd import issue_to_pr_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
 from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
@@ -1066,6 +1067,7 @@ cli.add_command(connect_cmd, "connect")
 cli.add_command(creds_group, "creds")
 cli.add_command(criterion_profile_group, "criterion-profile")
 cli.add_command(review_responder_group, "review-responder")
+cli.add_command(issue_to_pr_group, "issue-to-pr")
 
 # Already registered elsewhere
 cli.add_command(agents_group)

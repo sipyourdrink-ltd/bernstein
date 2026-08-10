@@ -84,8 +84,6 @@ last_revise_at: 2026-05-19T12:00:00Z
 
 The command is read-only; it never advances state.
 
-> **Note:** The `issue-to-pr` CLI command group was removed in v4.0.0. The pipeline is driven directly from Python using `bernstein.core.orchestration.issue_to_pr`.
-
 ## State markers
 
 The pipeline stores its progress as HTML comments inside the sticky
