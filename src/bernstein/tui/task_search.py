@@ -114,8 +114,10 @@ class TaskSearchInput(Input):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        kwargs.setdefault("placeholder", "Search tasks or use status:, role:, priority:, agent:")
-        super().__init__(*args, **kwargs)
+        
+    if "placeholder" not in kwargs:
+        kwargs["placeholder"] = "Search tasks or use status:, role:, priority:, agent:"
+    super().__init__(*args, **kwargs)
 
     def on_key(self, event: Key) -> None:
         """Handle key events."""
