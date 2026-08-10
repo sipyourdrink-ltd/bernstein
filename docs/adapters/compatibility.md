@@ -33,6 +33,7 @@ Last updated: 2026-07-16
 | `cody` | Sourcegraph | No | No |
 | `cursor` | Cursor | No | Yes |
 | `goose` | Block | No | No |
+| `muse` | Meta | JSONL (`--json`, not consumed) | No |
 | `continue` | Multi | No | No |
 | `opencode` | Multi | JSON (`--format json`) | No |
 | `pydantic_ai` | Multi (`<provider>:<model>`) | No | No |

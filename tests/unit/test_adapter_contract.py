@@ -77,8 +77,13 @@ def _discover_registered_names() -> list[str]:
       runtime of its own, and this suite calls spawn() with no mcp_config.
       Covered by ``tests/unit/adapters/test_python_runtime_adapter.py``,
       which exercises both the configured spawn and every refusal.
+    - ``muse`` - single-model vendor lineup; spawn() raises ValueError for
+      foreign logical model names (such as the ``sonnet`` this suite
+      passes) instead of silently remapping them onto the vendor default.
+      Covered by ``test_adapter_muse.py``, which exercises spawn with the
+      vendor model plus every refusal path.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime"})
+    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac", "clm", "q_dev", "python_runtime", "muse"})
 
 
 def _make_factory(name: str) -> Any:

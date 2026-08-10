@@ -72,6 +72,7 @@ modules =
     bernstein.adapters.letta_code
     bernstein.adapters.mistral
     bernstein.adapters.mock
+    bernstein.adapters.muse
     bernstein.adapters.ollama
     bernstein.adapters.open_interpreter
     bernstein.adapters.openai_agents

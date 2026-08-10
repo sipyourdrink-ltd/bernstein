@@ -142,6 +142,7 @@ adapters at a glance.
 | `letta_code` | unsupported | cli-flag | text-signals |
 | `mistral` | unsupported | unsupported | text-signals |
 | `mock` | unsupported | unsupported | text-signals |
+| `muse` | unsupported | cli-flag | text-signals |
 | `ollama` | unsupported | unsupported | text-signals |
 | `open_interpreter` | unsupported | unsupported | text-signals |
 | `openai_agents` | flag | always-on | hooks |

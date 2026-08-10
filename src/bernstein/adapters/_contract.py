@@ -705,6 +705,11 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "kiro": AdapterStrategy(),
     "mistral": AdapterStrategy(),
     "mock": AdapterStrategy(),
+    # Muse Code is driven through its headless mode with --disable-approval
+    # on every spawn (approval prompts would hang an unattended worker); the
+    # vendor sandbox stays on. A --session-id resume flag exists upstream but
+    # no spawn path supplies one, so resume stays declared unsupported.
+    "muse": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "ollama": AdapterStrategy(),
     "open_interpreter": AdapterStrategy(),
     "opencode": AdapterStrategy(),

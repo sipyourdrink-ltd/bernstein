@@ -1,0 +1,27 @@
+# Contract for the Muse Code CLI (adapter: muse).
+#
+# Always-passed surface from src/bernstein/adapters/muse.py:
+# ``muse --model <id> --disable-approval exec <prompt>``.
+# The prompt is a positional argument after the ``exec`` subcommand;
+# ``--model`` and ``--disable-approval`` are common launch flags passed
+# on every spawn. Headless-only flags (--json, --prompt-file,
+# --max-model-steps) exist upstream but are unused at spawn time and
+# are therefore not pinned here.
+adapter: muse
+binary: muse
+install:
+  method: curl
+  spec: "https://dev.meta.ai/install.sh"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "META_API_KEY"
+required_flags:
+  - "--model"
+  - "--disable-approval"
+required_subcommands:
+  - "exec"
+help_command: ["muse", "--help"]
+expected_models:
+  command: []
+  required_present: []

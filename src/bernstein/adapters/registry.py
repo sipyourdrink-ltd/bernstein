@@ -47,6 +47,7 @@ from bernstein.adapters.kiro import KiroAdapter
 from bernstein.adapters.letta_code import LettaCodeAdapter
 from bernstein.adapters.mistral import MistralAdapter
 from bernstein.adapters.mock import MockAgentAdapter
+from bernstein.adapters.muse import MuseAdapter
 from bernstein.adapters.ollama import OllamaAdapter
 from bernstein.adapters.open_interpreter import OpenInterpreterAdapter
 from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
@@ -126,6 +127,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "letta_code": LettaCodeAdapter,
     "mistral": MistralAdapter,
     "mock": MockAgentAdapter,
+    "muse": MuseAdapter,
     "ollama": OllamaAdapter,
     "open_interpreter": OpenInterpreterAdapter,
     "openai_agents": OpenAIAgentsAdapter,

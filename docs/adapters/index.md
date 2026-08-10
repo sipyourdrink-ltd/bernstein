@@ -48,6 +48,8 @@ These are the most exercised adapters in the test matrix.
   (see [`agy.md`](agy.md) for the lane split).
 - `copilot` - GitHub Copilot CLI.
 - `goose` - Block Goose.
+- `muse` - Muse Code, Meta's terminal coding agent, driven headless via
+  `muse exec` (see [`muse.md`](muse.md)).
 
 ### Local and offline
 
@@ -152,6 +154,7 @@ available locally with `bernstein integrations list --installed`.
 | [Plandex](https://github.com/plandex-ai/plandex) | `curl -sL https://plandex.ai/install.sh \| bash` |
 | [AIChat](https://github.com/sigoden/aichat) | `cargo install aichat` |
 | [Letta Code](https://github.com/letta-ai/letta-code) | `npm install -g @letta-ai/letta-code` |
+| [Muse Code](muse.md) (Meta) | `curl -fsSL https://dev.meta.ai/install.sh \| sh` |
 | **Generic** | Built-in |
 
 Any adapter also works as the internal scheduler LLM
