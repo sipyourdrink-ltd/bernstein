@@ -239,6 +239,24 @@ def test_a_raster_from_an_older_svg_is_reported(snapshot: Any, monkeypatch: pyte
     assert "--rasterize" in problems[0]
 
 
+def test_deleting_the_raster_is_not_a_way_to_pass(
+    snapshot: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absent asset is a broken image on the front page, not one less check.
+
+    The README and both translated front pages link the PNG by raw URL, so
+    treating "no file" as "nothing to verify" would let a deletion through the
+    gate and onto the project's landing page.
+    """
+    monkeypatch.setattr(snapshot, "PNG_RENDER", tmp_path / "tui-agents.png")
+
+    problems = snapshot.verify_png_binding()
+
+    assert problems, "a missing raster must not pass"
+    assert "--rasterize" in problems[0]
+    assert snapshot.main([]) == 1
+
+
 def test_the_page_that_documents_this_gate_is_reachable_and_names_the_real_commands(tmp_path: Path) -> None:
     """A gate whose regeneration command is undocumented gets guessed at.
 

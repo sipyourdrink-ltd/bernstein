@@ -298,7 +298,14 @@ def verify_png_binding() -> list[str]:
     (``--rasterize``), noticing a stale raster does not.
     """
     if not PNG_RENDER.exists():
-        return []
+        # Deleting the asset is not a way to pass: the README and both
+        # translated front pages link it by raw URL, so an absent file is a
+        # broken image on the project's front page rather than one less thing
+        # to check.
+        return [
+            f"{_display(PNG_RENDER)} is missing, and the README front pages link it; "
+            "restore it with: python3 scripts/render_tui_snapshot.py --rasterize"
+        ]
     if not PNG_BINDING.exists():
         return [f"{_display(PNG_RENDER)} is committed but {_display(PNG_BINDING)} does not bind it; run --rasterize"]
     binding = json.loads(PNG_BINDING.read_text(encoding="utf-8"))
