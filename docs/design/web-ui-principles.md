@@ -47,10 +47,12 @@ motion is short (90ms fades, 250ms drawer) and never loops.
 **P6 — State is never carried by colour alone.** Every `success` / `warning` /
 `destructive` token appears with a text or icon form of the same information.
 
-**P7 — Nothing leaves the browser at view time.** Fonts are vendored; there
-are no third-party asset hosts, no analytics, no outbound requests to render a
-screen. The project ships an air-gap profile, and an operator opening a
-dashboard should not announce that to anyone.
+**P7 — The orchestrator is the only host the browser talks to.** The
+dashboard fetches records from the API and event stream it was pointed at
+(`web/src/lib/api.ts`, `web/src/lib/sse.ts`) and from nowhere else. Fonts are
+vendored; there are no third-party asset hosts, no analytics, no telemetry.
+The project ships an air-gap profile, and an operator opening a dashboard
+should not announce that outside their own deployment.
 
 **P8 — Keyboard reaches everything the mouse reaches.** The command palette is
 the primary route; a control that exists only as a click target is incomplete.
