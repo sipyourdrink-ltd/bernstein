@@ -823,3 +823,50 @@ def test_repo_ref_name_auto_derived() -> None:
     assert RepoRef(path="../backend").name == "backend"
     assert RepoRef(path="services/auth-service/").name == "auth-service"
     assert RepoRef(path="../shared-types", name="types").name == "types"
+
+
+# ---------------------------------------------------------------------------
+# Boundary validation shared with validate_plan (#3516)
+# ---------------------------------------------------------------------------
+
+
+def test_step_files_scalar_raises_plan_load_error(tmp_path: Path) -> None:
+    """A scalar `files` value must not iterate character-by-character."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", "files": "src/app.py"}]}]},
+    )
+    with pytest.raises(PlanLoadError, match="'files' must be a"):
+        load_plan_from_yaml(plan_file)
+
+
+@pytest.mark.parametrize("value", ["3", True, 2.5], ids=["str", "bool", "float"])
+def test_step_priority_non_integer_raises_plan_load_error(tmp_path: Path, value: object) -> None:
+    """Non-integer priority must be a PlanLoadError, never silent coercion."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", "priority": value}]}]},
+    )
+    with pytest.raises(PlanLoadError, match="'priority' must be an integer"):
+        load_plan_from_yaml(plan_file)
+
+
+@pytest.mark.parametrize("value", ["ninety", "90", False], ids=["word", "numeric-str", "bool"])
+def test_step_estimated_minutes_non_integer_raises_plan_load_error(tmp_path: Path, value: object) -> None:
+    """A bad estimated_minutes must not escape as a bare ValueError."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", "estimated_minutes": value}]}]},
+    )
+    with pytest.raises(PlanLoadError, match="'estimated_minutes' must be an integer"):
+        load_plan_from_yaml(plan_file)
+
+
+def test_step_priority_and_estimated_minutes_defaults_still_apply(tmp_path: Path) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T"}]}]},
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert tasks[0].priority == 2
+    assert tasks[0].estimated_minutes == 30

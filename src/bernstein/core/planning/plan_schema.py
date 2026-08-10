@@ -414,6 +414,12 @@ def _validate_step_estimated_minutes(step: dict[str, Any], path: str, errors: li
         )
 
 
+# String-typed optional fields of a completion signal, mirroring
+# _COMPLETION_SIGNAL_SCHEMA. A non-string here must be a reported type
+# error, not a silent skip (#3516).
+_COMPLETION_SIGNAL_STRING_FIELDS: tuple[str, ...] = ("value", "path", "command", "contains")
+
+
 def _validate_completion_signals(step: dict[str, Any], path: str, errors: list[str]) -> None:
     """Validate the completion_signals array on a step."""
     if "completion_signals" not in step:
@@ -429,8 +435,31 @@ def _validate_completion_signals(step: dict[str, Any], path: str, errors: list[s
             continue
         if "type" not in sig:
             errors.append(f"{sig_path}: missing required field 'type'")
-        elif sig["type"] not in COMPLETION_SIGNAL_TYPES:
+        elif _check_type(sig["type"], "string", f"{sig_path}.type", errors):
             _validate_enum(sig["type"], COMPLETION_SIGNAL_TYPES, f"{sig_path}.type", errors)
+        for field_name in _COMPLETION_SIGNAL_STRING_FIELDS:
+            if field_name in sig:
+                _check_type(sig[field_name], "string", f"{sig_path}.{field_name}", errors)
+
+
+def _validate_step_phases(step: dict[str, Any], path: str, errors: list[str]) -> None:
+    """Validate the optional phases array on a step.
+
+    Mirrors the schema contract exactly: an array whose items are strings
+    drawn from :data:`PHASE_VALUES`. Anything else must fail the CLI
+    pre-check here instead of surfacing later as a ``PlanLoadError`` from
+    ``load_plan`` -> ``parse_phases`` (#3516).
+    """
+    if "phases" not in step:
+        return
+    phases = step["phases"]
+    if not isinstance(phases, list):
+        errors.append(f"{path}.phases: expected type array, got {type(phases).__name__}")
+        return
+    for i, item in enumerate(phases):
+        item_path = f"{path}.phases[{i}]"
+        if _check_type(item, "string", item_path, errors):
+            _validate_enum(item, PHASE_VALUES, item_path, errors)
 
 
 def _validate_artifact_spec(step: dict[str, Any], path: str, errors: list[str]) -> None:
@@ -476,6 +505,7 @@ def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
             _check_string_items(step["files"], f"{path}.files", errors)
 
     _validate_completion_signals(step, path, errors)
+    _validate_step_phases(step, path, errors)
     _validate_artifact_spec(step, path, errors)
 
 
@@ -626,8 +656,7 @@ def validate_plan(plan_data: dict[str, Any], warnings: list[str] | None = None) 
     Known gaps against the full schema: free-text string fields
     (``description``, ``cli``, step ``title``/``goal``/``mode``/``repo``,
     stage ``name``, repo ``path``/``branch``/``name``) are checked for
-    presence, not type; ``budget`` is untyped; and ``phases`` items are not
-    checked against the phase enum.
+    presence, not type; and ``budget`` is untyped.
 
     Args:
         plan_data: Parsed YAML plan as a Python dict.

@@ -385,6 +385,59 @@ class TestValidatePlanSchemaParity:
         errors = validate_plan(plan)
         assert any("estimated_minutes" in e and "integer" in e and "bool" in e for e in errors)
 
+    def test_completion_signal_type_must_be_a_string(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["completion_signals"] = [{"type": 3, "value": "x"}]
+        errors = validate_plan(plan)
+        assert any("completion_signals[0].type" in e and "string" in e for e in errors)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("value", 42, id="value-int"),
+            pytest.param("path", True, id="path-bool"),
+            pytest.param("command", ["pytest"], id="command-list"),
+            pytest.param("contains", None, id="contains-none"),
+        ],
+    )
+    def test_completion_signal_string_fields_are_type_checked(self, field: str, value: object) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["completion_signals"] = [{"type": "path_exists", field: value}]
+        errors = validate_plan(plan)
+        assert any(f"completion_signals[0].{field}" in e and "string" in e for e in errors)
+
+    def test_valid_completion_signal_passes(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["completion_signals"] = [{"type": "path_exists", "path": "out/report.md"}]
+        assert validate_plan(plan) == []
+
+    def test_phases_must_be_an_array(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = "implement"
+        errors = validate_plan(plan)
+        assert any(".phases:" in e and "array" in e for e in errors)
+
+    @pytest.mark.parametrize(
+        "value",
+        [pytest.param(True, id="bool"), pytest.param(2, id="int"), pytest.param(None, id="none")],
+    )
+    def test_phases_items_must_be_strings(self, value: object) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = ["research", value]
+        errors = validate_plan(plan)
+        assert any("phases[1]" in e and "string" in e for e in errors)
+
+    def test_phases_items_must_be_in_the_phase_enum(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = ["research", "deploy"]
+        errors = validate_plan(plan)
+        assert any("phases[1]" in e and "'deploy'" in e for e in errors)
+
+    def test_valid_phases_pass(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = ["research", "plan", "implement", "verify"]
+        assert validate_plan(plan) == []
+
     def test_name_must_be_a_string(self) -> None:
         errors = validate_plan(_minimal_plan(name=123))
         assert any("name" in e and "string" in e for e in errors)
