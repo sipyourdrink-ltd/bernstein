@@ -42,9 +42,22 @@ WORK="$(mktemp -d)"
 CONTAINER="${TAG}-install"
 
 cleanup() {
+    # Preserve the status the script is exiting with: teardown must never turn
+    # a passing smoke into a failure, nor a failing one into a pass.
+    local rc=$?
     docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
     docker rmi -f "${TAG}" >/dev/null 2>&1 || true
-    rm -rf "${WORK}"
+    if [ -d "${WORK}" ]; then
+        # rpmbuild and dnf run as root inside the container, so the build
+        # artefacts in the bind-mounted work dir are root-owned. On a Linux
+        # runner the invoking user cannot delete them (on Docker Desktop the
+        # VM's uid mapping hides this). Hand ownership back from inside a
+        # container before removing the tree.
+        docker run --rm -v "${WORK}:/work" "${IMAGE}" \
+            chown -R "$(id -u):$(id -g)" /work >/dev/null 2>&1 || true
+        rm -rf "${WORK}" || true
+    fi
+    exit "${rc}"
 }
 trap cleanup EXIT
 
