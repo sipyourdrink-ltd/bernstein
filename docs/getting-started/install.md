@@ -19,7 +19,10 @@ to follow the [first-run walkthrough](first-run.md).
 - **Git** (any recent version). Bernstein uses git worktrees to isolate agents.
 - **macOS, Linux, or Windows**.
 
-That's it. You do **not** need a CLI coding agent installed yet - that comes in the first-run page.
+That's it for installing. Before your **first run** you will also need at least one
+CLI coding agent (Claude Code, Codex CLI, Gemini CLI, ...) and its API key - the
+[first-run walkthrough](first-run.md) covers that. You do **not** need them to
+complete this page.
 
 ### Supported platforms
 
@@ -75,55 +78,75 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
 
 === "Homebrew (macOS / Linux)"
 
-    ```bash
-    brew tap chernistry/tap
-    brew install bernstein
-    ```
-
-    Bernstein is **not** in `homebrew-core`. The `tap` step is required.
-    The tap lives at `github.com/chernistry/homebrew-tap`; `brew tap chernistry/tap`
-    is the Homebrew short form.
+    **Temporarily unavailable.** The current formula installs Bernstein without
+    its runtime dependencies, so the installed `bernstein` command fails at
+    startup. Tracked in
+    [#3573](https://github.com/sipyourdrink-ltd/bernstein/issues/3573).
+    Use `uv tool install bernstein` or `pipx install bernstein` instead.
 
 === "Fedora / RHEL (dnf)"
 
-    ```bash
-    sudo dnf copr enable alexchernysh/bernstein
-    sudo dnf install bernstein
-    ```
+    **Not yet available.** The COPR repository exists but does not serve a
+    `bernstein` package yet. Tracked in
+    [#3558](https://github.com/sipyourdrink-ltd/bernstein/issues/3558).
+    Use `uv tool install bernstein` or `pipx install bernstein` in the meantime.
 
-=== "Debian / Ubuntu (apt)"
+=== "Debian / Ubuntu"
 
-    See the [Linux install guide](install-linux.md) for the COPR, Homebrew, pip/uv/pipx, and Docker channels.
-
-=== "npm wrapper"
-
-    ```bash
-    npx bernstein-orchestrator
-    ```
-
-    Wraps the Python package; still requires Python 3.12+ on `$PATH`.
+    There is no APT repository. On Debian/Ubuntu, install with pip/uv/pipx or
+    Docker - see the [Linux install guide](install-linux.md).
 
 === "Docker"
 
     ```bash
-    docker run -v "$(pwd)":/workspace -p 8052:8052 \
-      ghcr.io/sipyourdrink-ltd/bernstein -g "your goal"
+    docker run -v "$(pwd)":/workspace -v "$(pwd)/.sdd":/workspace/.sdd \
+      -p 8052:8052 ghcr.io/sipyourdrink-ltd/bernstein -g "your goal"
     ```
+
+    The explicit `.sdd` mount keeps run state in your project directory. On
+    images up to 3.14.159 it is **required**: without it the container creates
+    a root-owned volume at `/workspace/.sdd` and the run fails with
+    `Permission denied`. Run from a non-default git branch
+    ([first run](first-run.md) explains why).
 
 === "From source"
 
     ```bash
     git clone https://github.com/sipyourdrink-ltd/bernstein
     cd bernstein
-    uv venv && uv pip install -e ".[dev]"
+    uv venv && uv pip install -e .
+    source .venv/bin/activate
+    bernstein --version
     ```
+
+    For a development install (tests, linters, the `.[dev]` extras - which
+    need a C toolchain) see
+    [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md).
+
+=== "Dev container"
+
+    The repo ships a `.devcontainer/` (Python 3.12, pipx, port 8052 forwarded)
+    for GitHub Codespaces / VS Code Dev Containers. It is aimed at working
+    **on** Bernstein itself; to use Bernstein in your own project, pick one of
+    the other methods.
+
+---
+
+## Run without installing
+
+- `uvx bernstein` - downloads the latest release into a temporary environment
+  and runs it. Needs [`uv`](https://docs.astral.sh/uv/).
+- `npx bernstein-orchestrator` - Node wrapper that delegates to an existing
+  Python setup. It does **not** install Bernstein: it requires Python 3.12+
+  **and** `pipx` or `uv` on `$PATH`, then runs Bernstein through them.
 
 ---
 
 ## One-liner installers
 
-For fresh machines that don't have Python set up yet, the install scripts bootstrap
-Python (via `pyenv` or system package), pipx, and Bernstein in one step.
+On a machine that already has Python 3.12+, the install scripts set up pipx and
+Bernstein in one step. They **check** for Python 3.12+ and stop with an error if
+it is missing - they do not install Python itself.
 
 ```bash
 curl -fsSL https://bernstein.run/install.sh | sh           # macOS / Linux
@@ -173,8 +196,15 @@ You should see the current release version. Then run the pre-flight check:
 bernstein doctor
 ```
 
-`doctor` checks Python version, port availability, your `$PATH`, and any installed CLI agents.
-A clean run prints all green. If something fails, it tells you exactly which step to fix.
+`doctor` checks your setup end to end: installed agent CLIs (adapters), API keys,
+port availability, the `.sdd` workspace, and supporting tools.
+
+Straight after an install - before you have configured an agent CLI or an API
+key - **expect red rows** for adapters, auth, the workspace, and "Ready to run",
+and a non-zero exit code. Those clear as you work through the
+[first run](first-run.md). At this stage you only need `bernstein --version`
+working and the Python and port checks green. Each failing row names the step
+to fix.
 
 > **`command not found: bernstein`**
 > Your tool bin directory is not on `$PATH`. Add it:

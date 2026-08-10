@@ -31,8 +31,14 @@ RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl && \
     useradd -m -u 1000 bernstein && chown bernstein:bernstein /workspace
 USER bernstein
 
-# Bernstein state directory (mount a volume here for persistence)
-VOLUME ["/workspace/.sdd"]
+# Bernstein state lives in /workspace/.sdd. For persistence, bind-mount your
+# project directory at /workspace (the documented default) or mount an explicit
+# volume at /workspace/.sdd.
+#
+# Deliberately NOT declared as a VOLUME: an anonymous volume at this path is
+# created root-owned (0755) by the daemon while the container runs as uid 1000,
+# so every first run failed with "Permission denied" when creating the
+# worktree under /workspace/.sdd. Do not re-add a VOLUME line here.
 
 # Task server HTTP + gRPC ports
 EXPOSE 8052 50051

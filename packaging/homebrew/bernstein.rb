@@ -11,6 +11,12 @@ class Bernstein < Formula
 
   depends_on "python@3.12"
 
+  # BROKEN as-is: `virtualenv_install_with_resources` with no `resource`
+  # blocks installs bernstein via `pip --no-deps`, so the resulting binary
+  # fails at startup (ModuleNotFoundError: no module named 'click').
+  # Do not publish this formula until the runtime closure ships as
+  # resources (or the install strategy changes). Tracked in
+  # https://github.com/sipyourdrink-ltd/bernstein/issues/3573.
   def install
     virtualenv_install_with_resources
   end

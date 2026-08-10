@@ -34,9 +34,14 @@ If you nodded at two of those bullets, this fits.
 - forward-deployed engineering: drop the crew onto a client repo when you arrive, take it with you when you leave.
 - self-evolving projects: point Bernstein at its own repo and let it execute the backlog (the Bernstein codebase is one).
 - CI fleets: run a crew of agents in parallel on PRs, with per-agent credential scoping and an opt-in signed audit trail.
-- air-gapped deployment: install from a signed wheelhouse, run with `--profile airgap` to deny outbound by default. See [air-gap installation](installation/air-gap.md).
+- air-gapped deployment: install from a signed wheelhouse, run with `bernstein run --profile airgap` to deny outbound by default. See [air-gap installation](installation/air-gap.md).
 
 ## Common workflows
+
+The commands below assume the basics from the
+[first run](getting-started/first-run.md): at least one agent CLI with its API
+key configured, and a checked-out **working branch** - `bernstein -g` refuses to
+start on the repository default branch.
 
 ### Parallel test generation with AI agents
 
@@ -53,20 +58,29 @@ Good fit when you want broad coverage quickly, but still need janitor verificati
 Some teams use Bernstein as the repair loop after review has already happened. The autofix daemon watches open PRs, classifies failing checks, and dispatches a scoped fix run when CI turns red.
 
 ```bash
+# One-time: the daemon needs at least one [[repo]] entry in
+# ~/.config/bernstein/autofix.toml before it will do any work:
+#   [[repo]]
+#   name = "your-org/your-repo"
 bernstein autofix start --repo your-org/your-repo --foreground
 ```
 
-Good fit when the painful part is not finding failures, but paying the context-switch tax every time lint, typing, or a focused test failure breaks a PR. See [operations/autofix.md](operations/autofix.md).
+Good fit when the painful part is not finding failures, but paying the context-switch tax every time lint, typing, or a focused test failure breaks a PR. Config format and the full gate list: [operations/autofix.md](operations/autofix.md).
 
 ### PR review follow-up from inline comments
 
 Review comments are often small, mechanical, and easy to lose between pushes. Bernstein's review-responder daemon turns those comments into tracked work so the author can keep moving while the system handles the obvious follow-up.
 
 ```bash
+export BERNSTEIN_REVIEW_WEBHOOK_SECRET=...   # required; shared with the GitHub webhook
 bernstein review-responder start --repo your-org/your-repo --foreground
 ```
 
-Good fit when your team already does human review but wants the "please rename this / add a guard / update the test" loop to close faster. See [operations/review-responder.md](operations/review-responder.md).
+The daemon refuses to start without the webhook secret. To receive comments it
+also needs the repo webhook pointed at it (or it falls back to polling via
+`gh`) - setup steps in [operations/review-responder.md](operations/review-responder.md).
+
+Good fit when your team already does human review but wants the "please rename this / add a guard / update the test" loop to close faster.
 
 ### Large-scale codebase modernization
 
@@ -83,6 +97,7 @@ Good fit when the change is spread across many files and the main risk is merge 
 A lot of teams do not want another planning system; they want their existing tickets to become executable work. Bernstein can import a ticket URL, infer scope, and immediately turn it into a run.
 
 ```bash
+bernstein connect github   # one-time; or export GITHUB_TOKEN=...
 bernstein from-ticket https://github.com/your-org/your-repo/issues/123 --run
 ```
 
