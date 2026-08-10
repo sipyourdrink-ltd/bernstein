@@ -148,7 +148,7 @@ def test_a_run_that_fails_part_way_leaves_every_render_untouched(capturer: Any, 
 
 
 def test_the_staging_directory_never_survives_the_run(capturer: Any, assets: Path, monkeypatch: Any) -> None:
-    """It lives inside docs/assets, so a leftover would be a commitable stray."""
+    """It lives inside docs/assets, so a leftover would be a stray in the next commit."""
     _install_stub_playwright(monkeypatch, _Page(fail_on="agents"))
     with pytest.raises(RuntimeError):
         capturer.capture(SCREENS, "http://127.0.0.1:1234", "token")
