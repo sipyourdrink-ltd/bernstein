@@ -1,12 +1,13 @@
 {
   "renders": {
-    "webui-agents-diffs.png": "adopted",
-    "webui-agents-panel.png": "adopted",
+    "webui-agents-diffs.png": "captured",
+    "webui-agents-panel.png": "captured",
     "webui-agents.png": "captured",
     "webui-approvals.png": "captured",
     "webui-audit.png": "captured",
     "webui-costs.png": "captured",
     "webui-fleet.png": "captured",
+    "webui-missions.png": "captured",
     "webui-settings.png": "captured",
     "webui-tasks.png": "captured"
   },

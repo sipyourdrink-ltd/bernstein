@@ -187,3 +187,17 @@ def test_every_screen_the_script_owns_has_a_committed_render(capturer: Any) -> N
     committed = {path.name for path in (REPO_ROOT / "docs" / "assets").glob("webui-*.png")}
 
     assert {f"webui-{name}.png" for name in capturer.SCREENS} <= committed
+    assert {f"webui-{name}.png" for name in capturer.SEEDED_SCREENS} <= committed
+
+
+def test_the_script_owns_every_committed_render(capturer: Any) -> None:
+    """The inverse claim: no committed SPA render is outside the capture script.
+
+    A render outside it can only ever be rebound, never re-captured - the
+    front-page pair spent several releases in exactly that state, `adopted` on
+    every rebind while showing a UI that no longer existed.
+    """
+    committed = {path.name for path in (REPO_ROOT / "docs" / "assets").glob("webui-*.png")}
+    owned = {f"webui-{name}.png" for name in (*capturer.SCREENS, *capturer.SEEDED_SCREENS)}
+
+    assert committed == owned

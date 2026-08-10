@@ -213,6 +213,32 @@ def _nav_targets(node: object) -> list[str]:
     return []
 
 
+def test_the_front_page_raster_is_bound_to_the_committed_svg(snapshot: Any) -> None:
+    """The README's PNG is the same render, rasterised - and it can rot alone.
+
+    Pixels move between machines, so the raster cannot be byte-gated like the
+    SVG; it is bound to the SHA-256 of the SVG it was rasterised from instead.
+    This is the gate itself, run against the repository as committed, plus the
+    property it rests on: a stale binding is reported, not ignored.
+    """
+    assert snapshot.PNG_RENDER.exists(), "the front page links docs/assets/tui-agents.png"
+    assert snapshot.verify_png_binding() == []
+
+    binding = json.loads(snapshot.PNG_BINDING.read_text(encoding="utf-8"))
+    recorded = binding[snapshot.PNG_RENDER.name]["source_sha256"]
+    assert recorded == snapshot.svg_digest()
+
+
+def test_a_raster_from_an_older_svg_is_reported(snapshot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the gated SVG moves and the raster does not, the check must say so."""
+    monkeypatch.setattr(snapshot, "svg_digest", lambda: "0" * 64)
+
+    problems = snapshot.verify_png_binding()
+
+    assert problems, "a raster bound to a different SVG must not pass"
+    assert "--rasterize" in problems[0]
+
+
 def test_the_page_that_documents_this_gate_is_reachable_and_names_the_real_commands(tmp_path: Path) -> None:
     """A gate whose regeneration command is undocumented gets guessed at.
 
