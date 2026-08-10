@@ -46,12 +46,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _force_include_map() -> dict[str, str]:
-    """Return ``[tool.hatch.build.targets.wheel.force-include]`` as a mapping."""
+def _force_include_map(target: str = "wheel") -> dict[str, str]:
+    """Return ``[tool.hatch.build.targets.<target>.force-include]`` as a mapping."""
     data: Any = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    for key in ("tool", "hatch", "build", "targets", "wheel", "force-include"):
+    for key in ("tool", "hatch", "build", "targets", target, "force-include"):
         data = data.get(key, {})
-    assert isinstance(data, dict), "pyproject.toml has no wheel force-include table"
+    assert isinstance(data, dict), f"pyproject.toml has no {target} force-include table"
     return data
 
 
@@ -88,6 +88,30 @@ def test_admission_evidence_is_force_included_into_the_wheel(
     assert relative == expected, (
         f"{source} ships to {destination!r} but the loader reads {packaged_dir}; "
         "the wheel destination and the packaged-copy path must match."
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["tests/contract/contracts", "tests/golden"],
+    ids=["contracts", "golden-transcripts"],
+)
+def test_admission_evidence_survives_into_the_sdist(source: str) -> None:
+    """Each wheel force-include source is re-included into the sdist verbatim.
+
+    ``uv build`` (and any pip install from the sdist) builds the wheel FROM
+    the sdist, and hatchling hard-fails on a missing force-include source.
+    These trees live under ``tests/``, which the global
+    ``[tool.hatch.build]`` exclude drops from the sdist - so without a
+    matching sdist force-include entry every sdist-based build of the wheel
+    breaks (this is exactly how CI's "Package size check" job builds).
+    """
+    sdist_destination = _force_include_map("sdist").get(source)
+    assert sdist_destination == source, (
+        f"{source} is force-included into the wheel but does not survive into the sdist; "
+        "building a wheel from the sdist then fails with 'Forced include not found'. "
+        "Re-include it at its checkout path under "
+        "[tool.hatch.build.targets.sdist.force-include]."
     )
 
 

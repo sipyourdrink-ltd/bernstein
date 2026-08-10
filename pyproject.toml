@@ -511,6 +511,18 @@ artifacts = [
 # the display fallback read by cli/display/splash_v2.py when running from a
 # source checkout.
 
+[tool.hatch.build.targets.sdist.force-include]
+# Wheel force-include sources must also exist inside the sdist: `uv build`
+# (and any pip install from the sdist) builds the wheel FROM the sdist, and
+# hatchling hard-fails on a missing force-include source. Every other wheel
+# force-include source above (templates/, skills, ...) survives into the
+# sdist by default, but these two live under tests/, which the global
+# [tool.hatch.build] exclude drops - so they are re-included here verbatim,
+# at their checkout paths. Guard:
+# tests/unit/test_adapter_verification_data_in_wheel.py.
+"tests/contract/contracts" = "tests/contract/contracts"
+"tests/golden" = "tests/golden"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 120
