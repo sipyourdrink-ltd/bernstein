@@ -119,7 +119,9 @@ def test_man_pages_completes(tmp_path: Path) -> None:
 # name, resolve it through the real ``cli`` object.  A command that is
 # documented but unreachable now fails here instead of in a user's terminal.
 
-_DOC_COMMAND_HEADING = re.compile(r"^#+\s+`bernstein ([a-z0-9][A-Za-z0-9 _-]*)`\s*$", re.M)
+_HEADING = re.compile(r"^#{1,6}\s+\S")
+_CMD_IN_HEADING = re.compile(r"`bernstein ([a-z0-9][A-Za-z0-9 _-]*)`")
+_LONG_FLAG = re.compile(r"--[a-z][a-z0-9-]*")
 
 
 def _strip_argument_placeholders(heading: str) -> str:
@@ -141,17 +143,58 @@ def _strip_argument_placeholders(heading: str) -> str:
     return " ".join(words)
 
 
-def _documented_command_paths() -> list[str]:
-    """Command paths the CLI reference documents, as space-separated words.
+def _reference_sections() -> list[tuple[tuple[str, ...], str]]:
+    """Split the CLI reference into (commands named by the heading, body) pairs.
 
-    Headings carrying an option (``bernstein doctor --failover-drill``) are
-    excluded: they document a flag on a command, not a command.
+    A section runs from one markdown heading to the next heading of *any*
+    level, so a flag table can never bleed into the previous command's
+    section -- the failure mode that let combined headings such as
+    ``bernstein eval`` / ``bernstein benchmark`` attribute their tables to
+    whatever command happened to precede them.  Lines inside fenced code
+    blocks are ignored on both sides: a ``#`` comment inside a ```` ``` ````
+    block is not a heading, and an example table inside one is not a
+    documented contract.
+
+    A heading may name several commands (``bernstein eval`` / ``bernstein
+    benchmark``); every named command owns the section's body.  Forms
+    carrying an option (``bernstein init --wizard``) document a flag on a
+    command, not a command, and are dropped.
     """
     reference = Path(__file__).resolve().parents[2] / "docs" / "reference" / "cli-reference.md"
-    text = reference.read_text(encoding="utf-8")
-    return sorted(
-        {_strip_argument_placeholders(name) for name in _DOC_COMMAND_HEADING.findall(text) if "--" not in name} - {""}
-    )
+    sections: list[tuple[tuple[str, ...], str]] = []
+    commands: tuple[str, ...] = ()
+    body: list[str] = []
+    in_fence = False
+
+    def flush() -> None:
+        if commands:
+            sections.append((commands, "\n".join(body)))
+
+    for line in reference.read_text(encoding="utf-8").splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if _HEADING.match(line):
+            flush()
+            commands = tuple(
+                dict.fromkeys(
+                    path
+                    for raw in _CMD_IN_HEADING.findall(line)
+                    if "--" not in raw and (path := _strip_argument_placeholders(raw))
+                )
+            )
+            body = []
+        else:
+            body.append(line)
+    flush()
+    return sections
+
+
+def _documented_command_paths() -> list[str]:
+    """Command paths the CLI reference documents, as space-separated words."""
+    return sorted({path for commands, _ in _reference_sections() for path in commands})
 
 
 def _resolve(path: str) -> click.Command | None:
@@ -190,43 +233,119 @@ def test_previously_orphaned_command_resolves(name: str) -> None:
 # this gate proved the *name* resolved and stopped there, so `api-check` and
 # `ab-test` became reachable while every flag the reference documented for
 # them still failed with "No such option" -- the same class of failure the
-# registration fix was meant to remove, one layer down.
+# registration fix was meant to remove, one layer down.  #3465 widened the
+# assertion from those two commands to every command the reference documents.
 #
-# Scoped to the two commands this change makes reachable.  A sweep across the
-# whole reference measures 23 commands carrying documented flags that do not
-# exist; widening the gate is tracked separately so it lands with the fixes
-# rather than as a red build.
+# Scope of the gate, stated precisely:
+#
+# * Asserted: rows of a flag table -- markdown table rows whose *first cell*
+#   starts with a backticked long option.  Every long option named in that
+#   cell (including ``--x / --no-x`` alias spellings) must be accepted by the
+#   command the section heading names, and, unless the command is listed in
+#   ``PARTIAL_FLAG_TABLES``, every long option the command really accepts
+#   must appear in some row.  Both directions fail: a doc row for a flag
+#   that does not exist, and a real flag without a doc row.
+# * Not asserted: flags mentioned in prose, in fenced code blocks, or in the
+#   purpose column of subcommand tables.  Those describe *subcommand* flags
+#   (``chat serve --driver``), which this gate cannot attribute to a single
+#   command object.  That is the one-directional limit of the check.
 
-_FLAG_ROW = re.compile(r"^\|\s*`(--[a-z][a-z0-9-]*)", re.M)
+# Commands whose flag table may document flags the command does not accept.
+# Keep this empty: an entry here records a documented invocation that exits 2.
+GHOST_FLAG_EXEMPTIONS: dict[str, str] = {}
+
+# Commands whose flag table is deliberately a subset of the real surface.
+# Every entry carries the reason the table stays partial; the reverse
+# (real -> documented) assertion is skipped for them, the forward assertion
+# is not.
+PARTIAL_FLAG_TABLES: dict[str, str] = {
+    "run": "documents the most-used subset of a ~40-flag surface; the full list is `bernstein run --help`",
+}
 
 
-def _documented_flags(command_path: str) -> set[str]:
-    """Long options the CLI reference lists in ``command_path``'s flag table."""
-    reference = Path(__file__).resolve().parents[2] / "docs" / "reference" / "cli-reference.md"
-    sections = re.split(
-        r"^#+\s+`bernstein ([a-z0-9][a-z0-9 _-]*)`\s*$",
-        reference.read_text(encoding="utf-8"),
-        flags=re.M,
-    )
-    for name, body in zip(sections[1::2], sections[2::2], strict=False):
-        if name == command_path:
-            return set(_FLAG_ROW.findall(body))
-    return set()
+def _documented_flags(body: str) -> set[str]:
+    """Long options a section's flag table rows document.
+
+    A flag row is a table row whose first cell starts with a backticked long
+    option.  All long options in that cell count as documented, so both
+    ``| `--force` / `--hard` |`` and ``| `--last / --no-last` |`` document
+    two flags.  Rows starting with a positional placeholder or a subcommand
+    name are not flag rows.
+    """
+    flags: set[str] = set()
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith("|"):
+            continue
+        first_cell = stripped.split("|")[1] if "|" in stripped[1:] else stripped[1:]
+        if re.match(r"^\s*`--[a-z]", first_cell):
+            flags.update(_LONG_FLAG.findall(first_cell))
+    return flags
 
 
-@pytest.mark.parametrize("name", ["api-check", "ab-test", "impact api", "impact deps", "dep-impact"])
-def test_documented_flags_exist(name: str) -> None:
+def _real_flags(command: click.Command) -> set[str]:
+    return {opt for param in command.params for opt in (*param.opts, *param.secondary_opts) if opt.startswith("--")}
+
+
+def _sections_with_flag_tables() -> list[pytest.param]:
+    return [
+        pytest.param(path, flags, id=path)
+        for commands, body in _reference_sections()
+        if (flags := _documented_flags(body))
+        for path in commands
+    ]
+
+
+@pytest.mark.parametrize(("name", "documented"), _sections_with_flag_tables())
+def test_documented_flags_exist(name: str, documented: set[str]) -> None:
     """Every flag the reference documents is accepted by the command.
 
     A documented flag the parser rejects fails at ``No such option`` before
     the command body runs, which reads to the user exactly like the command
     being missing.
     """
+    if name in GHOST_FLAG_EXEMPTIONS:
+        pytest.skip(f"known-broken flag table: {GHOST_FLAG_EXEMPTIONS[name]}")
     command = _resolve(name)
-    assert command is not None
-    real = {opt for param in command.params for opt in param.opts if opt.startswith("--")}
-    documented = _documented_flags(name)
-    assert documented, f"no flag table found for `bernstein {name}` in the CLI reference"
-    assert not (documented - real), (
-        f"`bernstein {name}` documents flags it does not accept: {sorted(documented - real)}"
-    )
+    assert command is not None, f"`bernstein {name}` is documented but not registered"
+    ghosts = sorted(documented - _real_flags(command))
+    assert not ghosts, f"`bernstein {name}` documents flags it does not accept: {ghosts}"
+
+
+@pytest.mark.parametrize(("name", "documented"), _sections_with_flag_tables())
+def test_real_flags_are_documented(name: str, documented: set[str]) -> None:
+    """Every long option a command accepts appears in its flag table.
+
+    The reverse direction of the gate: a flag added to a command without a
+    doc row fails here, so the reference cannot silently fall behind the
+    surface it documents.  Commands without a flag table document nothing to
+    contradict and are out of scope; deliberately abbreviated tables are
+    named in ``PARTIAL_FLAG_TABLES`` with the reason.
+    """
+    if name in PARTIAL_FLAG_TABLES:
+        pytest.skip(f"deliberately partial table: {PARTIAL_FLAG_TABLES[name]}")
+    command = _resolve(name)
+    assert command is not None, f"`bernstein {name}` is documented but not registered"
+    undocumented = sorted(_real_flags(command) - documented - {"--help"})
+    assert not undocumented, f"`bernstein {name}` accepts flags its reference table does not list: {undocumented}"
+
+
+@pytest.mark.parametrize(
+    "exemptions",
+    [GHOST_FLAG_EXEMPTIONS, PARTIAL_FLAG_TABLES],
+    ids=["ghost-flag-exemptions", "partial-flag-tables"],
+)
+def test_flag_gate_exemptions_name_live_documented_commands(exemptions: dict[str, str]) -> None:
+    """Every exemption names a command that still exists and still has a table.
+
+    An entry for a renamed or undocumented command would exempt nothing while
+    reading as if it did; forcing the sets to track the live surface means
+    they can only shrink meaningfully, never rot.
+    """
+    documented_with_tables = {name for param in _sections_with_flag_tables() for name in (param.values[0],)}
+    for name, reason in exemptions.items():
+        assert reason.strip(), f"exemption for `bernstein {name}` carries no reason"
+        assert _resolve(name) is not None, f"exempted command `bernstein {name}` is not registered any more"
+        assert name in documented_with_tables, (
+            f"exempted command `bernstein {name}` no longer has a flag table in the reference"
+        )
