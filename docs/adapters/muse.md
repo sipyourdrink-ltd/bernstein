@@ -16,10 +16,22 @@ curl -fsSL https://dev.meta.ai/install.sh | sh
 ```
 
 Static binary for macOS/Linux (x86_64/arm64); no native Windows support
-(the vendor's documented route there is WSL2). Interactive use signs in
-via a browser device-code flow; unattended runs authenticate with the
-`META_API_KEY` environment variable, which is the only credential the
-adapter passes through the filtered worker environment.
+(the vendor's documented route there is WSL2). Two authentication paths
+work under the adapter's filtered worker environment:
+
+* `META_API_KEY` - the vendor-documented variable for unattended runs
+  (CI, headless workers); it is the only credential the adapter
+  explicitly passes through.
+* A pre-authenticated login session - interactive `muse` sign-in uses a
+  browser device-code flow and stores its session state under `$HOME`,
+  which survives the environment filter, so a machine where the operator
+  has already signed in needs no API key.
+
+With neither in place a worker cannot answer Muse Code's interactive
+sign-in, so set `META_API_KEY` for any unattended run. A run stuck on
+authentication surfaces in the session log
+(`.sdd/runtime/<session>.log`) and is reaped by the adapter's timeout
+watchdog rather than hanging forever.
 
 ```bash
 export META_API_KEY=...

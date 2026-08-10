@@ -50,6 +50,7 @@ _DEFAULT_SMOKE_MODELS: dict[str, str] = {
     "gemini": "gemini-3-flash",
     "kiro": "sonnet",
     "kilo": "sonnet",
+    "muse": "spark",
     "opencode": "gpt-5.4-mini",
     "qwen": "qwen-coder",
 }

@@ -73,17 +73,65 @@ def test_spawn_passes_explicit_vendor_model_id_through(tmp_path: Path) -> None:
     assert inner[1:3] == ["--model", "muse-spark-2.0-preview"]
 
 
+@pytest.mark.parametrize("tier", ["sonnet", "opus", "haiku", "Sonnet"])
+def test_spawn_maps_claude_tier_names_to_the_vendor_default(tmp_path: Path, tier: str) -> None:
+    """The shared selectors emit Claude tier names (the ``sonnet`` default
+    reaches every adapter); Muse cannot run them, so they map onto the
+    vendor default instead of failing before Popen - the same safety net
+    the Codex and Copilot adapters use."""
+    adapter = MuseAdapter()
+    proc_mock = make_popen_mock(803)
+
+    with patch("bernstein.adapters.muse.subprocess.Popen", return_value=proc_mock) as popen:
+        _spawn(adapter, tmp_path, model=tier)
+
+    inner = inner_cmd(popen.call_args.args[0])
+    assert inner[1:3] == ["--model", DEFAULT_MODEL]
+
+
 def test_spawn_unknown_logical_model_fails_loudly(tmp_path: Path) -> None:
     """Single-model vendor lineup: never silently remap a foreign name."""
     adapter = MuseAdapter()
 
     with (
         patch("bernstein.adapters.muse.subprocess.Popen") as popen,
-        pytest.raises(ValueError, match="sonnet"),
+        pytest.raises(ValueError, match="gpt-6-nano"),
     ):
-        _spawn(adapter, tmp_path, model="sonnet")
+        _spawn(adapter, tmp_path, model="gpt-6-nano")
 
     popen.assert_not_called()
+
+
+def test_spawn_appends_system_addendum_to_the_prompt(tmp_path: Path) -> None:
+    """Muse has no separate system-prompt channel; a non-empty addendum
+    must reach the agent by riding on the exec prompt (base contract
+    fallback), or completion/signal/heartbeat instructions are lost."""
+    adapter = MuseAdapter()
+    proc_mock = make_popen_mock(804)
+
+    with patch("bernstein.adapters.muse.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="fix the bug",
+            workdir=tmp_path,
+            model_config=ModelConfig(model=DEFAULT_MODEL, effort="high"),
+            session_id="muse-s1",
+            system_addendum="When done, POST /complete.",
+        )
+
+    inner = inner_cmd(popen.call_args.args[0])
+    assert inner[:5] == ["muse", "--model", DEFAULT_MODEL, "--disable-approval", "exec"]
+    assert inner[5] == "fix the bug\n\nWhen done, POST /complete."
+
+
+def test_spawn_empty_addendum_leaves_prompt_untouched(tmp_path: Path) -> None:
+    adapter = MuseAdapter()
+    proc_mock = make_popen_mock(805)
+
+    with patch("bernstein.adapters.muse.subprocess.Popen", return_value=proc_mock) as popen:
+        _spawn(adapter, tmp_path, prompt="just the task")
+
+    inner = inner_cmd(popen.call_args.args[0])
+    assert inner[-1] == "just the task"
 
 
 # ---------------------------------------------------------------------------

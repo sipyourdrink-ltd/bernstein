@@ -33,6 +33,7 @@ https://dev.meta.ai/docs/muse-code/extending.md before wiring up):
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,8 @@ if TYPE_CHECKING:
 
     from bernstein.core.models import ModelConfig
 
+logger = logging.getLogger(__name__)
+
 #: Documented default model (single-model vendor lineup today).
 DEFAULT_MODEL = "muse-spark-1.2"
 
@@ -62,24 +65,47 @@ _MODEL_MAP: dict[str, str] = {
     DEFAULT_MODEL: DEFAULT_MODEL,
 }
 
+# The batch / heuristic selectors emit Claude cascade tier names
+# (opus / sonnet / haiku) on almost every run - including the shared
+# ``sonnet`` default that plain ``run --cli muse`` and ``test-adapter``
+# inherit. They are not Muse model ids, so map them onto the vendor
+# default instead of failing before Popen (the same last-resort safety
+# net the Codex and Copilot adapters use). The real selection fix lives
+# in the spawner; genuinely unknown names still fail loudly below.
+_CLAUDE_TIER_MODELS: frozenset[str] = frozenset({"opus", "sonnet", "haiku"})
+_tier_notice_emitted = False
+
 
 def _resolve_model(model: str) -> str:
     """Resolve a Bernstein model name onto a Muse Code model id.
 
     Args:
         model: Logical name or explicit vendor model id. Empty selects
-            the documented default.
+            the documented default; a Claude cascade tier name maps onto
+            the default with a once-per-process notice.
 
     Returns:
         The vendor model id to pass via ``--model``.
 
     Raises:
-        ValueError: When ``model`` is neither a known logical name nor
-            an explicit ``muse-*`` vendor id. The vendor lineup is a
-            single model family, so a foreign logical name (e.g.
-            ``"sonnet"``) is a routing mistake to surface, not remap.
+        ValueError: When ``model`` is neither a known logical name, a
+            Claude cascade tier name, nor an explicit ``muse-*`` vendor
+            id. The vendor lineup is a single model family, so any other
+            foreign name is a routing mistake to surface, not remap.
     """
     if not model:
+        return DEFAULT_MODEL
+    if model.lower() in _CLAUDE_TIER_MODELS:
+        global _tier_notice_emitted
+        if not _tier_notice_emitted:
+            logger.info(
+                "MuseAdapter: model %r is a Claude tier name Muse Code cannot run; "
+                "using %r instead. Set role_model_policy.<role>.model or "
+                "default_model to a 'muse-*' model id to choose explicitly.",
+                model,
+                DEFAULT_MODEL,
+            )
+            _tier_notice_emitted = True
         return DEFAULT_MODEL
     mapped = _MODEL_MAP.get(model)
     if mapped is not None:
@@ -128,7 +154,11 @@ class MuseAdapter(CLIAdapter):
             timeout_seconds: Process timeout in seconds.
             task_scope: Task scope hint (unused by Muse Code).
             budget_multiplier: Multiplier on scope budget (unused).
-            system_addendum: Protocol-critical system instructions (unused).
+            system_addendum: Protocol-critical system instructions
+                (completion, signal-check, heartbeat). Muse Code has no
+                separate system-prompt channel, so a non-empty addendum
+                is appended to the user prompt - the documented fallback
+                in :meth:`CLIAdapter.spawn`.
             multimodal_context: Attachments; refused, Muse Code runs text-only here.
 
         Returns:
@@ -146,7 +176,11 @@ class MuseAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = ["muse", "--model", model_id, "--disable-approval", "exec", prompt]
+        # No separate system-prompt channel: merge the protocol-critical
+        # addendum into the prompt so completion/signal/heartbeat
+        # instructions actually reach the agent (base contract fallback).
+        full_prompt = f"{prompt}\n\n{system_addendum}".rstrip() if system_addendum else prompt
+        cmd = ["muse", "--model", model_id, "--disable-approval", "exec", full_prompt]
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
