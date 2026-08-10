@@ -423,7 +423,7 @@ class TaskListWidget(DataTable[Text]):
         """
         # Build a lookup of incoming rows by task_id
         incoming: dict[str, TaskRow] = {r.task_id: r for r in rows}
-        existing_keys: set[str] = set(self.rows)
+        existing_keys: set[str] = {str(key) for key in self.rows}
 
         # Remove rows no longer present
         for key in existing_keys - incoming.keys():
