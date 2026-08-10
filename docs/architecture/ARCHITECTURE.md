@@ -291,7 +291,7 @@ class CLIAdapter(ABC):
     def detect_tier(self) -> ApiTierInfo | None: ...  # optional, defaults to None
 ```
 
-`task_scope` and `budget_multiplier` feed per-task budget caps, `system_addendum` carries protocol-critical instructions through a system-prompt channel that survives prompt truncation, and `multimodal_context` passes base64-encoded attachments to multimodal-capable adapters (others must raise `CapabilityRefusal` before spawning). See the docstrings in `adapters/base.py` for the full contract.
+`task_scope` and `budget_multiplier` feed per-task budget caps. `system_addendum` carries protocol-critical instructions (completion, heartbeat, signal-check): adapters that support a separate system-prompt channel (e.g. Claude Code's `--append-system-prompt`) inject it there, where it survives prompt truncation; others append it to the user prompt as a fallback, and a few adapters do not consume it at all - check the target adapter before relying on it. `multimodal_context` passes base64-encoded attachments to multimodal-capable adapters (others must raise `CapabilityRefusal` before spawning). See the docstrings in `adapters/base.py` for the full contract.
 
 The `CachingAdapter` wrapper in `adapters/caching_adapter.py` transparently deduplicates system prompt prefixes across agents, saving tokens on repeated spawns.
 
