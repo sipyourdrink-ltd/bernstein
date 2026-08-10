@@ -249,3 +249,147 @@ def test_publish_workflow_mcp_registry_is_idempotent() -> None:
     # The publish step guards on the duplicate-version marker and exits 0 for it.
     assert "duplicate version" in workflow
     assert "idempotent" in workflow.lower()
+
+
+# --- Generator-side schema validation of rendered root manifests ---------
+
+
+def _write_json(path: Path, data: object) -> Path:
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _plugin_source_fixture(**overrides: object) -> dict[str, object]:
+    source: dict[str, object] = {
+        "name": "bernstein",
+        "description": "orchestrator",
+        "license": "Apache-2.0",
+        "keywords": ["agents"],
+    }
+    source.update(overrides)
+    return source
+
+
+def test_render_root_plugin_json_rejects_malformed_source(tmp_path: Path) -> None:
+    """A schema-invalid .plugin/plugin.json must fail generation, not ship."""
+    module = _load_gen_module()
+    module.PLUGIN_JSON = _write_json(tmp_path / "plugin.json", _plugin_source_fixture(name=42))
+    try:
+        module.render_root_plugin_json("9.9.9")
+    except module.ManifestValidationError as exc:
+        assert "$.name" in str(exc)
+        assert "string" in str(exc)
+    else:
+        raise AssertionError("numeric name must raise ManifestValidationError")
+
+
+def test_render_root_plugin_json_rejects_string_keywords(tmp_path: Path) -> None:
+    module = _load_gen_module()
+    module.PLUGIN_JSON = _write_json(tmp_path / "plugin.json", _plugin_source_fixture(keywords="agents"))
+    try:
+        module.render_root_plugin_json("9.9.9")
+    except module.ManifestValidationError as exc:
+        assert "$.keywords" in str(exc)
+        assert "array" in str(exc)
+    else:
+        raise AssertionError("string keywords must raise ManifestValidationError")
+
+
+def test_render_root_plugin_json_rejects_bad_name_pattern(tmp_path: Path) -> None:
+    module = _load_gen_module()
+    module.PLUGIN_JSON = _write_json(tmp_path / "plugin.json", _plugin_source_fixture(name="Bad..Name"))
+    try:
+        module.render_root_plugin_json("9.9.9")
+    except module.ManifestValidationError as exc:
+        assert "$.name" in str(exc)
+        assert "pattern" in str(exc)
+    else:
+        raise AssertionError("pattern-violating name must raise ManifestValidationError")
+
+
+def test_render_root_mcp_json_rejects_stdio_without_command(tmp_path: Path) -> None:
+    """A stdio server entry without a command must fail generation."""
+    module = _load_gen_module()
+    module.MCP_JSON = _write_json(tmp_path / "mcp.json", {"mcpServers": {"broken": {"args": ["serve"]}}})
+    try:
+        module.render_root_mcp_json()
+    except module.ManifestValidationError as exc:
+        assert "$.mcpServers.broken" in str(exc)
+        assert "command" in str(exc)
+    else:
+        raise AssertionError("stdio entry without command must raise ManifestValidationError")
+
+
+def test_render_root_mcp_json_rejects_unknown_transport(tmp_path: Path) -> None:
+    module = _load_gen_module()
+    module.MCP_JSON = _write_json(
+        tmp_path / "mcp.json",
+        {"mcpServers": {"ws": {"type": "websocket", "url": "wss://example.invalid"}}},
+    )
+    try:
+        module.render_root_mcp_json()
+    except module.ManifestValidationError as exc:
+        assert "$.mcpServers.ws" in str(exc)
+    else:
+        raise AssertionError("unknown transport type must raise ManifestValidationError")
+
+
+def test_render_root_mcp_json_rejects_stray_server_keys(tmp_path: Path) -> None:
+    module = _load_gen_module()
+    module.MCP_JSON = _write_json(
+        tmp_path / "mcp.json",
+        {"mcpServers": {"bernstein": {"command": "bernstein", "restart": True}}},
+    )
+    try:
+        module.render_root_mcp_json()
+    except module.ManifestValidationError as exc:
+        assert "$.mcpServers.bernstein" in str(exc)
+    else:
+        raise AssertionError("stray server keys must raise ManifestValidationError")
+
+
+def test_render_root_mcp_json_rejects_reserved_env_names(tmp_path: Path) -> None:
+    """The spec reserves PLUGIN_ROOT / PLUGIN_DATA env names for the host."""
+    module = _load_gen_module()
+    module.MCP_JSON = _write_json(
+        tmp_path / "mcp.json",
+        {"mcpServers": {"bernstein": {"command": "bernstein", "env": {"PLUGIN_ROOT": "/x"}}}},
+    )
+    try:
+        module.render_root_mcp_json()
+    except module.ManifestValidationError as exc:
+        assert "PLUGIN_ROOT" in str(exc)
+    else:
+        raise AssertionError("reserved env name must raise ManifestValidationError")
+
+
+def test_stdlib_schema_evaluator_agrees_with_jsonschema() -> None:
+    """The script's stdlib evaluator and the real jsonschema must agree.
+
+    The generator cannot import jsonschema (the publish job runs it with a
+    bare python3), so its evaluator is hand-rolled; this cross-checks the
+    verdict (valid / invalid) of both implementations over representative
+    documents so the two cannot silently diverge.
+    """
+    import jsonschema
+
+    module = _load_gen_module()
+    cases: list[tuple[str, object]] = [
+        ("plugin.schema.json", json.loads((_REPO / "plugin.json").read_text(encoding="utf-8"))),
+        ("mcp.schema.json", json.loads((_REPO / "mcp.json").read_text(encoding="utf-8"))),
+        ("plugin.schema.json", {"$schema": _PLUGIN_SCHEMA_ID, "name": 42}),
+        ("plugin.schema.json", {"$schema": _PLUGIN_SCHEMA_ID, "name": "ok", "keywords": "x"}),
+        ("plugin.schema.json", {"$schema": _PLUGIN_SCHEMA_ID, "name": "ok", "surprise": 1}),
+        ("mcp.schema.json", {"$schema": _MCP_SCHEMA_ID, "mcpServers": {"a": {"type": "stdio"}}}),
+        ("mcp.schema.json", {"$schema": _MCP_SCHEMA_ID, "mcpServers": {"a": {"type": "sse", "url": "https://x"}}}),
+        ("mcp.schema.json", {"$schema": _MCP_SCHEMA_ID, "mcpServers": {"a": {"type": "nope"}}}),
+        ("mcp.schema.json", {"$schema": "https://wrong", "mcpServers": {}}),
+    ]
+    for schema_file, document in cases:
+        schema = json.loads((_AGENT_PLUGINS_SCHEMA_DIR / schema_file).read_text(encoding="utf-8"))
+        reference_valid = jsonschema.Draft202012Validator(schema).is_valid(document)
+        stdlib_errors = module._schema_errors(document, schema, schema)
+        assert (not stdlib_errors) == reference_valid, (
+            f"evaluator disagreement on {schema_file} for {document!r}: "
+            f"jsonschema valid={reference_valid}, stdlib errors={stdlib_errors}"
+        )
