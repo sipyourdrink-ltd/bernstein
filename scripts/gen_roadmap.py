@@ -74,15 +74,26 @@ def _due_label(milestone: dict[str, Any]) -> str:
     # GitHub returns the Z spelling today. Pattern-matching that exact
     # spelling would make the scheduled job die with a stack trace instead
     # of a roadmap the first time an offset form comes back, so parse both.
-    parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    parsed = _parse_due(str(raw))
     return f"due {parsed.day} {parsed.strftime('%B %Y')}"
 
 
-def _sort_key(milestone: dict[str, Any]) -> tuple[int, str]:
-    """Dated milestones first, in date order; undated ones last, by title."""
+def _parse_due(raw: str) -> datetime:
+    """Parse either ISO 8601 spelling GitHub may return for ``due_on``."""
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
+def _sort_key(milestone: dict[str, Any]) -> tuple[int, datetime | str]:
+    """Dated milestones first, in date order; undated ones last, by title.
+
+    Ordering on the parsed instant rather than the raw string: the two
+    ISO spellings sort differently as text, so a mixed set would come out
+    in the wrong chronology while every individual date still rendered
+    correctly - the kind of wrong that looks right.
+    """
     raw = milestone.get("due_on")
     if raw:
-        return (0, str(raw))
+        return (0, _parse_due(str(raw)))
     return (1, str(milestone.get("title", "")))
 
 

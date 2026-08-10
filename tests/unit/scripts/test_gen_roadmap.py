@@ -148,3 +148,13 @@ class TestHostileMilestoneData:
         spliced = gen_roadmap.splice(doc, block)
         assert spliced.count(gen_roadmap.START) == 1
         assert spliced.count(gen_roadmap.END) == 1
+
+    def test_mixed_spellings_sort_chronologically(self) -> None:
+        """Text order and time order disagree across the two ISO spellings."""
+        out = gen_roadmap.render(
+            [
+                _milestone("later", "2026-09-21T00:00:00+00:00"),
+                _milestone("earlier", "2026-08-24T00:00:00Z"),
+            ]
+        )
+        assert out.index("earlier") < out.index("later")
