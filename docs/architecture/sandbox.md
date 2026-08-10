@@ -317,11 +317,23 @@ diagnosable error, never a traceback.
 |---|---|---|
 | 0 | `verified` | Anchored to the expected signer, signature + consistency intact, and every named blob (base + winner + losers) re-hashed intact against CAS. |
 | 1 | `failed` | Bad signature/consistency, a **tampered** blob (present, wrong hash), or a **malformed** digest field. Highest precedence — an integrity alarm. |
-| 4 | `unreadable` | A named blob could not be read on this host (permissions, or an anomalous symlinked blob the verifier refuses to dereference). A property of the reader, not the record. |
+| 4 | `unreadable` | A named blob could not be read on this host (permissions, or an anomalous symlink the verifier refuses to dereference). A property of the reader, not the record. |
 | 2 | `incomplete` | A named blob is **absent** from CAS (GC / retention / restart). An ordinary operational event, never conflated with tampering. |
 | 3 | `unanchored` | Signature + blobs check out, but `--expected-keyid` was omitted or empty (an unset env var counts as empty), so *whose* key signed it is unproven. |
 
 Precedence when several apply: `failed` > `unreadable` > `incomplete` (absent) > `unanchored` > `verified`.
+
+**Symlink refusal, and where it stops.** A CAS blob is read by walking the store
+one path component at a time, each open carrying `O_NOFOLLOW`, so a symlink
+planted at the blob *or* at the shard directory above it is refused by the open
+itself rather than by a check that could be raced. The store root is exempt on
+purpose: pointing it at another volume is operator configuration, not an attack.
+The refusal needs `os.open` to accept `dir_fd` and the platform to define
+`O_NOFOLLOW`. **It is POSIX-only.** Windows has neither, and there the read
+falls back to guarding the final component alone — the same protection as
+before, stated rather than implied. A refused symlink is `unreadable` (exit 4)
+on every platform that can refuse it; it is never reported as `absent`, which
+would clear the record of a suspicion the reader cannot rule out.
 
 `fork-race` requires a microVM-capable host; on an unsupported host it
 fails loudly. The determinism/tamper guarantees are validated

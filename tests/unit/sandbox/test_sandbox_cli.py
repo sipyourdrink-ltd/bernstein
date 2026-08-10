@@ -611,3 +611,31 @@ async def test_receipt_verify_symlinked_blob_is_unreadable_not_followed(tmp_path
     assert res.exit_code == 4, res.output  # unreadable, NOT 2 (absent) or 0 (intact)
     assert "unreadable" in res.output.lower()
     assert "OK" not in res.output
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX symlink semantics")
+@pytest.mark.asyncio
+async def test_receipt_verify_symlinked_shard_dir_is_unreadable_not_followed(tmp_path: Path) -> None:
+    """The same guarantee one level up (#3561). O_NOFOLLOW on the blob open
+    covered the final component only, so a symlink at the shard directory was
+    followed and the verdict came from wherever it pointed. The blob here is
+    real and its bytes are the ones the digest promises, and it still must not
+    be read through a redirected parent: unreadable (exit 4), never intact."""
+    receipt, receipt_path, cas_dir = await _make_receipt(tmp_path)
+    base = receipt.base_snapshot_digest
+    shard = cas_dir / base[:2]
+
+    # Move the shard aside and link to it. Following the link would find the
+    # authentic blob and report intact, so a verdict of intact here means the
+    # parent component was traversed - the defect, stated as a test.
+    elsewhere = tmp_path / "attacker-controlled-shard"
+    shard.rename(elsewhere)
+    shard.symlink_to(elsewhere, target_is_directory=True)
+
+    res = CliRunner().invoke(
+        sandbox_group,
+        ["receipt", "verify", str(receipt_path), "--cas-dir", str(cas_dir), "--expected-keyid", receipt.keyid],
+    )
+    assert res.exit_code == 4, res.output  # unreadable, NOT 2 (absent) or 0 (intact)
+    assert "unreadable" in res.output.lower()
+    assert "OK" not in res.output
