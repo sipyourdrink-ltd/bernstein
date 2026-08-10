@@ -30,14 +30,23 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      # A pull request opened under GITHUB_TOKEN never triggers the required
+      # contexts, so it can never be merged - it would sit open forever
+      # looking green. Failing here makes the missing secret visible once
+      # instead of producing an unmergeable pull request every week.
+      - name: Require BOT_PAT
+        env:
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+        run: |
+          if [ -z "${BOT_PAT}" ]; then
+            echo "::error::BOT_PAT is not configured; a refresh PR opened under GITHUB_TOKEN would never run the required checks"
+            exit 1
+          fi
+
       # Credentials persist because the last step pushes the refresh branch.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
         with:
-          # BOT_PAT when present, so the refresh PR actually runs CI.
-          # A pull request opened under GITHUB_TOKEN never triggers the
-          # required contexts, and reads as green while never having
-          # been checked.
-          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.BOT_PAT }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -50,7 +59,7 @@ jobs:
 
       - name: Open a pull request if the roadmap moved
         env:
-          GH_TOKEN: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
         run: |
           set -euo pipefail
           if git diff --quiet -- ROADMAP.md; then
@@ -61,7 +70,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B chore/roadmap-refresh
           git commit -q -m "docs(roadmap): refresh the milestone projection" -- ROADMAP.md
-          git push -f origin chore/roadmap-refresh
+          # --force-with-lease, not -f: if someone else moved the refresh
+          # branch, stop rather than overwrite their work.
+          git fetch -q origin chore/roadmap-refresh || true
+          git push --force-with-lease origin chore/roadmap-refresh
           existing="$(gh pr list --head chore/roadmap-refresh --state open --json number --jq '.[].number')"
           if [ -z "$existing" ]; then
             gh pr create \

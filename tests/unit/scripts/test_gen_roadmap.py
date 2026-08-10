@@ -85,10 +85,40 @@ class TestSplice:
         assert gen_roadmap.splice(once, "new") == once
 
     def test_missing_markers_raise_rather_than_write_nothing(self) -> None:
-        with pytest.raises(ValueError, match="markers"):
+        with pytest.raises(ValueError, match="marker"):
             gen_roadmap.splice("no markers here\n", "new")
 
     def test_reversed_markers_raise(self) -> None:
         broken = f"{gen_roadmap.END}\n{gen_roadmap.START}\n"
-        with pytest.raises(ValueError, match="markers"):
+        with pytest.raises(ValueError, match="marker"):
             gen_roadmap.splice(broken, "new")
+
+    def test_duplicate_marker_pair_is_refused(self) -> None:
+        """Two pairs would splice between mismatched markers and eat the middle."""
+        doubled = self._DOC + self._DOC
+        with pytest.raises(ValueError, match="exactly one"):
+            gen_roadmap.splice(doubled, "new")
+
+
+class TestTruncationGuard:
+    """A full page means milestones were dropped, and a dropped milestone
+    disappears from the roadmap without anything going red."""
+
+    def test_full_page_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        page = [_milestone(f"v{i}", None) for i in range(gen_roadmap._PAGE_SIZE)]
+
+        class _Response:
+            def read(self) -> bytes:
+                import json
+
+                return json.dumps(page).encode()
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        monkeypatch.setattr(gen_roadmap.urllib.request, "urlopen", lambda *a, **k: _Response())
+        with pytest.raises(ValueError, match="at least"):
+            gen_roadmap.fetch_milestones("o/r", None)

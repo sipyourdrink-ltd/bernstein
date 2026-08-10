@@ -35,12 +35,13 @@ from typing import Any
 START = "<!-- roadmap:generated:start -->"
 END = "<!-- roadmap:generated:end -->"
 DEFAULT_REPO = "sipyourdrink-ltd/bernstein"
+_PAGE_SIZE = 100
 
 
 def fetch_milestones(repo: str, token: str | None) -> list[dict[str, Any]]:
     """Read the open milestones for ``repo`` from the GitHub REST API."""
     request = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/milestones?state=open&per_page=100",
+        f"https://api.github.com/repos/{repo}/milestones?state=open&per_page={_PAGE_SIZE}",
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": "bernstein-roadmap",
@@ -49,6 +50,14 @@ def fetch_milestones(repo: str, token: str | None) -> list[dict[str, Any]]:
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         payload: list[dict[str, Any]] = json.load(response)
+    if len(payload) >= _PAGE_SIZE:
+        # Refusing beats paginating here. A truncated page would silently
+        # drop milestones from the roadmap, and a repo with 100 open
+        # milestones has a planning problem this script cannot fix.
+        raise ValueError(
+            f"{repo} has at least {_PAGE_SIZE} open milestones; this script reads one page "
+            "and would silently drop the rest"
+        )
     return payload
 
 
@@ -92,10 +101,15 @@ def render(milestones: list[dict[str, Any]]) -> str:
 
 def splice(text: str, block: str) -> str:
     """Replace the content between the generated markers with ``block``."""
+    if text.count(START) != 1 or text.count(END) != 1:
+        # Two marker pairs would splice between mismatched ones and delete
+        # whatever sits in between, which is exactly the failure a
+        # generated block is supposed to make impossible.
+        raise ValueError(f"ROADMAP.md must carry exactly one {START} / {END} marker pair")
     start = text.find(START)
     end = text.find(END)
-    if start == -1 or end == -1 or end < start:
-        raise ValueError(f"ROADMAP.md is missing the {START} / {END} markers")
+    if end < start:
+        raise ValueError(f"ROADMAP.md has the {START} / {END} markers in the wrong order")
     return f"{text[: start + len(START)]}\n\n{block}\n\n{text[end:]}"
 
 

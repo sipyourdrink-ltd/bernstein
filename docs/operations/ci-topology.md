@@ -62,6 +62,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/review-bot-ack-publish.yml | Review-bot acknowledgement publisher | workflow_run | {"cancel-in-progress": "false", "group": "review-bot-ack-publish-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.id }}"} | 2 |
 | .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | merge_group, pull_request, pull_request_review | {"cancel-in-progress": "true", "group": "review-bot-ack-${{ github.event.pull_request.number \|\| github.ref }}"} | 2 |
 | .github/workflows/review-bot-sweep.yml | Review-bot post-merge sweep | schedule, workflow_dispatch | - | 1 |
+| .github/workflows/roadmap-refresh.yml | Roadmap refresh | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "roadmap-refresh"} | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-nightly.yml | soc2-evidence-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
@@ -129,6 +130,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/review-bot-ack-publish.yml | publish: review-bot-ack-publisher<br>republish: review-bot-ack-republisher |
 | .github/workflows/review-bot-ack.yml | merge-group-verify: review-bot-ack-queue-verify<br>pr-gate: review-bot-ack-runner |
 | .github/workflows/review-bot-sweep.yml | sweep: Sweep recently merged PRs for unprocessed bot findings |
+| .github/workflows/roadmap-refresh.yml | refresh: Regenerate the milestone projection |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/soc2-evidence-nightly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
@@ -196,6 +198,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/review-bot-ack-publish.yml | publish: {"actions": "read", "checks": "write", "contents": "read"}<br>republish: {"actions": "write", "checks": "read", "contents": "read"} | - |
 | .github/workflows/review-bot-ack.yml | merge-group-verify: {"checks": "write", "contents": "read", "pull-requests": "read"}<br>pr-gate: {"checks": "write", "contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, LANDING_REPO_PAT |
+| .github/workflows/roadmap-refresh.yml | workflow: {"contents": "read"}<br>refresh: {"contents": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
 | .github/workflows/soc2-evidence-nightly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED |
