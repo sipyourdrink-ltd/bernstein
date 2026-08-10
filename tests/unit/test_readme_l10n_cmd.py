@@ -13,12 +13,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner, Result
 
 from bernstein.cli.commands.readme_l10n_cmd import readme_l10n_cmd
 from bernstein.core.knowledge.readme_l10n import (
     HEADER_SECTION,
     Section,
+    load_config,
+    load_owners,
+    load_settings,
     section_hash,
     split_sections,
 )
@@ -306,3 +310,180 @@ class TestCoreSplitting:
         footer = sections[-1].body
         assert "Footer line" in footer
         assert "four stages" not in footer
+
+
+def _stale_repo(tmp_path: Path, *, owners: str = "") -> Path:
+    """A fixture whose English source moved on after the translation bound it."""
+    repo = _write_fixture(tmp_path, zh=_zh_readme(_en_sections()))
+    (repo / "README.md").write_text(
+        EN_README.replace(
+            "pip and uv are covered in the install guide.",
+            "pip, uv, brew and dnf are covered in the install guide.",
+        ),
+        encoding="utf-8",
+    )
+    if owners:
+        (repo / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nversion = '0'\n\n"
+            "[tool.bernstein.readme-l10n]\nlanguages = ['zh-Hans']\n\n" + owners,
+            encoding="utf-8",
+        )
+    return repo
+
+
+class TestOwnerReporting:
+    """A drift report has to name someone who reads the language.
+
+    Without it every stale translation lands on whoever merged last,
+    which is how the earlier translation set went stale unnoticed.
+    """
+
+    def test_load_owners_reads_the_table(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.bernstein.readme-l10n]\nlanguages = ['zh-Hans']\n\n"
+            '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@someone"\n',
+            encoding="utf-8",
+        )
+        assert load_owners(tmp_path / "pyproject.toml") == {"zh-Hans": "@someone"}
+
+    def test_absent_owners_table_is_empty_not_an_error(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.bernstein.readme-l10n]\nlanguages = ['zh-Hans']\n", encoding="utf-8"
+        )
+        assert load_owners(tmp_path / "pyproject.toml") == {}
+
+    def test_blank_handle_is_a_config_error(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "  "\n', encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="zh-Hans"):
+            load_owners(tmp_path / "pyproject.toml")
+
+    def test_verify_names_the_owner_on_drift(self, tmp_path: Path) -> None:
+        repo = _stale_repo(
+            tmp_path,
+            owners='[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@translator"\n',
+        )
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 1, result.output
+        assert "@translator" in result.output
+
+    def test_verify_says_so_when_nobody_owns_it(self, tmp_path: Path) -> None:
+        result = _run("verify", "--workdir", str(_stale_repo(tmp_path)))
+        assert result.exit_code == 1, result.output
+        assert "no owner" in result.output
+
+    def test_a_blank_handle_exits_two_not_one(self, tmp_path: Path) -> None:
+        repo = _stale_repo(tmp_path, owners='[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = ""\n')
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 2, result.output
+
+
+class TestConfigFailsClosed:
+    """A broken pyproject.toml must not read as an absent one.
+
+    Swallowing a parse error would let a stray character disable the
+    drift gate while the run still exits 0, which is the one outcome the
+    gate exists to prevent.
+    """
+
+    def test_malformed_toml_is_a_config_error_not_an_empty_language_set(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("[tool.bernstein.readme-l10n\nlanguages = [", encoding="utf-8")
+        with pytest.raises(ValueError, match="not valid TOML"):
+            load_config(tmp_path / "pyproject.toml")
+        with pytest.raises(ValueError, match="not valid TOML"):
+            load_owners(tmp_path / "pyproject.toml")
+
+    def test_absent_pyproject_stays_an_empty_config(self, tmp_path: Path) -> None:
+        assert load_config(tmp_path / "pyproject.toml") == []
+        assert load_owners(tmp_path / "pyproject.toml") == {}
+
+    def test_unreadable_pyproject_is_a_config_error(self, tmp_path: Path) -> None:
+        # A directory at the config path: exists, cannot be read as a file.
+        (tmp_path / "pyproject.toml").mkdir()
+        with pytest.raises(ValueError, match="cannot read"):
+            load_config(tmp_path / "pyproject.toml")
+
+    def test_verify_exits_two_on_malformed_toml(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text(EN_README, encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text("[tool.bernstein.readme-l10n\n", encoding="utf-8")
+        result = _run("verify", "--workdir", str(tmp_path))
+        assert result.exit_code == 2, result.output
+
+    def test_handle_with_a_newline_cannot_forge_output_lines(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@ok\\nOK       all translated README(s) in sync"\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="control characters"):
+            load_owners(tmp_path / "pyproject.toml")
+
+    def test_handle_with_an_escape_sequence_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"zh-TW" = "@ok\\u001b[2K"\n', encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="control characters"):
+            load_owners(tmp_path / "pyproject.toml")
+
+
+class TestHandleControlRange:
+    """The refused control range covers C1, not just C0.
+
+    U+009B is a single-character CSI. A terminal reading 8-bit controls
+    acts on it exactly as it acts on the two-byte ``ESC [`` form, so a
+    handle carrying it can erase the report line it was printed on.
+    """
+
+    def test_handle_with_a_c1_csi_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@ok\\u009b2K"\n', encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="control characters"):
+            load_owners(tmp_path / "pyproject.toml")
+
+    def test_ordinary_non_ascii_handle_is_accepted(self, tmp_path: Path) -> None:
+        """The rule refuses controls, not non-ASCII: handles carry names."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"ru" = "@\u0410\u043d\u043d\u0430"\n', encoding="utf-8"
+        )
+        assert load_owners(tmp_path / "pyproject.toml") == {"ru": "@\u0410\u043d\u043d\u0430"}
+
+
+class TestSettingsParseOnce:
+    """``verify`` reads the config once, so languages and owners agree.
+
+    Two reads can straddle an edit and pair the languages of one
+    revision with the owners of another - the report would then name an
+    owner for a language that revision does not configure.
+    """
+
+    _CFG = (
+        "[tool.bernstein.readme-l10n]\nlanguages = ['zh-Hans']\n\n"
+        '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@someone"\n'
+    )
+
+    def test_returns_both_values(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(self._CFG, encoding="utf-8")
+        assert load_settings(tmp_path / "pyproject.toml") == (["zh-Hans"], {"zh-Hans": "@someone"})
+
+    def test_reads_the_file_exactly_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "pyproject.toml"
+        cfg.write_text(self._CFG, encoding="utf-8")
+        seen: list[Path] = []
+        real = Path.read_text
+
+        def counting(self: Path, *args: object, **kwargs: object) -> str:
+            seen.append(self)
+            return real(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "read_text", counting)
+        load_settings(cfg)
+        assert [q for q in seen if q == cfg] == [cfg]
+
+    def test_absent_file_is_empty_not_an_error(self, tmp_path: Path) -> None:
+        assert load_settings(tmp_path / "pyproject.toml") == ([], {})
+
+    def test_malformed_toml_fails_closed(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("[tool.bernstein\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="not valid TOML"):
+            load_settings(tmp_path / "pyproject.toml")

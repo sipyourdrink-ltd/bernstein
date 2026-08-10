@@ -50,10 +50,40 @@ Adding a language is a data change, not a code change:
 4. Run `uv run bernstein readme-l10n sync` to (re)compute every
    binding hash, then `uv run bernstein readme-l10n verify --workdir .`
    to confirm.
+5. Add yourself to `[tool.bernstein.readme-l10n.owners]`. A translation
+   is added by whoever can keep it current, not by whoever happens to
+   be merging that week:
+
+   ```toml
+   [tool.bernstein.readme-l10n.owners]
+   "zh-Hans" = "@your-handle"
+   ```
 
 A binding line for a section that does not exist in `README.md`
 makes `sync` warn; a translated section without a binding line makes
 `verify` fail with the section name.
+
+## Exit codes
+
+CI has to tell "nothing to verify" apart from "the configuration
+stopped parsing". Those are different situations and only one of them
+is fine, so they get different exit codes.
+
+| Exit | Meaning | Printed |
+|---|---|---|
+| 0 | every configured language is in sync | `OK` |
+| 0 | no `pyproject.toml`, or no configured `languages` | `SKIP` |
+| 1 | drift: stale binding, translated code block, paragraph-count mismatch, or a modified verbatim block | `DRIFT` |
+| 2 | `pyproject.toml` exists but cannot be read or parsed; `languages` malformed; `owners` table or a handle malformed (`verify`) | `CONFIG` |
+
+Both `verify` and `sync` exit 2 on an unreadable or malformed
+`pyproject.toml`. Only `verify` reads the `owners` table, so only
+`verify` can exit 2 because of it.
+
+A CI step written as `verify || exit 1` collapses 1 and 2 into one
+signal. That is fine for blocking a merge and wrong for diagnosing one:
+a stray tab in the TOML would otherwise read as "no languages
+configured", and the translations would rot behind a green check.
 
 ## What CI checks
 
@@ -109,3 +139,30 @@ stripped per line, blank lines are dropped, lines are joined with
 blank-line reflow) so the gate does not cry wolf on every formatting
 pass, while still catching any real content change to the English
 source.
+
+## Ownership
+
+The owner is the person a drift report is addressed to. When `verify`
+fails, it prints the stale section *and* the owner:
+
+```
+DRIFT    README.zh-Hans.md: section "install in 30 seconds" is stale: ...
+OWNER    README.zh-Hans.md is kept current by @your-handle
+```
+
+A language with no entry in the owners table is reported as unowned:
+
+```
+OWNER    README.zh-Hans.md has no owner in [tool.bernstein.readme-l10n.owners]
+```
+
+That is a real state, not a warning to ignore. An unowned translation is
+a removal candidate: it will drift, and the drift will land on whoever
+edited the English source, who by definition cannot check it. The repo
+carried eleven translations once, added in a single change with no gate
+and no owners; seventeen days later they were removed as stale. The gate
+prevents the silent part of that; the owners table prevents the rest.
+
+Handing a language over is a one-line change to the table, made by the
+person taking it on. Nobody is assigned a language they did not
+volunteer for.

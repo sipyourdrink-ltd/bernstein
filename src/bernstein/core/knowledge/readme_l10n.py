@@ -399,6 +399,32 @@ def binding_placement_errors(text: str) -> list[str]:
     return errors
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _read_pyproject(pyproject: Path) -> dict[str, object] | None:
+    """Parse ``pyproject.toml``; ``None`` means there is no file to read.
+
+    A file that exists but cannot be read or parsed is a configuration
+    error, not an absent configuration. Returning an empty result there
+    would let a stray tab in the TOML disable the drift gate while the
+    run still exits 0 - the gate would report SKIP on a repo whose
+    translations are silently rotting.
+    """
+    import tomllib
+
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(f"cannot read {pyproject.name}: {exc}") from exc
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"{pyproject.name} is not valid TOML: {exc}") from exc
+
+
 def load_config(pyproject: Path) -> list[str]:
     """Read the configured language set from ``[tool.bernstein.readme-l10n]``.
 
@@ -406,11 +432,12 @@ def load_config(pyproject: Path) -> list[str]:
     malformed ``languages`` entry is a hard error so a typo cannot
     silently disable the gate.
     """
-    import tomllib
+    return _languages_from(_read_pyproject(pyproject))
 
-    try:
-        data: dict[str, object] = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+
+def _languages_from(data: dict[str, object] | None) -> list[str]:
+    """Derive the language set from an already-parsed ``pyproject.toml``."""
+    if data is None:
         return []
 
     tool_raw: object = data.get("tool")
@@ -436,3 +463,65 @@ def load_config(pyproject: Path) -> list[str]:
     if not strs or len(strs) != len(langs):
         raise ValueError("[tool.bernstein.readme-l10n] languages must be a non-empty list of IETF tags")
     return strs
+
+
+def load_owners(pyproject: Path) -> dict[str, str]:
+    """Read the per-language owner map from ``[tool.bernstein.readme-l10n.owners]``.
+
+    Maps an IETF tag to the handle of whoever keeps that translation
+    current. Missing config, or a missing ``owners`` table, means no
+    language has a recorded owner - the gate still fails on drift, it
+    just cannot say who to ask. A malformed entry is a hard error for
+    the same reason a malformed ``languages`` entry is: a typo must not
+    quietly turn a language into one nobody is named for.
+    """
+    return _owners_from(_read_pyproject(pyproject))
+
+
+def _owners_from(data: dict[str, object] | None) -> dict[str, str]:
+    """Derive the owner map from an already-parsed ``pyproject.toml``."""
+    if data is None:
+        return {}
+
+    section: object = data.get("tool")
+    for key in ("bernstein", "readme-l10n", "owners"):
+        if not isinstance(section, dict):
+            return {}
+        section = cast(dict[str, object], section).get(key)
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise ValueError('[tool.bernstein.readme-l10n.owners] must be a table of ietf-tag = "handle"')
+    owners = cast(dict[str, object], section)
+    bad = sorted(tag for tag, handle in owners.items() if not isinstance(handle, str) or not handle.strip())
+    if bad:
+        raise ValueError(
+            "[tool.bernstein.readme-l10n.owners] entries must be non-empty strings; bad entries: " + ", ".join(bad)
+        )
+    # The handle is echoed into the verify output, which CI logs and
+    # humans read. A newline or an escape sequence in it would let the
+    # config forge lines in that report, so control bytes are refused
+    # rather than stripped: a handle that needs them is a typo. The
+    # refused set spans C1 as well as C0, because U+009B is a
+    # single-character CSI that a terminal reading 8-bit controls will
+    # act on exactly as it acts on the two-byte ESC form.
+    forged = sorted(tag for tag, handle in owners.items() if _CONTROL_CHARS.search(cast(str, handle)))
+    if forged:
+        raise ValueError(
+            "[tool.bernstein.readme-l10n.owners] handles may not contain control characters; bad entries: "
+            + ", ".join(forged)
+        )
+    return {tag: cast(str, handle).strip() for tag, handle in owners.items()}
+
+
+def load_settings(pyproject: Path) -> tuple[list[str], dict[str, str]]:
+    """Read languages and owners from a single parse of ``pyproject.toml``.
+
+    ``verify`` needs both. Reading the file twice would let an edit
+    landing between the two reads pair the languages of one revision
+    with the owners of another - the report would then name an owner
+    for a language that revision does not configure, or omit one it
+    does. One parse, both values, so the two can never disagree.
+    """
+    data = _read_pyproject(pyproject)
+    return _languages_from(data), _owners_from(data)
