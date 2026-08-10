@@ -269,19 +269,41 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+#: Characters that can continue a flag name. A required flag only counts as
+#: advertised when neither the character before nor the character after the
+#: match is one of these, so ``-m`` is not found inside ``--model`` and
+#: ``--instruction`` is not found inside ``--instructions``. Trailing ``=``,
+#: ``,``, ``<`` and end-of-line all remain valid terminators.
+_FLAG_NAME_CHARS = r"[A-Za-z0-9_-]"
+
+
+def _flag_pattern(flag: str) -> re.Pattern[str]:
+    """Compile a case-insensitive, token-bounded matcher for one flag."""
+    return re.compile(
+        rf"(?<!{_FLAG_NAME_CHARS}){re.escape(flag)}(?!{_FLAG_NAME_CHARS})",
+        re.IGNORECASE,
+    )
+
+
 def _capability_failures(spec: ContractSpec, help_text: str) -> list[str]:
     """Compute the list of human-readable capability failures.
 
-    Flag match is case-insensitive substring. The leading dashes already
-    make a flag unambiguous. Subcommand match is case-insensitive and
-    requires a token boundary (start/end of line or whitespace) so that
-    ``runs`` does not falsely satisfy ``run``.
+    Flag and subcommand matches are both case-insensitive and both require a
+    token boundary, so that ``runs`` does not falsely satisfy ``run`` and
+    ``--instructions`` does not falsely satisfy ``--instruction``.
+
+    The leading dashes anchor only the *start* of a flag; they say nothing
+    about where it ends. A plain substring match therefore treats a required
+    flag as present whenever upstream renames it to something that merely
+    contains it -- pluralising ``--instruction`` to ``--instructions``, or
+    dropping a ``-m`` alias while keeping ``--model``. That is the exact
+    rename that keeps a probe green against a CLI which rejects the declared
+    flag outright, so both ends are anchored here.
     """
     failures: list[str] = []
     haystack = _strip_ansi(help_text)
-    haystack_lower = haystack.lower()
     for flag in spec.required_flags:
-        if flag.lower() not in haystack_lower:
+        if not re.search(_flag_pattern(flag), haystack):
             failures.append(f"missing required flag {flag!r} in `{spec.binary} --help`")
     for sub in spec.required_subcommands:
         pattern = rf"(?im)(^|\s){re.escape(sub)}(\s|$)"

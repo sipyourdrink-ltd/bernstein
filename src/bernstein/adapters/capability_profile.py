@@ -1152,11 +1152,11 @@ _PROFILE_LIST: tuple[AdapterCapabilityProfile, ...] = (
         invocation=InvocationSpec(
             binary="goose",
             subcommands=("run",),
-            prompt_flag="--instruction",
+            prompt_flag="--text",
         ),
         mcp_client=True,
         event_channel=EventChannel.ACP,
-        notes="Block Goose. Speaks ACP natively; model flag is optional and module-supplied.",
+        notes="Goose (AAIF). Speaks ACP natively; model flag is optional and module-supplied.",
     ),
 )
 

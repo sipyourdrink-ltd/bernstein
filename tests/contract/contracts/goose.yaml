@@ -1,18 +1,25 @@
-# Contract for the Block Goose CLI (adapter: goose).
+# Contract for the Goose CLI (adapter: goose).
 #
 # Always-passed surface from src/bernstein/adapters/goose.py:
-# ``goose run --instruction <prompt> [--model <id>]``.
+# ``goose run --text <prompt> [--model <id>]``.
+#
+# ``--text`` is the inline-prompt flag; the file-based sibling is
+# ``--instructions <FILE>``.  A singular ``--instruction`` is NOT accepted and
+# must never be declared here: it is a prefix substring of ``--instructions``,
+# so a substring-matching probe would report it present against a CLI that
+# only offers the plural form.
 adapter: goose
 binary: goose
 install:
   method: curl
-  spec: "https://github.com/block/goose/releases/latest/download/download_cli.sh"
+  spec: "https://github.com/aaif-goose/goose/releases/latest/download/download_cli.sh"
 auth:
   required_for_help: false
   required_for_models: false
   secret_env: "ANTHROPIC_API_KEY"
 required_flags:
-  - "--instruction"
+  - "--text"
+  - "--model"
 required_subcommands:
   - "run"
 # Goose sub-flags live under ``goose run --help``.
