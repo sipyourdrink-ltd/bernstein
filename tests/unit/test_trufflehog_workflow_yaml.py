@@ -51,8 +51,8 @@ ALLOWED_EXCLUDED_DETECTORS = frozenset({"lob"})
 #: leading ``v``; ``latest`` and floating prefixes are what this rejects.
 EXACT_RELEASE = re.compile(r"^\d+\.\d+\.\d+$")
 
-#: The ``uses:`` pin and the version comment Renovate maintains beside it.
-ACTION_PIN = re.compile(r"uses:\s*trufflesecurity/trufflehog@[0-9a-f]{40}\s*#\s*v?(?P<version>\d+\.\d+\.\d+)")
+#: A full-SHA action pin, the only form this repository allows.
+SHA_PIN = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
 
 
 def _doc() -> dict[str, Any]:
@@ -84,14 +84,37 @@ def _scanner_version() -> str:
     return str(_scan_step().get("with", {}).get("version", "")).strip()
 
 
-def _action_version() -> str:
-    """The wrapper release, read from the comment beside the ``uses:`` SHA."""
-    match = ACTION_PIN.search(WORKFLOW.read_text(encoding="utf-8"))
-    assert match is not None, (
-        "the trufflehog step must pin the action by full SHA with the release "
-        "in a trailing comment, as Renovate writes it"
+def _release_comment(text: str, uses: str) -> str:
+    """The release Renovate records beside this exact ``uses:`` pin.
+
+    A SHA is opaque, so the trailing comment is the only readable statement
+    of which release runs - which makes it worth reading carefully. The
+    pattern is anchored to the pin passed in and to the start of its line,
+    so a commented-out predecessor or a second copy of the action cannot
+    answer on behalf of the step that actually runs. Two matches are an
+    error rather than a coin toss: it means the file disagrees with itself.
+    """
+    pattern = re.compile(
+        rf"^[ \t]*uses:[ \t]*{re.escape(uses)}[ \t]*#[ \t]*v?(?P<version>\d+\.\d+\.\d+)[ \t]*$",
+        re.MULTILINE,
     )
-    return match.group("version")
+    found = pattern.findall(text)
+    assert len(found) == 1, (
+        f"expected exactly one `uses: {uses}` line carrying a release comment, "
+        f"found {len(found)}. Renovate writes the release beside the SHA it "
+        "pins; without it there is no readable record of which scanner runs"
+    )
+    return str(found[0])
+
+
+def _action_version() -> str:
+    """The wrapper release, read from the step the workflow actually runs."""
+    uses = str(_scan_step().get("uses", ""))
+    assert SHA_PIN.match(uses), (
+        f"`uses: {uses}` must pin the action to a full 40-character commit "
+        "SHA. A tag or branch is rewritable, so it pins nothing"
+    )
+    return _release_comment(WORKFLOW.read_text(encoding="utf-8"), uses)
 
 
 def _excluded_detectors() -> frozenset[str]:
@@ -155,6 +178,36 @@ def test_the_scanner_binary_and_the_action_wrapper_are_the_same_release() -> Non
         "a single pull request, so a mismatch means half a bump landed - "
         "reconcile them rather than pinning the test to the drift"
     )
+
+
+def _workflow_text(*pin_lines: str) -> str:
+    """A workflow fragment carrying the given ``uses:`` lines verbatim."""
+    body = "\n".join(f"      - name: Run trufflehog\n        {line}" for line in pin_lines)
+    return f"jobs:\n  trufflehog:\n    steps:\n{body}\n"
+
+
+def test_a_commented_out_pin_cannot_answer_for_the_live_one() -> None:
+    """The release must come from the pin that runs, not the first in the file."""
+    text = _workflow_text(
+        f"# uses: trufflesecurity/trufflehog@{'a' * 40}  # v3.90.0",
+        f"uses: trufflesecurity/trufflehog@{'b' * 40}  # v3.96.0",
+    )
+    assert _release_comment(text, f"trufflesecurity/trufflehog@{'b' * 40}") == "3.96.0"
+
+
+def test_a_pin_with_no_release_comment_beside_it_is_rejected() -> None:
+    """Silence is not agreement - an absent comment must not read as a match."""
+    uses = f"trufflesecurity/trufflehog@{'b' * 40}"
+    with pytest.raises(AssertionError):
+        _release_comment(_workflow_text(f"uses: {uses}"), uses)
+
+
+def test_two_pins_of_one_action_are_rejected_rather_than_silently_halved() -> None:
+    """Picking either of two answers hides that the file disagrees with itself."""
+    uses = f"trufflesecurity/trufflehog@{'b' * 40}"
+    text = _workflow_text(f"uses: {uses}  # v3.96.0", f"uses: {uses}  # v3.90.0")
+    with pytest.raises(AssertionError):
+        _release_comment(text, uses)
 
 
 def test_the_scan_still_runs_on_main_and_pull_requests() -> None:
