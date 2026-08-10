@@ -79,8 +79,23 @@ ships in the wheel (`src/bernstein/gui/static/`), recorded in
 
 ```bash
 uv run python scripts/bind_webui_renders.py            # verify (what CI runs)
-uv run python scripts/bind_webui_renders.py --update   # rebind after re-capturing
+python3 scripts/capture_webui_renders.py               # re-capture the screens
+uv run python scripts/bind_webui_renders.py --update   # rebind to today's bundle
 ```
+
+The capture step boots `bernstein gui serve` against an empty throwaway project
+and drives headless Chromium over each screen, so re-capturing is a command
+rather than a ritual each person reconstructs. The empty project is the point:
+the committed renders show the zero-state, which is the only state that looks
+the same on every machine, and capturing against a live project would publish
+somebody's task titles into the docs. It runs under a Python that has
+Playwright (`python -m playwright install chromium`), which is usually not the
+project venv — Playwright is not a project dependency, because nothing in the
+wheel or the test suite drives a browser.
+
+`webui-agents-panel.png` and `webui-agents-diffs.png` are outside it. They show
+a populated agent panel with real diffs, which needs a live run to exist, and
+they carry `adopted` for exactly that reason.
 
 When the bundle moves and the renders do not, the check fails and names the
 renders to re-capture. **What this proves:** nobody shipped a UI change while
@@ -104,3 +119,22 @@ built from versions the lockfile no longer pins.
 
 `web-dashboard.png` is deliberately outside this: it shows the server-rendered
 `/dashboard` page, a different surface with a different source of truth.
+
+### The SPA fetches nothing at view time either
+
+The reason the CDN webfont is stripped from the terminal render applies to the
+runtime UI, and applies harder. `web/src/index.css` used to open with an
+`@import` of the Google Fonts stylesheet; a CSS `@import` blocks its own
+stylesheet from finishing, and that stylesheet blocks the `<script
+type="module">` after it. With no route to the font host the page committed,
+`document.readyState` stayed `interactive`, `DOMContentLoaded` never fired and
+`#root` stayed empty. Not a substituted typeface — a blank dashboard, on the
+air-gapped installs this project ships a profile for, plus a request to a third
+party from every operator who opened it.
+
+Both families are vendored under `web/src/fonts/` with their upstream URLs,
+versions and hashes recorded next to them.
+`tests/unit/test_webui_no_external_assets.py` fails if an external host returns
+to the shipped CSS or to `index.html`, and — the complement, so deleting the
+fonts is not a way to pass — if a `url()` in the shipped CSS stops resolving to
+a file that is actually in the bundle.

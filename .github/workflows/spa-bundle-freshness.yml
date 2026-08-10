@@ -107,7 +107,7 @@ jobs:
           echo
           echo "That moves the hash the browser renders are bound to, so also"
           echo "re-capture the affected screens and rebind them:"
-          echo "  uv run bernstein gui serve --no-open"
+          echo "  python3 scripts/capture_webui_renders.py"
           echo "  uv run python scripts/bind_webui_renders.py --update"
           echo "See docs/contributing/render-freshness.md."
           exit 1

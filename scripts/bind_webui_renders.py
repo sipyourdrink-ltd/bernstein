@@ -150,8 +150,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {problem}", file=sys.stderr)
     print(
         "\nRe-capture the affected screens, then rebind:\n"
-        "  uv run bernstein gui serve --no-open   # capture the screens you changed\n"
-        "  uv run python scripts/bind_webui_renders.py --update",
+        "  python3 scripts/capture_webui_renders.py             # all of them\n"
+        "  python3 scripts/capture_webui_renders.py tasks costs # or just these\n"
+        "  uv run python scripts/bind_webui_renders.py --update\n"
+        "See docs/contributing/render-freshness.md.",
         file=sys.stderr,
     )
     return 1
