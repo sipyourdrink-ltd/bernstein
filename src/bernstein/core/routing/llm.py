@@ -107,7 +107,9 @@ _CLI_FLAGS: dict[str, tuple[str, str, list[str]]] = {
     "gemini": ("-p", "-m", []),
     "qwen": ("-y", "--model", []),
     "codex": ("--prompt", "--model", []),
-    "goose": ("--prompt", "--model", []),
+    # goose takes the prompt under its ``run`` subcommand; ``--prompt`` is not
+    # a flag it defines, and without ``run`` there is no subcommand to parse.
+    "goose": ("run --text", "--model", []),
     "aider": ("--message", "--model", []),
     "claude": ("--print -p", "--model", ["--output-format", "text", "--max-turns", "1"]),
 }
