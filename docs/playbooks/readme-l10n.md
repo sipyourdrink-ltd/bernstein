@@ -50,10 +50,40 @@ Adding a language is a data change, not a code change:
 4. Run `uv run bernstein readme-l10n sync` to (re)compute every
    binding hash, then `uv run bernstein readme-l10n verify --workdir .`
    to confirm.
+5. Add yourself to `[tool.bernstein.readme-l10n.owners]`. A translation
+   is added by whoever can keep it current, not by whoever happens to
+   be merging that week:
+
+   ```toml
+   [tool.bernstein.readme-l10n.owners]
+   "zh-Hans" = "@your-handle"
+   ```
 
 A binding line for a section that does not exist in `README.md`
 makes `sync` warn; a translated section without a binding line makes
 `verify` fail with the section name.
+
+## Exit codes
+
+CI has to tell "nothing to verify" apart from "the configuration
+stopped parsing". Those are different situations and only one of them
+is fine, so they get different exit codes.
+
+| Exit | Meaning | Printed |
+|---|---|---|
+| 0 | every configured language is in sync | `OK` |
+| 0 | no `pyproject.toml`, or no configured `languages` | `SKIP` |
+| 1 | drift: stale binding, translated code block, paragraph-count mismatch, or a modified verbatim block | `DRIFT` |
+| 2 | `pyproject.toml` exists but cannot be read or parsed; `languages` malformed; `owners` table or a handle malformed (`verify`) | `CONFIG` |
+
+Both `verify` and `sync` exit 2 on an unreadable or malformed
+`pyproject.toml`. Only `verify` reads the `owners` table, so only
+`verify` can exit 2 because of it.
+
+A CI step written as `verify || exit 1` collapses 1 and 2 into one
+signal. That is fine for blocking a merge and wrong for diagnosing one:
+a stray tab in the TOML would otherwise read as "no languages
+configured", and the translations would rot behind a green check.
 
 ## What CI checks
 
@@ -109,24 +139,6 @@ stripped per line, blank lines are dropped, lines are joined with
 blank-line reflow) so the gate does not cry wolf on every formatting
 pass, while still catching any real content change to the English
 source.
-
-## Adding a language
-
-A translation is added by whoever can keep it current, not by whoever
-happens to be merging that week. Two steps, both data:
-
-1. Add `README.<ietf-tag>.md` carrying an `l10n` binding under every
-   translated `###` heading, and append the tag to `languages` in
-   `[tool.bernstein.readme-l10n]`.
-2. Add yourself to `[tool.bernstein.readme-l10n.owners]`:
-
-   ```toml
-   [tool.bernstein.readme-l10n.owners]
-   "zh-Hans" = "@your-handle"
-   ```
-
-`bernstein readme-l10n sync` fills the hashes; `verify` proves the file
-is in sync before the PR merges.
 
 ## Ownership
 

@@ -9,10 +9,21 @@ English section and leaves a translation behind turns red in CI.
 
 Non-zero exit codes are operator contract:
 
-- ``0``  - all configured languages are in sync
+- ``0``  - all configured languages are in sync, or there is nothing to
+           verify: no ``pyproject.toml``, or one carrying no
+           ``[tool.bernstein.readme-l10n]`` languages (reported ``SKIP``)
 - ``1``  - drift detected (stale binding, translated code block, or
            modified verbatim block)
-- ``2``  - configuration error (malformed ``languages`` entry)
+- ``2``  - configuration error: ``pyproject.toml`` exists but cannot be
+           read or parsed, ``languages`` is malformed, or - ``verify``
+           only, which is the command that reads it - the ``owners``
+           table or a handle in it is malformed
+
+Exit 2 is deliberately distinct from the exit-0 ``SKIP`` path. A repo
+that never configured the gate is fine; a repo whose configuration
+stopped parsing is not, and CI has to be able to tell those apart -
+otherwise a stray tab in the TOML reads as "nothing to check" and the
+translations rot behind a green check.
 
 Designed for CI gating::
 
@@ -31,7 +42,7 @@ from bernstein.core.knowledge.readme_l10n import (
     BINDING_RE,
     HEADER_SECTION,
     load_config,
-    load_owners,
+    load_settings,
     section_hash,
     split_sections,
     verify_language,
@@ -49,14 +60,19 @@ def _resolve_workdir(workdir: Path) -> Path:
     return workdir
 
 
-def _load_owners(workdir: Path) -> dict[str, str]:
-    """Load the per-language owner map, mapping config errors to exit 2."""
+def _load_settings(workdir: Path) -> tuple[list[str], dict[str, str]]:
+    """Load languages and owners together, mapping config errors to exit 2.
+
+    Both come from one parse. Loading them separately would let an edit
+    between the two reads report an owner drawn from a different
+    revision than the language list being verified.
+    """
     try:
-        return load_owners(workdir / "pyproject.toml")
+        return load_settings(workdir / "pyproject.toml")
     except ValueError as exc:
         click.echo(f"CONFIG   {exc}", err=True)
         sys.exit(2)
-    return {}
+    return [], {}
 
 
 def _report_owner(lang: str, owners: dict[str, str]) -> None:
@@ -127,8 +143,7 @@ def readme_l10n_verify(workdir: Path) -> None:
         bernstein readme-l10n verify || (echo 'drift; run sync' && exit 1)
     """
     _resolve_workdir(workdir)
-    languages = _load_languages(workdir)
-    owners = _load_owners(workdir)
+    languages, owners = _load_settings(workdir)
     if not languages:
         click.echo("SKIP     no [tool.bernstein.readme-l10n] languages configured; nothing to verify")
         return

@@ -399,7 +399,7 @@ def binding_placement_errors(text: str) -> list[str]:
     return errors
 
 
-_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def _read_pyproject(pyproject: Path) -> dict[str, object] | None:
@@ -432,7 +432,11 @@ def load_config(pyproject: Path) -> list[str]:
     malformed ``languages`` entry is a hard error so a typo cannot
     silently disable the gate.
     """
-    data = _read_pyproject(pyproject)
+    return _languages_from(_read_pyproject(pyproject))
+
+
+def _languages_from(data: dict[str, object] | None) -> list[str]:
+    """Derive the language set from an already-parsed ``pyproject.toml``."""
     if data is None:
         return []
 
@@ -471,7 +475,11 @@ def load_owners(pyproject: Path) -> dict[str, str]:
     the same reason a malformed ``languages`` entry is: a typo must not
     quietly turn a language into one nobody is named for.
     """
-    data = _read_pyproject(pyproject)
+    return _owners_from(_read_pyproject(pyproject))
+
+
+def _owners_from(data: dict[str, object] | None) -> dict[str, str]:
+    """Derive the owner map from an already-parsed ``pyproject.toml``."""
     if data is None:
         return {}
 
@@ -493,7 +501,10 @@ def load_owners(pyproject: Path) -> dict[str, str]:
     # The handle is echoed into the verify output, which CI logs and
     # humans read. A newline or an escape sequence in it would let the
     # config forge lines in that report, so control bytes are refused
-    # rather than stripped: a handle that needs them is a typo.
+    # rather than stripped: a handle that needs them is a typo. The
+    # refused set spans C1 as well as C0, because U+009B is a
+    # single-character CSI that a terminal reading 8-bit controls will
+    # act on exactly as it acts on the two-byte ESC form.
     forged = sorted(tag for tag, handle in owners.items() if _CONTROL_CHARS.search(cast(str, handle)))
     if forged:
         raise ValueError(
@@ -501,3 +512,16 @@ def load_owners(pyproject: Path) -> dict[str, str]:
             + ", ".join(forged)
         )
     return {tag: cast(str, handle).strip() for tag, handle in owners.items()}
+
+
+def load_settings(pyproject: Path) -> tuple[list[str], dict[str, str]]:
+    """Read languages and owners from a single parse of ``pyproject.toml``.
+
+    ``verify`` needs both. Reading the file twice would let an edit
+    landing between the two reads pair the languages of one revision
+    with the owners of another - the report would then name an owner
+    for a language that revision does not configure, or omit one it
+    does. One parse, both values, so the two can never disagree.
+    """
+    data = _read_pyproject(pyproject)
+    return _languages_from(data), _owners_from(data)
