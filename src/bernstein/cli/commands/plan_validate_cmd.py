@@ -86,7 +86,7 @@ def _check_unknown_roles(
             warnings.append(f"Task {task.title!r} uses unknown role {task.role!r}")
 
 
-def _check_schema(plan_file: Path, errors: list[str]) -> None:
+def _check_schema(plan_file: Path, errors: list[str], warnings: list[str]) -> None:
     """Append errors for anything the plan schema rejects.
 
     ``load_plan`` parses a plan; it does not judge it. It reads ``stages`` and
@@ -96,21 +96,19 @@ def _check_schema(plan_file: Path, errors: list[str]) -> None:
     at the task graph, not at the fields. Without this the command answers
     "Plan is valid." for a plan the scheduler will reject.
 
-    Role is the one field deliberately left to the schema's caller rather than
-    the schema. ``plan_schema`` holds role in an enum and reports an unknown one
-    as an error; roles are loaded from ``templates/roles/``, which an operator
-    extends, so this command reports an unrecognised role through
-    :func:`_check_unknown_roles` as a *warning* instead. Taking the schema's
-    verdict too would turn a documented warning into a hard failure for every
-    plan that names a role of its own.
+    Role membership is the one verdict deliberately left to the schema's
+    caller rather than the schema. ``plan_schema`` holds role in an enum and
+    reports an unknown one as an error; roles are loaded from
+    ``templates/roles/``, which an operator extends, so this command reports an
+    unrecognised role *string* through :func:`_check_unknown_roles` as a
+    *warning* instead. Taking the schema's membership verdict too would turn a
+    documented warning into a hard failure for every plan that names a role of
+    its own. The schema's role *type* verdict is kept: a non-string ``role``
+    is not a custom role, it is a type error (#3516).
 
-    The reach of this check is the reach of ``plan_schema.validate_plan``, which
-    is looser than the ``PLAN_JSON_SCHEMA`` the same module exports: a non-string
-    ``role``, non-string array items, unknown keys and ``max_agents: 0`` all pass
-    it while the schema rejects them. That gap is in the validator rather than
-    here, it affects every consumer of it, and closing the
-    ``additionalProperties`` part of it would reject plans that run today, so it
-    is tracked as its own change in #3516.
+    Keys the schema does not declare (``additionalProperties: false``) are
+    collected into *warnings*: plans carrying extra keys validate today, so
+    the error-level enforcement waits for the next major release (#3516).
 
     It runs before ``load_plan`` because ``load_plan`` is where several schema
     violations become crashes rather than findings: ``_parse_step`` builds
@@ -128,6 +126,7 @@ def _check_schema(plan_file: Path, errors: list[str]) -> None:
     Args:
         plan_file: The plan being validated.
         errors: Accumulator appended to in place.
+        warnings: Accumulator appended to in place.
     """
     try:
         raw = yaml.safe_load(plan_file.read_text())
@@ -135,7 +134,9 @@ def _check_schema(plan_file: Path, errors: list[str]) -> None:
         return
     if not isinstance(raw, dict) or not raw.get("stages"):
         return
-    errors.extend(e for e in _validate_plan_schema(raw) if ".role:" not in e)
+    errors.extend(
+        e for e in _validate_plan_schema(raw, warnings=warnings) if not (".role:" in e and "must be one of" in e)
+    )
 
 
 def _raw_step_count(plan_file: Path) -> int:
@@ -208,7 +209,7 @@ def validate_plan(plan_file: Path) -> None:
     errors: list[str] = []
     warnings: list[str] = []
 
-    _check_schema(plan_file, errors)
+    _check_schema(plan_file, errors, warnings)
     if errors:
         # The document does not satisfy its own schema. Loading it now would
         # either raise on the offending field or coerce it into a task that

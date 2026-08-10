@@ -318,6 +318,14 @@ PLAN_JSON_SCHEMA: dict[str, Any] = {
 # Manual validation (no jsonschema dependency)
 # ---------------------------------------------------------------------------
 
+# Allowed keys per object, derived from the schema dicts above so the
+# validator's additionalProperties reporting cannot drift from the schema.
+_PLAN_KEYS: frozenset[str] = frozenset(PLAN_JSON_SCHEMA["properties"])
+_STAGE_KEYS: frozenset[str] = frozenset(_STAGE_SCHEMA["properties"])
+_STEP_KEYS: frozenset[str] = frozenset(_STEP_SCHEMA["properties"])
+_REPO_KEYS: frozenset[str] = frozenset(_REPO_SCHEMA["properties"])
+_COMPLETION_SIGNAL_KEYS: frozenset[str] = frozenset(_COMPLETION_SIGNAL_SCHEMA["properties"])
+
 
 def _check_type(value: object, expected: str, path: str, errors: list[str]) -> bool:
     """Check that *value* matches the expected JSON Schema type string.
@@ -347,6 +355,13 @@ def _validate_enum(value: object, allowed: list[str], path: str, errors: list[st
         errors.append(f"{path}: invalid value {value!r}, must be one of {allowed}")
 
 
+def _check_string_items(items: list[Any], path: str, errors: list[str]) -> None:
+    """Append an error for every item of an array field that is not a string."""
+    for i, item in enumerate(items):
+        if not isinstance(item, str):
+            errors.append(f"{path}[{i}]: expected type string, got {type(item).__name__}")
+
+
 _STEP_ENUM_FIELDS: list[tuple[str, list[str]]] = [
     ("role", KNOWN_ROLES),
     ("scope", SCOPE_VALUES),
@@ -357,10 +372,19 @@ _STEP_ENUM_FIELDS: list[tuple[str, list[str]]] = [
 
 
 def _validate_step_enums(step: dict[str, Any], path: str, errors: list[str]) -> None:
-    """Validate enum-typed fields on a step."""
+    """Validate enum-typed fields on a step.
+
+    The schema types every enum field as a string, so a non-string value is a
+    type error -- it must not slip past the enum check unreported (#3516).
+    """
     for field_name, allowed in _STEP_ENUM_FIELDS:
-        if field_name in step and isinstance(step[field_name], str):
-            _validate_enum(step[field_name], allowed, f"{path}.{field_name}", errors)
+        if field_name not in step:
+            continue
+        value = step[field_name]
+        if not isinstance(value, str):
+            errors.append(f"{path}.{field_name}: expected type string, got {type(value).__name__}")
+            continue
+        _validate_enum(value, allowed, f"{path}.{field_name}", errors)
 
 
 def _validate_step_priority(step: dict[str, Any], path: str, errors: list[str]) -> None:
@@ -442,8 +466,11 @@ def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
     _validate_step_priority(step, path, errors)
     _validate_step_estimated_minutes(step, path, errors)
 
-    if "files" in step and not isinstance(step["files"], list):
-        errors.append(f"{path}.files: expected type array, got {type(step['files']).__name__}")
+    if "files" in step:
+        if not isinstance(step["files"], list):
+            errors.append(f"{path}.files: expected type array, got {type(step['files']).__name__}")
+        else:
+            _check_string_items(step["files"], f"{path}.files", errors)
 
     _validate_completion_signals(step, path, errors)
     _validate_artifact_spec(step, path, errors)
@@ -470,8 +497,11 @@ def _validate_stage(stage: dict[str, Any], idx: int, errors: list[str]) -> None:
         for j, step in enumerate(stage["steps"]):
             _validate_step(step, f"{path}.steps[{j}]", errors)
 
-    if "depends_on" in stage and not isinstance(stage["depends_on"], list):
-        errors.append(f"{path}.depends_on: expected type array")
+    if "depends_on" in stage:
+        if not isinstance(stage["depends_on"], list):
+            errors.append(f"{path}.depends_on: expected type array")
+        else:
+            _check_string_items(stage["depends_on"], f"{path}.depends_on", errors)
 
 
 def _validate_stages_field(plan_data: dict[str, Any], errors: list[str]) -> None:
@@ -490,13 +520,21 @@ def _validate_stages_field(plan_data: dict[str, Any], errors: list[str]) -> None
 def _validate_optional_fields(plan_data: dict[str, Any], errors: list[str]) -> None:
     """Validate optional typed top-level fields."""
     if "max_agents" in plan_data:
-        _check_type(plan_data["max_agents"], "integer", "max_agents", errors)
+        value = plan_data["max_agents"]
+        if _check_type(value, "integer", "max_agents", errors) and value < 1:
+            errors.append(f"max_agents: must be >= 1, got {value}")
 
-    if "constraints" in plan_data and not isinstance(plan_data["constraints"], list):
-        errors.append("'constraints' must be an array")
+    if "constraints" in plan_data:
+        if not isinstance(plan_data["constraints"], list):
+            errors.append("'constraints' must be an array")
+        else:
+            _check_string_items(plan_data["constraints"], "constraints", errors)
 
-    if "context_files" in plan_data and not isinstance(plan_data["context_files"], list):
-        errors.append("'context_files' must be an array")
+    if "context_files" in plan_data:
+        if not isinstance(plan_data["context_files"], list):
+            errors.append("'context_files' must be an array")
+        else:
+            _check_string_items(plan_data["context_files"], "context_files", errors)
 
     _validate_repos_field(plan_data, errors)
 
@@ -517,14 +555,83 @@ def _validate_repos_field(plan_data: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"{repo_path}: missing required field 'path'")
 
 
-def validate_plan(plan_data: dict[str, Any]) -> list[str]:
+def _warn_unknown_keys(
+    obj: dict[str, Any],
+    allowed: frozenset[str],
+    path: str,
+    warnings: list[str],
+) -> None:
+    """Append a warning for every key of *obj* the schema does not declare."""
+    for key in obj:
+        if key not in allowed:
+            where = path or "plan"
+            warnings.append(
+                f"{where}: unknown key {key!r} (not in the plan schema; becomes an error in the next major release)"
+            )
+
+
+def _collect_unknown_keys(plan_data: dict[str, Any], warnings: list[str]) -> None:
+    """Report keys that the schema's ``additionalProperties: false`` rejects.
+
+    Reported as warnings rather than errors: plans carrying extra keys pass
+    validation today, so failing them outright needs a deprecation window
+    first (#3516). ``artifact_spec`` blocks are skipped here because
+    :func:`bernstein.core.tasks.artifacts.parse_artifact_spec` already rejects
+    their unknown keys as errors via :func:`_validate_artifact_spec`.
+    """
+    _warn_unknown_keys(plan_data, _PLAN_KEYS, "", warnings)
+    stages = plan_data.get("stages")
+    if isinstance(stages, list):
+        for i, stage in enumerate(stages):
+            if not isinstance(stage, dict):
+                continue
+            _warn_unknown_keys(stage, _STAGE_KEYS, f"stages[{i}]", warnings)
+            steps = stage.get("steps")
+            if not isinstance(steps, list):
+                continue
+            for j, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    continue
+                step_path = f"stages[{i}].steps[{j}]"
+                _warn_unknown_keys(step, _STEP_KEYS, step_path, warnings)
+                signals = step.get("completion_signals")
+                if not isinstance(signals, list):
+                    continue
+                for k, sig in enumerate(signals):
+                    if isinstance(sig, dict):
+                        sig_path = f"{step_path}.completion_signals[{k}]"
+                        _warn_unknown_keys(sig, _COMPLETION_SIGNAL_KEYS, sig_path, warnings)
+    repos = plan_data.get("repos")
+    if isinstance(repos, list):
+        for i, repo in enumerate(repos):
+            if isinstance(repo, dict):
+                _warn_unknown_keys(repo, _REPO_KEYS, f"repos[{i}]", warnings)
+
+
+def validate_plan(plan_data: dict[str, Any], warnings: list[str] | None = None) -> list[str]:
     """Validate a plan dict against the Bernstein plan schema.
 
-    Performs manual structural checks equivalent to JSON Schema validation
-    without requiring the ``jsonschema`` package.
+    Performs manual structural checks mirroring :data:`PLAN_JSON_SCHEMA`
+    without requiring the ``jsonschema`` package. Enforced as errors: required
+    fields, field and array-item types, enum membership (including the string
+    type of every enum field), and the declared minimums (``max_agents``,
+    ``priority``, ``estimated_minutes``). The schema's ``additionalProperties:
+    false`` is reported through *warnings* instead, because plans carrying
+    extra keys validate today and failing them needs a deprecation window
+    (#3516).
+
+    Known gaps against the full schema: free-text string fields
+    (``description``, ``cli``, step ``title``/``goal``/``mode``/``repo``,
+    stage ``name``, repo ``path``/``branch``/``name``) are checked for
+    presence, not type; ``budget`` is untyped; ``phases`` items are not
+    checked against the phase enum; and booleans satisfy integer checks
+    (``isinstance(True, int)``).
 
     Args:
         plan_data: Parsed YAML plan as a Python dict.
+        warnings: Optional accumulator. When given, findings that do not fail
+            validation -- currently keys the schema does not declare -- are
+            appended to it in place.
 
     Returns:
         List of human-readable error strings.  Empty list means the plan is valid.
@@ -536,9 +643,14 @@ def validate_plan(plan_data: dict[str, Any]) -> list[str]:
 
     if "name" not in plan_data or not plan_data["name"]:
         errors.append("Missing required top-level field 'name'")
+    elif not isinstance(plan_data["name"], str):
+        errors.append(f"name: expected type string, got {type(plan_data['name']).__name__}")
 
     _validate_stages_field(plan_data, errors)
     _validate_optional_fields(plan_data, errors)
+
+    if warnings is not None:
+        _collect_unknown_keys(plan_data, warnings)
 
     return errors
 

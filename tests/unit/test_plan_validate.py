@@ -343,6 +343,81 @@ class TestOutOfRangeEnumValues:
         assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
+class TestSchemaParityAtTheCommand:
+    """Issue #3516 at the command surface.
+
+    The schema pre-check now enforces the types and ranges PLAN_JSON_SCHEMA
+    declares, and reports keys the schema does not know as warnings. Errors
+    must fail the command readably; warnings alone must not.
+    """
+
+    @pytest.fixture()
+    def runner(self) -> CliRunner:
+        return CliRunner()
+
+    def test_issue_repro_exits_1_with_readable_errors(self, runner: CliRunner, tmp_path: Path) -> None:
+        """The issue's reproduction plan, driven through the full CLI group."""
+        from bernstein.cli.main import cli
+
+        plan_file = tmp_path / "plan.yaml"
+        plan_file.write_text(
+            "name: P\n"
+            "max_agents: 0\n"
+            "stages:\n"
+            "  - name: S\n"
+            "    steps:\n"
+            "      - title: T\n"
+            "        role: 7\n"
+            "        files: [42]\n"
+            "        unknown_key: 1\n"
+        )
+
+        result = runner.invoke(cli, ["plan", "validate", str(plan_file)])
+
+        assert result.exit_code == 1
+        assert "max_agents" in result.output
+        assert "files[0]" in result.output
+        assert "role" in result.output
+        assert "Traceback" not in result.output
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+
+    def test_non_string_role_is_an_error_not_a_role_warning(self, runner: CliRunner, tmp_path: Path) -> None:
+        """The role *enum* verdict stays dropped (operators extend roles); the
+        role *type* verdict does not -- a non-string role is not a custom role."""
+        plan_file = _write_plan(
+            tmp_path,
+            {
+                "name": "Typed Role Plan",
+                "stages": [{"name": "Stage 1", "steps": [{"title": "Task A", "role": 7}]}],
+            },
+        )
+
+        result = runner.invoke(validate_plan, [str(plan_file)])
+
+        assert result.exit_code == 1
+        assert "role" in result.output
+
+    def test_unknown_key_alone_is_a_warning_and_exit_0(self, runner: CliRunner, tmp_path: Path) -> None:
+        plan_file = _write_plan(
+            tmp_path,
+            {
+                "name": "Extra Key Plan",
+                "stages": [
+                    {
+                        "name": "Stage 1",
+                        "steps": [{"title": "Task A", "role": "backend", "unknown_key": 1}],
+                    },
+                ],
+            },
+        )
+
+        result = runner.invoke(validate_plan, [str(plan_file)])
+
+        assert result.exit_code == 0
+        assert "unknown_key" in result.output
+        assert "warning" in result.output.lower()
+
+
 class TestDryRunWithPlanFile:
     """Tests for dry-run mode loading tasks from a plan file."""
 
