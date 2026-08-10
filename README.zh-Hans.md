@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - Leonard Bernstein
 
 ### 确定性多智能体 CLI 编排
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:d0cc91d44434" -->
+<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:71266dcc2820" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -34,6 +34,8 @@
 </div>
 
 ---
+
+> **状态：beta。** 由单人维护，正在积极开发中。版本号计的是发布次数，而非成熟度——次版本（minor）可能改变接口。凡有依赖请锁定版本；回归问题会被尽快修复，[欢迎提交](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
 Bernstein 是一个面向 CLI 编码智能体（Claude Code、Codex、Gemini CLI 以及 40 多个其他智能体）的确定性编排器。调度是纯 Python——协调循环中没有 LLM——因此运行可以端到端复现。每个编码任务都在自己的 git worktree 中运行，背后有 lint/type/test 门禁；产物模式（artifact-mode）任务以签署的血统收据（lineage receipt）而非提交来宣告完成，获得一个普通的工作目录。结果事后仍可核查：常驻的血统脊柱（lineage spine）和回放日志（replay journal），外加可选的 HMAC 链式审计日志（`BERNSTEIN_AUDIT=1`），其收据可离线验证。包含离线安装（air-gap）配置。Apache-2.0 许可。
 
