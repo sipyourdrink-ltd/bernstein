@@ -69,8 +69,37 @@ language it checks:
    section must be byte-identical (normalised) to the English section
    they mirror. A translated command, flag, path or subcommand is a
    failure, not a warning.
-3. **Verbatim header/footer** - logo, badges, the language links
+3. **Binding placement** - each binding sits directly under the
+   translated heading it mirrors. The same English section bound under
+   two headings, or a binding under no heading at all, is a failure:
+   either shape lets a section resolve to the wrong span.
+4. **Paragraph parity** - a translated section carries the same number
+   of paragraph-level blocks as the English section it mirrors.
+5. **Verbatim header/footer** - logo, badges, the language links
    line and the license/footer block must equal the English ones.
+
+## Paragraph parity: translations preserve block structure
+
+Hash bindings pin English *content*, and `sync` re-pins them after an
+English edit without proving the translation followed. A paragraph
+added to the English source could therefore go missing from every
+translation while the gate stayed green. Parity closes that hole by
+comparing block counts per section.
+
+The contract this places on translators is explicit: **a translation
+must preserve the blank-line block structure of the English section it
+mirrors.** Blocks are runs of non-blank lines separated by blank lines;
+a fenced code block counts as one block; binding comments count as
+none.
+
+This is stricter than the hash contract below, deliberately. Hash
+normalisation absorbs blank-line reflow of the *English source* so a
+formatting pass does not invalidate every binding. Parity compares
+English against translation, where a merged pair of paragraphs and a
+dropped paragraph are indistinguishable from the outside - so joining
+two translated paragraphs that are separate in English is an exit-1
+failure, even though no content is missing. Split them back apart to
+match the English layout.
 
 ## Hash stability
 

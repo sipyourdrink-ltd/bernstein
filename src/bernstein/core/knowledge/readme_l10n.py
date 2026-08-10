@@ -183,10 +183,16 @@ def paragraph_count(body: str) -> int:
     in_fence = False
     for line in body.splitlines():
         if _FENCE_RE.match(line):
-            if not in_fence and not in_block:
+            # A fence always opens a block of its own, even when it
+            # follows prose with no blank line between them, and closing
+            # it ends that block so following prose opens a new one.
+            if not in_fence:
                 blocks += 1
+                in_fence = True
                 in_block = True
-            in_fence = not in_fence
+            else:
+                in_fence = False
+                in_block = False
             continue
         if in_fence:
             continue
@@ -264,7 +270,12 @@ def verify_language(source_sections: list[Section], lang: str, translated_text: 
                         "and subcommands must stay verbatim"
                     )
 
-    # 3. Paragraph parity: a translated section must carry the same number
+    # 3. Binding placement: a duplicated or orphaned binding lets a
+    #    section resolve to the wrong span, so parity below cannot be
+    #    trusted until placement is unambiguous.
+    result.errors.extend(binding_placement_errors(translated_text))
+
+    # 4. Paragraph parity: a translated section must carry the same number
     #    of paragraph-level blocks as the English section it mirrors. The
     #    hash binding pins the English content, but `sync` re-binds after
     #    an English edit without proving the translation followed - a
@@ -284,7 +295,7 @@ def verify_language(source_sections: list[Section], lang: str, translated_text: 
                 "structures match"
             )
 
-    # 4. Header/footer verbatim: logo, badges, language links line and the
+    # 5. Header/footer verbatim: logo, badges, language links line and the
     #    license/footer block are shared verbatim. The translated file
     #    mirrors the English structure, so its own header (before the
     #    first heading) and footer (after the last '---') map directly.
@@ -315,27 +326,79 @@ def _find_translated_section(text: str, en_heading: str) -> Section | None:
     for ``en_heading`` sits directly under the translated heading, and
     the section runs to the next ``###`` heading (or l10n binding).
     """
+    owned = _owned_sections(text)
+    sections = owned.get(en_heading)
+    if sections is None or len(sections) != 1:
+        # Absent, or bound more than once: ambiguous placement is reported
+        # by ``binding_placement_errors`` rather than silently resolved to
+        # whichever copy happens to come first.
+        return None
+    return sections[0]
+
+
+def _owned_sections(text: str) -> dict[str, list[Section]]:
+    """Map English section name -> the translated sections bound to it.
+
+    A binding is owned by the heading it sits under: the *first* binding
+    inside a heading's span, per the documented placement (directly under
+    the translated heading). The section body runs from that binding to
+    the next heading, or to the footer separator for the last one -
+    mirroring ``split_sections`` so the translated footer is never read
+    as part of the last prose section. Resolving by owning heading is
+    what keeps a stray or duplicated binding elsewhere in the file from
+    redefining a section's boundaries.
+    """
     lines = text.splitlines(keepends=True)
     heading_idx = [i for i, line in enumerate(lines) if _HEADING_RE.match(line)]
-    # The last section stops where the footer starts, mirroring
-    # ``split_sections`` - otherwise the translated footer is read as part
-    # of the last prose section and its blocks are miscounted.
+    if not heading_idx:
+        return {}
+    footer_start = _footer_start(lines, heading_idx[-1])
+
+    owned: dict[str, list[Section]] = {}
+    for n, idx in enumerate(heading_idx):
+        end = heading_idx[n + 1] if n + 1 < len(heading_idx) else footer_start
+        for j in range(idx + 1, min(end, len(lines))):
+            m = _BINDING_RE.search(lines[j])
+            if m is None:
+                continue
+            en = m.group(1)
+            owned.setdefault(en, []).append(Section(en, "".join(lines[j + 1 : end])))
+            break  # only the first binding under a heading owns it
+    return owned
+
+
+def binding_placement_errors(text: str) -> list[str]:
+    """Report bindings a reader would misread as pinning a section.
+
+    Two shapes are rejected: the same English section bound under more
+    than one translated heading (which of them mirrors it?), and a
+    binding that sits under no heading at all (before the first heading
+    or below the footer separator), where it pins nothing. Both let a
+    translated paragraph go missing while the hash bindings still
+    reconcile, so they are failures rather than warnings.
+    """
+    errors: list[str] = []
+    owned = _owned_sections(text)
+    for en, sections in sorted(owned.items()):
+        if len(sections) > 1:
+            errors.append(
+                f'section "{en}" is bound by {len(sections)} translated headings; exactly one must mirror it'
+            )
+
+    lines = text.splitlines(keepends=True)
+    heading_idx = [i for i, line in enumerate(lines) if _HEADING_RE.match(line)]
+    first_heading = heading_idx[0] if heading_idx else len(lines)
     footer_start = _footer_start(lines, heading_idx[-1]) if heading_idx else len(lines)
-    # Find the binding line for this English heading.
     for i, line in enumerate(lines):
         m = _BINDING_RE.search(line)
-        if m and m.group(1) == en_heading:
-            start = i + 1
-            end = footer_start
-            for j in range(i + 1, min(len(lines), footer_start)):
-                if _HEADING_RE.match(lines[j]):
-                    end = j
-                    break
-                if _BINDING_RE.search(lines[j]) and j > i:
-                    end = j
-                    break
-            return Section(en_heading, "".join(lines[start:end]))
-    return None
+        if m is None:
+            continue
+        if i < first_heading or i >= footer_start:
+            errors.append(
+                f'binding for section "{m.group(1)}" sits outside every '
+                "translated heading; move it directly under the heading it mirrors"
+            )
+    return errors
 
 
 def load_config(pyproject: Path) -> list[str]:

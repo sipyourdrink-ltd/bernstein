@@ -204,6 +204,30 @@ class TestParagraphParity:
         result = _run("verify", "--workdir", str(repo))
         assert result.exit_code == 0, result.output
 
+    def test_fence_adjacent_to_prose_is_its_own_block(self) -> None:
+        """A fence with no blank line before or after it still counts once.
+
+        Counting it as part of the neighbouring prose run would let a
+        translation drop a paragraph next to a code block undetected.
+        """
+        from bernstein.core.knowledge.readme_l10n import paragraph_count
+
+        assert paragraph_count("prose\n```\ncode\n```") == 2
+        assert paragraph_count("```\ncode\n```\nprose") == 2
+        assert paragraph_count("before\n```\ncode\n```\nafter") == 3
+
+    def test_reflowed_translation_is_reported(self) -> None:
+        """Merging two English paragraphs into one translated block fails.
+
+        Documented contract: parity compares English against translation,
+        where a merged pair and a dropped paragraph look identical, so a
+        translation preserves the English block structure.
+        """
+        from bernstein.core.knowledge.readme_l10n import paragraph_count
+
+        assert paragraph_count("A\n\nB\n") == 2
+        assert paragraph_count("译A\n译B\n") == 1
+
     def test_code_block_counts_as_one_block(self) -> None:
         from bernstein.core.knowledge.readme_l10n import paragraph_count
 
@@ -215,6 +239,33 @@ class TestParagraphParity:
 
         body = '<!-- l10n: en="x" hash="sha256:00" -->\n\nprose paragraph\n'
         assert paragraph_count(body) == 1
+
+
+class TestBindingPlacement:
+    def test_duplicate_binding_for_one_section_fails(self, tmp_path: Path) -> None:
+        """Two headings binding one English section is ambiguous, not a pick-first."""
+        en = _en_sections()
+        zh = _zh_readme(en).replace(
+            "### 工作原理\n",
+            f'### 别名\n<!-- l10n: en="install in 30 seconds" hash="{section_hash(en["install in 30 seconds"])}" -->\n\n占位。\n\n### 工作原理\n',
+        )
+        repo = _write_fixture(tmp_path, zh=zh)
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 1, result.output
+        assert "bound by 2 translated headings" in result.output
+
+    def test_binding_under_no_heading_fails(self, tmp_path: Path) -> None:
+        """A binding above the first heading pins nothing."""
+        en = _en_sections()
+        h = section_hash(en["install in 30 seconds"])
+        zh = _zh_readme(en).replace(
+            "Intro line.\n",
+            f'Intro line.\n\n<!-- l10n: en="install in 30 seconds" hash="{h}" -->\n',
+        )
+        repo = _write_fixture(tmp_path, zh=zh)
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 1, result.output
+        assert "outside every" in result.output
 
 
 class TestSync:
