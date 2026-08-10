@@ -167,6 +167,56 @@ class TestVerify:
         assert "README.md" in result.output
 
 
+class TestParagraphParity:
+    def test_paragraph_added_to_english_fails_even_after_sync(self, tmp_path: Path) -> None:
+        """A paragraph added to the English source must not vanish silently.
+
+        ``sync`` rebinds the hash without proving the translation followed,
+        so the binding check alone goes green; the paragraph-parity check
+        is what turns the missing translated paragraph red.
+        """
+        repo = _write_fixture(tmp_path, zh=_zh_readme(_en_sections()))
+        changed = EN_README.replace(
+            "pip and uv are covered in the install guide.",
+            "pip and uv are covered in the install guide.\n\n"
+            "Hygiene gates: `demo l10n verify` fails a PR whose translations drifted.",
+        )
+        (repo / "README.md").write_text(changed, encoding="utf-8")
+        assert _run("sync", "--workdir", str(repo)).exit_code == 0
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 1, result.output
+        assert "paragraph" in result.output
+        assert "install in 30 seconds" in result.output
+
+    def test_translated_paragraph_present_passes(self, tmp_path: Path) -> None:
+        changed_en = EN_README.replace(
+            "pip and uv are covered in the install guide.",
+            "pip and uv are covered in the install guide.\n\n"
+            "Hygiene gates: `demo l10n verify` fails a PR whose translations drifted.",
+        )
+        zh = _zh_readme(_en_sections()).replace(
+            "pip 和 uv 涵盖在安装指南中。",
+            "pip 和 uv 涵盖在安装指南中。\n\n卫生门禁 `demo l10n verify` 会在翻译漂移时让 PR 失败。",
+        )
+        repo = _write_fixture(tmp_path, zh=zh)
+        (repo / "README.md").write_text(changed_en, encoding="utf-8")
+        assert _run("sync", "--workdir", str(repo)).exit_code == 0
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 0, result.output
+
+    def test_code_block_counts_as_one_block(self) -> None:
+        from bernstein.core.knowledge.readme_l10n import paragraph_count
+
+        body = "```bash\nfirst\n\nsecond\n```\n\nprose paragraph\n"
+        assert paragraph_count(body) == 2
+
+    def test_binding_comment_is_not_a_block(self) -> None:
+        from bernstein.core.knowledge.readme_l10n import paragraph_count
+
+        body = '<!-- l10n: en="x" hash="sha256:00" -->\n\nprose paragraph\n'
+        assert paragraph_count(body) == 1
+
+
 class TestSync:
     def test_sync_rebinds_stale_sections(self, tmp_path: Path) -> None:
         repo = _write_fixture(tmp_path, zh=_zh_readme(_en_sections()))

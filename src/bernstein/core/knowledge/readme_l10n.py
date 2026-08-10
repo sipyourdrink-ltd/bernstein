@@ -91,17 +91,7 @@ def split_sections(text: str) -> list[Section]:
     if not heading_idx:
         return [Section(HEADER_SECTION, text)]
 
-    # Footer start: first standalone '---' line after the last heading,
-    # outside any fenced code block.
-    footer_start = len(lines)
-    in_fence = False
-    for i in range(heading_idx[-1] + 1, len(lines)):
-        if _FENCE_RE.match(lines[i]):
-            in_fence = not in_fence
-            continue
-        if not in_fence and lines[i].strip() == "---":
-            footer_start = i
-            break
+    footer_start = _footer_start(lines, heading_idx[-1])
 
     sections: list[Section] = []
 
@@ -121,6 +111,19 @@ def split_sections(text: str) -> list[Section]:
     sections.append(Section(FOOTER_SECTION, footer_text))
 
     return sections
+
+
+def _footer_start(lines: list[str], last_heading_idx: int) -> int:
+    """Index of the footer separator: the first standalone ``---`` line
+    after the last heading, outside any fenced code block."""
+    in_fence = False
+    for i in range(last_heading_idx + 1, len(lines)):
+        if _FENCE_RE.match(lines[i]):
+            in_fence = not in_fence
+            continue
+        if not in_fence and lines[i].strip() == "---":
+            return i
+    return len(lines)
 
 
 def normalize(text: str) -> str:
@@ -162,6 +165,40 @@ def extract_code_blocks(section: Section) -> list[str]:
 def parse_bindings(text: str) -> dict[str, str]:
     """Map English section name -> bound hash from a translated file."""
     return {en: h for en, h in _BINDING_RE.findall(text)}
+
+
+def paragraph_count(body: str) -> int:
+    """Number of paragraph-level blocks in a section body.
+
+    Blocks are runs of non-blank lines separated by blank lines. A fenced
+    code block counts as a single block regardless of internal blank
+    lines. l10n binding comments are gate metadata, not content, and are
+    ignored. Used to compare structure between an English section and the
+    translation that mirrors it: hashes bind content, but a re-synced
+    binding cannot tell whether a paragraph added to the English source
+    ever reached the translation - the block count can.
+    """
+    blocks = 0
+    in_block = False
+    in_fence = False
+    for line in body.splitlines():
+        if _FENCE_RE.match(line):
+            if not in_fence and not in_block:
+                blocks += 1
+                in_block = True
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not line.strip():
+            in_block = False
+            continue
+        if _BINDING_RE.search(line):
+            continue
+        if not in_block:
+            blocks += 1
+            in_block = True
+    return blocks
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +264,27 @@ def verify_language(source_sections: list[Section], lang: str, translated_text: 
                         "and subcommands must stay verbatim"
                     )
 
-    # 3. Header/footer verbatim: logo, badges, language links line and the
+    # 3. Paragraph parity: a translated section must carry the same number
+    #    of paragraph-level blocks as the English section it mirrors. The
+    #    hash binding pins the English content, but `sync` re-binds after
+    #    an English edit without proving the translation followed - a
+    #    paragraph added to the English source can otherwise go missing
+    #    from every translation while the gate stays green.
+    for section in prose:
+        trans_section = _find_translated_section(translated_text, section.heading)
+        if trans_section is None:
+            continue
+        en_blocks_n = paragraph_count(section.body)
+        tr_blocks_n = paragraph_count(trans_section.body)
+        if en_blocks_n != tr_blocks_n:
+            result.errors.append(
+                f'section "{section.heading}" has {tr_blocks_n} paragraph '
+                f"block(s) but the English section has {en_blocks_n}; "
+                "translate the missing or extra paragraph(s) so the "
+                "structures match"
+            )
+
+    # 4. Header/footer verbatim: logo, badges, language links line and the
     #    license/footer block are shared verbatim. The translated file
     #    mirrors the English structure, so its own header (before the
     #    first heading) and footer (after the last '---') map directly.
@@ -259,13 +316,18 @@ def _find_translated_section(text: str, en_heading: str) -> Section | None:
     the section runs to the next ``###`` heading (or l10n binding).
     """
     lines = text.splitlines(keepends=True)
+    heading_idx = [i for i, line in enumerate(lines) if _HEADING_RE.match(line)]
+    # The last section stops where the footer starts, mirroring
+    # ``split_sections`` - otherwise the translated footer is read as part
+    # of the last prose section and its blocks are miscounted.
+    footer_start = _footer_start(lines, heading_idx[-1]) if heading_idx else len(lines)
     # Find the binding line for this English heading.
     for i, line in enumerate(lines):
         m = _BINDING_RE.search(line)
         if m and m.group(1) == en_heading:
             start = i + 1
-            end = len(lines)
-            for j in range(i + 1, len(lines)):
+            end = footer_start
+            for j in range(i + 1, min(len(lines), footer_start)):
                 if _HEADING_RE.match(lines[j]):
                     end = j
                     break
