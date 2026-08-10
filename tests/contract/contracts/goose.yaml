@@ -20,6 +20,13 @@ auth:
   required_for_help: false
   required_for_models: false
   secret_env: "ANTHROPIC_API_KEY"
+#
+# These are flags the CLI must still advertise in ``goose run --help``; the
+# list is not an assertion that every spawn passes each one. ``--model`` is
+# declared even though the adapter appends it only for a non-empty model: a
+# model-less spawn is unaffected, because this list is matched against help
+# text and never against argv, and the profile-contract admission check
+# permits a profile that declares fewer flags than the contract requires.
 required_flags:
   - "--text"
   - "--model"
