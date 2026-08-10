@@ -93,7 +93,7 @@ alias).
 | `cli` | string | - | Override adapter for this step only. |
 | `repo` | string | - | Multi-repo: route this step to a named repo. Falls back to stage-level `repo`. |
 | `depends_on_repo` | string | - | Cross-repo dependency: another repo must complete first. |
-| `files` | list[string] | `[]` | File ownership for conflict detection - agents declare which files they will touch. |
+| `files` | list[string] | `[]` | File ownership for conflict detection - agents declare which files they will touch. Must be a list: a scalar value fails the load with `PlanLoadError` (#3534); an explicit `null` loads as `[]`. `plan validate` rejects non-string items; the load path currently coerces them to strings instead of rejecting (#3556). |
 | `completion_signals` | list[object] | `[]` | Machine-checkable completion criteria (see below). |
 
 Step-level `depends_on` is *not* on the schema - dependencies between

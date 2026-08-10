@@ -85,8 +85,7 @@ session-shared state where multiple worktrees coexist.
 
 ### Task YAML
 
-Plan-file steps accept an `attachments:` list mirroring the CLI
-flag:
+Plan-file steps accept an `attachments:` list:
 
 ```yaml
 name: Reproduce failure
@@ -100,8 +99,19 @@ stages:
           - ./architecture.svg
 ```
 
-The orchestrator builds the same `MultiModalContext` from the
-listed paths and applies the same capability gate.
+The list is parsed and shape-validated at plan load and stored on
+the resulting task. It is not yet forwarded to the worker spawn
+path: the capability gate, audit-chain event, lineage receipt, and
+worktree pinning described above currently apply to the CLI
+`--attach` flag only. #3555 tracks wiring plan-declared attachments
+through that same path.
+
+`attachments` must be a list: a scalar value (e.g.
+`attachments: ./screenshot.png`) fails the plan load with
+`PlanLoadError`, and an explicit `null` loads as no attachments.
+Non-string list items are currently coerced to strings at load
+rather than rejected (#3555; #3552 tracks the full
+accepted/rejected/defaulted table for plan fields).
 
 ## References
 

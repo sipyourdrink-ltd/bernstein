@@ -169,8 +169,7 @@ def _require_schema_valid(document: object, schema_file: str, manifest_name: str
     if errors:
         listing = "\n  ".join(errors)
         msg = (
-            f"{manifest_name} does not conform to the vendored "
-            f"schemas/agent-plugins/1.0.0/{schema_file}:\n  {listing}"
+            f"{manifest_name} does not conform to the vendored schemas/agent-plugins/1.0.0/{schema_file}:\n  {listing}"
         )
         raise ManifestValidationError(msg)
 
