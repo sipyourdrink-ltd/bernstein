@@ -13,9 +13,10 @@ on:
     - cron: "17 6 * * 1"
   workflow_dispatch:
 
+# Workflow scope stays read-only; the one job that needs to write
+# re-asserts the elevated set at job scope (Scorecard token-permissions).
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: roadmap-refresh
@@ -23,22 +24,33 @@ concurrency:
 
 jobs:
   refresh:
+    name: Regenerate the milestone projection
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      # Credentials persist because the last step pushes the refresh branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
+        with:
+          # BOT_PAT when present, so the refresh PR actually runs CI.
+          # A pull request opened under GITHUB_TOKEN never triggers the
+          # required contexts, and reads as green while never having
+          # been checked.
+          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
 
-      - name: Regenerate the milestone projection
+      - name: Regenerate ROADMAP.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/gen_roadmap.py
 
       - name: Open a pull request if the roadmap moved
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if git diff --quiet -- ROADMAP.md; then
@@ -50,11 +62,12 @@ jobs:
           git checkout -B chore/roadmap-refresh
           git commit -q -m "docs(roadmap): refresh the milestone projection" -- ROADMAP.md
           git push -f origin chore/roadmap-refresh
-          if [ -z "$(gh pr list --head chore/roadmap-refresh --state open --json number --jq '.[].number')" ]; then
+          existing="$(gh pr list --head chore/roadmap-refresh --state open --json number --jq '.[].number')"
+          if [ -z "$existing" ]; then
             gh pr create \
               --head chore/roadmap-refresh \
               --title "docs(roadmap): refresh the milestone projection" \
               --body "Regenerated from the open milestones by \`scripts/gen_roadmap.py\`. Edit the milestone, not the generated block."
           else
-            echo "existing pull request updated by the push"
+            echo "pull request #$existing updated by the push"
           fi
