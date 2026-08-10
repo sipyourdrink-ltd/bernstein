@@ -870,3 +870,15 @@ def test_step_priority_and_estimated_minutes_defaults_still_apply(tmp_path: Path
     tasks = load_plan_from_yaml(plan_file)
     assert tasks[0].priority == 2
     assert tasks[0].estimated_minutes == 30
+
+
+@pytest.mark.parametrize("field", ["priority", "estimated_minutes"])
+def test_step_explicit_null_int_field_raises_plan_load_error(tmp_path: Path, field: str) -> None:
+    """An explicit ``null`` is a present non-integer value, not an absent key;
+    it must raise instead of silently receiving the absent-key default."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", field: None}]}]},
+    )
+    with pytest.raises(PlanLoadError, match=f"'{field}' must be an integer"):
+        load_plan_from_yaml(plan_file)

@@ -167,7 +167,7 @@ def _parse_enum_field[EnumT: Enum](
 
 
 def _parse_int_field(
-    raw: object,
+    step: dict[str, Any],
     field_name: str,
     stage_name: str,
     step_idx: int,
@@ -180,23 +180,27 @@ def _parse_int_field(
     integers and let a non-numeric string escape as a bare ``ValueError``
     instead of the documented ``PlanLoadError`` (#3516). Booleans are rejected
     too: JSON Schema's ``integer`` excludes them even though Python's ``bool``
-    subclasses ``int``.
+    subclasses ``int``. Presence is checked on the step dict itself so an
+    explicit ``null`` is rejected like any other non-integer instead of
+    silently receiving the default reserved for an absent key.
 
     Args:
-        raw: Raw value from the step dict (``None`` when the key is absent).
+        step: The step dict the field is read from.
         field_name: Step field name, for error context.
         stage_name: Stage name for error context.
         step_idx: Zero-based step index for error context.
-        default: Value returned when the field is absent.
+        default: Value returned when the key is absent.
 
     Returns:
         The integer value.
 
     Raises:
-        PlanLoadError: If *raw* is present but not an integer.
+        PlanLoadError: If the key is present but its value is not an integer
+            (including an explicit ``null``).
     """
-    if raw is None:
+    if field_name not in step:
         return default
+    raw = step[field_name]
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise PlanLoadError(
             f"Step {step_idx} in stage {stage_name!r}: {field_name!r} must be an integer, got {type(raw).__name__}"
@@ -389,7 +393,6 @@ def _parse_step(
     model_raw = step.get("model")
     effort_raw = step.get("effort")
     cli_raw = step.get("cli")
-    estimated_minutes_raw = step.get("estimated_minutes")
     mode_raw = step.get("mode")
     execution_mode: str | None = str(mode_raw) if mode_raw else None
     step_repo_raw = step.get("repo")
@@ -428,14 +431,12 @@ def _parse_step(
         title=title,
         description=str(step.get("description", title)),
         role=str(step.get("role", "backend")),
-        priority=_parse_int_field(step.get("priority"), "priority", stage_name, step_index, default=2),
+        priority=_parse_int_field(step, "priority", stage_name, step_index, default=2),
         scope=_parse_enum_field(Scope, step.get("scope", "medium"), "scope", stage_name, step_index),
         complexity=_parse_enum_field(
             Complexity, step.get("complexity", "medium"), "complexity", stage_name, step_index
         ),
-        estimated_minutes=_parse_int_field(
-            estimated_minutes_raw, "estimated_minutes", stage_name, step_index, default=30
-        ),
+        estimated_minutes=_parse_int_field(step, "estimated_minutes", stage_name, step_index, default=30),
         status=TaskStatus.OPEN,
         task_type=TaskType.STANDARD,
         depends_on=depends_on,
