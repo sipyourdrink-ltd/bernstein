@@ -85,7 +85,12 @@ uv run python scripts/bind_webui_renders.py --update   # rebind to today's bundl
 
 The capture step boots `bernstein gui serve` against an empty throwaway project
 and drives headless Chromium over each screen, so re-capturing is a command
-rather than a ritual each person reconstructs. The empty project is the point:
+rather than a ritual each person reconstructs. It is all-or-nothing: screens are
+staged and published only once every requested one succeeds. A run that dies
+half-way would otherwise leave some screens from today's bundle and the rest
+from whenever they were last taken, and `--update` preserves each render's prior
+provenance — so the untouched ones would keep the word `captured` while bound to
+a bundle they were never captured from. The empty project is the point:
 the committed renders show the zero-state, which is the only state that looks
 the same on every machine, and capturing against a live project would publish
 somebody's task titles into the docs. It runs under a Python that has

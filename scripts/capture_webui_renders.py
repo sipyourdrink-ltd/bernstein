@@ -52,6 +52,10 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = REPO_ROOT / "docs" / "assets"
@@ -119,6 +123,30 @@ def wait_for_boot(url: str, process: subprocess.Popen[bytes], log: Path) -> None
     raise SystemExit(f"the GUI did not answer on {url} within {BOOT_TIMEOUT_S}s:\n{log.read_text()}")
 
 
+def publish(staged: Path, names: Iterable[str]) -> list[Path]:
+    """Move staged captures over the committed renders.
+
+    Called only once every requested screen has been captured, so a run that
+    dies part-way leaves ``docs/assets`` untouched. Overwriting each render as
+    its screenshot lands would leave a mixed set - some screens from today's
+    bundle, the rest from whenever they were last taken - and the documented
+    next step (``bind_webui_renders.py --update``) preserves prior provenance,
+    so the stale ones would keep the word ``captured`` while bound to a bundle
+    they were never captured from. That is the one claim this gate exists to
+    make, so it must not be a half-finished run away from being false.
+
+    The staging directory lives inside ``docs/assets`` so this is a rename on
+    one filesystem: :func:`os.replace` is atomic per file, and across
+    filesystems it would not work at all.
+    """
+    published: list[Path] = []
+    for name in names:
+        target = ASSET_DIR / f"webui-{name}.png"
+        os.replace(staged / target.name, target)
+        published.append(target)
+    return published
+
+
 def capture(screens: dict[str, str], base: str, token: str) -> list[Path]:
     try:
         from playwright.sync_api import sync_playwright
@@ -128,8 +156,8 @@ def capture(screens: dict[str, str], base: str, token: str) -> list[Path]:
             "  python -m pip install playwright && python -m playwright install chromium"
         ) from exc
 
-    written: list[Path] = []
-    with sync_playwright() as playwright:
+    with sync_playwright() as playwright, tempfile.TemporaryDirectory(dir=ASSET_DIR, prefix=".staging-") as tmp:
+        staging = Path(tmp)
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1)
 
@@ -144,13 +172,12 @@ def capture(screens: dict[str, str], base: str, token: str) -> list[Path]:
         for name, route in screens.items():
             page.goto(f"{base}{route}", wait_until="networkidle")
             page.wait_for_timeout(SETTLE_MS)
-            target = ASSET_DIR / f"webui-{name}.png"
-            page.screenshot(path=str(target))
-            written.append(target)
-            print(f"  captured {target.relative_to(REPO_ROOT)}")
+            page.screenshot(path=str(staging / f"webui-{name}.png"))
+            print(f"  captured webui-{name}.png")
 
         browser.close()
-    return written
+        # Only now, with every requested screen in hand - see publish().
+        return publish(staging, screens)
 
 
 def main(argv: list[str] | None = None) -> int:
