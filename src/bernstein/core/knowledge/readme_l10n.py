@@ -436,3 +436,38 @@ def load_config(pyproject: Path) -> list[str]:
     if not strs or len(strs) != len(langs):
         raise ValueError("[tool.bernstein.readme-l10n] languages must be a non-empty list of IETF tags")
     return strs
+
+
+def load_owners(pyproject: Path) -> dict[str, str]:
+    """Read the per-language owner map from ``[tool.bernstein.readme-l10n.owners]``.
+
+    Maps an IETF tag to the handle of whoever keeps that translation
+    current. Missing config, or a missing ``owners`` table, means no
+    language has a recorded owner - the gate still fails on drift, it
+    just cannot say who to ask. A malformed entry is a hard error for
+    the same reason a malformed ``languages`` entry is: a typo must not
+    quietly turn a language into one nobody is named for.
+    """
+    import tomllib
+
+    try:
+        data: dict[str, object] = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+    section: object = data.get("tool")
+    for key in ("bernstein", "readme-l10n", "owners"):
+        if not isinstance(section, dict):
+            return {}
+        section = cast(dict[str, object], section).get(key)
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise ValueError('[tool.bernstein.readme-l10n.owners] must be a table of ietf-tag = "handle"')
+    owners = cast(dict[str, object], section)
+    bad = sorted(tag for tag, handle in owners.items() if not isinstance(handle, str) or not handle.strip())
+    if bad:
+        raise ValueError(
+            "[tool.bernstein.readme-l10n.owners] entries must be non-empty strings; bad entries: " + ", ".join(bad)
+        )
+    return {tag: cast(str, handle).strip() for tag, handle in owners.items()}

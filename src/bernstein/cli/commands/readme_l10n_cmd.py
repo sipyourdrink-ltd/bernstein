@@ -31,6 +31,7 @@ from bernstein.core.knowledge.readme_l10n import (
     BINDING_RE,
     HEADER_SECTION,
     load_config,
+    load_owners,
     section_hash,
     split_sections,
     verify_language,
@@ -46,6 +47,36 @@ def _resolve_workdir(workdir: Path) -> Path:
     if not (workdir / "README.md").is_file():
         raise click.UsageError(f"{workdir} does not contain a README.md; pass --workdir REPO_ROOT")
     return workdir
+
+
+def _load_owners(workdir: Path) -> dict[str, str]:
+    """Load the per-language owner map, mapping config errors to exit 2."""
+    try:
+        return load_owners(workdir / "pyproject.toml")
+    except ValueError as exc:
+        click.echo(f"CONFIG   {exc}", err=True)
+        sys.exit(2)
+    return {}
+
+
+def _report_owner(lang: str, owners: dict[str, str]) -> None:
+    """Name whoever keeps this translation current, on the failure path.
+
+    A drift report that does not say who to ask lands on the maintainer
+    by default, which is how the previous translation set went stale
+    before anyone noticed. A language with no recorded owner is reported
+    as such: an unowned translation is a removal candidate, not a
+    standing debt.
+    """
+    handle = owners.get(lang)
+    if handle:
+        click.echo(f"OWNER    README.{lang}.md is kept current by {handle}", err=True)
+    else:
+        click.echo(
+            f"OWNER    README.{lang}.md has no owner in [tool.bernstein.readme-l10n.owners]; "
+            "see docs/playbooks/readme-l10n.md",
+            err=True,
+        )
 
 
 def _load_languages(workdir: Path) -> list[str]:
@@ -97,6 +128,7 @@ def readme_l10n_verify(workdir: Path) -> None:
     """
     _resolve_workdir(workdir)
     languages = _load_languages(workdir)
+    owners = _load_owners(workdir)
     if not languages:
         click.echo("SKIP     no [tool.bernstein.readme-l10n] languages configured; nothing to verify")
         return
@@ -109,6 +141,7 @@ def readme_l10n_verify(workdir: Path) -> None:
         tpath = workdir / f"README.{lang}.md"
         if not tpath.is_file():
             click.echo(f"MISSING  README.{lang}.md (configured but not present)", err=True)
+            _report_owner(lang, owners)
             drift_total += 1
             continue
         result = verify_language(sections, lang, tpath.read_text(encoding="utf-8"))
@@ -117,6 +150,7 @@ def readme_l10n_verify(workdir: Path) -> None:
             continue
         for err in result.errors:
             click.echo(f"DRIFT    README.{lang}.md: {err}", err=True)
+        _report_owner(lang, owners)
         drift_total += len(result.errors)
 
     if drift_total:

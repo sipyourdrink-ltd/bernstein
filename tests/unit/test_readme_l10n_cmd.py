@@ -13,12 +13,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner, Result
 
 from bernstein.cli.commands.readme_l10n_cmd import readme_l10n_cmd
 from bernstein.core.knowledge.readme_l10n import (
     HEADER_SECTION,
     Section,
+    load_owners,
     section_hash,
     split_sections,
 )
@@ -306,3 +308,70 @@ class TestCoreSplitting:
         footer = sections[-1].body
         assert "Footer line" in footer
         assert "four stages" not in footer
+
+
+def _stale_repo(tmp_path: Path, *, owners: str = "") -> Path:
+    """A fixture whose English source moved on after the translation bound it."""
+    repo = _write_fixture(tmp_path, zh=_zh_readme(_en_sections()))
+    (repo / "README.md").write_text(
+        EN_README.replace(
+            "pip and uv are covered in the install guide.",
+            "pip, uv, brew and dnf are covered in the install guide.",
+        ),
+        encoding="utf-8",
+    )
+    if owners:
+        (repo / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nversion = '0'\n\n"
+            "[tool.bernstein.readme-l10n]\nlanguages = ['zh-Hans']\n\n" + owners,
+            encoding="utf-8",
+        )
+    return repo
+
+
+class TestOwnerReporting:
+    """A drift report has to name someone who reads the language.
+
+    Without it every stale translation lands on whoever merged last,
+    which is how the earlier translation set went stale unnoticed.
+    """
+
+    def test_load_owners_reads_the_table(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.bernstein.readme-l10n]\nlanguages = ['zh-Hans']\n\n"
+            '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@someone"\n',
+            encoding="utf-8",
+        )
+        assert load_owners(tmp_path / "pyproject.toml") == {"zh-Hans": "@someone"}
+
+    def test_absent_owners_table_is_empty_not_an_error(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.bernstein.readme-l10n]\nlanguages = ['zh-Hans']\n", encoding="utf-8"
+        )
+        assert load_owners(tmp_path / "pyproject.toml") == {}
+
+    def test_blank_handle_is_a_config_error(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "  "\n', encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="zh-Hans"):
+            load_owners(tmp_path / "pyproject.toml")
+
+    def test_verify_names_the_owner_on_drift(self, tmp_path: Path) -> None:
+        repo = _stale_repo(
+            tmp_path,
+            owners='[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@translator"\n',
+        )
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 1, result.output
+        assert "@translator" in result.output
+
+    def test_verify_says_so_when_nobody_owns_it(self, tmp_path: Path) -> None:
+        result = _run("verify", "--workdir", str(_stale_repo(tmp_path)))
+        assert result.exit_code == 1, result.output
+        assert "no owner" in result.output
+
+    def test_a_blank_handle_exits_two_not_one(self, tmp_path: Path) -> None:
+        repo = _stale_repo(tmp_path, owners='[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = ""\n')
+        result = _run("verify", "--workdir", str(repo))
+        assert result.exit_code == 2, result.output

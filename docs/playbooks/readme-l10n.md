@@ -109,3 +109,48 @@ stripped per line, blank lines are dropped, lines are joined with
 blank-line reflow) so the gate does not cry wolf on every formatting
 pass, while still catching any real content change to the English
 source.
+
+## Adding a language
+
+A translation is added by whoever can keep it current, not by whoever
+happens to be merging that week. Two steps, both data:
+
+1. Add `README.<ietf-tag>.md` carrying an `l10n` binding under every
+   translated `###` heading, and append the tag to `languages` in
+   `[tool.bernstein.readme-l10n]`.
+2. Add yourself to `[tool.bernstein.readme-l10n.owners]`:
+
+   ```toml
+   [tool.bernstein.readme-l10n.owners]
+   "zh-Hans" = "@your-handle"
+   ```
+
+`bernstein readme-l10n sync` fills the hashes; `verify` proves the file
+is in sync before the PR merges.
+
+## Ownership
+
+The owner is the person a drift report is addressed to. When `verify`
+fails, it prints the stale section *and* the owner:
+
+```
+DRIFT    README.zh-Hans.md: section "install in 30 seconds" is stale: ...
+OWNER    README.zh-Hans.md is kept current by @your-handle
+```
+
+A language with no entry in the owners table is reported as unowned:
+
+```
+OWNER    README.zh-Hans.md has no owner in [tool.bernstein.readme-l10n.owners]
+```
+
+That is a real state, not a warning to ignore. An unowned translation is
+a removal candidate: it will drift, and the drift will land on whoever
+edited the English source, who by definition cannot check it. The repo
+carried eleven translations once, added in a single change with no gate
+and no owners; seventeen days later they were removed as stale. The gate
+prevents the silent part of that; the owners table prevents the rest.
+
+Handing a language over is a one-line change to the table, made by the
+person taking it on. Nobody is assigned a language they did not
+volunteer for.

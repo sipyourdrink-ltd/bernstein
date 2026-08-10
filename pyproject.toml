@@ -869,6 +869,16 @@ ignore_missing_imports = true
 # here and add README.<tag>.md carrying l10n bindings.
 languages = ["zh-Hans", "zh-TW"]
 
+# Who keeps each translation current. `verify` names the owner when a
+# language drifts, so the report reaches someone who reads the language
+# rather than defaulting to whoever merged last. A language with no entry
+# here is reported as unowned and is a removal candidate rather than a
+# standing obligation. Handing a language over is a one-line change to
+# this table, made by the person taking it on.
+[tool.bernstein.readme-l10n.owners]
+"zh-Hans" = "@chernistry"
+"zh-TW" = "@chernistry"
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
