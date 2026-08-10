@@ -52,8 +52,8 @@ so the interpreter running this script is usually *not* the project venv. The
 server is therefore spawned as a separate ``bernstein`` executable
 (``--bernstein`` to point at a specific one) rather than as
 ``sys.executable -m bernstein``, which would require both to live together.
-When Pillow is importable the published PNGs are palette-quantised, which
-roughly halves their size at no visible cost on these flat UI surfaces.
+When Pillow is importable each published image is palette-quantised, which
+roughly halves its size at no visible cost on these flat UI surfaces.
 """
 
 from __future__ import annotations
