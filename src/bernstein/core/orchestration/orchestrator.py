@@ -162,6 +162,19 @@ from bernstein.evolution.risk import RiskScorer
 
 _BERNSTEIN_YAML = "bernstein.yaml"
 
+#: What an operator is told when no adapter resolves. Every flag it names has to
+#: be a flag of the ``bernstein`` command, because that is what the reader typed
+#: and what they will check against ``bernstein --help``. This module's own
+#: ``--adapter`` argparse flag belongs to the orchestrator subprocess and is not
+#: reachable from there; naming it sent readers looking for an option that does
+#: not exist (#3526). ``tests/unit/test_adapter_fatal_message.py`` resolves each
+#: flag here against the registered CLI, so the text cannot drift back.
+NO_ADAPTER_CONFIGURED = (
+    "FATAL: no adapter configured. Bernstein does not default to Claude - "
+    f"pass --cli (e.g. --cli codex), set BERNSTEIN_ADAPTER, or set 'cli' in {_BERNSTEIN_YAML}. "
+    "Run 'bernstein integrations list --installed' to see which adapters resolve here."
+)
+
 # Preserve underscore-prefixed aliases so existing test imports keep working
 _compute_total_spent = compute_total_spent
 _total_spent_cache = total_spent_cache
@@ -5908,10 +5921,12 @@ if __name__ == "__main__":
             )
 
         if not adapter_name:
-            logger.error(
-                "FATAL: no adapter configured. Bernstein does not default to Claude - "
-                "pass --adapter, set BERNSTEIN_ADAPTER, or configure 'cli' in bernstein.yaml."
-            )
+            # Name --cli, not --adapter. --adapter is this module's own argparse
+            # flag; the operator reaching this message typed `bernstein`, whose
+            # equivalent option is --cli. Naming a flag `bernstein --help` does
+            # not list sends the reader looking for something that is not there
+            # (#3526).
+            logger.error("%s", NO_ADAPTER_CONFIGURED)
             sys.exit(1)
 
         # Run-level model: ``--model`` flag (threaded from ``bernstein run
