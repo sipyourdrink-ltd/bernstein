@@ -152,7 +152,10 @@ class QwenAdapter(CLIAdapter):
             # The qwen CLI parser rejects unknown arguments outright, so a
             # sampling flag that is not in its surface aborts the run instead
             # of being ignored. None are wired; plugin_info() declares no
-            # sampling capability so the spawn is refused before reaching here.
+            # sampling capability, so a spawn carrying one of the enforced keys
+            # is refused before reaching here. ``max_tokens`` is the exception:
+            # it is absent from SAMPLING_PARAM_KEYS, so nothing refuses it and
+            # this warning is the only signal the value was dropped (#3586).
             for dropped_key in ("temperature", "top_p", "top_k", "max_tokens"):
                 if mcp_config.get(dropped_key) is not None:
                     logger.warning(
