@@ -103,6 +103,12 @@ stages:
 The orchestrator builds the same `MultiModalContext` from the
 listed paths and applies the same capability gate.
 
+`attachments` must be a list: a scalar value (e.g.
+`attachments: ./screenshot.png`) fails the plan load with
+`PlanLoadError`, and an explicit `null` loads as no attachments
+(#3552 tracks the full accepted/rejected/defaulted table for plan
+fields).
+
 ## References
 
 * `src/bernstein/core/agents/multimodal_attestation.py` -- spawn-time
