@@ -218,3 +218,18 @@ def test_every_version_the_pypi_check_accepts_can_also_be_rendered(mod: ModuleTy
     for candidate in ("3.13.0", "3.13.0-rc1", "3.13.0rc1", "3.13.0.post1", "3.13.0.dev1"):
         assert mod.pypi_version(candidate)
         assert mod.rpm_version(candidate)
+
+
+def test_spec_compares_the_packaged_version_as_pep440_not_as_a_string(spec_text: str) -> None:
+    """``%check`` must survive a pre-release.
+
+    A tag spells a pre-release ``3.15.0-rc1``; the installed distribution
+    metadata carries the normalised ``3.15.0rc1``. Comparing those as strings
+    fails every pre-release build even though pip installed exactly the right
+    release, so the check has to compare them as PEP 440 versions.
+    """
+    check_body = spec_text.split("%check", 1)[1].split("%files", 1)[0]
+
+    assert "from packaging.version import Version" in check_body
+    assert "Version(got) == Version(" in check_body
+    assert 'got == "%{pypi_version}"' not in check_body

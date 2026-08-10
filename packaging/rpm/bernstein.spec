@@ -104,10 +104,18 @@ ln -sf %{venv_root}/bin/%{name} %{buildroot}%{_bindir}/%{name}
 # The package must run the version it claims. pip resolving something else -
 # a stale index, a yanked release, a typo in the binding above - fails the
 # build here rather than shipping a package whose metadata is fiction.
+#
+# Compared as PEP 440 versions rather than as strings. A pre-release reaches
+# this spec in the spelling its tag used (3.15.0-rc1) while the installed
+# distribution metadata carries the normalised spelling (3.15.0rc1), so a
+# string comparison would fail every pre-release build even though the right
+# version is installed. `packaging` is one of the application's own runtime
+# dependencies, so it is always present in the venv being checked.
 %{buildroot}%{venv_root}/bin/python -c \
     'import importlib.metadata as m, sys; \
+     from packaging.version import Version; \
      got = m.version("%{name}"); \
-     sys.exit(0) if got == "%{pypi_version}" else sys.exit( \
+     sys.exit(0) if Version(got) == Version("%{pypi_version}") else sys.exit( \
          "packaged %s but the spec claims %{pypi_version}" % got)'
 
 %files
