@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from bernstein.core.protocols.cluster import NodeRegistry
+    from bernstein.core.protocols.grpc.grpc_server import ClusterServiceImpl
 
 
 class TestGrpcServerConfig:
@@ -170,6 +175,7 @@ class TestClusterServiceImplRegisterNode:
     @staticmethod
     def _make_request() -> MagicMock:
         request = MagicMock()
+        request.HasField.return_value = True
         request.name = "worker-a"
         request.url = "http://worker-a:8052"
         request.labels = {"gpu": "true"}
@@ -181,22 +187,25 @@ class TestClusterServiceImplRegisterNode:
         request.capacity.supported_models = ["claude-sonnet-4-20250514"]
         return request
 
-    @pytest.mark.asyncio
-    async def test_register_node_stores_a_real_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @staticmethod
+    def _make_service(monkeypatch: pytest.MonkeyPatch) -> tuple[NodeRegistry, ClusterServiceImpl]:
         from bernstein.core.models import ClusterConfig
 
         from bernstein.core.protocols.cluster import NodeRegistry
         from bernstein.core.protocols.grpc.grpc_server import ClusterServiceImpl
 
         monkeypatch.setitem(sys.modules, "bernstein.core.grpc_gen.cluster_pb2", MagicMock())
-
         registry = NodeRegistry(ClusterConfig())
-        service = ClusterServiceImpl(registry)
+        return registry, ClusterServiceImpl(registry)
+
+    @pytest.mark.asyncio
+    async def test_register_node_stores_a_real_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registry, service = self._make_service(monkeypatch)
         request = self._make_request()
 
-        await service.RegisterNode(request, context=MagicMock())
+        resp = await service.RegisterNode(request, context=MagicMock())
 
-        nodes = list(registry._nodes.values())
+        nodes = registry.list_nodes()
         assert len(nodes) == 1
         node = nodes[0]
         assert node.name == "worker-a"
@@ -207,3 +216,52 @@ class TestClusterServiceImplRegisterNode:
         assert node.capacity.supported_models == ["claude-sonnet-4-20250514"]
         assert node.labels == {"gpu": "true"}
         assert node.cell_ids == ["cell-1"]
+        # The response half of the handler: the scalar fields written by
+        # _fill_node_proto read back through the mocked cluster_pb2 module.
+        # (Container writes -- labels, cell_ids, supported_models -- go via
+        # __setitem__ and need real proto stubs to assert.)
+        assert resp.node.id == node.id
+        assert resp.node.name == "worker-a"
+        assert resp.node.url == "http://worker-a:8052"
+        assert resp.node.capacity.max_agents == 4
+        assert resp.node.capacity.available_slots == 3
+
+    @pytest.mark.asyncio
+    async def test_register_node_preserves_falsy_request_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registry, service = self._make_service(monkeypatch)
+        request = self._make_request()
+        request.labels = {}
+        request.cell_ids = []
+        request.capacity.max_agents = 4
+        request.capacity.available_slots = 0
+        request.capacity.active_agents = 4
+        request.capacity.gpu_available = False
+        request.capacity.supported_models = []
+
+        resp = await service.RegisterNode(request, context=MagicMock())
+
+        node = registry.list_nodes()[0]
+        # A saturated node's available_slots=0 must survive registration.
+        assert node.capacity.available_slots == 0
+        assert node.capacity.max_agents == 4
+        assert node.capacity.active_agents == 4
+        # No models named: same default the REST registration schema applies.
+        assert node.capacity.supported_models == ["sonnet", "opus", "haiku"]
+        assert node.labels == {}
+        assert node.cell_ids == []
+        assert resp.node.capacity.available_slots == 0
+
+    @pytest.mark.asyncio
+    async def test_register_node_without_capacity_uses_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registry, service = self._make_service(monkeypatch)
+        request = self._make_request()
+        request.HasField.return_value = False
+
+        await service.RegisterNode(request, context=MagicMock())
+
+        node = registry.list_nodes()[0]
+        assert node.capacity.max_agents == 6
+        assert node.capacity.available_slots == 6
+        assert node.capacity.active_agents == 0
+        assert node.capacity.gpu_available is False
+        assert node.capacity.supported_models == ["sonnet", "opus", "haiku"]
