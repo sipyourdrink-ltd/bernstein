@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import sys
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -71,9 +72,13 @@ class TestAnchoredOpen:
             open_anchored(tmp_path, "ab", "blob", flags=os.O_RDONLY)
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX symlink semantics")
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX symlink and FIFO semantics")
 @pytest.mark.skipif(not ANCHORED_OPEN_SUPPORTED, reason="needs dir_fd and O_NOFOLLOW")
-class TestSymlinkRefusal:
+class TestRefusals:
+    """What the open refuses: symlinked components, and types the caller said
+    it would not accept. The two are separate defences against one outcome --
+    a read that lands somewhere it should not, or never returns at all."""
+
     def test_refuses_a_symlinked_final_component(self, tmp_path: Path) -> None:
         (tmp_path / "ab").mkdir()
         target = tmp_path / "elsewhere"
@@ -116,6 +121,82 @@ class TestSymlinkRefusal:
         (tmp_path / "ab").write_bytes(b"not a directory")
         with pytest.raises(NotADirectoryError):
             open_anchored(tmp_path, "ab", "blob", flags=os.O_RDONLY)
+
+    def test_a_fifo_is_refused_without_stalling(self, tmp_path: Path) -> None:
+        """No symlink is involved: a FIFO at the name blocks a plain open until
+        a writer appears, which is the reader stall the symlink work is meant
+        to prevent, reached by another route. The open must go non-blocking and
+        the type must be rejected on the descriptor.
+
+        The test would hang rather than fail if this regressed, so it runs
+        under a timeout - a hang is the defect, and a hanging test suite
+        reports it as badly as no test at all."""
+        (tmp_path / "ab").mkdir()
+        os.mkfifo(tmp_path / "ab" / "blob")
+
+        finished = threading.Event()
+        result: list[BaseException | None] = []
+
+        def attempt() -> None:
+            try:
+                open_anchored(
+                    tmp_path,
+                    "ab",
+                    "blob",
+                    flags=os.O_RDONLY,
+                    require_regular_file=True,
+                )
+                result.append(None)
+            except BaseException as exc:
+                result.append(exc)
+            finished.set()
+
+        threading.Thread(target=attempt, daemon=True).start()
+        assert finished.wait(timeout=10), "open_anchored stalled on a FIFO"
+        assert isinstance(result[0], OSError)
+        assert result[0].errno == errno.EINVAL
+
+    def test_a_directory_in_place_of_the_blob_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "ab" / "blob").mkdir(parents=True)
+        with pytest.raises(OSError) as excinfo:
+            open_anchored(
+                tmp_path,
+                "ab",
+                "blob",
+                flags=os.O_RDONLY,
+                require_regular_file=True,
+            )
+        assert excinfo.value.errno == errno.EINVAL
+
+    def test_a_regular_file_is_unaffected_by_the_type_check(self, tmp_path: Path) -> None:
+        """The guard must not cost a legitimate read."""
+        (tmp_path / "ab").mkdir()
+        (tmp_path / "ab" / "blob").write_bytes(b"payload")
+        fd = open_anchored(
+            tmp_path,
+            "ab",
+            "blob",
+            flags=os.O_RDONLY,
+            require_regular_file=True,
+        )
+        assert _read_all(fd) == b"payload"
+
+    def test_refusing_a_type_leaks_no_descriptors(self, tmp_path: Path) -> None:
+        """The rejected descriptor is closed before the raise."""
+        before = _open_fd_count()
+        if before < 0:
+            pytest.skip("no /proc/self/fd or /dev/fd on this platform")
+        (tmp_path / "ab" / "blob").mkdir(parents=True)
+        for _ in range(50):
+            with pytest.raises(OSError):
+                open_anchored(
+                    tmp_path,
+                    "ab",
+                    "blob",
+                    flags=os.O_RDONLY,
+                    require_regular_file=True,
+                )
+        assert _open_fd_count() == before
 
     def test_refused_walk_leaks_no_descriptors(self, tmp_path: Path) -> None:
         """Every intermediate descriptor is closed on the way out, including the

@@ -5,8 +5,10 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import os
 import shutil
 import sys
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -500,6 +502,35 @@ class TestCASStoreSymlinkSafety:
         digest = cas.put(b"blob in its own shard")
         shutil.rmtree(cas.root / digest[:2])
         assert cas.get(digest) is None
+
+    def test_get_refuses_a_fifo_at_the_blob_path_without_stalling(self, cas: CASStore) -> None:
+        """The reader stall #3561 is about does not need a symlink: a FIFO at
+        the blob's own name blocks a plain open until a writer appears, and
+        O_NOFOLLOW never had anything to say about it. The read must refuse the
+        type instead of waiting - so this asserts on a worker thread and fails
+        on the timeout, because the regression here is a hang, not an error."""
+        digest = cas.put(b"authentic blob")
+        blob = cas.blob_path(digest)
+        blob.unlink()
+        os.mkfifo(blob)
+
+        finished = threading.Event()
+        result: list[BaseException | None] = []
+
+        def attempt() -> None:
+            try:
+                cas.get(digest, verify=True)
+                result.append(None)
+            except BaseException as exc:
+                result.append(exc)
+            finished.set()
+
+        threading.Thread(target=attempt, daemon=True).start()
+        assert finished.wait(timeout=10), "CASStore.get stalled on a FIFO blob"
+        # OSError, never None: a refused type is a reader-side failure the
+        # verifier reports as unreadable, not a blob that is simply absent.
+        assert isinstance(result[0], OSError)
+        assert not isinstance(result[0], FileNotFoundError)
 
     def test_a_symlinked_store_root_is_still_readable(self, tmp_path: Path) -> None:
         """Pointing the store root at another volume is operator configuration,

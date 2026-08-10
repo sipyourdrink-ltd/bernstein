@@ -173,7 +173,20 @@ class CASStore:
         )
 
     def _read_meta(self, digest: str) -> CASEntry | None:
-        """Load the :class:`CASEntry` sidecar, or ``None`` if missing."""
+        """Load the :class:`CASEntry` sidecar, or ``None`` if missing.
+
+        This read is **not** anchored the way :meth:`get` is, deliberately.
+        Unlike a blob, the sidecar is not content-addressed: there is no digest
+        to check it against, so an attacker holding the write access needed to
+        plant a symlink in the store can write a hostile sidecar in place and a
+        symlink refusal would catch nothing. Nothing in the verification path
+        reads metadata -- see "Symlink refusal, and where it stops" in
+        ``docs/architecture/sandbox.md``.
+
+        **That exemption depends on metadata staying descriptive.** A caller
+        that starts making a trust decision from these fields invalidates the
+        reasoning above, and this read needs anchoring before it does.
+        """
         meta = self._meta_path(digest)
         if not meta.exists():
             return None
@@ -263,8 +276,19 @@ class CASStore:
         # platform cannot anchor an open (Windows), it degrades to guarding the
         # final component alone -- see anchored_read. A refused symlink surfaces
         # as OSError (ELOOP), which callers classify as unreadable, not absent.
+        # `require_regular_file` covers the other half of the same exposure: a
+        # symlink is not needed to stall a reader when a FIFO planted at the
+        # blob's own name will do it, and O_NOFOLLOW was never the control for
+        # that. The store writes regular files only, so nothing legitimate is
+        # refused. It surfaces as OSError (EINVAL), classified unreadable.
         try:
-            fd = open_anchored(self._root, digest[:2], digest, flags=os.O_RDONLY)
+            fd = open_anchored(
+                self._root,
+                digest[:2],
+                digest,
+                flags=os.O_RDONLY,
+                require_regular_file=True,
+            )
         except FileNotFoundError:
             # Only a genuinely missing component reads as a cache miss. Every
             # other OSError keeps propagating: widening this to OSError would
