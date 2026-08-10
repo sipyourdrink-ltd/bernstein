@@ -39,12 +39,17 @@ from typing import Any, TypedDict
 import yaml
 
 # Repo-root anchor. We compute the repo root from this file's location so
-# the loader works under editable installs and from the wheel-installed
-# package (in which case the contracts simply aren't packaged and the
-# loader raises FileNotFoundError, the expected behaviour off-dev).
+# the loader works under editable installs and from a source checkout.
 _THIS_FILE = Path(__file__).resolve()
 _REPO_ROOT = _THIS_FILE.parents[3]
-CONTRACTS_DIR = _REPO_ROOT / "tests" / "contract" / "contracts"
+_DEV_CONTRACTS_DIR = _REPO_ROOT / "tests" / "contract" / "contracts"
+# Wheel-bundled copy. The contracts are force-included into the package tree
+# at build time (see ``[tool.hatch.build.targets.wheel.force-include]`` in
+# ``pyproject.toml``), so a pip install resolves them without a checkout -
+# without them every adapter's admission verdict is a `no_contract` refusal
+# (issue #3547).
+_PACKAGED_CONTRACTS_DIR = _THIS_FILE.parents[1] / "_default_templates" / "adapter_contracts"
+CONTRACTS_DIR = _DEV_CONTRACTS_DIR if _DEV_CONTRACTS_DIR.is_dir() else _PACKAGED_CONTRACTS_DIR
 
 # Per-subprocess timeouts. Plenty for any well-behaved CLI.
 _HELP_TIMEOUT_SECONDS = 30

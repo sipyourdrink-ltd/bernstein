@@ -272,12 +272,18 @@ _OFF_TOKENS = frozenset({"off", "0", "false", "disabled", "none"})
 #: against ``mock``.
 ADMISSION_EXEMPT: frozenset[str] = frozenset({"generic", "mock"})
 
-#: Env override for the golden-transcript directory (absent from an installed
-#: wheel, present in a dev checkout).
+#: Env override for the golden-transcript directory, for an operator pinning a
+#: tree of their own ahead of both layouts below.
 _GOLDEN_DIR_ENV = "BERNSTEIN_ADAPTER_GOLDEN_DIR"
 
 #: Golden transcripts as laid out in a development checkout.
 _GOLDEN_DIR_DEFAULT = Path(__file__).parents[3] / "tests" / "golden"
+
+#: Golden transcripts as shipped in the wheel. Force-included into the package
+#: tree at build time (see ``[tool.hatch.build.targets.wheel.force-include]``
+#: in ``pyproject.toml``) so a pip install can replay the spawn path instead of
+#: refusing every adapter with :data:`REASON_NO_TRANSCRIPT` (issue #3547).
+_GOLDEN_DIR_PACKAGED = Path(__file__).resolve().parents[1] / "_default_templates" / "adapter_golden"
 
 _RECEIPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -334,8 +340,8 @@ def golden_transcripts_dir(explicit: Path | None = None) -> Path | None:
     """Resolve the golden-transcript directory, or ``None`` when absent.
 
     Order: an explicit argument, then :data:`_GOLDEN_DIR_ENV`, then the
-    development-checkout layout. An installed wheel ships no transcripts, so
-    ``None`` there is expected and surfaces as a
+    development-checkout layout, then the copy bundled in the wheel. ``None``
+    means no transcript tree is reachable at all, which surfaces as a
     :data:`REASON_NO_TRANSCRIPT` refusal rather than as silent permission.
     """
     if explicit is not None:
@@ -344,7 +350,9 @@ def golden_transcripts_dir(explicit: Path | None = None) -> Path | None:
     if env_dir:
         candidate = Path(env_dir)
         return candidate if candidate.exists() else None
-    return _GOLDEN_DIR_DEFAULT if _GOLDEN_DIR_DEFAULT.exists() else None
+    if _GOLDEN_DIR_DEFAULT.exists():
+        return _GOLDEN_DIR_DEFAULT
+    return _GOLDEN_DIR_PACKAGED if _GOLDEN_DIR_PACKAGED.exists() else None
 
 
 # ---------------------------------------------------------------------------

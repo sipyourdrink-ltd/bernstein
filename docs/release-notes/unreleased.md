@@ -77,6 +77,20 @@ landed since the newest one.
 
 ## Fixed
 
+- Adapter admission can produce an `ADMIT` verdict on a pip install (#3547).
+  The verdict is a projection of the pinned contract's bytes and the
+  golden-transcript replay, but both trees live under `tests/` and were
+  excluded from the wheel, so off a dev checkout every adapter resolved to a
+  skip-shaped refusal (`no_contract`, then `no_transcript`) and
+  `bernstein adapters verify --seal` could never go green. The contracts and
+  the transcripts now ship in the wheel at
+  `bernstein/_default_templates/adapter_contracts/` and
+  `bernstein/_default_templates/adapter_golden/`; a source checkout still wins
+  when present, and `BERNSTEIN_ADAPTER_GOLDEN_DIR` still overrides both. The
+  trees ship verbatim, so an installed host derives the same replay
+  fingerprint a checkout does. A packaging guard test pins the wheel
+  destinations to the paths the loaders read, so the files cannot silently
+  drop out again. Docs: `docs/adapters/admission-receipts.md`.
 - `ClusterServiceImpl.RegisterNode` no longer raises `TypeError` on every
   gRPC node registration. The handler called `NodeRegistry.register()` with
   `NodeInfo`'s own constructor keywords (`name=`, `url=`, `capacity=`,

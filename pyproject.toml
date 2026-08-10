@@ -485,6 +485,17 @@ artifacts = [
 # Built-in team manifests (#2248) so `team_manifest: python` and the
 # `bernstein team` commands resolve right after pip install.
 "templates/teams" = "bernstein/_default_templates/teams"
+# Adapter admission evidence (#3547). The verdict `bernstein adapters
+# verify --seal` derives is a projection of the pinned contract's bytes and
+# the golden-transcript replay, so both have to be resolvable off a pip
+# install or every adapter falls back to a skip-shaped refusal
+# (`no_contract` / `no_transcript`) and the seal can never go green outside
+# a dev checkout. Both trees are shipped verbatim rather than filtered, so
+# an installed host derives the same replay fingerprint a checkout does.
+# Loaders: bernstein.adapters._contract.CONTRACTS_DIR and
+# bernstein.adapters.admission.golden_transcripts_dir.
+"tests/contract/contracts" = "bernstein/_default_templates/adapter_contracts"
+"tests/golden" = "bernstein/_default_templates/adapter_golden"
 # Cross-vendor agent-plugin assets (#2369): the bernstein-run skill plus
 # the plugin command/agent/rule files, so `bernstein skills package
 # install` resolves the bundled tree right after pip install. Loader:
