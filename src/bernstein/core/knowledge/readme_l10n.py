@@ -381,9 +381,7 @@ def binding_placement_errors(text: str) -> list[str]:
     owned = _owned_sections(text)
     for en, sections in sorted(owned.items()):
         if len(sections) > 1:
-            errors.append(
-                f'section "{en}" is bound by {len(sections)} translated headings; exactly one must mirror it'
-            )
+            errors.append(f'section "{en}" is bound by {len(sections)} translated headings; exactly one must mirror it')
 
     lines = text.splitlines(keepends=True)
     heading_idx = [i for i, line in enumerate(lines) if _HEADING_RE.match(line)]
