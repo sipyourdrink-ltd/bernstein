@@ -1,0 +1,60 @@
+name: Roadmap refresh
+
+# ROADMAP.md is a projection of the open milestones. This regenerates it
+# and opens a pull request when the projection actually changed.
+#
+# It opens a pull request rather than pushing to main on purpose: main
+# is frozen between a release PR merging and the tag landing, and an
+# unattended weekly push is exactly the kind of thing that would land in
+# that window unnoticed. A pull request is safe to leave sitting.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: roadmap-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Regenerate the milestone projection
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/gen_roadmap.py
+
+      - name: Open a pull request if the roadmap moved
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- ROADMAP.md; then
+            echo "roadmap unchanged; nothing to open"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B chore/roadmap-refresh
+          git commit -q -m "docs(roadmap): refresh the milestone projection" -- ROADMAP.md
+          git push -f origin chore/roadmap-refresh
+          if [ -z "$(gh pr list --head chore/roadmap-refresh --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --head chore/roadmap-refresh \
+              --title "docs(roadmap): refresh the milestone projection" \
+              --body "Regenerated from the open milestones by \`scripts/gen_roadmap.py\`. Edit the milestone, not the generated block."
+          else
+            echo "existing pull request updated by the push"
+          fi

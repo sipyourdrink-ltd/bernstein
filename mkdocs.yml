@@ -150,6 +150,7 @@ nav:
   - Home:
       - index.md
       - Use cases: use-cases.md
+      - Scope (what this does not do): scope.md
       - What's new: whats-new.md
       - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md
@@ -629,6 +630,7 @@ nav:
           - Multi-cell orchestration: orchestration/multi-cell.md
           - Bulletin board: orchestration/bulletin-board.md
       - Decisions (ADRs):
+          - Index: decisions/index.md
           - Agent lifecycle: decisions/001-agent-lifecycle.md
           - Self-evolution: decisions/003-self-evolution.md
           - File-based state: decisions/004-file-based-state.md

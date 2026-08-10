@@ -9,6 +9,42 @@ git clone https://github.com/sipyourdrink-ltd/bernstein && cd bernstein
 uv venv && uv pip install -e ".[dev]"
 ```
 
+## Picking something to work on
+
+[ROADMAP.md](ROADMAP.md) says what is being built and when. Three
+labelled queues say where to start:
+
+- [good first issue](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
+  — self-contained, acceptance criteria written out, no prior context needed.
+- [help wanted](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
+  — larger, still scoped.
+- [adapter](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aopen+is%3Aissue+label%3Aadapter)
+  — support for another coding CLI: one module, one conformance test,
+  one doc entry.
+
+Every issue in those queues states what "done" looks like before you
+start. If one does not, that is a defect in the issue — say so on it.
+
+Comment to claim an issue. If it is assigned but has been quiet for a
+couple of weeks, ask anyway; stalled is not the same as taken.
+
+Before proposing something large, read [Scope](docs/scope.md). It lists
+the boundaries that are already decided and the reason for each, with
+the [decision records](docs/decisions/index.md) behind them. Arguing
+with a stated reason is a good way to start a discussion. Spending a
+week working against one is not.
+
+### Areas
+
+Land three changes in one area and the area is yours if you want it:
+you are named in [CODEOWNERS](.github/CODEOWNERS) for it, and changes
+there come to you for review. Areas are adapters, the web dashboard,
+the terminal UI, docs, and packaging.
+
+This is not ceremonial. An area with a name against it gets a second
+reader who knows it; an area with nobody against it accumulates
+whatever the last person in a hurry did.
+
 ## Testing
 
 ```bash
