@@ -71,7 +71,10 @@ def _due_label(milestone: dict[str, Any]) -> str:
     raw = milestone.get("due_on")
     if not raw:
         return "scoped by content, no date"
-    parsed = datetime.strptime(str(raw), "%Y-%m-%dT%H:%M:%SZ")
+    # GitHub returns the Z spelling today. Pattern-matching that exact
+    # spelling would make the scheduled job die with a stack trace instead
+    # of a roadmap the first time an offset form comes back, so parse both.
+    parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     return f"due {parsed.day} {parsed.strftime('%B %Y')}"
 
 
@@ -92,7 +95,11 @@ def render(milestones: list[dict[str, Any]]) -> str:
     for milestone in sorted(milestones, key=_sort_key):
         title = str(milestone.get("title", "")).strip()
         url = str(milestone.get("html_url", "")).strip()
-        description = str(milestone.get("description") or "").strip()
+        # A milestone description carrying a generated-block marker would
+        # splice a second marker pair into ROADMAP.md, and every refresh
+        # after that would refuse the file. Strip rather than raise: one
+        # careless description should not permanently stop the roadmap.
+        description = str(milestone.get("description") or "").replace(START, "").replace(END, "").strip()
         heading = f"### [{title}]({url}) — {_due_label(milestone)}"
         body = description or "_No description on the milestone yet._"
         parts.append(f"{heading}\n\n{body}")

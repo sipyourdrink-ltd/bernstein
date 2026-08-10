@@ -122,3 +122,29 @@ class TestTruncationGuard:
         monkeypatch.setattr(gen_roadmap.urllib.request, "urlopen", lambda *a, **k: _Response())
         with pytest.raises(ValueError, match="at least"):
             gen_roadmap.fetch_milestones("o/r", None)
+
+
+class TestHostileMilestoneData:
+    """Milestone fields are operator-editable text and reach the file verbatim."""
+
+    def test_offset_timestamp_parses_like_the_z_form(self) -> None:
+        z = gen_roadmap.render([_milestone("v1", "2026-08-24T00:00:00Z")])
+        offset = gen_roadmap.render([_milestone("v1", "2026-08-24T00:00:00+00:00")])
+        assert z == offset
+        assert "due 24 August 2026" in offset
+
+    def test_marker_in_a_description_is_stripped(self) -> None:
+        """Otherwise the next refresh sees two pairs and refuses the file forever."""
+        out = gen_roadmap.render(
+            [_milestone("v1", None, description=f"theme {gen_roadmap.START} and {gen_roadmap.END}")]
+        )
+        assert gen_roadmap.START not in out
+        assert gen_roadmap.END not in out
+        assert "theme" in out
+
+    def test_a_stripped_description_still_splices_once(self) -> None:
+        doc = f"a\n\n{gen_roadmap.START}\n\nold\n\n{gen_roadmap.END}\n\nb\n"
+        block = gen_roadmap.render([_milestone("v1", None, description=gen_roadmap.START)])
+        spliced = gen_roadmap.splice(doc, block)
+        assert spliced.count(gen_roadmap.START) == 1
+        assert spliced.count(gen_roadmap.END) == 1
