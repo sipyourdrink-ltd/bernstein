@@ -109,6 +109,11 @@ def _check_schema(plan_file: Path, errors: list[str], warnings: list[str]) -> No
     Keys the schema does not declare (``additionalProperties: false``) are
     collected into *warnings*: plans carrying extra keys validate today, so
     the error-level enforcement waits for the next major release (#3516).
+    External tooling that applies the exported ``PLAN_JSON_SCHEMA`` verbatim
+    is therefore stricter than this command during that window - deliberately
+    so: the schema states the target contract, and the CLI's extra leniency
+    (custom roles, unknown keys) is the transitional surface, not the
+    destination.
 
     It runs before ``load_plan`` because ``load_plan`` is where several schema
     violations become crashes rather than findings: ``_parse_step`` builds
@@ -202,7 +207,10 @@ def validate_plan(plan_file: Path) -> None:
     """Validate a plan file -- check the schema, DAG, roles, and dependencies.
 
     Exits 1 when any check reports an error, 0 when the plan is clean or carries
-    warnings only, so a CI gate can branch on the exit code.
+    warnings only, so a CI gate can branch on the exit code. The exit code is
+    the whole machine contract: stdout is a human-facing report (summary,
+    errors, and warnings together, in reading order), not a parseable stream,
+    so warnings deliberately stay on stdout next to the verdict they qualify.
     """
     console.print(f"Validating plan: {plan_file}\n")
 
