@@ -11,8 +11,11 @@
 adapter: goose
 binary: goose
 install:
+  # ``stable`` matches the install line in src/bernstein/adapters/goose.py.
+  # ``latest`` is not equivalent: it follows the newest release, which can be
+  # a prerelease.
   method: curl
-  spec: "https://github.com/aaif-goose/goose/releases/latest/download/download_cli.sh"
+  spec: "https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh"
 auth:
   required_for_help: false
   required_for_models: false
