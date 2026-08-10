@@ -157,18 +157,46 @@ if [ -z "${OFFLINE_OUT}" ]; then
     exit 1
 fi
 
-# Exact comparison, not a substring search: `grep -F 3.1` matches a program
-# reporting 3.14.159, and a diagnostic line carrying the number would satisfy
-# it too. Click prints `bernstein, version X` on one line; take the last field
-# of that line and require equality.
-REPORTED="$(printf '%s' "${OFFLINE_OUT}" | sed -n '1s/.*[[:space:]]//p')"
-if [ "${REPORTED}" != "${VERSION}" ]; then
-    echo "::error::[${IMAGE}] RPM claims ${VERSION} but the installed program reports '${REPORTED}' (full output: ${OFFLINE_OUT})"
+if [ "$(printf '%s\n' "${OFFLINE_OUT}" | wc -l)" -ne 1 ]; then
+    echo "::error::[${IMAGE}] 'bernstein --version' printed more than the version line: ${OFFLINE_OUT}"
     exit 1
 fi
 
-if [ "$(printf '%s\n' "${OFFLINE_OUT}" | wc -l)" -ne 1 ]; then
-    echo "::error::[${IMAGE}] 'bernstein --version' printed more than the version line: ${OFFLINE_OUT}"
+# The version the program reports must equal the version the RPM claims -
+# compared as PEP 440, not as strings. A pre-release reaches this script in the
+# spelling its tag used (3.15.0-rc1) while the program reports the normalised
+# distribution metadata (3.15.0rc1), so a string comparison would reject a
+# correctly built pre-release RPM and block the release. The comparison runs on
+# the packaged interpreter, which carries `packaging` as one of the
+# application's own dependencies, so nothing is needed on the host.
+echo "::group::[${IMAGE}] packaged version equals the claimed version (PEP 440)"
+set +e
+VERIFY_OUT="$(docker run --rm -i --network none \
+    -e "SMOKE_VERSION=${VERSION}" \
+    "${TAG}" \
+    bash -euo pipefail -s <<'VERIFY' 2>&1
+VENV_BIN="$(dirname "$(readlink -f /usr/bin/bernstein)")"
+"${VENV_BIN}/python" - "${SMOKE_VERSION}" <<'PY'
+import importlib.metadata as metadata
+import sys
+
+from packaging.version import Version
+
+want = sys.argv[1]
+got = metadata.version("bernstein")
+if Version(got) != Version(want):
+    raise SystemExit(f"packaged {got} but the RPM claims {want}")
+print(got)
+PY
+VERIFY
+)"
+VERIFY_RC=$?
+set -e
+echo "exit=${VERIFY_RC} packaged=${VERIFY_OUT:-<empty>}"
+echo "::endgroup::"
+
+if [ "${VERIFY_RC}" -ne 0 ]; then
+    echo "::error::[${IMAGE}] packaged version does not match the RPM's claim: ${VERIFY_OUT:-<no output>}"
     exit 1
 fi
 
