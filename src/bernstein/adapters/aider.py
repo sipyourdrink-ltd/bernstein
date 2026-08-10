@@ -16,7 +16,7 @@ from bernstein.adapters.env_isolation import build_filtered_env
 # Map Bernstein short model names to aider model identifiers.
 # Aider accepts provider-prefixed names (e.g. "openai/gpt-5.5", "anthropic/claude-opus-4-7").
 # Short names are mapped to the most common aider-compatible IDs; unknown names pass through.
-# Last verified against upstream aider-chat 0.86.2 on 2026-05-19 - install: `pip install aider-chat`.
+# Last verified against upstream aider-chat 0.86.2 on 2026-08-10 - install: `pip install aider-chat`.
 _MODEL_MAP: dict[str, str] = {
     "opus": "anthropic/claude-opus-4-7",
     "opus-4-6": "anthropic/claude-opus-4-6",  # pinned fallback

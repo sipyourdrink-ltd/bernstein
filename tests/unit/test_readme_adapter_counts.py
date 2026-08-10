@@ -29,8 +29,10 @@ ADAPTER_INDEX = REPO_ROOT / "docs" / "adapters" / "index.md"
 
 # "carries install commands for 29 of them"
 _MATRIX_CLAIM_RE = re.compile(r"carries install commands for (\d+) of them")
-# "enumerates all 48 wired-in adapters"
-_TOTAL_CLAIM_RE = re.compile(r"enumerates all (\d+) wired-in adapters")
+# "enumerates all 51 wired-in integrations"
+_TOTAL_CLAIM_RE = re.compile(r"enumerates all (\d+) wired-in integrations")
+# "49 of them are selectable agent adapters"
+_SELECTABLE_CLAIM_RE = re.compile(r"(\d+) of them are selectable agent adapters")
 
 
 def _claimed(pattern: re.Pattern[str]) -> int:
@@ -67,6 +69,13 @@ def test_readme_install_matrix_count_matches_the_table() -> None:
 def test_readme_total_adapter_count_matches_the_registry() -> None:
     """The README's wired-in adapter count equals what the CLI enumerates."""
     assert _claimed(_TOTAL_CLAIM_RE) == len(_enumerate_rows())
+
+
+def test_readme_selectable_adapter_count_matches_the_registry() -> None:
+    """The README's selectable-adapter count equals the registry's selectable set."""
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    assert _claimed(_SELECTABLE_CLAIM_RE) == len(selectable_adapter_names())
 
 
 def test_install_matrix_is_a_subset_claim_not_a_full_one() -> None:

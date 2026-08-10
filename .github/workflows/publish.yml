@@ -401,13 +401,90 @@ jobs:
   # No warn-and-continue. The RPM channel leaves no artefact in the repository,
   # so a swallowed failure here is invisible until someone installs the package
   # by hand - the failure mode #3322 documents for the npm wrapper.
+  # Release-path RPM install smoke (#3558, #3559). Builds the binary RPM from
+  # the same SRPM the Copr job submits, installs it in a container per
+  # published chroot family, and asserts `bernstein --version` reports the
+  # release version with networking disabled. Runs before the Copr submission
+  # so a package that does not install - or installs a launcher instead of
+  # the program - fails the release here rather than reaching a user.
+  rpm-install-smoke:
+    name: RPM install smoke (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    needs: publish
+    # Mirrors the publish-copr condition: run on the tag path once PyPI has
+    # published (the spec installs the release from PyPI at build time), and
+    # on a channel-only republish where the upstream graph is skipped.
+    if: ${{ always() && (inputs.copr_only || needs.publish.result == 'success') }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # One container per published chroot, so nothing is submitted to Copr
+        # for a target this never installed on. The intended chroot list lives
+        # in docs/operations/release.md ("Chroots").
+        #
+        # fedora-rawhide is deliberately not gated here: it is a moving target
+        # whose breakage is routinely unrelated to this package, and failing a
+        # release on rawhide churn costs more than it catches. Copr still
+        # builds it and reports its own failure.
+        #
+        # Both arches are not gated either: these runners are x86_64 and an
+        # aarch64 cell would have to build a ~50 MB venv of compiled wheels
+        # under QEMU. The spec's arch-dependent surface is the wheel set pip
+        # selects, which Copr resolves natively per chroot and fails loudly on.
+        image:
+          - "fedora:43"
+          - "fedora:44"
+          - "quay.io/centos/centos:stream9"
+          - "quay.io/centos/centos:stream10"
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Same ref logic as publish-copr below: a republished tag can
+          # predate the smoke harness, so in that mode the packaging sources
+          # come from the dispatch ref instead of the tag.
+          ref: ${{ inputs.copr_only && github.ref || inputs.tag || github.ref }}
+          persist-credentials: false
+      - name: Wait for the release to be visible on PyPI
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          # The spec installs `bernstein==VERSION` from PyPI at build time and
+          # the index can lag the publish by a short window. Distinguish
+          # "not yet visible" from "the RPM is broken" by waiting here, with
+          # a bounded budget, before the smoke starts.
+          for _ in $(seq 1 30); do
+            if curl -fsS "https://pypi.org/pypi/bernstein/${VERSION}/json" >/dev/null 2>&1; then
+              echo "bernstein ${VERSION} is visible on PyPI"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::bernstein ${VERSION} never appeared on PyPI within the wait budget"
+          exit 1
+      - name: Build the RPM, install it, run it offline
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          scripts/rpm_install_smoke.sh "${SMOKE_IMAGE}" "${RELEASE_TAG#v}"
+
   publish-copr:
     name: Publish RPM to Copr
     runs-on: ubuntu-latest
-    needs: publish
+    needs: [publish, rpm-install-smoke]
     # `always()` so a channel-only republish still runs with the upstream
     # release graph skipped; the PyPI result still gates the normal tag path.
-    if: ${{ always() && (inputs.copr_only || needs.publish.result == 'success') }}
+    # The install smoke gates both paths: Copr accepting a build says nothing
+    # about whether the result installs, so a failed smoke must stop the
+    # submission rather than let Copr publish a package that does not work.
+    if: ${{ always() && needs.rpm-install-smoke.result == 'success' && (inputs.copr_only || needs.publish.result == 'success') }}
     # Comfortably above COPR_WATCH_SECONDS below, so the watch always ends on
     # its own deadline rather than being cancelled part-way through.
     timeout-minutes: 30

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
-from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
+from bernstein.adapters.plugin_sdk import AdapterPluginInfo
 from bernstein.core.defaults import QWEN_INSTALL_HINT
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
@@ -87,23 +87,21 @@ class QwenAdapter(CLIAdapter):
     def plugin_info(self) -> AdapterPluginInfo:
         """Declare the sampling surface QwenAdapter genuinely wires.
 
-        The ``qwen`` CLI accepts ``--temperature``/``--top-p`` pass-through
-        flags for its OpenAI-compatible generation config (see
-        :meth:`_build_command`). It does not expose a ``--top-k`` or
-        ``--max-tokens`` flag, so those are NOT declared here -
+        The ``qwen`` CLI exposes no sampling flags: ``--temperature``,
+        ``--top-p``, ``--top-k`` and ``--max-tokens`` are all rejected by
+        its argument parser (``Unknown argument: temperature``), which is a
+        hard spawn failure rather than a silent drop. None are declared, so
         :func:`bernstein.adapters.plugin_sdk.ensure_sampling_params_supported`
-        would refuse a spawn requesting them rather than silently drop
-        them.
+        refuses such a spawn up front instead of building an argv the CLI
+        will reject. Sampling for ``qwen`` is configured out-of-band via its
+        settings file.
         """
         return AdapterPluginInfo(
             name="qwen",
             version="0.1.0",
             author="bernstein",
             description="Qwen CLI adapter for OpenAI compatible models",
-            capabilities=(
-                AdapterCapability.SUPPORTS_TEMPERATURE,
-                AdapterCapability.SUPPORTS_TOP_P,
-            ),
+            capabilities=(),
         )
 
     def _build_command(
@@ -122,14 +120,17 @@ class QwenAdapter(CLIAdapter):
         :meth:`spawn`.
 
         Args:
-            mcp_config: Per-spawn config that may carry ``temperature``/
-                ``top_p`` overrides - the only two sampling fields this
-                adapter's :meth:`plugin_info` declares support for.
+            mcp_config: Per-spawn config that may carry sampling overrides.
+                None are wired onto argv - the qwen CLI exposes no sampling
+                flags and rejects unknown arguments, so :meth:`plugin_info`
+                declares no sampling capability and such a spawn is refused
+                before it reaches here.
         """
-        # ``--approval-mode yolo`` is the current documented auto-approve flag
-        # in qwen-code (the unified form; the older ``-y`` / ``--yolo`` spellings
-        # are no longer shown in ``qwen --help``). ``--approval-mode`` is the
-        # stable flag the adapter contract verifies against the CLI help.
+        # ``--approval-mode yolo`` is the current auto-approve flag in
+        # qwen-code. Verified accepted on 0.20.0 and 0.21.9 (an invalid value
+        # reports ``Choices: "plan", "default", "auto-edit", "auto", "yolo"``),
+        # but it is absent from ``qwen --help`` in every spelling, so the
+        # adapter contract cannot drift-check it against the help text.
         # ``--output-format stream-json`` makes qwen-code emit line-delimited
         # JSON whose ``stats.models[<route>].tokens`` breakdown and per-call
         # ``usage`` blocks carry the provider's own token accounting. The
@@ -148,15 +149,14 @@ class QwenAdapter(CLIAdapter):
             cmd.extend(["--auth-type", "openai"])
 
         if mcp_config:
-            temperature = mcp_config.get("temperature")
-            if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
-                logger.debug("qwen adapter: wiring --temperature=%s onto argv", temperature)
-                cmd.extend(["--temperature", str(float(temperature))])
-            top_p = mcp_config.get("top_p")
-            if isinstance(top_p, (int, float)) and not isinstance(top_p, bool):
-                logger.debug("qwen adapter: wiring --top-p=%s onto argv", top_p)
-                cmd.extend(["--top-p", str(float(top_p))])
-            for dropped_key in ("top_k", "max_tokens"):
+            # The qwen CLI parser rejects unknown arguments outright, so a
+            # sampling flag that is not in its surface aborts the run instead
+            # of being ignored. None are wired; plugin_info() declares no
+            # sampling capability, so a spawn carrying one of the enforced keys
+            # is refused before reaching here. ``max_tokens`` is the exception:
+            # it is absent from SAMPLING_PARAM_KEYS, so nothing refuses it and
+            # this warning is the only signal the value was dropped (#3586).
+            for dropped_key in ("temperature", "top_p", "top_k", "max_tokens"):
                 if mcp_config.get(dropped_key) is not None:
                     logger.warning(
                         "qwen adapter: %s=%r requested but not wired (qwen CLI has no matching "

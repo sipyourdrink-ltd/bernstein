@@ -30,6 +30,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.anchored_read import open_anchored
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -171,7 +173,20 @@ class CASStore:
         )
 
     def _read_meta(self, digest: str) -> CASEntry | None:
-        """Load the :class:`CASEntry` sidecar, or ``None`` if missing."""
+        """Load the :class:`CASEntry` sidecar, or ``None`` if missing.
+
+        This read is **not** anchored the way :meth:`get` is, deliberately.
+        Unlike a blob, the sidecar is not content-addressed: there is no digest
+        to check it against, so an attacker holding the write access needed to
+        plant a symlink in the store can write a hostile sidecar in place and a
+        symlink refusal would catch nothing. Nothing in the verification path
+        reads metadata -- see "Symlink refusal, and where it stops" in
+        ``docs/architecture/sandbox.md``.
+
+        **That exemption depends on metadata staying descriptive.** A caller
+        that starts making a trust decision from these fields invalidates the
+        reasoning above, and this read needs anchoring before it does.
+        """
         meta = self._meta_path(digest)
         if not meta.exists():
             return None
@@ -250,20 +265,35 @@ class CASStore:
                 do not hash to *digest*.
         """
         self._validate_digest(digest)
-        blob = self._blob_path(digest)
-        # Open with O_NOFOLLOW so a symlink planted at the blob path is rejected
-        # atomically by the read itself. A separate is_symlink() pre-check would
-        # leave a TOCTOU window: an attacker with write access to the store could
-        # swap in a symlink to a FIFO/device (hang) or another path between the
-        # check and the read. A content-addressed store only ever writes regular
-        # files, so O_NOFOLLOW never rejects a legitimate blob. The flag is
-        # POSIX-only; where it is absent it degrades to 0 (Windows has different
-        # symlink semantics and its own protections). A symlinked blob surfaces
+        # Walk root -> shard -> blob, refusing a symlink at every component
+        # below the root, so the read cannot be redirected by a link planted at
+        # the shard directory any more than by one planted at the blob itself.
+        # The refusal is a property of each open; a separate is_symlink()
+        # pre-check would leave a TOCTOU window in which an attacker with write
+        # access to the store swaps in a link to a FIFO or device and stalls the
+        # reader. A content-addressed store only ever writes regular files and
+        # real directories, so this never rejects a legitimate blob. Where the
+        # platform cannot anchor an open (Windows), it degrades to guarding the
+        # final component alone -- see anchored_read. A refused symlink surfaces
         # as OSError (ELOOP), which callers classify as unreadable, not absent.
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        # `require_regular_file` covers the other half of the same exposure: a
+        # symlink is not needed to stall a reader when a FIFO planted at the
+        # blob's own name will do it, and O_NOFOLLOW was never the control for
+        # that. The store writes regular files only, so nothing legitimate is
+        # refused. It surfaces as OSError (EINVAL), classified unreadable.
         try:
-            fd = os.open(blob, flags)
+            fd = open_anchored(
+                self._root,
+                digest[:2],
+                digest,
+                flags=os.O_RDONLY,
+                require_regular_file=True,
+            )
         except FileNotFoundError:
+            # Only a genuinely missing component reads as a cache miss. Every
+            # other OSError keeps propagating: widening this to OSError would
+            # report a refused symlink as an absent blob, which is the false
+            # accusation the classification in `receipt verify` exists to avoid.
             return None
         with os.fdopen(fd, "rb") as handle:
             content = handle.read()

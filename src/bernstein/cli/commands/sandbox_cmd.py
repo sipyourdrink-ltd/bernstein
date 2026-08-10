@@ -428,8 +428,9 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
         # Ask the store for the path (single source of truth for the shard
         # layout) rather than re-deriving cas_dir / digest[:2] / digest here.
         # Used only for the absent/unreadable disambiguation below; the symlink
-        # defence lives in cas.get (O_NOFOLLOW), atomically and race-free - no
-        # is_symlink() pre-check here, which would only add a TOCTOU window.
+        # defence lives in cas.get, which opens every component below the store
+        # root with O_NOFOLLOW - atomically and race-free, so no is_symlink()
+        # pre-check here, which would only add a TOCTOU window.
         try:
             blob_path = cas.blob_path(digest)
         except ValueError:

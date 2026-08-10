@@ -30,6 +30,10 @@ on:
       - "packages/vscode/**"
       - "packages/cursor-plugin/**"
       - "packaging/**"
+      # packaging/rpm is NOT ignored: the spec decides whether the shipped
+      # RPM works at all, and `install-smoke-rpm` is its covering test
+      # (#3558). A spec-only diff must run CI.
+      - "!packaging/rpm/**"
       - "Formula/**"
       # Deployment & infra configs
       - "deploy/**"
@@ -79,6 +83,10 @@ on:
       - "packages/vscode/**"
       - "packages/cursor-plugin/**"
       - "packaging/**"
+      # packaging/rpm is NOT ignored: the spec decides whether the shipped
+      # RPM works at all, and `install-smoke-rpm` is its covering test
+      # (#3558). A spec-only diff must run CI.
+      - "!packaging/rpm/**"
       - "Formula/**"
       # Deployment & infra configs
       - "deploy/**"
@@ -974,6 +982,66 @@ jobs:
           assert any(tpl_pkg.iterdir()), "no default templates shipped in wheel"
           print(f"packaged resources OK: {len(schemas)} MCP schemas")
           '
+
+  install-smoke-rpm:
+    # RPM-channel counterpart of the pipx / uv smokes above (#3558, #3559).
+    # Builds the binary RPM from the SRPM this tree renders - the same
+    # artefact Copr builds - installs it in a container of the target chroot
+    # family, and asserts that `bernstein --version` reports the version the
+    # RPM metadata claims *with networking disabled*. The channel shipped a
+    # launcher that resolved itself from PyPI at run time for four months
+    # because nothing installed the built RPM and ran the binary; this job is
+    # that missing check.
+    #
+    # Unlike the wheel smokes, this installs the newest *released* version:
+    # the RPM packages the PyPI release, so the subject under test here is
+    # the spec, the SRPM renderer, and the smoke harness in this tree - not
+    # the tree's own source code.
+    name: Install smoke - RPM (${{ matrix.image }})
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # One container per published chroot family. The PR lane runs both
+        # families rather than one representative cell: the spec resolves a
+        # different interpreter on EPEL 9 (`python3.12`) than everywhere
+        # else (`python3`), so a single cell would leave one branch of the
+        # spec untested. The trailing releases of each family run on push
+        # to main and on dispatch; they exercise no additional spec branch.
+        image: ${{ github.event_name == 'pull_request' && fromJSON('["fedora:43", "quay.io/centos/centos:stream9"]') || fromJSON('["fedora:43", "fedora:44", "quay.io/centos/centos:stream9", "quay.io/centos/centos:stream10"]') }}
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Resolve the newest released version
+        id: version
+        # `matrix.image` reaches the shell as an environment variable rather
+        # than a template expansion: an expansion is spliced into the script
+        # source before it runs, which is the shape zizmor rejects.
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          VERSION="$(curl -fsS --retry 3 https://pypi.org/pypi/bernstein/json | jq -r .info.version)"
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
+            echo "::error::could not resolve the newest released version from PyPI"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "smoking bernstein ${VERSION} on ${SMOKE_IMAGE}"
+      - name: Build the RPM, install it, run it offline
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+          SMOKE_VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/rpm_install_smoke.sh "${SMOKE_IMAGE}" "${SMOKE_VERSION}"
 
   # ─── CI hardening 2026 (medium, parallel, ≤8 min each) ───────────────
 
@@ -2013,6 +2081,7 @@ jobs:
       - dist-size
       - install-smoke-pipx
       - install-smoke-uv
+      - install-smoke-rpm
       - property-tests
       - snapshot-tests
       - schemathesis-smoke
@@ -2072,6 +2141,7 @@ jobs:
               "dist-size",
               "install-smoke-pipx",
               "install-smoke-uv",
+              "install-smoke-rpm",
           }
           # macOS-gated jobs (see #1468): on PRs these are skipped unless
           # the diff is macos_sensitive or the PR carries the

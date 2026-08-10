@@ -5,7 +5,8 @@ local server such as vLLM, llama.cpp's HTTP server, LM Studio) as the LLM
 backend.  This enables full code editing capabilities in air-gapped,
 privacy-sensitive, EU-residency, or cost-zero environments.
 
-Last verified against upstream Ollama 0.21.x on 2026-05-05.
+Last verified against upstream Ollama 0.21.x on 2026-08-10 (CLI surface
+verified against aider 0.86.2, which this adapter actually drives).
 
 Prerequisites:
     - Ollama: https://ollama.com  (``brew install ollama`` or
@@ -37,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
-from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
+from bernstein.adapters.plugin_sdk import AdapterPluginInfo
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -138,22 +139,22 @@ class OllamaAdapter(CLIAdapter):
     def plugin_info(self) -> AdapterPluginInfo:
         """Declare the sampling surface OllamaAdapter genuinely wires.
 
-        This adapter drives Aider (see the module docstring), which
-        accepts a ``--temperature`` flag. Aider has no ``--top-p``,
-        ``--top-k``, or completion ``--max-tokens`` CLI flag (its
-        ``--max-chat-history-tokens`` controls a different thing - chat
-        history truncation, not the completion length), so only the
-        narrow temperature capability is declared -
+        This adapter drives Aider (see the module docstring), which exposes
+        no sampling flags at all: ``--temperature``, ``--top-p``, ``--top-k``
+        and completion ``--max-tokens`` are all absent (``--max-chat-history-
+        tokens`` controls a different thing - chat history truncation, not the
+        completion length). Passing any of them makes Aider exit with
+        "unrecognized arguments", so none are declared -
         :func:`bernstein.adapters.plugin_sdk.ensure_sampling_params_supported`
-        refuses a spawn requesting the others rather than silently
-        dropping them.
+        refuses such a spawn rather than building an argv Aider rejects.
+        Sampling for local models is set on the Ollama model itself.
         """
         return AdapterPluginInfo(
             name="ollama",
             version="0.1.0",
             author="bernstein",
             description="Ollama / OpenAI-compatible local LLM adapter (via Aider)",
-            capabilities=(AdapterCapability.SUPPORTS_TEMPERATURE,),
+            capabilities=(),
         )
 
     def _resolve_model(self, model_name: str) -> str:
@@ -269,11 +270,11 @@ class OllamaAdapter(CLIAdapter):
         ]
 
         if mcp_config:
-            temperature = mcp_config.get("temperature")
-            if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
-                logger.debug("ollama adapter: wiring --temperature=%s onto aider argv", temperature)
-                cmd.extend(["--temperature", str(float(temperature))])
-            for dropped_key in ("top_p", "top_k", "max_tokens"):
+            # aider exposes no --temperature flag; argparse aborts the run with
+            # "unrecognized arguments: --temperature". Nothing is wired, and
+            # plugin_info() declares no sampling capability so the spawn is
+            # refused before an unusable argv is built.
+            for dropped_key in ("temperature", "top_p", "top_k", "max_tokens"):
                 if mcp_config.get(dropped_key) is not None:
                     logger.warning(
                         "ollama adapter: %s=%r requested but not wired (aider has no matching "

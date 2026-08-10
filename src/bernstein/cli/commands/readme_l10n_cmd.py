@@ -80,6 +80,14 @@ def readme_l10n_verify(workdir: Path) -> None:
       English source (a stale binding names the section),
     - fenced code blocks are verbatim against the English section they
       mirror (a translated command or flag is a failure, not a warning),
+    - every binding sits directly under the translated heading it
+      mirrors (duplicated or orphaned bindings are a failure),
+    - every translated section carries the same number of paragraph
+      blocks as the English section it mirrors, so a paragraph added to
+      the English source cannot silently go missing from a translation.
+      A translation must therefore preserve the blank-line block
+      structure of its English section: merging two paragraphs into one
+      is exit 1, even though no content is missing,
     - the header and footer blocks (logo, badges, language links,
       license line) are shared verbatim.
 

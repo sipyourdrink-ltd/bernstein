@@ -66,6 +66,23 @@ To capture a new one, run `bernstein demo`, call `_fetch_all()` against the
 running server from the demo's project directory, and save the payload with a
 `frozen_now` key holding the instant it was fetched.
 
+### The front page's raster
+
+`docs/assets/tui-agents.png` is the same gated render, rasterised - the README
+is where the render is mostly seen, and a PNG survives every markdown pipeline
+identically where an SVG's font handling does not. Pixels move between
+machines, so the PNG is not byte-gated; instead `docs/assets/tui-renders.json`
+binds it to the SHA-256 of the SVG it was rasterised from, and the same verify
+run fails when the gated SVG moves and the raster does not.
+
+```bash
+python3 scripts/render_tui_snapshot.py --rasterize   # re-raster + rebind (needs Playwright)
+```
+
+Because the raster is derived from the fixture render, it inherits the
+fixture's guarantees: scrubbed paths, a throwaway project, nothing from
+anyone's real machine in the frame.
+
 ## Browser — `bernstein gui serve`
 
 Browser renders are *not* pixel-stable: font hinting, antialiasing and GPU
@@ -83,24 +100,29 @@ python3 scripts/capture_webui_renders.py               # re-capture the screens
 uv run python scripts/bind_webui_renders.py --update   # rebind to today's bundle
 ```
 
-The capture step boots `bernstein gui serve` against an empty throwaway project
-and drives headless Chromium over each screen, so re-capturing is a command
-rather than a ritual each person reconstructs. It is all-or-nothing: screens are
+The capture step boots `bernstein gui serve` against throwaway projects and
+drives headless Chromium over each screen, so re-capturing is a command rather
+than a ritual each person reconstructs. It is all-or-nothing: screens are
 staged and published only once every requested one succeeds. A run that dies
 half-way would otherwise leave some screens from today's bundle and the rest
 from whenever they were last taken, and `--update` preserves each render's prior
 provenance — so the untouched ones would keep the word `captured` while bound to
-a bundle they were never captured from. The empty project is the point:
-the committed renders show the zero-state, which is the only state that looks
-the same on every machine, and capturing against a live project would publish
-somebody's task titles into the docs. It runs under a Python that has
+a bundle they were never captured from. It runs under a Python that has
 Playwright (`python -m playwright install chromium`), which is usually not the
 project venv — Playwright is not a project dependency, because nothing in the
 wheel or the test suite drives a browser.
 
-`webui-agents-panel.png` and `webui-agents-diffs.png` are outside it. They show
-a populated agent panel with real diffs, which needs a live run to exist, and
-they carry `adopted` for exactly that reason.
+Most screens are captured against an *empty* project: the committed renders
+show the zero-state, which is the only state that looks the same on every
+machine, and capturing against a live project would publish somebody's task
+titles into the docs. The two populated renders the front page links to —
+`webui-agents-panel.png` and `webui-agents-diffs.png` — come from a project
+the script seeds itself: a small committed git repo with a working-tree diff,
+and a fixed backlog created through the server's own task API. Nothing in the
+seed derives from the capturing machine, so the no-personal-content property
+holds for these too. They used to be outside the capture script entirely —
+photographs of a live run, carried forward as `adopted` on every rebind — which
+is exactly the rot the gate exists to prevent, so the exemption is closed.
 
 When the bundle moves and the renders do not, the check fails and names the
 renders to re-capture. **What this proves:** nobody shipped a UI change while
@@ -113,7 +135,10 @@ failure that actually happens.
 Each render carries a provenance word. `adopted` means it was bound to a bundle
 without evidence it was captured from one — the state the existing renders
 started in. Mark a render `captured` when you take it from the bundle it is
-bound to.
+bound to. `adopted` is transitional, not a resting state: the verify run fails
+while any render carries it, because every committed render is now capturable
+with the documented command and a render that stays `adopted` across rebinds is
+a screenshot nothing ever re-checks.
 
 This gate assumes the committed bundle is the one the lockfile builds. That is
 a separate claim, and it is checked separately: `spa-bundle-freshness.yml`

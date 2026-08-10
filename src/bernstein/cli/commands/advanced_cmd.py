@@ -70,8 +70,8 @@ _STYLE_BOLD_CYAN = "bold cyan"
 def live(interval: float, classic: bool, no_splash: bool) -> None:
     """Live dashboard: active agents, task events, and stats (Ctrl+C to exit).
 
-    Launches the 3-column interactive Textual TUI by default:
-    Agents | Tasks | Activity feed + sparkline + chat input.
+    Launches the two-column interactive Textual TUI by default:
+    Agents | Tasks, with a full-width activity feed + sparkline + chat input below.
     Mouse + keyboard. Pass --classic for the simpler Rich Live display.
     """
     seed_path = find_seed_file()

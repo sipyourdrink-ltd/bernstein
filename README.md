@@ -12,7 +12,7 @@
 
 <br>
 
-> *"To achieve great things, two things are needed: a plan and not quite enough time."* - [Sometimes](https://quoteinvestigator.com/2020/08/19/plan-time/) attributed to Leonard Bernstein
+> *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### deterministic multi-agent CLI orchestration
 
@@ -25,8 +25,9 @@
 [![CodeQL](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/codeql.yml)
 [![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
+<a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/install.md) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.zh-TW.md)
 
@@ -43,8 +44,8 @@ Bernstein is a deterministic orchestrator for CLI coding agents (Claude Code, Co
 Four things set it apart; everything after is detail.
 
 - **No LLM in the coordination loop.** Scheduling is plain Python, so a run is reproducible end to end. Replay yesterday's plan and get yesterday's task graph.
-- **Checkable after the fact.** The lineage spine and replay journal record every run; the opt-in audit chain adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run. Non-code deliverables get the same treatment: a task can declare an artifact contract (report, dataset, action log, ops result) on a plan step, a backlog entry, or the task CLI and complete on a signed lineage receipt instead of a git commit.
-- **Isolated by construction.** Each coding task gets its own git worktree behind merge gates; artifact-mode tasks get working-directory separation under `.sdd/workspaces/`. Under this default isolation there is no shared mutable state between agents; filesystem enforcement beyond that separation is opt-in, from the [sandbox backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) (disabling worktrees runs every task in the shared checkout).
+- **Checkable after the fact.** The replay journal records every run, and the always-on lineage spine records every lineage-bearing step; the opt-in audit chain adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run. Non-code deliverables get the same treatment: a task can declare an artifact contract (report, dataset, action log, ops result) on a plan step, a backlog entry, or the task CLI and complete on a signed lineage receipt instead of a git commit.
+- **Isolated by construction.** Each coding task gets its own git worktree behind merge gates; artifact-mode tasks get working-directory separation under `.sdd/workspaces/`. Under this default isolation agents share no mutable workspace; coordination state (the task backlog) is shared and claimed atomically. Filesystem enforcement beyond that separation is opt-in, from the [sandbox backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) (disabling worktrees runs every task in the shared checkout).
 - **Broad and local.** 40+ CLI agent adapters plus a generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
 
 The full list is on the [capabilities page](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); the [feature matrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) is the exhaustive index.
@@ -52,29 +53,30 @@ The full list is on the [capabilities page](https://github.com/sipyourdrink-ltd/
 ### install in 30 seconds
 
 ```bash
-pipx install bernstein
+uv tool install bernstein    # or: pipx install bernstein
 bernstein init
+bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pip, uv, brew, dnf, npm, Docker, and the air-gapped wheelhouse are covered in the [install guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/install.md).
+pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://bernstein.readthedocs.io/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://bernstein.readthedocs.io/en/latest/installation/air-gap/).
 
-<img alt="A real bernstein demo run: mock agents fix four seeded bugs in parallel worktrees, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
+<img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
-The recording above is a real run, and it ships with its own proof: the cast, the signed run receipt that exact run produced, and the public key that pins it live together in [`docs/assets/demo-run/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/docs/assets/demo-run). Verify the run you just watched, offline:
+The recording above is a real run, and it ships with its own proof: the cast, the signed run receipt derived from that run's journal, and the public key that pins it live together in [`docs/assets/demo-run/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/docs/assets/demo-run). Verify the run you just watched, offline:
 
 ```bash
 bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI re-verifies the committed receipt on every push — and proves a tampered copy fails — so the published evidence cannot rot into a decorative file. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
+CI re-verifies the committed receipt on every push to main — and proves a tampered copy fails — so the published evidence cannot rot into a decorative file. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
 
 A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other.
 
-| ![A three-column terminal dashboard: agents with their live logs on the left, the task board on the right, an activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
+| ![A two-column terminal dashboard - agents with their live logs on the left, the task board on the right - with a full-width activity feed and a cost line underneath](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/tui-agents.png) | ![A browser dashboard listing sixty-two tasks with eleven running, one of them opened to its working-tree diff](https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/webui-agents-diffs.png) |
 |:---:|:---:|
-| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the same run in a browser |
+| `bernstein live` — the terminal dashboard | `bernstein gui serve` — the browser dashboard |
 
 ### prove a run
 
@@ -92,9 +94,9 @@ bernstein verify run <run_id> --signing-key-path key.pem   # sign one portable r
 bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offline: file only
 ```
 
-The journal and the lineage spine are written on every run. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
+The journal is written on every run; the lineage spine is always on and gains an entry for each lineage-bearing step, so a short run can finish with a valid, empty spine. `bernstein audit verify` only has a chain to check when the run was started with `BERNSTEIN_AUDIT=1`, a compliance preset, or `bernstein run --audit`. The `--audit` flag belongs to `bernstein run`; on the `bernstein -g` form above, set the environment variable.
 
-The run receipt binds the journal head and the lineage-spine head (plus, opt-in, an audit-chain range) under one Ed25519-signed subject with the public key embedded, so a reviewer holding the file and the operator's public key can confirm the recorded actions are exactly what executed - no HMAC key, no live `.sdd/`, exit `2` naming the first divergent step on tamper. With the file alone (no `--public-key` pin) the check is integrity-only: it proves the receipt is internally consistent, not who signed it, and the verdict says so. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
+The run receipt binds the journal head - and the lineage-spine head when the run wrote spine entries - plus, opt-in, an audit-chain range, under one Ed25519-signed subject with the public key embedded, so a reviewer holding the file and the operator's public key can confirm the recorded actions are exactly what executed - no HMAC key, no live `.sdd/`, exit `2` naming the first divergent step on tamper. With the file alone (no `--public-key` pin) the check is integrity-only: it proves the receipt is internally consistent, not who signed it, and the verdict says so. Details in [deterministic replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 The same checkability applies to evaluation numbers: `bernstein bench run <suite> --reliability k` (also spelled `bernstein eval --reliability k`) runs every task `k` times under fixed coordination and reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling, sealed in a signed receipt that `bernstein bench reliability-verify` recomputes offline — a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
@@ -113,7 +115,7 @@ Why the scheduler is plain Python, and what that trades away: [why deterministic
 
 ```bash
 cd your-project
-bernstein init                    # creates .sdd/ workspace + bernstein.yaml
+bernstein init                    # creates .sdd/ workspace, bernstein.yaml + templates/
 bernstein -g "Add rate limiting"  # agents spawn, work in parallel, verify, exit
 bernstein live                    # watch progress in the TUI dashboard
 bernstein run plan.yaml           # multi-stage plan: skip LLM planning, execute directly
@@ -126,7 +128,7 @@ Repository hygiene gates: `bernstein readme-l10n verify` fails a PR whose transl
 
 ### supported agents
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 30 of them; `bernstein integrations list` enumerates all 51 wired-in adapters from the registry in `src/bernstein/adapters/registry.py`, which is the single source of truth for what resolves; `src/bernstein/adapters/use_cases.py` carries the end-user copy for each one. Anything else with a `--prompt` flag works through the generic wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, and more. The [adapter index](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) carries install commands for 30 of them; `bernstein integrations list` enumerates all 51 wired-in integrations from the registry in `src/bernstein/adapters/registry.py`, which is the single source of truth for what resolves - 49 of them are selectable agent adapters, the other two rows being the `mock` test stub and the `self-hosted-endpoints` endpoint profile; `src/bernstein/adapters/use_cases.py` carries the end-user copy for each one. Anything else with a `--prompt` flag works through the generic wrapper.
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
@@ -134,7 +136,7 @@ Mix agents in the same run: cheap local models for boilerplate, heavier cloud mo
 
 Everything deep lives on the [docs site](https://bernstein.readthedocs.io/):
 
-| | |
+| page | what it covers |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | the full capability list: MCP server mode, signed agent cards, sandbox backends, artifact sinks, regulatory mappings |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
@@ -147,13 +149,13 @@ Everything deep lives on the [docs site](https://bernstein.readthedocs.io/):
 
 ### why the name?
 
-Bernstein is named after Leonard Bernstein, the American conductor and composer. The project orchestrates a crew of CLI coding agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result. He is the original orchestrator the project takes its name from.
+Bernstein is named after Leonard Bernstein, the American conductor and composer. The project orchestrates a crew of CLI coding agents the way Bernstein conducted the New York Philharmonic: every player on cue, the score deterministic, the conductor accountable for the result.
 
 i wrote bernstein because i was paying $400/month in claude bills running three coding agents in parallel and getting nondeterministic merges. Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
 
 ### mentioned in
 
-Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, cited by [awesome-agentic-patterns](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) as the production implementation of deterministic zero-LLM orchestration, featured in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026), and ranked as the orchestration layer in a ten-repo [Claude Code agent-system breakdown](https://x.com/Granite0x/status/2080665298609328201).
+Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, and listed in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). We also wrote up the approach as the [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) pattern in awesome-agentic-patterns.
 
 <details>
 <summary>All coverage: 20+ awesome lists, directories, newsletters, and peer citations</summary>

@@ -114,7 +114,11 @@ class TaskSearchInput(Input):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        kwargs.setdefault("placeholder", "Search tasks or use status:, role:, priority:, agent:")
+        # ``Input`` takes ``placeholder`` as its second positional parameter, so
+        # injecting the default unconditionally collides with a caller that
+        # passed it positionally. Only supply it when neither door was used.
+        if len(args) < 2 and "placeholder" not in kwargs:
+            kwargs["placeholder"] = "Search tasks or use status:, role:, priority:, agent:"
         super().__init__(*args, **kwargs)
 
     def on_key(self, event: Key) -> None:

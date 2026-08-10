@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import difflib
+import hashlib
 import html
 import json
 import re
@@ -46,6 +47,15 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = REPO_ROOT / "tests" / "fixtures" / "tui_live_frame.json"
 RENDER = REPO_ROOT / "docs" / "assets" / "tui-live.svg"
+
+#: The front page's terminal render: the same gated SVG, rasterised. GitHub's
+#: README pipeline is where the render is actually seen, and an SVG that
+#: declares webfonts renders differently across viewers there - a PNG does
+#: not. The PNG cannot be byte-gated (rasterisation moves pixels between
+#: machines), so it is bound to the SHA-256 of the SVG it was rasterised from
+#: instead: when the gated SVG moves and the PNG does not, verification fails.
+PNG_RENDER = REPO_ROOT / "docs" / "assets" / "tui-agents.png"
+PNG_BINDING = REPO_ROOT / "docs" / "assets" / "tui-renders.json"
 
 #: Terminal geometry the render is taken at. Committed with the render because
 #: changing it changes every line of the output.
@@ -275,10 +285,100 @@ def drift_report(committed: str, current: str) -> str:
     return "\n".join([f"changed regions: {', '.join(names)}", "", *list(diff)[:60]])
 
 
+def svg_digest() -> str:
+    """SHA-256 of the committed SVG - what the PNG binding records."""
+    return hashlib.sha256(RENDER.read_bytes()).hexdigest()
+
+
+def verify_png_binding() -> list[str]:
+    """Return problems with the rasterised front-page render, if any.
+
+    Pure file reads on purpose: this runs in the same CI gate as the SVG
+    comparison, which has no browser. Rasterising needs one
+    (``--rasterize``), noticing a stale raster does not.
+    """
+    if not PNG_RENDER.exists():
+        # Deleting the asset is not a way to pass: the README and both
+        # translated front pages link it by raw URL, so an absent file is a
+        # broken image on the project's front page rather than one less thing
+        # to check.
+        return [
+            f"{_display(PNG_RENDER)} is missing, and the README front pages link it; "
+            "restore it with: python3 scripts/render_tui_snapshot.py --rasterize"
+        ]
+    if not PNG_BINDING.exists():
+        return [f"{_display(PNG_RENDER)} is committed but {_display(PNG_BINDING)} does not bind it; run --rasterize"]
+    binding = json.loads(PNG_BINDING.read_text(encoding="utf-8"))
+    recorded = binding.get(PNG_RENDER.name, {}).get("source_sha256")
+    current = svg_digest()
+    if recorded != current:
+        return [
+            f"{_display(PNG_RENDER)} was rasterised from a different {_display(RENDER)} "
+            "than the one committed, so the front page shows a dashboard that no longer exists.\n"
+            f"  rasterised from: {recorded}\n"
+            f"  committed SVG:   {current}\n"
+            "  Re-rasterise with: python3 scripts/render_tui_snapshot.py --rasterize"
+        ]
+    return []
+
+
+def rasterize() -> int:
+    """Rasterise the committed SVG to ``PNG_RENDER`` and bind it.
+
+    Runs under an interpreter with Playwright (the same one
+    ``capture_webui_renders.py`` uses), which is usually not the project venv;
+    everything here after the screenshot is stdlib plus optional Pillow.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover - operator tooling
+        raise SystemExit(
+            "Playwright is needed to rasterise the SVG:\n"
+            "  python -m pip install playwright && python -m playwright install chromium"
+        ) from exc
+
+    match = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', RENDER.read_text(encoding="utf-8"))
+    if not match:
+        raise SystemExit(f"{_display(RENDER)} carries no viewBox to size the raster from")
+    width, height = (int(float(group)) for group in match.groups())
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
+        page.goto(RENDER.resolve().as_uri())
+        page.wait_for_timeout(1_000)
+        page.screenshot(path=str(PNG_RENDER), omit_background=True)
+        browser.close()
+
+    try:
+        from PIL import Image
+
+        image = Image.open(PNG_RENDER)
+        image.quantize(colors=256, dither=Image.Dither.NONE).save(PNG_RENDER, optimize=True)
+    except ImportError:
+        pass
+
+    PNG_BINDING.write_text(
+        json.dumps({PNG_RENDER.name: {"source": RENDER.name, "source_sha256": svg_digest()}}, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    print(f"wrote {_display(PNG_RENDER)} ({PNG_RENDER.stat().st_size} bytes) bound to {_display(RENDER)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--update", action="store_true", help="rewrite the committed render")
+    parser.add_argument(
+        "--rasterize",
+        action="store_true",
+        help="re-rasterise the committed SVG to the front page's PNG (needs Playwright)",
+    )
     args = parser.parse_args(argv)
+
+    if args.rasterize:
+        return rasterize()
 
     current = render()
     if args.update:
@@ -291,7 +391,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     committed = RENDER.read_text(encoding="utf-8")
+    problems = verify_png_binding()
+    for problem in problems:
+        print(f"error: {problem}", file=sys.stderr)
     if committed == current:
+        if problems:
+            return 1
         print(f"{_display(RENDER)} matches what the dashboard draws")
         return 0
 

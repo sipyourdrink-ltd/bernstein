@@ -48,6 +48,7 @@ ALLOWED_IMAGE_HOSTS = frozenset(
         "img.shields.io",
         "api.securityscorecards.dev",
         "mcptoplist.com",
+        "deepwiki.com",
     }
 )
 

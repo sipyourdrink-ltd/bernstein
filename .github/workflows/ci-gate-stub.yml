@@ -76,6 +76,10 @@ on:
       - "packages/vscode/**"
       - "packages/cursor-plugin/**"
       - "packaging/**"
+      # packaging/rpm is NOT ignored: the spec decides whether the shipped
+      # RPM works at all, and `install-smoke-rpm` is its covering test
+      # (#3558). A spec-only diff must run CI.
+      - "!packaging/rpm/**"
       - "Formula/**"
       # Deployment & infra configs
       - "deploy/**"

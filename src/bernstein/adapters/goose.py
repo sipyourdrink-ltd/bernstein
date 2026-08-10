@@ -1,15 +1,20 @@
 """Goose CLI adapter for Bernstein.
 
-Adapter for Goose (https://github.com/block/goose), now stewarded by the
+Adapter for Goose (https://github.com/aaif-goose/goose), now stewarded by the
 Agentic AI Foundation (Linux Foundation) - the GitHub org has moved from
-``block/goose`` to ``aaif-goose/goose`` while binary releases continue under
-the ``block/goose`` releases page.  Goose is an AI agent that can execute
+``block/goose`` to ``aaif-goose/goose``, and the old paths still resolve
+through GitHub's rename redirect.  Goose is an AI agent that can execute
 tasks autonomously; this adapter allows Bernstein to orchestrate Goose as a
 worker agent.
 
-Last verified against upstream Goose 1.33.x on 2026-05-05.
+``goose run`` takes the prompt either as ``-i/--instructions <FILE>`` or as
+``-t/--text <TEXT>``; there is no singular ``--instruction`` that carries
+prompt text.  Passing one makes the argument parser abort with exit code 2
+before the agent starts, so the worker dies having done no work.
+
+Last verified against upstream Goose 1.45.0 on 2026-08-10.
 Install: ``brew install --cask block-goose`` (macOS), or
-``curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash``.
+``curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash``.
 """
 
 from __future__ import annotations
@@ -47,8 +52,8 @@ _MODEL_MAP: dict[str, str] = {
 class GooseAdapter(CLIAdapter):
     """Goose CLI adapter for Bernstein.
 
-    Integrates with Block's Goose CLI agent.
-    GitHub: https://github.com/block/goose
+    Integrates with the Goose CLI agent.
+    GitHub: https://github.com/aaif-goose/goose
     """
 
     def spawn(
@@ -88,7 +93,7 @@ class GooseAdapter(CLIAdapter):
 
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
 
-        cmd = ["goose", "run", "--instruction", prompt]
+        cmd = ["goose", "run", "--text", prompt]
         if model_id:
             cmd += ["--model", model_id]
 
@@ -121,7 +126,7 @@ class GooseAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError("goose not found in PATH. Install: https://github.com/block/goose") from exc
+                raise RuntimeError("goose not found in PATH. Install: https://github.com/aaif-goose/goose") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing goose: {exc}") from exc
 
