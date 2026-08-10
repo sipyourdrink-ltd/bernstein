@@ -42,6 +42,16 @@ jobs:
       - name: Run trufflehog
         uses: trufflesecurity/trufflehog@6f3c981e7b77f235fd2702dd74af25fc4b72bf11  # v3.96.0
         with:
+          # The `uses:` SHA above pins the action, which is a shell wrapper;
+          # the wrapper runs `ghcr.io/trufflesecurity/trufflehog:${version}`,
+          # and that input defaults to `latest`. Unpinned, a detector added
+          # upstream arrives on whichever pull request is open when it ships,
+          # and reads as that author's fault. Renovate bumps this together
+          # with the `uses:` SHA - see the `trufflehog` group in
+          # `renovate.json` - and `tests/unit/test_trufflehog_workflow_yaml.py`
+          # fails if the two ever name different releases.
+          # renovate: datasource=docker depName=ghcr.io/trufflesecurity/trufflehog
+          version: 3.96.0
           # Only report verified secrets - keeps signal-to-noise high and
           # lets the job act as a hard gate. Unknown / unverified results
           # are dominated by test-fixture connection strings like

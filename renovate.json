@@ -4,7 +4,27 @@
     "config:recommended"
   ],
   "minimumReleaseAge": "7 days",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the trufflehog scanner image. The github-actions manager only reads 'uses:' lines, but that action is a wrapper that runs 'ghcr.io/trufflesecurity/trufflehog:${version}'; without this the pinned scanner would silently go stale.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/trufflehog\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\s+version:\\s*(?<currentValue>[^\\s#]+)"
+      ]
+    }
+  ],
   "packageRules": [
+    {
+      "description": "trufflehog releases the action wrapper and the scanner image from one repository, and tests/unit/test_trufflehog_workflow_yaml.py requires the workflow to name the same release for both. Group them so a bump lands as one pull request rather than two that each fail that check.",
+      "groupName": "trufflehog",
+      "matchPackageNames": [
+        "trufflesecurity/trufflehog",
+        "ghcr.io/trufflesecurity/trufflehog"
+      ]
+    },
     {
       "description": "Pin python to 3.13 until aider-chat and other adapters confirm 3.14 compatibility.",
       "matchManagers": [

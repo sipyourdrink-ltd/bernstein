@@ -1,7 +1,7 @@
 """Structural assertions for the secret-scanning gate.
 
-The gate is only worth having if a red run means something. Two settings
-decide that, and both are the kind of thing that gets widened under time
+The gate is only worth having if a red run means something. Three settings
+decide that, and each is the kind of thing that gets widened under time
 pressure rather than by decision, so they are pinned here:
 
 * it reports verified results only - the unverified stream is dominated by
@@ -12,7 +12,13 @@ pressure rather than by decision, so they are pinned here:
   characters, so it fires on ordinary Python test names and on test
   filenames quoted in prose. A detector that cannot separate a credential
   from a docstring contributes nothing, but the argument stops there - it
-  does not extend to detectors for services this project actually uses.
+  does not extend to detectors for services this project actually uses;
+* it names the scanner version it runs. The ``uses:`` SHA pins the action,
+  which is a shell wrapper; the wrapper then runs
+  ``ghcr.io/trufflesecurity/trufflehog:${version}``, and that input defaults
+  to ``latest``. Left at the default, a detector added upstream reaches this
+  repository on its own schedule and lands on whichever pull request is open
+  at the time.
 
 The second point is why this file exists. ``--exclude-detectors`` takes a
 comma-separated list, so silencing a genuine finding is a one-word edit that
@@ -23,6 +29,7 @@ build green.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -39,6 +46,13 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "trufflehog.yml"
 #: ordinary test names hit. There is no Lob integration here, so nothing is
 #: lost. Extending this set means a real detector is being turned off.
 ALLOWED_EXCLUDED_DETECTORS = frozenset({"lob"})
+
+#: An exact scanner release, e.g. ``3.96.0``. The image is tagged without a
+#: leading ``v``; ``latest`` and floating prefixes are what this rejects.
+EXACT_RELEASE = re.compile(r"^\d+\.\d+\.\d+$")
+
+#: The ``uses:`` pin and the version comment Renovate maintains beside it.
+ACTION_PIN = re.compile(r"uses:\s*trufflesecurity/trufflehog@[0-9a-f]{40}\s*#\s*v?(?P<version>\d+\.\d+\.\d+)")
 
 
 def _doc() -> dict[str, Any]:
@@ -63,6 +77,21 @@ def _scan_step() -> dict[str, Any]:
 
 def _extra_args() -> str:
     return str(_scan_step().get("with", {}).get("extra_args", ""))
+
+
+def _scanner_version() -> str:
+    """The ``version`` input, i.e. the image tag the wrapper actually runs."""
+    return str(_scan_step().get("with", {}).get("version", "")).strip()
+
+
+def _action_version() -> str:
+    """The wrapper release, read from the comment beside the ``uses:`` SHA."""
+    match = ACTION_PIN.search(WORKFLOW.read_text(encoding="utf-8"))
+    assert match is not None, (
+        "the trufflehog step must pin the action by full SHA with the release "
+        "in a trailing comment, as Renovate writes it"
+    )
+    return match.group("version")
 
 
 def _excluded_detectors() -> frozenset[str]:
@@ -96,6 +125,35 @@ def test_the_known_false_positive_detector_stays_excluded() -> None:
     assert "lob" in _excluded_detectors(), (
         "`lob` verifies any `test_` + 35 characters as a live key; without "
         "this exclusion a test name of that length fails the scan"
+    )
+
+
+def test_the_scanner_binary_is_pinned_to_an_exact_release() -> None:
+    """The ``uses:`` SHA pins the wrapper, not the scanner it downloads."""
+    version = _scanner_version()
+    assert version, (
+        "the trufflehog step must set the `version` input. The `uses:` SHA "
+        "pins the action, but the action is a wrapper that runs "
+        "`ghcr.io/trufflesecurity/trufflehog:${version}`, and that input "
+        "defaults to `latest` - so a detector added upstream reaches this "
+        "repository with no change on this side, on whichever pull request "
+        "happens to be open"
+    )
+    assert EXACT_RELEASE.match(version), (
+        f"`version: {version}` does not name one release. The image tag must "
+        "be an exact `MAJOR.MINOR.PATCH` (no `v` prefix, and not `latest`), "
+        "or the scan is not reproducible from the workflow alone"
+    )
+
+
+def test_the_scanner_binary_and_the_action_wrapper_are_the_same_release() -> None:
+    """Renovate groups the two bumps; a mismatch means one landed alone."""
+    scanner, action = _scanner_version(), _action_version()
+    assert scanner == action, (
+        f"the workflow runs scanner {scanner} through wrapper {action}. "
+        "These ship from one repository and `renovate.json` groups them into "
+        "a single pull request, so a mismatch means half a bump landed - "
+        "reconcile them rather than pinning the test to the drift"
     )
 
 
