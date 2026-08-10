@@ -644,6 +644,40 @@ jobs:
             echo "Scope reference: \`docs/operations/type-check-scope.md\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  proto-drift:
+    name: Proto codegen drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.13.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+      # Pinned to the version that produced the committed files: protoc
+      # stamps its own version into the output, so an unpinned tool would
+      # make this gate red on an unrelated upstream release rather than on
+      # a real drift between proto/ and the checked-in modules.
+      - name: Regenerate and compare
+        run: |
+          uv run --with "grpcio-tools==1.83.0" python -m grpc_tools.protoc \
+            -Iproto \
+            --python_out=src/bernstein/core/grpc_gen \
+            --pyi_out=src/bernstein/core/grpc_gen \
+            --grpc_python_out=src/bernstein/core/grpc_gen \
+            proto/bernstein/v1/tasks.proto proto/bernstein/v1/cluster.proto
+          for f in src/bernstein/core/grpc_gen/*.py; do
+            sed -i 's/^from bernstein\.v1 import/from . import/' "$f"
+          done
+          git diff --exit-code -- src/bernstein/core/grpc_gen || {
+            echo "::error::checked-in gRPC modules differ from proto/. Run scripts/generate_proto.sh and commit the result."
+            exit 1
+          }
+
   dead-code:
     name: Dead code (Vulture)
     runs-on: ubuntu-latest
@@ -660,7 +694,10 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
       - run: uv tool install vulture
-      - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs"
+      # grpc_gen holds protoc output. Dead-code analysis of generated code
+      # reports the generator's habits, not ours: protobuf emits imports
+      # its descriptor uses at runtime and vulture cannot see.
+      - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
   dist-size:
     name: Package size check
