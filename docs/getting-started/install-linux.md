@@ -40,6 +40,11 @@ sudo dnf install bernstein
 
 COPR repository: https://copr.fedorainfracloud.org/coprs/alexchernysh/bernstein/
 
+The RPM is self-contained: it ships the application and all Python
+dependencies in a private virtualenv, so it needs no network access after
+installation and no `pipx`/`uv` on the host. On RHEL 9 / EPEL 9 it pulls
+`python3.12` from AppStream; other targets use the distribution `python3`.
+
 ---
 
 ## Homebrew (Linux or macOS)

@@ -44,6 +44,7 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 COPR_JOB = "publish-copr"
+SMOKE_JOB = "rpm-install-smoke"
 
 # Workflows that only ever ran off `release: published` and therefore never ran
 # for a release the publish chain created itself.
@@ -145,7 +146,11 @@ def test_copr_job_publishes_from_the_tag_trigger_not_the_release_event(workflow:
     assert "release" not in triggers, "the RPM publish must not depend on the release event"
 
     job = workflow["jobs"][COPR_JOB]
-    assert job.get("needs") == "publish", "the RPM wrapper resolves the package from PyPI at run time"
+    # The spec installs the release from PyPI at RPM build time, so the Copr
+    # submission waits for the PyPI publish; the install smoke must also have
+    # passed, because Copr accepting a build says nothing about whether the
+    # result installs (#3559).
+    assert job.get("needs") == ["publish", SMOKE_JOB]
 
 
 def test_copr_job_fails_the_workflow_when_the_submission_fails(workflow: dict[str, Any]) -> None:
@@ -245,6 +250,50 @@ def test_copr_job_can_be_replayed_for_an_already_published_tag(workflow: dict[st
     assert "always()" in copr_condition, "a skipped upstream job must not skip the replay"
     assert "inputs.copr_only" in copr_condition
     assert "needs.publish.result == 'success'" in copr_condition
+
+
+def test_rpm_smoke_gates_the_copr_submission(workflow: dict[str, Any]) -> None:
+    """A broken RPM must fail the release before Copr publishes it (#3559).
+
+    The Copr job reports success when Copr *accepts* the build, which says
+    nothing about whether the result installs. The smoke is the only step on
+    the release path that installs the built RPM and runs the binary, so the
+    submission may not proceed without it.
+    """
+    condition = workflow["jobs"][COPR_JOB].get("if")
+    assert isinstance(condition, str)
+    assert f"needs.{SMOKE_JOB}.result == 'success'" in condition
+
+
+def test_rpm_smoke_runs_the_shared_harness_offline(workflow: dict[str, Any]) -> None:
+    """CI and the release path must run the same install smoke.
+
+    ``scripts/rpm_install_smoke.sh`` owns the assertions (claimed version,
+    no network at run time); the workflow only feeds it the release version.
+    A drifted inline copy here could pass while the CI harness fails, or the
+    reverse.
+    """
+    smoke = _step(workflow, SMOKE_JOB, "Build the RPM, install it, run it offline")
+    assert "scripts/rpm_install_smoke.sh" in smoke["run"]
+    assert "RELEASE_TAG#v" in smoke["run"], "the smoke must test the tag version, not a floating one"
+
+
+def test_rpm_smoke_covers_both_published_chroot_families(workflow: dict[str, Any]) -> None:
+    """The spec resolves a different interpreter on EPEL 9 than elsewhere;
+    a single-family smoke would leave one branch of the spec untested."""
+    job = workflow["jobs"][SMOKE_JOB]
+    images = job["strategy"]["matrix"]["image"]
+    assert any("fedora" in image for image in images), images
+    assert any("centos" in image or "epel" in image for image in images), images
+
+
+def test_rpm_smoke_is_reachable_on_the_replay_path(workflow: dict[str, Any]) -> None:
+    """A channel-only republish still ships an RPM, so it is still gated."""
+    condition = workflow["jobs"][SMOKE_JOB].get("if")
+    assert isinstance(condition, str)
+    assert "always()" in condition
+    assert "inputs.copr_only" in condition
+    assert "needs.publish.result == 'success'" in condition
 
 
 def test_copr_replay_checks_out_packaging_sources_that_carry_the_builder(workflow: dict[str, Any]) -> None:

@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+#
+# Install smoke for the RPM channel (issues #3558, #3559).
+#
+# Builds the RPM the way Copr builds it - from the SRPM this repository
+# renders - installs it in a container of the target chroot family, and
+# asserts the two things the package promises:
+#
+#   1. `bernstein --version` prints the version the RPM metadata claims.
+#   2. It does so with no network access at all.
+#
+# Both assertions fail against a package that resolves itself at run time,
+# which is the defect #3558 describes.
+#
+# The Python channels are gated by `Install smoke - pipx` / `Install smoke -
+# uv tool` in ci.yml. This is the RPM channel's equivalent, and CI calls this
+# same script so a local reproduction and a CI failure are the same run.
+#
+# Usage:
+#   scripts/rpm_install_smoke.sh <container-image> <version>
+#
+# Example:
+#   scripts/rpm_install_smoke.sh fedora:43 3.14.159
+#
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+    echo "usage: $0 <container-image> <version>" >&2
+    exit 2
+fi
+
+IMAGE="$1"
+VERSION="$2"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Unique per invocation so matrix cells can run in parallel without racing on
+# the container name or the committed image tag.
+# `printf`, not `echo`: a trailing newline would become a trailing `-`, which
+# docker rejects as an invalid tag.
+TAG="bernstein-rpm-smoke-$$-$(printf '%s' "${IMAGE}" | tr -C 'a-zA-Z0-9' '-' | tr 'A-Z' 'a-z')"
+WORK="$(mktemp -d)"
+CONTAINER="${TAG}-install"
+
+cleanup() {
+    docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+    docker rmi -f "${TAG}" >/dev/null 2>&1 || true
+    rm -rf "${WORK}"
+}
+trap cleanup EXIT
+
+echo "::group::[${IMAGE}] build the RPM from the rendered SRPM"
+# rpm-build and a python3 for the renderer; the spec pulls its own interpreter
+# via BuildRequires. `--rebuild` is what turns the SRPM Copr would receive into
+# the binary RPM a user would install, so the smoke tests the real artefact.
+docker run --rm \
+    -v "${REPO_ROOT}:/src:ro" \
+    -v "${WORK}:/out" \
+    "${IMAGE}" \
+    bash -euo pipefail -c "
+        dnf -y install rpm-build python3 dnf-command\\(builddep\\) >/dev/null
+
+        # The renderer needs the same Python floor the project targets, but
+        # EPEL 9's \`python3\` is 3.9. In the real chain the SRPM is rendered on
+        # the runner and only rebuilt in the chroot, so pulling a modern
+        # interpreter just for that step keeps this faithful to Copr.
+        PY=python3
+        if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+            dnf -y install python3.12 >/dev/null
+            PY=python3.12
+        fi
+
+        cd /src
+        SRPM=\$(\${PY} scripts/build_copr_srpm.py --version '${VERSION}' --outdir /out/srpm)
+        echo \"rendered \${SRPM} (using \${PY})\"
+        dnf -y builddep \"\${SRPM}\" >/dev/null
+        rpmbuild --rebuild \
+            --define '_topdir /out/rb' \
+            --define '_rpmdir /out/rpms' \
+            \"\${SRPM}\"
+    "
+echo "::endgroup::"
+
+RPM_PATH="$(find "${WORK}/rpms" -name '*.rpm' -not -name '*.src.rpm' | head -1)"
+if [ -z "${RPM_PATH}" ]; then
+    echo "::error::[${IMAGE}] no binary RPM was produced"
+    exit 1
+fi
+echo "[${IMAGE}] built $(basename "${RPM_PATH}") ($(du -h "${RPM_PATH}" | cut -f1))"
+
+echo "::group::[${IMAGE}] install the RPM"
+# Network is allowed here: installing may pull the interpreter the package
+# requires. The offline assertion below is about *run* time.
+docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+if ! docker run --name "${CONTAINER}" \
+    -v "${WORK}/rpms:/rpms:ro" \
+    "${IMAGE}" \
+    bash -euo pipefail -c "
+        dnf -y install '/rpms/$(basename "$(dirname "${RPM_PATH}")")/$(basename "${RPM_PATH}")'
+        rpm -q bernstein
+    "; then
+    echo "::error::[${IMAGE}] the RPM does not install; dnf output above is the evidence"
+    exit 1
+fi
+docker commit "${CONTAINER}" "${TAG}" >/dev/null
+echo "::endgroup::"
+
+# ── Assertion 1+2: the claimed version runs, with the network removed ────────
+#
+# `--network none` gives the container no interfaces at all, so anything that
+# tries to resolve itself from an index here fails rather than quietly
+# succeeding on a well-connected runner.
+echo "::group::[${IMAGE}] run offline (--network none)"
+set +e
+OFFLINE_OUT="$(docker run --rm --network none "${TAG}" bernstein --version 2>&1)"
+OFFLINE_RC=$?
+set -e
+echo "exit=${OFFLINE_RC} output=${OFFLINE_OUT:-<empty>}"
+echo "::endgroup::"
+
+if [ "${OFFLINE_RC}" -ne 0 ]; then
+    echo "::error::[${IMAGE}] 'bernstein --version' failed offline (exit ${OFFLINE_RC}): ${OFFLINE_OUT:-<no output>}"
+    exit 1
+fi
+
+if [ -z "${OFFLINE_OUT}" ]; then
+    # The wrapper this replaced exited 0 while printing nothing, having
+    # exec'd into a pip install. An empty success is the failure mode.
+    echo "::error::[${IMAGE}] 'bernstein --version' exited 0 but printed nothing; the package ran no program"
+    exit 1
+fi
+
+if ! printf '%s' "${OFFLINE_OUT}" | grep -qF "${VERSION}"; then
+    echo "::error::[${IMAGE}] RPM claims ${VERSION} but the installed program reports: ${OFFLINE_OUT}"
+    exit 1
+fi
+
+# ── Assertion 3: the CLI is actually loadable, not just version-stamped ──────
+echo "::group::[${IMAGE}] bernstein --help offline"
+if ! docker run --rm --network none "${TAG}" bernstein --help >/dev/null 2>&1; then
+    echo "::error::[${IMAGE}] 'bernstein --help' failed offline; the packaged CLI does not load"
+    exit 1
+fi
+echo "::endgroup::"
+
+echo "[${IMAGE}] OK - installed RPM reports ${VERSION} with no network"

@@ -72,11 +72,25 @@ interpolated into shell text. The token carries an expiry date recorded as a
 comment in the file itself, so it has to be reissued from the Copr web UI
 before that date or the job starts failing.
 
-The RPM is a wrapper: it installs a `bernstein` launcher that resolves the
-real package through `pipx`/`uvx` at run time, which is why the job waits for
-the PyPI publish and why the spec declares no Python dependencies. The version
-is bound to the release tag at build time, so the `Version:` committed in the
-spec is only what keeps the file buildable on its own.
+The RPM ships the application and its full dependency closure in a private
+virtualenv under `%{_libdir}/bernstein`, with `/usr/bin/bernstein` symlinked
+to the venv's console script. `%install` resolves `bernstein==<release>` from
+PyPI once, at RPM build time inside the Copr chroot; nothing resolves at run
+time, so the installed command works without network access and always runs
+the version the package metadata names. `%check` fails the build if the
+packaged payload disagrees with that version. This is why the job waits for
+the PyPI publish before submitting to Copr.
+
+The package is arch-specific (not `noarch`): the closure carries compiled
+extension modules, so each chroot builds its own payload against its own
+interpreter ABI. On EPEL 9 the spec requires `python3.12` (parallel-installable
+from AppStream) because the distribution's `python3` is 3.9, below the
+project's floor; every other chroot uses `python3`.
+
+Both version fields in the spec — `Version:` and `%global pypi_version` — are
+bound to the release tag by the renderer at build time, so the committed
+values are only what keeps the file buildable on its own. The two spellings
+differ for pre-releases (`3.15.0~rc1` vs `3.15.0-rc1`).
 
 Build a source RPM locally the same way the job does:
 
@@ -84,6 +98,35 @@ Build a source RPM locally the same way the job does:
 python3 scripts/build_copr_srpm.py --version v3.13.0 --outdir dist-rpm
 python3 scripts/build_copr_srpm.py --version v3.13.0 --render-only   # no rpmbuild needed
 ```
+
+Run the install smoke locally exactly the way CI runs it (needs Docker):
+
+```
+scripts/rpm_install_smoke.sh fedora:43 3.14.159
+scripts/rpm_install_smoke.sh quay.io/centos/centos:stream9 3.14.159
+```
+
+### Chroots
+
+The intended chroot set for the Copr project. This list is the single source
+of truth: the smoke matrices in `ci.yml` (`install-smoke-rpm`) and
+`publish.yml` (`rpm-install-smoke`) each cover one container per family named
+here, and a chroot that cannot pass the smoke is removed from the project
+rather than left publishing a package that does not install. Chroots are
+enabled in the Copr project settings by the maintainer; nothing in CI mutates
+the project.
+
+| Chroot | Arches | Notes |
+|---|---|---|
+| `fedora-43` | x86_64, aarch64 | current stable |
+| `fedora-44` | x86_64, aarch64 | current stable |
+| `fedora-rawhide` | x86_64, aarch64 | follows Fedora branching, so a new Fedora release needs no manual edit here |
+| `epel-9` | x86_64, aarch64 | spec requires `python3.12` from AppStream (distribution `python3` is 3.9) |
+| `epel-10` | x86_64, aarch64 | distribution `python3` is 3.12 |
+
+When Fedora branches a new release, Copr's rawhide chroot carries on and the
+new stable chroot is enabled in the project settings; the smoke matrices pin
+container tags and are updated in the same change.
 
 ### Republishing the RPM for an existing tag
 

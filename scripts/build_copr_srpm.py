@@ -29,7 +29,9 @@ CHANGELOG_AUTHOR = "Bernstein release automation <alex@alexchernysh.com>"
 CHANGELOG_MARKER = "%changelog\n"
 
 VERSION_LINE_RE = re.compile(r"(?m)^Version:(?P<pad>[ \t]+)\S+[ \t]*$")
+PYPI_VERSION_LINE_RE = re.compile(r"(?m)^%global(?P<pad>[ \t]+)pypi_version[ \t]+\S+[ \t]*$")
 RPM_VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.~+_]*")
+PYPI_VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.\-+_!]*")
 
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = (
@@ -66,6 +68,25 @@ def rpm_version(tag_or_version: str) -> str:
     return version
 
 
+def pypi_version(tag_or_version: str) -> str:
+    """Return the version under which PyPI serves this release.
+
+    The spec carries two spellings of one release. ``Version:`` is the RPM
+    one, where ``-`` is illegal and ``~`` marks a pre-release; this is the
+    PyPI one, which keeps the tag's own separator. They differ only for
+    pre-release tags, and the package has to be fetched under the name the
+    index actually knows.
+    """
+    version = tag_or_version.strip().removeprefix("v")
+    if not version:
+        msg = f"{tag_or_version!r} carries no release version"
+        raise ValueError(msg)
+    if not PYPI_VERSION_RE.fullmatch(version):
+        msg = f"{tag_or_version!r} is not a usable PyPI version (got {version!r})"
+        raise ValueError(msg)
+    return version
+
+
 def changelog_stamp(day: date) -> str:
     """Return the RPM ``%changelog`` date stamp for ``day``.
 
@@ -79,6 +100,7 @@ def changelog_stamp(day: date) -> str:
 def render_spec(spec_text: str, version: str, build_date: date) -> str:
     """Return ``spec_text`` bound to ``version``, with a changelog entry."""
     release_version = rpm_version(version)
+    index_version = pypi_version(version)
 
     rendered, replaced = VERSION_LINE_RE.subn(
         lambda match: f"Version:{match.group('pad')}{release_version}",
@@ -87,6 +109,18 @@ def render_spec(spec_text: str, version: str, build_date: date) -> str:
     )
     if replaced != 1:
         msg = "spec has no `Version:` line to bind to the release"
+        raise ValueError(msg)
+
+    # The spec installs `bernstein==%{pypi_version}` into the packaged venv, so
+    # leaving this bound to the committed value would build a package whose
+    # payload is a different release than its metadata claims.
+    rendered, replaced = PYPI_VERSION_LINE_RE.subn(
+        lambda match: f"%global{match.group('pad')}pypi_version {index_version}",
+        rendered,
+        count=1,
+    )
+    if replaced != 1:
+        msg = "spec has no `%global pypi_version` line to bind to the release"
         raise ValueError(msg)
 
     entry_header = f"* {changelog_stamp(build_date)} {CHANGELOG_AUTHOR} - {release_version}-1"

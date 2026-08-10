@@ -58,12 +58,64 @@ def test_rpm_version_rejects_values_rpm_cannot_carry(mod: ModuleType, bad: str) 
         mod.rpm_version(bad)
 
 
+def test_pypi_version_strips_the_tag_prefix(mod: ModuleType) -> None:
+    assert mod.pypi_version("v3.13.0") == "3.13.0"
+    assert mod.pypi_version("3.13.0") == "3.13.0"
+
+
+def test_pypi_version_keeps_the_index_prerelease_separator(mod: ModuleType) -> None:
+    """RPM spells a pre-release ``3.13.0~rc1``; PyPI serves it as ``3.13.0-rc1``.
+
+    The spec installs ``bernstein==%%{pypi_version}`` into the packaged venv,
+    so the binding must keep the spelling the index resolves.
+    """
+    assert mod.pypi_version("v3.13.0-rc1") == "3.13.0-rc1"
+
+
+@pytest.mark.parametrize("bad", ["", "v", "vnext", "3.13.0 0", "3.13.0/etc"])
+def test_pypi_version_rejects_values_pip_cannot_resolve(mod: ModuleType, bad: str) -> None:
+    with pytest.raises(ValueError, match="version"):
+        mod.pypi_version(bad)
+
+
 def test_render_spec_binds_the_spec_to_the_release_version(mod: ModuleType, spec_text: str) -> None:
     """The rendered spec must declare the release version, not the committed one."""
     rendered = mod.render_spec(spec_text, "v3.13.0", date(2026, 8, 1))
 
     version_lines = [line for line in rendered.splitlines() if line.startswith("Version:")]
     assert version_lines == ["Version:        3.13.0"]
+
+
+def test_render_spec_binds_the_packaged_payload_to_the_release_version(
+    mod: ModuleType, spec_text: str
+) -> None:
+    """``%install`` fetches ``bernstein==%%{pypi_version}`` into the venv.
+
+    Leaving that bound to the committed value would build a package whose
+    payload is a different release than its own metadata claims - the exact
+    defect the venv spec replaced (#3558).
+    """
+    rendered = mod.render_spec(spec_text, "v3.13.0", date(2026, 8, 1))
+
+    payload_lines = [
+        line for line in rendered.splitlines() if line.startswith("%global pypi_version")
+    ]
+    assert payload_lines == ["%global pypi_version 3.13.0"]
+
+
+def test_render_spec_binds_both_spellings_of_a_prerelease(mod: ModuleType, spec_text: str) -> None:
+    """One release, two version grammars: RPM's ``~`` and PyPI's ``-``."""
+    rendered = mod.render_spec(spec_text, "v3.13.0-rc1", date(2026, 8, 1))
+
+    assert "Version:        3.13.0~rc1" in rendered
+    assert "%global pypi_version 3.13.0-rc1" in rendered
+
+
+def test_render_spec_fails_loudly_on_a_spec_without_the_payload_binding(mod: ModuleType) -> None:
+    with pytest.raises(ValueError, match="pypi_version"):
+        mod.render_spec(
+            "Name: bernstein\nVersion: 0.0.0\n", "v3.13.0", date(2026, 8, 1)
+        )
 
 
 def test_render_spec_records_the_release_in_the_changelog(mod: ModuleType, spec_text: str) -> None:
