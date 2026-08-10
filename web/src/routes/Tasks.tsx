@@ -23,6 +23,7 @@ import { TaskGatesPanel } from '@/components/gates/TaskGatesPanel';
 import { TaskDepsPanel } from '@/components/deps/TaskDepsPanel';
 import { TaskTracePanel } from '@/components/trace/TaskTracePanel';
 import { TaskArtifactsPanel } from '@/components/artifacts';
+import { SteerPanel } from '@/components/steer/SteerPanel';
 import {
   formatUSD,
   formatDuration,
@@ -307,7 +308,7 @@ const CHIPS: { key: ChipKey; label: string; statusParam?: string }[] = [
 
 // ── Detail tabs ─────────────────────────────────────────────────────────────
 
-const DETAIL_TABS = ['Summary', 'Diff', 'Gates', 'Artifacts', 'Logs', 'Deps', 'Trace'] as const;
+const DETAIL_TABS = ['Summary', 'Diff', 'Gates', 'Artifacts', 'Logs', 'Deps', 'Trace', 'Steer'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
 // ── Operator-syntax token highlighter ───────────────────────────────────────
@@ -1598,6 +1599,12 @@ function TaskTabContent({
       return <TaskDepsPanel taskId={taskId} active />;
     case 'Trace':
       return <TaskTracePanel taskId={taskId} active />;
+    case 'Steer': {
+      const ui = toUiStatus(task.status);
+      const terminal = ui === 'done' || ui === 'failed';
+      const terminalLabel = ui === 'done' ? 'the task is done' : 'the task failed or was cancelled';
+      return <SteerPanel taskId={taskId} terminal={terminal} terminalLabel={terminalLabel} />;
+    }
     case 'Summary':
       return null;
     default:

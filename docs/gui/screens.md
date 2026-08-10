@@ -37,7 +37,7 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 - **Data shown:** task ID, title + branch, agent, role pill, duration (color-coded if stalled), progress bar, cost.
 - **Filter chips:** All · Running · Queued · Stalled · Done · 24h · Failed (with counts).
 - **Operator search syntax:** mono input parses `agent:` / `status:` / `role:` token prefixes.
-- **Drawer tabs:** Summary · Diff · Gates · Logs · Deps · Trace.
+- **Drawer tabs:** Summary · Diff · Gates · Logs · Deps · Trace · Steer (Steer disabled with a reason on terminal tasks).
 - **Actions:** Cancel run · Re-run · Change model · Change role · Kill session.
 - **Endpoints:** `GET /api/v1/tasks?status=&agent=&page=`, `POST /api/v1/tasks/{id}/{cancel,retry,prioritize,kill}`, `POST /api/v1/tasks/batch-ops`. SSE: `task_update`, `task_progress` over `/api/v1/events`.
 - **Replaces TUI widget:** `task_list.py` + `task_detail_overlay.py` + `dependency_graph.py`.
