@@ -69,6 +69,7 @@ class TestTaskSearchInputPlaceholder:
         """
         widget = TaskSearchInput(placeholder="custom text")
         assert widget.placeholder == "custom text"
+
     def test_positional_placeholder_does_not_raise(self) -> None:
         widget = TaskSearchInput(None, "custom text")
         assert widget.placeholder == "custom text"
