@@ -343,7 +343,10 @@ def _check_type(value: object, expected: str, path: str, errors: list[str]) -> b
     py_type = type_map.get(expected)
     if py_type is None:
         return True  # unknown type - skip
-    if not isinstance(value, py_type):
+    # JSON Schema's integer and number types exclude booleans, but Python's
+    # bool subclasses int, so isinstance alone would let true/false through.
+    is_bool_as_number = expected in ("integer", "number") and isinstance(value, bool)
+    if is_bool_as_number or not isinstance(value, py_type):
         errors.append(f"{path}: expected type {expected}, got {type(value).__name__}")
         return False
     return True
@@ -391,7 +394,7 @@ def _validate_step_priority(step: dict[str, Any], path: str, errors: list[str]) 
     """Validate the optional priority field on a step."""
     if "priority" not in step:
         return
-    if isinstance(step["priority"], int):
+    if isinstance(step["priority"], int) and not isinstance(step["priority"], bool):
         if not (1 <= step["priority"] <= 5):
             errors.append(f"{path}.priority: must be between 1 and 5, got {step['priority']}")
     else:
@@ -402,7 +405,7 @@ def _validate_step_estimated_minutes(step: dict[str, Any], path: str, errors: li
     """Validate the optional estimated_minutes field on a step."""
     if "estimated_minutes" not in step:
         return
-    if isinstance(step["estimated_minutes"], int):
+    if isinstance(step["estimated_minutes"], int) and not isinstance(step["estimated_minutes"], bool):
         if step["estimated_minutes"] < 1:
             errors.append(f"{path}.estimated_minutes: must be >= 1")
     else:
@@ -623,9 +626,8 @@ def validate_plan(plan_data: dict[str, Any], warnings: list[str] | None = None) 
     Known gaps against the full schema: free-text string fields
     (``description``, ``cli``, step ``title``/``goal``/``mode``/``repo``,
     stage ``name``, repo ``path``/``branch``/``name``) are checked for
-    presence, not type; ``budget`` is untyped; ``phases`` items are not
-    checked against the phase enum; and booleans satisfy integer checks
-    (``isinstance(True, int)``).
+    presence, not type; ``budget`` is untyped; and ``phases`` items are not
+    checked against the phase enum.
 
     Args:
         plan_data: Parsed YAML plan as a Python dict.

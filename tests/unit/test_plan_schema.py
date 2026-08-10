@@ -363,6 +363,28 @@ class TestValidatePlanSchemaParity:
     def test_max_agents_one_is_accepted(self) -> None:
         assert validate_plan(_minimal_plan(max_agents=1)) == []
 
+    @pytest.mark.parametrize("value", [True, False], ids=["true", "false"])
+    def test_max_agents_boolean_is_a_type_error(self, value: bool) -> None:
+        """JSON Schema's integer excludes booleans; Python's bool subclasses int.
+
+        ``True`` must not satisfy ``minimum: 1`` and ``False`` must be a type
+        error, not a range error.
+        """
+        errors = validate_plan(_minimal_plan(max_agents=value))
+        assert any("max_agents" in e and "integer" in e and "bool" in e for e in errors)
+
+    def test_priority_boolean_is_a_type_error(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["priority"] = True
+        errors = validate_plan(plan)
+        assert any("priority" in e and "integer" in e and "bool" in e for e in errors)
+
+    def test_estimated_minutes_boolean_is_a_type_error(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["estimated_minutes"] = True
+        errors = validate_plan(plan)
+        assert any("estimated_minutes" in e and "integer" in e and "bool" in e for e in errors)
+
     def test_name_must_be_a_string(self) -> None:
         errors = validate_plan(_minimal_plan(name=123))
         assert any("name" in e and "string" in e for e in errors)
