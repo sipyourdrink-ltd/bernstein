@@ -41,9 +41,11 @@ RPM_VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.~+_]*")
 # ``1.0--rc1`` and ``1.0+foo+bar`` that pip cannot resolve, which would render
 # an SRPM whose ``%install`` fails only once it reaches the remote builder.
 # Local version segments (``+local``) are excluded deliberately - PyPI does not
-# serve them, so one could never be installed from the index.
+# serve them, so one could never be installed from the index. Epochs (``1!2.0``)
+# are excluded for the same kind of reason: ``Version:`` cannot carry ``!``, so
+# ``rpm_version`` would reject an epoch anyway and accepting one here would
+# advertise support that ``render_spec`` cannot honour.
 PYPI_VERSION_RE = re.compile(
-    r"(?:[0-9]+!)?"
     r"[0-9]+(?:\.[0-9]+)*"
     r"(?:[-_.]?(?:a|b|c|rc|alpha|beta|pre|preview)[-_.]?[0-9]*)?"
     r"(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?"

@@ -87,6 +87,9 @@ def test_pypi_version_keeps_the_index_prerelease_separator(mod: ModuleType) -> N
         "1.0+foo+bar",
         "1.0+local",
         "3.13.0-",
+        # An epoch cannot be carried by `Version:`, so accepting one here would
+        # advertise a capability `render_spec` cannot honour.
+        "1!2.0",
     ],
 )
 def test_pypi_version_rejects_values_pip_cannot_resolve(mod: ModuleType, bad: str) -> None:
@@ -96,7 +99,7 @@ def test_pypi_version_rejects_values_pip_cannot_resolve(mod: ModuleType, bad: st
 
 @pytest.mark.parametrize(
     "good",
-    ["3.13.0", "3.13.0-rc1", "3.13.0rc1", "3.13.0.post1", "3.13.0.dev1", "1!2.0"],
+    ["3.13.0", "3.13.0-rc1", "3.13.0rc1", "3.13.0.post1", "3.13.0.dev1"],
 )
 def test_pypi_version_accepts_the_release_grammar(mod: ModuleType, good: str) -> None:
     assert mod.pypi_version(good) == good
@@ -203,3 +206,15 @@ def test_committed_spec_changelog_dates_are_real_weekdays(spec_text: str) -> Non
         day_name, month_name, day, year = match.groups()
         actual = date(int(year), months[month_name], int(day))
         assert day_name == weekdays[actual.weekday()], f"bogus changelog date: {match.group(0)!r}"
+
+
+def test_every_version_the_pypi_check_accepts_can_also_be_rendered(mod: ModuleType) -> None:
+    """The two version checks must agree on what a release can be.
+
+    ``pypi_version`` accepting a spelling that ``rpm_version`` rejects would
+    advertise support the renderer cannot honour: the value passes the helper
+    and then raises out of ``render_spec`` before anything is bound.
+    """
+    for candidate in ("3.13.0", "3.13.0-rc1", "3.13.0rc1", "3.13.0.post1", "3.13.0.dev1"):
+        assert mod.pypi_version(candidate)
+        assert mod.rpm_version(candidate)
