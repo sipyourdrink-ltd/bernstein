@@ -310,7 +310,7 @@ class ClusterServiceImpl:
         self._registry.cordon(request.node_id)
         return cluster_pb2.NodeStatusResponse(
             node_id=request.node_id,
-            status=4,  # CORDONED
+            status=cluster_pb2.NodeStatus.NODE_STATUS_CORDONED,
         )
 
     async def UncordonNode(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
@@ -322,7 +322,7 @@ class ClusterServiceImpl:
         self._registry.uncordon(request.node_id)
         return cluster_pb2.NodeStatusResponse(
             node_id=request.node_id,
-            status=1,  # ONLINE
+            status=cluster_pb2.NodeStatus.NODE_STATUS_ONLINE,
         )
 
     async def DrainNode(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
@@ -334,7 +334,7 @@ class ClusterServiceImpl:
         self._registry.start_drain(request.node_id)
         return cluster_pb2.NodeStatusResponse(
             node_id=request.node_id,
-            status=5,  # DRAINING
+            status=cluster_pb2.NodeStatus.NODE_STATUS_DRAINING,
         )
 
     async def ListNodes(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
