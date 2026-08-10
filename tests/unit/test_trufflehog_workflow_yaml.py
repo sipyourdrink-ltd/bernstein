@@ -51,8 +51,18 @@ ALLOWED_EXCLUDED_DETECTORS = frozenset({"lob"})
 #: leading ``v``; ``latest`` and floating prefixes are what this rejects.
 EXACT_RELEASE = re.compile(r"^\d+\.\d+\.\d+$")
 
-#: A full-SHA action pin, the only form this repository allows.
-SHA_PIN = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
+#: The only action this gate may run.
+#:
+#: The step is *discovered* by looking for ``trufflehog`` anywhere in a
+#: ``uses:`` value, which is deliberately generous so that a swapped action
+#: is still found rather than quietly skipped. Identity is then checked
+#: exactly: every other assertion in this file reads the selected step's
+#: inputs, so a fork or a similarly named action would satisfy all of them
+#: while executing somebody else's code.
+SCANNER_ACTION = "trufflesecurity/trufflehog"
+
+#: That action pinned to a full lowercase commit SHA, as Renovate writes it.
+ACTION_PIN = re.compile(rf"^{re.escape(SCANNER_ACTION)}@[0-9a-f]{{40}}\Z")
 
 
 def _doc() -> dict[str, Any]:
@@ -107,14 +117,22 @@ def _release_comment(text: str, uses: str) -> str:
     return str(found[0])
 
 
+def _action_uses() -> str:
+    """The selected step's ``uses:``, checked to be the upstream scanner."""
+    uses = str(_scan_step().get("uses", ""))
+    assert ACTION_PIN.match(uses), (
+        f"`uses: {uses}` must be `{SCANNER_ACTION}@` followed by a full "
+        "40-character lowercase commit SHA. The step is found by matching "
+        "`trufflehog` anywhere in the value, so a fork or a similarly named "
+        "action would pass every other assertion in this file while running "
+        "different code; a tag or branch is rewritable and pins nothing"
+    )
+    return uses
+
+
 def _action_version() -> str:
     """The wrapper release, read from the step the workflow actually runs."""
-    uses = str(_scan_step().get("uses", ""))
-    assert SHA_PIN.match(uses), (
-        f"`uses: {uses}` must pin the action to a full 40-character commit "
-        "SHA. A tag or branch is rewritable, so it pins nothing"
-    )
-    return _release_comment(WORKFLOW.read_text(encoding="utf-8"), uses)
+    return _release_comment(WORKFLOW.read_text(encoding="utf-8"), _action_uses())
 
 
 def _excluded_detectors() -> frozenset[str]:
@@ -184,6 +202,31 @@ def _workflow_text(*pin_lines: str) -> str:
     """A workflow fragment carrying the given ``uses:`` lines verbatim."""
     body = "\n".join(f"      - name: Run trufflehog\n        {line}" for line in pin_lines)
     return f"jobs:\n  trufflehog:\n    steps:\n{body}\n"
+
+
+@pytest.mark.parametrize(
+    "uses",
+    [
+        pytest.param(f"attacker/trufflehog-wrapper@{'a' * 40}", id="unrelated-owner"),
+        pytest.param(f"trufflesecurity/trufflehog-fork@{'a' * 40}", id="suffixed-repo"),
+        pytest.param(f"nottrufflesecurity/trufflehog@{'a' * 40}", id="prefixed-owner"),
+        pytest.param(f"trufflesecurity/trufflehog@{'A' * 40}", id="uppercase-sha"),
+        pytest.param("trufflesecurity/trufflehog@v3", id="tag-not-sha"),
+        pytest.param(f"trufflesecurity/trufflehog@{'a' * 39}", id="truncated-sha"),
+    ],
+)
+def test_an_action_that_merely_resembles_the_scanner_is_refused(uses: str) -> None:
+    """Discovery matches a substring; identity must not be so generous."""
+    assert not ACTION_PIN.match(uses), (
+        f"`{uses}` would be accepted as the scanner. Every other assertion "
+        "in this file reads the selected step's inputs, so a look-alike "
+        "passes them all while running different code"
+    )
+
+
+def test_the_workflow_runs_the_upstream_scanner_action() -> None:
+    """The positive half: the step really is the action it is taken to be."""
+    assert _action_uses().startswith(f"{SCANNER_ACTION}@")
 
 
 def test_a_commented_out_pin_cannot_answer_for_the_live_one() -> None:
