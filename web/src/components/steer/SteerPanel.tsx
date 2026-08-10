@@ -16,7 +16,10 @@ export interface SteerPanelProps {
   /** True when the task can no longer be steered (done, failed, cancelled). */
   terminal: boolean;
   /** Short label for the terminal state, shown as the disable reason. */
-  terminalLabel: string;
+  /** Why steering is unavailable. Present exactly when ``terminal`` is true:
+   *  the caller derives both from the task record, so a terminal task always
+   *  carries a reason and a live one never needs a placeholder. */
+  terminalLabel?: string;
   className?: string;
 }
 
