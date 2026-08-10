@@ -7,6 +7,12 @@
 # the package must be fetched under the name PyPI knows.
 %global pypi_version 1.4.11
 
+# The venv's bootstrap pip comes from the chroot and ranges from 23.2 (EPEL 9)
+# to current (Fedora). Pin the one that resolves the closure so a rebuild of
+# the same SRPM does not change resolver behaviour with whatever pip happens to
+# be newest that day.
+%global pip_version 26.2.1
+
 # The application lives in a private virtualenv rather than in the system
 # site-packages: its dependency closure is ~80 packages, most of which Fedora
 # does not carry, and none of which we want to force onto a user's system
@@ -27,7 +33,12 @@
 
 Name:           bernstein
 Version:        1.4.11
-Release:        1%{?dist}
+# Release 2, not 1: the previous package was `noarch` and carried only a
+# launcher script. RPM will not replace an installed package with one of the
+# same name-version-release, so a host that already has the launcher at this
+# version would keep it. Bumping the release makes the change an unambiguous
+# upgrade on every host, whatever it has installed.
+Release:        2%{?dist}
 Summary:        Deterministic orchestrator for CLI coding agents
 License:        Apache-2.0
 URL:            https://github.com/sipyourdrink-ltd/bernstein
@@ -72,7 +83,7 @@ mkdir -p %{buildroot}%{venv_root}
 # package claims to be. Nothing is fetched after this point - not on first
 # run, not ever.
 %{buildroot}%{venv_root}/bin/python -m pip install \
-    --no-cache-dir --disable-pip-version-check --upgrade pip
+    --no-cache-dir --disable-pip-version-check "pip==%{pip_version}"
 %{buildroot}%{venv_root}/bin/python -m pip install \
     --no-cache-dir --disable-pip-version-check "%{name}==%{pypi_version}"
 
@@ -104,6 +115,13 @@ ln -sf %{venv_root}/bin/%{name} %{buildroot}%{_bindir}/%{name}
 %{_bindir}/%{name}
 
 %changelog
+* Mon Aug 10 2026 Alex Chernysh <alex@alexchernysh.com> - 1.4.11-2
+- Package the application itself: the release and its dependency closure are
+  installed into a private virtualenv at build time instead of being resolved
+  from PyPI on first run
+- Drop noarch: the closure carries compiled extension modules
+- Require python3.12 on EPEL 9, where the distribution python3 is 3.9
+
 * Fri Apr 03 2026 Alex Chernysh <alex@alexchernysh.com> - 1.4.11-1
 - Switch to wrapper RPM: installs via pipx/uvx instead of native Python RPM
 - Fixes COPR build failures from missing Fedora packages for Python deps

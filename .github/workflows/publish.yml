@@ -421,11 +421,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One container per published chroot family; the spec resolves a
-        # different interpreter on EPEL 9 than on the other chroots, so both
-        # families must run. The intended chroot list lives in
-        # docs/operations/release.md ("Chroots").
-        image: ["fedora:43", "quay.io/centos/centos:stream9"]
+        # One container per published chroot, so nothing is submitted to Copr
+        # for a target this never installed on. The intended chroot list lives
+        # in docs/operations/release.md ("Chroots").
+        #
+        # fedora-rawhide is deliberately not gated here: it is a moving target
+        # whose breakage is routinely unrelated to this package, and failing a
+        # release on rawhide churn costs more than it catches. Copr still
+        # builds it and reports its own failure.
+        #
+        # Both arches are not gated either: these runners are x86_64 and an
+        # aarch64 cell would have to build a ~50 MB venv of compiled wheels
+        # under QEMU. The spec's arch-dependent surface is the wheel set pip
+        # selects, which Copr resolves natively per chroot and fails loudly on.
+        image:
+          - "fedora:43"
+          - "fedora:44"
+          - "quay.io/centos/centos:stream9"
+          - "quay.io/centos/centos:stream10"
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0

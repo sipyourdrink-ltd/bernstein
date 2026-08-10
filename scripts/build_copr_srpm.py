@@ -29,9 +29,26 @@ CHANGELOG_AUTHOR = "Bernstein release automation <alex@alexchernysh.com>"
 CHANGELOG_MARKER = "%changelog\n"
 
 VERSION_LINE_RE = re.compile(r"(?m)^Version:(?P<pad>[ \t]+)\S+[ \t]*$")
+# The leading integer of `Release:`; the rest is the `%{?dist}` macro. The
+# changelog entry has to carry the same release number as the field, or the
+# spec claims a different EVR than it builds.
+RELEASE_LINE_RE = re.compile(r"(?m)^Release:[ \t]+(?P<release>[0-9]+)")
 PYPI_VERSION_LINE_RE = re.compile(r"(?m)^%global(?P<pad>[ \t]+)pypi_version[ \t]+\S+[ \t]*$")
 RPM_VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.~+_]*")
-PYPI_VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.\-+_!]*")
+# The PEP 440 public-version grammar, in the non-normalised spellings a release
+# tag may legitimately use (``3.15.0-rc1`` as well as ``3.15.0rc1``). A plain
+# character whitelist is not enough: it accepts shapes like ``3.13.0..1``,
+# ``1.0--rc1`` and ``1.0+foo+bar`` that pip cannot resolve, which would render
+# an SRPM whose ``%install`` fails only once it reaches the remote builder.
+# Local version segments (``+local``) are excluded deliberately - PyPI does not
+# serve them, so one could never be installed from the index.
+PYPI_VERSION_RE = re.compile(
+    r"(?:[0-9]+!)?"
+    r"[0-9]+(?:\.[0-9]+)*"
+    r"(?:[-_.]?(?:a|b|c|rc|alpha|beta|pre|preview)[-_.]?[0-9]*)?"
+    r"(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?"
+    r"(?:[-_.]?dev[-_.]?[0-9]*)?"
+)
 
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = (
@@ -123,7 +140,13 @@ def render_spec(spec_text: str, version: str, build_date: date) -> str:
         msg = "spec has no `%global pypi_version` line to bind to the release"
         raise ValueError(msg)
 
-    entry_header = f"* {changelog_stamp(build_date)} {CHANGELOG_AUTHOR} - {release_version}-1"
+    release_match = RELEASE_LINE_RE.search(rendered)
+    if release_match is None:
+        msg = "spec has no numeric `Release:` field to record in the changelog"
+        raise ValueError(msg)
+    release_number = release_match.group("release")
+
+    entry_header = f"* {changelog_stamp(build_date)} {CHANGELOG_AUTHOR} - {release_version}-{release_number}"
     if CHANGELOG_MARKER not in rendered:
         return f"{rendered.rstrip()}\n\n{CHANGELOG_MARKER}{entry_header}\n- Release {release_version}\n"
 

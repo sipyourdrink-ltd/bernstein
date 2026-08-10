@@ -986,6 +986,11 @@ jobs:
           persist-credentials: false
       - name: Resolve the newest released version
         id: version
+        # `matrix.image` reaches the shell as an environment variable rather
+        # than a template expansion: an expansion is spliced into the script
+        # source before it runs, which is the shape zizmor rejects.
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
         run: |
           set -euo pipefail
           VERSION="$(curl -fsS --retry 3 https://pypi.org/pypi/bernstein/json | jq -r .info.version)"
@@ -994,7 +999,7 @@ jobs:
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "smoking bernstein ${VERSION} on ${{ matrix.image }}"
+          echo "smoking bernstein ${VERSION} on ${SMOKE_IMAGE}"
       - name: Build the RPM, install it, run it offline
         env:
           SMOKE_IMAGE: ${{ matrix.image }}

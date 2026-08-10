@@ -33,6 +33,16 @@ IMAGE="$1"
 VERSION="$2"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The version reaches this script from a release tag, a dispatch input, or a
+# PyPI query, and is handed to a process running as root inside the build
+# container. Constrain it to the release grammar before it goes anywhere: a
+# value carrying shell metacharacters must be rejected here, not quoted around
+# later.
+if ! printf '%s' "${VERSION}" | grep -qE '^[0-9]+(\.[0-9]+)*([-_.]?(a|b|c|rc|alpha|beta|pre|preview)[-_.]?[0-9]*)?([-_.]?(post|rev|r)[-_.]?[0-9]*)?([-_.]?dev[-_.]?[0-9]*)?$'; then
+    echo "::error::refusing to smoke a version that is not a release version: ${VERSION}" >&2
+    exit 2
+fi
+
 # Unique per invocation so matrix cells can run in parallel without racing on
 # the container name or the committed image tag.
 # `printf`, not `echo`: a trailing newline would become a trailing `-`, which
@@ -65,32 +75,36 @@ echo "::group::[${IMAGE}] build the RPM from the rendered SRPM"
 # rpm-build and a python3 for the renderer; the spec pulls its own interpreter
 # via BuildRequires. `--rebuild` is what turns the SRPM Copr would receive into
 # the binary RPM a user would install, so the smoke tests the real artefact.
-docker run --rm \
+# The inner script is a quoted heredoc, so nothing in it is expanded by this
+# shell: the version crosses the boundary as an environment variable and is
+# never spliced into the source the container executes.
+docker run --rm -i \
     -v "${REPO_ROOT}:/src:ro" \
     -v "${WORK}:/out" \
+    -e "SMOKE_VERSION=${VERSION}" \
     "${IMAGE}" \
-    bash -euo pipefail -c "
-        dnf -y install rpm-build python3 dnf-command\\(builddep\\) >/dev/null
+    bash -euo pipefail -s <<'INNER'
+dnf -y install rpm-build python3 "dnf-command(builddep)" >/dev/null
 
-        # The renderer needs the same Python floor the project targets, but
-        # EPEL 9's \`python3\` is 3.9. In the real chain the SRPM is rendered on
-        # the runner and only rebuilt in the chroot, so pulling a modern
-        # interpreter just for that step keeps this faithful to Copr.
-        PY=python3
-        if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
-            dnf -y install python3.12 >/dev/null
-            PY=python3.12
-        fi
+# The renderer needs the same Python floor the project targets, but EPEL 9's
+# `python3` is 3.9. In the real chain the SRPM is rendered on the runner and
+# only rebuilt in the chroot, so pulling a modern interpreter just for that
+# step keeps this faithful to Copr.
+PY=python3
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+    dnf -y install python3.12 >/dev/null
+    PY=python3.12
+fi
 
-        cd /src
-        SRPM=\$(\${PY} scripts/build_copr_srpm.py --version '${VERSION}' --outdir /out/srpm)
-        echo \"rendered \${SRPM} (using \${PY})\"
-        dnf -y builddep \"\${SRPM}\" >/dev/null
-        rpmbuild --rebuild \
-            --define '_topdir /out/rb' \
-            --define '_rpmdir /out/rpms' \
-            \"\${SRPM}\"
-    "
+cd /src
+SRPM="$("${PY}" scripts/build_copr_srpm.py --version "${SMOKE_VERSION}" --outdir /out/srpm)"
+echo "rendered ${SRPM} (using ${PY})"
+dnf -y builddep "${SRPM}" >/dev/null
+rpmbuild --rebuild \
+    --define "_topdir /out/rb" \
+    --define "_rpmdir /out/rpms" \
+    "${SRPM}"
+INNER
 echo "::endgroup::"
 
 RPM_PATH="$(find "${WORK}/rpms" -name '*.rpm' -not -name '*.src.rpm' | head -1)"
@@ -104,13 +118,12 @@ echo "::group::[${IMAGE}] install the RPM"
 # Network is allowed here: installing may pull the interpreter the package
 # requires. The offline assertion below is about *run* time.
 docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+RPM_IN_CONTAINER="/rpms/$(basename "$(dirname "${RPM_PATH}")")/$(basename "${RPM_PATH}")"
 if ! docker run --name "${CONTAINER}" \
     -v "${WORK}/rpms:/rpms:ro" \
+    -e "SMOKE_RPM=${RPM_IN_CONTAINER}" \
     "${IMAGE}" \
-    bash -euo pipefail -c "
-        dnf -y install '/rpms/$(basename "$(dirname "${RPM_PATH}")")/$(basename "${RPM_PATH}")'
-        rpm -q bernstein
-    "; then
+    bash -euo pipefail -c 'dnf -y install "${SMOKE_RPM}"; rpm -q bernstein'; then
     echo "::error::[${IMAGE}] the RPM does not install; dnf output above is the evidence"
     exit 1
 fi
@@ -124,7 +137,9 @@ echo "::endgroup::"
 # succeeding on a well-connected runner.
 echo "::group::[${IMAGE}] run offline (--network none)"
 set +e
-OFFLINE_OUT="$(docker run --rm --network none "${TAG}" bernstein --version 2>&1)"
+# stdout only: a warning on stderr must not be able to satisfy the version
+# assertion below.
+OFFLINE_OUT="$(docker run --rm --network none "${TAG}" bernstein --version 2>/dev/null)"
 OFFLINE_RC=$?
 set -e
 echo "exit=${OFFLINE_RC} output=${OFFLINE_OUT:-<empty>}"
@@ -142,8 +157,18 @@ if [ -z "${OFFLINE_OUT}" ]; then
     exit 1
 fi
 
-if ! printf '%s' "${OFFLINE_OUT}" | grep -qF "${VERSION}"; then
-    echo "::error::[${IMAGE}] RPM claims ${VERSION} but the installed program reports: ${OFFLINE_OUT}"
+# Exact comparison, not a substring search: `grep -F 3.1` matches a program
+# reporting 3.14.159, and a diagnostic line carrying the number would satisfy
+# it too. Click prints `bernstein, version X` on one line; take the last field
+# of that line and require equality.
+REPORTED="$(printf '%s' "${OFFLINE_OUT}" | sed -n '1s/.*[[:space:]]//p')"
+if [ "${REPORTED}" != "${VERSION}" ]; then
+    echo "::error::[${IMAGE}] RPM claims ${VERSION} but the installed program reports '${REPORTED}' (full output: ${OFFLINE_OUT})"
+    exit 1
+fi
+
+if [ "$(printf '%s\n' "${OFFLINE_OUT}" | wc -l)" -ne 1 ]; then
+    echo "::error::[${IMAGE}] 'bernstein --version' printed more than the version line: ${OFFLINE_OUT}"
     exit 1
 fi
 

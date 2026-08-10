@@ -72,10 +72,34 @@ def test_pypi_version_keeps_the_index_prerelease_separator(mod: ModuleType) -> N
     assert mod.pypi_version("v3.13.0-rc1") == "3.13.0-rc1"
 
 
-@pytest.mark.parametrize("bad", ["", "v", "vnext", "3.13.0 0", "3.13.0/etc"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "v",
+        "vnext",
+        "3.13.0 0",
+        "3.13.0/etc",
+        # Shapes a character whitelist would wave through but pip cannot
+        # resolve: the SRPM would render fine and fail in the remote builder.
+        "3.13.0..1",
+        "1.0--rc1",
+        "1.0+foo+bar",
+        "1.0+local",
+        "3.13.0-",
+    ],
+)
 def test_pypi_version_rejects_values_pip_cannot_resolve(mod: ModuleType, bad: str) -> None:
     with pytest.raises(ValueError, match="version"):
         mod.pypi_version(bad)
+
+
+@pytest.mark.parametrize(
+    "good",
+    ["3.13.0", "3.13.0-rc1", "3.13.0rc1", "3.13.0.post1", "3.13.0.dev1", "1!2.0"],
+)
+def test_pypi_version_accepts_the_release_grammar(mod: ModuleType, good: str) -> None:
+    assert mod.pypi_version(good) == good
 
 
 def test_render_spec_binds_the_spec_to_the_release_version(mod: ModuleType, spec_text: str) -> None:
@@ -118,8 +142,18 @@ def test_render_spec_records_the_release_in_the_changelog(mod: ModuleType, spec_
 
     # 2026-08-01 is a Saturday; a wrong weekday makes rpmbuild warn.
     assert body.splitlines()[0].startswith("* Sat Aug 01 2026 ")
-    assert body.splitlines()[0].endswith(" - 3.13.0-1")
+    # The entry must carry the spec's own `Release:` number, not a hardcoded 1:
+    # a changelog naming a different EVR than the package builds is a lie about
+    # what was shipped.
+    assert body.splitlines()[0].endswith(" - 3.13.0-2")
     assert "- Release 3.13.0" in body
+
+
+def test_render_spec_changelog_release_tracks_the_release_field(mod: ModuleType) -> None:
+    spec = "Name: bernstein\nVersion: 0.0.0\nRelease: 7%{?dist}\n%global pypi_version 0.0.0\n"
+    rendered = mod.render_spec(spec, "v3.13.0", date(2026, 8, 1))
+
+    assert rendered.split("%changelog\n", 1)[1].splitlines()[0].endswith(" - 3.13.0-7")
 
 
 def test_render_spec_is_deterministic_and_idempotent(mod: ModuleType, spec_text: str) -> None:
