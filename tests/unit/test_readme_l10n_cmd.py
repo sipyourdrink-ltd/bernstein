@@ -20,6 +20,7 @@ from bernstein.cli.commands.readme_l10n_cmd import readme_l10n_cmd
 from bernstein.core.knowledge.readme_l10n import (
     HEADER_SECTION,
     Section,
+    load_config,
     load_owners,
     section_hash,
     split_sections,
@@ -375,3 +376,50 @@ class TestOwnerReporting:
         repo = _stale_repo(tmp_path, owners='[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = ""\n')
         result = _run("verify", "--workdir", str(repo))
         assert result.exit_code == 2, result.output
+
+
+class TestConfigFailsClosed:
+    """A broken pyproject.toml must not read as an absent one.
+
+    Swallowing a parse error would let a stray character disable the
+    drift gate while the run still exits 0, which is the one outcome the
+    gate exists to prevent.
+    """
+
+    def test_malformed_toml_is_a_config_error_not_an_empty_language_set(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("[tool.bernstein.readme-l10n\nlanguages = [", encoding="utf-8")
+        with pytest.raises(ValueError, match="not valid TOML"):
+            load_config(tmp_path / "pyproject.toml")
+        with pytest.raises(ValueError, match="not valid TOML"):
+            load_owners(tmp_path / "pyproject.toml")
+
+    def test_absent_pyproject_stays_an_empty_config(self, tmp_path: Path) -> None:
+        assert load_config(tmp_path / "pyproject.toml") == []
+        assert load_owners(tmp_path / "pyproject.toml") == {}
+
+    def test_unreadable_pyproject_is_a_config_error(self, tmp_path: Path) -> None:
+        # A directory at the config path: exists, cannot be read as a file.
+        (tmp_path / "pyproject.toml").mkdir()
+        with pytest.raises(ValueError, match="cannot read"):
+            load_config(tmp_path / "pyproject.toml")
+
+    def test_verify_exits_two_on_malformed_toml(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text(EN_README, encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text("[tool.bernstein.readme-l10n\n", encoding="utf-8")
+        result = _run("verify", "--workdir", str(tmp_path))
+        assert result.exit_code == 2, result.output
+
+    def test_handle_with_a_newline_cannot_forge_output_lines(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"zh-Hans" = "@ok\\nOK       all translated README(s) in sync"\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="control characters"):
+            load_owners(tmp_path / "pyproject.toml")
+
+    def test_handle_with_an_escape_sequence_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.bernstein.readme-l10n.owners]\n"zh-TW" = "@ok\\u001b[2K"\n', encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="control characters"):
+            load_owners(tmp_path / "pyproject.toml")

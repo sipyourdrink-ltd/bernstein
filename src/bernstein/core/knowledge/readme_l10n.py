@@ -399,6 +399,32 @@ def binding_placement_errors(text: str) -> list[str]:
     return errors
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _read_pyproject(pyproject: Path) -> dict[str, object] | None:
+    """Parse ``pyproject.toml``; ``None`` means there is no file to read.
+
+    A file that exists but cannot be read or parsed is a configuration
+    error, not an absent configuration. Returning an empty result there
+    would let a stray tab in the TOML disable the drift gate while the
+    run still exits 0 - the gate would report SKIP on a repo whose
+    translations are silently rotting.
+    """
+    import tomllib
+
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(f"cannot read {pyproject.name}: {exc}") from exc
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"{pyproject.name} is not valid TOML: {exc}") from exc
+
+
 def load_config(pyproject: Path) -> list[str]:
     """Read the configured language set from ``[tool.bernstein.readme-l10n]``.
 
@@ -406,11 +432,8 @@ def load_config(pyproject: Path) -> list[str]:
     malformed ``languages`` entry is a hard error so a typo cannot
     silently disable the gate.
     """
-    import tomllib
-
-    try:
-        data: dict[str, object] = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+    data = _read_pyproject(pyproject)
+    if data is None:
         return []
 
     tool_raw: object = data.get("tool")
@@ -448,11 +471,8 @@ def load_owners(pyproject: Path) -> dict[str, str]:
     the same reason a malformed ``languages`` entry is: a typo must not
     quietly turn a language into one nobody is named for.
     """
-    import tomllib
-
-    try:
-        data: dict[str, object] = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+    data = _read_pyproject(pyproject)
+    if data is None:
         return {}
 
     section: object = data.get("tool")
@@ -469,5 +489,15 @@ def load_owners(pyproject: Path) -> dict[str, str]:
     if bad:
         raise ValueError(
             "[tool.bernstein.readme-l10n.owners] entries must be non-empty strings; bad entries: " + ", ".join(bad)
+        )
+    # The handle is echoed into the verify output, which CI logs and
+    # humans read. A newline or an escape sequence in it would let the
+    # config forge lines in that report, so control bytes are refused
+    # rather than stripped: a handle that needs them is a typo.
+    forged = sorted(tag for tag, handle in owners.items() if _CONTROL_CHARS.search(cast(str, handle)))
+    if forged:
+        raise ValueError(
+            "[tool.bernstein.readme-l10n.owners] handles may not contain control characters; bad entries: "
+            + ", ".join(forged)
         )
     return {tag: cast(str, handle).strip() for tag, handle in owners.items()}
