@@ -428,12 +428,15 @@ Group: verifies integrity and reproducibility artefacts. It does not run lint / 
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start the autofix daemon (watches PRs, repairs CI failures). |
-| `stop` | Stop the daemon. |
-| `status` | Show daemon status + recent activity. |
-| `run PR` | Single-shot autofix on a specific PR. |
+| `start` | Start the autofix daemon (watches PRs, repairs CI failures). `--repo`, `--config`, `--foreground`, `--once`. |
+| `stop` | Stop the daemon. `--timeout`. |
+| `status` | Show daemon status + recent activity. `--watch`, `--json`, `--limit`. |
+| `attach` | Attach to the running daemon's activity feed. `--limit`. |
+| `ladder` | Single-shot escalation-ladder run against one failing PR. `--pr`, `--repo`, `--dry-run`. |
+| `review` | Respond to review findings on a PR. `--pr`, `--repo`, `--poll-seconds`, `--once`. |
+| `review-register` / `review-resolve` | Register / resolve review-finding state. |
 
-`bernstein autofix start` flags include `--workdir`, `--server URL`, `--poll SEC`, `--max-attempts N`, `--token`. See `cli/commands/autofix_cmd.py:172-200` for full list.
+See `cli/commands/autofix_cmd.py:172+` for the full flag list.
 
 #### `bernstein ci`
 
@@ -600,7 +603,7 @@ its merged branch, or the merge commit.
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | Available agents and capabilities (`--show-all` includes unregistered). |
+| `list` | Available agents and capabilities (`--source`, `--identities`). |
 | `sync` | Pull the latest agent catalog. |
 | `validate` | Validate the local catalog. |
 | `showcase` | Print example invocations for each agent. |
@@ -727,7 +730,7 @@ digest. (`cli/commands/skill_cmd.py`.)
 | `list` | List available templates. |
 | `show TEMPLATE [OUTPUT]` | Print template content (or write to OUTPUT). |
 | `use TEMPLATE [OUTPUT]` | Copy TEMPLATE to OUTPUT (default `plans/<name>.yaml`). |
-| `compress ROLE\|--all` | Operator-gated LLM compression of role prompt templates (`cli/commands/templates_cmd.py`). Rewrite via the configured adapter (`--model`, `--provider`), then mechanical validators (fenced blocks, headings, URLs, inline code, placeholders, completion-contract block; at most two targeted fix retries), then apply. Originals are stored under `~/.local/share/bernstein/template-backups/` keyed by content hash with readback verification; the receipt `{role, pre_sha256, post_sha256, pre_tokens, post_tokens, validators, adapter, model}` is chained to the audit log and a `templates.lock` row lets `bernstein team drift` classify the change as intentional. Prints only the template token delta; per-spawn savings come from `bernstein cost --by role`. `--workdir DIR`, `--yes` skips the confirmation. |
+| `compress ROLE\|--all` | Operator-gated LLM compression of role prompt templates (`cli/commands/templates_cmd.py`). Rewrite via the configured adapter (`--model`, `--provider`), then mechanical validators (fenced blocks, headings, URLs, inline code, placeholders, completion-contract block; at most two targeted fix retries), then apply. Originals are stored under `~/.local/share/bernstein/template-backups/` keyed by content hash with readback verification; the receipt `{role, pre_sha256, post_sha256, pre_tokens, post_tokens, validators, adapter, model}` is chained to the audit log and a `templates.lock` row lets `bernstein team drift` classify the change as intentional. Prints only the template token delta; per-spawn savings come from `bernstein cost` grouped by role. `--workdir DIR`, `--yes` skips the confirmation. |
 | `restore ROLE` | Reverse the most recent receipted compression byte-identically (backup hash, on-disk hash, and directory digest all verified). `--workdir DIR`. |
 | `hooks list` / `hooks use` | Browse and scaffold bundled command-hook templates. |
 
@@ -755,8 +758,7 @@ digest. (`cli/commands/skill_cmd.py`.)
 | `status [RUN_ID]` | Status of a cloud run. |
 | `runs` | Recent cloud runs. `--limit N`, `--json`. |
 | `cost` | Cloud usage and spend. |
-| `init` | Generate `wrangler.toml`. `--worker-name`, `-o FILE`. |
-| `deploy` | Deploy the Worker. `--worker-name`. |
+| `init` | Generate `wrangler.toml` and the worker entry point. `--worker-name`, `-o FILE`. Deploy afterwards with `npx wrangler deploy`. |
 
 (`cli/commands/cloud_cmd.py:35+`.)
 
@@ -781,7 +783,7 @@ digest. (`cli/commands/skill_cmd.py`.)
 
 | Subcommand | Purpose |
 |---|---|
-| `run HOST` | Invoke `bernstein run PATH` against HOST over SSH. `--user`, `--port`, `--key-file`. |
+| `run HOST` | Invoke `bernstein run PATH` against HOST over SSH. `--user`, `--port`, `--identity-file`, `--remote-path`. |
 | `test HOST` | Check that HOST is reachable and time the round trip. |
 | `forget HOST` | Remove any cached ControlMaster sockets for HOST. |
 
@@ -1165,8 +1167,8 @@ not accept these flags.
 | Subcommand | Purpose |
 |---|---|
 | `check-update` | Verify the signed release feed offline and seal a chain-anchored advisory. |
-| `update` | Install the verified candidate; refuses mid-run, verifies the wheel hash first. |
-| `pin VERSION` / `unpin` | Signed version pin the updater will not cross without `--override-pin`. |
+| `update` | Install the verified candidate; refuses mid-run, verifies the wheel hash first. `--override-pin` crosses a signed pin. |
+| `pin VERSION` / `unpin` | Signed version pin the updater will not cross unless explicitly overridden. |
 | `rollback` | Return to the previous receipted version. |
 
 See [Updates: check, verify, apply](../operations/updates.md).
@@ -1240,7 +1242,7 @@ For worktree lifecycle (inspection / reaping) use `bernstein worktrees list` / `
 | `list` | List cached task-result entries. `--workdir`, `--limit`, `--json`. |
 | `inspect TASK_ID` | Inspect the cached result produced by a specific task. `--workdir`, `--json`. |
 | `action` | Inspect / replay the action-level LLM cache. |
-| `clear` | Clear response-cache entries. `--workdir`, `--scope`, `--yes`. |
+| `clear` | Clear response-cache entries. `--workdir`, `--unverified`, `--yes`. |
 
 (`cli/commands/cache_cmd.py:45-146`.)
 
@@ -1276,7 +1278,7 @@ systemd / launchd unit installer.
 
 | Subcommand | Purpose |
 |---|---|
-| `install` | Install the unit. `--user` / `--system`, `--workdir`. |
+| `install` | Install the unit. `--user` / `--system`, `--command`, `--env`, `--force`. |
 | `uninstall` | Remove the unit. |
 | `status` | Show daemon status. |
 | `start` / `stop` / `restart` | Control daemon lifecycle. |
@@ -1319,7 +1321,7 @@ The root MCP command - runs Bernstein as an MCP server itself.
 | `--port N` | 8053 | HTTP port (when `--transport http`). |
 | `--host HOST` | 127.0.0.1 | Bind host. |
 | `--server-url URL` | `http://localhost:8052` | Upstream Bernstein server. |
-| `--mcp-tier NAME` | `standard` | Tool tier to advertise (context-budget knob); overrides `BERNSTEIN_MCP_TOOL_TIER`. |
+| `--mcp-tier {core\|standard\|all}` | unset | Tool tier to advertise (context-budget knob); overrides `BERNSTEIN_MCP_TOOL_TIER`, and the effective default is `standard`. |
 
 #### `bernstein mcp catalog`
 
@@ -1329,7 +1331,7 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 
 | Subcommand | Purpose |
 |---|---|
-| `serve` | Run the chat bridge for PLATFORM until Ctrl-C. `--driver {telegram\|slack\|discord}`, `--token`, `--target`. |
+| `serve` | Run the chat bridge until Ctrl-C. `--platform {telegram\|discord\|slack\|teams}`, `--token`, `--allow`. |
 | `status` | Print active chat<->session bindings. |
 | `logout` | Drop cached bindings for PLATFORM. |
 
@@ -1359,18 +1361,17 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start the review-responder daemon. `--workdir`, `--server`, `--poll`. |
-| `stop` | Stop the daemon. |
-| `status` | Show daemon status. |
-| `run PR` | Single-shot review-respond on one PR. |
+| `start` | Start the review-responder daemon. `--repo`, `--tunnel`, `--port`, `--quiet-window`, `--cost-cap`, `--foreground`. |
+| `status` | Show daemon status. `--pr`. |
+| `tick` | Single-shot poll-and-respond cycle. `--repo`, `--pr`. |
 
 #### `bernstein preview`
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start a preview server in the current task's worktree. `--port`, `--command`, `--public`, `--name`, `--ttl`. |
+| `start` | Start a preview server in the current task's worktree. `--cwd`, `--command`, `--provider`, `--auth`, `--expire`, `--no-clipboard`. |
 | `list` | List active previews. `--json`. |
-| `show ID` | Show a preview's URL and process. `--json`. |
+| `status ID` | Show a preview's URL and process. `--json`. |
 | `stop [ID]` | Stop one preview. `--all` stops every active preview. |
 
 (`cli/commands/preview_cmd.py:46-220`.)

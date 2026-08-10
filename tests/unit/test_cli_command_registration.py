@@ -245,10 +245,17 @@ def test_previously_orphaned_command_resolves(name: str) -> None:
 #   ``PARTIAL_FLAG_TABLES``, every long option the command really accepts
 #   must appear in some row.  Both directions fail: a doc row for a flag
 #   that does not exist, and a real flag without a doc row.
-# * Not asserted: flags mentioned in prose, in fenced code blocks, or in the
-#   purpose column of subcommand tables.  Those describe *subcommand* flags
-#   (``chat serve --driver``), which this gate cannot attribute to a single
-#   command object.  That is the one-directional limit of the check.
+# * Asserted, forward direction only: rows of a subcommand table -- a table
+#   whose header's first cell is ``Subcommand``.  The row's first cell names
+#   a subcommand of the section's command; every long option mentioned in
+#   the row's other cells must be accepted by that subcommand, and the
+#   subcommand itself must resolve.  There is no reverse assertion here: a
+#   purpose cell is a summary, not an exhaustive flag list.
+# * Not asserted: flags mentioned in prose outside tables, in fenced code
+#   blocks, or in tables whose header is neither a flag table nor
+#   ``Subcommand`` (e.g. the ``Command | Purpose`` category tables and the
+#   ``Deprecated | Canonical`` alias-mapping table, whose cells discuss
+#   several commands at once).  That is the stated limit of the check.
 
 # Commands whose flag table may document flags the command does not accept.
 # Keep this empty: an entry here records a documented invocation that exits 2.
@@ -259,7 +266,65 @@ GHOST_FLAG_EXEMPTIONS: dict[str, str] = {}
 # (real -> documented) assertion is skipped for them, the forward assertion
 # is not.
 PARTIAL_FLAG_TABLES: dict[str, str] = {
-    "run": "documents the most-used subset of a ~40-flag surface; the full list is `bernstein run --help`",
+    "run": "documents the most-used subset of a ~45-flag surface; the full list is `bernstein run --help`",
+}
+
+# The complete long-option surface of every command in ``PARTIAL_FLAG_TABLES``.
+# The abbreviated table exempts these commands from the reverse doc assertion,
+# which would otherwise let a rename or removal ship silently and break every
+# script using the old spelling.  This pin closes that hole: changing the
+# command's surface fails here and forces a deliberate update -- and a look at
+# whether the "most-used" table rows are affected.
+PARTIAL_TABLE_FULL_SURFACES: dict[str, frozenset[str]] = {
+    "run": frozenset(
+        {
+            "--ab-test",
+            "--activity-log",
+            "--allow-network",
+            "--allow-paid",
+            "--attach",
+            "--audit",
+            "--auto-approve",
+            "--auto-pr",
+            "--budget",
+            "--budget-cap",
+            "--cells",
+            "--cli",
+            "--compliance",
+            "--container",
+            "--container-image",
+            "--cprofile",
+            "--criterion-profile",
+            "--dry-run",
+            "--fresh",
+            "--from-plan",
+            "--goal",
+            "--hard-budget",
+            "--idle",
+            "--max-blast-radius",
+            "--max-cost-usd",
+            "--model",
+            "--no-container",
+            "--no-two-phase-sandbox",
+            "--permission-profile",
+            "--plan-only",
+            "--port",
+            "--profile",
+            "--quiet",
+            "--refresh-cache",
+            "--remote",
+            "--retry-budget",
+            "--routing",
+            "--sandbox",
+            "--seed",
+            "--skip-gate",
+            "--skip-gate-reason",
+            "--task",
+            "--two-phase-sandbox",
+            "--worker",
+            "--workflow",
+        }
+    ),
 }
 
 
@@ -328,6 +393,86 @@ def test_real_flags_are_documented(name: str, documented: set[str]) -> None:
     assert command is not None, f"`bernstein {name}` is documented but not registered"
     undocumented = sorted(_real_flags(command) - documented - {"--help"})
     assert not undocumented, f"`bernstein {name}` accepts flags its reference table does not list: {undocumented}"
+
+
+@pytest.mark.parametrize("name", sorted(PARTIAL_FLAG_TABLES))
+def test_partial_table_surface_is_pinned(name: str) -> None:
+    """A partially-documented command's full surface is pinned.
+
+    ``PARTIAL_FLAG_TABLES`` exempts the command from the reverse doc
+    assertion; without this pin a flag rename or removal outside the
+    abbreviated rows would ship with CI green and break every script using
+    the old spelling.  Any surface change must update the pin -- and prompt
+    a look at whether the documented "most-used" rows are affected.
+    """
+    assert name in PARTIAL_TABLE_FULL_SURFACES, (
+        f"`bernstein {name}` is in PARTIAL_FLAG_TABLES without a pinned surface in PARTIAL_TABLE_FULL_SURFACES"
+    )
+    command = _resolve(name)
+    assert command is not None
+    real = _real_flags(command)
+    pinned = PARTIAL_TABLE_FULL_SURFACES[name]
+    assert real == pinned, (
+        f"`bernstein {name}`'s option surface changed: "
+        f"added {sorted(real - pinned)}, removed {sorted(pinned - real)}. "
+        "Update PARTIAL_TABLE_FULL_SURFACES and check whether the reference's abbreviated table is affected."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Subcommand tables (forward direction)
+# ---------------------------------------------------------------------------
+
+_SUBCOMMAND_WORDS = re.compile(r"^([a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*)")
+
+
+def _subcommand_rows() -> list[pytest.param]:
+    """(subcommand path, flags its purpose cell mentions) for every subcommand-table row.
+
+    A subcommand table is one whose header's first cell is ``Subcommand``.
+    Each row's first cell names one or more subcommands of the section's
+    command (``pin VERSION`` / ``unpin`` names two); trailing ALL-CAPS
+    argument placeholders are stripped the same way as for headings.
+    """
+    rows: list[pytest.param] = []
+    for commands, body in _reference_sections():
+        in_table = False
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                in_table = False
+                continue
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if cells and cells[0].strip("`").lower() == "subcommand":
+                in_table = True
+                continue
+            if not in_table or not cells or set(cells[0]) <= {"-", ":", " "}:
+                continue
+            flags = frozenset(_LONG_FLAG.findall(" ".join(cells[1:])))
+            for parent in commands:
+                for piece in cells[0].split("/"):
+                    match = _SUBCOMMAND_WORDS.match(piece.strip().strip("`").strip())
+                    if match is None:
+                        continue
+                    path = f"{parent} {match.group(1)}"
+                    rows.append(pytest.param(path, flags, id=path))
+    return rows
+
+
+@pytest.mark.parametrize(("path", "flags"), _subcommand_rows())
+def test_subcommand_rows_resolve_and_accept_their_flags(path: str, flags: frozenset[str]) -> None:
+    """Every subcommand-table row names a live subcommand and real flags.
+
+    The per-command flag tables cannot see one level down, so a rename like
+    ``chat serve --driver`` -> ``--platform`` used to ship with CI green
+    while the documented invocation exited 2.  Forward direction only: the
+    purpose cell is a summary, so flags it omits are not failures, but a
+    flag it names must exist on the row's own subcommand.
+    """
+    command = _resolve(path)
+    assert command is not None, f"`bernstein {path}` appears in a subcommand table but does not resolve"
+    ghosts = sorted(flags - _real_flags(command))
+    assert not ghosts, f"`bernstein {path}`'s subcommand row mentions flags it does not accept: {ghosts}"
 
 
 @pytest.mark.parametrize(
