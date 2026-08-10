@@ -267,6 +267,82 @@ class TestSchemaCheck:
         assert "unknown role" not in result.output.lower()
 
 
+class TestOutOfRangeEnumValues:
+    """`plan validate` on an out-of-range enum reports a verdict, never a traceback.
+
+    Issue #3515: an enum typo (`complexity: epic`) escaped `load_plan` as a bare
+    ValueError, so the command crashed with a traceback instead of printing the
+    validation error it exists to print. These drive the full CLI group, the
+    same entry point the `bernstein` binary dispatches through.
+    """
+
+    @pytest.fixture()
+    def runner(self) -> CliRunner:
+        return CliRunner()
+
+    def test_issue_repro_exits_1_with_readable_error(self, runner: CliRunner, tmp_path: Path) -> None:
+        """The issue's exact reproduction YAML, byte for byte."""
+        from bernstein.cli.main import cli
+
+        plan_file = tmp_path / "plan.yaml"
+        plan_file.write_text(
+            "name: Enum Plan\n"
+            "stages:\n"
+            "  - name: Stage 1\n"
+            "    steps:\n"
+            "      - title: Task A\n"
+            "        role: backend\n"
+            "        complexity: epic\n"
+        )
+
+        result = runner.invoke(cli, ["plan", "validate", str(plan_file)])
+
+        assert result.exit_code == 1
+        assert "complexity" in result.output
+        assert "epic" in result.output
+        assert "Traceback" not in result.output
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("complexity", "epic", id="complexity"),
+            pytest.param("scope", "galactic", id="scope"),
+            pytest.param("model", "gpt9000", id="model"),
+            pytest.param("effort", "turbo", id="effort"),
+        ],
+    )
+    def test_each_enum_field_gets_a_verdict_not_a_traceback(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        field: str,
+        value: str,
+    ) -> None:
+        from bernstein.cli.main import cli
+
+        plan_file = _write_plan(
+            tmp_path,
+            {
+                "name": "Enum Plan",
+                "stages": [
+                    {
+                        "name": "Stage 1",
+                        "steps": [{"title": "Task A", "role": "backend", field: value}],
+                    },
+                ],
+            },
+        )
+
+        result = runner.invoke(cli, ["plan", "validate", str(plan_file)])
+
+        assert result.exit_code == 1
+        assert field in result.output
+        assert value in result.output
+        assert "Traceback" not in result.output
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
 class TestDryRunWithPlanFile:
     """Tests for dry-run mode loading tasks from a plan file."""
 

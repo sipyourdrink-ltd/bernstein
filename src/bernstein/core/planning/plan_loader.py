@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING
 
 import yaml
@@ -129,6 +130,42 @@ def _step_title(step: dict[object, object], stage_name: str, step_idx: int) -> s
     return str(title)
 
 
+def _parse_enum_field[EnumT: Enum](
+    enum_cls: type[EnumT],
+    raw: object,
+    field_name: str,
+    stage_name: str,
+    step_idx: int,
+) -> EnumT:
+    """Convert a raw YAML value to *enum_cls*, guarding the conversion.
+
+    A bare ``ValueError`` out of an enum constructor escapes ``load_plan``'s
+    documented failure contract -- callers catch ``PlanLoadError`` alone, so an
+    enum typo in a plan surfaced as an unhandled traceback (issue #3515).
+
+    Args:
+        enum_cls: The target enum class (e.g. ``Scope``, ``Complexity``).
+        raw: Raw value from the step dict.
+        field_name: Step field name, for error context.
+        stage_name: Stage name for error context.
+        step_idx: Zero-based step index for error context.
+
+    Returns:
+        The matching enum member.
+
+    Raises:
+        PlanLoadError: If *raw* is not one of the enum's values, naming the
+            field, the offending value, and the accepted values.
+    """
+    try:
+        return enum_cls(raw)
+    except ValueError as exc:
+        accepted = ", ".join(str(member.value) for member in enum_cls)
+        raise PlanLoadError(
+            f"Step {step_idx} in stage {stage_name!r}: invalid {field_name!r} value {raw!r}; accepted: {accepted}"
+        ) from exc
+
+
 def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
     """Load a YAML plan file and return plan-level config plus a list of Task objects.
 
@@ -149,7 +186,9 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
         generated task IDs before submitting to the task server.
 
     Raises:
-        PlanLoadError: If the file is missing, invalid YAML, or missing required fields.
+        PlanLoadError: If the file is missing, invalid YAML, missing required
+            fields, or a step's enum-typed field (``scope``, ``complexity``)
+            carries a value outside the enum.
     """
     if not path.exists():
         raise PlanLoadError(f"Plan file not found: {path}")
@@ -340,8 +379,10 @@ def _parse_step(
         description=str(step.get("description", title)),
         role=str(step.get("role", "backend")),
         priority=int(step.get("priority", 2)),
-        scope=Scope(step.get("scope", "medium")),
-        complexity=Complexity(step.get("complexity", "medium")),
+        scope=_parse_enum_field(Scope, step.get("scope", "medium"), "scope", stage_name, step_index),
+        complexity=_parse_enum_field(
+            Complexity, step.get("complexity", "medium"), "complexity", stage_name, step_index
+        ),
         estimated_minutes=int(estimated_minutes_raw) if estimated_minutes_raw is not None else 30,
         status=TaskStatus.OPEN,
         task_type=TaskType.STANDARD,
@@ -373,7 +414,9 @@ def load_plan_from_yaml(path: Path) -> list[Task]:
         List of Task objects with dependencies mapped by title.
 
     Raises:
-        PlanLoadError: If the file is missing, invalid YAML, or missing required fields.
+        PlanLoadError: If the file is missing, invalid YAML, missing required
+            fields, or a step's enum-typed field (``scope``, ``complexity``)
+            carries a value outside the enum.
     """
     _config, tasks = load_plan(path)
     return tasks

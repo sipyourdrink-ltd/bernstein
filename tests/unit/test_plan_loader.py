@@ -402,6 +402,106 @@ def test_step_files_maps_to_owned_files(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Enum-typed step fields (issue #3515)
+# ---------------------------------------------------------------------------
+
+
+def test_step_out_of_range_complexity_raises_plan_load_error(tmp_path: Path) -> None:
+    """An out-of-range `complexity` is a PlanLoadError naming the field, the
+    value, and the accepted values -- not a bare ValueError escaping a function
+    documented to raise PlanLoadError only (issue #3515).
+    """
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "name": "Enum Plan",
+            "stages": [
+                {
+                    "name": "Stage 1",
+                    "steps": [{"title": "Task A", "role": "backend", "complexity": "epic"}],
+                }
+            ],
+        },
+    )
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "complexity" in message
+    assert "epic" in message
+    for accepted in ("low", "medium", "high"):
+        assert accepted in message
+    assert "Stage 1" in message
+
+
+def test_step_out_of_range_scope_raises_plan_load_error(tmp_path: Path) -> None:
+    """An out-of-range `scope` is a PlanLoadError naming the field, the value,
+    and the accepted values (issue #3515).
+    """
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "name": "Enum Plan",
+            "stages": [
+                {
+                    "name": "Stage 1",
+                    "steps": [{"title": "Task A", "role": "backend", "scope": "galactic"}],
+                }
+            ],
+        },
+    )
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "scope" in message
+    assert "galactic" in message
+    for accepted in ("small", "medium", "large"):
+        assert accepted in message
+    assert "Stage 1" in message
+
+
+def test_step_non_string_enum_value_raises_plan_load_error(tmp_path: Path) -> None:
+    """A wrong-typed enum value (YAML int where the enum holds strings) gets the
+    same PlanLoadError, not a bare ValueError (issue #3515).
+    """
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "name": "Enum Plan",
+            "stages": [
+                {
+                    "name": "Stage 1",
+                    "steps": [{"title": "Task A", "role": "backend", "complexity": 3}],
+                }
+            ],
+        },
+    )
+    with pytest.raises(PlanLoadError, match="complexity"):
+        load_plan_from_yaml(plan_file)
+
+
+def test_step_valid_scope_and_complexity_still_parse(tmp_path: Path) -> None:
+    """The guard must not reject values inside the enums."""
+    from bernstein.core.tasks.models import Complexity, Scope
+
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "S",
+                    "steps": [{"title": "T", "scope": "large", "complexity": "high"}],
+                }
+            ]
+        },
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert tasks[0].scope is Scope.LARGE
+    assert tasks[0].complexity is Complexity.HIGH
+
+
+# ---------------------------------------------------------------------------
 # Completion signals
 # ---------------------------------------------------------------------------
 
