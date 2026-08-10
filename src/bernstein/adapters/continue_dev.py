@@ -6,8 +6,12 @@ in headless mode for non-interactive task execution.
 
 Installation: ``npm install -g @continuedev/cli`` (binary is ``cn``).
 Authentication: ``~/.continue/config.yaml`` or provider API keys in the env.
-Model selection is driven by the Continue config; ``cn`` has no CLI flag for
-per-invocation model override, so ``model_config.model`` is logged only.
+Model selection is driven by the Continue config, so ``model_config.model``
+is logged only. Note: ``cn`` 1.5.x does expose a ``--model`` flag, but it
+takes a Continue *hub slug* (``owner/package``) rather than a provider model
+ID, so Bernstein's model identifiers cannot be passed through unmapped.
+
+Last verified against upstream @continuedev/cli 1.5.47 on 2026-08-10.
 """
 
 from __future__ import annotations

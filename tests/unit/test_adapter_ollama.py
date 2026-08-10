@@ -49,22 +49,33 @@ class TestOllamaAdapterSpawn:
 
 
 class TestOllamaAdapterPluginInfo:
-    def test_declares_temperature_only(self) -> None:
+    def test_declares_no_sampling_capability(self) -> None:
+        """Aider exposes no sampling flags, so none may be advertised.
+
+        Declaring one lets ``ensure_sampling_params_supported`` admit a spawn
+        that then builds an argv aider rejects with
+        ``unrecognized arguments``.
+        """
         info = OllamaAdapter().plugin_info()
-        assert set(info.capabilities) == {AdapterCapability.SUPPORTS_TEMPERATURE}
+        assert set(info.capabilities) == set()
 
     def test_does_not_declare_coarse_or_others(self) -> None:
         info = OllamaAdapter().plugin_info()
         assert AdapterCapability.SUPPORTS_SAMPLING_PARAMS not in info.capabilities
+        assert AdapterCapability.SUPPORTS_TEMPERATURE not in info.capabilities
         assert AdapterCapability.SUPPORTS_TOP_P not in info.capabilities
         assert AdapterCapability.SUPPORTS_TOP_K not in info.capabilities
         assert AdapterCapability.SUPPORTS_MAX_TOKENS not in info.capabilities
 
 
 class TestOllamaAdapterSamplingParams:
-    """mcp_config temperature must reach the built aider argv."""
+    """No sampling param may reach the built aider argv.
 
-    def test_temperature_reaches_argv(self, tmp_path: Path) -> None:
+    Aider has no ``--temperature`` flag: passing one makes argparse exit
+    with ``unrecognized arguments: --temperature``, killing the spawn.
+    """
+
+    def test_temperature_never_reaches_argv(self, tmp_path: Path) -> None:
         adapter = OllamaAdapter()
         proc_mock = make_popen_mock(pid=801)
         with patch("bernstein.adapters.ollama.subprocess.Popen", return_value=proc_mock) as popen:
@@ -76,8 +87,7 @@ class TestOllamaAdapterSamplingParams:
                 mcp_config={"temperature": 0.15},
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert "--temperature" in inner
-        assert inner[inner.index("--temperature") + 1] == "0.15"
+        assert "--temperature" not in inner
 
     def test_no_mcp_config_omits_temperature_flag(self, tmp_path: Path) -> None:
         adapter = OllamaAdapter()
