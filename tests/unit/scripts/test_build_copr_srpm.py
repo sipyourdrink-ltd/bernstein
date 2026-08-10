@@ -86,9 +86,7 @@ def test_render_spec_binds_the_spec_to_the_release_version(mod: ModuleType, spec
     assert version_lines == ["Version:        3.13.0"]
 
 
-def test_render_spec_binds_the_packaged_payload_to_the_release_version(
-    mod: ModuleType, spec_text: str
-) -> None:
+def test_render_spec_binds_the_packaged_payload_to_the_release_version(mod: ModuleType, spec_text: str) -> None:
     """``%install`` fetches ``bernstein==%%{pypi_version}`` into the venv.
 
     Leaving that bound to the committed value would build a package whose
@@ -97,9 +95,7 @@ def test_render_spec_binds_the_packaged_payload_to_the_release_version(
     """
     rendered = mod.render_spec(spec_text, "v3.13.0", date(2026, 8, 1))
 
-    payload_lines = [
-        line for line in rendered.splitlines() if line.startswith("%global pypi_version")
-    ]
+    payload_lines = [line for line in rendered.splitlines() if line.startswith("%global pypi_version")]
     assert payload_lines == ["%global pypi_version 3.13.0"]
 
 
@@ -113,9 +109,7 @@ def test_render_spec_binds_both_spellings_of_a_prerelease(mod: ModuleType, spec_
 
 def test_render_spec_fails_loudly_on_a_spec_without_the_payload_binding(mod: ModuleType) -> None:
     with pytest.raises(ValueError, match="pypi_version"):
-        mod.render_spec(
-            "Name: bernstein\nVersion: 0.0.0\n", "v3.13.0", date(2026, 8, 1)
-        )
+        mod.render_spec("Name: bernstein\nVersion: 0.0.0\n", "v3.13.0", date(2026, 8, 1))
 
 
 def test_render_spec_records_the_release_in_the_changelog(mod: ModuleType, spec_text: str) -> None:
