@@ -176,6 +176,21 @@ VERIFY_OUT="$(docker run --rm -i --network none \
     "${TAG}" \
     bash -euo pipefail -s <<'VERIFY' 2>&1
 VENV_BIN="$(dirname "$(readlink -f /usr/bin/bernstein)")"
+# Validate what the symlink resolved to before running anything from it. An
+# absent or wrongly pointed /usr/bin/bernstein would otherwise leave a bare
+# `./python` to be executed, and the version assertion below could then pass
+# against an interpreter that is not the packaged one.
+case "${VENV_BIN}" in
+    /usr/lib64/bernstein/bin | /usr/lib/bernstein/bin) ;;
+    *)
+        echo "/usr/bin/bernstein resolves to ${VENV_BIN}, not the packaged venv" >&2
+        exit 1
+        ;;
+esac
+if [ ! -x "${VENV_BIN}/python" ]; then
+    echo "no executable interpreter at ${VENV_BIN}/python" >&2
+    exit 1
+fi
 "${VENV_BIN}/python" - "${SMOKE_VERSION}" <<'PY'
 import importlib.metadata as metadata
 import sys
