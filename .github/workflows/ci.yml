@@ -429,7 +429,8 @@ jobs:
         # Run `uv run bernstein readme-l10n sync` after editing README.md.
         run: uv run bernstein readme-l10n verify --workdir .
       - name: Distribution manifest drift check
-        # Fails in under a minute if server.json / .plugin/plugin.json drift
+        # Fails in under a minute if server.json / .plugin/plugin.json or the
+        # Agent Plugins 1.0.0 root manifests (plugin.json / mcp.json) drift
         # from `scripts/gen_distribution_manifests.py`, instead of surfacing the
         # drift much later inside a long test shard. Run
         # `uv run python scripts/gen_distribution_manifests.py` locally to fix.

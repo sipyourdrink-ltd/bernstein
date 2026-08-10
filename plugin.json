@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "author": {
+    "name": "chernistry",
+    "url": "https://github.com/chernistry"
+  },
+  "description": "Deterministic orchestrator for CLI coding agents. Spawn parallel agents in per-task git worktrees, verify their work, and merge results; no model in the coordination loop, so runs replay byte-identically.",
+  "homepage": "https://github.com/sipyourdrink-ltd/bernstein",
+  "keywords": [
+    "orchestration",
+    "multi-agent",
+    "coding-agents",
+    "claude-code",
+    "codex",
+    "gemini"
+  ],
+  "license": "Apache-2.0",
+  "name": "bernstein",
+  "repository": "https://github.com/sipyourdrink-ltd/bernstein",
+  "version": "3.13.0"
+}

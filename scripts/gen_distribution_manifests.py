@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Regenerate the distribution manifests from ``pyproject.toml`` (#2369).
 
-The MCP registry manifest (``server.json``) and the plugin manifest
-(``.plugin/plugin.json``) are release artifacts: their version fields must
-track the package version, and the release workflow - not hand edits - is
-their single source. This script is a deterministic projection: given the
+The MCP registry manifest (``server.json``), the plugin manifest
+(``.plugin/plugin.json``), and the Agent Plugins 1.0.0 root manifests
+(``plugin.json``, ``mcp.json``, #3540) are release artifacts: their version
+fields must track the package version, and the release workflow - not hand
+edits - is their single source. This script is a deterministic projection: given the
 same ``pyproject.toml`` and manifest inputs it produces byte-identical
 outputs, so CI can diff instead of trusting a human.
 
@@ -29,6 +30,30 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SERVER_JSON = REPO / "server.json"
 PLUGIN_JSON = REPO / ".plugin" / "plugin.json"
+MCP_JSON = REPO / ".mcp.json"
+ROOT_PLUGIN_JSON = REPO / "plugin.json"
+ROOT_MCP_JSON = REPO / "mcp.json"
+SKILLS_DIR = REPO / "skills"
+
+#: Canonical schema identifiers for the Agent Plugins 1.0.0 manifests.
+#: Validation runs against the copies vendored under
+#: ``schemas/agent-plugins/1.0.0/`` - never fetched at load time.
+PLUGIN_SCHEMA_ID = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+MCP_SCHEMA_ID = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+
+#: plugin.json fields the 1.0.0 schema accepts (it sets
+#: ``additionalProperties: false``, so host-specific keys such as
+#: ``commands`` or ``skills`` paths must not leak into the root manifest).
+_SPEC_PLUGIN_FIELDS = (
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+)
 
 
 def pyproject_version() -> str:
@@ -68,6 +93,69 @@ def render_plugin_json(version: str) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
+def discover_skills() -> list[str]:
+    """Return the skill names at the fixed ``skills/`` discovery location.
+
+    Mirrors the Agent Plugins 1.0.0 discovery rule: each immediate child
+    directory of ``skills/`` containing a regular ``SKILL.md`` is one skill;
+    deeper descendants are never searched. A child directory *without* a
+    ``SKILL.md`` is a packaging error (hosts would silently ignore it), so it
+    raises instead of being skipped.
+    """
+    skills: list[str] = []
+    for child in sorted(SKILLS_DIR.iterdir()):
+        if not child.is_dir():
+            continue
+        if not (child / "SKILL.md").is_file():
+            msg = (
+                f"skills/{child.name}/ has no SKILL.md; conformant hosts would "
+                "silently ignore it - remove the directory or add the skill file"
+            )
+            raise RuntimeError(msg)
+        skills.append(child.name)
+    if not skills:
+        msg = "skills/ contains no discoverable skill (expected skills/*/SKILL.md)"
+        raise RuntimeError(msg)
+    return skills
+
+
+def render_root_plugin_json(version: str) -> str:
+    """Return the canonical Agent Plugins 1.0.0 root ``plugin.json``.
+
+    Metadata is projected from ``.plugin/plugin.json`` (the single editing
+    surface for bundle metadata), restricted to the fields the 1.0.0 schema
+    accepts, with the ``$schema`` marker and the ``pyproject.toml`` version
+    stamped in. Skill discovery is directory-convention based in the spec, so
+    the manifest carries no skill list - but generation still requires the
+    ``skills/`` tree to be discoverable, failing fast on a broken bundle.
+    """
+    discover_skills()
+    source = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))
+    data: dict[str, object] = {"$schema": PLUGIN_SCHEMA_ID}
+    for field in _SPEC_PLUGIN_FIELDS:
+        if field in source:
+            data[field] = source[field]
+    data["version"] = version
+    return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def render_root_mcp_json() -> str:
+    """Return the canonical Agent Plugins 1.0.0 root ``mcp.json``.
+
+    Server entries are projected from ``.mcp.json`` (kept as-is for current
+    host integrations) with the spec-required ``type`` field added; entries
+    without an explicit type are stdio servers.
+    """
+    source = json.loads(MCP_JSON.read_text(encoding="utf-8"))
+    servers: dict[str, object] = {}
+    for name, entry in source["mcpServers"].items():
+        server = dict(entry)
+        server.setdefault("type", "stdio")
+        servers[name] = server
+    data = {"$schema": MCP_SCHEMA_ID, "mcpServers": servers}
+    return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -81,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     targets = {
         SERVER_JSON: render_server_json(version),
         PLUGIN_JSON: render_plugin_json(version),
+        ROOT_PLUGIN_JSON: render_root_plugin_json(version),
+        ROOT_MCP_JSON: render_root_mcp_json(),
     }
 
     drift: list[str] = []

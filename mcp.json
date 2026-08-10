@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "bernstein": {
+      "args": [
+        "run",
+        "bernstein",
+        "mcp"
+      ],
+      "command": "uv",
+      "cwd": "${PLUGIN_ROOT}",
+      "type": "stdio"
+    }
+  }
+}
