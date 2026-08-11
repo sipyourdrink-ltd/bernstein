@@ -93,18 +93,24 @@ export function openEventStream(url: string, options: OpenEventStreamOptions): E
         const part = await reader.read();
         if (part.done) break;
         buffer += decoder.decode(part.value, { stream: true });
-        let boundary = buffer.search(/\r?\n\r?\n/);
-        while (boundary >= 0) {
-          const record = buffer.slice(0, boundary);
-          const terminatorLength = buffer.startsWith('\r\n', boundary) ? 4 : 2;
-          buffer = buffer.slice(boundary + terminatorLength);
+        // The SSE spec allows LF, CRLF, and mixed boundaries between
+        // records; the separator length must come from what actually
+        // matched, not from a two-way prefix guess.
+        const separator = /\r?\n\r?\n/g;
+        separator.lastIndex = 0;
+        let match = separator.exec(buffer);
+        while (match) {
+          const record = buffer.slice(0, match.index);
+          const terminatorLength = match[0].length;
+          buffer = buffer.slice(match.index + terminatorLength);
           const event = parseSseRecord(record);
           if (event) {
             retry = 0;
             options.onEvent(event);
           }
           if (cancelled) return;
-          boundary = buffer.search(/\r?\n\r?\n/);
+          separator.lastIndex = 0;
+          match = separator.exec(buffer);
         }
       }
     } finally {

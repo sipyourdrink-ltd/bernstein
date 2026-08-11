@@ -59,6 +59,30 @@ test('authenticated SSE streams dispatch a record split inside its terminator fo
   }
 });
 
+test('mixed CRLF/LF record separators survive framing intact', async () => {
+  const { openEventStream } = await import('../src/lib/sse.ts');
+  const separators = ['\r\n\n', '\n\r\n', '\n\n', '\r\n\r\n'];
+  const received = [];
+  let close;
+  const stream = openEventStream('/api/v1/events', {
+    fetchImpl: async () => {
+      let body = '';
+      for (const sep of separators) {
+        body += `event: evt_${separators.indexOf(sep)}\ndata: {"payload":"${separators.indexOf(sep)}"}${sep}`;
+      }
+      return responseFromChunks([body]);
+    },
+    onEvent: (event) => received.push(event),
+    onError: () => assert.fail('mixed-separator records must not be treated as an error'),
+  });
+  close = stream.close;
+
+  await waitFor(() => received.length === separators.length, 'mixed-separator records did not all dispatch');
+  for (let i = 0; i < separators.length; i += 1) {
+    assert.deepEqual(received[i], { type: `evt_${i}`, data: { payload: `${i}` } });
+  }
+});
+
 test('a clean EOF reconnects', async () => {
   const { openEventStream } = await import('../src/lib/sse.ts');
   const received = [];
