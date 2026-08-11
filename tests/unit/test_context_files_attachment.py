@@ -374,7 +374,9 @@ def test_resumed_tasks_keep_their_declared_context_files(tmp_path: Path) -> None
 
 
 def test_tasks_without_context_files_spawn_byte_identically(tmp_path: Path) -> None:
-    """No payload key, no metadata key, identical worker context, no record."""
+    """No payload key, no metadata key, identical worker context, no
+    context.files_attached record - but skills.injected still fires
+    unconditionally with an explicit empty set (issue #3383 AC3)."""
     # Payload: exactly the pre-#3375 shape, no metadata key at all.
     parsed = parse_backlog_text("ticket.md", _TICKET_WITHOUT_CONTEXT)
     assert parsed is not None
@@ -411,7 +413,12 @@ def test_tasks_without_context_files_spawn_byte_identically(tmp_path: Path) -> N
     assert wired == unwired
     assert "## Context files" not in wired
 
-    # Run record: an undeclared session journals exactly what it did before.
+    # Run record: an undeclared session journals exactly what it did
+    # before, except skills.injected - unlike context.files_attached,
+    # that event fires unconditionally with an explicit empty set (#3383).
     session = AgentSession(id="sess-1", role="backend", task_ids=["T-1"])
     events = _record_spawned(session)
-    assert [name for name, _data in events] == ["agent_spawned", "task_claimed"]
+    assert [name for name, _data in events] == ["agent_spawned", "skills.injected", "task_claimed"]
+    skills_event = next(data for name, data in events if name == "skills.injected")
+    assert skills_event["entries"] == []
+    assert skills_event["task_ids"] == ["T-1"]

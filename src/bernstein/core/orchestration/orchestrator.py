@@ -46,6 +46,7 @@ from bernstein.core.agent_recycling import (
 )
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.agents.context_attachments import CONTEXT_FILES_ATTACHED_EVENT
+from bernstein.core.agents.injected_skills_event import SKILLS_INJECTED_EVENT
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.batch_api import ProviderBatchManager
@@ -5194,6 +5195,19 @@ class Orchestrator:
                     task_ids=session.task_ids,
                     entries=list(session.context_attachments),
                 )
+            # Issue #3382: pin the skill templates injected into this
+            # session's worktree at spawn/resume time, with both the
+            # pre-render and rendered-bytes digests. Unlike
+            # context.files_attached, this is emitted unconditionally -
+            # skills have an always-inject default (_ALWAYS_INJECT), so
+            # an empty set on a fresh spawn is itself meaningful and must
+            # not be silently indistinguishable from "never recorded".
+            self._recorder.record(
+                SKILLS_INJECTED_EVENT,
+                agent_id=session.id,
+                task_ids=session.task_ids,
+                entries=list(session.injected_skills),
+            )
             for tid in session.task_ids:
                 self._recorder.record(
                     "task_claimed",
