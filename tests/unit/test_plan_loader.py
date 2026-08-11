@@ -401,6 +401,36 @@ def test_step_files_maps_to_owned_files(tmp_path: Path) -> None:
     assert tasks[0].owned_files == ["src/app.py", "tests/test_app.py"]
 
 
+@pytest.mark.parametrize(
+    ("bad_file", "expected_type"),
+    [
+        (None, "NoneType"),
+        (True, "bool"),
+        (42, "int"),
+        ({"path": "src/app.py"}, "dict"),
+    ],
+)
+def test_step_files_rejects_non_string_items(tmp_path: Path, bad_file: object, expected_type: str) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "S",
+                    "steps": [{"title": "T", "files": ["src/app.py", bad_file]}],
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "files[1]" in message
+    assert expected_type in message
+
+
 # ---------------------------------------------------------------------------
 # Enum-typed step fields (issue #3515)
 # ---------------------------------------------------------------------------
