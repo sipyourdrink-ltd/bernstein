@@ -77,6 +77,13 @@ landed since the newest one.
 
 ## Fixed
 
+- The `deep-review` label did not start a review on a PR that was already open.
+  `.github/workflows/bernstein-pr-review.yml` gates its `review` job on that
+  label but did not list `labeled` as a trigger type, so adding the label to a
+  ready PR did nothing until the next push -- a switch not wired to anything,
+  and one a contributor cannot work around because label management needs repo
+  write. `labeled` is now a trigger type, and a structural test asserts that a
+  label-gated job keeps a matching trigger.
 - `bernstein issue-to-pr trace --repo OWNER/NAME N` is registered again. The
   orchestration guide continued to advertise this read-only pipeline snapshot
   after the v4 command cleanup, while the formatter that names the command
