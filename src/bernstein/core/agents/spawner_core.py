@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import re
+import copy
 import shutil
 import threading
 import time
@@ -4158,13 +4159,18 @@ class AgentSpawner:
             # Inject role-specific skills into the worktree before spawn so the
             # agent picks up orchestration protocol and role-specific instructions.
             # Skills survive context compaction and reduce prompt boilerplate.
-            inject_skills(
+            injected_skills_audit: list[dict[str, str]] = inject_skills(
                 workdir=spawn_cwd,
                 role=role,
                 tasks=tasks,
                 session_id=session_id,
                 templates_dir=self._templates_dir,
             )
+            audit_snapshot: list[dict[str, str]] = injected_skills_audit or []
+            session.injected_skills = copy.deepcopy(audit_snapshot)
+            for _t in tasks:
+                if isinstance(_t.metadata, dict):
+                    _t.metadata['injected_skills'] = copy.deepcopy(audit_snapshot)
             _inject_scheduled_tasks(
                 workdir=spawn_cwd,
                 session_id=session_id,
