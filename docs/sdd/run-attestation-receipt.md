@@ -31,6 +31,12 @@ Closure is derived from retained evidence and never inferred from silence.
    evidence; and
 8. signs the resulting `head_sha256` through the shared receipt substrate.
 
+An explicit historical boundary may produce an observed receipt, but it cannot
+prove whole-run completeness. If that retained range would otherwise upgrade
+to `complete`, construction refuses it unless the selected boundary is also
+the verified source snapshot head. This prevents a caller from hiding a later
+same-run event behind an earlier closure marker.
+
 Timestamp fields remain observational. They are never used to decide range
 membership, so collisions or forged wall-clock values cannot add or remove an
 event from the declared interval.
@@ -80,6 +86,8 @@ validity nor a stored verdict is mistaken for the other.
 - Missing, duplicate, or conflicting run anchors refuse construction.
 - A requested boundary before the anchor or absent from the authenticated
   chain refuses construction.
+- A historical boundary that would claim whole-run completeness refuses
+  construction unless it is also the verified source snapshot head.
 - Source-chain corruption refuses construction before any receipt is emitted.
 - Removing a prefix, middle event, or suffix changes the recomputed range head
   and invalidates every standard receipt format.

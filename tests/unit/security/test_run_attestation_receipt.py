@@ -242,6 +242,37 @@ async def test_later_same_run_event_downgrades_a_previously_valid_closure(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_explicit_closure_boundary_cannot_hide_later_same_run_event(tmp_path: Path) -> None:
+    provider = _anchored_provider(tmp_path)
+    await provider.prepare_dispatch(_intent())
+    closure = close_run(
+        chain=provider.chain,
+        run_id="run-1",
+        outcome="completed",
+        actor="orchestrator",
+        run_journal_head="1" * 64,
+        run_journal_event_count=4,
+    )
+    provider.chain.log(
+        event_type="run.progress",
+        actor="agent-1",
+        resource_type="run",
+        resource_id="run-1",
+        details={"run_id": "run-1"},
+    )
+
+    with pytest.raises(RunAttestationReceiptError, match="snapshot head"):
+        build_run_attestation_receipt(
+            tmp_path / "audit",
+            run_id="run-1",
+            key=HMAC_KEY,
+            kms_adapter=_kms(tmp_path / "signing"),
+            through_hmac=closure.hmac,
+            write=False,
+        )
+
+
+@pytest.mark.asyncio
 async def test_projection_begins_at_anchor_and_keeps_interleaved_events(receipt_env: dict[str, Any]) -> None:
     events = receipt_env["receipt"].receipt["events"]
     assert events[0]["event_type"] == EVENT_IDENTITY_SPAWN_ATTESTATION

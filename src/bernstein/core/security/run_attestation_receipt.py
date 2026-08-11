@@ -225,6 +225,11 @@ def build_run_attestation_receipt(
     dispatch_verdict = derive_attestation_verdict(_run_verdict_events(rebuilt, resolved_run_id), witnessed=True)
     closure = derive_run_closure(rebuilt, resolved_run_id, witnessed=True)
     closure_completes_run = _closure_completes_identity_run(closure)
+    if closure_completes_run and boundary_index != len(source_events) - 1:
+        raise RunAttestationReceiptError(
+            "whole-run completeness requires the verified source snapshot head; "
+            "an explicit historical boundary cannot prove that no later same-run event exists"
+        )
     whole_run_verdict = AttestationVerdict.COMPLETE if closure_completes_run else AttestationVerdict.OBSERVED
 
     first_timestamp = str(retained_source[0].get("timestamp", ""))

@@ -114,6 +114,12 @@ closure bound to a work ledger remains valid detached-run evidence but cannot
 upgrade a receipt whose beginning is anchored to the run journal. A serialized
 `complete` claim cannot upgrade itself.
 
+An explicit historical boundary may still scope an observed receipt, but it
+cannot establish whole-run completeness. Construction refuses a historical
+range that would otherwise upgrade to `complete` unless its boundary is also
+the verified source snapshot head, so a caller cannot conceal a later same-run
+event behind an earlier closure marker.
+
 Use `tools/verify_audit_receipt.py` to verify the standard receipt formats and
 pin the receipt-signing key. `verify_run_attestation_projection(...)` separately
 recomputes the run-specific semantic projection from the embedded events. A
