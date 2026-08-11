@@ -464,13 +464,15 @@ def _authenticate(page: Any, base: str, token: str) -> None:
     # parses on boot (bernstein.gui.pwa.compose_onboarding_url); it keeps the
     # credential out of the server's access log. Without it every panel
     # renders "Unauthorized" and the footer reads API · DEGRADED.
-    page.goto(f"{base}/ui/#t={token}", wait_until="networkidle")
+    # The authenticated SSE reader intentionally keeps a fetch pending for the
+    # life of the page, so networkidle would never resolve after #3563.
+    page.goto(f"{base}/ui/#t={token}", wait_until="domcontentloaded")
     page.wait_for_timeout(SETTLE_MS)
 
 
 def _stage_screens(page: Any, screens: dict[str, str], base: str, staging: Path) -> None:
     for name, route in screens.items():
-        page.goto(f"{base}{route}", wait_until="networkidle")
+        page.goto(f"{base}{route}", wait_until="domcontentloaded")
         page.wait_for_timeout(SETTLE_MS)
         if name == "agents-diffs":
             # Drawer on the completed build task, Diff tab: the working-tree

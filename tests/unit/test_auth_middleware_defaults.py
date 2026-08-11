@@ -169,12 +169,13 @@ def test_unauth_dashboard_events_returns_401(monkeypatch: pytest.MonkeyPatch) ->
     assert response.status_code == 401
 
 
-def test_unauth_status_events_returns_401(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The SSE status stream at /events must require auth too."""
+@pytest.mark.parametrize("path", ["/events", "/api/v1/events", "/events/cost", "/api/v1/events/cost"])
+def test_unauth_sse_streams_return_401(monkeypatch: pytest.MonkeyPatch, path: str) -> None:
+    """Both versioned and unversioned SSE streams must require a bearer token."""
     monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
     client = _build_app(legacy_token="secret")
 
-    response = client.get("/events")
+    response = client.get(path)
 
     assert response.status_code == 401
 

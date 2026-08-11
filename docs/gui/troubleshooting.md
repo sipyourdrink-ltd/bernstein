@@ -146,8 +146,8 @@ drops auth (never on a network-exposed host).
 ## Sidebar Approvals badge stuck at zero
 
 - Badge count comes from `useQuery(['approvals','queue'])`. If the queue endpoint returns `[]` even when approvals exist, the SSE stream isn't hydrating the cache.
-- With auth enabled (which a default loopback `bernstein gui serve` guarantees), `GET /api/v1/events` currently returns 401: the browser-native `EventSource` cannot send the bearer header. Tracked in [#3563](https://github.com/sipyourdrink-ltd/bernstein/issues/3563). Until fixed, updates arrive only on interval polling.
-- Verify `GET /api/v1/events` is open in DevTools Network (look for `EventStream` type).
+- With auth enabled (which a default loopback `bernstein gui serve` guarantees), the GUI opens `GET /api/v1/events` through its authenticated fetch reader. A 401 means the saved GUI bearer was refused; reauthenticate rather than waiting for polling to repair it.
+- Verify `GET /api/v1/events` stays pending with a 200 response in DevTools Network. The fetch reader reconnects after a clean disconnect with capped backoff.
 - If SSE is blocked by a corporate proxy that buffers responses, the live updates will not arrive - the page will only refresh on poll. Bypass the proxy or use `bernstein gui serve --dev` against a local dev session.
 
 ## Auth disabled but warning floods the log

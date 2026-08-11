@@ -50,8 +50,12 @@ class _Page:
     def __init__(self, fail_on: str | None) -> None:
         self._fail_on = fail_on
         self.shots: list[Path] = []
+        self.goto_waits: list[str] = []
 
-    def goto(self, url: str, **_: object) -> None:
+    def goto(self, url: str, **kwargs: object) -> None:
+        wait_until = kwargs.get("wait_until")
+        if isinstance(wait_until, str):
+            self.goto_waits.append(wait_until)
         pass
 
     def wait_for_timeout(self, _ms: int) -> None:
@@ -129,6 +133,16 @@ def test_a_complete_run_replaces_every_requested_render(capturer: Any, assets: P
     for name in SCREENS:
         assert (assets / f"webui-{name}.png").read_bytes().startswith(b"\x89PNG")
     assert browser.closed, "the browser must be closed even on the happy path"
+
+
+def test_capture_waits_for_dom_content_not_network_idle(capturer: Any, assets: Path, monkeypatch: Any) -> None:
+    """Persistent fetch-based SSE keeps network activity open by design."""
+    page = _Page(fail_on=None)
+    _install_stub_playwright(monkeypatch, page)
+
+    capturer.capture({"tasks": "/ui/tasks"}, "http://127.0.0.1:1234", "token")
+
+    assert page.goto_waits == ["domcontentloaded", "domcontentloaded"]
 
 
 def test_a_run_that_fails_part_way_leaves_every_render_untouched(capturer: Any, assets: Path, monkeypatch: Any) -> None:
