@@ -613,6 +613,35 @@ class TestLastGreen:
         assert set(loaded) == {"claude"}
         assert loaded["claude"].version == "2.1.227"
 
+    def test_surrounding_whitespace_is_normalised_not_carried_into_consumers(self, tmp_path: Path) -> None:
+        """A padded field passes an emptiness check and then breaks its consumer.
+
+        ``shutil.which(" claude")`` finds nothing and a padded version reaches
+        admission as a version nobody installed, so the row would produce a
+        stale-or-unknown verdict about a perfectly current install.
+        """
+        path = tmp_path / "last_green.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "adapters": {
+                        "claude": {
+                            "binary": " claude ",
+                            "version": "\t2.1.227\n",
+                            "receipt_sha256": "cd" * 32,
+                            "recorded_at": "2026-08-11T05:47:04Z",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = load_last_green(path)
+
+        assert loaded["claude"].binary == "claude"
+        assert loaded["claude"].version == "2.1.227"
+
     def test_render_table_rows_sorted_by_adapter(self) -> None:
         entries = {}
         for name in ("gemini", "agy"):

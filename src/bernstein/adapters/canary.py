@@ -774,11 +774,18 @@ def _row_text(entry: dict[str, Any], key: str) -> str:
     than as the corruption they are. Every row here claims a receipt attested
     it, so a field that was never a string is a corrupt row, not a row with an
     unusual value.
+
+    The value is returned stripped. Surrounding whitespace carries no meaning
+    in any of these fields and does not survive a round trip, but it does
+    survive into consumers: ``shutil.which(" claude")`` finds nothing, and a
+    padded version reaches admission as a version nobody installed. Normalising
+    is right here rather than rejecting -- the row is not corrupt, its
+    formatting is.
     """
     value = entry[key]
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} must be a non-empty string, got {type(value).__name__}")
-    return value
+    return value.strip()
 
 
 def _row_receipt_sha256(entry: dict[str, Any]) -> str:

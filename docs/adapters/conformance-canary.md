@@ -43,6 +43,40 @@ ephemeral runner: recompute a receipt file's SHA-256 and match it
 against the `receipt_sha256` of the persisted `adapter.canary_receipt`
 entry.
 
+## What `last_green.json` rows must look like
+
+`load_last_green` validates each row at the JSON boundary instead of
+coercing it. A row that does not satisfy the shape it claims is **dropped
+with a warning**, and the rest of the table still loads -- one bad row
+must not empty the projection, because an empty projection makes every
+`doctor` staleness check a silent no-op.
+
+| Field | Accepted | Rejected |
+|---|---|---|
+| `binary` | non-empty string; surrounding whitespace is stripped | `null`, numbers, lists, objects, `""` |
+| `version` | non-empty string; surrounding whitespace is stripped | `null`, numbers, lists, objects, `""` |
+| `receipt_sha256` | exactly 64 lowercase hex characters | uppercase hex, truncated hashes, any non-hash string, non-strings |
+| `recorded_at` | a timestamp `datetime.fromisoformat` accepts, including a trailing `Z` | `"yesterday"`, epoch integers, objects, non-strings |
+
+A row missing any of these keys is dropped, as before.
+
+**If you maintain a projection this repo did not generate**, check it
+against the table above before upgrading: a hand-written or older file
+whose `receipt_sha256` is not a full lowercase hash, or whose
+`recorded_at` is not ISO 8601, will now be dropped rather than loaded.
+The symptom is `CANARY_UNKNOWN` at admission and a warning-only `doctor`
+result for that adapter, and the cause is named in a
+`last-green row ... malformed` warning on the loader's logger. Rows the
+canary itself writes are already in this shape; regenerate with
+`uv run python scripts/adapter_canary.py --update-docs` if in doubt.
+
+The reason for validating rather than coercing: `str(value)` renders
+`None` as `"None"` and a list as its repr, so a corrupt row used to load
+as a populated entry that admission and `doctor` then read as a
+receipt-backed claim. The table is a projection of receipts and every row
+is meant to be independently checkable against its receipt file; a value
+that was never a hash cannot be checked against anything.
+
 ## Regression handling
 
 * A regression must repeat: **two consecutive failures with the same
