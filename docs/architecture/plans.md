@@ -508,7 +508,7 @@ The plan loader validates fields strictly. This table documents the load-time be
 | Field | Accepted shapes | Rejected shapes | Default | Coercion |
 |-------|-----------------|-----------------|---------|----------|
 | `name` | Non-empty string | Empty string, missing | — | — |
-| `depends_on` | Any list, missing, `null` | — | `[]` (missing or `null`) | Every item via `str()`; a scalar string is iterated character-by-character |
+| `depends_on` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
 
 ### Plan fields
 
@@ -516,8 +516,8 @@ The plan loader validates fields strictly. This table documents the load-time be
 |-------|-----------------|-----------------|---------|----------|
 | `name` | Non-empty string | Empty string, missing | — | — |
 | `stages` | `list[Stage]` | Missing, non-list | — | — |
-| `constraints` | Any list, missing, `null` | — | `[]` (missing or `null`) | None: non-string items pass through unchanged; a scalar string is iterated character-by-character |
-| `context_files` | Any list, missing, `null` | — | `[]` (missing or `null`) | None: non-string items pass through unchanged; a scalar string is iterated character-by-character |
+| `constraints` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `context_files` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
 
 ### Differences between load and validate
 
@@ -526,13 +526,8 @@ The plan loader validates fields strictly. This table documents the load-time be
 | `files: null` | Treated as `[]` | Flagged as error |
 | `files: [1, 2]` | Raises `PlanLoadError` | Flagged as error |
 | `attachments: null` | Treated as `[]` | Not checked (loader-only) |
-| `constraints: "abc"` | Becomes `['a', 'b', 'c']` | Flagged as error |
-
-`files` and `attachments` are the only list fields the loader checks item by
-item. `depends_on`, `constraints`, and `context_files` still carry the lenient
-behaviour the stricter loader replaced elsewhere, so a scalar string is
-iterated rather than rejected there. That gap is tracked in #3639; this table
-documents what the loader does today, not what it should do.
+| `constraints: "abc"` | Raises `PlanLoadError` | Flagged as error |
+| `constraints: [1, 2]` | Raises `PlanLoadError` | Flagged as error |
 
 ### Compatibility window
 

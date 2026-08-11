@@ -242,6 +242,38 @@ def _parse_string_list_field(raw: object, field_name: str, stage_name: str, step
     return parsed
 
 
+def _parse_plan_list_field(raw: object, field_name: str, scope: str = "Plan") -> list[str]:
+    """Parse an optional plan- or stage-level list-of-strings field.
+
+    Mirrors ``_parse_string_list_field`` for step fields: a scalar or a
+    non-string item raises ``PlanLoadError`` instead of being silently
+    coerced or iterated character-by-character (issue #3639).
+
+    Args:
+        raw: Raw field value from the YAML.
+        field_name: Field name, for error context.
+        scope: Human-readable location (e.g. ``"Plan"``, ``"Stage 2"``).
+
+    Returns:
+        The string items, or an empty list when the field is absent or
+        explicitly ``null``.
+
+    Raises:
+        PlanLoadError: If the field is present but not a list, or if any
+            list item is not a string.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise PlanLoadError(f"{scope}: {field_name!r} must be a list of strings, got {type(raw).__name__}")
+    parsed: list[str] = []
+    for item_idx, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise PlanLoadError(f"{scope}: {field_name}[{item_idx}] must be a string, got {type(item).__name__}")
+        parsed.append(item)
+    return parsed
+
+
 def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
     """Load a YAML plan file and return plan-level config plus a list of Task objects.
 
@@ -312,11 +344,14 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
             )
         )
 
+    constraints = _parse_plan_list_field(data.get("constraints"), "constraints")
+    context_files = _parse_plan_list_field(data.get("context_files"), "context_files")
+
     config = PlanConfig(
         name=str(data.get("name", "")),
         description=str(data.get("description", "")),
-        constraints=list(data.get("constraints") or []),
-        context_files=list(data.get("context_files") or []),
+        constraints=constraints,
+        context_files=context_files,
         cli=str(data["cli"]) if data.get("cli") else None,
         budget=str(budget_raw) if budget_raw is not None else None,
         max_agents=int(max_agents_raw) if max_agents_raw is not None else None,
@@ -362,7 +397,7 @@ def _parse_stage(
         return
 
     stage_tasks[str(stage_name)] = []
-    stage_deps: list[str] = [str(d) for d in (stage.get("depends_on") or [])]
+    stage_deps = _parse_plan_list_field(stage.get("depends_on"), "depends_on", f"Stage {stage_index}")
     stage_repo: str | None = str(stage["repo"]) if stage.get("repo") else None
 
     for j, step in enumerate(steps):

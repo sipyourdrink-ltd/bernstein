@@ -866,8 +866,82 @@ def test_step_files_scalar_raises_plan_load_error(tmp_path: Path) -> None:
         tmp_path,
         {"stages": [{"name": "S", "steps": [{"title": "T", "files": "src/app.py"}]}]},
     )
+
     with pytest.raises(PlanLoadError, match="'files' must be a"):
         load_plan_from_yaml(plan_file)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["depends_on", "constraints", "context_files"],
+)
+def test_plan_list_field_scalar_raises_plan_load_error(tmp_path: Path, field: str) -> None:
+    """A scalar string in a plan-level list field must not be iterated."""
+    data: dict[str, object] = {
+        "stages": [{"name": "S", "steps": [{"title": "T"}]}],
+    }
+    if field == "depends_on":
+        data["stages"] = [{"name": "S", "depends_on": "scalar value", "steps": [{"title": "T"}]}]
+    else:
+        data[field] = "scalar value"
+    plan_file = _write_plan(tmp_path, data)
+
+    with pytest.raises(PlanLoadError, match=f"'{field}' must be a list of strings"):
+        load_plan_from_yaml(plan_file)
+
+
+def test_stage_depends_on_scalar_raises_plan_load_error(tmp_path: Path) -> None:
+    """A scalar string in stage `depends_on` must not be iterated."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "depends_on": "Infrastructure", "steps": [{"title": "T"}]}]},
+    )
+
+    with pytest.raises(PlanLoadError, match="Stage 0: 'depends_on' must be a list of strings"):
+        load_plan_from_yaml(plan_file)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_item", "expected_type"),
+    [
+        ("depends_on", None, "NoneType"),
+        ("constraints", 42, "int"),
+        ("constraints", None, "NoneType"),
+        ("context_files", {"path": "docs/spec.md"}, "dict"),
+    ],
+)
+def test_plan_list_field_non_string_item_raises_plan_load_error(
+    tmp_path: Path, field: str, bad_item: object, expected_type: str
+) -> None:
+    """A non-string item must be a PlanLoadError naming the field and index."""
+    data: dict[str, object] = {
+        "stages": [{"name": "S", "steps": [{"title": "T"}]}],
+    }
+    if field == "depends_on":
+        data["stages"] = [{"name": "S", "depends_on": ["A", bad_item], "steps": [{"title": "T"}]}]
+    else:
+        data[field] = ["valid", bad_item]
+    plan_file = _write_plan(tmp_path, data)
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert f"{field}[1]" in message
+    assert expected_type in message
+
+
+@pytest.mark.parametrize("field", ["depends_on", "constraints", "context_files"])
+def test_plan_list_field_absent_and_null_default_to_empty(tmp_path: Path, field: str) -> None:
+    """Missing and explicit-`null` list fields must keep returning `[]`."""
+    base = {"stages": [{"name": "S", "steps": [{"title": "T"}]}]}
+    for data in (base, {**base, field: None}):
+        plan_file = _write_plan(tmp_path, data)
+        config, tasks = load_plan(plan_file)
+        if field == "depends_on":
+            assert tasks[0].depends_on == []
+        else:
+            assert getattr(config, field) == []
 
 
 @pytest.mark.parametrize("value", ["3", True, 2.5], ids=["str", "bool", "float"])
