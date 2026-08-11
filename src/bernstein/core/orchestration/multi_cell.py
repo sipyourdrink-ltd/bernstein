@@ -8,8 +8,10 @@ and rebalancing work when cells are overloaded or stuck.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import httpx
@@ -25,6 +27,9 @@ from bernstein.core.models import (
     TaskStatus,
 )
 from bernstein.core.orchestration.orchestrator import TickResult, group_by_role
+from bernstein.core.replay.journal import EventJournal
+from bernstein.core.security.audit_chain import AuditChainStore
+from bernstein.core.security.run_closure import RunClosureOutcome, close_run
 from bernstein.core.tasks.lifecycle import transition_agent
 
 if TYPE_CHECKING:
@@ -180,6 +185,9 @@ class MultiCellOrchestrator:
         self._client = client or httpx.Client(timeout=10.0)
         self._cells: dict[str, Cell] = {}
         self._running = False
+        self._closure_outcome = RunClosureOutcome.COMPLETED
+        self._run_id = os.environ.get("BERNSTEIN_RUN_ID") or datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        self._recorder = EventJournal(run_id=self._run_id, sdd_dir=workdir / ".sdd")
         self._last_bulletin_ts: float = 0.0
         # Optional clearance-gate coordinator (#2556). When wired, a posted
         # ``blocker`` is not merely logged: it is deterministically projected
@@ -465,16 +473,56 @@ class MultiCellOrchestrator:
         import time as _time
 
         self._running = True
+        self._recorder.record("run_started", run_id=self._run_id, mode="multi_cell")
+        try:
+            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+
+            write_spawner_run_owner(
+                sdd_dir=self._workdir / ".sdd",
+                run_id=self._run_id,
+                journal_head=self._recorder.fingerprint(),
+                journal_event_count=self._recorder.event_count(),
+            )
+        except OSError as exc:
+            logger.warning("Run owner record not written for %s: %s", self._run_id, exc)
         logger.info(
             "MultiCellOrchestrator started (cells=%d, poll=%ds)",
             len(self._cells),
             self._config.poll_interval_s,
         )
-        while self._running:
-            self.tick()
-            _time.sleep(self._config.poll_interval_s)
-        logger.info("MultiCellOrchestrator stopped")
+        try:
+            while self._running:
+                self.tick()
+                _time.sleep(self._config.poll_interval_s)
+        except KeyboardInterrupt:
+            self._closure_outcome = RunClosureOutcome.CANCELLED
+            raise
+        except Exception:
+            self._closure_outcome = RunClosureOutcome.FAILED
+            raise
+        finally:
+            self._recorder.record(
+                "run_completed",
+                run_id=self._run_id,
+                outcome=self._closure_outcome.value,
+                mode="multi_cell",
+            )
+            try:
+                close_run(
+                    chain=AuditChainStore(self._workdir / ".sdd" / "audit"),
+                    run_id=self._run_id,
+                    outcome=self._closure_outcome,
+                    actor="multi_cell_orchestrator",
+                    run_journal_head=self._recorder.fingerprint(),
+                    run_journal_event_count=self._recorder.event_count(),
+                )
+            except Exception:
+                # Failure to authenticate closure must leave the projection
+                # open without hiding the execution result that preceded it.
+                logger.exception("Failed to write multi-cell run closure")
+            logger.info("MultiCellOrchestrator stopped")
 
-    def stop(self) -> None:
+    def stop(self, *, outcome: RunClosureOutcome | str = RunClosureOutcome.CANCELLED) -> None:
         """Signal the run loop to exit after the current tick."""
+        self._closure_outcome = RunClosureOutcome(outcome)
         self._running = False

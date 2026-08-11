@@ -87,7 +87,7 @@ The `bernstein audit receipt verify <path>` subcommand shells out to that
 standalone tool on purpose - it proves the receipt needs nothing from Bernstein
 to validate.
 
-## Provisional run-attestation projection
+## Run-attestation projection
 
 `build_run_attestation_receipt(...)` reuses the same COSE, DSSE/in-toto, and
 transparency substrate for identity-bound tool-call evidence. Its range is not
@@ -102,13 +102,17 @@ The projection distinguishes two verdicts:
 
 - `dispatch_evidence_verdict` is re-derived from retained identity envelopes,
   attestation references, and enforced-dispatch markers;
-- `whole_run_verdict` is always `observed` and the receipt is always marked
-  `provisional` in this slice.
+- `whole_run_verdict` becomes `complete` only when the retained range ends in
+  one still-valid `run.closure` marker that binds the run journal; otherwise
+  the receipt remains `observed` and `provisional`.
 
-The second rule is load-bearing. Bernstein does not yet emit one authenticated
-run-closure marker on every foreground, detached, and capsule-governed path.
-An authenticated snapshot head therefore proves exactly what was retained, not
-that the run ended there. A serialized `complete` claim cannot upgrade it.
+The second rule is load-bearing. An authenticated snapshot head proves exactly
+what was retained, not that the run ended there. The semantic verifier walks
+the retained range: absence stays open, duplicate or malformed markers fail
+closed, and any later same-run event invalidates the terminal claim. A detached
+closure bound to a work ledger remains valid detached-run evidence but cannot
+upgrade a receipt whose beginning is anchored to the run journal. A serialized
+`complete` claim cannot upgrade itself.
 
 Use `tools/verify_audit_receipt.py` to verify the standard receipt formats and
 pin the receipt-signing key. `verify_run_attestation_projection(...)` separately

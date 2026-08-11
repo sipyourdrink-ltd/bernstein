@@ -42,6 +42,8 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.security.audit_chain import AuditChainStore
+from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
 if TYPE_CHECKING:
     from bernstein.core.bulletin import BulletinBoard
@@ -1651,10 +1653,37 @@ class TestRunStop:
             dry_run=True,
         )
         orch = _build_orchestrator(tmp_path, transport, config=config)
+
+        def seal_capsule_event(_key: bytes) -> None:
+            AuditChainStore(tmp_path / ".sdd" / "audit").log(
+                event_type="intent.journal_seal",
+                actor="test",
+                resource_type="run",
+                resource_id=orch._run_id,
+                details={"run_id": orch._run_id},
+            )
+
+        orch._seal_intent_capsules = seal_capsule_event  # type: ignore[method-assign]
+
+        def finalize_with_run_event() -> None:
+            AuditChainStore(tmp_path / ".sdd" / "audit").log(
+                event_type="otel.projection",
+                actor="test",
+                resource_type="run",
+                resource_id=orch._run_id,
+                details={"run_id": orch._run_id},
+            )
+
+        stream.finalize.side_effect = finalize_with_run_event
         orch.run()
 
         assert [row["event"] for row in rows] == ["run_started", "tick_start", "run_completed"]
         stream.finalize.assert_called_once_with()
+        chain = AuditChainStore(tmp_path / ".sdd" / "audit")
+        closure = project_run_closure(chain, orch._run_id)
+        assert closure.status is RunClosureStatus.CLOSED
+        target_events = [event.event_type for event in chain.query() if event.details.get("run_id") == orch._run_id]
+        assert target_events[-3:] == ["intent.journal_seal", "otel.projection", "run.closure"]
 
     def test_stop_breaks_loop(self, tmp_path: Path) -> None:
         transport = _mock_transport(
@@ -1683,6 +1712,9 @@ class TestRunStop:
         orch.run()
 
         assert call_count == 3
+        closure = project_run_closure(AuditChainStore(tmp_path / ".sdd" / "audit"), orch._run_id)
+        assert closure.status is RunClosureStatus.CLOSED
+        assert closure.outcome is RunClosureOutcome.CANCELLED
 
     def test_tick_does_not_claim_or_spawn_after_stop_requested(self, tmp_path: Path) -> None:
         task = _make_task(id="T-stop", title="Update docs", description="Refresh docs.")

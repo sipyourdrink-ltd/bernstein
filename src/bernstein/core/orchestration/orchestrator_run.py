@@ -87,6 +87,17 @@ def _record_run_started(orch: Any) -> None:
         config_hash=orch._replay_metadata.config_hash,
         **extra,
     )
+    try:
+        from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+
+        write_spawner_run_owner(
+            sdd_dir=orch._workdir / ".sdd",
+            run_id=orch._run_id,
+            journal_head=orch._recorder.fingerprint(),
+            journal_event_count=orch._recorder.event_count(),
+        )
+    except OSError as exc:
+        logger.warning("Run owner record not written for %s: %s", orch._run_id, exc)
 
 
 def _recover_wal(orch: Any) -> None:
@@ -209,8 +220,10 @@ def _run_shutdown(orch: Any) -> None:
         run_id=orch._run_id,
         ticks=orch._tick_count,
         fingerprint=orch._recorder.fingerprint(),
+        outcome=getattr(orch, "_closure_outcome", "completed"),
     )
     orch._seal_journal_into_lineage_spine()
+    orch._write_run_closure()
     logger.info(
         "Orchestrator stopped (replay: %s, fingerprint: %s)",
         orch._recorder.path,

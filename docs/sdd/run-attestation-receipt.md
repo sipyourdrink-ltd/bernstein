@@ -1,4 +1,4 @@
-# Provisional run-attestation receipt
+# Authenticated run-attestation receipt
 
 ## Purpose
 
@@ -8,11 +8,10 @@ projects that evidence into the existing COSE, DSSE/in-toto, and transparency
 formats without inventing a second receipt cryptosystem or signing-key
 lifecycle.
 
-The receipt is intentionally provisional. No event currently closes every
-Bernstein execution path: `run.lifecycle transition=completed` belongs to
-detached `RunService` runs, while `intent.journal_seal` belongs to
-capsule-governed runs. A snapshot head is authenticated, but it is not proof
-that a foreground or otherwise unsealed run ended there.
+The receipt remains provisional until the retained range contains one valid
+`run.closure` marker for the requested run. A snapshot head is authenticated,
+but it is not proof that a foreground or otherwise unsealed run ended there.
+Closure is derived from retained evidence and never inferred from silence.
 
 ## Construction boundary
 
@@ -43,10 +42,19 @@ the retained interval. It is `complete` when each retained enforced dispatch
 has one preceding identity-valid attestation and the existing replay,
 substitution, ordering, and coverage rules pass.
 
-`whole_run_verdict` is always `observed` in this slice. `provisional` is always
-true and `terminal_boundary` is always null. Semantic verification ignores any
-serialized attempt to say otherwise and reports an unsupported completeness
-claim.
+`whole_run_verdict` becomes `complete` only when the retained range contains
+exactly one valid, still-terminal `run.closure` marker that binds a verified
+run-journal head and positive event count. Otherwise it is `observed`,
+`provisional` remains true, and `terminal_boundary` remains null. A detached
+RunService closure that binds a work ledger is valid for that execution path,
+but cannot upgrade an identity receipt whose beginning is anchored to a run
+journal: the two ends must name the same execution object.
+
+The verifier walks forward from the marker. A later event for the same run
+invalidates completeness; events for other runs may remain interleaved without
+doing so. Duplicate markers, conflicting outcomes, invalid anchors, or audit
+chain corruption also refuse the upgrade. The serialized verdict is never
+trusted.
 
 This distinction lets a receipt truthfully say, "all retained enforced
 dispatch evidence checks out," without silently changing that into, "the
@@ -62,9 +70,10 @@ or public key adds signer provenance.
 
 `verify_run_attestation_projection` performs the semantic half: it derives the
 run from the first retained identity anchor, checks the source anchor and
-boundary witnesses, recomputes the dispatch verdict, and refuses a whole-run
-upgrade. The cryptographic and semantic checks are separate so neither
-signature validity nor a stored verdict is mistaken for the other.
+boundary witnesses, recomputes the dispatch verdict, walks the closure state,
+and accepts a whole-run upgrade only from a still-valid run-journal closure.
+The cryptographic and semantic checks are separate so neither signature
+validity nor a stored verdict is mistaken for the other.
 
 ## Failure behavior
 
@@ -77,14 +86,17 @@ signature validity nor a stored verdict is mistaken for the other.
 - Missing or invalid identity envelopes, duplicated references, reordered
   calls, or mismatched intent bindings downgrade dispatch evidence to
   `observed`.
+- A missing closure stays `open`; a later same-run event invalidates an earlier
+  marker rather than being hidden.
 - Construction never appends, truncates, acknowledges, or repairs the source
   audit chain.
 
 ## Explicit exclusions
 
-This slice adds no universal run-closure event, `LineageGate` or janitor
-coupling, CLI command, external identity provider, revocation service,
-result/effect attestation, Rekor dependency, dispatch-policy change, or new key
-lifecycle. Those remain separate boundaries. A later closure-marker slice can
-make whole-run `complete` reachable without replacing this receipt format or
-its authenticated range.
+Closure does not prove that journaled claims are true, that effects bypassing
+Bernstein were observed, or that an HMAC key holder was honest. It proves that
+the authenticated chain contains a terminal statement for a specific verified
+state anchor and no later retained event for that run. `LineageGate`, external
+identity, result/effect attestation, revocation, and transparency publication
+remain separate boundaries. Closure reuses the existing audit key and receipt
+formats; it creates no new key lifecycle.

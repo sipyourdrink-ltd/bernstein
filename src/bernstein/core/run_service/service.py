@@ -43,10 +43,12 @@ from bernstein.core.run_service.receipts import (
     prove_continuity,
 )
 from bernstein.core.security.audit_chain import (
+    EVENT_RUN_CLOSURE,
     EVENT_RUN_LIFECYCLE,
     AuditChainStore,
     record_run_lifecycle,
 )
+from bernstein.core.security.run_closure import RunClosureOutcome, close_run
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -156,31 +158,49 @@ class RunService:
         did not diverge while they were away.
         """
         self._require(run_id)
-        head, count = self._head_and_count(run_id)
-        return self._record(run_id, TRANSITION_DETACHED, ledger_head=head, entry_count=count)
+        chain = self._chain()
+        with chain.chain_transaction():
+            if self.project(run_id).run_closed:
+                return self._last_lifecycle_event(run_id, chain=chain)
+            head, count = self._head_and_count(run_id)
+            return record_run_lifecycle(
+                chain=chain,
+                run_id=run_id,
+                transition=TRANSITION_DETACHED,
+                ledger_head=head,
+                entry_count=count,
+            )
 
     def attach(self, run_id: str) -> AttachResult:
         """Reattach: prove continuity across the boundary, then project state.
 
         Returns an :class:`AttachResult` whose ``proof`` is False (rather than
         raising) when the ledger diverged or failed to verify, so the caller
-        can surface the exact reason. A ``reattached`` receipt is always
-        recorded so the reattach itself is chain-attested.
+        can surface the exact reason. An open run records a ``reattached``
+        receipt; a closed run is read-only and returns its final lifecycle
+        receipt so observation cannot invalidate the terminal boundary.
         """
         self._require(run_id)
-        boundary = self._last_boundary_head(run_id)
-        reader = self._reader(run_id)
-        proof = prove_continuity(reader, boundary, run_id=run_id)
-        state = replay_state(reader.entries(), run_id=run_id)
-        receipt = self._record(
-            run_id,
-            TRANSITION_REATTACHED,
-            ledger_head=proof.current_head,
-            entry_count=reader.verify().entries,
-            from_head=boundary,
-            to_head=proof.current_head,
-            entries_added=proof.entries_added,
-        )
+        chain = self._chain()
+        with chain.chain_transaction():
+            boundary = self._last_boundary_head(run_id, chain=chain)
+            reader = self._reader(run_id)
+            proof = prove_continuity(reader, boundary, run_id=run_id)
+            state = replay_state(reader.entries(), run_id=run_id)
+            receipt = (
+                self._last_lifecycle_event(run_id, chain=chain)
+                if state.run_closed
+                else record_run_lifecycle(
+                    chain=chain,
+                    run_id=run_id,
+                    transition=TRANSITION_REATTACHED,
+                    ledger_head=proof.current_head,
+                    entry_count=reader.verify().entries,
+                    from_head=boundary,
+                    to_head=proof.current_head,
+                    entries_added=proof.entries_added,
+                )
+            )
         return AttachResult(
             run_id=run_id,
             state=state,
@@ -192,18 +212,23 @@ class RunService:
     def daemon_restart(self, run_id: str) -> AuditEvent:
         """Record a supervisor (re)start that resumes an existing ledger."""
         self._require(run_id)
-        boundary = self._last_boundary_head(run_id)
-        reader = self._reader(run_id)
-        proof = prove_continuity(reader, boundary, run_id=run_id)
-        return self._record(
-            run_id,
-            TRANSITION_DAEMON_RESTARTED,
-            ledger_head=proof.current_head,
-            entry_count=reader.verify().entries,
-            from_head=boundary,
-            to_head=proof.current_head,
-            entries_added=proof.entries_added,
-        )
+        chain = self._chain()
+        with chain.chain_transaction():
+            if self.project(run_id).run_closed:
+                return self._last_lifecycle_event(run_id, chain=chain)
+            boundary = self._last_boundary_head(run_id, chain=chain)
+            reader = self._reader(run_id)
+            proof = prove_continuity(reader, boundary, run_id=run_id)
+            return record_run_lifecycle(
+                chain=chain,
+                run_id=run_id,
+                transition=TRANSITION_DAEMON_RESTARTED,
+                ledger_head=proof.current_head,
+                entry_count=reader.verify().entries,
+                from_head=boundary,
+                to_head=proof.current_head,
+                entries_added=proof.entries_added,
+            )
 
     def complete(self, run_id: str) -> AuditEvent:
         """Close the run in the ledger and record a completion receipt."""
@@ -217,7 +242,62 @@ class RunService:
             finally:
                 ledger.close()
         head, count = self._head_and_count(run_id)
-        return self._record(run_id, TRANSITION_COMPLETED, ledger_head=head, entry_count=count)
+        chain = self._chain()
+        with chain.chain_transaction():
+            existing_lifecycle = [
+                event
+                for event in chain.query(event_type=EVENT_RUN_LIFECYCLE, resource_id=run_id)
+                if event.details.get("run_id") == run_id and event.details.get("transition") == TRANSITION_COMPLETED
+            ]
+            lifecycle = (
+                existing_lifecycle[-1]
+                if existing_lifecycle
+                else record_run_lifecycle(
+                    chain=chain,
+                    run_id=run_id,
+                    transition=TRANSITION_COMPLETED,
+                    ledger_head=head,
+                    entry_count=count,
+                )
+            )
+            close_run(
+                chain=chain,
+                run_id=run_id,
+                outcome=RunClosureOutcome.COMPLETED,
+                actor="run_service",
+                work_ledger_head=head,
+                work_ledger_entry_count=count,
+            )
+            return lifecycle
+
+    def close(self, run_id: str, outcome: RunClosureOutcome | str) -> AuditEvent:
+        """Close an unfinished detached run with a non-success outcome."""
+        self._require(run_id)
+        resolved = outcome if isinstance(outcome, RunClosureOutcome) else RunClosureOutcome(outcome)
+        if resolved is RunClosureOutcome.COMPLETED:
+            self.complete(run_id)
+            closures = self._chain().query(event_type=EVENT_RUN_CLOSURE, resource_id=run_id)
+            return closures[-1]
+        reader = self._reader(run_id)
+        state = replay_state(reader.entries(), run_id=run_id)
+        if not state.run_closed:
+            ledger = WorkLedger.open(self._ledger_dir(run_id))
+            try:
+                ledger.append(
+                    kind=KIND_RUN_CLOSED,
+                    payload={"run_id": run_id, "outcome": resolved.value},
+                )
+            finally:
+                ledger.close()
+        head, count = self._head_and_count(run_id)
+        return close_run(
+            chain=self._chain(),
+            run_id=run_id,
+            outcome=resolved,
+            actor="run_service",
+            work_ledger_head=head,
+            work_ledger_entry_count=count,
+        )
 
     # -- projection ---------------------------------------------------------
 
@@ -238,13 +318,41 @@ class RunService:
         result = self._reader(run_id).verify()
         return result.head_hash, result.entries
 
-    def _last_boundary_head(self, run_id: str) -> str:
+    def _last_boundary_head(self, run_id: str, *, chain: AuditChainStore | None = None) -> str:
         """Return the ledger head recorded by the newest lifecycle receipt."""
-        events = self.lifecycle_events(run_id)
+        events = (
+            self.lifecycle_events(run_id)
+            if chain is None
+            else [
+                event
+                for event in chain.query(event_type=EVENT_RUN_LIFECYCLE, resource_id=run_id)
+                if event.details.get("run_id") == run_id
+            ]
+        )
         if not events:
             return GENESIS_HASH
         head = events[-1].details.get("ledger_head")
         return str(head) if head else GENESIS_HASH
+
+    def _last_lifecycle_event(
+        self,
+        run_id: str,
+        *,
+        chain: AuditChainStore | None = None,
+    ) -> AuditEvent:
+        """Return the last pre-closure receipt without appending past it."""
+        events = (
+            self.lifecycle_events(run_id)
+            if chain is None
+            else [
+                event
+                for event in chain.query(event_type=EVENT_RUN_LIFECYCLE, resource_id=run_id)
+                if event.details.get("run_id") == run_id
+            ]
+        )
+        if not events:
+            raise RunServiceError(f"closed run {run_id!r} has no lifecycle receipt")
+        return events[-1]
 
     def _record(
         self,

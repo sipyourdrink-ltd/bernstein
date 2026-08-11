@@ -1,10 +1,8 @@
-"""Provisional, offline-verifiable receipts for identity-bound run evidence.
+"""Offline-verifiable receipts for identity-bound run evidence.
 
-This projection deliberately cannot report whole-run completeness. Bernstein
-does not yet emit one authenticated closure marker on every execution path, so
-the strongest honest claim is ``observed``: the receipt proves the exact
-authenticated range it retained and the identity-bound dispatch evidence in
-that range, while stating that later activity may exist.
+Whole-run completeness is reachable only when the retained authenticated range
+contains one still-valid :data:`run.closure` marker.  Absence, conflict, an
+invalid marker, or later same-run activity remains ``observed``.
 
 Range membership follows HMAC-chain position, never timestamps. The source
 range begins at the run's unique ``identity.spawn_attestation`` and ends at an
@@ -33,6 +31,7 @@ from bernstein.core.security.audit_receipt import (
     rebuild_receipt_range,
     receipt_events_head,
 )
+from bernstein.core.security.run_closure import RunClosureProjection, RunClosureStatus, derive_run_closure
 from bernstein.core.security.toolcall_interlock import AttestationVerdict, derive_attestation_verdict
 
 if TYPE_CHECKING:
@@ -42,6 +41,18 @@ if TYPE_CHECKING:
 
 RUN_ATTESTATION_RECEIPT_TYPE = "https://bernstein.run/attestations/run-attestation-receipt/v1"
 RUN_ATTESTATION_SCHEMA_VERSION = "1.0.0"
+
+
+def _closure_completes_identity_run(closure: RunClosureProjection) -> bool:
+    """Require the terminal marker to bind the same journal vocabulary.
+
+    Detached-service closures legitimately bind a work ledger, but that is
+    not enough to upgrade an identity-anchored run receipt whose beginning is
+    defined by the per-run journal. The two ends must speak about the same
+    authenticated execution object.
+    """
+    return closure.status is RunClosureStatus.CLOSED and closure.anchor_kind == "run_journal"
+
 
 _RUN_EVENT_TYPES = frozenset(
     {
@@ -58,7 +69,7 @@ class RunAttestationReceiptError(AuditReceiptError):
 
 @dataclass(frozen=True, slots=True)
 class RunAttestationReceipt:
-    """A provisional run-attestation projection over one audit receipt."""
+    """A run-attestation projection over one audit receipt."""
 
     run_id: str
     identity_anchor_hmac: str
@@ -163,13 +174,13 @@ def build_run_attestation_receipt(
     output_dir: Path | None = None,
     write: bool = True,
 ) -> RunAttestationReceipt:
-    """Build a provisional receipt from a run anchor to an authenticated head.
+    """Build a receipt from a run anchor to an authenticated head.
 
     The source audit chain is verified from genesis under one append lock before
     any range is selected. Exactly one spawn anchor must exist for ``run_id``.
     When ``through_hmac`` is omitted the verified snapshot head is used; either
-    way the result stays provisional because the boundary is not a universal
-    authenticated run-closure marker.
+    way whole-run completeness is derived only from a valid closure marker
+    retained in the selected range.
     """
     resolved_run_id = run_id.strip()
     if not resolved_run_id:
@@ -212,6 +223,9 @@ def build_run_attestation_receipt(
     retained_source = source_events[anchor_index : boundary_index + 1]
     rebuilt, head_hmac, head_sha256 = rebuild_receipt_range(retained_source, key)
     dispatch_verdict = derive_attestation_verdict(_run_verdict_events(rebuilt, resolved_run_id), witnessed=True)
+    closure = derive_run_closure(rebuilt, resolved_run_id, witnessed=True)
+    closure_completes_run = _closure_completes_identity_run(closure)
+    whole_run_verdict = AttestationVerdict.COMPLETE if closure_completes_run else AttestationVerdict.OBSERVED
 
     first_timestamp = str(retained_source[0].get("timestamp", ""))
     last_timestamp = str(retained_source[-1].get("timestamp", ""))
@@ -221,12 +235,15 @@ def build_run_attestation_receipt(
         "selection": "authenticated-chain-position",
         "identity_anchor_hmac": anchor_hmac,
         "through_hmac": boundary_hmac,
-        "terminal_boundary": None,
-        "provisional": True,
+        "terminal_boundary": closure.terminal_boundary if closure_completes_run else None,
+        "provisional": not closure_completes_run,
         "dispatch_evidence_verdict": dispatch_verdict.value,
-        "whole_run_verdict": AttestationVerdict.OBSERVED.value,
-        "limitation": "no universal authenticated run-closure marker",
+        "whole_run_verdict": whole_run_verdict.value,
     }
+    if not closure_completes_run:
+        projection["limitation"] = (
+            f"run closure is {closure.status.value} with anchor {closure.anchor_kind or 'none'} in the retained range"
+        )
     audit_receipt = materialize_receipt(
         audit_dir,
         since=first_timestamp,
@@ -256,7 +273,7 @@ def build_run_attestation_receipt(
         identity_anchor_hmac=anchor_hmac,
         through_hmac=boundary_hmac,
         dispatch_evidence_verdict=dispatch_verdict,
-        whole_run_verdict=AttestationVerdict.OBSERVED,
+        whole_run_verdict=whole_run_verdict,
         audit_receipt=audit_receipt,
     )
 
@@ -268,7 +285,7 @@ def verify_run_attestation_projection(
 
     Run the standalone audit-receipt verifier as well to validate COSE/DSSE,
     subject binding, and optionally a pinned signer. This function refuses any
-    attempt to upgrade the whole-run verdict while closure remains unattested.
+    attempt to upgrade the whole-run verdict without retained closure evidence.
     """
     errors: list[str] = []
     raw_events_value = receipt.get("events")
@@ -354,18 +371,23 @@ def verify_run_attestation_projection(
     dispatch_verdict = derive_attestation_verdict(_run_verdict_events(events, run_id), witnessed=True)
     if projection.get("dispatch_evidence_verdict") != dispatch_verdict.value:
         errors.append("serialized dispatch verdict was not derived from the retained evidence")
+    closure = derive_run_closure(events, run_id, witnessed=True)
+    closure_completes_run = _closure_completes_identity_run(closure)
+    whole_run_verdict = AttestationVerdict.COMPLETE if closure_completes_run else AttestationVerdict.OBSERVED
+    expected_boundary = closure.terminal_boundary if closure_completes_run else None
+    expected_provisional = not closure_completes_run
     if (
-        projection.get("whole_run_verdict") != AttestationVerdict.OBSERVED.value
-        or projection.get("provisional") is not True
-        or projection.get("terminal_boundary") is not None
+        projection.get("whole_run_verdict") != whole_run_verdict.value
+        or projection.get("provisional") is not expected_provisional
+        or projection.get("terminal_boundary") != expected_boundary
     ):
-        errors.append("receipt attempts an unsupported whole-run completeness claim")
+        errors.append("serialized whole-run verdict was not derived from retained closure evidence")
 
     return RunAttestationProjectionVerification(
         ok=not errors,
         run_id=run_id,
         dispatch_evidence_verdict=dispatch_verdict,
-        whole_run_verdict=AttestationVerdict.OBSERVED,
+        whole_run_verdict=whole_run_verdict,
         errors=tuple(errors),
     )
 

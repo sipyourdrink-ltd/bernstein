@@ -139,6 +139,7 @@ from bernstein.core.runtime_state import (
     write_session_replay_metadata,
 )
 from bernstein.core.security.audit import load_or_create_audit_key
+from bernstein.core.security.run_closure import RunClosureOutcome
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.seed import resolve_seed_path
 from bernstein.core.semantic_cache import ResponseCacheManager
@@ -417,6 +418,10 @@ class Orchestrator:
         # Populated when a task completes; used by group_by_role to batch related work.
         self._agent_affinity: dict[str, str] = {}
         self._running = False
+        # Outcome recorded by the universal authenticated closure marker.
+        # Normal quiescence remains completed; explicit operator signals and
+        # internal fatal paths replace it before shutdown is journaled.
+        self._closure_outcome = RunClosureOutcome.COMPLETED
         self._tick_count = 0
         self._consecutive_server_failures: int = 0
         # No-progress window for a quiescent run that produced zero terminal
@@ -1402,6 +1407,7 @@ class Orchestrator:
                     "Server unreachable for %d consecutive ticks - orchestrator stopping to prevent waste",
                     self._consecutive_server_failures,
                 )
+                self._closure_outcome = RunClosureOutcome.FAILED
                 self._running = False
             elif self._consecutive_server_failures >= ORCHESTRATOR.server_failure_warn:
                 logger.warning(
@@ -2573,6 +2579,7 @@ class Orchestrator:
             )
 
         self._run_stall_stopped = True
+        self._closure_outcome = RunClosureOutcome.FAILED
         self._regenerate_final_retrospective(trigger_path="tick-stalled-run-self-stop")
         self._running = False
 
@@ -2678,6 +2685,17 @@ class Orchestrator:
             config_hash=self._replay_metadata.config_hash,
             **_run_started_extra,
         )
+        try:
+            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+
+            write_spawner_run_owner(
+                sdd_dir=self._workdir / ".sdd",
+                run_id=self._run_id,
+                journal_head=self._recorder.fingerprint(),
+                journal_event_count=self._recorder.event_count(),
+            )
+        except OSError as exc:
+            logger.warning("Run owner record not written for %s: %s", self._run_id, sanitize_log(str(exc)))
         # WAL recovery: detect uncommitted entries from crashed previous runs.
         # Must run after WAL writer is initialized (in __init__) so that
         # acknowledgement entries are written to the current run's WAL.
@@ -2737,6 +2755,7 @@ class Orchestrator:
                         "Stopping after %d consecutive tick failures",
                         consecutive_failures,
                     )
+                    self._closure_outcome = RunClosureOutcome.FAILED
                     break
             if self._config.dry_run:
                 break
@@ -2814,10 +2833,12 @@ class Orchestrator:
             run_id=self._run_id,
             ticks=self._tick_count,
             fingerprint=self._recorder.fingerprint(),
+            outcome=self._closure_outcome.value,
         )
         self._seal_journal_into_lineage_spine()
         if self._otel_stream is not None:
             self._otel_stream.finalize()
+        self._write_run_closure()
         logger.info(
             "Orchestrator stopped (replay: %s, fingerprint: %s)",
             self._recorder.path,
@@ -2873,6 +2894,30 @@ class Orchestrator:
         else:
             if receipt_path is not None:
                 logger.info("Run receipt written: %s", receipt_path)
+
+    def _write_run_closure(self) -> None:
+        """Commit the final journal head to the universal closure event.
+
+        This runs after the lineage/capsule seal because those operations can
+        append run-attributed audit events.  Closure must be the final event
+        for this run or a verifier will (correctly) invalidate it.
+        """
+        try:
+            from bernstein.core.security.audit_chain import AuditChainStore
+            from bernstein.core.security.run_closure import close_run
+
+            close_run(
+                chain=AuditChainStore(self._workdir / ".sdd" / "audit"),
+                run_id=self._run_id,
+                outcome=self._closure_outcome,
+                actor="orchestrator",
+                run_journal_head=self._recorder.fingerprint(),
+                run_journal_event_count=self._recorder.event_count(),
+            )
+        except Exception as exc:
+            # Honest degradation: absence projects as open.  A closure aid
+            # must not rewrite a run's already-durable execution outcome.
+            logger.warning("Run closure marker not written for run %s: %s", self._run_id, sanitize_log(str(exc)))
 
     def _seal_intent_capsules(self, hmac_key: bytes) -> None:
         """Commit the finished journal's end for every capsule bound to this run (#2649).
@@ -3513,8 +3558,13 @@ class Orchestrator:
 
         return preserved
 
-    def stop(self) -> None:
+    def stop(
+        self,
+        *,
+        outcome: RunClosureOutcome | str = RunClosureOutcome.CANCELLED,
+    ) -> None:
         """Delegate to orchestrator_cleanup.stop."""
+        self._closure_outcome = RunClosureOutcome(outcome)
         from bernstein.core.orchestration import orchestrator_cleanup
 
         orchestrator_cleanup.stop(self)
@@ -6527,7 +6577,7 @@ if __name__ == "__main__":
 
             def _signal_handler(signum: int, _frame: object) -> None:
                 logger.info("Signal %d received, stopping orchestrator", signum)
-                orchestrator.stop()
+                orchestrator.stop(outcome="cancelled")
 
             signal.signal(signal.SIGINT, _signal_handler)
             signal.signal(signal.SIGTERM, _signal_handler)
@@ -6568,6 +6618,10 @@ if __name__ == "__main__":
             flush=True,
         )
         logger.exception("Orchestrator crashed")
+        _failed_orchestrator = locals().get("orchestrator")
+        if isinstance(_failed_orchestrator, Orchestrator):
+            _failed_orchestrator._closure_outcome = RunClosureOutcome.FAILED
+            _failed_orchestrator._write_run_closure()
         try:
             _crash_log_dir = workdir / ".sdd" / "runtime"
             _crash_log_dir.mkdir(parents=True, exist_ok=True)

@@ -44,6 +44,7 @@ from bernstein.core.orchestration.preflight import (
 )
 from bernstein.core.orchestration.process_utils import (
     LIVENESS_ALIVE,
+    LIVENESS_GONE,
     ORCHESTRATOR_PROCESS_MARKERS,
     WATCHDOG_POLL_S,
     Liveness,
@@ -77,6 +78,18 @@ from bernstein.core.server_launch import (
 from bernstein.core.server_supervisor import supervised_server
 
 logger = logging.getLogger(__name__)
+
+
+def _reconcile_dead_owner_before_runtime_cleanup(workdir: Path) -> None:
+    """Preserve an abnormal closure before stale runtime files are removed."""
+    from bernstein.core.orchestration.run_closure_owner import (
+        list_spawner_run_owners,
+        reconcile_spawner_run_owner,
+    )
+
+    for owner in list_spawner_run_owners(workdir / ".sdd"):
+        if not _is_alive(owner.pid):
+            reconcile_spawner_run_owner(workdir=workdir, owner=owner)
 
 
 def _bearer_headers(auth_token: str | None) -> dict[str, str]:
@@ -675,6 +688,7 @@ def bootstrap_from_seed(
 
     # 2. Workspace + catalog + index (silent - errors logged, not printed)
     ensure_sdd(workdir, model=seed.model)
+    _reconcile_dead_owner_before_runtime_cleanup(workdir)
     _clean_stale_runtime(workdir)
     _discover_catalog(workdir)
     _index_codebase_with_timeout(workdir)
@@ -1114,10 +1128,17 @@ def run_watchdog(
             expect_cmdline=ORCHESTRATOR_PROCESS_MARKERS,
         )
 
-        def _restart_spawner() -> int:
+        def _restart_spawner(
+            _spawner_liveness: Liveness = spawner_liveness,
+            _spawner_pid: int | None = spawner_pid,
+        ) -> int:
             cur_server_pid = _read_pid(server_pid_path)
             if cur_server_pid is None or not _is_alive(cur_server_pid):
                 return -1  # signal: skip restart
+            if _spawner_liveness == LIVENESS_GONE and _spawner_pid is not None:
+                from bernstein.core.orchestration.run_closure_owner import reconcile_positively_dead_owner
+
+                reconcile_positively_dead_owner(workdir=workdir, dead_pid=_spawner_pid)
             logger.info("_restart_spawner: restarting with seed_path=%s adapter=%s model=%s", seed_path, adapter, model)
             return _start_spawner(workdir, port, adapter=adapter, model=model, seed_path=seed_path)
 
@@ -1390,6 +1411,7 @@ def _bootstrap_from_goal_impl(
         created = ensure_sdd(workdir, model=model)
         if first_run and not (workdir / "bernstein.yaml").exists():
             auto_write_bernstein_yaml(workdir)
+        _reconcile_dead_owner_before_runtime_cleanup(workdir)
         _clean_stale_runtime(workdir)
     if created:
         console.print(f"[green]{_icons.arrow_right}[/green] Created .sdd/ workspace")

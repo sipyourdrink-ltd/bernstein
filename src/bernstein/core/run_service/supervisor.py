@@ -102,6 +102,9 @@ def advance_run(
     completed_count = 0
     try:
         state = _project(ledger_dir, run_id)
+        # Direct callers must not silently resume past a terminal boundary.
+        if state.run_closed:
+            return state
         already_started = set(state.in_flight_tasks)
         frontier = state.resume_frontier()
         for task_id in frontier:
@@ -144,12 +147,22 @@ def serve_run(root: Path, run_id: str, *, per_task_delay: float = 0.0) -> Ledger
     root = Path(root)
     svc = RunService(root)
     state = svc.project(run_id)
+    if state.run_closed:
+        return state
     if state.completed_tasks or state.in_flight_tasks:
         svc.daemon_restart(run_id)
     spec = read_ssh_spec(root, run_id)
     task_runner = SSHTaskRunner(spec, root, run_id) if spec is not None else None
-    advance_run(root, run_id, per_task_delay=per_task_delay, task_runner=task_runner)
-    svc.complete(run_id)
+    try:
+        advance_run(root, run_id, per_task_delay=per_task_delay, task_runner=task_runner)
+    except KeyboardInterrupt:
+        svc.close(run_id, "cancelled")
+        raise
+    except Exception:
+        svc.close(run_id, "failed")
+        raise
+    else:
+        svc.complete(run_id)
     return svc.project(run_id)
 
 

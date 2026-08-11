@@ -25,6 +25,7 @@ from bernstein.core.run_service import (
     verify_run,
 )
 from bernstein.core.security.audit_chain import EVENT_RUN_LIFECYCLE, AuditChainStore
+from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
 
 @pytest.fixture
@@ -122,6 +123,55 @@ def test_serve_run_advances_then_records_completion(project: Path) -> None:
         if e.details.get("run_id") == run_id
     ]
     assert transitions[-1] == "completed"
+    closure = project_run_closure(chain, run_id)
+    assert closure.status is RunClosureStatus.CLOSED
+    assert closure.outcome is RunClosureOutcome.COMPLETED
+    assert closure.anchor_kind == "work_ledger"
+
+
+def test_run_service_failure_records_failed_closure(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    svc = RunService(project)
+    handle = svc.submit("goal", ["t0"])
+
+    def fail_run(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("worker failed")
+
+    monkeypatch.setattr("bernstein.core.run_service.supervisor.advance_run", fail_run)
+    with pytest.raises(RuntimeError, match="worker failed"):
+        serve_run(project, handle.run_id)
+    closure = project_run_closure(AuditChainStore(project / ".sdd" / "audit"), handle.run_id)
+    assert closure.status is RunClosureStatus.CLOSED
+    assert closure.outcome is RunClosureOutcome.FAILED
+
+
+def test_completion_retry_does_not_append_after_closure(project: Path) -> None:
+    svc = RunService(project)
+    handle = svc.submit("goal", ["t0"])
+    advance_run(project, handle.run_id)
+    svc.complete(handle.run_id)
+    before = AuditChainStore(project / ".sdd" / "audit").query(include_archived=True)
+    svc.complete(handle.run_id)
+    after = AuditChainStore(project / ".sdd" / "audit").query(include_archived=True)
+    assert len(after) == len(before)
+    assert project_run_closure(AuditChainStore(project / ".sdd" / "audit"), handle.run_id).complete_range
+
+
+def test_closed_run_is_read_only_across_lifecycle_entrypoints(project: Path) -> None:
+    svc = RunService(project)
+    handle = svc.submit("goal", ["t0"])
+    advance_run(project, handle.run_id)
+    svc.complete(handle.run_id)
+    chain = AuditChainStore(project / ".sdd" / "audit")
+    before = chain.query(include_archived=True)
+
+    assert svc.attach(handle.run_id).state.run_closed
+    svc.detach(handle.run_id)
+    svc.daemon_restart(handle.run_id)
+    assert advance_run(project, handle.run_id).run_closed
+
+    after = AuditChainStore(project / ".sdd" / "audit").query(include_archived=True)
+    assert len(after) == len(before)
+    assert project_run_closure(AuditChainStore(project / ".sdd" / "audit"), handle.run_id).complete_range
 
 
 def test_advance_run_deterministic_projection(project: Path) -> None:

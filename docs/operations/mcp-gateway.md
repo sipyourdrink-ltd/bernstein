@@ -119,14 +119,15 @@ and rejects duplicate dispatch of the same attestation. Operators should treat
 `observed` as an honest loss of completeness, never as a softer spelling of
 `complete`.
 
-The provisional run-attestation receipt projects this evidence from the run's
+The run-attestation receipt projects this evidence from the run's
 unique identity anchor through an authenticated audit-chain head. It keeps
 interleaved events, validates the source chain before selection, and uses the
-existing COSE/DSSE/transparency receipt formats. Even when every retained
-dispatch is paired and identity-verified, the whole-run verdict remains
-`observed`: Bernstein has no authenticated closure marker shared by every run
-launch path yet. The receipt is therefore evidence of the retained interval,
-not evidence that no later call occurred.
+existing COSE/DSSE/transparency receipt formats. The whole-run verdict becomes
+`complete` only when the retained range has a still-valid journal-bound
+`run.closure`; without it, even perfectly paired dispatch evidence remains
+`observed`. A later same-run event invalidates the closure claim. The receipt
+therefore never turns a snapshot, a work-ledger marker, or silence into proof
+that no later gateway call occurred.
 
 For pre-merge enforcement, janitor can receive the authenticated audit-chain
 source and couple it to the signed lineage log. Every

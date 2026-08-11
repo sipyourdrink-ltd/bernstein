@@ -32,6 +32,7 @@ from bernstein.core.security.run_attestation_receipt import (
     build_run_attestation_receipt,
     verify_run_attestation_projection,
 )
+from bernstein.core.security.run_closure import close_run
 from bernstein.core.security.toolcall_identity import LineageToolCallIdentitySigner
 from bernstein.core.security.toolcall_interlock import AttestationVerdict, ToolCallIntent
 
@@ -155,6 +156,89 @@ async def test_valid_range_is_standard_verifiable_but_whole_run_stays_observed(r
     rc, output = _standard_verify(receipt.receipt_path)
     assert rc == 0, output
     assert "OVERALL: PASS" in output
+
+
+@pytest.mark.asyncio
+async def test_valid_closure_upgrades_whole_run_from_retained_evidence(tmp_path: Path) -> None:
+    provider = _anchored_provider(tmp_path)
+    await provider.prepare_dispatch(_intent())
+    closure = close_run(
+        chain=provider.chain,
+        run_id="run-1",
+        outcome="completed",
+        actor="orchestrator",
+        run_journal_head="1" * 64,
+        run_journal_event_count=4,
+    )
+    receipt = build_run_attestation_receipt(
+        tmp_path / "audit",
+        run_id="run-1",
+        key=HMAC_KEY,
+        kms_adapter=_kms(tmp_path / "signing"),
+        write=False,
+    )
+    assert receipt.whole_run_verdict is AttestationVerdict.COMPLETE
+    assert receipt.receipt["run_attestation"]["terminal_boundary"] == closure.hmac
+    assert receipt.receipt["run_attestation"]["provisional"] is False
+    semantic = verify_run_attestation_projection(receipt.receipt)
+    assert semantic.ok, semantic.errors
+    assert semantic.whole_run_verdict is AttestationVerdict.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_work_ledger_closure_does_not_upgrade_identity_journal_receipt(tmp_path: Path) -> None:
+    provider = _anchored_provider(tmp_path)
+    await provider.prepare_dispatch(_intent())
+    close_run(
+        chain=provider.chain,
+        run_id="run-1",
+        outcome="completed",
+        actor="run_service",
+        work_ledger_head="2" * 64,
+        work_ledger_entry_count=4,
+    )
+    receipt = build_run_attestation_receipt(
+        tmp_path / "audit",
+        run_id="run-1",
+        key=HMAC_KEY,
+        kms_adapter=_kms(tmp_path / "signing"),
+        write=False,
+    )
+    assert receipt.whole_run_verdict is AttestationVerdict.OBSERVED
+    assert receipt.receipt["run_attestation"]["terminal_boundary"] is None
+    assert receipt.receipt["run_attestation"]["provisional"] is True
+
+
+@pytest.mark.asyncio
+async def test_later_same_run_event_downgrades_a_previously_valid_closure(tmp_path: Path) -> None:
+    provider = _anchored_provider(tmp_path)
+    await provider.prepare_dispatch(_intent())
+    close_run(
+        chain=provider.chain,
+        run_id="run-1",
+        outcome="completed",
+        actor="orchestrator",
+        run_journal_head="1" * 64,
+        run_journal_event_count=4,
+    )
+    provider.chain.log(
+        event_type="run.progress",
+        actor="agent-1",
+        resource_type="run",
+        resource_id="run-1",
+        details={"run_id": "run-1"},
+    )
+    receipt = build_run_attestation_receipt(
+        tmp_path / "audit",
+        run_id="run-1",
+        key=HMAC_KEY,
+        kms_adapter=_kms(tmp_path / "signing"),
+        write=False,
+    )
+    assert receipt.whole_run_verdict is AttestationVerdict.OBSERVED
+    assert receipt.receipt["run_attestation"]["terminal_boundary"] is None
+    assert receipt.receipt["run_attestation"]["provisional"] is True
+    assert verify_run_attestation_projection(receipt.receipt).ok
 
 
 @pytest.mark.asyncio
@@ -305,7 +389,7 @@ async def test_serialized_complete_claim_is_refused(receipt_env: dict[str, Any])
     mutated["run_attestation"]["provisional"] = False
     result = verify_run_attestation_projection(mutated)
     assert not result.ok
-    assert any("unsupported whole-run" in error for error in result.errors)
+    assert any("not derived from retained closure evidence" in error for error in result.errors)
 
 
 @pytest.mark.asyncio

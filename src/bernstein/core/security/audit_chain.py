@@ -496,6 +496,14 @@ EVENT_REVIEW_BOARD_ACTION = "review_board.action"
 #: continuity span are recorded -- never goal text or task payloads.
 EVENT_RUN_LIFECYCLE = "run.lifecycle"
 
+#: Issue #3469 -- the one authenticated terminal marker shared by every run
+#: execution path.  The marker binds the outcome and exactly one authoritative
+#: state anchor: the Merkle journal head for orchestrator runs, or the durable
+#: work-ledger head for detached RunService runs.  It is a statement at one
+#: HMAC-chain position, not a write barrier: a verifier must scan forward and
+#: invalidate closure when a later event for the same run appears.
+EVENT_RUN_CLOSURE = "run.closure"
+
 #: Issue #2364 -- emitted whenever an MCP Tasks-extension run handle is minted
 #: for a long-running run. The event carries the handle receipt: the task id,
 #: the run id, the projected status, the run journal head, the embedded
@@ -5526,6 +5534,40 @@ def record_run_lifecycle(
     )
 
 
+def record_run_closure(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    outcome: str,
+    run_journal_head: str = "",
+    run_journal_event_count: int = 0,
+    work_ledger_head: str = "",
+    work_ledger_entry_count: int = 0,
+    actor: str,
+) -> AuditEvent:
+    """Append the authenticated terminal marker for *run_id* (#3469).
+
+    Validation and idempotency belong to
+    :func:`bernstein.core.security.run_closure.close_run`; this low-level
+    recorder mirrors the established audit-chain helper pattern and should not
+    be called directly by lifecycle owners.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RUN_CLOSURE,
+        actor=actor,
+        resource_type="run",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "outcome": outcome,
+            "run_journal_head": run_journal_head,
+            "run_journal_event_count": run_journal_event_count,
+            "work_ledger_head": work_ledger_head,
+            "work_ledger_entry_count": work_ledger_entry_count,
+        },
+    )
+
+
 def record_review_board_action(
     *,
     chain: AuditChainStore,
@@ -8184,6 +8226,7 @@ __all__ = [
     "EVENT_RULE_FIRE_RECEIPT",
     "EVENT_RUN_ARTIFACT",
     "EVENT_RUN_ARTIFACT_REFUSED",
+    "EVENT_RUN_CLOSURE",
     "EVENT_RUN_LIFECYCLE",
     "EVENT_RUN_SSH_TASK",
     "EVENT_SCHEDULE_COLLISION",
@@ -8318,6 +8361,7 @@ __all__ = [
     "record_rule_fire_receipt",
     "record_run_artifact",
     "record_run_artifact_refused",
+    "record_run_closure",
     "record_run_lifecycle",
     "record_run_ssh_task",
     "record_schedule_collision",

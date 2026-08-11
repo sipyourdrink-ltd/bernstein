@@ -390,7 +390,7 @@ def status_cmd(run_id: str | None, workdir: Path | None, output_json: bool) -> N
 @_WORKDIR_OPTION
 @_JSON_OPTION
 def stop_cmd(run_id: str, workdir: Path | None, output_json: bool) -> None:
-    """Stop the run's supervisor and record a detach boundary.
+    """Stop the run's supervisor and record a cancelled closure.
 
     \b
     Exit codes:
@@ -400,18 +400,22 @@ def stop_cmd(run_id: str, workdir: Path | None, output_json: bool) -> None:
     root = _root(workdir)
     svc = RunService(root)
     try:
-        svc.detach(run_id)
+        state = svc.project(run_id)
     except RunServiceError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(EXIT_NO_RUN) from None
+    if not state.run_closed:
+        svc.detach(run_id)
     stopped = stop_supervisor(root, run_id)
+    if not svc.project(run_id).run_closed:
+        svc.close(run_id, "cancelled")
     if output_json:
         console.print_json(json.dumps({"run_id": run_id, "stopped": stopped}))
         return
     if stopped:
-        console.print(f"[green]Supervisor stopped[/green] for run {run_id}; detach boundary recorded.")
+        console.print(f"[green]Supervisor stopped[/green] for run {run_id}; cancelled closure recorded.")
     else:
-        console.print(f"[yellow]No running supervisor[/yellow] for run {run_id}; detach boundary recorded.")
+        console.print(f"[yellow]No running supervisor[/yellow] for run {run_id}; closure state preserved.")
 
 
 # ---------------------------------------------------------------------------

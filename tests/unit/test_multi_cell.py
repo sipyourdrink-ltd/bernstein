@@ -19,10 +19,14 @@ from bernstein.core.models import (
 from bernstein.core.multi_cell import (
     CellStatus,
     MultiCellOrchestrator,
+    MultiCellTickResult,
     cell_status,
 )
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.core.security.audit_chain import AuditChainStore
+from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -155,6 +159,20 @@ class TestRegisterRemoveCell:
         orch.register_cell(cell1)
         orch.register_cell(cell2)
         assert orch.cells["alpha"].name == "Second"
+
+    def test_run_stop_writes_cancelled_journal_closure(self, tmp_path: Path) -> None:
+        orch = self._make_orchestrator(tmp_path)
+
+        def one_tick() -> MultiCellTickResult:
+            orch.stop()
+            return MultiCellTickResult()
+
+        orch.tick = one_tick  # type: ignore[method-assign]
+        orch.run()
+        closure = project_run_closure(AuditChainStore(tmp_path / ".sdd" / "audit"), orch._run_id)
+        assert closure.status is RunClosureStatus.CLOSED
+        assert closure.outcome is RunClosureOutcome.CANCELLED
+        assert closure.anchor_kind == "run_journal"
 
 
 # ---------------------------------------------------------------------------
