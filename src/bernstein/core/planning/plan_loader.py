@@ -408,16 +408,9 @@ def _parse_step(
     # Reject scalar / non-list shapes so a YAML typo like
     # ``attachments: ./shot.png`` does not silently iterate the string
     # character-by-character. (bot-ack: 3284182784 -- CodeRabbit major.)
-    raw_attachments = step.get("attachments")
-    if raw_attachments is None:
-        attachments: list[str] = []
-    elif isinstance(raw_attachments, list):
-        attachments = [str(a) for a in raw_attachments]
-    else:
-        raise PlanLoadError(
-            f"Step {step_index} in stage {stage_name!r}: 'attachments' must be a "
-            f"list of paths, got {type(raw_attachments).__name__}"
-        )
+    attachments: list[str] = _parse_string_list_field(
+        step.get("attachments"), "attachments", f"Step {step_index} in stage {stage_name!r}"
+    )
 
     model_raw = step.get("model")
     effort_raw = step.get("effort")
