@@ -402,6 +402,10 @@ class TestRetryEscalation:
         task.max_retries = 2
         retried: set[str] = set()
         quarantine = MagicMock()
+        # The exhaustion path asks the store before recording, so a bare Mock
+        # would answer with a truthy Mock and suppress the very call this
+        # test asserts on (#3628).
+        quarantine.is_quarantined.return_value = False
 
         result = maybe_retry_task(
             task,
