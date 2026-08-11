@@ -146,6 +146,7 @@ def _coerce_rows(raw: Any) -> list[Any]:
 # Per-kind canonicalisers + content hash
 # ---------------------------------------------------------------------------
 
+
 def _canonical_finding_bytes(raw: Any) -> bytes:
     """Canonicalise a SARIF 2.1.0 finding artifact for content-addressing.
     Projects the finding down to stable identity fields, deliberately dropping
@@ -180,6 +181,7 @@ def _canonical_finding_bytes(raw: Any) -> bytes:
     }
 
     return _canonical_json_bytes(projected)
+
 
 def canonicalise_artifact(kind: ArtifactKind | str, raw: Any) -> bytes:
     """Return the canonical bytes for ``raw`` under ``kind``'s rule.
