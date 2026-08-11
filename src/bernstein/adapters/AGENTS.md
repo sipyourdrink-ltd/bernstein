@@ -1,3 +1,4 @@
+<!-- ... -->
 # CLI agent adapters
 
 One adapter per upstream coding-agent CLI (claude, codex, gemini,

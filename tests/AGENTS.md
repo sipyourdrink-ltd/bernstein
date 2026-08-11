@@ -1,3 +1,4 @@
+<!-- ... -->
 # Test suite
 
 Layered pytest suite. `unit/` is the big one (1600+ files, no network);

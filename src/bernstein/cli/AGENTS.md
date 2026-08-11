@@ -1,3 +1,4 @@
+<!-- ... -->
 # Click CLI
 
 The top-level `bernstein` command (`pyproject.toml` `[project.scripts]`

@@ -1,3 +1,4 @@
+<!-- ... -->
 # Quality gates and verification
 
 The verification layer between a worker's diff and merge or human
