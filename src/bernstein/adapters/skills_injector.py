@@ -299,44 +299,50 @@ def inject_skills(
     for template_name in templates_to_inject:
         if template_name.rsplit(".", 1)[0] in revoked_ids:
             _logger.warning("Refusing to inject revoked skill %s (signed revocation)", template_name)
-            audit_records.append({
-                'template_name': template_name,
-                'version': '',
-                'pre_render_digest': '',
-                'rendered_digest': '',
-                'trigger_source': trigger_by_template.get(template_name, 'unknown'),
-                'source': 'injected',
-                'status': 'refused'
-            })
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "refused",
+                }
+            )
             continue
 
         source_path = skills_source_dir / template_name
         if not source_path.exists():
             _logger.debug("Skill template not found: %s - skipping", source_path)
-            audit_records.append({
-                'template_name': template_name,
-                'version': '',
-                'pre_render_digest': '',
-                'rendered_digest': '',
-                'trigger_source': trigger_by_template.get(template_name, 'unknown'),
-                'source': 'injected',
-                'status': 'missing'
-            })
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "missing",
+                }
+            )
             continue
 
         try:
             raw = source_path.read_text(encoding="utf-8")
         except OSError as exc:
             _logger.debug("Failed to read skill template %s: %s", source_path, exc)
-            audit_records.append({
-                'template_name': template_name,
-                'version': '',
-                'pre_render_digest': '',
-                'rendered_digest': '',
-                'trigger_source': trigger_by_template.get(template_name, 'unknown'),
-                'source': 'injected',
-                'status': 'read_failed'
-            })
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "read_failed",
+                }
+            )
             continue
 
         # Strip invisible Unicode Tag codepoints (U+E0000-U+E007F, Cf, U+FFF9-
@@ -350,10 +356,10 @@ def inject_skills(
             origin=str(source_path),
             source_name="templates/skills",
         )
-        
-        pre_render_digest: str = hashlib.blake2b(sanitized.encode('utf-8')).hexdigest()
+
+        pre_render_digest: str = hashlib.blake2b(sanitized.encode("utf-8")).hexdigest()
         rendered: str = render_skill_template(sanitized, session_id=session_id, tasks=tasks)
-        rendered_digest: str = hashlib.blake2b(rendered.encode('utf-8')).hexdigest()
+        rendered_digest: str = hashlib.blake2b(rendered.encode("utf-8")).hexdigest()
 
         dest_path = skills_dest_dir / template_name
         try:
@@ -362,15 +368,17 @@ def inject_skills(
             written_relpaths.append(str(dest_path.relative_to(workdir)))
         except OSError as exc:
             _logger.debug("Failed to write skill %s: %s", dest_path, exc)
-            audit_records.append({
-                'template_name': template_name,
-                'version': '',
-                'pre_render_digest': pre_render_digest,
-                'rendered_digest': rendered_digest,
-                'trigger_source': trigger_by_template.get(template_name, 'unknown'),
-                'source': 'injected',
-                'status': 'write_failed'
-            })
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": pre_render_digest,
+                    "rendered_digest": rendered_digest,
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "write_failed",
+                }
+            )
             continue
 
         # Activation log: best-effort, opt-out via env var. We compute a
@@ -384,15 +392,17 @@ def inject_skills(
         except Exception:
             _logger.debug("Failed to extract skill version for %s", template_name, exc_info=True)
             version = ""
-        audit_records.append({
-            'template_name': template_name,
-            'version': version,
-            'pre_render_digest': pre_render_digest,
-            'rendered_digest': rendered_digest,
-            'trigger_source': trigger_by_template.get(template_name, 'unknown'),
-            'status': 'injected',
-            'source': 'injected'
-        })
+        audit_records.append(
+            {
+                "template_name": template_name,
+                "version": version,
+                "pre_render_digest": pre_render_digest,
+                "rendered_digest": rendered_digest,
+                "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                "status": "injected",
+                "source": "injected",
+            }
+        )
         try:
             digest: str = hashlib.blake2b(sanitized.encode("utf-8"), digest_size=16).hexdigest()
         except Exception:

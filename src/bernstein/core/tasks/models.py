@@ -1212,6 +1212,7 @@ class AgentSession:
     # nothing was injected (not absent).
     injected_skills: list[dict[str, str]] = field(default_factory=list)
 
+
 class IsolationMode(StrEnum):
     """Agent isolation mode."""
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import collections
 import concurrent.futures
 import contextlib
+import hashlib
 import itertools
 import json
 import logging
@@ -27,7 +28,6 @@ import re
 import signal
 import threading
 import time
-import hashlib
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -58,9 +58,6 @@ from bernstein.core.context_degradation_detector import (
     ContextDegradationConfig,
     ContextDegradationDetector,
 )
-from bernstein.core.skills.provenance import record_usage
-from bernstein.core.security.audit import load_or_create_audit_key
-from bernstein.core.lineage import LineageSpine
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.cost.budget_actions import BudgetAction, BudgetPolicy, apply_policy
 from bernstein.core.cost_tracker import CostTracker
@@ -79,6 +76,7 @@ from bernstein.core.file_locks import FileLockManager
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.incident import IncidentManager
 from bernstein.core.knowledge.task_graph import TaskGraph
+from bernstein.core.lineage import LineageSpine
 from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.memory_guard import MemoryGuard
 from bernstein.core.merge_queue import MergeQueue
@@ -140,10 +138,12 @@ from bernstein.core.runtime_state import (
     rotate_log_file,
     write_session_replay_metadata,
 )
+from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.seed import resolve_seed_path
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
+from bernstein.core.skills.provenance import record_usage
 from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments
 from bernstein.core.task_grouping import compact_small_tasks
 from bernstein.core.task_lifecycle import (
@@ -5233,6 +5233,7 @@ class Orchestrator:
             # activation log or the journal event above.
             if session.injected_skills:
                 from bernstein import get_templates_dir
+
                 hmac_key = load_or_create_audit_key()
                 lineage_root = self._workdir / ".sdd" / "lineage"
                 spine = LineageSpine(lineage_root, run_id=self._run_id, hmac_key=hmac_key)

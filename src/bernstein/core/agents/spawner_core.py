@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import copy
 import inspect
 import json
 import logging
 import re
-import copy
 import shutil
 import threading
 import time
@@ -4170,7 +4170,7 @@ class AgentSpawner:
             session.injected_skills = copy.deepcopy(audit_snapshot)
             for _t in tasks:
                 if isinstance(_t.metadata, dict):
-                    _t.metadata['injected_skills'] = copy.deepcopy(audit_snapshot)
+                    _t.metadata["injected_skills"] = copy.deepcopy(audit_snapshot)
             _inject_scheduled_tasks(
                 workdir=spawn_cwd,
                 session_id=session_id,
@@ -4693,32 +4693,34 @@ class AgentSpawner:
         physically present in the worktree even if we've lost the record
         of exactly which digests they correspond to.
         """
-        source_record = tasks[0].metadata.get('injected_skills') if tasks else None
+        source_record = tasks[0].metadata.get("injected_skills") if tasks else None
         if not source_record:
             logger.warning(
                 "No injected_skills provenance found on resume for tasks %s; "
                 "worktree may still contain skill files from the original spawn",
                 [t.id for t in tasks],
             )
-            session.injected_skills = [{
-                'template_name': '',
-                'version': '',
-                'pre_render_digest': '',
-                'rendered_digest': '',
-                'trigger_source': 'unknown',
-                'source': 'resume-preserved',
-                'status': 'unknown_provenance',
-            }]
+            session.injected_skills = [
+                {
+                    "template_name": "",
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": "unknown",
+                    "source": "resume-preserved",
+                    "status": "unknown_provenance",
+                }
+            ]
             return
 
         carried = copy.deepcopy(source_record)
         for record in carried:
-            record['source'] = 'resume-preserved'
+            record["source"] = "resume-preserved"
 
         session.injected_skills = carried
         for t in tasks:
             if isinstance(t.metadata, dict):
-                t.metadata['injected_skills'] = copy.deepcopy(carried)
+                t.metadata["injected_skills"] = copy.deepcopy(carried)
 
     def spawn_for_resume(
         self,
