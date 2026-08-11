@@ -171,12 +171,12 @@ configuring anything.
 
 ### `No agents available`
 
-`bernstein agents` shows nothing checked. Install at least one CLI agent (Step 1) and run
-its login flow. Then:
+`bernstein doctor` shows every `Adapter:` row red. Install at least one CLI agent
+(Step 1) and run its login flow. Then:
 
 ```bash
-bernstein agents discover    # rescan
-bernstein doctor             # confirm
+bernstein agents discover    # rescan agent-role catalogs
+bernstein doctor             # confirm adapters + auth are green
 ```
 
 ### `Port 8052 already in use`
