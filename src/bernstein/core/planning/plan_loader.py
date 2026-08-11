@@ -408,8 +408,11 @@ def _parse_step(
     # Reject scalar / non-list shapes so a YAML typo like
     # ``attachments: ./shot.png`` does not silently iterate the string
     # character-by-character. (bot-ack: 3284182784 -- CodeRabbit major.)
+    # Items are checked too: this field becomes a filesystem path at spawn, so
+    # ``str()`` on a mapping produced "{'a': 'b'}" and handed the adapter a
+    # path that cannot exist and never named the plan line that wrote it.
     attachments: list[str] = _parse_string_list_field(
-        step.get("attachments"), "attachments", f"Step {step_index} in stage {stage_name!r}"
+        step.get("attachments"), "attachments", _step_context(stage_name, step_index)
     )
 
     model_raw = step.get("model")

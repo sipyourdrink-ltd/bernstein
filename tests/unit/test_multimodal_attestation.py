@@ -538,6 +538,59 @@ class TestPlanLoaderAttachments:
         with pytest.raises(PlanLoadError, match="attachments"):
             load_plan_from_yaml(plan_yaml)
 
+    @pytest.mark.parametrize(
+        ("literal", "expected_type"),
+        [("null", "NoneType"), ("true", "bool"), ("42", "int"), ("{a: b}", "dict")],
+        ids=["null", "bool", "number", "mapping"],
+    )
+    def test_yaml_plan_rejects_non_string_attachment_items(
+        self, tmp_path: Path, literal: str, expected_type: str
+    ) -> None:
+        """Every item becomes a filesystem path at spawn, so a non-string one
+        has to fail at load. `str()` turned these into '42' and "{'a': 'b'}" --
+        paths that cannot exist, reported later by whatever tried to open them
+        rather than by the loader that read the plan line."""
+        img = _make_image(tmp_path / "img.png")
+        plan_yaml = tmp_path / "plan.yaml"
+        plan_yaml.write_text(
+            "name: test\n"
+            "stages:\n"
+            "  - name: phase1\n"
+            "    steps:\n"
+            "      - title: With attachment\n"
+            "        role: backend\n"
+            f"        attachments: ['{img}', {literal}]\n"
+        )
+        from bernstein.core.planning.plan_loader import PlanLoadError, load_plan_from_yaml
+
+        with pytest.raises(PlanLoadError) as exc_info:
+            load_plan_from_yaml(plan_yaml)
+
+        message = str(exc_info.value)
+        assert "attachments[1]" in message
+        assert expected_type in message
+        # The plan line is what the reader has to edit, so the message names it.
+        assert message.startswith("Step 0 in stage 'phase1':"), message
+
+    @pytest.mark.parametrize("literal", ["null", ""], ids=["explicit-null", "absent"])
+    def test_yaml_plan_absent_and_null_attachments_still_load(self, tmp_path: Path, literal: str) -> None:
+        """Steps without attachments are the overwhelming majority; a strict
+        rewrite that rejects the absent case would break every existing plan."""
+        plan_yaml = tmp_path / "plan.yaml"
+        field = f"        attachments: {literal}\n" if literal else ""
+        plan_yaml.write_text(
+            "name: test\n"
+            "stages:\n"
+            "  - name: phase1\n"
+            "    steps:\n"
+            "      - title: No attachment\n"
+            "        role: backend\n" + field
+        )
+        from bernstein.core.planning.plan_loader import load_plan_from_yaml
+
+        tasks = load_plan_from_yaml(plan_yaml)
+        assert tasks[0].attachments == []
+
 
 # ---------------------------------------------------------------------------
 # Hash-matches-base64 invariant (bot-ack: 3284182756)
