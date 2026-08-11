@@ -51,9 +51,26 @@ jobs:
           # hand-typed dispatch produces. Reject it here so the failure names the
           # cause, instead of surfacing three steps later as a formula pinned to a
           # release that does not exist.
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$'; then
-            echo "::error::'${VERSION}' is not a release version this workflow can publish."
+          #
+          # Two separate rules, because "not publishable" and "not a version"
+          # are different outcomes. The first pattern is the set scripts/
+          # bump_version.py can produce and publish.yml therefore dispatches;
+          # anything outside it is a typo or a misconfigured dispatch and is an
+          # error. The second is narrower: a tap's stable formula must not
+          # track a pre-release, dev, post, or local version, so those exit
+          # successfully as a deliberate skip rather than failing the run that
+          # a legitimate `v3.15.0rc1` tag would otherwise turn red.
+          # tests/unit/test_homebrew_formula.py pins the first pattern to
+          # bump_version.py so the two cannot drift apart.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+.]?[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'${VERSION}' is not a version this project's release tooling can produce."
             exit 1
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::notice::'${VERSION}' is not a final release; Homebrew publishes final releases only."
+            echo "'${VERSION}' is not a final release; skipped Homebrew publication." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -79,6 +96,7 @@ jobs:
           done
 
       - name: Generate formula
+        if: steps.meta.outputs.skip != 'true'
         env:
           META_VERSION: ${{ steps.meta.outputs.version }}
           META_SHA256: ${{ steps.meta.outputs.sha256 }}
@@ -106,6 +124,7 @@ jobs:
           cat /tmp/bernstein.rb
 
       - name: Push to homebrew-tap repo
+        if: steps.meta.outputs.skip != 'true'
         env:
           # HOMEBREW_TAP_TOKEN must be a PAT with `repo` scope for
           # chernistry/homebrew-tap. Without it the cross-repo push fails;

@@ -136,10 +136,85 @@ def test_publish_workflow_validates_the_version_before_building_a_url() -> None:
     """
     code = _code(PUBLISH_WORKFLOW.read_text(encoding="utf-8"))
 
-    version_check = code.partition("is not a release version")[0]
+    version_check = code.partition(_UNRECOGNISED_MESSAGE)[0]
     assert "grep -Eq" in version_check, "the version must be shape-checked before it reaches the URL"
 
     before_url = code.partition('URL="https://files.pythonhosted.org')[0]
-    assert "is not a release version" in before_url, (
+    assert _UNRECOGNISED_MESSAGE in before_url, (
         "the version check must run before the URL that interpolates it is built"
+    )
+
+
+# --------------------------------------------------------------------------
+# Which versions the workflow recognises, and which it publishes (#3626)
+# --------------------------------------------------------------------------
+
+_UNRECOGNISED_MESSAGE = "is not a version this project's release tooling can produce"
+_BUMP_SCRIPT = _REPO / "scripts" / "bump_version.py"
+_GREP_PATTERN = re.compile(r"grep -Eq '(\^\[0-9\][^']+)'")
+_BUMP_SEMVER = re.compile(r"^_SEMVER_RE = re\.compile\(r\"(.+)\"\)$", re.MULTILINE)
+
+# Versions scripts/bump_version.py accepts, so publish.yml can dispatch them.
+_BUMPABLE = ("3.15.0", "3.15.0.dev1", "3.15.0.post1", "3.15.0-rc1", "3.15.0+local.1")
+# Canonical PEP 440 pre-releases, which arrive from a hand-pushed tag.
+_TAGGABLE = ("3.15.0a1", "3.15.0b2", "3.15.0rc1")
+# Values workflow_dispatch's `required: true` still lets through.
+_JUNK = ("latest", "v3.15.0", "3.15", "3.15.0 ", " 3.15.0", "", "main")
+
+
+def _workflow_patterns() -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """The recognise-then-publish pair, in the order the workflow applies them."""
+    found = _GREP_PATTERN.findall(_code(PUBLISH_WORKFLOW.read_text(encoding="utf-8")))
+    assert len(found) == 2, f"expected a recognise and a publish pattern, found {found}"
+    return re.compile(found[0]), re.compile(found[1])
+
+
+def test_every_version_the_bump_script_produces_is_recognised() -> None:
+    """A legitimate release must not fail this workflow, only skip it.
+
+    publish.yml dispatches `${TAG#v}` for whatever tag was released, so a
+    recognise-rule narrower than what scripts/bump_version.py accepts turns a
+    deliberate pre-release into a red run.
+    """
+    recognise, _ = _workflow_patterns()
+    bump = _BUMP_SEMVER.search(_BUMP_SCRIPT.read_text(encoding="utf-8"))
+    assert bump is not None, "scripts/bump_version.py no longer declares _SEMVER_RE"
+    bumpable = re.compile(bump.group(1))
+
+    for version in _BUMPABLE:
+        assert bumpable.match(version), f"corpus is stale: bump_version.py rejects {version!r}"
+        assert recognise.match(version), f"{version!r} is bumpable but the workflow errors on it"
+    for version in _TAGGABLE:
+        assert recognise.match(version), f"{version!r} is a valid tag but the workflow errors on it"
+
+
+def test_a_hand_typed_dispatch_value_is_still_rejected() -> None:
+    recognise, _ = _workflow_patterns()
+
+    for value in _JUNK:
+        assert not recognise.match(value), f"{value!r} must not be treated as a version"
+
+
+def test_only_final_releases_reach_the_tap() -> None:
+    """A stable formula that tracks a dev or pre-release version is a broken tap."""
+    recognise, publish = _workflow_patterns()
+
+    assert publish.match("3.15.0")
+    for version in (*_BUMPABLE[1:], *_TAGGABLE):
+        assert recognise.match(version), f"{version!r} must be recognised"
+        assert not publish.match(version), f"{version!r} must not be published to the tap"
+
+
+def test_a_skipped_version_stops_the_publishing_steps() -> None:
+    """`exit 0` ends the step, not the job -- the later steps need the guard.
+
+    Without it they run with an empty ``steps.meta.outputs.version`` and push a
+    formula pinned to a release that does not exist.
+    """
+    body = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    code = _code(body)
+
+    assert 'echo "skip=true" >> "$GITHUB_OUTPUT"' in code, "the skip path must record itself as an output"
+    assert code.count("steps.meta.outputs.skip != 'true'") == 2, (
+        "both the formula generation and the tap push must be guarded on the skip output"
     )
