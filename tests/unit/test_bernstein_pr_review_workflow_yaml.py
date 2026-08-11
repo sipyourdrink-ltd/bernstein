@@ -102,3 +102,27 @@ def test_pr_review_runs_local_action_from_base_checkout(review_steps: list[Workf
     task = inputs.get("task", "")
     assert isinstance(task, str)
     assert ".bernstein-pr.diff" in task, "Review task must point the action at the fetched PR diff"
+
+
+def test_label_gated_review_also_triggers_on_labeled(workflow: Workflow) -> None:
+    """A label that gates the job must also be able to start it.
+
+    The ``review`` job runs only when the ``deep-review`` label is present. That
+    label is usually added by a maintainer after the PR is already open and
+    ready for review. Without ``labeled`` in the trigger list, adding it does
+    nothing until the contributor happens to push again -- the label reads as a
+    switch that is not wired to anything.
+    """
+    triggers = cast(dict[str, object], workflow.get("on") or workflow.get(True))
+    pull_request = triggers.get("pull_request")
+    assert isinstance(pull_request, dict), "expected a pull_request trigger"
+    types = pull_request.get("types")
+    assert isinstance(types, list)
+
+    review = cast(dict[str, object], cast(dict[str, object], workflow["jobs"])["review"])
+    condition = str(review.get("if", ""))
+    assert "deep-review" in condition, "this test assumes the job is label-gated"
+
+    assert "labeled" in types, (
+        f"the review job is gated on the 'deep-review' label, so 'labeled' must be a trigger type; got {types}"
+    )

@@ -1,10 +1,13 @@
 name: "Bernstein PR Review"
 
-# Trigger: automatically review every non-draft pull request.
-# Add the label "skip-bernstein" to a PR to opt out.
+# Trigger: non-draft pull requests carrying the "deep-review" label.
+# "labeled" is in the list because the label is often added after the PR is
+# already open and ready; without it the review only ever runs on the next
+# push, and a maintainer adding the label sees nothing happen.
+# Add the label "skip-bernstein" to opt a PR out even when "deep-review" is on.
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review]
+    types: [opened, synchronize, ready_for_review, labeled]
     paths:
       - 'src/**'
       - 'tests/**'
