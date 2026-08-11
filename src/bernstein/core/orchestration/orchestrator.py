@@ -27,6 +27,7 @@ import re
 import signal
 import threading
 import time
+import hashlib
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -57,6 +58,9 @@ from bernstein.core.context_degradation_detector import (
     ContextDegradationConfig,
     ContextDegradationDetector,
 )
+from bernstein.core.skills.provenance import record_usage
+from bernstein.core.security.audit import load_or_create_audit_key
+from bernstein.core.lineage import LineageSpine
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.cost.budget_actions import BudgetAction, BudgetPolicy, apply_policy
 from bernstein.core.cost_tracker import CostTracker
@@ -5208,6 +5212,32 @@ class Orchestrator:
                 task_ids=session.task_ids,
                 entries=list(session.injected_skills),
             )
+            # Issue #3382: anchor each injected skill's content hash to this
+            # run's lineage spine, so provenance queries can answer "which
+            # runs used skill X" independently of the human-readable
+            # activation log or the journal event above.
+            if session.injected_skills:
+                from bernstein import get_templates_dir
+                hmac_key = load_or_create_audit_key()
+                lineage_root = self._workdir / ".sdd" / "lineage"
+                spine = LineageSpine(lineage_root, run_id=self._run_id, hmac_key=hmac_key)
+                journal_head = spine.head_hash()
+                skills_dir = get_templates_dir(self._workdir) / "skills"
+                for record in session.injected_skills:
+                    if record.get("status") != "injected":
+                        continue
+                    template_name = record.get("template_name", "")
+                    skill_source = skills_dir / template_name
+                    if not skill_source.is_file():
+                        continue
+                    skill_hash = "sha256:" + hashlib.sha256(skill_source.read_bytes()).hexdigest()
+                    record_usage(
+                        workdir=self._workdir,
+                        skill_hash=skill_hash,
+                        run_id=self._run_id,
+                        journal_head=journal_head,
+                        timestamp=int(time.time()),
+                    )
             for tid in session.task_ids:
                 self._recorder.record(
                     "task_claimed",
