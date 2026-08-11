@@ -96,7 +96,9 @@ def _build(workdir: Path, anchors: list[TaskTrajectoryAnchor] | None = None, **k
     """Build a receipt and return its hash."""
     receipt = build_trajectory_receipt(
         run_id=kwargs.pop("run_id", "run-test-001"),
-        task_anchors=anchors if anchors is not None else [
+        task_anchors=anchors
+        if anchors is not None
+        else [
             _anchor("smoke-001", journal_head="sha256:" + "1" * 64),
             _anchor("smoke-002", journal_head="sha256:" + "2" * 64),
         ],
@@ -152,26 +154,20 @@ def _audit_verify_receipts(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> bo
 # ---------------------------------------------------------------------------
 
 
-def test_audit_verify_noop_when_no_receipts_exist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_verify_noop_when_no_receipts_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC7: no trajectory receipts → _verify_trajectory_receipts returns True silently."""
     result = _audit_verify_receipts(tmp_path, monkeypatch)
     assert result is True
 
 
-def test_audit_verify_passes_for_intact_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_verify_passes_for_intact_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC7: one intact receipt → passes and returns True."""
     _build(tmp_path)
     result = _audit_verify_receipts(tmp_path, monkeypatch)
     assert result is True
 
 
-def test_audit_verify_hard_fails_for_tampered_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_verify_hard_fails_for_tampered_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC7: a tampered receipt → _verify_trajectory_receipts returns False (hard-fail)."""
     receipt_hash = _build(tmp_path)
 
@@ -185,9 +181,7 @@ def test_audit_verify_hard_fails_for_tampered_receipt(
     assert result is False
 
 
-def test_audit_verify_hard_fails_contaminated_suite(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_verify_hard_fails_contaminated_suite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC7 + AC3: a contaminated golden suite (task_id renamed) hard-fails audit verify."""
     receipt_hash = _build(tmp_path)
     payload = _load_payload(tmp_path, receipt_hash)
@@ -200,14 +194,10 @@ def test_audit_verify_hard_fails_contaminated_suite(
     assert result is False
 
 
-def test_audit_verify_noop_with_multiple_intact_receipts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_verify_noop_with_multiple_intact_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC7: multiple intact receipts all pass; no false failure."""
     _build(tmp_path / "run-a", run_id="run-a")
-    _build(tmp_path / "run-b",
-           anchors=[_anchor("t-X", journal_head="sha256:" + "x" * 64)],
-           run_id="run-b")
+    _build(tmp_path / "run-b", anchors=[_anchor("t-X", journal_head="sha256:" + "x" * 64)], run_id="run-b")
 
     # Both receipts should be under the same workdir for audit verify to find them
     # Build both into the same workdir but different run_ids
@@ -249,9 +239,7 @@ def test_benchmark_receipt_verify_inflated_scalar_fails(tmp_path: Path) -> None:
     payload = _load_payload(tmp_path, receipt_hash)
     payload["published_score"] = 9.99
     # Overwrite without resealing — stale hash caught at step 0/1
-    trajectory_receipt_path(tmp_path, receipt_hash).write_text(
-        _canonical(payload), encoding="utf-8"
-    )
+    trajectory_receipt_path(tmp_path, receipt_hash).write_text(_canonical(payload), encoding="utf-8")
     result = _verify(tmp_path, receipt_hash)
     assert result.ok is False
     assert "tampered" in result.reason.lower() or "hash" in result.reason.lower()
@@ -350,9 +338,7 @@ def test_strip_journal_head_from_anchor_fails_closed(tmp_path: Path) -> None:
     new_hash = _reseal(tmp_path, payload)
 
     result = _verify(tmp_path, new_hash)
-    assert result.ok is False, (
-        "strip-the-substrate must fail closed, not pass as a warning"
-    )
+    assert result.ok is False, "strip-the-substrate must fail closed, not pass as a warning"
     assert result.reason  # must name what failed, not be empty
 
 
@@ -365,9 +351,7 @@ def test_strip_events_hash_from_anchor_fails_closed(tmp_path: Path) -> None:
     new_hash = _reseal(tmp_path, payload)
 
     result = _verify(tmp_path, new_hash)
-    assert result.ok is False, (
-        "absent fixture hash must fail closed, not pass as a warning"
-    )
+    assert result.ok is False, "absent fixture hash must fail closed, not pass as a warning"
 
 
 def test_strip_all_task_anchors_fails_closed(tmp_path: Path) -> None:
@@ -384,9 +368,7 @@ def test_strip_all_task_anchors_fails_closed(tmp_path: Path) -> None:
     new_hash = _reseal(tmp_path, payload)
 
     result = _verify(tmp_path, new_hash)
-    assert result.ok is False, (
-        "stripping all anchors must fail closed (contamination detection)"
-    )
+    assert result.ok is False, "stripping all anchors must fail closed (contamination detection)"
 
 
 def test_strip_substrate_result_is_not_ok_false_is_hard_fail(tmp_path: Path) -> None:
@@ -404,8 +386,6 @@ def test_strip_substrate_result_is_not_ok_false_is_hard_fail(tmp_path: Path) -> 
 
     # ok=False is the hard-fail; reason must not be empty (names the failure)
     assert result.ok is False
-    assert isinstance(result.reason, str) and result.reason.strip(), (
-        "reason must name the failure, not be blank"
-    )
+    assert isinstance(result.reason, str) and result.reason.strip(), "reason must name the failure, not be blank"
     # requested_hash is always retained so the operator can locate the file
     assert result.requested_hash == new_hash

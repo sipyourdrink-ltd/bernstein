@@ -124,6 +124,5 @@ def test_label_gated_review_also_triggers_on_labeled(workflow: Workflow) -> None
     assert "deep-review" in condition, "this test assumes the job is label-gated"
 
     assert "labeled" in types, (
-        "the review job is gated on the 'deep-review' label, so 'labeled' must "
-        f"be a trigger type; got {types}"
+        f"the review job is gated on the 'deep-review' label, so 'labeled' must be a trigger type; got {types}"
     )
