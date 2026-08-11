@@ -5231,14 +5231,15 @@ class Orchestrator:
             # run's lineage spine, so provenance queries can answer "which
             # runs used skill X" independently of the human-readable
             # activation log or the journal event above.
-            if session.injected_skills:
+            workdir = getattr(self, "_workdir", None)
+            if session.injected_skills and workdir is not None:
                 from bernstein import get_templates_dir
-
+                run_id = getattr(self, "_run_id", "")
                 hmac_key = load_or_create_audit_key()
-                lineage_root = self._workdir / ".sdd" / "lineage"
-                spine = LineageSpine(lineage_root, run_id=self._run_id, hmac_key=hmac_key)
+                lineage_root = workdir / ".sdd" / "lineage"
+                spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
                 journal_head = spine.head_hash()
-                skills_dir = get_templates_dir(self._workdir) / "skills"
+                skills_dir = get_templates_dir(workdir) / "skills"
                 for record in session.injected_skills:
                     if record.get("status") != "injected":
                         continue
@@ -5248,9 +5249,9 @@ class Orchestrator:
                         continue
                     skill_hash = "sha256:" + hashlib.sha256(skill_source.read_bytes()).hexdigest()
                     record_usage(
-                        workdir=self._workdir,
+                        workdir=workdir,
                         skill_hash=skill_hash,
-                        run_id=self._run_id,
+                        run_id=run_id,
                         journal_head=journal_head,
                         timestamp=int(time.time()),
                     )
