@@ -32,6 +32,22 @@ locally without waiting for the cloud runner.
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
+| **Web Node tests**          | Pre-hydration theme resolution and browser-bootstrap safety         | PR (focused)        |
+
+## Web UI tests
+
+The web package has a focused Node test layer for browser bootstrap code that
+must run before React hydration. Run it from the `web/` directory:
+
+```bash
+cd web && npm test
+```
+
+These tests execute the inline `theme-bootstrap` from `web/index.html` in
+isolated VM contexts. They cover stored and system theme resolution, blocked
+storage, unavailable or throwing browser APIs, inaccessible document roots,
+and the matching `ThemeProvider` storage fallback. They do not start a web
+server or make network requests.
 
 ## Run any of the above locally
 

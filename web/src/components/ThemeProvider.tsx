@@ -1,7 +1,16 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  DEFAULT_THEME,
+  DEFAULT_THEME_STORAGE_KEY,
+  readStoredTheme,
+  resolveTheme,
+  saveStoredTheme,
+  type ResolvedTheme,
+  type Theme,
+} from './theme';
 
-export type Theme = 'dark' | 'light' | 'system';
-export type ResolvedTheme = 'dark' | 'light';
+export type { ResolvedTheme, Theme } from './theme';
+export { DEFAULT_THEME, DEFAULT_THEME_STORAGE_KEY } from './theme';
 
 type ThemeProviderProps = {
   children: ReactNode;
@@ -23,44 +32,56 @@ const ThemeProviderContext = createContext<ThemeProviderState>({
 });
 
 function readSystemTheme(): ResolvedTheme {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'dark';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  try {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch {
+    return 'dark';
+  }
 }
 
 export function ThemeProvider({
   children,
-  defaultTheme = 'system',
-  storageKey = 'bernstein-theme',
+  defaultTheme = DEFAULT_THEME,
+  storageKey = DEFAULT_THEME_STORAGE_KEY,
 }: ThemeProviderProps) {
-  const [theme, setThemeState] = useState<Theme>(
-    () => (typeof window !== 'undefined' && (localStorage.getItem(storageKey) as Theme)) || defaultTheme,
-  );
+  const [theme, setThemeState] = useState<Theme>(() => readStoredTheme(storageKey) ?? defaultTheme);
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => readSystemTheme());
 
   // Track OS preference changes so that toggle reflects what the user actually sees.
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const mql = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => setSystemTheme(e.matches ? 'dark' : 'light');
-    if (typeof mql.addEventListener === 'function') {
-      mql.addEventListener('change', handler);
-      return () => mql.removeEventListener('change', handler);
+    try {
+      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+      const mql = window.matchMedia('(prefers-color-scheme: dark)');
+      const handler = (e: MediaQueryListEvent) => setSystemTheme(e.matches ? 'dark' : 'light');
+      if (typeof mql.addEventListener === 'function' && typeof mql.removeEventListener === 'function') {
+        mql.addEventListener('change', handler);
+        return () => mql.removeEventListener('change', handler);
+      }
+      // Older Safari fallback.
+      if (typeof mql.addListener === 'function' && typeof mql.removeListener === 'function') {
+        mql.addListener(handler);
+        return () => mql.removeListener(handler);
+      }
+    } catch {
+      // Media queries are optional; retain the initial safe system fallback.
     }
-    // Older Safari fallback.
-    mql.addListener(handler);
-    return () => mql.removeListener(handler);
   }, []);
 
-  const resolvedTheme: ResolvedTheme = theme === 'system' ? systemTheme : theme;
+  const resolvedTheme = resolveTheme(theme, systemTheme);
 
   useEffect(() => {
-    const root = window.document.documentElement;
-    root.classList.remove('light', 'dark');
-    root.classList.add(resolvedTheme);
+    try {
+      const root = window.document.documentElement;
+      root.classList.remove('light', 'dark');
+      root.classList.add(resolvedTheme);
+    } catch {
+      // The head bootstrap and provider are best effort; rendering must continue without them.
+    }
   }, [resolvedTheme]);
 
   const setTheme = (t: Theme) => {
-    localStorage.setItem(storageKey, t);
+    saveStoredTheme(storageKey, t);
     setThemeState(t);
   };
 

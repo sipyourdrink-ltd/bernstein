@@ -13,7 +13,7 @@ import {
 } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AppShell from './components/AppShell';
-import { ThemeProvider } from './components/ThemeProvider';
+import { DEFAULT_THEME, DEFAULT_THEME_STORAGE_KEY, ThemeProvider } from './components/ThemeProvider';
 import { ApiError } from './lib/api';
 import Tasks from './routes/Tasks';
 import Agents from './routes/Agents';
@@ -192,7 +192,7 @@ function NotFound() {
 
 export default function App() {
   return (
-    <ThemeProvider defaultTheme="system" storageKey="bernstein-theme">
+    <ThemeProvider defaultTheme={DEFAULT_THEME} storageKey={DEFAULT_THEME_STORAGE_KEY}>
       <QueryClientProvider client={queryClient}>
         {/* basename normalizes both `/ui` and `/ui/` - RR strips the prefix
             internally before matching, so the index route fires exactly once

@@ -95,10 +95,6 @@ rather than by hand-rolling per screen.
 
 Recorded here rather than in a comment nobody greps.
 
-- Theme bootstrap: `index.html` has no inline script reading the stored theme
-  before React mounts, so first paint can flash light theme before resolving
-  to dark. Noted in `web/src/index.css` and left out of scope by the file that
-  found it.
 - The token set has no documented contrast measurements. `success` and
   `warning` on `surface-raised` are the pairs most likely to be short.
 - No route renders a design-system reference page, so the only way to see the

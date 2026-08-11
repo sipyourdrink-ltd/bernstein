@@ -2,14 +2,6 @@
    Tokens from design_handoff_bernstein_phase1/design-source/tokens.css.
    HSL space-separated to match shadcn convention. */
 
-/* NOTE for chrome agent (file owner: ThemeProvider/index.html):
-   ThemeProvider.tsx correctly removes the .dark class on mount, but FOUC
-   is still possible because index.html has no inline theme-bootstrap
-   script - first paint always flashes the light theme. To remove the
-   flash, add a tiny inline <script> in index.html <head> that reads
-   localStorage('bernstein-theme') and sets the class on <html> before
-   React hydrates. (No fix here - out of scope for this file.) */
-
 /* Font loading: both families are vendored under ./fonts and declared below,
    so the dashboard renders with no outbound request at view time.
 
