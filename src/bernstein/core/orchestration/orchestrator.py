@@ -5234,6 +5234,7 @@ class Orchestrator:
             workdir = getattr(self, "_workdir", None)
             if session.injected_skills and workdir is not None:
                 from bernstein import get_templates_dir
+
                 run_id = getattr(self, "_run_id", "")
                 hmac_key = load_or_create_audit_key()
                 lineage_root = workdir / ".sdd" / "lineage"
