@@ -41,6 +41,7 @@ class ArtifactKind(StrEnum):
     DATASET = "dataset"
     ACTION_LOG = "action_log"
     OPS_RESULT = "ops_result"
+    FINDING = "finding"
 
 
 #: Kinds whose canonical form is normalised UTF-8 *text*.
@@ -145,6 +146,41 @@ def _coerce_rows(raw: Any) -> list[Any]:
 # Per-kind canonicalisers + content hash
 # ---------------------------------------------------------------------------
 
+def _canonical_finding_bytes(raw: Any) -> bytes:
+    """Canonicalise a SARIF 2.1.0 finding artifact for content-addressing.
+    
+    Projects the finding down to stable identity fields, deliberately dropping
+    the raw line number so cosmetic shifts don't change the hash. Binds tool
+    context so the identity is anchored to the exact invocation.
+    """
+    if not isinstance(raw, dict):
+        raise CanonicalisationError(f"finding artifact must be a mapping, got {type(raw).__name__}")
+
+    # Extract SARIF result fields
+    rule_id = str(raw.get("ruleId", ""))
+    
+    # Normalise artifact location URI to forward slashes
+    artifact_location = raw.get("artifactLocation", {})
+    uri = str(artifact_location.get("uri", "")).replace("\\", "/")
+    
+    # Hash the snippet text instead of using the raw line number
+    region = raw.get("region", {})
+    snippet_text = str(region.get("snippet", {}).get("text", ""))
+    snippet_hash = "sha256:" + hashlib.sha256(snippet_text.encode("utf-8")).hexdigest()
+    
+    # Bind context fields required by the issue
+    projected = {
+        "ruleId": rule_id,
+        "uri": uri,
+        "snippet_hash": snippet_hash,
+        "tool": str(raw.get("tool", "")),
+        "tool_version": str(raw.get("tool_version", "")),
+        "pinned_digest": str(raw.get("pinned_digest", "")),
+        "invocation_argv_hash": str(raw.get("invocation_argv_hash", "")),
+        "target": str(raw.get("target", "")),
+    }
+    
+    return _canonical_json_bytes(projected)
 
 def canonicalise_artifact(kind: ArtifactKind | str, raw: Any) -> bytes:
     """Return the canonical bytes for ``raw`` under ``kind``'s rule.
@@ -160,6 +196,8 @@ def canonicalise_artifact(kind: ArtifactKind | str, raw: Any) -> bytes:
         return b"\n".join(_canonical_json_bytes(row) for row in rows)
     if k in _JSON_OBJECT_KINDS:
         return _canonical_json_bytes(raw)
+    if k is ArtifactKind.FINDING:
+        return _canonical_finding_bytes(raw)
     raise CanonicalisationError(f"no canonicaliser registered for kind {k!r}")
 
 

@@ -40,6 +40,7 @@ ARTEFACT_KINDS: frozenset[str] = frozenset(
         "ops_result",
         "query-result",
         "external",
+        "finding"
     }
 )
 
