@@ -167,6 +167,70 @@ def test_citation_cff_stamp_rejects_a_file_it_cannot_stamp() -> None:
         module.render_citation_cff("3.14.159", 'cff-version: 1.2.0\nversion: "3.10.0"\n', today="2026-08-10")
 
 
+def test_citation_cff_stamp_rejects_a_document_it_cannot_fully_own() -> None:
+    """A duplicate top-level key would leave a stale value the stamp never touched.
+
+    ``re.sub(..., count=1)`` stamps the first match. With two ``version:`` keys
+    the second keeps the old value, the projection then agrees with itself, and
+    ``--check`` reports in sync while the artifact is wrong.
+    """
+    module = _gen_module()
+    doubled = _CITATION_SAMPLE + 'version: "3.10.0"\n'
+
+    with pytest.raises(module.ManifestValidationError, match="exactly one"):
+        module.render_citation_cff("3.14.159", doubled, today="2026-08-10")
+
+
+def test_citation_cff_stamp_rejects_a_non_scalar_version() -> None:
+    """``version:`` opening a block leaves nothing for the stamp to replace."""
+    module = _gen_module()
+    block = 'cff-version: 1.2.0\nversion:\n  - "3.10.0"\ndate-released: "2026-07-26"\n'
+
+    with pytest.raises(module.ManifestValidationError, match="not a scalar"):
+        module.render_citation_cff("3.14.159", block, today="2026-08-10")
+
+
+def test_citation_cff_stamp_rejects_a_date_that_only_looks_like_one() -> None:
+    """A preserved ``date-released`` is still validated, not trusted."""
+    module = _gen_module()
+    bad = 'cff-version: 1.2.0\nversion: "3.14.159"\ndate-released: "last Tuesday"\n'
+
+    with pytest.raises(module.ManifestValidationError, match="ISO 8601"):
+        module.render_citation_cff("3.14.159", bad, today="2026-08-10")
+
+
+def test_failed_provenance_puts_back_every_file_the_run_replaced(tmp_path: Path) -> None:
+    """A failed release gate must not leave the tree half-rewritten.
+
+    Provenance is verified against the regenerated ``server.json``, so the write
+    happens first. If the check then fails and the new bytes stay, the manifests
+    disagree about which version is being released -- and the next run finds no
+    drift and reports itself in sync.
+    """
+    module = _gen_module()
+
+    existing = tmp_path / "server.json"
+    existing.write_text('{"version": "3.10.0"}\n', encoding="utf-8")
+    created = tmp_path / "mcp.json"
+    created.write_text("new content\n", encoding="utf-8")
+
+    module._restore_replaced({existing: '{"version": "3.10.0"}\n', created: None})
+
+    assert existing.read_text(encoding="utf-8") == '{"version": "3.10.0"}\n'
+    assert not created.exists(), "a file this run created must be removed, not left empty"
+
+
+def test_provenance_failure_restores_before_it_returns() -> None:
+    """Pins the ordering the previous test cannot observe from outside."""
+    source = (_REPO / "scripts" / "gen_distribution_manifests.py").read_text(encoding="utf-8")
+
+    branch = source.partition("if not provenance.ok:")[2].partition("return 1")[0]
+    assert branch, "expected a provenance failure branch in main()"
+    assert "_restore_replaced(replaced)" in branch, (
+        "the provenance failure path must put back what the write phase replaced"
+    )
+
+
 def test_repository_citation_cff_matches_the_package_version() -> None:
     """The checked-in file must already be stamped, or ``--check`` fails the release."""
     module = _gen_module()

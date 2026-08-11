@@ -104,3 +104,42 @@ def test_publish_workflow_refuses_an_unresolved_digest() -> None:
     guard = workflow.partition('if [ -z "$META_SHA256" ]')[2]
     assert guard, "the publish step must guard against an unresolved PyPI digest"
     assert "exit 1" in guard.partition("fi")[0], "an unresolved digest must fail the job"
+
+
+def test_publish_workflow_hashes_the_sdist_and_not_an_error_body() -> None:
+    """``curl -sL`` exits 0 on an HTTP error and prints the error page.
+
+    Piping that into ``sha256sum`` yields a digest that is neither empty nor the
+    empty-file digest, so it cleared every previous guard -- and the formula
+    would ship a ``sha256`` that disagrees with its own ``url``, failing every
+    ``brew install`` at checksum verification.
+    """
+    code = _code(PUBLISH_WORKFLOW.read_text(encoding="utf-8"))
+
+    assert "curl -sL" not in code, "the sdist fetch must not ignore HTTP status"
+    assert "--fail" in code, "the sdist fetch must fail on an HTTP error instead of hashing the body"
+    assert "gzip --test" in code, "the downloaded bytes must be confirmed to be a gzip stream before hashing"
+
+    digest_lines = [line for line in code.splitlines() if "sha256sum" in line]
+    assert digest_lines, "the workflow must compute a digest"
+    assert all("/tmp/sdist.tar.gz" in line for line in digest_lines), (
+        "the digest must be taken from the downloaded file, not from a pipe off curl"
+    )
+
+
+def test_publish_workflow_validates_the_version_before_building_a_url() -> None:
+    """``required: true`` on a dispatch input only means "not omitted".
+
+    The value is interpolated into the sdist URL and into the published formula,
+    so ``latest`` or a stray space becomes a formula pinned to a release that
+    does not exist.
+    """
+    code = _code(PUBLISH_WORKFLOW.read_text(encoding="utf-8"))
+
+    version_check = code.partition("is not a release version")[0]
+    assert "grep -Eq" in version_check, "the version must be shape-checked before it reaches the URL"
+
+    before_url = code.partition('URL="https://files.pythonhosted.org')[0]
+    assert "is not a release version" in before_url, (
+        "the version check must run before the URL that interpolates it is built"
+    )

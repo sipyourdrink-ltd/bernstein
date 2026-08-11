@@ -45,18 +45,36 @@ jobs:
           else
             VERSION="${GITHUB_REF_NAME#v}"
           fi
+          # The version is interpolated straight into the sdist URL and into the
+          # published formula, and workflow_dispatch's `required: true` only means
+          # "not omitted": it accepts `latest`, a stray space, or anything else a
+          # hand-typed dispatch produces. Reject it here so the failure names the
+          # cause, instead of surfacing three steps later as a formula pinned to a
+          # release that does not exist.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$'; then
+            echo "::error::'${VERSION}' is not a release version this workflow can publish."
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          # Get SHA256 of PyPI tarball
+          # `curl -sL` exits 0 on an HTTP error and writes the error body to
+          # stdout, so piping it into sha256sum hashes the 404 page. That digest
+          # is non-empty and is not the empty-file digest, so it passed both
+          # previous guards -- and the published formula would then carry a
+          # sha256 that disagrees with its own url, failing every `brew install`
+          # at checksum verification. Fetch to a file with --fail, and confirm
+          # the bytes really are a gzip stream before hashing them.
           URL="https://files.pythonhosted.org/packages/source/b/bernstein/bernstein-${VERSION}.tar.gz"
           for i in 1 2 3 4 5; do
-            SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
-            if [ -n "$SHA" ] && [ "$SHA" != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+            if curl --fail --location --silent --show-error "$URL" -o /tmp/sdist.tar.gz \
+              && gzip --test /tmp/sdist.tar.gz; then
+              SHA=$(sha256sum /tmp/sdist.tar.gz | cut -d' ' -f1)
               echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
               echo "Found SHA: $SHA"
               break
             fi
-            echo "Waiting for PyPI to propagate... (attempt $i)"
+            rm -f /tmp/sdist.tar.gz
+            echo "sdist for ${VERSION} is not fetchable yet; waiting for PyPI to propagate (attempt $i)"
             sleep 30
           done
 
