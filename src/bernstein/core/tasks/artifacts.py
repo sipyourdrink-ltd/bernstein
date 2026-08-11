@@ -148,7 +148,6 @@ def _coerce_rows(raw: Any) -> list[Any]:
 
 def _canonical_finding_bytes(raw: Any) -> bytes:
     """Canonicalise a SARIF 2.1.0 finding artifact for content-addressing.
-    
     Projects the finding down to stable identity fields, deliberately dropping
     the raw line number so cosmetic shifts don't change the hash. Binds tool
     context so the identity is anchored to the exact invocation.
@@ -158,16 +157,16 @@ def _canonical_finding_bytes(raw: Any) -> bytes:
 
     # Extract SARIF result fields
     rule_id = str(raw.get("ruleId", ""))
-    
+
     # Normalise artifact location URI to forward slashes
     artifact_location = raw.get("artifactLocation", {})
     uri = str(artifact_location.get("uri", "")).replace("\\", "/")
-    
+
     # Hash the snippet text instead of using the raw line number
     region = raw.get("region", {})
     snippet_text = str(region.get("snippet", {}).get("text", ""))
     snippet_hash = "sha256:" + hashlib.sha256(snippet_text.encode("utf-8")).hexdigest()
-    
+
     # Bind context fields required by the issue
     projected = {
         "ruleId": rule_id,
@@ -179,7 +178,7 @@ def _canonical_finding_bytes(raw: Any) -> bytes:
         "invocation_argv_hash": str(raw.get("invocation_argv_hash", "")),
         "target": str(raw.get("target", "")),
     }
-    
+
     return _canonical_json_bytes(projected)
 
 def canonicalise_artifact(kind: ArtifactKind | str, raw: Any) -> bytes:
