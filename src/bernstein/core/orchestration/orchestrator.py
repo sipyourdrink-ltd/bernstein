@@ -1562,6 +1562,29 @@ class Orchestrator:
                 task_graph.save(self._workdir / ".sdd" / "runtime")
             except OSError as exc:
                 logger.debug("Failed to save task graph: %s", exc)
+            
+            # Record plan.graph digest in the run journal (issue #3613)
+            # Only append when the digest changes to avoid 60 identical rows
+            # in a 60-tick run.
+            try:
+                import hashlib
+                graph_triples = sorted(
+                    (t.id, t.role, tuple(sorted(t.depends_on)))
+                    for t in all_tasks
+                )
+                graph_bytes = str(graph_triples).encode()
+                graph_digest = hashlib.sha256(graph_bytes).hexdigest()
+                
+                # Only record if digest changed since last recording
+                if not hasattr(self, '_last_graph_digest') or self._last_graph_digest != graph_digest:
+                    self._recorder.record(
+                        "plan.graph",
+                        digest=graph_digest,
+                        task_count=len(all_tasks),
+                    )
+                    self._last_graph_digest = graph_digest
+            except Exception as exc:
+                logger.debug("Failed to record plan.graph digest: %s", exc)
         else:
             # Fast tick: skip the expensive graph analysis, validation and
             # snapshot persistence, but still recompute the critical path -
