@@ -315,8 +315,8 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
     config = PlanConfig(
         name=str(data.get("name", "")),
         description=str(data.get("description", "")),
-        constraints=list(data.get("constraints") or []),
-        context_files=list(data.get("context_files") or []),
+        constraints=_parse_string_list_field(data.get("constraints"), "constraints", "Plan"),
+        context_files=_parse_string_list_field(data.get("context_files"), "context_files", "Plan"),
         cli=str(data["cli"]) if data.get("cli") else None,
         budget=str(budget_raw) if budget_raw is not None else None,
         max_agents=int(max_agents_raw) if max_agents_raw is not None else None,
@@ -362,7 +362,7 @@ def _parse_stage(
         return
 
     stage_tasks[str(stage_name)] = []
-    stage_deps: list[str] = [str(d) for d in (stage.get("depends_on") or [])]
+    stage_deps: list[str] = _parse_string_list_field(stage.get("depends_on"), "depends_on", f"Stage {stage_name!r}")
     stage_repo: str | None = str(stage["repo"]) if stage.get("repo") else None
 
     for j, step in enumerate(steps):
