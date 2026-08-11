@@ -211,7 +211,7 @@ def build_run_attestation_receipt(
     boundary_hmac = str(source_events[boundary_index].get("hmac", "")).strip()
     retained_source = source_events[anchor_index : boundary_index + 1]
     rebuilt, head_hmac, head_sha256 = rebuild_receipt_range(retained_source, key)
-    dispatch_verdict = derive_attestation_verdict(_run_verdict_events(rebuilt, resolved_run_id))
+    dispatch_verdict = derive_attestation_verdict(_run_verdict_events(rebuilt, resolved_run_id), witnessed=True)
 
     first_timestamp = str(retained_source[0].get("timestamp", ""))
     last_timestamp = str(retained_source[-1].get("timestamp", ""))
@@ -351,7 +351,7 @@ def verify_run_attestation_projection(
     if projection.get("through_hmac") != last_source_hmac:
         errors.append("serialized boundary does not match the retained source witness")
 
-    dispatch_verdict = derive_attestation_verdict(_run_verdict_events(events, run_id))
+    dispatch_verdict = derive_attestation_verdict(_run_verdict_events(events, run_id), witnessed=True)
     if projection.get("dispatch_evidence_verdict") != dispatch_verdict.value:
         errors.append("serialized dispatch verdict was not derived from the retained evidence")
     if (

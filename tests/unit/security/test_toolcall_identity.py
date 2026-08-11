@@ -421,3 +421,34 @@ async def test_two_warm_provider_instances_reconcile_before_allocating_indices(t
     attestations = [event for event in _events(first) if event["event_type"] == "toolcall.attestation"]
     assert [event["details"]["call_index"] for event in attestations] == [1, 2, 3]
     assert first.chain.verify() == (True, [])
+
+
+@pytest.mark.asyncio
+async def test_native_chain_ignores_a_witness_field_it_did_not_ask_for(tmp_path: Any) -> None:
+    """Provenance mode comes from the caller, never from a field in the payload.
+
+    A receipt projection re-chains its range, so anchor identity has to come
+    from the retained ``_original_hmac`` witness. That substitution must be
+    something a caller opts into. If mere presence of the key selected it, an
+    ``identity.spawn_attestation`` whose details carried the key would redirect
+    the anchor on a native chain too -- and this function sits on the
+    enforcement path, not only the projection path.
+    """
+    provider = _provider(tmp_path)
+    await provider.prepare_dispatch(_intent())
+    events = _events(provider)
+    assert derive_attestation_verdict(events) is AttestationVerdict.COMPLETE
+
+    anchor = next(event for event in events if event["event_type"] == "identity.spawn_attestation")
+    assert anchor["hmac"], "the anchor must carry its own authenticated HMAC"
+
+    planted = deepcopy(events)
+    planted_anchor = next(event for event in planted if event["event_type"] == "identity.spawn_attestation")
+    planted_anchor["details"]["_original_hmac"] = "0" * 64
+
+    # Native chain: the field is inert, the anchor stays the event's own HMAC.
+    assert derive_attestation_verdict(planted) is AttestationVerdict.COMPLETE
+
+    # Witnessed projection: the same bytes now select the anchor, and a witness
+    # that does not match what the envelopes were signed against fails closed.
+    assert derive_attestation_verdict(planted, witnessed=True) is AttestationVerdict.OBSERVED
