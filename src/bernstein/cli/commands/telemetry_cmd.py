@@ -558,16 +558,21 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
     whose anchor mismatches, is rejected as a forgery.
 
     Exit codes: 0 = genuine, 1 = could not be evaluated (missing journal,
-    malformed span, bad input), 2 = verification failed (forged). Same
-    convention as ``trace verify-projection``; a rejection is always a hard
-    nonzero exit, never a warning.
+    corrupted journal, malformed span, bad input), 2 = verification failed
+    (forged). Same convention as ``trace verify-projection``; a rejection
+    is always a hard nonzero exit, never a warning.
     """
     from bernstein.core.observability.otel_bridge import (
         SpanParseError,
         parse_exported_span,
         verify_exported_span,
     )
-    from bernstein.core.replay.journal import JournalPathError, load_events, run_journal_path
+    from bernstein.core.replay.journal import (
+        JournalParseError,
+        JournalPathError,
+        load_events,
+        run_journal_path,
+    )
     from bernstein.core.security.audit import load_or_create_audit_key
     from bernstein.core.security.audit_chain import EVENT_OTEL_PROJECTION, AuditChainStore
     from bernstein.core.security.sanitize import sanitize_log
@@ -588,7 +593,15 @@ def telemetry_verify_span(ctx: click.Context, run_id: str, workdir: str, span_so
         journal_path = run_journal_path(root / ".sdd", run_id)
     except JournalPathError as exc:
         raise click.ClickException(sanitize_log(str(exc))) from exc
-    events = load_events(journal_path)
+    try:
+        events = load_events(journal_path, strict=True)
+    except JournalParseError as exc:
+        # A verifier attests over the journal on disk, not a filtered
+        # sequence: a malformed row is exactly the corruption a verifier
+        # exists to surface, so refuse rather than verify a partial view.
+        raise click.ClickException(
+            f"journal is corrupted: {sanitize_log(str(exc))}; refusing to verify a filtered sequence"
+        ) from exc
 
     projections: list[dict[str, Any]] = []
     try:

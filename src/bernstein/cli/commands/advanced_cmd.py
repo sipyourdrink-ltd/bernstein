@@ -1432,7 +1432,7 @@ def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str 
     Rejects a span whose id was altered or whose journal entry hash is absent
     from the chain, and confirms the signature chains to the install identity.
 
-    Exit codes: 0 = OK, 1 = bad input, 2 = verification failed.
+    Exit codes: 0 = OK, 1 = bad input (incl. a corrupted journal), 2 = verification failed.
     """
     from bernstein.cli.commands.credential_cmd import (
         _load_or_create_install_key,
@@ -1443,10 +1443,17 @@ def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str 
         projection_from_dict,
         verify_projection,
     )
-    from bernstein.core.replay.journal import load_events
+    from bernstein.core.replay.journal import JournalParseError, load_events
 
     root = Path(workdir).resolve()
-    events = load_events(_journal_path_for_run(root, run_id))
+    try:
+        events = load_events(_journal_path_for_run(root, run_id), strict=True)
+    except JournalParseError as exc:
+        # A verifier attests over the journal on disk, not a filtered
+        # sequence: a malformed row is exactly the corruption a verifier
+        # exists to surface, so refuse rather than verify a partial view.
+        console.print(f"[red]Journal corrupted:[/red] {sanitize_log(str(exc))}; refusing to verify a filtered sequence")
+        raise SystemExit(1) from exc
     if not events:
         console.print(f"[red]No event journal for run[/red] {sanitize_log(run_id)}")
         raise SystemExit(1)
