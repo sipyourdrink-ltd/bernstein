@@ -223,7 +223,7 @@ dev = [
     "boto3-stubs>=1.43.56",  # boto3 (s3 / r2 extras), published by the mypy_boto3 project
     "botocore-stubs>=1.43.14",  # botocore, same publisher
 ]
-grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=7.35"]
+grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=7.35.1"]
 voice = ["faster-whisper>=1.0.0", "sounddevice>=0.4.0", "numpy>=1.20.0"]
 k8s = ["kubernetes>=35.0.0"]
 # SPIFFE/SPIRE workload-identity integration
@@ -1019,6 +1019,16 @@ dev = [
     "boto3-stubs>=1.43.56",  # boto3 (s3 / r2 extras), published by the mypy_boto3 project
     "botocore-stubs>=1.43.14",  # botocore, same publisher
 ]
+
+[tool.uv]
+# The checked-in gRPC gencode under src/bernstein/core/grpc_gen/ carries
+# `Protobuf Python Version: 7.35.1` and calls ValidateProtobufRuntimeVersion()
+# at import time, which rejects any runtime from an older major. The modal SDK
+# caps protobuf below 7.0, so the `grpc` and `modal` extras cannot share one
+# environment. Declaring the conflict keeps the universal lock resolvable and
+# turns a former import-time VersionError into an install-time resolution
+# error, which is where a dependency conflict belongs.
+conflicts = [[{ extra = "grpc" }, { extra = "modal" }]]
 
 [tool.mutmut]
 # Lineage v1 mutation testing - see scripts/mutmut_lineage.py for the
