@@ -912,3 +912,135 @@ def test_step_explicit_null_int_field_raises_plan_load_error(tmp_path: Path, fie
     )
     with pytest.raises(PlanLoadError, match=f"'{field}' must be an integer"):
         load_plan_from_yaml(plan_file)
+
+
+# ---------------------------------------------------------------------------
+# Plan- and stage-level list fields, same boundary as `files` (#3639)
+# ---------------------------------------------------------------------------
+#
+# `depends_on`, `constraints`, and `context_files` were left on the lenient
+# path when `files` was tightened, so `constraints: "no network calls"` loaded
+# as 17 single-character constraints and `depends_on: [null]` became the
+# fabricated stage name `'None'`. Both failures are silent: the plan loads and
+# the agents receive nonsense.
+#
+# These fields live at three different levels of the document, so each case
+# also asserts that the error names the level the reader has to go and edit.
+
+
+def _plan_with(**top: object) -> dict[str, object]:
+    return {"name": "P", "stages": [{"name": "S", "steps": [{"title": "T"}]}], **top}
+
+
+@pytest.mark.parametrize("field", ["constraints", "context_files"])
+def test_plan_level_scalar_string_raises_instead_of_being_iterated(tmp_path: Path, field: str) -> None:
+    plan_file = _write_plan(tmp_path, _plan_with(**{field: "no network calls"}))
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan(plan_file)
+
+    message = str(exc_info.value)
+    assert f"'{field}' must be a list" in message
+    # The field is top-level, so the message must not send the reader hunting
+    # for a step or a stage that does not carry it.
+    assert message.startswith("Plan:"), message
+
+
+@pytest.mark.parametrize("field", ["constraints", "context_files"])
+@pytest.mark.parametrize(
+    ("bad_item", "expected_type"),
+    [(None, "NoneType"), (True, "bool"), (42, "int"), ({"a": "b"}, "dict")],
+)
+def test_plan_level_non_string_item_raises_naming_field_and_index(
+    tmp_path: Path, field: str, bad_item: object, expected_type: str
+) -> None:
+    plan_file = _write_plan(tmp_path, _plan_with(**{field: ["ok", bad_item]}))
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan(plan_file)
+
+    message = str(exc_info.value)
+    assert f"{field}[1]" in message
+    assert expected_type in message
+
+
+def test_stage_depends_on_scalar_string_raises_instead_of_being_iterated(tmp_path: Path) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {"name": "build", "steps": [{"title": "T1"}]},
+                {"name": "test", "depends_on": "build", "steps": [{"title": "T2"}]},
+            ]
+        },
+    )
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "'depends_on' must be a list" in message
+    assert message.startswith("Stage 'test':"), message
+
+
+@pytest.mark.parametrize(
+    ("bad_item", "expected_type"),
+    [(None, "NoneType"), (True, "bool"), (42, "int"), ({"a": "b"}, "dict")],
+)
+def test_stage_depends_on_non_string_item_raises(tmp_path: Path, bad_item: object, expected_type: str) -> None:
+    """`depends_on: [null]` used to become the fabricated stage name 'None',
+    which then failed dependency resolution naming a stage nobody wrote."""
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {"name": "build", "steps": [{"title": "T1"}]},
+                {"name": "test", "depends_on": ["build", bad_item], "steps": [{"title": "T2"}]},
+            ]
+        },
+    )
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "depends_on[1]" in message
+    assert expected_type in message
+
+
+@pytest.mark.parametrize("field", ["constraints", "context_files"])
+@pytest.mark.parametrize("present", [True, False], ids=["explicit-null", "absent"])
+def test_plan_level_absent_and_null_still_load_as_empty(tmp_path: Path, field: str, present: bool) -> None:
+    """The behaviour most likely to be broken by a strict rewrite: existing
+    plans that omit these fields, or set them to `null`, must keep loading."""
+    top: dict[str, object] = {field: None} if present else {}
+    plan_file = _write_plan(tmp_path, _plan_with(**top))
+
+    config, tasks = load_plan(plan_file)
+
+    assert getattr(config, field) == []
+    assert len(tasks) == 1
+
+
+@pytest.mark.parametrize("present", [True, False], ids=["explicit-null", "absent"])
+def test_stage_depends_on_absent_and_null_still_load_as_empty(tmp_path: Path, present: bool) -> None:
+    stage: dict[str, object] = {"name": "S", "steps": [{"title": "T"}]}
+    if present:
+        stage["depends_on"] = None
+    plan_file = _write_plan(tmp_path, {"stages": [stage]})
+
+    tasks = load_plan_from_yaml(plan_file)
+
+    assert tasks[0].depends_on == []
+
+
+def test_plan_level_valid_string_lists_survive_unchanged(tmp_path: Path) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        _plan_with(constraints=["no network calls"], context_files=["docs/spec.md"]),
+    )
+
+    config, _ = load_plan(plan_file)
+
+    assert config.constraints == ["no network calls"]
+    assert config.context_files == ["docs/spec.md"]

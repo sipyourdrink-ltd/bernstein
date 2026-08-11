@@ -493,7 +493,7 @@ The plan loader validates fields strictly. This table documents the load-time be
 |-------|-----------------|-----------------|---------|----------|
 | `title` / `goal` | Non-empty string | Empty string, missing | — | — |
 | `files` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
-| `attachments` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `attachments` | Any list, missing, `null` | Scalar | `[]` (missing or `null`) | Every item via `str()` (tracked in #3555) |
 | `priority` | Integer | Float, string, boolean | — | — |
 | `estimated_minutes` | Integer | Float, string, boolean | — | — |
 | `role` | Known role enum | Unknown string | — | — |
@@ -508,7 +508,7 @@ The plan loader validates fields strictly. This table documents the load-time be
 | Field | Accepted shapes | Rejected shapes | Default | Coercion |
 |-------|-----------------|-----------------|---------|----------|
 | `name` | Non-empty string | Empty string, missing | — | — |
-| `depends_on` | Any list, missing, `null` | — | `[]` (missing or `null`) | Every item via `str()`; a scalar string is iterated character-by-character |
+| `depends_on` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
 
 ### Plan fields
 
@@ -516,8 +516,8 @@ The plan loader validates fields strictly. This table documents the load-time be
 |-------|-----------------|-----------------|---------|----------|
 | `name` | Non-empty string | Empty string, missing | — | — |
 | `stages` | `list[Stage]` | Missing, non-list | — | — |
-| `constraints` | Any list, missing, `null` | — | `[]` (missing or `null`) | None: non-string items pass through unchanged; a scalar string is iterated character-by-character |
-| `context_files` | Any list, missing, `null` | — | `[]` (missing or `null`) | None: non-string items pass through unchanged; a scalar string is iterated character-by-character |
+| `constraints` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `context_files` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
 
 ### Differences between load and validate
 
@@ -526,13 +526,26 @@ The plan loader validates fields strictly. This table documents the load-time be
 | `files: null` | Treated as `[]` | Flagged as error |
 | `files: [1, 2]` | Raises `PlanLoadError` | Flagged as error |
 | `attachments: null` | Treated as `[]` | Not checked (loader-only) |
-| `constraints: "abc"` | Becomes `['a', 'b', 'c']` | Flagged as error |
+| `attachments: [1, 2]` | Becomes `['1', '2']` | Not checked (loader-only) |
+| `constraints: null` | Treated as `[]` | Flagged as error |
+| `constraints: "abc"` | Raises `PlanLoadError` | Flagged as error |
 
-`files` and `attachments` are the only list fields the loader checks item by
-item. `depends_on`, `constraints`, and `context_files` still carry the lenient
-behaviour the stricter loader replaced elsewhere, so a scalar string is
-iterated rather than rejected there. That gap is tracked in #3639; this table
-documents what the loader does today, not what it should do.
+`files`, `depends_on`, `constraints`, and `context_files` are checked item by
+item at load, so a scalar string raises rather than being iterated. The
+loader's error names the level of the document the field was found at — `Plan`,
+`Stage 'name'`, or `Step N in stage 'name'` — because the same field names
+appear at more than one level and a reader given the wrong one goes looking for
+a step that does not carry the field.
+
+`attachments` is the one list field still on the lenient path: a scalar raises,
+but non-string items are coerced with `str()` rather than rejected. That gap is
+tracked in #3555.
+
+Explicit `null` is the one shape where load and validate still disagree by
+design: the loader treats it as absent and returns `[]`, while `plan validate`
+sees a present key whose value is not an array and flags it. Existing plans
+rely on the loader's reading, so tightening it is a separate compatibility
+decision, not part of the item-level strictness above.
 
 ### Compatibility window
 
