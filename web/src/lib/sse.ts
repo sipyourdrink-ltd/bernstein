@@ -96,8 +96,10 @@ export function openEventStream(url: string, options: OpenEventStreamOptions): E
         // The SSE spec allows LF, CRLF, and mixed boundaries between
         // records; the separator length must come from what actually
         // matched, not from a two-way prefix guess.
-        const separator = /\r?\n\r?\n/g;
-        separator.lastIndex = 0;
+        // Deliberately not /g: exec on a non-global regex always starts at 0,
+        // so re-scanning the shortened buffer needs no lastIndex bookkeeping,
+        // and nobody can later delete a reset and silently skip records.
+        const separator = /\r?\n\r?\n/;
         let match = separator.exec(buffer);
         while (match) {
           const record = buffer.slice(0, match.index);
@@ -109,7 +111,6 @@ export function openEventStream(url: string, options: OpenEventStreamOptions): E
             options.onEvent(event);
           }
           if (cancelled) return;
-          separator.lastIndex = 0;
           match = separator.exec(buffer);
         }
       }
