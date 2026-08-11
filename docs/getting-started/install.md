@@ -78,11 +78,12 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
 
 === "Homebrew (macOS / Linux)"
 
-    **Temporarily unavailable.** The current formula installs Bernstein without
-    its runtime dependencies, so the installed `bernstein` command fails at
-    startup. Tracked in
-    [#3573](https://github.com/sipyourdrink-ltd/bernstein/issues/3573).
-    Use `uv tool install bernstein` or `pipx install bernstein` instead.
+    ```bash
+    brew install chernistry/tap/bernstein
+    ```
+
+    The formula builds its own virtualenv and resolves the runtime closure from
+    wheels, so the install takes a couple of minutes and compiles nothing.
 
 === "Fedora / RHEL (dnf)"
 

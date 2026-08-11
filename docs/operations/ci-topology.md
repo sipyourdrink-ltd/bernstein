@@ -87,7 +87,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/auto-release.yml | alert-on-stale-release-trigger: Alert on stale release trigger<br>detect-stale-alerts: Detect open auto-release-skipped issues<br>gate: Release gate<br>release: Tag release<br>sweep-stale-alerts-on-success: Close auto-release-skipped issues on green main |
 | .github/workflows/bernstein-ci-fix.yml | fallback-issue: Open ci-fix issue (fallback)<br>fix: Auto-heal with Bernstein<br>tier3-shadow: Tier-3 OpenRouter shadow-mode escalation<br>triage: Triage CI failure |
 | .github/workflows/bernstein-issues-decompose.yml | decompose: Implement approved issue plan<br>plan: Plan issue decomposition<br>reject-untrusted-issue: Reject untrusted issue decomposition<br>scope_gate: Require approved file scope |
-| .github/workflows/bernstein-pr-review.yml | review: Review with Bernstein |
+| .github/workflows/bernstein-pr-review.yml | review: ${{ github.event.pull_request.head.repo.fork && 'Review with Bernstein (did not run: fork PR, credential withheld)' \|\| 'Review with Bernstein' }} |
 | .github/workflows/bisect-on-red.yml | bisect: Identify culprit PR |
 | .github/workflows/branch-protection-audit.yml | audit: Branch protection audit |
 | .github/workflows/ci-gate-stub.yml | ci-gate: ${{ needs.classify.outputs.all_ignored == 'true' && 'CI gate' \|\| 'CI gate stub (not applicable)' }}<br>classify: Classify diff against ci.yml paths-ignore |

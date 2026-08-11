@@ -23,6 +23,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 _REPO = Path(__file__).resolve().parents[2]
 
 
@@ -102,6 +104,75 @@ def test_render_server_json_retags_oci_identifier_on_version_bump() -> None:
     assert packages["oci"]["identifier"] == "ghcr.io/sipyourdrink-ltd/bernstein:9.9.9"
     assert "version" not in packages["oci"]
     assert packages["pypi"]["version"] == "9.9.9"
+
+
+def _gen_module() -> object:
+    spec = importlib.util.spec_from_file_location(
+        "gen_distribution_manifests",
+        _REPO / "scripts" / "gen_distribution_manifests.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_CITATION_SAMPLE = """cff-version: 1.2.0
+title: "Bernstein"
+abstract: >-
+  A folded block that a YAML round-trip would reflow.
+version: "3.10.0"
+date-released: "2026-07-26"
+preferred-citation:
+  type: software
+  year: 2026
+"""
+
+
+def test_citation_cff_is_stamped_from_the_package_version() -> None:
+    """A CITATION.cff behind the released version is drift, not a style nit.
+
+    It shipped 3.10.0 while 3.14.159 was on PyPI (#3571), so anyone citing the
+    project from the repository cited a version that was four releases old.
+    """
+    module = _gen_module()
+
+    stamped = module.render_citation_cff("3.14.159", _CITATION_SAMPLE, today="2026-08-10")
+
+    assert 'version: "3.14.159"' in stamped
+    assert 'date-released: "2026-08-10"' in stamped
+    assert "cff-version: 1.2.0" in stamped, "cff-version is a different key and must survive"
+    assert "abstract: >-" in stamped, "the folded block must not be reflowed by the stamp"
+    assert "  year: 2026" in stamped, "indented keys under preferred-citation are not top level"
+
+
+def test_citation_cff_stamp_preserves_the_date_when_the_version_is_current() -> None:
+    """Re-running on a matching version must not move date-released to today.
+
+    ``--check`` compares the rendered projection against the file on disk. If
+    the date tracked the clock, every day after a release would report drift and
+    the gate would be noise within a week.
+    """
+    module = _gen_module()
+
+    stamped = module.render_citation_cff("3.10.0", _CITATION_SAMPLE, today="2099-01-01")
+
+    assert stamped == _CITATION_SAMPLE, "a matching version must render byte-identically"
+
+
+def test_citation_cff_stamp_rejects_a_file_it_cannot_stamp() -> None:
+    module = _gen_module()
+
+    with pytest.raises(module.ManifestValidationError, match="date-released"):
+        module.render_citation_cff("3.14.159", 'cff-version: 1.2.0\nversion: "3.10.0"\n', today="2026-08-10")
+
+
+def test_repository_citation_cff_matches_the_package_version() -> None:
+    """The checked-in file must already be stamped, or ``--check`` fails the release."""
+    module = _gen_module()
+
+    current = (_REPO / "CITATION.cff").read_text(encoding="utf-8")
+    assert f'version: "{module.pyproject_version()}"' in current
 
 
 def test_gen_script_check_mode_passes_and_is_idempotent(tmp_path: Path) -> None:

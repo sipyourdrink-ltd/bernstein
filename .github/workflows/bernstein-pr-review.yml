@@ -5,6 +5,27 @@ name: "Bernstein PR Review"
 # already open and ready; without it the review only ever runs on the next
 # push, and a maintainer adding the label sees nothing happen.
 # Add the label "skip-bernstein" to opt a PR out even when "deep-review" is on.
+#
+# Position on fork pull requests (#3601). GitHub does not pass repository
+# secrets to `pull_request` runs on branches that live in a fork, so
+# ANTHROPIC_API_KEY is empty for every external contribution and no review can
+# run. That is a platform rule, not a misconfiguration, and it is not worked
+# around here: reviewing untrusted head code with a credential in scope is the
+# risk `pull_request` exists to avoid, and `pull_request_target` would hand the
+# credential exactly the diff it must not be given.
+#
+# What is fixed is the signal. A run that reviewed nothing must not look like a
+# run that reviewed and found nothing, because that green check is read as
+# evidence by whoever merges. So the two skip causes are separated:
+#
+#   fork PR, credential withheld  -> the job name says the review did not run,
+#                                    which is what a reviewer sees in the checks
+#                                    list at merge time; the job still succeeds,
+#                                    because reddening every external
+#                                    contribution punishes the contributor for a
+#                                    platform rule
+#   same-repo PR, secret missing  -> the job fails, because there the secret is
+#                                    genuinely absent and that is ours to fix
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, labeled]
@@ -22,7 +43,13 @@ permissions:
 
 jobs:
   review:
-    name: Review with Bernstein
+    # The check name is the only surface this job controls that a reviewer sees
+    # without opening the run, so it carries the outcome a fork PR is going to
+    # get. Evaluated from the `github` context before the job starts.
+    name: >-
+      ${{ github.event.pull_request.head.repo.fork
+      && 'Review with Bernstein (did not run: fork PR, credential withheld)'
+      || 'Review with Bernstein' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -41,13 +68,37 @@ jobs:
           egress-policy: audit
       - name: Check API key
         id: check
+        env:
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping Bernstein review - no ANTHROPIC_API_KEY secret"
-          else
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+
+          if [ "$IS_FORK" = "true" ]; then
+            {
+              echo "## Bernstein deep review did not run"
+              echo
+              echo "This pull request comes from a fork. GitHub withholds repository"
+              echo "secrets from \`pull_request\` runs on fork branches, so"
+              echo "\`ANTHROPIC_API_KEY\` is empty here: no diff was fetched and no"
+              echo "review was produced."
+              echo
+              echo "**Nothing in this pull request was checked by this job.** External"
+              echo "contributions are reviewed by a maintainer by hand."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Deep review did not run::Fork pull request - GitHub withholds ANTHROPIC_API_KEY from pull_request runs on fork branches, so no diff was read and no review was produced."
+            exit 0
+          fi
+
+          # Same-repository PR: the secret should have been in scope. An empty
+          # value here is a missing secret, which is ours to fix, so fail rather
+          # than report a green check nobody can distinguish from a real review.
+          echo "::error title=Deep review is misconfigured::ANTHROPIC_API_KEY is unset on a same-repository pull request; the secret is absent from the repository rather than withheld by the platform."
+          exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: steps.check.outputs.skip != 'true'

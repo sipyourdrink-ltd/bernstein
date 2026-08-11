@@ -3,7 +3,8 @@
 
 The MCP registry manifest (``server.json``), the plugin manifest
 (``.plugin/plugin.json``), and the Agent Plugins 1.0.0 root manifests
-(``plugin.json``, ``mcp.json``, #3540) are release artifacts: their version
+(``plugin.json``, ``mcp.json``, #3540) and the citation metadata
+(``CITATION.cff``, #3571) are release artifacts: their version
 fields must track the package version, and the release workflow - not hand
 edits - is their single source. This script is a deterministic projection: given the
 same ``pyproject.toml`` and manifest inputs it produces byte-identical
@@ -23,9 +24,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -34,7 +37,14 @@ PLUGIN_JSON = REPO / ".plugin" / "plugin.json"
 MCP_JSON = REPO / ".mcp.json"
 ROOT_PLUGIN_JSON = REPO / "plugin.json"
 ROOT_MCP_JSON = REPO / "mcp.json"
+CITATION_CFF = REPO / "CITATION.cff"
 SKILLS_DIR = REPO / "skills"
+
+#: Top-level ``CITATION.cff`` keys this script owns. Anchored to the start of a
+#: line so they match only at the document root: ``cff-version`` is a different
+#: key, and ``preferred-citation`` has its own indented block.
+_CFF_VERSION = re.compile(r"^version:.*$", re.MULTILINE)
+_CFF_DATE_RELEASED = re.compile(r"^date-released:.*$", re.MULTILINE)
 
 #: Canonical schema identifiers for the Agent Plugins 1.0.0 manifests.
 #: Validation runs against the copies vendored under
@@ -282,6 +292,60 @@ def render_root_mcp_json() -> str:
     return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
+def release_date() -> str:
+    """Return the date to stamp when the recorded version changes (UTC, ISO 8601).
+
+    ``SOURCE_DATE_EPOCH`` wins when it is set, so a reproducible-build
+    environment can pin what this returns. Otherwise the current UTC date, which
+    is the release date: this value is only ever read on a run that is changing
+    the recorded version, and that is the release commit.
+    """
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch:
+        return datetime.fromtimestamp(int(epoch), tz=UTC).date().isoformat()
+    return datetime.now(tz=UTC).date().isoformat()
+
+
+def render_citation_cff(version: str, current: str, *, today: str) -> str:
+    """Return ``CITATION.cff`` with ``version`` and ``date-released`` stamped.
+
+    Citation metadata drifted from the released package once already: the file
+    carried 3.10.0 while 3.14.159 was on PyPI (#3571). It is a release artifact
+    like the manifests above, so it is stamped by the release job rather than by
+    hand.
+
+    ``date-released`` is the one field here that ``pyproject.toml`` cannot
+    supply, and a projection that reads the clock unconditionally would report
+    drift every day after a release instead of on the release. So the date is
+    rewritten only when the recorded version actually changes, and preserved
+    verbatim otherwise. That keeps this a deterministic projection of
+    ``(pyproject version, current file)``: it is idempotent, and ``--check``
+    stays a drift test rather than a clock test.
+
+    The rewrite is textual on purpose. Round-tripping this file through a YAML
+    library would reflow the folded ``abstract`` block and reorder keys, turning
+    a two-line release stamp into a whole-file diff.
+    """
+    if not _CFF_VERSION.search(current):
+        raise ManifestValidationError("CITATION.cff: no top-level 'version:' field to stamp")
+    if not _CFF_DATE_RELEASED.search(current):
+        raise ManifestValidationError("CITATION.cff: no top-level 'date-released:' field to stamp")
+
+    recorded = _cff_value(_CFF_VERSION, current)
+    rendered = _CFF_VERSION.sub(f'version: "{version}"', current, count=1)
+    if recorded != version:
+        rendered = _CFF_DATE_RELEASED.sub(f'date-released: "{today}"', rendered, count=1)
+    return rendered
+
+
+def _cff_value(pattern: re.Pattern[str], text: str) -> str:
+    """Return the scalar value of the ``CITATION.cff`` key *pattern* matches."""
+    match = pattern.search(text)
+    if match is None:  # pragma: no cover - callers check first
+        return ""
+    return match.group(0).split(":", 1)[1].strip().strip("\"'")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -298,6 +362,11 @@ def main(argv: list[str] | None = None) -> int:
             PLUGIN_JSON: render_plugin_json(version),
             ROOT_PLUGIN_JSON: render_root_plugin_json(version),
             ROOT_MCP_JSON: render_root_mcp_json(),
+            CITATION_CFF: render_citation_cff(
+                version,
+                CITATION_CFF.read_text(encoding="utf-8") if CITATION_CFF.is_file() else "",
+                today=release_date(),
+            ),
         }
     except ManifestValidationError as exc:
         # Schema-invalid projections must fail generation and --check alike,

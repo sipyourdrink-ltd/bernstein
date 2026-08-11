@@ -126,3 +126,58 @@ def test_label_gated_review_also_triggers_on_labeled(workflow: Workflow) -> None
     assert "labeled" in types, (
         f"the review job is gated on the 'deep-review' label, so 'labeled' must be a trigger type; got {types}"
     )
+
+
+def test_skipped_review_is_distinguishable_at_the_merge_decision(workflow: Workflow) -> None:
+    """A run that reviewed nothing must not present as a run that found nothing.
+
+    GitHub withholds secrets from ``pull_request`` runs on fork branches, so the
+    review cannot run for any external contribution (#3601). What must not
+    happen is that the resulting check looks identical to a completed review:
+    the check name is the only thing a reviewer reads before merging, so it is
+    the surface that has to carry the outcome.
+    """
+    review = cast(dict[str, object], cast(dict[str, object], workflow["jobs"])["review"])
+    name = str(review.get("name", ""))
+
+    assert "github.event.pull_request.head.repo.fork" in name, (
+        "the check name must branch on whether the PR head lives in a fork, "
+        f"otherwise a skipped review is indistinguishable from a completed one; got {name!r}"
+    )
+    assert "did not run" in name, f"the fork-PR check name must state that no review ran; got {name!r}"
+
+
+def test_skip_reason_names_the_cause_and_fails_a_same_repo_misconfiguration(
+    review_steps: list[WorkflowStep],
+) -> None:
+    """The two skip causes are different failures and must not share an outcome.
+
+    A fork PR is a platform rule -- nothing is wrong with the repository, so the
+    job reports the fact and succeeds. An empty key on a same-repository PR is a
+    missing secret, which is the maintainer's to fix, so it fails instead of
+    reporting a green check that no one can tell apart from a real review.
+    """
+    check = _step_named(review_steps, "Check API key")
+    env = check.get("env", {})
+    assert isinstance(env, dict)
+    assert env.get("IS_FORK") == "${{ github.event.pull_request.head.repo.fork }}", (
+        "the check step needs the fork flag to tell the two causes apart"
+    )
+
+    run = check.get("run", "")
+    assert isinstance(run, str)
+
+    assert "fork" in run.lower(), "the skip reason must name the cause, not only the symptom"
+    assert "ANTHROPIC_API_KEY" in run
+    assert "GITHUB_STEP_SUMMARY" in run, "the fork skip must be recorded where a reader can find it"
+    assert "::warning" in run, "a skipped review must annotate the run, not pass silently"
+
+    lines = [line.strip() for line in run.strip().splitlines() if line.strip()]
+    assert lines[-1] == "exit 1", (
+        "an empty ANTHROPIC_API_KEY on a same-repository PR is a missing secret and must fail "
+        f"the job, so the check step has to end on a non-zero exit; it ends on {lines[-1]!r}"
+    )
+
+    fork_guard = [index for index, line in enumerate(lines) if line.startswith('if [ "$IS_FORK"')]
+    assert fork_guard, "expected an explicit fork branch in the check step"
+    assert "exit 0" in lines[fork_guard[0] :], "a fork PR must not be reddened for a platform rule"
