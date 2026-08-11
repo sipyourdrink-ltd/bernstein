@@ -11,6 +11,8 @@ every entry in `log.jsonl` is:
   5. Free of unresolved forks (each open tip is single OR is a merge entry).
   6. (Optional) Authored by a steward-allow-listed agent when the entry is
      a merge (parent_hashes length >= 2).
+  7. (Optional) Coupled to a caller-supplied set of authenticated tool-call
+     attestations.
 
 The check is read-only and does not depend on the LineageStore - it can
 operate on a frozen log + cards directory (e.g. an audit pack).
@@ -189,6 +191,7 @@ def check(
     *,
     operator_secret: bytes | None = None,
     steward_allowlist: frozenset[str] | None = None,
+    verified_tool_call_ids: frozenset[str] | None = None,
 ) -> GateResult:
     """Run all lineage invariants against the log + cards on disk.
 
@@ -200,6 +203,11 @@ def check(
             HMAC field itself). When None, the HMAC check is skipped.
         steward_allowlist: when given, every merge entry's `agent_id` must
             be in this set or the gate fails (privilege escalation guard).
+        verified_tool_call_ids: authenticated tool-call request identifiers
+            supplied by the caller. When provided, every entry's signed
+            ``tool_call_id`` must occur in this set. ``None`` preserves the
+            legacy/audit-disabled gate; an empty set enables the coupling and
+            therefore rejects every referenced tool call.
 
     Returns:
         GateResult with ok=True iff failures is empty.
@@ -269,6 +277,16 @@ def check(
         if steward_allowlist is not None and len(entry.parent_hashes) >= 2 and entry.agent_id not in steward_allowlist:
             failures.append(
                 f"{entry.artefact_path}: merge entry {eh} written by non-steward {entry.agent_id!r} (not in allowlist)"
+            )
+        # The lineage module deliberately does not open or interpret the audit
+        # chain.  The security caller verifies that chain and projects exactly
+        # the request ids supported by identity-bound tool-call evidence.  This
+        # keeps payload contents from selecting their own verification mode and
+        # keeps the frozen lineage gate usable in legacy/audit-disabled packs.
+        if verified_tool_call_ids is not None and entry.tool_call_id not in verified_tool_call_ids:
+            failures.append(
+                f"{entry.artefact_path}: tool_call_id {entry.tool_call_id!r} on entry {eh} "
+                "has no matching verified toolcall.attestation"
             )
 
     # Parent-hash chain integrity.

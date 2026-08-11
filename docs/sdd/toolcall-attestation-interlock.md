@@ -88,6 +88,31 @@ This boundary does not contain direct filesystem, process, network, or
 connector effects that bypass the host hook. A completeness statement is valid
 only for the dispatch surfaces wired through the interlock.
 
+## LineageGate coupling
+
+The pre-merge coupling is a separate consumer of the same evidence. The
+janitor authenticates the native audit chain first, then
+`verified_tool_call_ids` projects only request ids that have all of the
+following:
+
+- one spawn-frozen tool-signing identity;
+- an identity envelope valid for that exact run, request, intent, call index,
+  journal head, audit predecessor, and anchor;
+- one immediately following `toolcall.enforced_dispatch` with the same
+  attestation reference and intent digest; and
+- no duplicate request id or attestation consumption.
+
+`LineageEntry.tool_call_id` is matched against that request-id projection.
+When authenticated evidence is explicitly supplied, a missing match is a
+blocking LineageGate failure surfaced in the janitor signal list. The lineage
+gate never opens the audit store and never infers verification mode from a
+payload field; it accepts only the frozen set its security caller derived.
+
+Supplying no audit-chain context preserves the existing lineage-only behavior.
+That compatibility path is not an attestation claim. Legacy HMAC-only
+attestations remain inspectable but are ineligible to authorize a signed
+artefact write through this coupling.
+
 ## Performance measurement
 
 `scripts/bench_toolcall_interlock.py` compares full

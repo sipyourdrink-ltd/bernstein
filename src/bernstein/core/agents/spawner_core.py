@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import copy
 import inspect
 import json
 import logging
@@ -4158,13 +4159,18 @@ class AgentSpawner:
             # Inject role-specific skills into the worktree before spawn so the
             # agent picks up orchestration protocol and role-specific instructions.
             # Skills survive context compaction and reduce prompt boilerplate.
-            inject_skills(
+            injected_skills_audit: list[dict[str, str]] = inject_skills(
                 workdir=spawn_cwd,
                 role=role,
                 tasks=tasks,
                 session_id=session_id,
                 templates_dir=self._templates_dir,
             )
+            audit_snapshot: list[dict[str, str]] = injected_skills_audit or []
+            session.injected_skills = copy.deepcopy(audit_snapshot)
+            for _t in tasks:
+                if isinstance(_t.metadata, dict):
+                    _t.metadata["injected_skills"] = copy.deepcopy(audit_snapshot)
             _inject_scheduled_tasks(
                 workdir=spawn_cwd,
                 session_id=session_id,
@@ -4669,6 +4675,53 @@ class AgentSpawner:
                     )
         return declared
 
+    def _resolve_and_stamp_injected_skills(self, session: AgentSession, tasks: list[Task]) -> None:
+        """Carry the injected-skill audit set forward on resume (issue #3382).
+
+        inject_skills() is never called again on resume - the preserved
+        worktree already has .claude/skills/ written by the original spawn.
+        The audit trail is therefore carried from the crashed session's
+        task metadata (stamped there by _spawn_for_tasks_internal, see
+        :4173) rather than recomputed.
+
+        Known limitation: if the orchestrator process itself restarts
+        between the original spawn and this resume call (not just the
+        crashed agent), task.metadata is only as fresh as the last
+        persisted write - the same limitation context_attachments has.
+        We degrade to an explicit 'unknown_provenance' record rather than
+        silently claiming an empty set, since the skill files are still
+        physically present in the worktree even if we've lost the record
+        of exactly which digests they correspond to.
+        """
+        source_record = tasks[0].metadata.get("injected_skills") if tasks else None
+        if not source_record:
+            logger.warning(
+                "No injected_skills provenance found on resume for tasks %s; "
+                "worktree may still contain skill files from the original spawn",
+                [t.id for t in tasks],
+            )
+            session.injected_skills = [
+                {
+                    "template_name": "",
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": "unknown",
+                    "source": "resume-preserved",
+                    "status": "unknown_provenance",
+                }
+            ]
+            return
+
+        carried = copy.deepcopy(source_record)
+        for record in carried:
+            record["source"] = "resume-preserved"
+
+        session.injected_skills = carried
+        for t in tasks:
+            if isinstance(t.metadata, dict):
+                t.metadata["injected_skills"] = copy.deepcopy(carried)
+
     def spawn_for_resume(
         self,
         tasks: list[Task],
@@ -4787,6 +4840,7 @@ class AgentSpawner:
         # run journal pins the bytes this session actually sees, including
         # any edits the crashed agent made to the declared files.
         self._resolve_and_stamp_context_files(session, tasks, worktree_path)
+        self._resolve_and_stamp_injected_skills(session, tasks)
 
         _scope_order = {"small": 0, "medium": 1, "large": 2}
         resume_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))

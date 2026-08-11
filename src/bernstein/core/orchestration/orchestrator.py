@@ -19,6 +19,7 @@ from __future__ import annotations
 import collections
 import concurrent.futures
 import contextlib
+import hashlib
 import itertools
 import json
 import logging
@@ -46,6 +47,7 @@ from bernstein.core.agent_recycling import (
 )
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.agents.context_attachments import CONTEXT_FILES_ATTACHED_EVENT
+from bernstein.core.agents.injected_skills_event import SKILLS_INJECTED_EVENT
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.batch_api import ProviderBatchManager
@@ -74,6 +76,7 @@ from bernstein.core.file_locks import FileLockManager
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.incident import IncidentManager
 from bernstein.core.knowledge.task_graph import TaskGraph
+from bernstein.core.lineage import LineageSpine
 from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.memory_guard import MemoryGuard
 from bernstein.core.merge_queue import MergeQueue
@@ -135,10 +138,12 @@ from bernstein.core.runtime_state import (
     rotate_log_file,
     write_session_replay_metadata,
 )
+from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.seed import resolve_seed_path
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
+from bernstein.core.skills.provenance import record_usage
 from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments
 from bernstein.core.task_grouping import compact_small_tasks
 from bernstein.core.task_lifecycle import (
@@ -5209,6 +5214,48 @@ class Orchestrator:
                     task_ids=session.task_ids,
                     entries=list(session.context_attachments),
                 )
+            # Issue #3382: pin the skill templates injected into this
+            # session's worktree at spawn/resume time, with both the
+            # pre-render and rendered-bytes digests. Unlike
+            # context.files_attached, this is emitted unconditionally -
+            # skills have an always-inject default (_ALWAYS_INJECT), so
+            # an empty set on a fresh spawn is itself meaningful and must
+            # not be silently indistinguishable from "never recorded".
+            self._recorder.record(
+                SKILLS_INJECTED_EVENT,
+                agent_id=session.id,
+                task_ids=session.task_ids,
+                entries=list(session.injected_skills),
+            )
+            # Issue #3382: anchor each injected skill's content hash to this
+            # run's lineage spine, so provenance queries can answer "which
+            # runs used skill X" independently of the human-readable
+            # activation log or the journal event above.
+            workdir = getattr(self, "_workdir", None)
+            if session.injected_skills and workdir is not None:
+                from bernstein import get_templates_dir
+
+                run_id = getattr(self, "_run_id", "")
+                hmac_key = load_or_create_audit_key()
+                lineage_root = workdir / ".sdd" / "lineage"
+                spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
+                journal_head = spine.head_hash()
+                skills_dir = get_templates_dir(workdir) / "skills"
+                for record in session.injected_skills:
+                    if record.get("status") != "injected":
+                        continue
+                    template_name = record.get("template_name", "")
+                    skill_source = skills_dir / template_name
+                    if not skill_source.is_file():
+                        continue
+                    skill_hash = "sha256:" + hashlib.sha256(skill_source.read_bytes()).hexdigest()
+                    record_usage(
+                        workdir=workdir,
+                        skill_hash=skill_hash,
+                        run_id=run_id,
+                        journal_head=journal_head,
+                        timestamp=int(time.time()),
+                    )
             for tid in session.task_ids:
                 self._recorder.record(
                     "task_claimed",

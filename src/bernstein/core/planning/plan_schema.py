@@ -498,7 +498,7 @@ def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
     _validate_step_priority(step, path, errors)
     _validate_step_estimated_minutes(step, path, errors)
 
-    if "files" in step:
+    if "files" in step and step["files"] is not None:
         if not isinstance(step["files"], list):
             errors.append(f"{path}.files: expected type array, got {type(step['files']).__name__}")
         else:
@@ -530,7 +530,7 @@ def _validate_stage(stage: dict[str, Any], idx: int, errors: list[str]) -> None:
         for j, step in enumerate(stage["steps"]):
             _validate_step(step, f"{path}.steps[{j}]", errors)
 
-    if "depends_on" in stage:
+    if "depends_on" in stage and stage["depends_on"] is not None:
         if not isinstance(stage["depends_on"], list):
             errors.append(f"{path}.depends_on: expected type array")
         else:
@@ -557,13 +557,13 @@ def _validate_optional_fields(plan_data: dict[str, Any], errors: list[str]) -> N
         if _check_type(value, "integer", "max_agents", errors) and value < 1:
             errors.append(f"max_agents: must be >= 1, got {value}")
 
-    if "constraints" in plan_data:
+    if "constraints" in plan_data and plan_data["constraints"] is not None:
         if not isinstance(plan_data["constraints"], list):
             errors.append("'constraints' must be an array")
         else:
             _check_string_items(plan_data["constraints"], "constraints", errors)
 
-    if "context_files" in plan_data:
+    if "context_files" in plan_data and plan_data["context_files"] is not None:
         if not isinstance(plan_data["context_files"], list):
             errors.append("'context_files' must be an array")
         else:

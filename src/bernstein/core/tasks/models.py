@@ -1202,6 +1202,15 @@ class AgentSession:
     # the attachment set next to the ``agent_spawned`` event. Empty when the
     # session's tasks declare nothing.
     context_attachments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    # Skill templates injected into the worktree at spawn time (issue #3382).
+    # Each entry is ``{"template_name", "version", "pre_render_digest",
+    # "rendered_digest", "trigger_source", "status"}`` in injection order -
+    # a revoked skill keeps its position with status="refused" instead of
+    # being skipped. Stamped by the spawner so the run journal can record
+    # the injected set next to the ``agent_spawned`` event, independent of
+    # whether the human-readable activation log is enabled. Empty when
+    # nothing was injected (not absent).
+    injected_skills: list[dict[str, str]] = field(default_factory=list)
 
 
 class IsolationMode(StrEnum):

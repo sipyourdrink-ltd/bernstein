@@ -128,6 +128,14 @@ dispatch is paired and identity-verified, the whole-run verdict remains
 launch path yet. The receipt is therefore evidence of the retained interval,
 not evidence that no later call occurred.
 
+For pre-merge enforcement, janitor can receive the authenticated audit-chain
+source and couple it to the signed lineage log. Every
+`LineageEntry.tool_call_id` must then equal the `request_id` of one
+identity-valid, uniquely consumed enforced dispatch. Missing, unsigned,
+duplicated, reordered, mismatched, or audit-tampered evidence blocks the
+janitor verdict. If no audit-chain context is supplied, the legacy lineage
+gate remains available but makes no tool-call attestation claim.
+
 This initial integration seam is programmatic. The CLI does not select a
 provider yet, and an unwired gateway retains its existing observe-only
 behavior. The boundary covers calls that cross the gateway; it cannot contain

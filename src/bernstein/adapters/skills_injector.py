@@ -236,7 +236,7 @@ def inject_skills(
     tasks: list[Task],
     session_id: str,
     templates_dir: Path,
-) -> None:
+) -> list[dict[str, str]]:
     """Write role-specific Claude Code skills into the worktree.
 
     Copies skills from ``templates/skills/`` to ``workdir/.claude/skills/``,
@@ -259,7 +259,7 @@ def inject_skills(
             "Skills templates directory not found: %s - skipping injection",
             skills_source_dir,
         )
-        return
+        return []
 
     skills_dest_dir = workdir / ".claude" / "skills"
     skills_dest_dir.mkdir(parents=True, exist_ok=True)
@@ -295,20 +295,54 @@ def inject_skills(
     revoked_ids = _revoked_skill_ids(workdir)
 
     written_relpaths: list[str] = []
+    audit_records: list[dict[str, str]] = []
     for template_name in templates_to_inject:
         if template_name.rsplit(".", 1)[0] in revoked_ids:
             _logger.warning("Refusing to inject revoked skill %s (signed revocation)", template_name)
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "refused",
+                }
+            )
             continue
 
         source_path = skills_source_dir / template_name
         if not source_path.exists():
             _logger.debug("Skill template not found: %s - skipping", source_path)
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "missing",
+                }
+            )
             continue
 
         try:
             raw = source_path.read_text(encoding="utf-8")
         except OSError as exc:
             _logger.debug("Failed to read skill template %s: %s", source_path, exc)
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": "",
+                    "rendered_digest": "",
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "read_failed",
+                }
+            )
             continue
 
         # Strip invisible Unicode Tag codepoints (U+E0000-U+E007F, Cf, U+FFF9-
@@ -323,7 +357,9 @@ def inject_skills(
             source_name="templates/skills",
         )
 
-        rendered = render_skill_template(sanitized, session_id=session_id, tasks=tasks)
+        pre_render_digest: str = hashlib.blake2b(sanitized.encode("utf-8")).hexdigest()
+        rendered: str = render_skill_template(sanitized, session_id=session_id, tasks=tasks)
+        rendered_digest: str = hashlib.blake2b(rendered.encode("utf-8")).hexdigest()
 
         dest_path = skills_dest_dir / template_name
         try:
@@ -332,6 +368,17 @@ def inject_skills(
             written_relpaths.append(str(dest_path.relative_to(workdir)))
         except OSError as exc:
             _logger.debug("Failed to write skill %s: %s", dest_path, exc)
+            audit_records.append(
+                {
+                    "template_name": template_name,
+                    "version": "",
+                    "pre_render_digest": pre_render_digest,
+                    "rendered_digest": rendered_digest,
+                    "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                    "source": "injected",
+                    "status": "write_failed",
+                }
+            )
             continue
 
         # Activation log: best-effort, opt-out via env var. We compute a
@@ -339,10 +386,29 @@ def inject_skills(
         # the log line refers to the source skill rather than the
         # rendered-with-task-ids variant. ``version`` is best-effort
         # pulled from frontmatter; missing values stay as empty strings.
+        skill_name = template_name.rsplit(".", 1)[0]
         try:
-            skill_name = template_name.rsplit(".", 1)[0]
             version = _extract_skill_version(sanitized)
-            digest = hashlib.blake2b(sanitized.encode("utf-8"), digest_size=16).hexdigest()
+        except Exception:
+            _logger.debug("Failed to extract skill version for %s", template_name, exc_info=True)
+            version = ""
+        audit_records.append(
+            {
+                "template_name": template_name,
+                "version": version,
+                "pre_render_digest": pre_render_digest,
+                "rendered_digest": rendered_digest,
+                "trigger_source": trigger_by_template.get(template_name, "unknown"),
+                "status": "injected",
+                "source": "injected",
+            }
+        )
+        try:
+            digest: str = hashlib.blake2b(sanitized.encode("utf-8"), digest_size=16).hexdigest()
+        except Exception:
+            _logger.debug("Failed to compute activation log digest for %s", template_name, exc_info=True)
+            digest = ""
+        try:
             for task in tasks:
                 log_activation(
                     ActivationRecord(
@@ -373,6 +439,7 @@ def inject_skills(
 
     if written_relpaths:
         _exclude_injected_paths(workdir, written_relpaths)
+    return audit_records
 
 
 def _revoked_skill_ids(workdir: Path) -> set[str]:

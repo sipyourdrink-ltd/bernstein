@@ -40,7 +40,9 @@ from bernstein.core.quality.verifier_ladder import (
 )
 
 if TYPE_CHECKING:
+    from bernstein.core.lineage.gate import GateResult
     from bernstein.core.persistence.lineage import LineageVerificationResult
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
 
@@ -604,6 +606,63 @@ def verify_lineage_chains(
     return results
 
 
+def verify_lineage_tool_call_gate(
+    workdir: Path,
+    *,
+    audit_chain: AuditChainStore | None = None,
+    operator_secret: bytes | None = None,
+) -> GateResult:
+    """Run the signed-lineage gate with authenticated tool-call evidence.
+
+    The coupling is opt-in at the caller boundary.  Passing no audit chain
+    preserves the legacy/audit-disabled lineage verdict byte-for-byte.  When a
+    chain is supplied, this function authenticates it before projecting
+    identity-bound request ids; an audit verification failure therefore blocks
+    rather than degrading to an unverified payload lookup.
+
+    The function returns :class:`bernstein.core.lineage.gate.GateResult` but
+    keeps the import local so the quality module does not make security-chain
+    construction a mandatory dependency for ordinary janitor runs.
+    """
+    from bernstein.core.lineage.gate import GateResult, check
+
+    sdd = workdir / ".sdd"
+    log_path = sdd / "lineage" / "log.jsonl"
+    cards_dir = sdd / "agents"
+    if audit_chain is None:
+        return check(log_path, cards_dir, operator_secret=operator_secret)
+
+    scan = audit_chain.scan_verified(None)
+    if not scan.ok:
+        errors = scan.errors or ["authenticated audit scan failed"]
+        return GateResult(
+            ok=False,
+            failures=[f"audit chain: {error}" for error in errors],
+        )
+
+    from bernstein.core.security.toolcall_interlock import verified_tool_call_ids
+
+    events = [
+        {
+            "timestamp": event.timestamp,
+            "event_type": event.event_type,
+            "actor": event.actor,
+            "resource_type": event.resource_type,
+            "resource_id": event.resource_id,
+            "details": event.details,
+            "prev_hmac": event.prev_hmac,
+            "hmac": event.hmac,
+        }
+        for event in scan.events
+    ]
+    return check(
+        log_path,
+        cards_dir,
+        operator_secret=operator_secret,
+        verified_tool_call_ids=verified_tool_call_ids(events),
+    )
+
+
 def _surface_tamper(
     run_id: str,
     result: LineageVerificationResult,
@@ -812,6 +871,8 @@ async def run_janitor(
     judge_model: str | None = None,
     judge_provider: str | None = None,
     ladder: VerifierLadderContext | None = None,
+    lineage_audit_chain: AuditChainStore | None = None,
+    lineage_operator_secret: bytes | None = None,
 ) -> list[JanitorResult]:
     """Evaluate tasks and return structured results.
 
@@ -842,6 +903,12 @@ async def run_janitor(
             ``LadderReceipt`` hash is returned on
             ``JanitorResult.ladder_receipt_hash``. Default ``None``: nothing
             is sealed and janitor behaviour is unchanged.
+        lineage_audit_chain: Optional authenticated audit-chain source for the
+            LineageGate/tool-call coupling. When supplied, a signed lineage
+            entry without matching identity-valid dispatch evidence blocks the
+            janitor verdict. ``None`` preserves legacy/audit-disabled behavior.
+        lineage_operator_secret: Optional HMAC secret for the ordinary signed
+            lineage checks performed by that coupled gate.
 
     Returns:
         List of JanitorResult for each evaluated task.
@@ -852,9 +919,16 @@ async def run_janitor(
     # workdirs (unit tests, dry runs) skip the empty-diff guard entirely --
     # signals-only judgment there is unchanged behavior.
     _attribution_possible = _is_git_repo(workdir)
+    lineage_gate_result = None
+    if lineage_audit_chain is not None:
+        lineage_gate_result = verify_lineage_tool_call_gate(
+            workdir,
+            audit_chain=lineage_audit_chain,
+            operator_secret=lineage_operator_secret,
+        )
     results: list[JanitorResult] = []
     for task in tasks:
-        if not task.completion_signals:
+        if not task.completion_signals and lineage_gate_result is None:
             continue
 
         judge_verdict: JudgeVerdict | None = None
@@ -954,6 +1028,21 @@ async def run_janitor(
                 task.id,
                 [(gr.check, gr.detail) for gr in blocked_guards],
             )
+
+        if lineage_gate_result is not None:
+            if lineage_gate_result.ok:
+                signal_results.append(("lineage:tool_call_attestation", True, ""))
+            else:
+                all_passed = False
+                for failure in lineage_gate_result.failures:
+                    detail = f"lineage:tool_call_attestation: {failure}"
+                    signal_results.append(("lineage:tool_call_attestation", False, failure))
+                    failed_descs.append(detail)
+                logger.warning(
+                    "janitor REJECT (lineage tool-call gate): task=%s failures=%s",
+                    task.id,
+                    lineage_gate_result.failures,
+                )
 
         fix_task_ids = await _create_fix_tasks_if_needed(
             task,
