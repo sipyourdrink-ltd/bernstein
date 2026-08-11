@@ -368,7 +368,14 @@ def _parse_step(
     if raw_files is None:
         owned_files: list[str] = []
     elif isinstance(raw_files, list):
-        owned_files = [str(f) for f in raw_files]
+        # Validate all items are strings before coercing (matches plan validate behavior)
+        for i, f in enumerate(raw_files):
+            if not isinstance(f, str):
+                raise PlanLoadError(
+                    f"Step {step_index} in stage {stage_name!r}: "
+                    f"files[{i}] must be a string, got {type(f).__name__}"
+                )
+        owned_files = list(raw_files)
     else:
         raise PlanLoadError(
             f"Step {step_index} in stage {stage_name!r}: 'files' must be a "
