@@ -480,3 +480,69 @@ bernstein run --from-plan plans/rate-limit-api.yaml
 See also: [`state-persistence.md`](state-persistence.md) for how plans
 land in `.sdd/`, [`LIFECYCLE.md`](LIFECYCLE.md) for the per-task FSM the
 orchestrator runs once a plan is loaded.
+
+---
+
+## Plan loader field behavior (v3.14.159+)
+
+The plan loader validates fields strictly. This table documents the load-time behavior for each field type.
+
+### Step fields
+
+| Field | Accepted shapes | Rejected shapes | Default | Coercion |
+|-------|-----------------|-----------------|---------|----------|
+| `title` / `goal` | Non-empty string | Empty string, missing | — | — |
+| `files` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `attachments` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `priority` | Integer | Float, string, boolean | — | — |
+| `estimated_minutes` | Integer | Float, string, boolean | — | — |
+| `role` | Known role enum | Unknown string | — | — |
+| `scope` | Known scope enum | Unknown string | — | — |
+| `complexity` | Known complexity enum | Unknown string | — | — |
+| `model` | Known model enum | Unknown string | — | — |
+| `effort` | Known effort enum | Unknown string | — | — |
+| `completion_signals` | `list[CompletionSignal]` | — | `[]` (if missing) | — |
+
+### Stage fields
+
+| Field | Accepted shapes | Rejected shapes | Default | Coercion |
+|-------|-----------------|-----------------|---------|----------|
+| `name` | Non-empty string | Empty string, missing | — | — |
+| `depends_on` | Any list, missing, `null` | — | `[]` (missing or `null`) | Every item via `str()`; a scalar string is iterated character-by-character |
+
+### Plan fields
+
+| Field | Accepted shapes | Rejected shapes | Default | Coercion |
+|-------|-----------------|-----------------|---------|----------|
+| `name` | Non-empty string | Empty string, missing | — | — |
+| `stages` | `list[Stage]` | Missing, non-list | — | — |
+| `constraints` | Any list, missing, `null` | — | `[]` (missing or `null`) | None: non-string items pass through unchanged; a scalar string is iterated character-by-character |
+| `context_files` | Any list, missing, `null` | — | `[]` (missing or `null`) | None: non-string items pass through unchanged; a scalar string is iterated character-by-character |
+
+### Differences between load and validate
+
+| Field | Load path | Validate path |
+|-------|-----------|---------------|
+| `files: null` | Treated as `[]` | Flagged as error |
+| `files: [1, 2]` | Raises `PlanLoadError` | Flagged as error |
+| `attachments: null` | Treated as `[]` | Not checked (loader-only) |
+| `constraints: "abc"` | Becomes `['a', 'b', 'c']` | Flagged as error |
+
+`files` and `attachments` are the only list fields the loader checks item by
+item. `depends_on`, `constraints`, and `context_files` still carry the lenient
+behaviour the stricter loader replaced elsewhere, so a scalar string is
+iterated rather than rejected there. That gap is tracked in #3639; this table
+documents what the loader does today, not what it should do.
+
+### Compatibility window
+
+Plan files written against the pre-3.14.159 lenient loader may fail on upgrade if they contain:
+- Out-of-range enum values
+- Scalar `files` or `attachments`
+- Non-integer numeric fields
+
+Run `bernstein plan validate <file>` to check before upgrading.
+
+### The `dry-run --plan` exception
+
+`bernstein dry-run --plan <file>` currently converts a load failure into an empty result and exits 0 (#3550). This is a known issue; use `bernstein plan validate <file>` for reliable error detection.
