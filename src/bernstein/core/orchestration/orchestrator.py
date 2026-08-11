@@ -167,6 +167,19 @@ from bernstein.evolution.risk import RiskScorer
 
 _BERNSTEIN_YAML = "bernstein.yaml"
 
+#: What an operator is told when no adapter resolves. Every flag it names has to
+#: be a flag of the ``bernstein`` command, because that is what the reader typed
+#: and what they will check against ``bernstein --help``. This module's own
+#: ``--adapter`` argparse flag belongs to the orchestrator subprocess and is not
+#: reachable from there; naming it sent readers looking for an option that does
+#: not exist (#3526). ``tests/unit/test_adapter_fatal_message.py`` resolves each
+#: flag here against the registered CLI, so the text cannot drift back.
+NO_ADAPTER_CONFIGURED = (
+    "FATAL: no adapter configured. Bernstein does not default to Claude - "
+    f"pass --cli (e.g. --cli codex), set BERNSTEIN_ADAPTER, or set 'cli' in {_BERNSTEIN_YAML}. "
+    "Run 'bernstein integrations list --installed' to see which adapters resolve here."
+)
+
 # Preserve underscore-prefixed aliases so existing test imports keep working
 _compute_total_spent = compute_total_spent
 _total_spent_cache = total_spent_cache
@@ -498,12 +511,13 @@ class Orchestrator:
         init_telemetry(config.telemetry.otlp_endpoint if hasattr(config, "telemetry") else None)
 
         # Self-evolution feedback loop
+        self._evolution: EvolutionCoordinator | None
         if config.evolution_enabled:
             self._evolution = evolution or EvolutionCoordinator(
                 state_dir=workdir / ".sdd",
             )
         else:
-            self._evolution: EvolutionCoordinator | None = None
+            self._evolution = None
 
         # Adaptive governance: adjusts metric weights each evolution cycle.
         # Always initialize the governor - it's lightweight and evolve mode
@@ -726,6 +740,7 @@ class Orchestrator:
         # held for interactive review, or pushed as a GitHub PR.
         # merge_strategy="pr" activates PR mode by default; "direct" forces auto.
         # An explicit approval override ("review" or "pr") takes precedence.
+        self._approval_gate: ApprovalGate | None
         if config.approval == "workflow":
             self._approval_gate = ApprovalGate(
                 mode=ApprovalMode.AUTO,  # base mode, overridden per-task in task_completion.py
@@ -742,7 +757,7 @@ class Orchestrator:
                 # merge_strategy="pr" (default) -> PR mode
                 _effective_approval = "pr"
             _approval_mode = ApprovalMode(_effective_approval)
-            self._approval_gate: ApprovalGate | None = (
+            self._approval_gate = (
                 ApprovalGate(
                     mode=_approval_mode,
                     workdir=workdir,
@@ -895,7 +910,7 @@ class Orchestrator:
         )
         if self._audit_mode:
             from bernstein.core.audit import AuditLog
-            from bernstein.core.lifecycle import set_audit_log
+            from bernstein.core.tasks.lifecycle import set_audit_log
 
             audit_dir = workdir / ".sdd" / "audit"
             self._audit_log = AuditLog(audit_dir)
@@ -3555,7 +3570,7 @@ class Orchestrator:
         """Dispatch an anomaly signal: log, stop spawning, or kill agent."""
         import contextlib
 
-        from bernstein.core import heartbeat as heartbeat_protocol
+        from bernstein.core.agents import heartbeat as heartbeat_protocol
         from bernstein.core.cost_anomaly import AnomalySignal
 
         assert isinstance(signal, AnomalySignal)
@@ -3846,11 +3861,11 @@ class Orchestrator:
         # _reap_session_heartbeat_loop / Defect-10) so the loop does not
         # outlive the agent it was monitoring.
         with contextlib.suppress(Exception):
-            from bernstein.core import heartbeat as heartbeat_protocol
+            from bernstein.core.agents import heartbeat as heartbeat_protocol
 
             heartbeat_protocol._reap_session_heartbeat_loop(self, session, reason="cost_cap_kill")
 
-        from bernstein.core.lifecycle import transition_agent
+        from bernstein.core.tasks.lifecycle import transition_agent
 
         transition_agent(session, "dead", actor="orchestrator", reason="max_cost_per_agent exceeded")
         self._release_file_ownership(session.id)
@@ -3955,7 +3970,7 @@ class Orchestrator:
             elapsed,
             len(pending_kill),
         )
-        from bernstein.core import heartbeat as heartbeat_protocol
+        from bernstein.core.agents import heartbeat as heartbeat_protocol
 
         for session in pending_kill:
             self._budget_stop_killed_agents.add(session.id)
@@ -5950,10 +5965,12 @@ if __name__ == "__main__":
             )
 
         if not adapter_name:
-            logger.error(
-                "FATAL: no adapter configured. Bernstein does not default to Claude - "
-                "pass --adapter, set BERNSTEIN_ADAPTER, or configure 'cli' in bernstein.yaml."
-            )
+            # Name --cli, not --adapter. --adapter is this module's own argparse
+            # flag; the operator reaching this message typed `bernstein`, whose
+            # equivalent option is --cli. Naming a flag `bernstein --help` does
+            # not list sends the reader looking for something that is not there
+            # (#3526).
+            logger.error("%s", NO_ADAPTER_CONFIGURED)
             sys.exit(1)
 
         # Run-level model: ``--model`` flag (threaded from ``bernstein run

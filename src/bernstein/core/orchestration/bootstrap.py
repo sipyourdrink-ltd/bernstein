@@ -177,11 +177,19 @@ def _register_mcp_discovery(workdir: Path) -> None:
     existing: dict[str, object] = {}
     if mcp_path.exists():
         try:
-            existing = _json.loads(mcp_path.read_text())
+            loaded = _json.loads(mcp_path.read_text())
         except (ValueError, OSError):
-            existing = {}
+            loaded = None
+        # A valid JSON document need not be an object: null, a list, a string,
+        # and scalars all decode cleanly and would then fail on .get() below,
+        # outside the suppress(OSError) both call sites wrap this in.
+        if isinstance(loaded, dict):
+            existing = loaded
 
-    servers = dict(existing.get("mcpServers", {}))  # type: ignore[arg-type]
+    raw_servers = existing.get("mcpServers")
+    # dict() also accepts a list of pairs, which would smuggle entries in from
+    # a shape that is not a server map. Require a real object.
+    servers: dict[str, object] = dict(raw_servers) if isinstance(raw_servers, dict) else {}
     desired_args = ["-m", "bernstein.mcp.server"]
 
     # Self-heal only when the entry is missing or stale. The bernstein entry is

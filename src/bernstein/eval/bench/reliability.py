@@ -29,8 +29,8 @@ point estimate, not a confidence bound: with small ``k`` a flaky task can
 still show a clean floor by luck.  ``pass^k <= pass@1`` always holds; a gap
 between the two is the signature of flaky tasks.
 
-Artefact-as-proof
------------------
+Receipt verification
+--------------------
 The primary artefact is the :class:`ReliabilityReceipt`.  It embeds all
 ``k`` per-attempt run receipts for every task, so a verifier can replay
 every attempt offline and recompute the floor.  A cherry-picked or
@@ -209,8 +209,8 @@ class TaskReliabilityResult:
     One task's ``k`` fixed-coordination attempts.
 
     Each attempt is a :class:`TaskResult` carrying its own replayable run
-    receipt and emit-time receipt hash — the same artefact-as-proof shape a
-    submission bundle uses, repeated ``k`` times.
+    receipt and emit-time receipt hash — the same receipt structure a
+    submission bundle carries, repeated ``k`` times.
     """
 
     task_id: str

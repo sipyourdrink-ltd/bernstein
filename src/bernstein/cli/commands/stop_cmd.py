@@ -92,8 +92,16 @@ def _unregister_mcp_discovery(workdir: Path) -> None:
         data = json.loads(mcp_path.read_text())
     except (ValueError, OSError):
         return
-    servers = data.get("mcpServers", {})
-    if "bernstein" not in servers:
+    # A valid JSON document need not be an object, and mcpServers need not be
+    # a map: null, lists, strings and scalars all decode cleanly and would then
+    # raise from .get(), the membership test, or .pop() - outside the
+    # suppress(OSError) below. Shutdown has nothing to clean up in any of those
+    # shapes, so treat them as a no-op and leave the file untouched rather than
+    # rewriting something this command did not create.
+    if not isinstance(data, dict):
+        return
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict) or "bernstein" not in servers:
         return
     servers.pop("bernstein")
     data["mcpServers"] = servers

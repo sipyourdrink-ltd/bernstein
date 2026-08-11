@@ -16,7 +16,7 @@ AC-3  The reliability receipt is signed and embeds all k per-attempt run
 
 AC-4  A fabricated floor (claimed pass^k not matching the replayed
       attempts) is rejected; stripping the replay substrate makes the
-      floor unverifiable (artefact-as-proof).
+      floor unverifiable.
 
 AC-5  reliability-check proves one attempt replays byte-identically, so a
       low floor is attributable to model sampling and not hidden

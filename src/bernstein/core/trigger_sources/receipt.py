@@ -7,8 +7,8 @@ to be checkable rather than asserted. A task id in a webhook response says
 nothing about which payload was admitted under which scope, and an unsigned
 status callback is the weakest link in any later incident review.
 
-The artefact IS the proof
--------------------------
+Receipts and status proofs
+--------------------------
 * A :class:`TriggerReceipt` binds ``{payload_digest, graph_digest, scope,
   admission_chain_head}`` for one inbound trigger, is signed with the install's
   Ed25519 identity, and is anchored in the HMAC audit chain. The platform

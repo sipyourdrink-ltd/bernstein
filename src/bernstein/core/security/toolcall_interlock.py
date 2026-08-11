@@ -179,7 +179,11 @@ class ToolCallAttestationInterlock:
             ) from exc
 
 
-def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> AttestationVerdict:
+def derive_attestation_verdict(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    witnessed: bool = False,
+) -> AttestationVerdict:
     """Derive completeness from ordered chain projections, never a claim field.
 
     A complete verdict requires at least one ``toolcall.enforced_dispatch``
@@ -188,6 +192,11 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
     always downgrade to :attr:`AttestationVerdict.OBSERVED`.
 
     Receipt fields such as ``claimed_mode`` are intentionally ignored.
+
+    Set ``witnessed`` only when the events are a receipt projection whose
+    range was re-chained, so anchor identity must come from the retained
+    ``details._original_hmac`` witness rather than the projection-local
+    HMAC. On a native chain the field carries no authority and is ignored.
     """
     attestations: dict[str, str] = {}
     anchored_runs: dict[str, Mapping[str, Any]] = {}
@@ -205,13 +214,26 @@ def derive_attestation_verdict(events: Sequence[Mapping[str, Any]]) -> Attestati
         if not run_id or run_id in anchored_runs:
             return AttestationVerdict.OBSERVED
         anchored_runs[run_id] = payload
-        event_hmac = str(event.get("hmac", "")).strip()
+        # A receipt projection re-chains a contiguous source range, so the
+        # event HMAC is projection-local while the identity envelope was
+        # signed against the source anchor witnessed in
+        # ``details._original_hmac``. Only a caller that knows it is reading a
+        # projection may substitute that witness: provenance mode comes from
+        # the call, never from the presence of a field inside the payload the
+        # verdict is being derived about.
+        event_hmac = ""
+        if witnessed:
+            original_hmac = payload.get("_original_hmac")
+            if original_hmac is not None:
+                event_hmac = str(original_hmac).strip()
+        if not event_hmac:
+            event_hmac = str(event.get("hmac", "")).strip()
         if event_hmac:
             anchor_refs[run_id] = "hmac:" + event_hmac
     for event in events:
         event_type = str(event.get("event_type", event.get("event", "")))
         details = event.get("details")
-        payload: Mapping[str, Any] = cast("Mapping[str, Any]", details) if isinstance(details, Mapping) else event
+        payload = cast("Mapping[str, Any]", details) if isinstance(details, Mapping) else event
         if event_type == "toolcall.attestation":
             reference = str(payload.get("attestation_ref", "")).strip()
             intent_digest = str(payload.get("intent_digest", "")).strip()

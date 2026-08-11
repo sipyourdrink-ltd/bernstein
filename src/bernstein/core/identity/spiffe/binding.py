@@ -11,8 +11,7 @@ the chain and the install public key can prove offline -- via
 :func:`verify_binding` and :func:`verify_binding_against_event` -- that a card
 was bound to exactly this SVID and that neither has been altered since.
 
-Strip the audit chain and the binding loses its meaning, not just its log: the
-receipt is the artefact, and its identity is the content hash the chain pins.
+The binding's identity is the content hash the chain pins.
 """
 
 from __future__ import annotations

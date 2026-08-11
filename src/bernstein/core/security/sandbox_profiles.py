@@ -145,10 +145,10 @@ def compose_profiles(*profiles: SandboxProfile) -> SandboxProfile:
     cmds: dict[str, None] = {}
 
     for p in profiles:
-        for r in p.network_rules:
-            net[r] = None
-        for r in p.fs_rules:
-            fs[r] = None
+        for net_rule in p.network_rules:
+            net[net_rule] = None
+        for fs_rule in p.fs_rules:
+            fs[fs_rule] = None
         for v in p.env_vars:
             env[v] = None
         for c in p.allowed_commands:
@@ -320,13 +320,13 @@ def validate_profile(profile: SandboxProfile) -> list[ProfileConflict]:
             )
 
     # Wildcard network rules.
-    for rule in profile.network_rules:
-        if rule.port == 0:
+    for net_rule in profile.network_rules:
+        if net_rule.port == 0:
             conflicts.append(
                 ProfileConflict(
                     kind="wildcard_network",
                     message=(
-                        f"Network rule for {rule.host!r} uses port 0 "
+                        f"Network rule for {net_rule.host!r} uses port 0 "
                         "(all ports). Consider restricting to specific ports."
                     ),
                 )

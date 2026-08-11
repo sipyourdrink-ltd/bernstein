@@ -132,8 +132,7 @@ The action is a **governance receipt, not board-side state**:
    row via `EventJournal.resume`, so it chains onto the exact verified
    journal head it was made against (a poisoned chain fails closed with
    `409`). The board's `merged` column and review annotations then project
-   from that row - strip the chain and the action loses its meaning, not
-   just its log line.
+   from that row.
 2. It is mirrored as a signed `review_board.action` entry on the HMAC audit
    chain, naming the acting principal and binding the `projection_hash` the
    operator saw, the `journal_head` the decision chained onto, and the

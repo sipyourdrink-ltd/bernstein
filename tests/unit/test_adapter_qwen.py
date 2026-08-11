@@ -328,24 +328,34 @@ class TestQwenAdapterSpawn:
 
 
 class TestQwenAdapterPluginInfo:
-    def test_declares_temperature_and_top_p_only(self) -> None:
+    def test_declares_no_sampling_capability(self) -> None:
+        """The qwen CLI exposes no sampling flags, so none may be advertised.
+
+        Declaring one lets ``ensure_sampling_params_supported`` admit a spawn
+        that then builds an argv qwen rejects outright with
+        ``Unknown argument: temperature``.
+        """
         info = QwenAdapter().plugin_info()
-        assert set(info.capabilities) == {
-            AdapterCapability.SUPPORTS_TEMPERATURE,
-            AdapterCapability.SUPPORTS_TOP_P,
-        }
+        assert set(info.capabilities) == set()
 
     def test_does_not_declare_coarse_or_top_k_or_max_tokens(self) -> None:
         info = QwenAdapter().plugin_info()
         assert AdapterCapability.SUPPORTS_SAMPLING_PARAMS not in info.capabilities
+        assert AdapterCapability.SUPPORTS_TEMPERATURE not in info.capabilities
+        assert AdapterCapability.SUPPORTS_TOP_P not in info.capabilities
         assert AdapterCapability.SUPPORTS_TOP_K not in info.capabilities
         assert AdapterCapability.SUPPORTS_MAX_TOKENS not in info.capabilities
 
 
 class TestQwenAdapterSamplingParams:
-    """mcp_config temperature/top_p must reach the built CLI argv."""
+    """No sampling param may reach the built CLI argv.
 
-    def test_temperature_reaches_argv(self, tmp_path: Path) -> None:
+    ``qwen`` rejects unknown arguments rather than ignoring them
+    (``Unknown argument: temperature`` / ``Unknown arguments: top-p, topP``),
+    so a wired sampling flag is a hard spawn failure.
+    """
+
+    def test_temperature_never_reaches_argv(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=300)
         settings = _default_settings()
@@ -361,10 +371,9 @@ class TestQwenAdapterSamplingParams:
                 mcp_config={"temperature": 0.3},
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--temperature" in inner
-        assert inner[inner.index("--temperature") + 1] == "0.3"
+        assert "--temperature" not in inner
 
-    def test_top_p_reaches_argv(self, tmp_path: Path) -> None:
+    def test_top_p_never_reaches_argv(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=301)
         settings = _default_settings()
@@ -380,10 +389,9 @@ class TestQwenAdapterSamplingParams:
                 mcp_config={"top_p": 0.85},
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--top-p" in inner
-        assert inner[inner.index("--top-p") + 1] == "0.85"
+        assert "--top-p" not in inner
 
-    def test_both_reach_argv_together(self, tmp_path: Path) -> None:
+    def test_neither_reaches_argv_together(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=302)
         settings = _default_settings()
@@ -399,8 +407,8 @@ class TestQwenAdapterSamplingParams:
                 mcp_config={"temperature": 0.1, "top_p": 0.95},
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert inner[inner.index("--temperature") + 1] == "0.1"
-        assert inner[inner.index("--top-p") + 1] == "0.95"
+        assert "--temperature" not in inner
+        assert "--top-p" not in inner
 
     def test_no_mcp_config_omits_sampling_flags(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()

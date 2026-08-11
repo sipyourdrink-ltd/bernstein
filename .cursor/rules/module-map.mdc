@@ -15,6 +15,7 @@ alwaysApply: false
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
 | `defaults.py`               | Centralized default values for the Bernstein orchestrator |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
+| `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
 | `run_auth_token.py`         | Persist and read the auto-generated run Bearer token (issue #2794) |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
@@ -136,12 +137,14 @@ alwaysApply: false
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
 | `junie.py`                  | JetBrains Junie CLI adapter |
 | `kilo.py`                   | Kilo CLI adapter (Stackblitz) |
+| `kimchi.py`                 | Kimchi CLI adapter (#3100) |
 | `kimi.py`                   | Kimi CLI adapter |
 | `kiro.py`                   | Kiro CLI adapter |
 | `letta_code.py`             | Letta Code CLI adapter |
 | `manager.py`                | Manager adapter - spawns the internal Python ManagerAgent orchestrator |
 | `mistral.py`                | Mistral Vibe CLI adapter |
 | `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
+| `muse.py`                   | Muse Code CLI adapter for Bernstein |
 | `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
 | `open_interpreter.py`       | Open Interpreter CLI adapter |
 | `openai_agents.py`          | OpenAI Agents SDK v2 adapter |
@@ -152,6 +155,8 @@ alwaysApply: false
 | `pi.py`                     | Pi (pi-coding-agent) CLI adapter |
 | `plandex.py`                | Plandex CLI adapter |
 | `plugin_sdk.py`             | Adapter plugin SDK for third-party agent integration |
+| `python_runtime.py`         | Generic Python-invoked agent-runtime adapter (#2959) |
+| `python_runtime_runner.py`  | Runner script for the generic Python-invoked agent-runtime adapter (#2959) |
 | `q_dev.py`                  | AWS Q Developer CLI adapter (binary: ``q``) |
 | `qwen.py`                   | Qwen CLI adapter for OpenAI compatible models |
 | `ralphex.py`                | Ralphex (umputun/ralphex) CLI adapter |
@@ -246,34 +251,35 @@ alwaysApply: false
 
 ### `src/bernstein/eval/` - evaluation harness
 
-| File                      | Purpose |
-|---------------------------|---------|
-| `ab_comparison.py`        | Three-arm profile A/B comparison artifact (issue #2247) |
-| `ab_runner.py`            | A/B runner primitive - deterministic prompt-vs-prompt comparison |
-| `baseline.py`             | Baseline tracking for eval-gated evolution |
-| `calibration.py`          | Calibration log + Brier score for router and judge decisions |
-| `clean_run.py`            | Clean-run attestation: prove task ground-truth was never fetched (#2930) |
-| `gate_receipt.py`         | Signed verdict receipts for statistical eval gating (#2520) |
-| `golden.py`               | Golden benchmark suite - curated tasks for eval |
-| `harness.py`              | Eval harness - multiplicative scoring, LLM judge, failure taxonomy |
-| `incident_synthesizer.py` | Convert dead-letter and post-mortem incidents into regression eval cases |
-| `judge.py`                | LLM judge - evaluate code quality of agent-produced changes |
-| `metrics.py`              | Custom eval metrics - each metric is a dataclass with a compute method |
-| `pentest_consensus.py`    | Consensus aggregation for the multi-adapter pentest fan-out |
-| `pentest_runner.py`       | Driver that runs the ``security-pentest`` scenario end-to-end |
-| `pentest_scorer.py`       | Precision and recall scorer for security pentest eval scenario |
-| `promotion.py`            | Deterministic stage promotion and revocation for eval gating (#2520) |
-| `scenario_generator.py`   | Forward-looking synthetic scenario generator |
-| `scenario_runner.py`      | Scenario runner - execute YAML-defined eval scenarios against the live codebase |
-| `significance.py`         | Exact statistics for eval gate verdicts (#2520) |
-| `taxonomy.py`             | Failure taxonomy - classify every eval failure into a closed set |
-| `telemetry.py`            | Telemetry contract - strict schema for agent output metadata |
-| `trajectory_receipt.py`   | Signed, independently-replayable trajectory receipts for benchmark scores (#2925) |
-| `vcr_fixture.py`          | VCR fixture pattern - dehydrate/hydrate deterministic test fixtures (T805) |
-| `yaml_runner.py`          | YAML eval harness - operator-runnable spec format with judge and golden diff |
-| `bench/`                  | bernstein-bench: runnable, reproducibility-gated evaluation harness |
-| `cases/`                  | cases/ sub-package |
-| `golden_data/`            | Packaged golden benchmark fixtures (ships in wheel via package-data) |
+| File                               | Purpose |
+|------------------------------------|---------|
+| `ab_comparison.py`                 | Three-arm profile A/B comparison artifact (issue #2247) |
+| `ab_runner.py`                     | A/B runner primitive - deterministic prompt-vs-prompt comparison |
+| `baseline.py`                      | Baseline tracking for eval-gated evolution |
+| `calibration.py`                   | Calibration log + Brier score for router and judge decisions |
+| `clean_run.py`                     | Clean-run attestation: prove task ground-truth was never fetched (#2930) |
+| `gate_receipt.py`                  | Signed verdict receipts for statistical eval gating (#2520) |
+| `golden.py`                        | Golden benchmark suite - curated tasks for eval |
+| `harness.py`                       | Eval harness - multiplicative scoring, LLM judge, failure taxonomy |
+| `incident_synthesizer.py`          | Convert dead-letter and post-mortem incidents into regression eval cases |
+| `judge.py`                         | LLM judge - evaluate code quality of agent-produced changes |
+| `metrics.py`                       | Custom eval metrics - each metric is a dataclass with a compute method |
+| `pentest_consensus.py`             | Consensus aggregation for the multi-adapter pentest fan-out |
+| `pentest_runner.py`                | Driver that runs the ``security-pentest`` scenario end-to-end |
+| `pentest_scorer.py`                | Precision and recall scorer for security pentest eval scenario |
+| `promotion.py`                     | Deterministic stage promotion and revocation for eval gating (#2520) |
+| `scenario_generator.py`            | Forward-looking synthetic scenario generator |
+| `scenario_runner.py`               | Scenario runner - execute YAML-defined eval scenarios against the live codebase |
+| `significance.py`                  | Exact statistics for eval gate verdicts (#2520) |
+| `taxonomy.py`                      | Failure taxonomy - classify every eval failure into a closed set |
+| `telemetry.py`                     | Telemetry contract - strict schema for agent output metadata |
+| `trajectory_receipt.py`            | Signed, independently-replayable trajectory receipts for benchmark scores (#2925) |
+| `trajectory_receipt_projection.py` | COSE / in-toto DSSE / RFC 6962 transparency projection for trajectory receipts |
+| `vcr_fixture.py`                   | VCR fixture pattern - dehydrate/hydrate deterministic test fixtures (T805) |
+| `yaml_runner.py`                   | YAML eval harness - operator-runnable spec format with judge and golden diff |
+| `bench/`                           | bernstein-bench: runnable, reproducibility-gated evaluation harness |
+| `cases/`                           | cases/ sub-package |
+| `golden_data/`                     | Packaged golden benchmark fixtures (ships in wheel via package-data) |
 
 ### `src/bernstein/plugins/` - plugin system (pluggy)
 

@@ -424,10 +424,11 @@ class DrainCoordinator:
         while remaining and time.monotonic() < deadline:
             self._poll_agent_statuses(remaining)
             remaining = [a for a in self._agents if a.status == "running"]
-            exited = [a for a in self._agents if a.status == "exited"]
+            exited_agents = [a for a in self._agents if a.status == "exited"]
             elapsed = self._config.wait_timeout_s - (deadline - time.monotonic())
             phase.detail = (
-                f"{len(exited)} exited, {len(remaining)} waiting ({int(elapsed)}s/{self._config.wait_timeout_s}s)"
+                f"{len(exited_agents)} exited, {len(remaining)} waiting "
+                f"({int(elapsed)}s/{self._config.wait_timeout_s}s)"
             )
             if self._callback is not None:
                 self._callback(phase, self._agents)

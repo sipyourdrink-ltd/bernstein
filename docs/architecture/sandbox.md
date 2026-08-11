@@ -317,11 +317,38 @@ diagnosable error, never a traceback.
 |---|---|---|
 | 0 | `verified` | Anchored to the expected signer, signature + consistency intact, and every named blob (base + winner + losers) re-hashed intact against CAS. |
 | 1 | `failed` | Bad signature/consistency, a **tampered** blob (present, wrong hash), or a **malformed** digest field. Highest precedence — an integrity alarm. |
-| 4 | `unreadable` | A named blob could not be read on this host (permissions, or an anomalous symlinked blob the verifier refuses to dereference). A property of the reader, not the record. |
+| 4 | `unreadable` | A named blob could not be read on this host (permissions, or an anomalous symlink the verifier refuses to dereference). A property of the reader, not the record. |
 | 2 | `incomplete` | A named blob is **absent** from CAS (GC / retention / restart). An ordinary operational event, never conflated with tampering. |
 | 3 | `unanchored` | Signature + blobs check out, but `--expected-keyid` was omitted or empty (an unset env var counts as empty), so *whose* key signed it is unproven. |
 
 Precedence when several apply: `failed` > `unreadable` > `incomplete` (absent) > `unanchored` > `verified`.
+
+**Symlink refusal, and where it stops.** A CAS blob is read by walking the store
+one path component at a time, each open carrying `O_NOFOLLOW`, so a symlink
+planted at the blob *or* at the shard directory above it is refused by the open
+itself rather than by a check that could be raced. The store root is exempt on
+purpose: pointing it at another volume is operator configuration, not an attack.
+The refusal needs `os.open` to accept `dir_fd` and the platform to define
+`O_NOFOLLOW`. **It is POSIX-only.** Windows has neither, and there the read
+falls back to a single open of the joined path that refuses **nothing** — not
+the parents, not the final component. Read that as the absence of a guard
+rather than a weaker one: a Windows junction is followed exactly as it was
+before. A refused symlink is `unreadable` (exit 4) on every platform that can
+refuse it; it is never reported as `absent`, which would clear the record of a
+suspicion the reader cannot rule out.
+
+Symlinks are not the only way to stall a reader, so the blob open also refuses
+anything that is not a regular file, opening non-blocking and checking the type
+on the descriptor. A FIFO planted at a blob's own name needs no link at all,
+and would otherwise block the read until a writer appeared.
+
+This covers the **blob** read, which is what `receipt verify` consults. The
+`.meta.json` sidecar beside each blob is read without the walk, and deliberately
+so: unlike the blob, it is not content-addressed, so there is no digest to check
+it against. An attacker holding the write access needed to plant a symlink in
+the store can equally write a hostile sidecar in place, which no symlink refusal
+would catch. Nothing in the verification path reads metadata; treat it as
+descriptive, not as evidence.
 
 `fork-race` requires a microVM-capable host; on an unsupported host it
 fails loudly. The determinism/tamper guarantees are validated

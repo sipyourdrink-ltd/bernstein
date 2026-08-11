@@ -336,10 +336,10 @@ def benchmark_programbench(
     """Run Bernstein against ProgramBench tasks with partial-credit scoring.
 
     \b
-      bernstein benchmark programbench --adapter claude
-      bernstein benchmark programbench --adapter mock --tasks 5
-      bernstein benchmark programbench --adapter claude --task programbench-001
-      bernstein benchmark programbench --adapter claude --out report.json
+      bernstein eval programbench --adapter claude
+      bernstein eval programbench --adapter mock --tasks 5
+      bernstein eval programbench --adapter claude --task programbench-001
+      bernstein eval programbench --adapter claude --out report.json
     """
     _run_programbench_command(
         adapter=adapter,
@@ -454,9 +454,9 @@ def benchmark_compare(tasks_dir: str, modes: tuple[str, ...]) -> None:
     """Run comparative benchmark: single-agent vs orchestrated.
 
     \b
-      bernstein benchmark compare                                   # default tasks
-      bernstein benchmark compare --tasks-dir path/to/tasks         # custom tasks
-      bernstein benchmark compare --mode single --mode orchestrated # explicit modes
+      bernstein eval compare                                   # default tasks
+      bernstein eval compare --tasks-dir path/to/tasks         # custom tasks
+      bernstein eval compare --mode single --mode orchestrated # explicit modes
     """
     from bernstein.benchmark.comparative import ComparativeBenchmark, load_benchmark_tasks
 
@@ -527,10 +527,10 @@ def benchmark_simulate(
     comparable across runs with the same seed.
 
     \b
-      bernstein benchmark simulate                             # all tasks, seed=42
-      bernstein benchmark simulate --seed 1                   # different seed
-      bernstein benchmark simulate --task-id bugfix-1         # single task
-      bernstein benchmark simulate --baseline prior.jsonl     # detect regressions
+      bernstein eval simulate                             # all tasks, seed=42
+      bernstein eval simulate --seed 1                   # different seed
+      bernstein eval simulate --task-id bugfix-1         # single task
+      bernstein eval simulate --baseline prior.jsonl     # detect regressions
     """
     from pathlib import Path as _Path
 
@@ -630,7 +630,7 @@ def benchmark_receipt_emit(run_id: str, workdir: str) -> None:
 
     Example:
 
-        bernstein benchmark receipt emit run-2025-07-26-001
+        bernstein eval receipt emit run-2025-07-26-001
     """
     import json
     import math
@@ -761,7 +761,7 @@ def benchmark_receipt_verify(receipt_hash: str, workdir: str) -> None:
 
     Example:
 
-        bernstein benchmark receipt verify sha256:abc123...
+        bernstein eval receipt verify sha256:abc123...
     """
     from pathlib import Path
 
@@ -2362,6 +2362,39 @@ def eval_clean_run_verify_cmd(attestation_hash: str, workdir: str, as_json: bool
         return
     console.print(f"[red]Clean-run attestation verification failed:[/red] {result.reason}")
     raise SystemExit(1)
+
+
+# Every subcommand the deprecated ``benchmark`` group carries needs a home on
+# ``eval`` before the group is unregistered in v4.0.0, otherwise the removal
+# deletes a capability rather than a spelling.  ``run`` and ``swe-bench``
+# already existed on ``eval``; the remaining four are registered here as the
+# *same* Command objects, so the two spellings cannot drift.
+#
+# ``simulate`` is not the top-level ``bernstein simulate``: that command is a
+# digital-twin simulation of a plan against historical traces (#1374), while
+# this one replays the standard benchmark task set for throughput/cost/quality
+# (disjoint options, disjoint inputs, disjoint outputs).  They share a verb and
+# nothing else, so the top-level command is not a migration target for it.
+eval_group.add_command(benchmark_programbench, "programbench")
+eval_group.add_command(benchmark_compare, "compare")
+eval_group.add_command(benchmark_simulate, "simulate")
+eval_group.add_command(benchmark_receipt_group, "receipt")
+
+
+@click.group("benchmark", help="[Deprecated] Use 'bernstein eval' instead.")
+@click.pass_context
+def benchmark_alias_group(ctx: click.Context) -> None:
+    """[Deprecated] Use 'bernstein eval' instead."""
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein benchmark' is deprecated and will be removed in v4.0.0 (#3143): "
+            "use 'bernstein eval' instead.",
+            err=True,
+        )
+
+
+for _cmd_name, _cmd_obj in benchmark_group.commands.items():
+    benchmark_alias_group.add_command(_cmd_obj, _cmd_name)
 
 
 # ---------------------------------------------------------------------------

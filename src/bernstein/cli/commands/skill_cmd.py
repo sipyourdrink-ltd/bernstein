@@ -49,13 +49,20 @@ def _resolve_skill_hash(workdir: Path, skill: str) -> tuple[str, str | None]:
 
 
 @click.group("skill")
-def skill_group() -> None:
-    """Inspect the usage provenance of installed skills.
+@click.pass_context
+def skill_group(ctx: click.Context) -> None:
+    """[Deprecated] Inspect the usage provenance of installed skills (use 'bernstein skills').
 
     \b
       bernstein skill provenance code-review   # verified runs + artifacts
       bernstein skill verify code-review        # recompute install receipt
     """
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein skill' is deprecated and will be removed in v4.0.0 (#3138): "
+            "use 'bernstein skills' instead.",
+            err=True,
+        )
 
 
 @skill_group.command("provenance")

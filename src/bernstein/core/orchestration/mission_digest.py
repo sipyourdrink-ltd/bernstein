@@ -34,9 +34,8 @@ pure fold over the ledger too:
   no-op.
 
 Strip the ledger, the audit chain, and the deterministic fold, and the digest
-collapses to unverifiable prose. The digest is not "a status message plus a
-hash": it is the audit chain in the shape of a morning summary. What the
-operator reads is exactly what a verifier recomputes.
+collapses to unverifiable prose. What the operator reads is exactly what a
+verifier recomputes.
 
 Related work: the mission timeline UI (#2510) renders the same projection over
 the web surface; the deterministic fire projection

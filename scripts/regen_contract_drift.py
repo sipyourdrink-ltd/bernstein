@@ -9,8 +9,14 @@ automatically so the bot can open a follow-up PR.
 Fixtures handled
 ----------------
 * ``DOCUMENTED_COMMANDS``  -- ``tests/unit/test_readme_api_coverage.py``
+  (report-only; see ``regen_documented_commands``)
 * ``_INFRASTRUCTURE_PATHS`` -- ``tests/unit/test_api_v1_routing.py``
 * ``cli_run_callback``     -- forward-arg list in ``src/bernstein/cli/main.py``
+
+Not every fixture is auto-patchable. ``DOCUMENTED_COMMANDS`` guards a
+documentation contract, and the only edit that satisfies it without writing
+documentation is one no bot should make on a contributor's behalf, so that
+fixture reports and stops.
 
 Usage
 -----
@@ -31,11 +37,16 @@ References #1273.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import inspect
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -82,71 +93,93 @@ def _write_if_changed(path: Path, before: str, after: str) -> bool:
 # Fixture 1: DOCUMENTED_COMMANDS
 # ---------------------------------------------------------------------------
 
+CLI_DOC_GATE_PATH = REPO_ROOT / "tests" / "unit" / "test_readme_api_coverage.py"
+CLI_REFERENCE_PATH = REPO_ROOT / "docs" / "reference" / "cli-reference.md"
+
+
+def _load_cli_doc_gate() -> ModuleType:
+    """Import ``tests/unit/test_readme_api_coverage.py`` as a module.
+
+    The gate owns both the exemption map and the rules for reading a command
+    out of the CLI reference. Importing it keeps this script from carrying a
+    second copy of those rules that can drift away from the one CI enforces.
+    """
+    spec = importlib.util.spec_from_file_location("_cli_doc_gate_under_regen", CLI_DOC_GATE_PATH)
+    if spec is None or spec.loader is None:  # pragma: no cover - import machinery
+        raise ImportError(f"cannot load {CLI_DOC_GATE_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 def regen_documented_commands() -> bool:
-    """Add newly-registered CLI commands to the README allow-list."""
+    """Report registered CLI commands that are neither documented nor exempt.
+
+    Deliberately report-only: it never writes, and always returns False.
+
+    The gate in ``tests/unit/test_readme_api_coverage.py`` exists so that a
+    newly registered command is either documented in
+    ``docs/reference/cli-reference.md`` or recorded in
+    ``UNDOCUMENTED_EXEMPTIONS`` with a reason someone wrote. Appending a
+    bot-authored exemption satisfies the gate without either, and the autofix
+    workflow pushes that patch straight onto the source PR's head ref -- so an
+    undocumented command would go green with no human in the loop, which is the
+    failure mode the gate was rewritten to remove (#3468).
+
+    Leaving the drift unpatched routes it to the workflow's tracking-issue
+    path, where a person decides between documenting the command and exempting
+    it.
+    """
     from bernstein.cli.main import cli
 
-    target = REPO_ROOT / "tests" / "unit" / "test_readme_api_coverage.py"
-    source = target.read_text()
-
-    # Extract the existing frozenset literal -- AST gives us the exact names
-    # without us having to teach a regex about Python syntax.
-    import ast
-
-    tree = ast.parse(source)
-    documented: set[str] = set()
-    for node in ast.walk(tree):
-        target_name: str | None = None
-        rhs: ast.AST | None = None
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            target_name = node.targets[0].id
-            rhs = node.value
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            target_name = node.target.id
-            rhs = node.value
-        if target_name == "DOCUMENTED_COMMANDS" and rhs is not None:
-            # Walk the right-hand-side and harvest every constant string.
-            for sub in ast.walk(rhs):
-                if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                    documented.add(sub.value)
-            break
-
-    registered = set(cli.commands.keys())
-    missing = sorted(registered - documented)
-    if not missing:
-        print("[regen] DOCUMENTED_COMMANDS: nothing to add")
-        return False
-
-    # Insert before the closing ``}`` of the frozenset({...}) literal.
-    # We anchor on ``_REPO_ROOT = Path`` which is the next top-level statement
-    # after the frozenset -- the closing ``}\n    )`` we want lives just above.
-    anchor = "\n# ---------------------------------------------------------------------------\n# Helpers"
-    if anchor not in source:
-        print("[regen] DOCUMENTED_COMMANDS: could not find anchor -- skipping", file=sys.stderr)
-        return False
-
-    # Build the insert block. Group new entries under a comment so the diff is
-    # self-explanatory.
-    bot_block_lines = ["        # Bot-added: drift autofix (regen_contract_drift.py)"]
-    for name in missing:
-        bot_block_lines.append(f'        "{name}",')
-    bot_block = "\n".join(bot_block_lines) + "\n"
-
-    # Walk the file forward to locate the ``    }\n)`` that closes the literal.
-    # Start search just before the anchor so we don't accidentally edit a
-    # different frozenset later in the file.
-    pre, _, _ = source.partition(anchor)
-    close_idx = pre.rfind("    }\n)")
-    if close_idx == -1:
+    if not CLI_REFERENCE_PATH.is_file():
         print(
-            "[regen] DOCUMENTED_COMMANDS: could not locate frozenset close -- skipping",
+            f"[regen] UNDOCUMENTED_EXEMPTIONS: {CLI_REFERENCE_PATH} is missing -- "
+            "refusing to classify commands as undocumented without it.",
             file=sys.stderr,
         )
         return False
-    new_source = pre[:close_idx] + bot_block + pre[close_idx:] + source[len(pre) :]
+    try:
+        reference_text = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(
+            f"[regen] UNDOCUMENTED_EXEMPTIONS: cannot read {CLI_REFERENCE_PATH} ({exc}) -- skipping.",
+            file=sys.stderr,
+        )
+        return False
 
-    return _write_if_changed(target, source, new_source)
+    gate = _load_cli_doc_gate()
+    documented = gate._parse_documented_commands(reference_text)
+    exemptions: dict[str, str] = gate.UNDOCUMENTED_EXEMPTIONS
+    registered = set(cli.commands)
+    reference = CLI_REFERENCE_PATH.name
+
+    # Every invariant the gate enforces, not just the missing-command one:
+    # reporting "nothing to add" while CI is red on a stale or malformed
+    # exemption would send the reader looking in the wrong place.
+    problems: list[str] = []
+    if missing := sorted(registered - (documented | set(exemptions))):
+        problems.append(f"registered, but neither documented in {reference} nor exempt: {', '.join(missing)}")
+    if redundant := sorted(set(exemptions) & documented):
+        problems.append(f"exempt, but now documented in {reference} -- drop the exemption: {', '.join(redundant)}")
+    if phantoms := sorted(set(exemptions) - registered):
+        problems.append(f"exempt, but not a registered command: {', '.join(phantoms)}")
+    if blank := sorted(name for name, reason in exemptions.items() if not reason or not reason.strip()):
+        problems.append(f"exempt without a reason: {', '.join(blank)}")
+
+    if not problems:
+        print("[regen] UNDOCUMENTED_EXEMPTIONS: nothing to add")
+        return False
+
+    for problem in problems:
+        print(f"[regen] UNDOCUMENTED_EXEMPTIONS: {problem}", file=sys.stderr)
+    print(
+        "[regen] This fixture does not patch itself: an exemption records a decision, and a "
+        "bot-written one records none. Resolve the above in "
+        f"{CLI_DOC_GATE_PATH.relative_to(REPO_ROOT)} or {CLI_REFERENCE_PATH.relative_to(REPO_ROOT)}.",
+        file=sys.stderr,
+    )
+    return False
 
 
 # ---------------------------------------------------------------------------

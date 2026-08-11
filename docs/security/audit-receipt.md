@@ -87,6 +87,35 @@ The `bernstein audit receipt verify <path>` subcommand shells out to that
 standalone tool on purpose - it proves the receipt needs nothing from Bernstein
 to validate.
 
+## Provisional run-attestation projection
+
+`build_run_attestation_receipt(...)` reuses the same COSE, DSSE/in-toto, and
+transparency substrate for identity-bound tool-call evidence. Its range is not
+chosen by timestamps: construction verifies the source audit chain from
+genesis, finds exactly one `identity.spawn_attestation` for the run, and keeps
+every source event from that anchor through an authenticated HMAC boundary.
+Events belonging to other runs remain interleaved in the embedded range. This
+preserves the omission-detection boundary instead of filtering and silently
+re-chaining a hand-picked history.
+
+The projection distinguishes two verdicts:
+
+- `dispatch_evidence_verdict` is re-derived from retained identity envelopes,
+  attestation references, and enforced-dispatch markers;
+- `whole_run_verdict` is always `observed` and the receipt is always marked
+  `provisional` in this slice.
+
+The second rule is load-bearing. Bernstein does not yet emit one authenticated
+run-closure marker on every foreground, detached, and capsule-governed path.
+An authenticated snapshot head therefore proves exactly what was retained, not
+that the run ended there. A serialized `complete` claim cannot upgrade it.
+
+Use `tools/verify_audit_receipt.py` to verify the standard receipt formats and
+pin the receipt-signing key. `verify_run_attestation_projection(...)` separately
+recomputes the run-specific semantic projection from the embedded events. A
+self-embedded JWK establishes cryptographic self-consistency only; provenance
+requires an independently pinned JWK or public key.
+
 ### Verifying with third-party tooling
 
 Because `intoto` is a plain DSSE envelope wrapping an in-toto v1 Statement, any

@@ -66,11 +66,13 @@ modules =
     bernstein.adapters.iac
     bernstein.adapters.junie
     bernstein.adapters.kilo
+    bernstein.adapters.kimchi
     bernstein.adapters.kimi
     bernstein.adapters.kiro
     bernstein.adapters.letta_code
     bernstein.adapters.mistral
     bernstein.adapters.mock
+    bernstein.adapters.muse
     bernstein.adapters.ollama
     bernstein.adapters.open_interpreter
     bernstein.adapters.openai_agents
@@ -78,6 +80,7 @@ modules =
     bernstein.adapters.openhands
     bernstein.adapters.pi
     bernstein.adapters.plandex
+    bernstein.adapters.python_runtime
     bernstein.adapters.q_dev
     bernstein.adapters.qwen
     bernstein.adapters.ralphex

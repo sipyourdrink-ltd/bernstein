@@ -260,7 +260,7 @@ class SBOMGateError(Exception):
 
     def __init__(self, findings: list[SBOMVulnFinding]) -> None:
         self.findings = findings
-        counts = {}
+        counts: dict[str, int] = {}
         for f in findings:
             counts[f.severity.value] = counts.get(f.severity.value, 0) + 1
         summary = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))

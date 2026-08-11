@@ -432,8 +432,7 @@ than a raw filesystem message.
 An MCP-native worker drives its own claim, update, complete loop over MCP
 alone, with no second integration path (no CLI, no raw HTTP). Every step
 returns an object that verifies offline against the same audit chain
-`bernstein audit verify` walks: strip the chain and the signatures and the
-loop loses its meaning, not merely its log.
+`bernstein audit verify` walks.
 
 1. **Claim** with `bernstein_claim`. The tool drives the dependency-gated
    claim path: a task is offered only when every id in its `depends_on` is

@@ -523,6 +523,7 @@ def test_discovery_matches_exactly_the_known_pull_request_lanes() -> None:
         "docs-observability-snapshot.yml",
         "nightly-drift-sweep.yml",
         "review-bot-sweep.yml",
+        "roadmap-refresh.yml",
     }
 
 

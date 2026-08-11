@@ -13,9 +13,8 @@ audit key.
 Killer shape
 ------------
 The grant is not "a secret plus a log line". The grant record *is* a signed
-chain event, and the broker exchange references it. Strip the audit chain and
-the grant loses its meaning, not just its observability: an ordinary token
-vault cannot prove to a third party which task held which credential power over
+chain event, and the broker exchange references it. An ordinary token vault
+cannot prove to a third party which task held which credential power over
 which time window, and who authorized it. Here that proof is the chain itself.
 
 Two anchors per record

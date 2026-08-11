@@ -1,12 +1,8 @@
-"""``bernstein issue-to-pr`` -- inspect the issue -> PR pipeline state.
+"""``bernstein issue-to-pr`` -- inspect the issue-to-PR pipeline state.
 
 The CLI is intentionally thin: real logic lives in
-:mod:`bernstein.core.orchestration.issue_to_pr`.  This module just glues
-click flags to the pipeline trace primitive and prints a status summary.
-
-Only the ``trace`` subcommand is exposed for now.  Ticking the pipeline
-is driven from the daemon or a manual call into the module; the CLI
-intentionally avoids being a fourth way to advance state.
+:mod:`bernstein.core.orchestration.issue_to_pr`. Only the read-only ``trace``
+subcommand is exposed; advancing the pipeline remains a Python API concern.
 """
 
 from __future__ import annotations
@@ -23,22 +19,7 @@ from bernstein.core.orchestration.issue_to_pr import (
 
 @click.group("issue-to-pr")
 def issue_to_pr_group() -> None:
-    """Inspect the issue -> plan-comment -> PR pipeline. [Deprecated, removed in 4.0.0]
-
-    No shipped runtime drives this pipeline: the only importers of
-    ``bernstein.core.orchestration.issue_to_pr`` are ``main.py`` and this
-    CLI module itself, and no daemon calls the ticker the docstring
-    mentions, so ``trace`` reports on a pipeline that cannot progress.
-    This group stays registered through the 3.10 line with a deprecation
-    warning on invocation and is unregistered in 4.0.0 (#3144). The core
-    module stays importable and unchanged.
-    """
-    click.echo(
-        "WARNING: 'bernstein issue-to-pr' is deprecated and will be removed in "
-        "v4.0.0 (#3144): it inspects a pipeline no shipped runtime advances. "
-        "The core module bernstein.core.orchestration.issue_to_pr stays importable.",
-        err=True,
-    )
+    """Inspect the issue -> plan-comment -> PR pipeline."""
 
 
 @issue_to_pr_group.command("trace")
@@ -49,19 +30,18 @@ def issue_to_pr_group() -> None:
     help="GitHub owner/repo slug, e.g. acme/web.",
 )
 def trace_cmd(issue_id: str, repo: str) -> None:
-    """Print the current pipeline state for ``<owner>/<repo>#<issue_id>``.
+    """Print the pipeline state for ``<owner>/<repo>#<issue_id>``.
 
-    Reads sticky-comment markers and the linked PR (if any) and prints
-    one fact per line.  Read-only; safe to invoke anywhere.
+    Reads sticky-comment markers and prints one fact per line. This command is
+    read-only and exits 0 after rendering a snapshot.
     """
     try:
         issue_number = int(issue_id.lstrip("#"))
     except ValueError as exc:
         raise click.BadParameter(f"issue_id must be numeric, got {issue_id!r}") from exc
-    trace = (
-        IssueToPRPipeline(
-            config=IssueToPRConfig(),
-            client=IssuePRClient(),
-        )
+
+    trace = IssueToPRPipeline(
+        config=IssueToPRConfig(),
+        client=IssuePRClient(),
     ).trace(repo, issue_number)
     console.print(trace.render())

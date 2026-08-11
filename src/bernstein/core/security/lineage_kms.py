@@ -56,6 +56,7 @@ The module ships three concrete implementations:
 from __future__ import annotations
 
 import base64
+import binascii
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -269,7 +270,7 @@ def _decode_env_key(raw: str) -> bytes:
     if stripped.startswith("rawb64:"):
         try:
             return base64.b64decode(stripped[7:], validate=True)
-        except (ValueError, base64.binascii.Error) as exc:
+        except (ValueError, binascii.Error) as exc:
             raise LineageSignerError("EnvBasedKMSAdapter: 'rawb64:' payload is not valid base64") from exc
     # PEM path -- normalise escaped newlines so the cryptography parser
     # accepts it.

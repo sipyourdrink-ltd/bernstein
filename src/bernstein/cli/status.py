@@ -60,8 +60,8 @@ def _derive_run_name(data: dict[str, Any]) -> tuple[str | None, str | None]:
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
-_CAST_DICT_STR_OBJ = "dict[str, object]"
+type _CAST_DICT_STR_ANY = dict[str, Any]
+type _CAST_DICT_STR_OBJ = dict[str, object]
 
 
 def _task_sort_key(task: dict[str, Any]) -> tuple[int, int, str]:

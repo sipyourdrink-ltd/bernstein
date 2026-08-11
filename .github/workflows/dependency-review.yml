@@ -72,5 +72,14 @@ jobs:
           # runs in an isolated workflow runner and is never linked into or
           # distributed with the wheel, so its copyleft obligations do not
           # propagate to the project's binaries).
+          #
+          # protobuf ships BSD-3-Clause, which is on the allow-list above, but
+          # from 7.35.1 its published metadata declares the compound expression
+          # "BSD-3-Clause AND LicenseRef-scancode-protobuf". The second half is
+          # a scancode identifier for the same upstream LICENSE text, not an
+          # additional grant, and the reviewer has no rule for LicenseRef-*
+          # terms, so the compound fails as a whole. The package is the same
+          # one already vendored at 6.x under the same terms.
           allow-dependencies-licenses: >-
-            pkg:githubactions/trufflesecurity/trufflehog
+            pkg:githubactions/trufflesecurity/trufflehog,
+            pkg:pypi/protobuf

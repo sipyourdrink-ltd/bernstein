@@ -45,54 +45,86 @@ jobs:
           else
             VERSION="${GITHUB_REF_NAME#v}"
           fi
+          # The version is interpolated straight into the sdist URL and into the
+          # published formula, and workflow_dispatch's `required: true` only means
+          # "not omitted": it accepts `latest`, a stray space, or anything else a
+          # hand-typed dispatch produces. Reject it here so the failure names the
+          # cause, instead of surfacing three steps later as a formula pinned to a
+          # release that does not exist.
+          #
+          # Two separate rules, because "not publishable" and "not a version"
+          # are different outcomes. The first pattern is the set scripts/
+          # bump_version.py can produce and publish.yml therefore dispatches;
+          # anything outside it is a typo or a misconfigured dispatch and is an
+          # error. The second is narrower: a tap's stable formula must not
+          # track a pre-release, dev, post, or local version, so those exit
+          # successfully as a deliberate skip rather than failing the run that
+          # a legitimate `v3.15.0rc1` tag would otherwise turn red.
+          # tests/unit/test_homebrew_formula.py pins the first pattern to
+          # bump_version.py so the two cannot drift apart.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+.]?[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'${VERSION}' is not a version this project's release tooling can produce."
+            exit 1
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::notice::'${VERSION}' is not a final release; Homebrew publishes final releases only."
+            echo "'${VERSION}' is not a final release; skipped Homebrew publication." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          # Get SHA256 of PyPI tarball
+          # `curl -sL` exits 0 on an HTTP error and writes the error body to
+          # stdout, so piping it into sha256sum hashes the 404 page. That digest
+          # is non-empty and is not the empty-file digest, so it passed both
+          # previous guards -- and the published formula would then carry a
+          # sha256 that disagrees with its own url, failing every `brew install`
+          # at checksum verification. Fetch to a file with --fail, and confirm
+          # the bytes really are a gzip stream before hashing them.
           URL="https://files.pythonhosted.org/packages/source/b/bernstein/bernstein-${VERSION}.tar.gz"
           for i in 1 2 3 4 5; do
-            SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
-            if [ -n "$SHA" ] && [ "$SHA" != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+            if curl --fail --location --silent --show-error "$URL" -o /tmp/sdist.tar.gz \
+              && gzip --test /tmp/sdist.tar.gz; then
+              SHA=$(sha256sum /tmp/sdist.tar.gz | cut -d' ' -f1)
               echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
               echo "Found SHA: $SHA"
               break
             fi
-            echo "Waiting for PyPI to propagate... (attempt $i)"
+            rm -f /tmp/sdist.tar.gz
+            echo "sdist for ${VERSION} is not fetchable yet; waiting for PyPI to propagate (attempt $i)"
             sleep 30
           done
 
       - name: Generate formula
+        if: steps.meta.outputs.skip != 'true'
         env:
           META_VERSION: ${{ steps.meta.outputs.version }}
           META_SHA256: ${{ steps.meta.outputs.sha256 }}
         run: |
-          cat > /tmp/bernstein.rb << 'FORMULA'
-          class Bernstein < Formula
-            include Language::Python::Virtualenv
+          # The formula body is packaging/homebrew/bernstein.rb. It used to be a
+          # second copy inlined here, and the two drifted: the checked-in
+          # template carried a warning that the install strategy was broken while
+          # this heredoc -- the copy that actually reaches the tap -- kept
+          # shipping it (#3573). Only the version and the tarball digest are
+          # substituted here; anything else about the formula is a repository
+          # change reviewed like any other.
+          if [ -z "$META_SHA256" ]; then
+            echo "::error::PyPI sdist digest for ${META_VERSION} never resolved; refusing to publish a formula whose sha256 would be empty."
+            exit 1
+          fi
 
-            desc "Deterministic orchestrator for CLI coding agents"
-            homepage "https://github.com/sipyourdrink-ltd/bernstein"
-            url "https://files.pythonhosted.org/packages/source/b/bernstein/bernstein-VERSION.tar.gz"
-            sha256 "SHA256"
-            license "Apache-2.0"
-            head "https://github.com/sipyourdrink-ltd/bernstein.git", branch: "main"
+          sed -e "s|bernstein-VERSION.tar.gz|bernstein-${META_VERSION}.tar.gz|" \
+              -e "s|PLACEHOLDER|${META_SHA256}|" \
+              packaging/homebrew/bernstein.rb > /tmp/bernstein.rb
 
-            depends_on "python@3.12"
-
-            def install
-              virtualenv_install_with_resources
-            end
-
-            test do
-              assert_match "bernstein", shell_output("#{bin}/bernstein --version")
-            end
-          end
-          FORMULA
-
-          sed -i "s/VERSION/${META_VERSION}/g" /tmp/bernstein.rb
-          sed -i "s/SHA256/${META_SHA256}/g" /tmp/bernstein.rb
+          if grep -q "PLACEHOLDER\|bernstein-VERSION" /tmp/bernstein.rb; then
+            echo "::error::formula still carries a template placeholder after substitution."
+            exit 1
+          fi
           cat /tmp/bernstein.rb
 
       - name: Push to homebrew-tap repo
+        if: steps.meta.outputs.skip != 'true'
         env:
           # HOMEBREW_TAP_TOKEN must be a PAT with `repo` scope for
           # chernistry/homebrew-tap. Without it the cross-repo push fails;

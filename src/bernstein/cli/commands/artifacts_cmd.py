@@ -31,13 +31,20 @@ def _load_hmac_key() -> bytes:
 
 
 @click.group("artifacts")
-def artifacts_group() -> None:
-    """List and render agent-posted, journal-anchored task artifacts.
+@click.pass_context
+def artifacts_group(ctx: click.Context) -> None:
+    """[Deprecated] List and render agent-posted task artifacts (use 'bernstein artifact').
 
     \b
       bernstein artifacts list <task>
       bernstein artifacts show <task> <key>
     """
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein artifacts' is deprecated and will be removed in v4.0.0 (#3138): "
+            "use 'bernstein artifact' instead.",
+            err=True,
+        )
 
 
 @artifacts_group.command("list")
@@ -50,10 +57,17 @@ def artifacts_group() -> None:
     show_default=True,
     help="Project root containing .sdd/.",
 )
-def artifacts_list_cmd(task: str, workdir: str) -> None:
+@click.option("--output-json", is_flag=True, help="Emit JSON instead of human text.")
+def artifacts_list_cmd(task: str, workdir: str, output_json: bool) -> None:
     """List every artifact version posted against TASK, with verify state.
 
-    Exit code 0 when artifacts exist, 1 when there are none.
+    Exit code 0 when artifacts exist, 1 when there are none, 2 when tampering
+    hid every row. ``--output-json`` emits one stable document on stdout for all
+    three, so a caller reads the verdict without parsing the table:
+    ``{"artifacts": [...], "reason": <str|null>, "task": ..., "verified": bool}``.
+    A row that fails its blob or spine check leaves the exit code at 0 -- the
+    listing rendered -- and reports ``verified: false``, exactly as the table
+    marks that row tampered.
     """
     from rich.table import Table
 
@@ -65,13 +79,45 @@ def artifacts_list_cmd(task: str, workdir: str) -> None:
     records = read_artifact_rows(sdd, task, verify=False)
     verdict_list = verify_run_artifacts(sdd, task, hmac_key=_load_hmac_key())
     verdicts = {(r.key, r.version): r for r in verdict_list}
+
+    def _emit_json(rows: list[dict[str, object]], *, verified: bool, reason: str | None) -> None:
+        click.echo(json.dumps({"artifacts": rows, "reason": reason, "task": task, "verified": verified}))
+
     if not records:
         tampered = [v for v in verdict_list if not v.ok]
         if tampered:
-            console.print(f"[red]TAMPERED[/red] task={task} -- {tampered[0].reason}")
+            if output_json:
+                _emit_json([], verified=False, reason=tampered[0].reason)
+            else:
+                console.print(f"[red]TAMPERED[/red] task={task} -- {tampered[0].reason}")
             raise SystemExit(2)
-        console.print(f"[yellow]No artifacts found for task[/yellow] {task}")
+        if output_json:
+            _emit_json([], verified=True, reason=None)
+        else:
+            console.print(f"[yellow]No artifacts found for task[/yellow] {task}")
         raise SystemExit(1)
+
+    if output_json:
+        rows: list[dict[str, object]] = []
+        failures: list[str] = []
+        for record in records:
+            verdict = verdicts.get((record.key, record.version))
+            ok = verdict.ok if verdict is not None else False
+            if not ok:
+                failures.append((verdict.reason if verdict is not None else None) or "no verification result")
+            rows.append(
+                {
+                    "content_hash": record.content_hash,
+                    "journal_index": record.journal_index,
+                    "key": record.key,
+                    "link_kind": record.link_kind,
+                    "type": record.artifact_type,
+                    "verified": ok,
+                    "version": record.version,
+                }
+            )
+        _emit_json(rows, verified=not failures, reason=failures[0] if failures else None)
+        return
 
     console.print()
     console.print(f"[bold]Artifacts[/bold] task={task} ({len(records)} version(s))")

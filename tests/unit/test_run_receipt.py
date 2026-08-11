@@ -1,10 +1,10 @@
 """Unit tests for the signed run receipt (issue #2924).
 
-Covers the artefact-as-proof contract: the signed subject is derived from
-the embedded journal/spine/audit ranges, every head is recomputed by the
-verifier from the receipt bytes alone (no HMAC key, no ``.sdd/``), and any
-single mutation - a journal row, a spine entry, an audit event, a
-signature byte, or a stripped range - collapses verification.
+The signed subject is derived from the embedded journal/spine/audit
+ranges, every head is recomputed by the verifier from the receipt bytes
+alone (no HMAC key, no ``.sdd/``), and any single mutation - a journal
+row, a spine entry, an audit event, a signature byte, or a stripped
+range - collapses verification.
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ def test_receipt_excludes_wall_clock_fields(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Substrate collapse (artefact-as-proof)
+# Tamper detection and offline verification
 # ---------------------------------------------------------------------------
 
 

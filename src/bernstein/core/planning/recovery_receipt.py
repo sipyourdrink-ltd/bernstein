@@ -13,7 +13,7 @@ already observed - the failing node's terminal status, its condition context,
 the tail of the run's Merkle event journal filtered to that task, and its
 quality gate report - in a canonical, sorted-key serialization.
 
-Substrate coupling (the artifact IS the proof):
+Substrate coupling:
 
 * **Content addressing.** :meth:`RecoveryReceipt.content_hash` is a pure
   function of the receipt payload. Two runs over identical fixtures produce a

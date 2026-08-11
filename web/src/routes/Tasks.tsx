@@ -23,6 +23,7 @@ import { TaskGatesPanel } from '@/components/gates/TaskGatesPanel';
 import { TaskDepsPanel } from '@/components/deps/TaskDepsPanel';
 import { TaskTracePanel } from '@/components/trace/TaskTracePanel';
 import { TaskArtifactsPanel } from '@/components/artifacts';
+import { SteerPanel } from '@/components/steer/SteerPanel';
 import {
   formatUSD,
   formatDuration,
@@ -114,6 +115,24 @@ interface TaskDetail extends TaskRow {
   /** Server-side ``progress_log`` entries - used as a Plan fallback. */
   progress_log?: Array<{ timestamp?: number; message?: string; percent?: number }>;
 }
+
+// Why a task can no longer be steered, read from the record rather than
+// narrated from the UI bucket. toUiStatus collapses failed, cancelled and
+// refused into one bucket on purpose - that is right for colour and wrong
+// for a sentence, because the record knows which of the three happened and
+// a typed refusal is neither of the other two.
+//
+// A status missing from this table is not terminal as far as the panel is
+// concerned, so it renders live controls. That is the safer direction:
+// offering a control for something unsteerable costs one failed request,
+// while a confidently wrong reason costs the operator's trust in the panel.
+const TERMINAL_REASON: Record<string, string> = {
+  done: 'the task is done',
+  closed: 'the task is closed',
+  failed: 'the task failed',
+  cancelled: 'the task was cancelled',
+  refused: 'the worker refused the task',
+};
 
 // Map every backend status onto a UI bucket. Unknown strings fall to 'queued'
 // (the safest neutral state).
@@ -307,7 +326,7 @@ const CHIPS: { key: ChipKey; label: string; statusParam?: string }[] = [
 
 // ── Detail tabs ─────────────────────────────────────────────────────────────
 
-const DETAIL_TABS = ['Summary', 'Diff', 'Gates', 'Artifacts', 'Logs', 'Deps', 'Trace'] as const;
+const DETAIL_TABS = ['Summary', 'Diff', 'Gates', 'Artifacts', 'Logs', 'Deps', 'Trace', 'Steer'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
 // ── Operator-syntax token highlighter ───────────────────────────────────────
@@ -1598,6 +1617,16 @@ function TaskTabContent({
       return <TaskDepsPanel taskId={taskId} active />;
     case 'Trace':
       return <TaskTracePanel taskId={taskId} active />;
+    case 'Steer': {
+      const terminalLabel = TERMINAL_REASON[task.status ?? ''];
+      return (
+        <SteerPanel
+          taskId={taskId}
+          terminal={terminalLabel !== undefined}
+          terminalLabel={terminalLabel}
+        />
+      );
+    }
     case 'Summary':
       return null;
     default:

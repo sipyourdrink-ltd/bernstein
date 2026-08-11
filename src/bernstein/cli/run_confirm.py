@@ -30,8 +30,8 @@ _STYLE_BOLD_MAGENTA = "bold magenta"
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_ANY = "dict[str, Any]"
-_CAST_LIST_OBJ = "list[object]"
+type _CAST_DICT_STR_ANY = dict[str, Any]
+type _CAST_LIST_OBJ = list[object]
 
 
 @dataclass(frozen=True)
@@ -848,6 +848,71 @@ def _demo_exit_code(outcome: _DemoOutcome | None, *, bootstrap_error: Exception 
     return 0 if outcome.all_fixed else 1
 
 
+def _run_flask_todo_scenario(
+    *,
+    real: bool,
+    adapter: str | None,
+    timeout: int,
+    keep: bool,
+    dry_run: bool,
+) -> None:
+    """Forward ``bernstein demo --flask-todo`` to the Flask TODO scenario.
+
+    The scenario body used to be reachable as its own top-level command with
+    its own defaults, so forwarding it verbatim silently changes three
+    contracts that belong to ``demo``:
+
+    * ``demo`` spends money only behind ``--real``. The scenario body resolves
+      ``adapter or detect_available_adapter() or "mock"``, so handing it an
+      unresolved ``None`` makes it pick up an installed CLI and spawn paid
+      agents on a bare ``demo --flask-todo``. The adapter is resolved here,
+      under ``demo``'s rule, and passed through already decided.
+    * ``--dry-run`` promises no agents are spawned. The scenario has no
+      preview mode, so the combination is refused rather than executed.
+    * ``demo --timeout`` defaults to 120s while the scenario budgets 300s.
+      An operator who did not name a timeout gets the scenario's own default;
+      one who did gets exactly what they asked for.
+
+    Args:
+        real: True when the operator opted into real agents.
+        adapter: Explicit adapter name, or None to auto-detect under --real.
+        timeout: Timeout as parsed on ``demo``.
+        keep: Preserve the scenario's temp project directory.
+        dry_run: True when the operator asked for a preview.
+
+    Raises:
+        click.UsageError: When ``--dry-run`` is combined with ``--flask-todo``.
+        SystemExit: When ``--real`` is set and no adapter can be resolved.
+    """
+    if dry_run:
+        raise click.UsageError(
+            "--dry-run is not supported with --flask-todo: the Flask TODO scenario has no preview mode. "
+            "Run `bernstein demo --dry-run` for the plan preview, or drop --dry-run to run the scenario."
+        )
+
+    from click.core import ParameterSource
+
+    from bernstein.cli.commands.quickstart_cmd import quickstart_cmd
+
+    if real:
+        resolved = adapter or detect_available_adapter()
+        if resolved is None:
+            from bernstein.cli.errors import no_cli_agent_found
+
+            no_cli_agent_found().print()
+            raise SystemExit(1)
+    else:
+        resolved = "mock"
+
+    ctx = click.get_current_context()
+    forwarded: dict[str, object] = {"keep": keep, "adapter": resolved}
+    # Omitting the key lets ``Context.invoke`` fill the scenario's own default,
+    # so the two defaults can never drift apart here.
+    if ctx.get_parameter_source("timeout") is not ParameterSource.DEFAULT:
+        forwarded["timeout"] = timeout
+    ctx.invoke(quickstart_cmd, **forwarded)
+
+
 @click.command("demo")
 @click.option(
     "--dry-run",
@@ -873,7 +938,27 @@ def _demo_exit_code(outcome: _DemoOutcome | None, *, bootstrap_error: Exception 
     show_default=True,
     help="Maximum seconds to wait for tasks to complete.",
 )
-def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
+@click.option(
+    "--flask-todo",
+    "flask_todo",
+    is_flag=True,
+    default=False,
+    help="Run the Flask TODO API scenario instead (3 tasks on a Flask TODO API).",
+)
+@click.option(
+    "--keep",
+    is_flag=True,
+    default=False,
+    help="Preserve the temp project directory after the run (--flask-todo only; the standard demo always keeps it).",
+)
+def demo(
+    dry_run: bool,
+    real: bool,
+    adapter: str | None,
+    timeout: int,
+    flask_todo: bool = False,
+    keep: bool = False,
+) -> None:
     """Zero-config demo: fix 4 bugs in a Flask app with mock agents.
 
     \b
@@ -886,8 +971,12 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
       bernstein demo              # mock agents (no API key)
       bernstein demo --real       # real agents (requires API key, ~$0.15)
       bernstein demo --dry-run    # preview the plan without spawning
-      bernstein demo --real --timeout 180
+      bernstein demo --flask-todo # run the Flask TODO API scenario
     """
+    if flask_todo:
+        _run_flask_todo_scenario(real=real, adapter=adapter, timeout=timeout, keep=keep, dry_run=dry_run)
+        return
+
     import tempfile
 
     print_banner()

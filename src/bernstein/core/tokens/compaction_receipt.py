@@ -279,12 +279,16 @@ def load_receipts(chain: AuditChainStore, *, task_id: str | None = None) -> list
         Receipts in chain order.
     """
     receipts: list[CompactionReceipt] = []
-    for event, parse_error in _iter_receipt_events(chain):
-        if parse_error is not None:
+    # Addressed as a whole rather than unpacked: the pair is a union tagged by
+    # its second member, and that correlation is only visible while the tuple
+    # is still indexed instead of split into two independent names.
+    for entry in _iter_receipt_events(chain):
+        if entry[1] is not None:
             from bernstein.core.security.sanitize import sanitize_log
 
-            logger.warning("Skipping malformed compaction receipt event: %s", sanitize_log(parse_error))
+            logger.warning("Skipping malformed compaction receipt event: %s", sanitize_log(entry[1]))
             continue
+        event = entry[0]
         if task_id is not None and event.task_id != task_id:
             continue
         receipts.append(event)
@@ -400,10 +404,11 @@ def verify_compaction_receipts(
         errors.extend(f"audit chain: {err}" for err in chain_errors)
 
     receipts: dict[str, CompactionReceipt] = {}
-    for receipt, parse_error in _iter_receipt_events(chain):
-        if parse_error is not None:
-            errors.append(f"audit chain: {parse_error}")
+    for entry in _iter_receipt_events(chain):
+        if entry[1] is not None:
+            errors.append(f"audit chain: {entry[1]}")
             continue
+        receipt = entry[0]
         if task_id is not None and receipt.task_id != task_id:
             continue
         receipts[receipt.correlation_id] = receipt
@@ -419,14 +424,14 @@ def verify_compaction_receipts(
                 # tasks are out of scope for this verification pass.
                 continue
             correlation_id = str(call.get("correlation_id", ""))
-            receipt = receipts.get(correlation_id)
-            if receipt is None:
+            pinned = receipts.get(correlation_id)
+            if pinned is None:
                 errors.append(
                     f"compaction step seq={step.seq} (correlation={correlation_id or 'missing'}) "
                     f"has no chain receipt; audit verification fails"
                 )
                 continue
-            if receipt.pre_sha256 != call.get("pre_sha256") or receipt.post_sha256 != call.get("post_sha256"):
+            if pinned.pre_sha256 != call.get("pre_sha256") or pinned.post_sha256 != call.get("post_sha256"):
                 errors.append(
                     f"compaction step seq={step.seq} pre/post hash mismatch against chain receipt {correlation_id}"
                 )

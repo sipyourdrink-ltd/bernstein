@@ -363,3 +363,31 @@ def test_verify_exported_span_recompute_uses_shared_derivation(project: Path) ->
     verdict = verify_exported_span(parse_exported_span(forged), events, projections, run_id=_RUN_ID)
     assert verdict.ok is False
     assert verdict.unverifiable is False
+
+
+# --------------------------------------------------------------------------- #
+# #3549: a corrupted journal must fail the verifier, not verify a filtered view #
+# --------------------------------------------------------------------------- #
+
+
+def test_corrupted_journal_is_unverifiable_exit_one(project: Path) -> None:
+    """A journal that does not fully parse must fail the verifier (#3549).
+
+    The tolerant reader is right for ordinary readers (a torn trailing write
+    must not wedge them), but a verifier attests over the journal on disk: a
+    malformed row is exactly the corruption a verifier exists to surface. The
+    failure exits 1 (could not be evaluated) and names the physical line --
+    never a pass over a filtered sequence.
+    """
+    spans = _exported_spans(project)
+    span_file = _write(project, spans[0])
+    genuine = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
+    assert genuine.exit_code == 0, genuine.output
+
+    journal_path = run_journal_path(project / ".sdd", _RUN_ID)
+    with journal_path.open("a", encoding="utf-8") as f:
+        f.write("{not json\n")
+    result = _invoke(["verify-span", "--run", _RUN_ID, "-w", str(project), "--span", str(span_file)])
+    assert result.exit_code == 1, result.output
+    assert "corrupted" in result.output.lower()
+    assert "physical line" in result.output.lower()

@@ -761,8 +761,66 @@ def canary_skip_issue_body(outcome: CanaryOutcome, *, receipt_sha: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: A row's ``receipt_sha256`` is the identity of the receipt that attested it:
+#: 64 lowercase hex characters, the shape ``hashlib.sha256().hexdigest()`` emits.
+_RECEIPT_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _row_text(entry: dict[str, Any], key: str) -> str:
+    """Return *key* as a non-empty string, rejecting values JSON coerces well.
+
+    ``str(value)`` turns ``None`` into ``"None"`` and ``["2.1.0"]`` into
+    ``"['2.1.0']"`` -- values that read downstream as populated fields rather
+    than as the corruption they are. Every row here claims a receipt attested
+    it, so a field that was never a string is a corrupt row, not a row with an
+    unusual value.
+
+    The value is returned stripped. Surrounding whitespace carries no meaning
+    in any of these fields and does not survive a round trip, but it does
+    survive into consumers: ``shutil.which(" claude")`` finds nothing, and a
+    padded version reaches admission as a version nobody installed. Normalising
+    is right here rather than rejecting -- the row is not corrupt, its
+    formatting is.
+    """
+    value = entry[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} must be a non-empty string, got {type(value).__name__}")
+    return value.strip()
+
+
+def _row_receipt_sha256(entry: dict[str, Any]) -> str:
+    """Return the attesting receipt hash, or reject the row.
+
+    The table is a projection of receipts and every row is meant to be
+    independently checkable against its receipt file. A hash that is not a hash
+    cannot be checked against anything, so it must not enter the projection
+    wearing the shape of one.
+    """
+    value = _row_text(entry, "receipt_sha256")
+    if not _RECEIPT_SHA256.fullmatch(value):
+        raise ValueError("receipt_sha256 must be 64 lowercase hex characters")
+    return value
+
+
+def _row_recorded_at(entry: dict[str, Any]) -> str:
+    """Return the attesting run's timestamp, or reject the row."""
+    value = _row_text(entry, "recorded_at")
+    try:
+        datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("recorded_at must be an ISO 8601 timestamp") from exc
+    return value
+
+
 def load_last_green(path: Path | None = None) -> dict[str, LastGreenEntry]:
-    """Load the last-green projection (packaged file by default)."""
+    """Load the last-green projection (packaged file by default).
+
+    Rows are validated at the JSON boundary rather than coerced. A row that
+    does not satisfy the shape it claims is dropped with a warning: the entries
+    this returns feed admission and ``doctor``, which read them as attestations,
+    and an attestation assembled from a coerced value attests nothing while
+    still presenting as evidence.
+    """
     source = path if path is not None else LAST_GREEN_JSON_PATH
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
@@ -778,12 +836,16 @@ def load_last_green(path: Path | None = None) -> dict[str, LastGreenEntry]:
         try:
             entries[str(name)] = LastGreenEntry(
                 adapter=str(name),
-                binary=str(entry["binary"]),
-                version=str(entry["version"]),
-                receipt_sha256=str(entry["receipt_sha256"]),
-                recorded_at=str(entry["recorded_at"]),
+                binary=_row_text(entry, "binary"),
+                version=_row_text(entry, "version"),
+                receipt_sha256=_row_receipt_sha256(entry),
+                recorded_at=_row_recorded_at(entry),
             )
-        except KeyError:
+        except KeyError as exc:
+            logger.warning("last-green row %r is missing %s; dropped", name, exc)
+            continue
+        except ValueError as exc:
+            logger.warning("last-green row %r is malformed and was dropped: %s", name, exc)
             continue
     return entries
 

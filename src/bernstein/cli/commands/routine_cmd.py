@@ -182,7 +182,8 @@ def routine_provision(scenarios_dir: Path | None, bernstein_url: str) -> None:
         console.print(f"[green]Registered {binding.trigger_id} -> {binding.scenario_id}[/green]")
     else:
         console.print(
-            f"[dim]Run `bernstein routine register --scenario {scenario.scenario_id} --trigger-id <id>` later.[/dim]"
+            "[dim]Run `bernstein schedule routine register "
+            f"--scenario {scenario.scenario_id} --trigger-id <id>` later.[/dim]"
         )
 
 
@@ -237,3 +238,19 @@ def routine_bindings(scenarios_dir: Path | None) -> None:
     for b in bindings:
         table.add_row(b.trigger_id, b.scenario_id, b.repo)
     console.print(table)
+
+
+@click.group("routine", help="[Deprecated] Use 'bernstein schedule routine' instead.")
+@click.pass_context
+def routine_alias_group(ctx: click.Context) -> None:
+    """[Deprecated] Use 'bernstein schedule routine' instead."""
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein routine' is deprecated and will be removed in v4.0.0 (#3140): "
+            "use 'bernstein schedule routine' instead.",
+            err=True,
+        )
+
+
+for _cmd_name, _cmd_obj in routine_group.commands.items():
+    routine_alias_group.add_command(_cmd_obj, _cmd_name)

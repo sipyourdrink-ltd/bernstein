@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_LIST_ANY = "list[Any]"
+type _CAST_LIST_ANY = list[Any]
 
 
 @dataclass(frozen=True)

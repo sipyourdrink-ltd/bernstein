@@ -15,8 +15,7 @@ The map is anchored on two Bernstein levers working together:
 
 Every ``selector`` cites a literal ``event_type`` string a Bernstein run
 actually writes, so the coverage claim is only as strong as the signed
-catalog plus the tamper-evident chain that backs it. Remove either lever
-and the map loses its meaning, not merely its log.
+catalog plus the tamper-evident chain that backs it.
 
 Honesty rule: where Bernstein only partially addresses a control the
 entry is marked ``"partial"`` and the gap is stated. Skill-catalogue

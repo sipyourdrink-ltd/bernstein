@@ -150,6 +150,7 @@ nav:
   - Home:
       - index.md
       - Use cases: use-cases.md
+      - Scope (what this does not do): scope.md
       - What's new: whats-new.md
       - Mentions: mentions.md
       - Benchmarks: benchmarks/BENCHMARKS.md
@@ -520,6 +521,7 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v3.14.159: release-notes/v3.14.159.md
           - v3.13.0: release-notes/v3.13.0.md
           - v3.12.0: release-notes/v3.12.0.md
           - v3.11.0: release-notes/v3.11.0.md
@@ -628,6 +630,7 @@ nav:
           - Multi-cell orchestration: orchestration/multi-cell.md
           - Bulletin board: orchestration/bulletin-board.md
       - Decisions (ADRs):
+          - Index: decisions/index.md
           - Agent lifecycle: decisions/001-agent-lifecycle.md
           - Self-evolution: decisions/003-self-evolution.md
           - File-based state: decisions/004-file-based-state.md

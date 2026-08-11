@@ -17,6 +17,10 @@ import click
 
 from bernstein.cli.helpers import console
 
+# Non-zero exit codes are operator contract (issue #3550): a plan that fails
+# to load must not look like "valid plan, nothing to schedule".
+EXIT_PLAN_ERROR = 1
+
 
 def _route_task_to_dict(
     router: Any,
@@ -82,14 +86,23 @@ def render_dry_run(
 
 
 def _render_dry_run_from_plan(workdir: Path, plan_file: Path) -> list[dict[str, Any]]:
-    """Build dry-run task list from a plan file."""
-    from bernstein.core.plan_loader import PlanLoadError, load_plan
+    """Build dry-run task list from a plan file.
 
-    try:
-        _plan_config, loaded_tasks = load_plan(plan_file)
-    except PlanLoadError as exc:
-        console.print(f"[red]Plan load error:[/red] {exc}")
-        return []
+    Args:
+        workdir: Project root directory.
+        plan_file: Plan file to load tasks from.
+
+    Returns:
+        List of task dicts with routing metadata.
+
+    Raises:
+        PlanLoadError: If the plan file cannot be loaded or parsed. Callers
+            must surface this as a non-zero exit; swallowing it would turn a
+            malformed plan into a convincing empty result.
+    """
+    from bernstein.core.plan_loader import load_plan
+
+    _plan_config, loaded_tasks = load_plan(plan_file)
 
     router = _init_router(workdir)
     result: list[dict[str, Any]] = []
@@ -159,7 +172,18 @@ def print_dry_run_expanded(
     """
     from rich.table import Table
 
-    tasks = render_dry_run(workdir, plan_file, goal)
+    from bernstein.core.plan_loader import PlanLoadError
+
+    try:
+        tasks = render_dry_run(workdir, plan_file, goal)
+    except PlanLoadError as exc:
+        # A malformed plan is a failure, not an empty backlog: exit non-zero
+        # and let the operator see the loader's message in both output modes.
+        if as_json:
+            console.print_json(json.dumps({"error": {"kind": "PlanLoadError", "message": str(exc)}}))
+        else:
+            console.print(f"[red]Plan load error:[/red] {exc}")
+        raise SystemExit(EXIT_PLAN_ERROR) from exc
 
     if as_json:
         console.print_json(json.dumps({"tasks": tasks, "total": len(tasks)}))
@@ -215,6 +239,11 @@ def dry_run_cmd(plan_file: str | None, goal: str | None, as_json: bool) -> None:
     \b
     Reads the backlog or a plan file and displays what would be executed,
     including provider routing decisions for each task.
+
+    \b
+    Exit codes:
+      0  success (including an empty backlog)
+      1  --plan file failed to load
 
     \b
     Examples:

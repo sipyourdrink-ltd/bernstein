@@ -276,9 +276,34 @@ tests/unit/eval/bench/
 └── test_reliability.py  # pass^k reliability floor tests
 
 docs/eval/
-├── bench.md             # this document
-└── reliability.md       # pass^k reliability floor
+├── bench.md                  # this document
+├── reliability.md            # pass^k reliability floor
+└── trajectory-receipts.md   # offline-verifiable benchmark score receipts (#2925)
 ```
+
+---
+
+## Trajectory receipts
+
+Every number produced by `bernstein benchmark` ships as a **trajectory receipt**
+— a content-addressed, spine-anchored envelope that lets any third party
+re-derive the score offline without re-running the suite.
+
+```bash
+# Seal a run into a receipt
+bernstein benchmark receipt emit <run_id>
+
+# Verify offline — re-derives the score from embedded per-task components
+bernstein benchmark receipt verify sha256:<receipt_hash>
+```
+
+`bernstein audit verify` sweeps trajectory receipts alongside every other
+integrity pillar. Absence of receipts is a silent no-op; a present-and-tampered
+receipt hard-fails the sweep.
+
+See [`docs/eval/trajectory-receipts.md`](trajectory-receipts.md) for the full
+CLI reference, the offline third-party (COSE/in-toto) verification path, and
+the strip-the-substrate failure contract.
 
 ---
 

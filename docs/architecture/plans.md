@@ -93,7 +93,7 @@ alias).
 | `cli` | string | - | Override adapter for this step only. |
 | `repo` | string | - | Multi-repo: route this step to a named repo. Falls back to stage-level `repo`. |
 | `depends_on_repo` | string | - | Cross-repo dependency: another repo must complete first. |
-| `files` | list[string] | `[]` | File ownership for conflict detection - agents declare which files they will touch. |
+| `files` | list[string] | `[]` | File ownership for conflict detection - agents declare which files they will touch. Must be a list: a scalar value fails the load with `PlanLoadError` (#3534); an explicit `null` loads as `[]`. `plan validate` rejects non-string items; the load path currently coerces them to strings instead of rejecting (#3556). |
 | `completion_signals` | list[object] | `[]` | Machine-checkable completion criteria (see below). |
 
 Step-level `depends_on` is *not* on the schema - dependencies between
@@ -122,13 +122,14 @@ Source: `plan_schema.py:49-77`, `plan_loader.py:70-97`.
 
 ---
 
-## Plan validation: `bernstein validate`
+## Plan validation: `bernstein plan validate`
 
-`bernstein validate path/to/plan.yaml` runs four checks before the plan is
-ever scheduled:
+`bernstein plan validate path/to/plan.yaml` runs four checks before the plan is
+ever scheduled. `bernstein validate` remains registered as a deprecated alias
+for the whole 3.x line and is unregistered in 4.0.0.
 
 1. **Schema check** - required fields, enum values, integer ranges
-   (`plan_schema.validate_plan()` at `plan_schema.py:428-451`).
+   (`plan_schema.validate_plan()`, run by `plan_validate_cmd._check_schema`).
 2. **Duplicate titles** - every step title must be unique within the plan
    (`plan_validate_cmd._check_duplicate_titles`).
 3. **Dependency references** - every `depends_on` entry must point at a
@@ -139,7 +140,13 @@ ever scheduled:
 Plus warnings:
 
 - **Unknown roles** - any role not in the registry-known list is flagged
-  (`_check_unknown_roles`).
+  (`_check_unknown_roles`). Roles come from `templates/roles/`, which a project
+  extends, so an unrecognised role is a warning and never an error.
+
+**Exit code.** `0` when the plan is clean or carries warnings only, `1` when any
+check reports an error - both spellings. A CI gate should branch on that rather
+than grep the output. The schema check runs first and, when it finds anything,
+the command reports those errors and stops without building the task graph.
 
 Common errors:
 
@@ -413,7 +420,7 @@ stages:
 Validation:
 
 ```bash
-bernstein validate plans/rate-limit-api.yaml
+bernstein plan validate plans/rate-limit-api.yaml
 # ✓ 6 tasks, 3 stages, max parallel = 3
 ```
 
@@ -473,3 +480,86 @@ bernstein run --from-plan plans/rate-limit-api.yaml
 See also: [`state-persistence.md`](state-persistence.md) for how plans
 land in `.sdd/`, [`LIFECYCLE.md`](LIFECYCLE.md) for the per-task FSM the
 orchestrator runs once a plan is loaded.
+
+---
+
+## Plan loader field behavior (v3.14.159+)
+
+The plan loader validates fields strictly. This table documents the load-time behavior for each field type.
+
+### Step fields
+
+| Field | Accepted shapes | Rejected shapes | Default | Coercion |
+|-------|-----------------|-----------------|---------|----------|
+| `title` / `goal` | Non-empty string | Empty string, missing | — | — |
+| `files` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `attachments` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `priority` | Integer | Float, string, boolean | — | — |
+| `estimated_minutes` | Integer | Float, string, boolean | — | — |
+| `role` | Known role enum | Unknown string | — | — |
+| `scope` | Known scope enum | Unknown string | — | — |
+| `complexity` | Known complexity enum | Unknown string | — | — |
+| `model` | Known model enum | Unknown string | — | — |
+| `effort` | Known effort enum | Unknown string | — | — |
+| `completion_signals` | `list[CompletionSignal]` | — | `[]` (if missing) | — |
+
+### Stage fields
+
+| Field | Accepted shapes | Rejected shapes | Default | Coercion |
+|-------|-----------------|-----------------|---------|----------|
+| `name` | Non-empty string | Empty string, missing | — | — |
+| `depends_on` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+
+### Plan fields
+
+| Field | Accepted shapes | Rejected shapes | Default | Coercion |
+|-------|-----------------|-----------------|---------|----------|
+| `name` | Non-empty string | Empty string, missing | — | — |
+| `stages` | `list[Stage]` | Missing, non-list | — | — |
+| `constraints` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+| `context_files` | `list[str]`, missing, `null` | Scalar, `list[non-str]` | `[]` (missing or `null`) | — |
+
+### Differences between load and validate
+
+| Field | Load path | Validate path |
+|-------|-----------|---------------|
+| `files: null` | Treated as `[]` | Flagged as error |
+| `files: [1, 2]` | Raises `PlanLoadError` | Flagged as error |
+| `attachments: null` | Treated as `[]` | Not checked (loader-only) |
+| `attachments: [1, 2]` | Raises `PlanLoadError` | Not checked (loader-only) |
+| `constraints: null` | Treated as `[]` | Flagged as error |
+| `constraints: "abc"` | Raises `PlanLoadError` | Flagged as error |
+| `constraints: [1, 2]` | Raises `PlanLoadError` | Flagged as error |
+
+Every list field is checked item by item at load, so a scalar string raises
+rather than being iterated and a non-string item raises rather than being
+coerced. The
+loader's error names the level of the document the field was found at — `Plan`,
+`Stage 'name'`, or `Step N in stage 'name'` — because the same field names
+appear at more than one level and a reader given the wrong one goes looking for
+a step that does not carry the field.
+
+Strict loading of `attachments` is not the same as the field working. A plan
+step's `attachments` is loaded and round-trips through `Task`, but no
+production call site forwards it to `MultiModalContext` or an adapter, so it
+never reaches the capability gate, audit event, lineage receipt, or worktree
+pinning that CLI `--attach` goes through. That gap is tracked in #3555.
+
+Explicit `null` is the one shape where load and validate still disagree by
+design: the loader treats it as absent and returns `[]`, while `plan validate`
+sees a present key whose value is not an array and flags it. Existing plans
+rely on the loader's reading, so tightening it is a separate compatibility
+decision, not part of the item-level strictness above.
+
+### Compatibility window
+
+Plan files written against the pre-3.14.159 lenient loader may fail on upgrade if they contain:
+- Out-of-range enum values
+- Scalar `files` or `attachments`
+- Non-integer numeric fields
+
+Run `bernstein plan validate <file>` to check before upgrading.
+
+### The `dry-run --plan` exception
+
+`bernstein dry-run --plan <file>` currently converts a load failure into an empty result and exits 0 (#3550). This is a known issue; use `bernstein plan validate <file>` for reliable error detection.

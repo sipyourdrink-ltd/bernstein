@@ -103,3 +103,10 @@ created during install.
   reports an error rather than overwriting it.
 - `bernstein init` may also write `.claude/mcp.json` for orchestration
   auto-discovery; the two mechanisms are independent and can coexist.
+- `.claude/mcp.json` is only edited where its shape is understood. A file
+  whose root is not a JSON object, or whose `mcpServers` is not a map,
+  carries nothing either command can act on: `bernstein init` starts from
+  an empty configuration and writes its own entry, and `bernstein stop`
+  treats the file as having nothing to remove and leaves it byte-for-byte
+  alone. Neither command fails on such a file, and neither discards
+  top-level keys it did not write.

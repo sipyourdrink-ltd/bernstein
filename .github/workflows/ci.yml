@@ -30,6 +30,10 @@ on:
       - "packages/vscode/**"
       - "packages/cursor-plugin/**"
       - "packaging/**"
+      # packaging/rpm is NOT ignored: the spec decides whether the shipped
+      # RPM works at all, and `install-smoke-rpm` is its covering test
+      # (#3558). A spec-only diff must run CI.
+      - "!packaging/rpm/**"
       - "Formula/**"
       # Deployment & infra configs
       - "deploy/**"
@@ -79,6 +83,10 @@ on:
       - "packages/vscode/**"
       - "packages/cursor-plugin/**"
       - "packaging/**"
+      # packaging/rpm is NOT ignored: the spec decides whether the shipped
+      # RPM works at all, and `install-smoke-rpm` is its covering test
+      # (#3558). A spec-only diff must run CI.
+      - "!packaging/rpm/**"
       - "Formula/**"
       # Deployment & infra configs
       - "deploy/**"
@@ -429,11 +437,20 @@ jobs:
         # Run `uv run bernstein readme-l10n sync` after editing README.md.
         run: uv run bernstein readme-l10n verify --workdir .
       - name: Distribution manifest drift check
-        # Fails in under a minute if server.json / .plugin/plugin.json drift
+        # Fails in under a minute if server.json / .plugin/plugin.json or the
+        # Agent Plugins 1.0.0 root manifests (plugin.json / mcp.json) drift
         # from `scripts/gen_distribution_manifests.py`, instead of surfacing the
         # drift much later inside a long test shard. Run
         # `uv run python scripts/gen_distribution_manifests.py` locally to fix.
         run: uv run python scripts/gen_distribution_manifests.py --check
+      - name: CLI reference flag-table drift check (#3465)
+        # Fails if docs/reference/cli-reference.md documents a flag a command
+        # rejects (that invocation exits 2 with "No such option" before the
+        # command body runs), or if a command accepts a flag its flag table
+        # does not list. Runs here as well as in the test shards so a
+        # docs-only change cannot land the drift past an affected-tests PR
+        # lane.
+        run: uv run pytest tests/unit/test_cli_command_registration.py -q --no-cov --timeout=120
       - name: Operator-surface render freshness (#3427)
         # The published renders of `bernstein live` and `bernstein gui serve`
         # are generated artefacts, so they get the same treatment as the rest
@@ -635,6 +652,40 @@ jobs:
             echo "Scope reference: \`docs/operations/type-check-scope.md\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  proto-drift:
+    name: Proto codegen drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+      # Pinned to the version that produced the committed files: protoc
+      # stamps its own version into the output, so an unpinned tool would
+      # make this gate red on an unrelated upstream release rather than on
+      # a real drift between proto/ and the checked-in modules.
+      - name: Regenerate and compare
+        run: |
+          uv run --with "grpcio-tools==1.83.0" python -m grpc_tools.protoc \
+            -Iproto \
+            --python_out=src/bernstein/core/grpc_gen \
+            --pyi_out=src/bernstein/core/grpc_gen \
+            --grpc_python_out=src/bernstein/core/grpc_gen \
+            proto/bernstein/v1/tasks.proto proto/bernstein/v1/cluster.proto
+          for f in src/bernstein/core/grpc_gen/*.py; do
+            sed -i 's/^from bernstein\.v1 import/from . import/' "$f"
+          done
+          git diff --exit-code -- src/bernstein/core/grpc_gen || {
+            echo "::error::checked-in gRPC modules differ from proto/. Run scripts/generate_proto.sh and commit the result."
+            exit 1
+          }
+
   dead-code:
     name: Dead code (Vulture)
     runs-on: ubuntu-latest
@@ -651,7 +702,10 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
       - run: uv tool install vulture
-      - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs"
+      # grpc_gen holds protoc output. Dead-code analysis of generated code
+      # reports the generator's habits, not ours: protobuf emits imports
+      # its descriptor uses at runtime and vulture cannot see.
+      - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
   dist-size:
     name: Package size check
@@ -928,6 +982,66 @@ jobs:
           assert any(tpl_pkg.iterdir()), "no default templates shipped in wheel"
           print(f"packaged resources OK: {len(schemas)} MCP schemas")
           '
+
+  install-smoke-rpm:
+    # RPM-channel counterpart of the pipx / uv smokes above (#3558, #3559).
+    # Builds the binary RPM from the SRPM this tree renders - the same
+    # artefact Copr builds - installs it in a container of the target chroot
+    # family, and asserts that `bernstein --version` reports the version the
+    # RPM metadata claims *with networking disabled*. The channel shipped a
+    # launcher that resolved itself from PyPI at run time for four months
+    # because nothing installed the built RPM and ran the binary; this job is
+    # that missing check.
+    #
+    # Unlike the wheel smokes, this installs the newest *released* version:
+    # the RPM packages the PyPI release, so the subject under test here is
+    # the spec, the SRPM renderer, and the smoke harness in this tree - not
+    # the tree's own source code.
+    name: Install smoke - RPM (${{ matrix.image }})
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # One container per published chroot family. The PR lane runs both
+        # families rather than one representative cell: the spec resolves a
+        # different interpreter on EPEL 9 (`python3.12`) than everywhere
+        # else (`python3`), so a single cell would leave one branch of the
+        # spec untested. The trailing releases of each family run on push
+        # to main and on dispatch; they exercise no additional spec branch.
+        image: ${{ github.event_name == 'pull_request' && fromJSON('["fedora:43", "quay.io/centos/centos:stream9"]') || fromJSON('["fedora:43", "fedora:44", "quay.io/centos/centos:stream9", "quay.io/centos/centos:stream10"]') }}
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Resolve the newest released version
+        id: version
+        # `matrix.image` reaches the shell as an environment variable rather
+        # than a template expansion: an expansion is spliced into the script
+        # source before it runs, which is the shape zizmor rejects.
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          VERSION="$(curl -fsS --retry 3 https://pypi.org/pypi/bernstein/json | jq -r .info.version)"
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
+            echo "::error::could not resolve the newest released version from PyPI"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "smoking bernstein ${VERSION} on ${SMOKE_IMAGE}"
+      - name: Build the RPM, install it, run it offline
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+          SMOKE_VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/rpm_install_smoke.sh "${SMOKE_IMAGE}" "${SMOKE_VERSION}"
 
   # ─── CI hardening 2026 (medium, parallel, ≤8 min each) ───────────────
 
@@ -1967,6 +2081,7 @@ jobs:
       - dist-size
       - install-smoke-pipx
       - install-smoke-uv
+      - install-smoke-rpm
       - property-tests
       - snapshot-tests
       - schemathesis-smoke
@@ -2026,6 +2141,7 @@ jobs:
               "dist-size",
               "install-smoke-pipx",
               "install-smoke-uv",
+              "install-smoke-rpm",
           }
           # macOS-gated jobs (see #1468): on PRs these are skipped unless
           # the diff is macos_sensitive or the PR carries the

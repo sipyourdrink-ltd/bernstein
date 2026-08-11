@@ -122,17 +122,17 @@ class TaskClient:
         from bernstein.core.grpc_gen import tasks_pb2
 
         status_map = {
-            "open": 1,
-            "claimed": 2,
-            "in_progress": 3,
-            "done": 4,
-            "failed": 5,
-            "blocked": 6,
-            "cancelled": 7,
-            "orphaned": 8,
+            "open": tasks_pb2.TaskStatus.TASK_STATUS_OPEN,
+            "claimed": tasks_pb2.TaskStatus.TASK_STATUS_CLAIMED,
+            "in_progress": tasks_pb2.TaskStatus.TASK_STATUS_IN_PROGRESS,
+            "done": tasks_pb2.TaskStatus.TASK_STATUS_DONE,
+            "failed": tasks_pb2.TaskStatus.TASK_STATUS_FAILED,
+            "blocked": tasks_pb2.TaskStatus.TASK_STATUS_BLOCKED,
+            "cancelled": tasks_pb2.TaskStatus.TASK_STATUS_CANCELLED,
+            "orphaned": tasks_pb2.TaskStatus.TASK_STATUS_ORPHANED,
         }
         req = tasks_pb2.ListTasksRequest(
-            status_filter=status_map.get(status or "", 0),
+            status_filter=status_map.get(status or "", tasks_pb2.TaskStatus.TASK_STATUS_UNSPECIFIED),
             role_filter=role or "",
             limit=limit,
         )

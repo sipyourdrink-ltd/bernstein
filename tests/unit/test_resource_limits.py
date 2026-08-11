@@ -95,3 +95,35 @@ class TestCheckUsage:
     def test_memory_exceeded_flag(self) -> None:
         usage = ResourceUsage(rss_mb=500.0, memory_exceeded=True)
         assert usage.memory_exceeded
+
+
+class TestFromDictRefusesMeaninglessValues:
+    """`0` means unlimited, so a negative is a typo rather than a tighter limit.
+
+    Left alone it survives to `setrlimit`, where a negative is
+    `RLIM_INFINITY` on several platforms: the config reads as a tightened
+    limit, `has_any_limit()` agrees one is set, and the process runs
+    unbounded. Parse time is the last place that distinction is visible.
+    """
+
+    @pytest.mark.parametrize(
+        "key",
+        ["memory_mb", "cpu_seconds", "open_files", "disk_write_mb"],
+    )
+    def test_a_negative_limit_is_refused(self, key: str) -> None:
+        with pytest.raises(ValueError, match=f"{key} must be >= 0"):
+            ResourceLimits.from_dict({key: -1})
+
+    def test_a_boolean_is_refused(self) -> None:
+        """YAML reads `memory_mb: yes` as True, and int(True) is a 1 MB cap."""
+        with pytest.raises(ValueError, match="got a boolean"):
+            ResourceLimits.from_dict({"memory_mb": True})
+
+    def test_a_quoted_number_still_coerces(self) -> None:
+        """Config arrives from YAML and TOML, where a quoted number is ordinary."""
+        assert ResourceLimits.from_dict({"memory_mb": "512"}).memory_mb == 512
+
+    def test_zero_and_absent_stay_unlimited(self) -> None:
+        assert ResourceLimits.from_dict({"memory_mb": 0}).memory_mb == 0
+        assert ResourceLimits.from_dict({}).memory_mb == 0
+        assert ResourceLimits.from_dict({}).has_any_limit() is False

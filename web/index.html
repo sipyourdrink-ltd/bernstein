@@ -16,6 +16,41 @@
     <meta name="apple-mobile-web-app-title" content="Bernstein" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#111111" />
+    <script id="theme-bootstrap">
+      (() => {
+        try {
+          const root = document.documentElement;
+          let theme = 'system';
+
+          try {
+            const storedTheme = window.localStorage.getItem('bernstein-theme');
+            if (storedTheme === 'dark' || storedTheme === 'light' || storedTheme === 'system') {
+              theme = storedTheme;
+            }
+          } catch {
+            // Storage can be blocked in private browsing; use the system preference instead.
+          }
+
+          if (theme === 'system') {
+            try {
+              theme =
+                typeof window.matchMedia !== 'function'
+                  ? 'dark'
+                  : window.matchMedia('(prefers-color-scheme: dark)').matches
+                    ? 'dark'
+                    : 'light';
+            } catch {
+              theme = 'dark';
+            }
+          }
+
+          root.classList.remove('light', 'dark');
+          root.classList.add(theme);
+        } catch {
+          // This runs before hydration, so a hostile browser environment must not block rendering.
+        }
+      })();
+    </script>
 
     <link
       rel="icon"

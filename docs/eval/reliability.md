@@ -92,7 +92,7 @@ produced it:
 ```
 
 Every attempt embeds its own replayable run receipt with an emit-time
-receipt hash — the same artefact-as-proof shape a submission bundle uses,
+receipt hash — the same receipt structure a submission bundle carries,
 repeated `k` times. The sealed `pass_at_1` / `pass_caret_k` values are
 claims; the verifier re-derives both.
 

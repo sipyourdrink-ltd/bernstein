@@ -1,13 +1,13 @@
-"""CLI command: ``bernstein api-check`` - detect breaking API changes via git diff.
+"""CLI command: ``bernstein impact api`` - detect breaking API changes via git diff.
 
 Compares Python function signatures between the current working tree and a
 base git ref (default ``HEAD~1``). Exits with code 1 when breaking changes
-are found.
+are found.  ``bernstein api-check`` stays registered as a second spelling.
 
 Usage::
 
-    bernstein api-check                  # compare against HEAD~1
-    bernstein api-check --base main      # compare against main branch
+    bernstein impact api                 # compare against HEAD~1
+    bernstein impact api --base main     # compare against main branch
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ def api_check_cmd(base: str, workdir: str | None) -> None:
     """Detect breaking API changes in Python files since a git ref.
 
     \b
-      bernstein api-check                 # vs HEAD~1
-      bernstein api-check --base main     # vs main branch
+      bernstein impact api                 # vs HEAD~1
+      bernstein impact api --base main     # vs main branch
     """
     from rich.table import Table
 

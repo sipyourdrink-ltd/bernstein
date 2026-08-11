@@ -8,11 +8,15 @@ limits), and creates tasks on the task server.
 
 from __future__ import annotations
 
+import contextlib
+import datetime
 import fnmatch
 import hashlib
 import json
 import logging
+import os
 import re
+import tempfile
 import time
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
@@ -100,6 +104,34 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
         if not isinstance(raw, dict) or "name" not in raw or "source" not in raw:
             logger.warning("Skipping malformed trigger entry: %r", raw)
             continue
+        # Presence is not type. Both fields are load-bearing: name is joined
+        # into the dedup key, where a non-string raises, and source is only
+        # ever compared against string literals, so a non-string one loads
+        # clean and is silently inert.
+        if not isinstance(raw["name"], str) or not raw["name"]:
+            logger.warning("Skipping trigger entry with a non-string or empty name: %r", raw["name"])
+            continue
+        if not isinstance(raw["source"], str) or not raw["source"]:
+            logger.warning("Skipping trigger %r: source must be a non-empty string, got %r", raw["name"], raw["source"])
+            continue
+        # TriggerConfig.schedule is str | None, but YAML hands back whatever was
+        # written: `schedule: 30` unquoted arrives as an int and used to be
+        # carried in unchecked, making the declared type a fiction and deferring
+        # the failure to croniter. Drop non-strings here so the dataclass tells
+        # the truth. Syntax is still the evaluator's business - validating it
+        # needs croniter, which is optional.
+        schedule = raw.get("schedule")
+        if raw["source"] == "cron":
+            if schedule is not None and not isinstance(schedule, str):
+                logger.warning(
+                    "Cron trigger %r has a %s schedule, not a string; it will never fire",
+                    raw["name"],
+                    type(schedule).__name__,
+                )
+                schedule = None
+            elif not schedule:
+                # The evaluator skips these on a falsy check every tick, silently.
+                logger.warning("Cron trigger %r has no usable schedule and will never fire", raw["name"])
         task_raw = raw.get("task", {})
         configs.append(
             TriggerConfig(
@@ -109,7 +141,7 @@ def load_trigger_configs(path: Path) -> list[TriggerConfig]:
                 filters=dict(raw.get("filters", {})),
                 conditions=dict(raw.get("conditions", {})),
                 task=_parse_task_template(task_raw),
-                schedule=raw.get("schedule"),
+                schedule=schedule,
             )
         )
     return configs
@@ -408,6 +440,10 @@ class TriggerManager:
 
         # Cron state: {trigger_name: last_fire_minute}
         self._cron_state: dict[str, str] = {}
+        # Set when _cron_state has changes that are not on disk yet, so a
+        # dropped write is retried on the next pass rather than waiting for
+        # the next fire (the same-minute dedup skips before the write).
+        self._cron_state_dirty = False
 
         # Load persisted state
         self._load_dedup_cache()
@@ -498,16 +534,52 @@ class TriggerManager:
             try:
                 with path.open() as f:
                     data = json.load(f)
-                self._cron_state = {k: v.get("last_fire_minute", "") for k, v in data.items()}
             except (json.JSONDecodeError, OSError):
                 logger.warning("Corrupt cron state, treating as empty")
                 self._cron_state = {}
+                return
+            # Valid JSON of the wrong shape decodes cleanly, so the guard above
+            # does not fire and .items()/.get() would raise out of __init__ -
+            # taking down every command that builds a TriggerManager. Keep the
+            # entries that parse: discarding the whole map re-fires every
+            # trigger already recorded for this minute.
+            if not isinstance(data, dict):
+                logger.warning("Cron state is not an object, treating as empty")
+                self._cron_state = {}
+                return
+            state: dict[str, str] = {}
+            for key, value in data.items():
+                minute = value.get("last_fire_minute", "") if isinstance(value, dict) else None
+                if not isinstance(key, str) or not isinstance(minute, str):
+                    logger.warning("Dropping unreadable cron state entry %r", key)
+                    continue
+                state[key] = minute
+            self._cron_state = state
 
     def _save_cron_state(self) -> None:
         path = self._runtime_dir / "cron_state.json"
         data = {k: {"last_fire_minute": v, "last_fired": time.time()} for k, v in self._cron_state.items()}
-        with path.open("w") as f:
-            json.dump(data, f)
+        # Write to a scratch sibling and rename over the target. Opening the
+        # real file "w" truncates it before the content lands, and
+        # _load_cron_state reads a corrupt file as empty state - so an
+        # interrupted write did not lose one entry, it replayed every cron
+        # trigger on the next start.
+        #
+        # mkstemp rather than a fixed ".tmp" name: the name is unique per
+        # writer, so two managers on one runtime dir cannot interleave inside
+        # a single scratch file, and it is created O_EXCL at 0o600, so an
+        # existing path cannot capture the write and the mode carries over to
+        # cron_state.json through the rename.
+        fd, tmp_name = tempfile.mkstemp(dir=self._runtime_dir, prefix="cron_state.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp_name)
 
     # -- Fire log -----------------------------------------------------------
 
@@ -772,14 +844,24 @@ class TriggerManager:
                 continue
 
             try:
-                cron = croniter(trigger.schedule, time.localtime(now))
-                # Check if the current minute matches the schedule
+                # croniter accepts a Unix timestamp, a datetime, or None - not
+                # a struct_time; ``now`` is already a float epoch.
+                cron = croniter(trigger.schedule, now)
                 prev_fire = cron.get_prev(float)
                 # If the previous fire time is within this minute, fire
                 prev_minute = time.strftime("%Y-%m-%dT%H:%M", time.localtime(prev_fire))
-                if prev_minute != current_minute:
+                # get_prev is strictly-before its anchor, so a tick landing
+                # exactly on a fire instant reports the fire *before* it and the
+                # schedule reads as not due. match() answers that one instant.
+                # It is consulted only after get_prev has already said "not
+                # due", so it can add a fire and never suppress one - and it
+                # leaves a sub-minute schedule's phase alone, which anchoring
+                # the search on the next minute would not.
+                if prev_minute != current_minute and not croniter.match(
+                    trigger.schedule, datetime.datetime.fromtimestamp(now)
+                ):
                     continue
-            except (ValueError, KeyError) as exc:
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
                 logger.error("Invalid cron expression for trigger %s: %s", trigger.name, exc)
                 continue
 
@@ -792,11 +874,33 @@ class TriggerManager:
             )
             events.append(event)
 
-            # Mark as fired for this minute
+            # Mark as fired for this minute. The in-memory entry is what
+            # suppresses a re-fire on the next tick; the file only carries that
+            # across a restart.
             self._cron_state[trigger.name] = current_minute
-            self._save_cron_state()
+            self._cron_state_dirty = True
 
+        self._flush_cron_state()
         return events
+
+    def _flush_cron_state(self) -> None:
+        """Persist pending cron state, tolerating a failed write.
+
+        Runs once per pass rather than per fire, and unconditionally while
+        state is pending, so a dropped write is retried on the next pass
+        instead of waiting for some trigger to fire again. A write that never
+        lands costs at most a duplicate fire after a restart within the same
+        minute; letting the error escape would strand the whole tick, which is
+        the failure this module already fixed once.
+        """
+        if not self._cron_state_dirty:
+            return
+        try:
+            self._save_cron_state()
+        except OSError as exc:
+            logger.error("Could not persist cron state (will retry next pass): %s", exc)
+            return
+        self._cron_state_dirty = False
 
     # -- Summary for CLI ----------------------------------------------------
 

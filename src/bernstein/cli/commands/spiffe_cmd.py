@@ -105,25 +105,48 @@ def verify_binding_cmd(binding_file: Path, install_key: Path, trust_domain: str,
         raise SystemExit(1)
 
     if audit_dir is not None:
-        matched = _verify_against_chain(binding, audit_dir)
+        matched, chain_reason = _verify_against_chain(binding, audit_dir)
         if not matched:
-            click.echo("invalid: no matching chained spiffe.svid_binding receipt", err=True)
+            click.echo(f"invalid: {chain_reason}", err=True)
             raise SystemExit(1)
         click.echo("valid (chain-anchored)")
         return
     click.echo("valid")
 
 
-def _verify_against_chain(binding: SvidBinding, audit_dir: Path) -> bool:
-    """Return True when *binding* matches a chained ``spiffe.svid_binding`` event."""
+def _verify_against_chain(binding: SvidBinding, audit_dir: Path) -> tuple[bool, str]:
+    """Check *binding* against a verified ``spiffe.svid_binding`` chain event.
+
+    Returns ``(matched, reason)``. Rows are read through
+    :meth:`AuditChainStore.verify_and_query`, so the verdict only ever rests on
+    events whose HMAC linkage held under whole-chain verification -- a
+    ``spiffe.svid_binding`` row inserted by a writer without the audit key
+    fails the chain check instead of anchoring the binding. The key is loaded
+    read-only: a verifier that minted its own key would fail every HMAC check
+    against a chain written under the real key, so a missing key is reported
+    as an operator error rather than papered over with fresh key material.
+    """
+    from bernstein.core.security.audit import (
+        AuditKeyMissingError,
+        AuditKeyPermissionError,
+        load_audit_key,
+    )
     from bernstein.core.security.audit_chain import (
         EVENT_SPIFFE_SVID_BINDING,
         AuditChainStore,
     )
 
-    chain = AuditChainStore(audit_dir)
-    for event in chain.query(event_type=EVENT_SPIFFE_SVID_BINDING):
-        ok, _reason = verify_binding_against_event(binding, event)
-        if ok:
-            return True
-    return False
+    try:
+        key = load_audit_key()
+    except (AuditKeyMissingError, AuditKeyPermissionError) as exc:
+        return False, f"cannot authenticate audit rows: {exc}"
+
+    chain = AuditChainStore(audit_dir, key=key)
+    ok, errors, events = chain.verify_and_query(event_type=EVENT_SPIFFE_SVID_BINDING, include_archived=True)
+    if not ok:
+        return False, "audit chain verification failed: " + "; ".join(errors)
+    for event in events:
+        matched, _reason = verify_binding_against_event(binding, event)
+        if matched:
+            return True, "ok"
+    return False, "no matching chained spiffe.svid_binding receipt"

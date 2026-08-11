@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.advanced_cmd import trace_cmd
-from bernstein.core.replay.journal import EventJournal
+from bernstein.core.replay.journal import EventJournal, run_journal_path
 
 _RUN_ID = "run-1"
 
@@ -98,3 +98,21 @@ def test_two_projections_byte_identical(project: Path) -> None:
     second = runner.invoke(trace_cmd, ["project", _RUN_ID, "--workdir", str(project), "--json"])
     assert first.exit_code == 0
     assert first.output == second.output
+
+
+def test_verify_projection_corrupted_journal_exits_one(project: Path) -> None:
+    """A journal that does not fully parse must fail the verifier (#3549).
+
+    Same contract as the sibling ``telemetry verify-span`` test: exit 1
+    (bad input) naming the physical line, never a pass over a filtered view.
+    """
+    runner = CliRunner()
+    runner.invoke(trace_cmd, ["project", _RUN_ID, "--workdir", str(project)])
+
+    journal_path = run_journal_path(project / ".sdd", _RUN_ID)
+    with journal_path.open("a", encoding="utf-8") as f:
+        f.write("{not json\n")
+    result = runner.invoke(trace_cmd, ["verify-projection", _RUN_ID, "--workdir", str(project)])
+    assert result.exit_code == 1, result.output
+    assert "corrupted" in result.output.lower()
+    assert "physical line" in result.output.lower()

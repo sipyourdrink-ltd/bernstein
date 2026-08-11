@@ -85,7 +85,7 @@ _COMMAND_EXAMPLES: dict[str, dict[str, Any]] = {
     "live": {
         "summary": "Launch the interactive TUI dashboard.",
         "examples": [
-            ("bernstein live", "Start the 3-column TUI"),
+            ("bernstein live", "Start the TUI dashboard"),
             ("bernstein live --classic", "Use the simpler Rich Live display"),
             ("bernstein live --interval 5", "Set polling interval to 5 seconds"),
         ],

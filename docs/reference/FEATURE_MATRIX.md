@@ -178,7 +178,7 @@ additionally holds the CLI's server calls to the registered route table.
 | Sovereign deployment profile | Full | Signed residency-posture attestation; posture drift at spawn is a signed refusal (`core/security/deployment_profile.py`) |
 | [Workflow DSL](../operations/workflow-manifests.md) | Full | `bernstein workflow validate/list/show` |
 | [Chaos engineering](../operations/chaos-engineering.md) | Full | `bernstein chaos agent-kill/file-remove/status/slo` |
-| Benchmark suite | Full | `bernstein benchmark run/compare/swe-bench` |
+| Benchmark suite | Full | `bernstein eval run/compare/swe-bench/programbench` |
 | [Eval harness](../eval/golden-harness.md) | Full | `bernstein eval run/report/failures` |
 | SWE-Bench harness | Full | Verified eval in `benchmarks/swe_bench/run.py` |
 | [Graduation system](../operations/graduation.md) | Full | Agent promotion stages, routes in `routes/graduation.py` |
@@ -225,7 +225,7 @@ additionally holds the CLI's server calls to the registered route table.
 | [`bernstein checkpoint`](../operations/checkpoint.md) | Full | Session snapshot |
 | [`bernstein wrap-up`](../operations/wrap-up.md) | Full | End session with summary |
 | `bernstein demo` | Full | Zero-config demo |
-| [`bernstein quickstart`](../getting-started/quickstart-demo.md) | Full | Flask TODO demo (3 tasks) |
+| [`bernstein demo --flask-todo`](../getting-started/quickstart-demo.md) | Full | Flask TODO demo (3 tasks). `bernstein quickstart` is a deprecated alias, removed in 4.0.0. |
 | `bernstein agents ...` | Full | Catalog management |
 | `bernstein evolve ...` | Full | Self-improvement |
 | `bernstein ci fix` | Full | CI autofix |
@@ -235,7 +235,7 @@ additionally holds the CLI's server calls to the registered route table.
 | [`bernstein chaos`](../operations/chaos-engineering.md) | Full | Fault injection |
 | [`bernstein audit`](../security/audit-log.md) | Full | Cryptographic audit (`seal/verify/export/taint/pack/slice`) |
 | [`bernstein verify`](cli/verify.md) | Full | Merkle/HMAC verification |
-| `bernstein benchmark` | Full | Benchmark suite |
+| `bernstein benchmark` | Full | Deprecated alias for `bernstein eval`, removed in v4.0.0 |
 | [`bernstein eval`](../eval/golden-harness.md) | Full | Evaluation harness |
 | `bernstein workspace` | Full | Multi-repo workspace |
 | [`bernstein config`](../operations/global-config.md) | Full | Configuration management |
@@ -280,7 +280,7 @@ additionally holds the CLI's server calls to the registered route table.
 | [`bernstein supervisor status/escalate`](../api/supervisor.md) | Full | Supervise stalled workers and seal stall escalation receipts |
 | [`bernstein delegation verify`](../operations/delegation-verify.md) | Full | Reconstruct and verify a run's delegation chain |
 | [`bernstein credential emit/verify`](../operations/content-credentials.md) | Full | Project an artifact's lineage into a signed C2PA credential and verify it |
-| [`bernstein skill provenance/verify`](../operations/skill-provenance.md) | Full | Recompute a skill's install receipt and usage-provenance graph |
+| [`bernstein skills provenance/verify`](../operations/skill-provenance.md) | Full | Recompute a skill's install receipt and usage-provenance graph |
 | [`bernstein schedule verify/audit`, `schedule show --at`](../operations/schedule.md) | Full | Replay recorded fires, chain-check fire receipts, project a schedule at a time |
 | `bernstein sla add/list/show/verify/report` | Full | Attach per-goal SLA contracts; a breach is an offline-verifiable violation receipt |
 | [`bernstein trace project/verify-projection`](../observability/otel-span-projection.md) | Full | Project a run journal into signed OTel GenAI spans and verify the projection |

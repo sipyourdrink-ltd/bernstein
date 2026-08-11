@@ -84,14 +84,6 @@ last_revise_at: 2026-05-19T12:00:00Z
 
 The command is read-only; it never advances state.
 
-> **Deprecated (removed in 4.0.0):** no shipped runtime advances this
-> pipeline -- nothing calls the ticker the docs describe, so `trace`
-> reports on a pipeline that cannot progress. The CLI group stays
-> registered through the 3.10 line and prints a deprecation warning on
-> invocation; it is unregistered in 4.0.0 (#3144). The core module
-> `bernstein.core.orchestration.issue_to_pr` stays importable and
-> unchanged -- drive the pipeline from Python if a producer lands.
-
 ## State markers
 
 The pipeline stores its progress as HTML comments inside the sticky

@@ -63,7 +63,8 @@ def _ensure_ingested_titles(orch: Any) -> set[str]:
         Set of lowered, stripped task titles already on the server.
     """
     if not hasattr(orch, "_ingested_titles"):
-        orch._ingested_titles: set[str] = set()
+        ingested: set[str] = set()
+        orch._ingested_titles = ingested
         with contextlib.suppress(Exception):
             resp = orch._client.get(f"{orch._config.server_url}/tasks")
             resp.raise_for_status()

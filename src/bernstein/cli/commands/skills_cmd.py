@@ -658,3 +658,9 @@ def skills_watch(path: Path | None) -> None:
             signal.signal(signal.SIGINT, previous_sigint)
         handle.stop()
         console.print("[dim]watcher stopped[/dim]")
+
+
+from bernstein.cli.commands.skill_cmd import skill_provenance_cmd, skill_verify_cmd  # noqa: E402
+
+skills_group.add_command(skill_provenance_cmd, "provenance")
+skills_group.add_command(skill_verify_cmd, "verify")

@@ -65,7 +65,7 @@ _manager: PluginManager | None = None
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_LIST_OBJ = "list[object]"
+type _CAST_LIST_OBJ = list[object]
 
 
 def _mcp_entry_from_dict(d: dict[str, Any]) -> Any:

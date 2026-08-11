@@ -29,9 +29,13 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+    )
+
     from .agent_identity import AgentIdentityCard
 
 __all__ = [
@@ -273,7 +277,10 @@ def sign_agent_card(
     """
     from cryptography.hazmat.primitives import serialization
 
-    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    # ``load_pem_private_key`` is typed as the full private-key union. Agent
+    # cards are signed with EdDSA only (see the ``alg`` header below), so
+    # narrow it to the key type whose ``sign(data)`` shape this code uses.
+    private_key = cast("Ed25519PrivateKey", serialization.load_pem_private_key(private_key_pem, password=None))
 
     # Build the JWS protected header (RFC 7515 §4) then base64url it.
     header = {"alg": "EdDSA", "typ": "agent-card+jws", "kid": kid or f"agent-{card.agent_id}"}
@@ -335,7 +342,25 @@ def verify_agent_card(
     if header.get("typ") != "agent-card+jws":
         return False
 
-    public_key = serialization.load_pem_public_key(public_key_pem)
+    # The ``alg``/``typ`` checks above constrain the JWS *header*, which the
+    # presenter supplies - they say nothing about ``public_key_pem``, which the
+    # caller supplies from its trust store. A key of another algorithm reaches
+    # ``verify(sig, signing_input)``, and only ``Ed25519PublicKey.verify`` has
+    # that two-argument shape: RSA and EC need padding or a hash. The resulting
+    # ``TypeError`` is not caught below, so it leaves ``verify_agent_card`` and
+    # its callers in ``IdentitySpawnAnchor`` as an unhandled exception where a
+    # ``False`` is the documented contract. A malformed PEM does the same via
+    # ``load_pem_public_key`` itself.
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    try:
+        loaded_key = serialization.load_pem_public_key(public_key_pem)
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return False
+    if not isinstance(loaded_key, Ed25519PublicKey):
+        return False
+    public_key = loaded_key
 
     body_b64 = _b64url(canonicalize_jcs(_card_to_dict(card)))
     signing_input = f"{header_b64}.{body_b64}".encode("ascii")

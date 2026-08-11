@@ -94,6 +94,29 @@ def test_a_binding_that_outlives_its_render_fails(binder: Any, tmp_path: Path, m
     assert any(dropped in problem for problem in problems), problems
 
 
+def test_a_render_left_adopted_fails(binder: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`adopted` is transitional - a render that keeps it is never re-checked.
+
+    Before the capture script owned every committed render, the two front-page
+    screenshots were rebound with `adopted` on every bundle change and rotted
+    for versions without anything failing. Every render is capturable now, so
+    a render that is bound without being captured is a gate finding.
+    """
+    binding = binder.load_binding()
+    renders = dict(binding["renders"])
+    renders["webui-agents-diffs.png"] = "adopted"
+    monkeypatch.setattr(binder, "load_binding", lambda *_: {**binding, "renders": renders})
+
+    problems = binder.verify()
+
+    assert any("webui-agents-diffs.png" in problem and "adopted" in problem for problem in problems), problems
+
+
+def test_the_committed_binding_carries_no_adopted_render(binder: Any) -> None:
+    """The repository itself must hold the property the gate enforces."""
+    assert all(provenance == "captured" for provenance in binder.load_binding()["renders"].values())
+
+
 def test_renaming_a_bundle_file_moves_the_digest(binder: Any, tmp_path: Path) -> None:
     """A rename ships a new UI even when every byte is the same.
 

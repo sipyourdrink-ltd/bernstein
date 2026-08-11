@@ -29,7 +29,10 @@ ALIASES: dict[str, str] = {
     "p": "plan",
     "c": "cost",
     "w": "watch",
-    "i": "init-wizard",
+    # ``init-wizard`` is folded into ``init --wizard`` (#3140). An alias value
+    # may carry flags, so the shortcut keeps landing on the interactive setup
+    # path it has always opened instead of silently becoming plain ``init``.
+    "i": "init --wizard",
     "st": "stop",
     "rc": "recap",
 }
@@ -55,6 +58,28 @@ def get_alias(name: str) -> str | None:
 def get_all_aliases() -> dict[str, str]:
     """Return a copy of the alias registry."""
     return ALIASES.copy()
+
+
+def expand_alias(name: str) -> list[str] | None:
+    """Split an alias into the argv tokens it stands for.
+
+    An alias value is a command line, not just a command name: folding a
+    top-level command into a flag on another one (``init-wizard`` into
+    ``init --wizard``, #3140) leaves the shortcut with nothing to point at
+    unless the value can carry the flag too.
+
+    Args:
+        name: Potential alias string.
+
+    Returns:
+        The argv tokens the alias expands to, or None when ``name`` is not a
+        registered alias. The first token is always the command name.
+    """
+    resolved = ALIASES.get(name)
+    if resolved is None:
+        return None
+    tokens = resolved.split()
+    return tokens or None
 
 
 def _load_user_aliases() -> dict[str, str]:
@@ -93,10 +118,11 @@ class AliasGroup(click.Group):
     """
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
-        # Check alias registry first
-        resolved = ALIASES.get(cmd_name)
-        if resolved is not None:
-            return super().get_command(ctx, resolved)
+        # Check alias registry first. Only the command name is a lookup key:
+        # any flags the alias carries are applied by resolve_command.
+        tokens = expand_alias(cmd_name)
+        if tokens is not None:
+            return super().get_command(ctx, tokens[0])
         # Standard lookup
         return super().get_command(ctx, cmd_name)
 
@@ -107,9 +133,9 @@ class AliasGroup(click.Group):
     ) -> tuple[str | None, click.Command | None, list[str]]:
         # Check if first arg is an alias
         if args:
-            resolved = ALIASES.get(args[0])
-            if resolved is not None:
-                args = [resolved, *args[1:]]
+            tokens = expand_alias(args[0])
+            if tokens is not None:
+                args = [*tokens, *args[1:]]
         return super().resolve_command(ctx, args)
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
@@ -146,7 +172,7 @@ def aliases_cmd() -> None:
         "p": "Show task backlog",
         "c": "Spend breakdown",
         "w": "Watch for file changes",
-        "i": "Initialize workspace",
+        "i": "Interactive workspace setup wizard",
         "st": "Graceful shutdown",
         "ps": "Running agent processes",
         "rc": "Post-run summary",

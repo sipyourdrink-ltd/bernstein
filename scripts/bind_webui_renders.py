@@ -126,6 +126,16 @@ def verify() -> list[str]:
     if vanished:
         problems.append(f"these renders are bound but no longer committed: {vanished}")
 
+    adopted = sorted(name for name in names if isinstance(recorded, dict) and recorded.get(name) != "captured")
+    if adopted:
+        problems.append(
+            "these renders are bound to the bundle without evidence they were captured from it "
+            f"(provenance is not `captured`): {adopted}\n"
+            "  Every committed render is capturable: run scripts/capture_webui_renders.py for these "
+            "screens, then mark them `captured` in the binding. `adopted` is a transitional word for "
+            "a render that predates the capture tooling, not a state a render may stay in."
+        )
+
     return problems
 
 
@@ -150,8 +160,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {problem}", file=sys.stderr)
     print(
         "\nRe-capture the affected screens, then rebind:\n"
-        "  uv run bernstein gui serve --no-open   # capture the screens you changed\n"
-        "  uv run python scripts/bind_webui_renders.py --update",
+        "  python3 scripts/capture_webui_renders.py             # all of them\n"
+        "  python3 scripts/capture_webui_renders.py tasks costs # or just these\n"
+        "  uv run python scripts/bind_webui_renders.py --update\n"
+        "See docs/contributing/render-freshness.md.",
         file=sys.stderr,
     )
     return 1

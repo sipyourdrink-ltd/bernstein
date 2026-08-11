@@ -99,21 +99,3 @@ def postmortem_cmd(
     if save:
         saved = generator.save(report, fmt=fmt)
         console.print(f"\n[green]Report saved to {saved}[/green]")
-
-
-@click.command(
-    "postmortem_alias",
-    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
-    help="(Deprecated) Legacy alias for `bernstein report postmortem`.",
-)
-@click.pass_context
-def postmortem_alias(ctx: click.Context) -> None:
-    """Backward compatibility for the
-    original `postmortem` command,
-    which was moved to `report_postmortem`."""
-    click.echo(
-        "WARNING: 'bernstein postmortem' is deprecated and will be removed in v4.0.0. "
-        "Use 'bernstein report postmortem' instead.",
-        err=True,
-    )
-    postmortem_cmd.main(args=ctx.args, prog_name="bernstein postmortem", standalone_mode=False)

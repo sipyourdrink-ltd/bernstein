@@ -303,6 +303,12 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     help="Drive a recorded observation tape instead of a live browser (offline, deterministic).",
 )
 @click.option(
+    "--driver",
+    "driver_name",
+    default=None,
+    help="Select browser driver backend by registered name (e.g. browser_use, playwright).",
+)
+@click.option(
     "--workdir",
     "-w",
     type=click.Path(file_okay=False, exists=True),
@@ -316,6 +322,7 @@ def browser_run_cmd(
     run_id: str,
     stage_id: str,
     recording_path: str | None,
+    driver_name: str | None,
     workdir: str,
     as_json: bool,
 ) -> None:
@@ -331,9 +338,12 @@ def browser_run_cmd(
     from bernstein.core.orchestration.activity import ActivityRejected, TerminalState, dispatch_activity
     from bernstein.core.orchestration.activity_modalities import ContentStore
     from bernstein.core.orchestration.browser_driver import (
+        RECORDED_DRIVER_NAME,
+        RECORDED_DRIVER_REFUSAL,
         BrowserDriver,
+        BrowserDriverError,
         RecordedBrowserDriver,
-        browser_use_driver,
+        get_driver_factory,
     )
     from bernstein.core.orchestration.browser_worker import BrowserBudgetExceeded, BrowserWorker
     from bernstein.core.replay.journal import EventJournal
@@ -343,14 +353,29 @@ def browser_run_cmd(
     flow_id, start_url, steps, final_checks, budget = _parse_flow(_load_json(Path(flow_path), label="flow document"))
 
     if recording_path is not None:
+        if driver_name is not None:
+            # Both name the backend. Silently letting --recording win would leave
+            # an unknown --driver name unrefused, which AC1 requires refusing.
+            raise click.BadParameter("--driver and --recording both select the backend; pass one or the other.")
         frames = _parse_recording(_load_json(Path(recording_path), label="recording"))
 
         def build(profile_dir: Path) -> BrowserDriver:
             return RecordedBrowserDriver(frames, profile_dir=profile_dir)
     else:
+        dname = driver_name or "browser_use"
+        try:
+            factory = get_driver_factory(dname)
+        except BrowserDriverError as exc:
+            raise click.BadParameter(str(exc)) from exc
+        if dname == RECORDED_DRIVER_NAME:
+            # The recorded driver needs a tape, so it is not constructible from a
+            # name. Refused here rather than at build time: a refusal raised
+            # inside the worker is classified into a driver_error terminal state,
+            # which never tells the operator to pass --recording.
+            raise click.BadParameter(RECORDED_DRIVER_REFUSAL)
 
         def build(profile_dir: Path) -> BrowserDriver:
-            return browser_use_driver(profile_dir=profile_dir)
+            return factory(profile_dir=profile_dir)
 
     worker = BrowserWorker(
         store=ContentStore(sdd_dir / "cas"),

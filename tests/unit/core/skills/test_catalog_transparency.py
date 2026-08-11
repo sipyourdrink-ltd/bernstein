@@ -272,7 +272,7 @@ def test_signed_head_from_dict_rejects_malformed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Inclusion receipt (the artefact IS the proof)
+# Inclusion receipt
 # ---------------------------------------------------------------------------
 
 

@@ -9,10 +9,10 @@ record* anchored to the run's lineage spine (the journal-anchored audit chain):
 
 The record's canonical bytes are the artefact the spine hashes, so the record's
 ``journal_entry_hash`` is the spine entry hash over exactly those bytes -- its
-chain-verifiable identity. Strip the spine and the record loses its meaning,
-not merely its log: ``verify_adjudication`` recomputes ``inputs_hash`` from the
-claimed inputs and confirms the recorded panel saw exactly those inputs, then
-confirms the record is still anchored in a spine that itself verifies.
+chain-verifiable identity. ``verify_adjudication`` recomputes ``inputs_hash``
+from the claimed inputs and confirms the recorded panel saw exactly those
+inputs, then confirms the record is still anchored in a spine that itself
+verifies.
 
 Independence is enforced structurally: a panel whose judges share
 model+temp+prompt (the same ``identity_hash``) is rejected as non-independent

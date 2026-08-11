@@ -252,6 +252,67 @@ def test_capability_subcommand_not_substring_match() -> None:
     assert len(failures) == 1
 
 
+def _flag_spec(*flags: str) -> _contract.ContractSpec:
+    """Minimal spec carrying only required flags."""
+    return _contract.ContractSpec(
+        adapter="x",
+        binary="x",
+        install_method="",
+        install_spec="",
+        auth_required_for_help=False,
+        auth_required_for_models=False,
+        auth_secret_env="",
+        required_flags=flags,
+        required_subcommands=(),
+        help_command=(),
+        models_command=(),
+        models_required_present=(),
+    )
+
+
+def test_capability_flag_not_satisfied_by_longer_flag() -> None:
+    """``--instruction`` must not be satisfied by ``--instructions``.
+
+    Upstream Goose renamed its inline-prompt flag to the plural, file-taking
+    ``--instructions``.  A substring match reports the singular flag present,
+    so the nightly probe stays green while every spawned worker aborts at
+    argument parsing.
+    """
+    help_text = "Options:\n  -i, --instructions <FILE>\n  -t, --text <TEXT>\n"
+    failures = _capability_failures_for(help_text, "--instruction")
+    assert len(failures) == 1
+    assert "--instruction" in failures[0]
+
+
+def test_capability_short_flag_not_satisfied_by_long_flag() -> None:
+    """``-m`` must not be satisfied by the ``--model`` that contains it."""
+    failures = _capability_failures_for("Options:\n      --model <MODEL>\n", "-m")
+    assert len(failures) == 1
+
+
+def test_capability_short_flag_matches_its_own_listing() -> None:
+    """``-m`` is present when the CLI lists it as an alias of ``--model``."""
+    assert _capability_failures_for("Options:\n  -m, --model <MODEL>\n", "-m") == []
+
+
+def test_capability_flag_matches_when_followed_by_punctuation() -> None:
+    """A flag stays present when trailed by ``=``, ``,``, ``<`` or end of line."""
+    help_text = "Options:\n  --text=<TEXT>\n  --model, alias\n  --sandbox <MODE>\n  --yolo\n"
+    assert _capability_failures_for(help_text, "--text", "--model", "--sandbox", "--yolo") == []
+
+
+def test_capability_flag_prefix_and_longer_sibling_both_required() -> None:
+    """``--print`` and ``--print-timeout`` are matched independently."""
+    only_long = "Options:\n  --print-timeout <SECS>\n"
+    assert len(_capability_failures_for(only_long, "--print")) == 1
+    both = "Options:\n  --print\n  --print-timeout <SECS>\n"
+    assert _capability_failures_for(both, "--print", "--print-timeout") == []
+
+
+def _capability_failures_for(help_text: str, *flags: str) -> list[str]:
+    return _contract._capability_failures(_flag_spec(*flags), help_text)
+
+
 def test_capability_match_is_case_insensitive() -> None:
     spec = _contract.ContractSpec(
         adapter="x",

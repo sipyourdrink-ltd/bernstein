@@ -25,22 +25,56 @@ Usage::
         event_hmac="deadbeef...",
     )
     print(record.rekor_log_id or "fallback used")
+
+Local bundle contract
+---------------------
+
+A ``bernstein-local-attestation/v1`` bundle is untrusted input: its
+``public_key_file`` field names the key that
+:func:`verify_local_attestation` checks the signature against, so a bundle
+that can steer that name picks its own verdict.  Producers must therefore
+emit, and consumers may rely on, a narrow shape:
+
+* ``public_key_file`` is a **single plain filename** resolved inside
+  ``attestation_dir``.  Absolute paths, drive-qualified paths, anything
+  containing ``/`` or ``\\``, ``.``, ``..``, and non-string values are all
+  rejected with ``ValueError``.  Writers emit ``pub_path.name``, which
+  always satisfies this.
+* Containment is decided from that string alone -- no ``resolve``, no
+  ``stat`` -- so it cannot be raced.  Subdirectories are refused for this
+  reason, not because they are inherently unsafe.
+* The key is read through a descriptor anchored to ``attestation_dir``.  A
+  symlink at the name is refused, as is anything that is not a regular
+  file, both with ``ValueError``.
+* A missing or unreadable key still raises ``OSError``: that is a local
+  fault rather than a hostile bundle, and callers distinguish the two.
+* The symlink refusal is atomic only where ``os.open`` supports **both**
+  ``dir_fd`` and ``O_NOFOLLOW``.  Missing either one -- Windows lacks both
+  -- it degrades to a best-effort check, since no atomic equivalent exists
+  there.  Name containment is unaffected and holds on every platform.
+
+None of this depends on ``attestation_dir`` itself being adversary-proof.
+Write access to that directory means control of the stored signing key, at
+which point an attacker signs bundles outright rather than steering them.
 """
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import json
 import logging
 import os
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
+
 
 _ISO_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -456,13 +490,33 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
         msg = "Not a local Ed25519 attestation bundle"
         raise ValueError(msg)
 
-    # Sanitize public_key_file to prevent path traversal attacks
+    # ``public_key_file`` comes from the untrusted bundle, so it decides which
+    # key the signature is checked against: steer it outside the attestation
+    # directory and any payload signed with an attacker-held key verifies.
+    #
+    # Containment is decided from the name alone, with no filesystem lookup.
+    # Resolving a path to prove it is contained and then opening that path are
+    # two separate lookups, and everything between them is a window; a name
+    # that is a single plain component cannot leave the directory it is opened
+    # relative to, so there is no window to begin with. The writer stores
+    # ``pub_path.name``, so nothing legitimate is absolute, descends into a
+    # subdirectory, or walks upwards.
     raw_key_name = bundle["public_key_file"]
-    pub_key_file = (attestation_dir / raw_key_name).resolve()
-    if not str(pub_key_file).startswith(str(attestation_dir.resolve())):
+    if _escapes_directory(raw_key_name):
         msg = f"Path traversal detected in public_key_file: {raw_key_name!r}"
         raise ValueError(msg)
-    public_key = serialization.load_pem_public_key(pub_key_file.read_bytes())
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    public_key = serialization.load_pem_public_key(_read_contained_key_bytes(attestation_dir, raw_key_name))
+    if not isinstance(public_key, Ed25519PublicKey):
+        # The schema says Ed25519, but the key file is named by the same
+        # untrusted bundle, so the schema is not evidence about the key. Only
+        # ``Ed25519PublicKey.verify`` takes ``(signature, data)``; every other
+        # algorithm needs padding or a hash argument. Without this the mismatch
+        # arrives as a ``TypeError`` swallowed by the ``except Exception``
+        # below, which reaches the same ``False`` by accident rather than by
+        # decision - and leaves nothing for a reader to check.
+        return False
 
     payload_bytes = AttestationPayload(**bundle["payload"]).canonical_json().encode()
     signature = bytes.fromhex(bundle["signature_hex"])
@@ -477,6 +531,109 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _escapes_directory(raw_key_name: object) -> bool:
+    """Whether ``raw_key_name`` could name anything but a file in one directory.
+
+    Decided from the string alone -- no ``resolve``, no ``stat``, nothing the
+    filesystem can change underneath the answer.  Only a single plain
+    component passes: anything absolute, drive-qualified, separated, or
+    self/parent-referential is rejected, as is a non-string, which a crafted
+    bundle can carry just as easily as a traversing name.
+
+    Args:
+        raw_key_name: The bundle-supplied ``public_key_file`` value.
+
+    Returns:
+        True when the value must be refused.
+    """
+    if not isinstance(raw_key_name, str) or not raw_key_name:
+        return True
+    drive, _ = os.path.splitdrive(raw_key_name)
+    return bool(
+        drive
+        or os.path.isabs(raw_key_name)
+        or raw_key_name in {os.curdir, os.pardir}
+        or "/" in raw_key_name
+        or "\\" in raw_key_name
+    )
+
+
+def _read_contained_key_bytes(attestation_dir: Path, raw_key_name: str) -> bytes:
+    """Read the bundle-named public key from exactly one directory lookup.
+
+    ``attestation_dir`` is resolved once, into a descriptor, and the key is
+    opened relative to that descriptor.  Nothing re-derives the directory
+    afterwards, so there is no interval in which swapping it could redirect
+    the read; :func:`_escapes_directory` has already established that the name
+    is a single component, which is what makes an anchored open sufficient.
+
+    ``O_NOFOLLOW`` then refuses a symlink at that component, and ``fstat``
+    requires a regular file, so a crafted bundle surfaces as the ``ValueError``
+    callers already handle instead of a stray ``OSError``.
+
+    Args:
+        attestation_dir: Directory the key must be read from.
+        raw_key_name: Bundle-supplied name, already checked by
+            :func:`_escapes_directory`.
+
+    Returns:
+        The bytes of the key file.
+
+    Raises:
+        ValueError: If the name is a symlink or not a regular file.
+    """
+    # ``O_BINARY`` matters on Windows, where ``os.open`` would otherwise
+    # translate line endings and hand ``load_pem_public_key`` altered bytes.
+    open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    dir_fd: int | None = None
+    # Both capabilities are required, not just ``dir_fd``: the anchored open
+    # refuses a symlink only because ``O_NOFOLLOW`` is among its flags, so
+    # selecting that branch on ``dir_fd`` alone would, on a platform offering
+    # one without the other, take the branch that has no best-effort check
+    # while dropping the flag that would have made it unnecessary.
+    can_anchor = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")
+    try:
+        if can_anchor:
+            dir_fd = os.open(attestation_dir, os.O_RDONLY)
+            fd = os.open(raw_key_name, open_flags, dir_fd=dir_fd)
+        else:
+            # Windows reaches this branch, as does any platform missing
+            # either capability. A single component still cannot escape the
+            # directory it is joined to, so containment holds; what is
+            # missing is an atomic refusal to follow a link at that
+            # component. This check is therefore best effort by construction
+            # -- it catches a symlink that is present, not one planted
+            # between here and the open -- and it is the most such a platform
+            # offers.
+            key_path = attestation_dir / raw_key_name
+            if key_path.is_symlink():
+                msg = f"public_key_file is a symlink, refusing to follow it: {raw_key_name!r}"
+                raise ValueError(msg)
+            fd = os.open(key_path, open_flags)
+    except OSError as exc:
+        # O_NOFOLLOW reports a symlink at the final component as ELOOP.  Every
+        # other OSError (a missing or unreadable key) is a genuine local fault
+        # and keeps propagating as it did before.
+        if exc.errno == errno.ELOOP:
+            msg = f"public_key_file is a symlink, refusing to follow it: {raw_key_name!r}"
+            raise ValueError(msg) from exc
+        raise
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
+
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            msg = f"public_key_file is not a regular file: {raw_key_name!r}"
+            raise ValueError(msg)
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
 
 
 def _save_record_index(attestation_dir: Path, record: AttestationRecord) -> None:

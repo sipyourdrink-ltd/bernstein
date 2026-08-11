@@ -203,11 +203,17 @@ synthesizes its own from PyPI metadata. That generated spec pulls in 30+
 `python3dist(...)` BuildRequires that Fedora does not package, so every
 chroot build failed. The last successful build was `1.4.11`.
 
-The fix keeps the channel and drops `buildpypi`. `packaging/rpm/bernstein.spec`
-ships a wrapper RPM that resolves the package through `pipx`/`uvx` at run
-time, so it declares no Python dependencies and nothing has to be packaged for
-Fedora. `scripts/build_copr_srpm.py` binds the spec to the release tag and
-`publish-copr` in `.github/workflows/publish.yml` submits the resulting SRPM.
+The fix keeps the channel and drops `buildpypi`. The first replacement spec
+shipped a launcher that resolved the package through `pipx`/`uvx` at run time;
+that made the RPM version describe nothing and the package unusable offline
+(#3558), so `packaging/rpm/bernstein.spec` now installs the release and its
+dependency closure into a private virtualenv at RPM build time. Nothing has to
+be packaged for Fedora - the closure comes from the released wheels - and
+nothing resolves at run time. `scripts/build_copr_srpm.py` binds the spec to
+the release tag, `rpm-install-smoke` installs the built RPM per chroot family
+and runs it with networking disabled, and `publish-copr` in
+`.github/workflows/publish.yml` submits the SRPM only after that smoke passes
+(#3559).
 
 Operator details - secret name, project URL, local build commands, and the
 single-channel republish path - live in

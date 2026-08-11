@@ -54,7 +54,7 @@ The manifest records `redactions_applied`, a total count of substitutions
 made across every text artefact in the bundle, so the operator sending the
 bundle can see at a glance how many patterns were caught.
 
-## Legacy alias: `bernstein debug-bundle`
+## Deprecated: `bernstein debug-bundle`
 
 A separate, older entry point, `bernstein debug-bundle`, still exists
 (`cli/commands/debug_cmd.py`). It runs an interactive confirmation prompt by
@@ -71,7 +71,41 @@ bernstein debug-bundle --extended     # include full (untruncated) logs
 
 It does not support task/run filtering or `--include-source-snippets`.
 `bernstein debug bundle` (the group command above) is the actively developed
-path; the flat `debug-bundle` alias is kept for backward compatibility.
+path. The flat `debug-bundle` spelling prints a deprecation warning on stderr
+and is removed in v4.0.0 (#3138).
+
+Migrating is not a plain rename, because the two are different builders:
+
+| `debug-bundle` | `debug bundle` |
+|---|---|
+| `--output FILE` | `--out FILE` |
+| `--yes` | not needed; there is no confirmation prompt |
+| `--extended` | no equivalent |
+
+The deprecation warning names those three differences, so a script that
+migrates blind does not lose a flag silently.
+
+### The ZIP is not interchangeable either
+
+The two builders lay their archives out differently, so any tooling that reads
+entries out of the ZIP by path has to be updated as well as the command name.
+Nothing in the CLI can detect that for you: swapping the command succeeds and
+produces a valid bundle with different member paths.
+
+| `debug-bundle` (legacy) | `debug bundle` (current) |
+|---|---|
+| Everything under a `bernstein-debug-<timestamp>/` top-level directory | Everything at the archive root |
+| no manifest member | `manifest.json` |
+| `config/bernstein.yaml` | `bernstein.yaml` |
+| `diagnostics/*` (git status, worktree list, disk space) | `doctor.json` |
+| `state/tasks.jsonl`, `state/archive_tail.jsonl`, `state/runtime_summary.json` | `traces/*`, `metrics/*` |
+| `logs/*` | `logs/*` |
+| `bernstein_version.txt`, `platform.txt`, `README.md` | folded into `manifest.json` |
+| — | `source/*` with `--include-source-snippets N` |
+
+Both report a redaction count. The legacy builder prints it into the archive's
+`README.md`; the current path writes it into `manifest.json` as
+`redactions_applied`.
 
 ## Source
 

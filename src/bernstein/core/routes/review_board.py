@@ -236,8 +236,7 @@ def review_board_diff(run_id: str, task_id: str, request: Request) -> JSONRespon
 # lives in, so it chains onto the exact head it was made against) and mirrored
 # as a signed, principal-named ``review_board.action`` entry on the audit
 # chain. The board's merged column and review annotations then project from
-# that journal row - strip the chain and the action loses its meaning, not
-# just its log line. The route sits under ``/dashboard`` so the dashboard-auth
+# that journal row. The route sits under ``/dashboard`` so the dashboard-auth
 # middleware attributes a real principal and blocks any non-operator scope.
 # ---------------------------------------------------------------------------
 

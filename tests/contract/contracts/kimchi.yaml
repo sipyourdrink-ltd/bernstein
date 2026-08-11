@@ -1,0 +1,24 @@
+# Contract for the Kimchi CLI (adapter: kimchi).
+#
+# Always-passed surface from src/bernstein/adapters/kimchi.py:
+# ``kimchi --mode acp --yolo --prompt <prompt> --model <model>``.
+# ``--mode acp`` selects the JSON-RPC event surface; ``--yolo`` auto-approves
+# tool calls so the session runs unattended; ``--prompt`` carries the task.
+adapter: kimchi
+binary: kimchi
+install:
+  method: brew
+  spec: "getkimchi/tap/kimchi"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "KIMCHI_API_KEY"
+required_flags:
+  - "--mode"
+  - "--yolo"
+  - "--prompt"
+  - "--model"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

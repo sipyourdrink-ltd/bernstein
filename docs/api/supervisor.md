@@ -20,6 +20,7 @@ Both shapes are versioned via an explicit `schema_version` field.
   "generated_ts": 1700000000.0,
   "stuck_count": 2,
   "oldest_stall_age_s": 95.0,
+  "parked_available": true,
   "workers": [
     {
       "worker_id": "abc123def456",
@@ -47,6 +48,7 @@ Both shapes are versioned via an explicit `schema_version` field.
 | `generated_ts` | float | Unix timestamp the snapshot was captured. |
 | `stuck_count` | integer | Number of workers with `is_stuck=true`. |
 | `oldest_stall_age_s` | float \| null | Age, in seconds, of the oldest currently-stuck worker; `null` when no worker is stuck or no stall timestamp is available. |
+| `parked_available` | bool | Whether this run found a record of the spawn supervisor's parked-session store (the `.sdd/runtime/spawn_supervisor/parked.json` marker, or a `respawn_exhausted` failure-log fallback entry). `false` means the store was never written this run, so a `stuck_count` of `0` should not be read as "definitely nothing parked". |
 | `workers[].worker_id` | string | Operator-decodable worker handle. |
 | `workers[].session_id` | string | Adapter session id. |
 | `workers[].role` | string | Worker role (`manager`, `backend`, `qa`, ...). |

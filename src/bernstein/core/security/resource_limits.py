@@ -19,10 +19,10 @@ import platform
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class ResourceLimits:
     disk_write_mb: int = 0
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> ResourceLimits:
+    def from_dict(cls, data: Mapping[str, Any]) -> ResourceLimits:
         """Parse a config dict into ResourceLimits.
 
         Args:
@@ -60,12 +60,17 @@ class ResourceLimits:
 
         Returns:
             Parsed ResourceLimits.
+
+        Raises:
+            ValueError: If a limit is negative or a boolean. ``0`` remains the
+                documented way to say "unlimited"; a negative is a typo that
+                would otherwise be applied as a limit.
         """
         return cls(
-            memory_mb=int(data.get("memory_mb", 0) or 0),
-            cpu_seconds=int(data.get("cpu_seconds", 0) or 0),
-            open_files=int(data.get("open_files", 0) or 0),
-            disk_write_mb=int(data.get("disk_write_mb", 0) or 0),
+            memory_mb=_limit_from_config(data, "memory_mb"),
+            cpu_seconds=_limit_from_config(data, "cpu_seconds"),
+            open_files=_limit_from_config(data, "open_files"),
+            disk_write_mb=_limit_from_config(data, "disk_write_mb"),
         )
 
     def has_any_limit(self) -> bool:
@@ -75,6 +80,45 @@ class ResourceLimits:
             True if at least one limit is configured.
         """
         return bool(self.memory_mb or self.cpu_seconds or self.open_files or self.disk_write_mb)
+
+
+def _limit_from_config(data: Mapping[str, Any], key: str) -> int:
+    """Read one limit from operator config, refusing values that mean nothing.
+
+    ``0`` is the documented way to say "unlimited", so a negative is never a
+    smaller limit - it is a typo. Left alone it survives to ``setrlimit``,
+    where a negative is ``RLIM_INFINITY`` on several platforms: the config
+    reads as a tightened limit, ``has_any_limit()`` agrees one is set, and the
+    process runs unbounded. Refusing at parse time is the only place that
+    distinction is still visible.
+
+    A ``bool`` is refused for the same reason rather than any safety one:
+    YAML reads ``memory_mb: yes`` as ``True``, and ``int(True)`` is a 1 MB
+    limit that nobody wrote down.
+
+    Strings still coerce. Config arrives from YAML and TOML where a quoted
+    number is ordinary, and ``int("6")`` was already the behaviour; a
+    non-numeric string raises ``ValueError`` here exactly as it did before.
+
+    Args:
+        data: The operator's limits mapping.
+        key: Which limit to read.
+
+    Returns:
+        The limit as a non-negative int; ``0`` when absent or empty.
+
+    Raises:
+        ValueError: If the value is a bool or negative.
+    """
+    raw = data.get(key, 0)
+    if isinstance(raw, bool):
+        msg = f"{key} must be an integer, got a boolean ({raw!r}); YAML reads `yes`/`no` as booleans"
+        raise ValueError(msg)
+    value = int(raw or 0)
+    if value < 0:
+        msg = f"{key} must be >= 0 ({value} given); 0 means unlimited"
+        raise ValueError(msg)
+    return value
 
 
 # ---------------------------------------------------------------------------

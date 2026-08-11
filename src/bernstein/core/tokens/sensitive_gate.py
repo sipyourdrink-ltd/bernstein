@@ -499,7 +499,9 @@ def emit_gate_audit(
     from bernstein.core.security.audit_chain import record_sensitive_gate
 
     actor = task_id or session_id or "unknown"
-    records = [(finding, decision.action) for finding in decision.findings]
+    # ``suppressed`` is an audit-only outcome that never appears as a
+    # GateDecision.action, so the recorded action is wider than that Literal.
+    records: list[tuple[GateFinding, str]] = [(finding, decision.action) for finding in decision.findings]
     records.extend((finding, "suppressed") for finding in decision.suppressed)
     for finding, action in records:
         try:

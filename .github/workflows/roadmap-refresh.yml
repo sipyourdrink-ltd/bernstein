@@ -1,0 +1,85 @@
+name: Roadmap refresh
+
+# ROADMAP.md is a projection of the open milestones. This regenerates it
+# and opens a pull request when the projection actually changed.
+#
+# It opens a pull request rather than pushing to main on purpose: main
+# is frozen between a release PR merging and the tag landing, and an
+# unattended weekly push is exactly the kind of thing that would land in
+# that window unnoticed. A pull request is safe to leave sitting.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+# Workflow scope stays read-only; the one job that needs to write
+# re-asserts the elevated set at job scope (Scorecard token-permissions).
+permissions:
+  contents: read
+
+concurrency:
+  group: roadmap-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Regenerate the milestone projection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # A pull request opened under GITHUB_TOKEN never triggers the required
+      # contexts, so it can never be merged - it would sit open forever
+      # looking green. Failing here makes the missing secret visible once
+      # instead of producing an unmergeable pull request every week.
+      - name: Require BOT_PAT
+        env:
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+        run: |
+          if [ -z "${BOT_PAT}" ]; then
+            echo "::error::BOT_PAT is not configured; a refresh PR opened under GITHUB_TOKEN would never run the required checks"
+            exit 1
+          fi
+
+      # Credentials persist because the last step pushes the refresh branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
+        with:
+          token: ${{ secrets.BOT_PAT }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: Regenerate ROADMAP.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/gen_roadmap.py
+
+      - name: Open a pull request if the roadmap moved
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- ROADMAP.md; then
+            echo "roadmap unchanged; nothing to open"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B chore/roadmap-refresh
+          git commit -q -m "docs(roadmap): refresh the milestone projection" -- ROADMAP.md
+          # --force-with-lease, not -f: if someone else moved the refresh
+          # branch, stop rather than overwrite their work.
+          git fetch -q origin chore/roadmap-refresh || true
+          git push --force-with-lease origin chore/roadmap-refresh
+          existing="$(gh pr list --head chore/roadmap-refresh --state open --json number --jq '.[].number')"
+          if [ -z "$existing" ]; then
+            gh pr create \
+              --head chore/roadmap-refresh \
+              --title "docs(roadmap): refresh the milestone projection" \
+              --body "Regenerated from the open milestones by \`scripts/gen_roadmap.py\`. Edit the milestone, not the generated block."
+          else
+            echo "pull request #$existing updated by the push"
+          fi

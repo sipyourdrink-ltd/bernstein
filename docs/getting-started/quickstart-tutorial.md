@@ -52,20 +52,21 @@ Bernstein does not run models directly - it orchestrates CLI coding agents that 
 separately. Check which ones are available on your system:
 
 ```bash
-bernstein agents
+bernstein doctor
 ```
 
 Example output:
 
 ```
-Available agents:
-  claude    ✓  Claude Code (claude)
-  codex     ✓  Codex CLI (codex)
-  gemini    ✗  Not found - install: npm i -g @google/gemini-cli
-  aider     ✗  Not found - install: pip install aider-chat
+ Check              Status  Detail               Fix
+ Adapter: claude    ✗       not in PATH          Install claude CLI - see docs
+ Adapter: codex     ✗       not in PATH          Install codex CLI - see docs
+ Adapter: gemini    ✗       not in PATH          Install gemini CLI - see docs
 ```
 
-You need at least one `✓`. If none are installed:
+You need at least one adapter row to turn ✓ (`doctor` also checks auth, ports,
+and your `.sdd` workspace - those stay red until later steps). If none are
+installed:
 
 ```bash
 # Claude Code (Anthropic)
@@ -298,7 +299,7 @@ bernstein stop --force   # Hard kill without draining
 
 You have a working Bernstein setup. Here are common next steps:
 
-- **Add more agents**: Run `bernstein agents` to see what else is installable
+- **Add more adapters**: Run `bernstein integrations list` to see what else is installable
 - **Configure model routing**: Set `model_policy` in `bernstein.yaml` to use cheaper models for simple tasks
 - **Write a plan file**: For real project work, a plan file gives you more control than an inline goal
 - **Set up guardrails**: Add `.bernstein/rules.yaml` to control what agents are allowed to do
@@ -318,7 +319,7 @@ Useful references:
 ### "No agents available"
 
 ```bash
-bernstein agents    # See which agents are installed and which are missing
+bernstein doctor    # See which agent CLIs are installed and authenticated
 ```
 
 Install at least one:

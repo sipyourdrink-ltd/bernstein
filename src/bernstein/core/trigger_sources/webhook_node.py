@@ -16,8 +16,8 @@ encoded and prefixed ``v1,`` in the signature header. Verification is
 constant-time and accepts the space-separated multi-signature header form so a
 sender rotating secrets can present more than one candidate signature.
 
-The artefact IS the proof
--------------------------
+Inbound and outbound receipts
+-----------------------------
 * An :class:`InboundReceipt` binds ``{event_hash, source, journal_root}``: the
   ``event_hash`` is recomputed from the source label, event id, and body, and
   the spawned run's journal is seeded with an event carrying that hash, so the

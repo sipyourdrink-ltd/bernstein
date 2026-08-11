@@ -237,4 +237,4 @@ check the profile against every gate above.
 | `droid` | `MODULE` | `droid <prompt>` |
 | `kimi` | `MODULE` | `kimi --yolo -c <prompt>` |
 | `opencode` | `MODULE` | `opencode run -m <model> --format json <prompt>` |
-| `goose` | `MODULE` | `goose run --instruction <prompt>` |
+| `goose` | `MODULE` | `goose run --text <prompt>` |

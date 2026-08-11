@@ -14,8 +14,7 @@ AC-2  bernstein bench verify recomputes every task's score by replaying the
 AC-3  A bundle with a fabricated score (verdict flipped without a matching
       replayable run) is rejected at the diverging task; removing or
       corrupting a task's receipt makes the whole bundle fail verification —
-      the score has no meaning without the replay substrate (artefact-as-proof
-      test).
+      the score has no meaning without the replay substrate.
 
 AC-4  The suite is content-addressed: two runners on the same suite hash
       provably ran the same task set; a changed task changes the suite hash.
@@ -325,7 +324,7 @@ class TestVerifierFabricatedScore:
 
 
 # ===========================================================================
-# AC-3 — Artefact-as-proof: missing / corrupted receipt
+# AC-3 — Receipt integrity: missing / corrupted receipt
 # ===========================================================================
 
 
@@ -362,8 +361,8 @@ class TestVerifierReceiptIntegrity:
         A receipt whose bytes were changed AFTER the bundle was emitted is
         caught even when the verdict is left unchanged.
 
-        This is the core artefact-as-proof property: stored_receipt_hash was
-        committed at emit time; any byte-flip diverges from the stored hash.
+        stored_receipt_hash was committed at emit time; any byte-flip
+        diverges from the stored hash.
         """
         bundle = _make_bundle(simple_suite, adapter)
 

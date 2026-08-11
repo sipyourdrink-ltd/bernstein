@@ -50,7 +50,7 @@ MIN_HEALTHY_SCORE: int = 60  # files below this are "unhealthy"
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_OBJ = "dict[str, object]"
+type _CAST_DICT_STR_OBJ = dict[str, object]
 
 
 @dataclass

@@ -15,8 +15,8 @@ scheduler-side evidence gate (:mod:`bernstein.core.evidence.completion_gate`)
 remains authoritative and runs regardless. The point of the in-process gate is
 to refuse the cheap miss early, not to replace the authoritative check.
 
-The artefact IS the receipt
----------------------------
+Gate outcomes are evidence bundles
+----------------------------------
 A gate outcome is never "a status plus a log". Every recordable outcome -- a
 blocked completion or a refused out-of-scope write -- is sealed as an
 :class:`~bernstein.core.evidence.bundle.EvidenceBundle`: the exact signed,

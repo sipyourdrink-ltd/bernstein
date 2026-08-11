@@ -41,11 +41,13 @@ from bernstein.adapters.hermes import HermesAdapter
 from bernstein.adapters.iac import IaCAdapter
 from bernstein.adapters.junie import JunieAdapter
 from bernstein.adapters.kilo import KiloAdapter
+from bernstein.adapters.kimchi import KimchiAdapter
 from bernstein.adapters.kimi import KimiAdapter
 from bernstein.adapters.kiro import KiroAdapter
 from bernstein.adapters.letta_code import LettaCodeAdapter
 from bernstein.adapters.mistral import MistralAdapter
 from bernstein.adapters.mock import MockAgentAdapter
+from bernstein.adapters.muse import MuseAdapter
 from bernstein.adapters.ollama import OllamaAdapter
 from bernstein.adapters.open_interpreter import OpenInterpreterAdapter
 from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
@@ -53,6 +55,7 @@ from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.openhands import OpenHandsAdapter
 from bernstein.adapters.pi import PiAdapter
 from bernstein.adapters.plandex import PlandexAdapter
+from bernstein.adapters.python_runtime import PythonRuntimeAdapter
 from bernstein.adapters.q_dev import QDevAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.ralphex import RalphexAdapter
@@ -118,11 +121,13 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "iac": IaCAdapter,
     "junie": JunieAdapter,
     "kilo": KiloAdapter,
+    "kimchi": KimchiAdapter,
     "kimi": KimiAdapter,
     "kiro": KiroAdapter,
     "letta_code": LettaCodeAdapter,
     "mistral": MistralAdapter,
     "mock": MockAgentAdapter,
+    "muse": MuseAdapter,
     "ollama": OllamaAdapter,
     "open_interpreter": OpenInterpreterAdapter,
     "openai_agents": OpenAIAgentsAdapter,
@@ -130,6 +135,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "openhands": OpenHandsAdapter,
     "pi": PiAdapter,
     "plandex": PlandexAdapter,
+    "python_runtime": PythonRuntimeAdapter,
     "q_dev": QDevAdapter,
     "qwen": QwenAdapter,
     "ralphex": RalphexAdapter,

@@ -44,7 +44,7 @@ VALID_SIGNAL_TYPES = frozenset({"file_contains", "test_passes", "command_succeed
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_DICT_STR_OBJ = "dict[str, object]"
+type _CAST_DICT_STR_OBJ = dict[str, object]
 
 
 @dataclass(frozen=True)

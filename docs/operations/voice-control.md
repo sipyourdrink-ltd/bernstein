@@ -39,11 +39,14 @@ strings are passed through verbatim.
 
 ## Setup
 
+The audio and speech-to-text packages ship in the optional `voice`
+extra, not in the base install:
+
 ```
-pip install faster-whisper sounddevice numpy
+pip install 'bernstein[voice]'
 ```
 
-Requirements (`voice_cmd.py:283-296`):
+The extra pulls in (`pyproject.toml`, `[project.optional-dependencies]`):
 
 - `sounddevice` - microphone capture (PortAudio under the hood).
 - `numpy` - audio buffers.
@@ -59,8 +62,10 @@ Platform notes:
 - macOS: `brew install portaudio` is enough.
 - Windows: `pip install sounddevice` ships prebuilt wheels.
 
-The CLI exits with a clear install hint if any of the three deps are
-missing (`voice_cmd.py:271-296`).
+`bernstein listen` stays registered whether or not the extra is
+installed. If any of the three packages is missing it exits with
+status 1 and names `pip install 'bernstein[voice]'`
+(`voice_cmd.py:271-296`) rather than reporting an unknown command.
 
 ---
 

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 # Map Bernstein short model names to gptme model identifiers.
 # gptme accepts provider-prefixed names (e.g. "anthropic/claude-sonnet-4-6",
 # "openai/gpt-5.5"). Unknown names pass through unchanged.
-# Last verified against upstream gptme 0.27.x on 2026-05-05 - install: `pipx install gptme`.
+# Last verified against upstream gptme 0.32.1 on 2026-08-10 - install: `pipx install gptme`.
 _MODEL_MAP: dict[str, str] = {
     "opus": "anthropic/claude-opus-4-7",
     "opus-4-6": "anthropic/claude-opus-4-6",

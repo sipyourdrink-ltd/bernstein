@@ -246,5 +246,4 @@ advisory when the shipped matrix is stale.
 The whole layer is a deterministic projection. The decision reads no clock, no
 filesystem, and no network; the ledger projection, the cap comparison, and
 every hash are pure functions of the inputs. That is what makes a halt
-reproducible and a receipt independently verifiable offline -- the audit chain
-in the shape of a budget decision, not a log line beside it.
+reproducible and a receipt independently verifiable offline.

@@ -401,6 +401,136 @@ def test_step_files_maps_to_owned_files(tmp_path: Path) -> None:
     assert tasks[0].owned_files == ["src/app.py", "tests/test_app.py"]
 
 
+@pytest.mark.parametrize(
+    ("bad_file", "expected_type"),
+    [
+        (None, "NoneType"),
+        (True, "bool"),
+        (42, "int"),
+        ({"path": "src/app.py"}, "dict"),
+    ],
+)
+def test_step_files_rejects_non_string_items(tmp_path: Path, bad_file: object, expected_type: str) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "S",
+                    "steps": [{"title": "T", "files": ["src/app.py", bad_file]}],
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "files[1]" in message
+    assert expected_type in message
+
+
+# ---------------------------------------------------------------------------
+# Enum-typed step fields (issue #3515)
+# ---------------------------------------------------------------------------
+
+
+def test_step_out_of_range_complexity_raises_plan_load_error(tmp_path: Path) -> None:
+    """An out-of-range `complexity` is a PlanLoadError naming the field, the
+    value, and the accepted values -- not a bare ValueError escaping a function
+    documented to raise PlanLoadError only (issue #3515).
+    """
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "name": "Enum Plan",
+            "stages": [
+                {
+                    "name": "Stage 1",
+                    "steps": [{"title": "Task A", "role": "backend", "complexity": "epic"}],
+                }
+            ],
+        },
+    )
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "complexity" in message
+    assert "epic" in message
+    for accepted in ("low", "medium", "high"):
+        assert accepted in message
+    assert "Stage 1" in message
+
+
+def test_step_out_of_range_scope_raises_plan_load_error(tmp_path: Path) -> None:
+    """An out-of-range `scope` is a PlanLoadError naming the field, the value,
+    and the accepted values (issue #3515).
+    """
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "name": "Enum Plan",
+            "stages": [
+                {
+                    "name": "Stage 1",
+                    "steps": [{"title": "Task A", "role": "backend", "scope": "galactic"}],
+                }
+            ],
+        },
+    )
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "scope" in message
+    assert "galactic" in message
+    for accepted in ("small", "medium", "large"):
+        assert accepted in message
+    assert "Stage 1" in message
+
+
+def test_step_non_string_enum_value_raises_plan_load_error(tmp_path: Path) -> None:
+    """A wrong-typed enum value (YAML int where the enum holds strings) gets the
+    same PlanLoadError, not a bare ValueError (issue #3515).
+    """
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "name": "Enum Plan",
+            "stages": [
+                {
+                    "name": "Stage 1",
+                    "steps": [{"title": "Task A", "role": "backend", "complexity": 3}],
+                }
+            ],
+        },
+    )
+    with pytest.raises(PlanLoadError, match="complexity"):
+        load_plan_from_yaml(plan_file)
+
+
+def test_step_valid_scope_and_complexity_still_parse(tmp_path: Path) -> None:
+    """The guard must not reject values inside the enums."""
+    from bernstein.core.tasks.models import Complexity, Scope
+
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "S",
+                    "steps": [{"title": "T", "scope": "large", "complexity": "high"}],
+                }
+            ]
+        },
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert tasks[0].scope is Scope.LARGE
+    assert tasks[0].complexity is Complexity.HIGH
+
+
 # ---------------------------------------------------------------------------
 # Completion signals
 # ---------------------------------------------------------------------------
@@ -723,3 +853,194 @@ def test_repo_ref_name_auto_derived() -> None:
     assert RepoRef(path="../backend").name == "backend"
     assert RepoRef(path="services/auth-service/").name == "auth-service"
     assert RepoRef(path="../shared-types", name="types").name == "types"
+
+
+# ---------------------------------------------------------------------------
+# Boundary validation shared with validate_plan (#3516)
+# ---------------------------------------------------------------------------
+
+
+def test_step_files_scalar_raises_plan_load_error(tmp_path: Path) -> None:
+    """A scalar `files` value must not iterate character-by-character."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", "files": "src/app.py"}]}]},
+    )
+    with pytest.raises(PlanLoadError, match="'files' must be a"):
+        load_plan_from_yaml(plan_file)
+
+
+@pytest.mark.parametrize("value", ["3", True, 2.5], ids=["str", "bool", "float"])
+def test_step_priority_non_integer_raises_plan_load_error(tmp_path: Path, value: object) -> None:
+    """Non-integer priority must be a PlanLoadError, never silent coercion."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", "priority": value}]}]},
+    )
+    with pytest.raises(PlanLoadError, match="'priority' must be an integer"):
+        load_plan_from_yaml(plan_file)
+
+
+@pytest.mark.parametrize("value", ["ninety", "90", False], ids=["word", "numeric-str", "bool"])
+def test_step_estimated_minutes_non_integer_raises_plan_load_error(tmp_path: Path, value: object) -> None:
+    """A bad estimated_minutes must not escape as a bare ValueError."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", "estimated_minutes": value}]}]},
+    )
+    with pytest.raises(PlanLoadError, match="'estimated_minutes' must be an integer"):
+        load_plan_from_yaml(plan_file)
+
+
+def test_step_priority_and_estimated_minutes_defaults_still_apply(tmp_path: Path) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T"}]}]},
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert tasks[0].priority == 2
+    assert tasks[0].estimated_minutes == 30
+
+
+@pytest.mark.parametrize("field", ["priority", "estimated_minutes"])
+def test_step_explicit_null_int_field_raises_plan_load_error(tmp_path: Path, field: str) -> None:
+    """An explicit ``null`` is a present non-integer value, not an absent key;
+    it must raise instead of silently receiving the absent-key default."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", field: None}]}]},
+    )
+    with pytest.raises(PlanLoadError, match=f"'{field}' must be an integer"):
+        load_plan_from_yaml(plan_file)
+
+
+# ---------------------------------------------------------------------------
+# Plan- and stage-level list fields, same boundary as `files` (#3639)
+# ---------------------------------------------------------------------------
+#
+# `depends_on`, `constraints`, and `context_files` were left on the lenient
+# path when `files` was tightened, so `constraints: "no network calls"` loaded
+# as 17 single-character constraints and `depends_on: [null]` became the
+# fabricated stage name `'None'`. Both failures are silent: the plan loads and
+# the agents receive nonsense.
+#
+# These fields live at three different levels of the document, so each case
+# also asserts that the error names the level the reader has to go and edit.
+
+
+def _plan_with(**top: object) -> dict[str, object]:
+    return {"name": "P", "stages": [{"name": "S", "steps": [{"title": "T"}]}], **top}
+
+
+@pytest.mark.parametrize("field", ["constraints", "context_files"])
+def test_plan_level_scalar_string_raises_instead_of_being_iterated(tmp_path: Path, field: str) -> None:
+    plan_file = _write_plan(tmp_path, _plan_with(**{field: "no network calls"}))
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan(plan_file)
+
+    message = str(exc_info.value)
+    assert f"'{field}' must be a list" in message
+    # The field is top-level, so the message must not send the reader hunting
+    # for a step or a stage that does not carry it.
+    assert message.startswith("Plan:"), message
+
+
+@pytest.mark.parametrize("field", ["constraints", "context_files"])
+@pytest.mark.parametrize(
+    ("bad_item", "expected_type"),
+    [(None, "NoneType"), (True, "bool"), (42, "int"), ({"a": "b"}, "dict")],
+)
+def test_plan_level_non_string_item_raises_naming_field_and_index(
+    tmp_path: Path, field: str, bad_item: object, expected_type: str
+) -> None:
+    plan_file = _write_plan(tmp_path, _plan_with(**{field: ["ok", bad_item]}))
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan(plan_file)
+
+    message = str(exc_info.value)
+    assert f"{field}[1]" in message
+    assert expected_type in message
+
+
+def test_stage_depends_on_scalar_string_raises_instead_of_being_iterated(tmp_path: Path) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {"name": "build", "steps": [{"title": "T1"}]},
+                {"name": "test", "depends_on": "build", "steps": [{"title": "T2"}]},
+            ]
+        },
+    )
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "'depends_on' must be a list" in message
+    assert message.startswith("Stage 'test':"), message
+
+
+@pytest.mark.parametrize(
+    ("bad_item", "expected_type"),
+    [(None, "NoneType"), (True, "bool"), (42, "int"), ({"a": "b"}, "dict")],
+)
+def test_stage_depends_on_non_string_item_raises(tmp_path: Path, bad_item: object, expected_type: str) -> None:
+    """`depends_on: [null]` used to become the fabricated stage name 'None',
+    which then failed dependency resolution naming a stage nobody wrote."""
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {"name": "build", "steps": [{"title": "T1"}]},
+                {"name": "test", "depends_on": ["build", bad_item], "steps": [{"title": "T2"}]},
+            ]
+        },
+    )
+
+    with pytest.raises(PlanLoadError) as exc_info:
+        load_plan_from_yaml(plan_file)
+
+    message = str(exc_info.value)
+    assert "depends_on[1]" in message
+    assert expected_type in message
+
+
+@pytest.mark.parametrize("field", ["constraints", "context_files"])
+@pytest.mark.parametrize("present", [True, False], ids=["explicit-null", "absent"])
+def test_plan_level_absent_and_null_still_load_as_empty(tmp_path: Path, field: str, present: bool) -> None:
+    """The behaviour most likely to be broken by a strict rewrite: existing
+    plans that omit these fields, or set them to `null`, must keep loading."""
+    top: dict[str, object] = {field: None} if present else {}
+    plan_file = _write_plan(tmp_path, _plan_with(**top))
+
+    config, tasks = load_plan(plan_file)
+
+    assert getattr(config, field) == []
+    assert len(tasks) == 1
+
+
+@pytest.mark.parametrize("present", [True, False], ids=["explicit-null", "absent"])
+def test_stage_depends_on_absent_and_null_still_load_as_empty(tmp_path: Path, present: bool) -> None:
+    stage: dict[str, object] = {"name": "S", "steps": [{"title": "T"}]}
+    if present:
+        stage["depends_on"] = None
+    plan_file = _write_plan(tmp_path, {"stages": [stage]})
+
+    tasks = load_plan_from_yaml(plan_file)
+
+    assert tasks[0].depends_on == []
+
+
+def test_plan_level_valid_string_lists_survive_unchanged(tmp_path: Path) -> None:
+    plan_file = _write_plan(
+        tmp_path,
+        _plan_with(constraints=["no network calls"], context_files=["docs/spec.md"]),
+    )
+
+    config, _ = load_plan(plan_file)
+
+    assert config.constraints == ["no network calls"]
+    assert config.context_files == ["docs/spec.md"]

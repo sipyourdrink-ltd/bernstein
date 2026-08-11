@@ -23,7 +23,7 @@ AGENT_CARD_FILENAME = "agent.json"
 
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
-_CAST_LIST_OBJ = "list[object]"
+type _CAST_LIST_OBJ = list[object]
 
 
 @dataclass(frozen=True, slots=True)

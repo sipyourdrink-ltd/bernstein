@@ -397,3 +397,33 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
 
         with contextlib.suppress(Exception):
             shutil.rmtree(project_dir, ignore_errors=True)
+
+
+@click.command("quickstart", help="[Deprecated] Use 'bernstein demo --flask-todo' instead.")
+@click.option(
+    "--keep",
+    is_flag=True,
+    default=False,
+    help="Preserve the temp directory after completion.",
+)
+@click.option(
+    "--timeout",
+    default=300,
+    show_default=True,
+    help="Maximum seconds to wait.",
+)
+@click.option(
+    "--adapter",
+    default=None,
+    metavar="NAME",
+    help="CLI adapter to use.",
+)
+@click.pass_context
+def quickstart_alias_cmd(ctx: click.Context, keep: bool, timeout: int, adapter: str | None) -> None:
+    """[Deprecated] Use 'bernstein demo --flask-todo' instead."""
+    click.echo(
+        "WARNING: 'bernstein quickstart' is deprecated and will be removed in v4.0.0 (#3140): "
+        "use 'bernstein demo --flask-todo' instead.",
+        err=True,
+    )
+    ctx.invoke(quickstart_cmd, keep=keep, timeout=timeout, adapter=adapter)

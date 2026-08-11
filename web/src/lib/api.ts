@@ -25,9 +25,9 @@
 //     buildUrl('/api/v1/dashboard/x')    === '/api/v1/dashboard/x'
 //     buildUrl('')                       === '/api/v1'
 //
-// SSE endpoints constructed in ``web/src/lib/sse.ts`` go through
-// ``new EventSource(url)`` directly - those callers pass fully-qualified
-// ``/api/v1/...`` URLs because EventSource has no shared base.
+// SSE endpoints constructed in ``web/src/lib/sse.ts`` use the same bearer
+// token as this wrapper. Their callers pass fully-qualified ``/api/v1/...``
+// URLs because the stream helper does not rewrite paths.
 
 const TOKEN_KEY = 'bernstein_token';
 const BASE = '/api/v1';
@@ -47,15 +47,28 @@ export function buildUrl(path: string): string {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public body: unknown, message: string) {
+  public readonly status: number;
+  public readonly body: unknown;
+
+  constructor(status: number, body: unknown, message: string) {
     super(message);
+    this.status = status;
+    this.body = body;
     // Preserve a useful name for instanceof and devtools display.
     this.name = 'ApiError';
   }
 }
 
+export function getAuthToken(): string | null {
+  return typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_KEY) : null;
+}
+
+export function clearAuthToken(): void {
+  if (typeof window !== 'undefined') window.localStorage.removeItem(TOKEN_KEY);
+}
+
 function authHeaders(): HeadersInit {
-  const token = typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_KEY) : null;
+  const token = getAuthToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -104,7 +117,7 @@ export async function api<T = unknown>(
     },
   });
   if (r.status === 401) {
-    if (typeof window !== 'undefined') window.localStorage.removeItem(TOKEN_KEY);
+    clearAuthToken();
     // Preserve any server-provided error body so callers can surface a reason.
     const body = await readBody(r);
     throw new ApiError(401, body, 'Unauthorized - clear session and re-auth');

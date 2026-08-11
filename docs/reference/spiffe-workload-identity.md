@@ -50,9 +50,8 @@ verifiable after the fact. `bind_svid_to_card`:
    fingerprint, the card hash, and the leaf SVID's content address
    (`sha256:<hex>` over the leaf DER) -- never the SVID private key.
 
-The binding's identity **is** its content hash, and that hash is chained. Strip
-the audit chain and the binding loses its meaning, not just its log. Verify it
-offline:
+The binding's identity **is** its content hash, and that hash is chained, so a
+tampered binding fails verification. Verify it offline:
 
 ```bash
 bernstein spiffe verify-binding binding.json \

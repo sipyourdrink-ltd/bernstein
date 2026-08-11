@@ -179,6 +179,42 @@ class TestVerifyMCPServer:
         assert result.ok is False
         assert result.verdict == VerificationVerdict.UNSIGNED
 
+    @pytest.mark.parametrize(
+        ("signature", "expected"),
+        [
+            (None, VerificationVerdict.UNSIGNED),
+            (b"c2ln", VerificationVerdict.BAD_SIGNATURE),
+            (12345, VerificationVerdict.BAD_SIGNATURE),
+        ],
+    )
+    def test_non_string_signature_returns_a_verdict_instead_of_raising(
+        self, signature: object, expected: VerificationVerdict
+    ) -> None:
+        """The verifier's contract is a verdict; a type violation must not escape as an exception.
+
+        ``signature_b64`` is annotated ``str``, but it carries a value that
+        crossed a trust boundary - a parsed JSON ``null``, or the bytes from a
+        ``.sig`` file read without ``.decode()``. Callers outside this module
+        are not type-checked against it. Before the guard, ``.strip()`` raised
+        ``AttributeError`` and a caller written to branch on the verdict got an
+        exception instead, in the one code path whose whole purpose is to fail
+        closed.
+
+        ``None`` is a signature never supplied and stays UNSIGNED; anything
+        else was supplied and cannot be read, which is BAD_SIGNATURE. The
+        distinction is load-bearing: ``mcp_signing_policy`` allows UNSIGNED
+        under a warn-only policy and never allows BAD_SIGNATURE.
+        """
+        manifest, _sig, fp, pem = _make_signed_manifest()
+        result = verify_mcp_server(
+            manifest_yaml=manifest,
+            signature_b64=signature,  # type: ignore[arg-type]  # the point of the test
+            publisher_public_key_pem=pem,
+            trusted_publishers={fp},
+        )
+        assert result.ok is False
+        assert result.verdict == expected
+
     def test_content_hash_mismatch(self) -> None:
         """Manifest content_hash + non-matching bundle → mismatch verdict."""
         private_pem, public_pem = generate_ed25519_keypair()

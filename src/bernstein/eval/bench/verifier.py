@@ -18,8 +18,8 @@ Receipt integrity check
 they were when the bundle was emitted*.  The verifier recomputes the hash from
 the live receipt object and compares it to the stored value — so a single
 byte-flip in the receipt is caught even when the verdict field is left intact.
-This closes the "artefact-as-proof" requirement from the issue: removing or
-corrupting a task's receipt makes the whole bundle fail verification.
+Removing or corrupting a task's receipt makes the whole bundle fail
+verification.
 
 A coordinator that puts a model in the scheduling loop cannot satisfy the
 byte-identical reproducibility requirement *by construction*, so the
@@ -173,9 +173,9 @@ class BenchVerifier:
 
         # --- a2. Receipt integrity: recompute hash from live bytes ------
         #
-        # This is the "artefact-as-proof" check.  stored_receipt_hash was
-        # set when the bundle was emitted and persisted to JSON.  We now
-        # recompute from the live receipt bytes.  Any byte-flip is caught.
+        # stored_receipt_hash was set when the bundle was emitted and
+        # persisted to JSON.  We now recompute from the live receipt bytes.
+        # Any byte-flip is caught.
         live_hash = hashlib.sha256(
             json.dumps(result.receipt, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()

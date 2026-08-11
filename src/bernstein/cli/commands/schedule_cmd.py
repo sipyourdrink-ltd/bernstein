@@ -510,3 +510,8 @@ def schedule_doctor(as_json: bool) -> None:
         )
     else:
         click.echo("next fire at:         (no schedules)")
+
+
+from bernstein.cli.commands.routine_cmd import routine_group as _routine_group  # noqa: E402
+
+schedule_group.add_command(_routine_group, "routine")

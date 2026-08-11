@@ -9,8 +9,8 @@ x402 adapter over the AP2 mandate / consent-receipt surface
 payment itself; the settlement hook is the single boundary where the operator's
 own payment tooling plugs in.
 
-Design (the artefact IS the proof)
-----------------------------------
+Receipt bindings
+----------------
 A settlement is not "a payment plus an audit line". The primary artefact is a
 :class:`SpendReceipt` whose identity is a lineage-spine entry hash and whose
 bindings recompute offline against two independent records:
@@ -24,8 +24,7 @@ bindings recompute offline against two independent records:
 A payment claim that does not chain to *both* fails :func:`verify_spend_receipt`.
 Mutating the recorded amount, the 402 challenge digest, or the WAL invocation
 digest breaks the recompute -- so a provider statement is checkable against
-gateway execution history rather than taken on trust. Strip the spine, the WAL,
-or the mandate and the receipt loses its meaning, not just its log.
+gateway execution history rather than taken on trust.
 
 Default off
 -----------

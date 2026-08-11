@@ -33,10 +33,19 @@ re-checks the stored blob hash against the journal row: a tampered blob displays
 as tampered, not as content.
 
 ```bash
-bernstein artifacts list <task>          # every version + verify state
-bernstein artifacts show <task> <key>    # latest version + history
-bernstein audit verify                   # recompute every artifact offline
+bernstein artifact list <task>            # every version + verify state
+bernstein artifact list <task> --output-json  # the same three states as JSON
+bernstein artifact show <task> <key>      # latest version + history
+bernstein audit verify                    # recompute every artifact offline
 ```
+
+`bernstein artifact list` with no task argument answers a different question --
+the artifact keys the local lineage spines carry -- so the two listings stay
+distinct under one name.
+
+The plural `bernstein artifacts list|show` spelling still works and takes the
+same arguments, but it prints a deprecation warning on stderr and is removed in
+v4.0.0. See [deprecated command names](../operations/commands.md#deprecated-command-names).
 
 `bernstein audit verify` walks every artifact row, recomputes the stored blob
 hash, the spine anchor, and the chain mirror. Flipping one byte in a stored blob

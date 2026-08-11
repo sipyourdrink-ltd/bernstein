@@ -868,14 +868,54 @@ def is_codespace_runtime() -> bool:
         "Skips local-binary checks that would fail in a fresh container."
     ),
 )
+@click.option(
+    "--wizard",
+    "-w",
+    "wizard",
+    is_flag=True,
+    default=False,
+    help="Run interactive setup wizard to configure the workspace.",
+)
+@click.option(
+    "--non-interactive",
+    "non_interactive",
+    is_flag=True,
+    default=False,
+    help="With --wizard: take the wizard's defaults without prompting. Plain init never prompts.",
+)
 def init(
     target_dir: str,
     *,
     add_badge: bool = False,
     badge_variant: str = "signed",
     remote: bool = False,
+    wizard: bool = False,
+    non_interactive: bool = False,
 ) -> None:
-    """Init workspace -- create .sdd/ structure."""
+    """Init workspace -- create .sdd/ structure.
+
+    Raises:
+        click.UsageError: When --wizard is combined with a flag the wizard
+            path does not implement.
+    """
+    if wizard:
+        # The wizard is a separate implementation, not a mode of _init_impl:
+        # it writes its own bernstein.yaml and never reaches the badge or
+        # remote-container code below. Accepting those flags here would drop
+        # them silently, which reads to the operator as the flag not working.
+        unhonoured = [name for name, used in (("--add-badge", add_badge), ("--remote", remote)) if used]
+        if unhonoured:
+            raise click.UsageError(
+                f"{' and '.join(unhonoured)} cannot be combined with --wizard: the wizard does not run "
+                "that path. Run `bernstein init --wizard` first, then `bernstein init` with those flags."
+            )
+
+        from bernstein.cli.commands.init_wizard_cmd import init_wizard_cmd
+
+        ctx = click.get_current_context()
+        ctx.invoke(init_wizard_cmd, target_dir=target_dir, non_interactive=non_interactive)
+        return
+
     try:
         _init_impl(
             target_dir,
@@ -1009,11 +1049,11 @@ def _init_impl(
     console.print("")
     # ``examples/`` is a repo directory and is not part of the wheel, so an
     # operator who installed from PyPI has no such path to look at. The
-    # quickstart command carries its own inline copy of the sample project and
-    # works from any install.
+    # scenario behind ``demo --flask-todo`` carries its own inline copy of the
+    # sample project and works from any install.
     console.print(
         "  See [link=https://bernstein.readthedocs.io/en/latest/]docs[/link] "
-        "or run [bold]bernstein quickstart[/bold] for a working example."
+        "or run [bold]bernstein demo --flask-todo[/bold] for a working example."
     )
 
 

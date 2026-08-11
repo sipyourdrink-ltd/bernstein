@@ -535,6 +535,113 @@ class TestLastGreen:
         entries = load_last_green()
         assert isinstance(entries, dict)
 
+    def test_packaged_table_survives_validation(self) -> None:
+        """The shipped projection must satisfy the boundary it is read through.
+
+        Validating rows is only an improvement if the real table passes it; a
+        stricter loader that silently empties the packaged file would turn every
+        ``doctor`` staleness check into a no-op.
+        """
+        entries = load_last_green()
+        assert entries, "the packaged last-green table must load at least one row"
+        for name, entry in entries.items():
+            assert len(entry.receipt_sha256) == 64, name
+            assert entry.version.strip(), name
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("version", None),
+            ("version", ["1.4.0"]),
+            ("version", ""),
+            ("binary", None),
+            ("binary", 7),
+            ("receipt_sha256", None),
+            ("receipt_sha256", 123),
+            ("receipt_sha256", "not-a-hash"),
+            ("receipt_sha256", "AB" * 32),
+            ("recorded_at", None),
+            ("recorded_at", {"at": "2026-07-11T05:57:23Z"}),
+            ("recorded_at", "yesterday"),
+        ],
+    )
+    def test_malformed_row_is_dropped_rather_than_coerced(self, tmp_path: Path, field: str, value: object) -> None:
+        """A row that was never valid must not arrive looking like an attestation.
+
+        ``str(value)`` renders ``None`` as ``"None"`` and a list as its repr, so
+        a corrupt row used to load as a populated entry that admission and
+        ``doctor`` then read as a receipt-backed claim.
+        """
+        row = {
+            "binary": "agy",
+            "version": "1.4.0",
+            "receipt_sha256": "ab" * 32,
+            "recorded_at": "2026-07-11T05:57:23Z",
+        }
+        row[field] = value  # type: ignore[assignment]
+        path = tmp_path / "last_green.json"
+        path.write_text(json.dumps({"adapters": {"agy": row}}), encoding="utf-8")
+
+        assert load_last_green(path) == {}, f"{field}={value!r} must not load as an entry"
+
+    def test_a_malformed_row_does_not_discard_its_valid_neighbours(self, tmp_path: Path) -> None:
+        path = tmp_path / "last_green.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "adapters": {
+                        "agy": {
+                            "binary": "agy",
+                            "version": None,
+                            "receipt_sha256": "ab" * 32,
+                            "recorded_at": "2026-07-11T05:57:23Z",
+                        },
+                        "claude": {
+                            "binary": "claude",
+                            "version": "2.1.227",
+                            "receipt_sha256": "cd" * 32,
+                            "recorded_at": "2026-08-11T05:47:04Z",
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = load_last_green(path)
+
+        assert set(loaded) == {"claude"}
+        assert loaded["claude"].version == "2.1.227"
+
+    def test_surrounding_whitespace_is_normalised_not_carried_into_consumers(self, tmp_path: Path) -> None:
+        """A padded field passes an emptiness check and then breaks its consumer.
+
+        ``shutil.which(" claude")`` finds nothing and a padded version reaches
+        admission as a version nobody installed, so the row would produce a
+        stale-or-unknown verdict about a perfectly current install.
+        """
+        path = tmp_path / "last_green.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "adapters": {
+                        "claude": {
+                            "binary": " claude ",
+                            "version": "\t2.1.227\n",
+                            "receipt_sha256": "cd" * 32,
+                            "recorded_at": "2026-08-11T05:47:04Z",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = load_last_green(path)
+
+        assert loaded["claude"].binary == "claude"
+        assert loaded["claude"].version == "2.1.227"
+
     def test_render_table_rows_sorted_by_adapter(self) -> None:
         entries = {}
         for name in ("gemini", "agy"):

@@ -91,17 +91,7 @@ def split_sections(text: str) -> list[Section]:
     if not heading_idx:
         return [Section(HEADER_SECTION, text)]
 
-    # Footer start: first standalone '---' line after the last heading,
-    # outside any fenced code block.
-    footer_start = len(lines)
-    in_fence = False
-    for i in range(heading_idx[-1] + 1, len(lines)):
-        if _FENCE_RE.match(lines[i]):
-            in_fence = not in_fence
-            continue
-        if not in_fence and lines[i].strip() == "---":
-            footer_start = i
-            break
+    footer_start = _footer_start(lines, heading_idx[-1])
 
     sections: list[Section] = []
 
@@ -121,6 +111,19 @@ def split_sections(text: str) -> list[Section]:
     sections.append(Section(FOOTER_SECTION, footer_text))
 
     return sections
+
+
+def _footer_start(lines: list[str], last_heading_idx: int) -> int:
+    """Index of the footer separator: the first standalone ``---`` line
+    after the last heading, outside any fenced code block."""
+    in_fence = False
+    for i in range(last_heading_idx + 1, len(lines)):
+        if _FENCE_RE.match(lines[i]):
+            in_fence = not in_fence
+            continue
+        if not in_fence and lines[i].strip() == "---":
+            return i
+    return len(lines)
 
 
 def normalize(text: str) -> str:
@@ -162,6 +165,46 @@ def extract_code_blocks(section: Section) -> list[str]:
 def parse_bindings(text: str) -> dict[str, str]:
     """Map English section name -> bound hash from a translated file."""
     return {en: h for en, h in _BINDING_RE.findall(text)}
+
+
+def paragraph_count(body: str) -> int:
+    """Number of paragraph-level blocks in a section body.
+
+    Blocks are runs of non-blank lines separated by blank lines. A fenced
+    code block counts as a single block regardless of internal blank
+    lines. l10n binding comments are gate metadata, not content, and are
+    ignored. Used to compare structure between an English section and the
+    translation that mirrors it: hashes bind content, but a re-synced
+    binding cannot tell whether a paragraph added to the English source
+    ever reached the translation - the block count can.
+    """
+    blocks = 0
+    in_block = False
+    in_fence = False
+    for line in body.splitlines():
+        if _FENCE_RE.match(line):
+            # A fence always opens a block of its own, even when it
+            # follows prose with no blank line between them, and closing
+            # it ends that block so following prose opens a new one.
+            if not in_fence:
+                blocks += 1
+                in_fence = True
+                in_block = True
+            else:
+                in_fence = False
+                in_block = False
+            continue
+        if in_fence:
+            continue
+        if not line.strip():
+            in_block = False
+            continue
+        if _BINDING_RE.search(line):
+            continue
+        if not in_block:
+            blocks += 1
+            in_block = True
+    return blocks
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +270,32 @@ def verify_language(source_sections: list[Section], lang: str, translated_text: 
                         "and subcommands must stay verbatim"
                     )
 
-    # 3. Header/footer verbatim: logo, badges, language links line and the
+    # 3. Binding placement: a duplicated or orphaned binding lets a
+    #    section resolve to the wrong span, so parity below cannot be
+    #    trusted until placement is unambiguous.
+    result.errors.extend(binding_placement_errors(translated_text))
+
+    # 4. Paragraph parity: a translated section must carry the same number
+    #    of paragraph-level blocks as the English section it mirrors. The
+    #    hash binding pins the English content, but `sync` re-binds after
+    #    an English edit without proving the translation followed - a
+    #    paragraph added to the English source can otherwise go missing
+    #    from every translation while the gate stays green.
+    for section in prose:
+        trans_section = _find_translated_section(translated_text, section.heading)
+        if trans_section is None:
+            continue
+        en_blocks_n = paragraph_count(section.body)
+        tr_blocks_n = paragraph_count(trans_section.body)
+        if en_blocks_n != tr_blocks_n:
+            result.errors.append(
+                f'section "{section.heading}" has {tr_blocks_n} paragraph '
+                f"block(s) but the English section has {en_blocks_n}; "
+                "translate the missing or extra paragraph(s) so the "
+                "structures match"
+            )
+
+    # 5. Header/footer verbatim: logo, badges, language links line and the
     #    license/footer block are shared verbatim. The translated file
     #    mirrors the English structure, so its own header (before the
     #    first heading) and footer (after the last '---') map directly.
@@ -258,22 +326,103 @@ def _find_translated_section(text: str, en_heading: str) -> Section | None:
     for ``en_heading`` sits directly under the translated heading, and
     the section runs to the next ``###`` heading (or l10n binding).
     """
+    owned = _owned_sections(text)
+    sections = owned.get(en_heading)
+    if sections is None or len(sections) != 1:
+        # Absent, or bound more than once: ambiguous placement is reported
+        # by ``binding_placement_errors`` rather than silently resolved to
+        # whichever copy happens to come first.
+        return None
+    return sections[0]
+
+
+def _owned_sections(text: str) -> dict[str, list[Section]]:
+    """Map English section name -> the translated sections bound to it.
+
+    A binding is owned by the heading it sits under: the *first* binding
+    inside a heading's span, per the documented placement (directly under
+    the translated heading). The section body runs from that binding to
+    the next heading, or to the footer separator for the last one -
+    mirroring ``split_sections`` so the translated footer is never read
+    as part of the last prose section. Resolving by owning heading is
+    what keeps a stray or duplicated binding elsewhere in the file from
+    redefining a section's boundaries.
+    """
     lines = text.splitlines(keepends=True)
-    # Find the binding line for this English heading.
+    heading_idx = [i for i, line in enumerate(lines) if _HEADING_RE.match(line)]
+    if not heading_idx:
+        return {}
+    footer_start = _footer_start(lines, heading_idx[-1])
+
+    owned: dict[str, list[Section]] = {}
+    for n, idx in enumerate(heading_idx):
+        end = heading_idx[n + 1] if n + 1 < len(heading_idx) else footer_start
+        for j in range(idx + 1, min(end, len(lines))):
+            m = _BINDING_RE.search(lines[j])
+            if m is None:
+                continue
+            en = m.group(1)
+            owned.setdefault(en, []).append(Section(en, "".join(lines[j + 1 : end])))
+            break  # only the first binding under a heading owns it
+    return owned
+
+
+def binding_placement_errors(text: str) -> list[str]:
+    """Report bindings a reader would misread as pinning a section.
+
+    Two shapes are rejected: the same English section bound under more
+    than one translated heading (which of them mirrors it?), and a
+    binding that sits under no heading at all (before the first heading
+    or below the footer separator), where it pins nothing. Both let a
+    translated paragraph go missing while the hash bindings still
+    reconcile, so they are failures rather than warnings.
+    """
+    errors: list[str] = []
+    owned = _owned_sections(text)
+    for en, sections in sorted(owned.items()):
+        if len(sections) > 1:
+            errors.append(f'section "{en}" is bound by {len(sections)} translated headings; exactly one must mirror it')
+
+    lines = text.splitlines(keepends=True)
+    heading_idx = [i for i, line in enumerate(lines) if _HEADING_RE.match(line)]
+    first_heading = heading_idx[0] if heading_idx else len(lines)
+    footer_start = _footer_start(lines, heading_idx[-1]) if heading_idx else len(lines)
     for i, line in enumerate(lines):
         m = _BINDING_RE.search(line)
-        if m and m.group(1) == en_heading:
-            start = i + 1
-            end = len(lines)
-            for j in range(i + 1, len(lines)):
-                if _HEADING_RE.match(lines[j]):
-                    end = j
-                    break
-                if _BINDING_RE.search(lines[j]) and j > i:
-                    end = j
-                    break
-            return Section(en_heading, "".join(lines[start:end]))
-    return None
+        if m is None:
+            continue
+        if i < first_heading or i >= footer_start:
+            errors.append(
+                f'binding for section "{m.group(1)}" sits outside every '
+                "translated heading; move it directly under the heading it mirrors"
+            )
+    return errors
+
+
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _read_pyproject(pyproject: Path) -> dict[str, object] | None:
+    """Parse ``pyproject.toml``; ``None`` means there is no file to read.
+
+    A file that exists but cannot be read or parsed is a configuration
+    error, not an absent configuration. Returning an empty result there
+    would let a stray tab in the TOML disable the drift gate while the
+    run still exits 0 - the gate would report SKIP on a repo whose
+    translations are silently rotting.
+    """
+    import tomllib
+
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(f"cannot read {pyproject.name}: {exc}") from exc
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"{pyproject.name} is not valid TOML: {exc}") from exc
 
 
 def load_config(pyproject: Path) -> list[str]:
@@ -283,11 +432,12 @@ def load_config(pyproject: Path) -> list[str]:
     malformed ``languages`` entry is a hard error so a typo cannot
     silently disable the gate.
     """
-    import tomllib
+    return _languages_from(_read_pyproject(pyproject))
 
-    try:
-        data: dict[str, object] = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+
+def _languages_from(data: dict[str, object] | None) -> list[str]:
+    """Derive the language set from an already-parsed ``pyproject.toml``."""
+    if data is None:
         return []
 
     tool_raw: object = data.get("tool")
@@ -313,3 +463,65 @@ def load_config(pyproject: Path) -> list[str]:
     if not strs or len(strs) != len(langs):
         raise ValueError("[tool.bernstein.readme-l10n] languages must be a non-empty list of IETF tags")
     return strs
+
+
+def load_owners(pyproject: Path) -> dict[str, str]:
+    """Read the per-language owner map from ``[tool.bernstein.readme-l10n.owners]``.
+
+    Maps an IETF tag to the handle of whoever keeps that translation
+    current. Missing config, or a missing ``owners`` table, means no
+    language has a recorded owner - the gate still fails on drift, it
+    just cannot say who to ask. A malformed entry is a hard error for
+    the same reason a malformed ``languages`` entry is: a typo must not
+    quietly turn a language into one nobody is named for.
+    """
+    return _owners_from(_read_pyproject(pyproject))
+
+
+def _owners_from(data: dict[str, object] | None) -> dict[str, str]:
+    """Derive the owner map from an already-parsed ``pyproject.toml``."""
+    if data is None:
+        return {}
+
+    section: object = data.get("tool")
+    for key in ("bernstein", "readme-l10n", "owners"):
+        if not isinstance(section, dict):
+            return {}
+        section = cast(dict[str, object], section).get(key)
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise ValueError('[tool.bernstein.readme-l10n.owners] must be a table of ietf-tag = "handle"')
+    owners = cast(dict[str, object], section)
+    bad = sorted(tag for tag, handle in owners.items() if not isinstance(handle, str) or not handle.strip())
+    if bad:
+        raise ValueError(
+            "[tool.bernstein.readme-l10n.owners] entries must be non-empty strings; bad entries: " + ", ".join(bad)
+        )
+    # The handle is echoed into the verify output, which CI logs and
+    # humans read. A newline or an escape sequence in it would let the
+    # config forge lines in that report, so control bytes are refused
+    # rather than stripped: a handle that needs them is a typo. The
+    # refused set spans C1 as well as C0, because U+009B is a
+    # single-character CSI that a terminal reading 8-bit controls will
+    # act on exactly as it acts on the two-byte ESC form.
+    forged = sorted(tag for tag, handle in owners.items() if _CONTROL_CHARS.search(cast(str, handle)))
+    if forged:
+        raise ValueError(
+            "[tool.bernstein.readme-l10n.owners] handles may not contain control characters; bad entries: "
+            + ", ".join(forged)
+        )
+    return {tag: cast(str, handle).strip() for tag, handle in owners.items()}
+
+
+def load_settings(pyproject: Path) -> tuple[list[str], dict[str, str]]:
+    """Read languages and owners from a single parse of ``pyproject.toml``.
+
+    ``verify`` needs both. Reading the file twice would let an edit
+    landing between the two reads pair the languages of one revision
+    with the owners of another - the report would then name an owner
+    for a language that revision does not configure, or omit one it
+    does. One parse, both values, so the two can never disagree.
+    """
+    data = _read_pyproject(pyproject)
+    return _languages_from(data), _owners_from(data)

@@ -43,6 +43,40 @@ ephemeral runner: recompute a receipt file's SHA-256 and match it
 against the `receipt_sha256` of the persisted `adapter.canary_receipt`
 entry.
 
+## What `last_green.json` rows must look like
+
+`load_last_green` validates each row at the JSON boundary instead of
+coercing it. A row that does not satisfy the shape it claims is **dropped
+with a warning**, and the rest of the table still loads -- one bad row
+must not empty the projection, because an empty projection makes every
+`doctor` staleness check a silent no-op.
+
+| Field | Accepted | Rejected |
+|---|---|---|
+| `binary` | non-empty string; surrounding whitespace is stripped | `null`, numbers, lists, objects, `""` |
+| `version` | non-empty string; surrounding whitespace is stripped | `null`, numbers, lists, objects, `""` |
+| `receipt_sha256` | exactly 64 lowercase hex characters | uppercase hex, truncated hashes, any non-hash string, non-strings |
+| `recorded_at` | a timestamp `datetime.fromisoformat` accepts, including a trailing `Z` | `"yesterday"`, epoch integers, objects, non-strings |
+
+A row missing any of these keys is dropped, as before.
+
+**If you maintain a projection this repo did not generate**, check it
+against the table above before upgrading: a hand-written or older file
+whose `receipt_sha256` is not a full lowercase hash, or whose
+`recorded_at` is not ISO 8601, will now be dropped rather than loaded.
+The symptom is `CANARY_UNKNOWN` at admission and a warning-only `doctor`
+result for that adapter, and the cause is named in a
+`last-green row ... malformed` warning on the loader's logger. Rows the
+canary itself writes are already in this shape; regenerate with
+`uv run python scripts/adapter_canary.py --update-docs` if in doubt.
+
+The reason for validating rather than coercing: `str(value)` renders
+`None` as `"None"` and a list as its repr, so a corrupt row used to load
+as a populated entry that admission and `doctor` then read as a
+receipt-backed claim. The table is a projection of receipts and every row
+is meant to be independently checkable against its receipt file; a value
+that was never a hash cannot be checked against anything.
+
 ## Regression handling
 
 * A regression must repeat: **two consecutive failures with the same
@@ -118,14 +152,14 @@ frozen adapter locally, not only in this table.
 | Adapter | Binary | Last-green version | Verified | Receipt |
 |---|---|---|---|---|
 | agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z (stale) | `006fb946868d` |
-| claude | `claude` | 2.1.224 | 2026-08-07T06:04:21Z | `dfac3d6796ff` |
-| codex | `codex` | 0.147.0 | 2026-08-07T06:04:21Z | `34146527aef9` |
-| copilot | `copilot` | 1.0.78 | 2026-08-07T06:04:21Z | `c159c088b80b` |
-| gemini | `gemini` | 0.54.4 | 2026-08-07T06:04:21Z | `9e160d13e0a2` |
-| kimi | `kimi` | 1.49.0 | 2026-08-07T06:04:21Z | `020b12dd3bca` |
-| opencode | `opencode` | 1.18.14 | 2026-08-07T06:04:21Z | `4919b19f2501` |
-| pydantic_ai | `clai` | 2.26.0 | 2026-08-07T06:04:21Z | `f499f1e10838` |
-| qwen | `qwen` | 0.21.7 | 2026-08-07T06:04:21Z | `fa89a478502d` |
+| claude | `claude` | 2.1.227 | 2026-08-11T05:47:04Z | `5d96894dd122` |
+| codex | `codex` | 0.147.0 | 2026-08-11T05:47:04Z | `e48e896d2010` |
+| copilot | `copilot` | 1.0.79 | 2026-08-11T05:47:04Z | `c9a897f9dec2` |
+| gemini | `gemini` | 0.54.4 | 2026-08-11T05:47:04Z | `466c9e678312` |
+| kimi | `kimi` | 1.49.0 | 2026-08-11T05:47:04Z | `8f5ecde0c4e0` |
+| opencode | `opencode` | 1.18.16 | 2026-08-11T05:47:04Z | `792c9e5c2b9e` |
+| pydantic_ai | `clai` | 2.27.1 | 2026-08-11T05:47:04Z | `85d0fc284225` |
+| qwen | `qwen` | 0.21.9 | 2026-08-11T05:47:04Z | `cd0d6579424a` |
 <!-- last-green:end -->
 
 ## Operator knobs

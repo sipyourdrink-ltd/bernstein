@@ -230,6 +230,10 @@ USE_CASES: dict[str, AdapterUseCase] = {
         headline="Kilo CLI by Stackblitz",
         binary="kilo",
     ),
+    "kimchi": AdapterUseCase(
+        headline="Kimchi CLI for open-weight and Ollama-hosted models",
+        binary="kimchi",
+    ),
     "kimi": AdapterUseCase(
         headline="Kimi CLI for Moonshot models",
         binary="kimi",
@@ -254,6 +258,16 @@ USE_CASES: dict[str, AdapterUseCase] = {
             "conformance harness. Selecting ``mock`` skips real LLM "
             "calls entirely."
         ),
+    ),
+    "muse": AdapterUseCase(
+        headline="Muse Code (Meta) terminal coding agent in headless mode",
+        binary="muse",
+        details=(
+            "Drives the documented non-interactive mode (muse exec) with "
+            "approvals disabled and the vendor sandbox kept on. Auth via "
+            "META_API_KEY; single-model lineup (muse-spark-1.2)."
+        ),
+        docs_path="docs/adapters/muse.md",
     ),
     "ollama": AdapterUseCase(
         headline="Local Ollama / OpenAI-compatible models without cloud keys",

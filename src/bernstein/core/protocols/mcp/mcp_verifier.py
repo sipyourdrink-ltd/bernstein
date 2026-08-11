@@ -364,6 +364,28 @@ def verify_mcp_server(
             failure_reason=str(exc),
         )
 
+    if not isinstance(signature_b64, str):
+        # Declared ``str``, but this is the boundary where a third party's
+        # signature arrives: a JSON ``null`` or a raw ``Path.read_bytes()``
+        # reaches here from callers this module does not type-check. The
+        # contract is to return a verdict, so a non-string is refused rather
+        # than surfacing as an ``AttributeError`` from ``.strip()`` below.
+        #
+        # ``None`` is a signature that was never supplied; anything else is a
+        # supplied signature that cannot be read. Policy maps UNSIGNED and
+        # BAD_SIGNATURE to different outcomes, so the two stay distinct.
+        return MCPVerificationResult(
+            ok=False,
+            verdict=(VerificationVerdict.UNSIGNED if signature_b64 is None else VerificationVerdict.BAD_SIGNATURE),
+            failure_reason=(
+                "no signature provided"
+                if signature_b64 is None
+                else f"signature must be a base64 string, got {type(signature_b64).__name__}"
+            ),
+            manifest=manifest,
+            publisher_fingerprint=manifest.publisher_fingerprint,
+        )
+
     if not signature_b64.strip():
         return MCPVerificationResult(
             ok=False,
@@ -437,6 +459,7 @@ def _verify_ed25519(
     """
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     try:
         signature = base64.b64decode(signature_b64.encode("ascii"), validate=True)
@@ -448,12 +471,19 @@ def _verify_ed25519(
     except (ValueError, TypeError):
         return False
 
+    if not isinstance(public_key, Ed25519PublicKey):
+        # public_key was parsed but is not Ed25519 (e.g. RSA PEM passed in).
+        # Previously this surfaced as the TypeError/AttributeError raised by
+        # the differing verify() signatures of the other key types.
+        return False
+
     try:
-        public_key.verify(signature, signing_input)  # type: ignore[union-attr]
+        public_key.verify(signature, signing_input)
     except InvalidSignature:
         return False
     except (TypeError, AttributeError):
-        # public_key was parsed but is not Ed25519 (e.g. RSA PEM passed in)
+        # Retained so malformed (non-bytes) arguments from untyped callers
+        # keep returning False rather than propagating.
         return False
     return True
 

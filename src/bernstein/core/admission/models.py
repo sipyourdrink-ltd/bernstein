@@ -10,8 +10,7 @@ The subsystem's guiding shape is *the grant is the artifact*. Admission state
 (pool occupancy, queue order, effective rate limits, postures) is never a
 mutable side-table -- it is a pure projection of the hash-chained rows, in the
 same style as :mod:`bernstein.core.persistence.work_ledger`. A :class:`Grant`
-is therefore identified by the ``entry_hash`` of the ledger row that issued it:
-strip the chain and the grant loses its identity, not merely its log.
+is therefore identified by the ``entry_hash`` of the ledger row that issued it.
 """
 
 from __future__ import annotations

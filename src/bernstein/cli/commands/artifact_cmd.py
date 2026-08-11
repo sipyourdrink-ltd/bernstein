@@ -23,8 +23,11 @@ bytes, evidence, cadence -- recomputed offline from ``.sdd`` state alone. Its
 ``--json`` output is produced by the same function the server route calls, so
 the CLI and the dashboard cannot disagree about an artifact.
 
-This is the singular ``artifact`` group; the plural ``artifacts`` group lists
-agent-posted, journal-anchored task artifacts (issue #2553) and is unrelated.
+The plural ``artifacts`` group (issue #2553) answers a third, task-keyed
+question: which agent-posted, journal-anchored artifacts a task attached. It is
+folded in here as ``artifact list <task>`` and ``artifact show <task> <key>``
+(issue #3138), registering the same command objects rather than reimplementing
+them, so the deprecated plural spelling and this one cannot diverge.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from pathlib import Path
 
 import click
 
+from bernstein.cli.commands.artifacts_cmd import artifacts_list_cmd, artifacts_show_cmd
 from bernstein.cli.helpers import console
 
 #: Exit code for a red / unverifiable verdict. Matches ``artifact verify`` so a
@@ -47,7 +51,8 @@ def artifact_group() -> None:
 
     \b
       bernstein artifact verify <task_id>
-      bernstein artifact list
+      bernstein artifact list [<task>]
+      bernstein artifact show <task> <key>
       bernstein artifact log <uri>
       bernstein artifact health <uri>
     """
@@ -131,9 +136,23 @@ def _spine_hmac_key() -> bytes:
 
 @artifact_group.command("list")
 @_workdir_option
+@click.argument("task", required=False, default=None)
 @click.option("--output-json", is_flag=True, help="Emit JSON instead of human text.")
-def artifact_list_cmd(workdir: Path, output_json: bool) -> None:
-    """List every artifact key the local lineage spines carry."""
+@click.pass_context
+def artifact_list_cmd(ctx: click.Context, workdir: Path, task: str | None, output_json: bool) -> None:
+    """List every artifact key the local lineage spines carry (or posted artifacts for TASK).
+
+    Without TASK this lists lineage-spine artifact keys. With TASK it lists the
+    agent-posted artifacts of that task -- the surface ``bernstein artifacts
+    list`` used to own. ``--output-json`` is honoured on both paths.
+    """
+    if task is not None:
+        # ctx.invoke (not .callback) so every parameter the delegate declares --
+        # including any added later -- is filled from its own declared default
+        # rather than silently missing.
+        ctx.invoke(artifacts_list_cmd, task=task, workdir=str(workdir), output_json=output_json)
+        return
+
     import json
 
     from bernstein.core.lineage.artifact_health import list_artifact_keys
@@ -149,6 +168,12 @@ def artifact_list_cmd(workdir: Path, output_json: bool) -> None:
         return
     for uri, count in ordered:
         console.print(f"  {count:>4}  {uri}")
+
+
+#: ``show`` is the agent-posted artifact renderer that ``bernstein artifacts show``
+#: owned. Registering the same command object (rather than re-declaring it) keeps
+#: the two spellings from drifting in arguments or exit codes.
+artifact_group.add_command(artifacts_show_cmd, "show")
 
 
 @artifact_group.command("log")

@@ -31,6 +31,7 @@ _BINARY_OVERRIDES: dict[str, str] = {
     "q_dev": "q",
     "open_interpreter": "interpreter",
     "openai_agents": "python",  # SDK adapter, not a standalone binary
+    "python_runtime": "python",  # in-process runtime driven by a Python worker
     "letta_code": "letta",
     "continue": "continue",
     "openhands": "openhands",
@@ -49,6 +50,7 @@ _DEFAULT_SMOKE_MODELS: dict[str, str] = {
     "gemini": "gemini-3-flash",
     "kiro": "sonnet",
     "kilo": "sonnet",
+    "muse": "spark",
     "opencode": "gpt-5.4-mini",
     "qwen": "qwen-coder",
 }

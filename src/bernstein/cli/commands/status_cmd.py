@@ -1256,19 +1256,3 @@ def commit_stats_cmd(since: str | None, until: str | None, repo_dir: str, as_jso
         print_json(result.to_dict())
     else:
         render_commit_stats(result)
-
-
-@click.command(
-    "commit_stats_alias",
-    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
-    help="(Deprecated) Legacy alias for `bernstein report commits`.",
-)
-@click.pass_context
-def commit_stats_alias(ctx: click.Context) -> None:
-    """Backward compatibility alias for `bernstein commit-stats`."""
-    click.echo(
-        "WARNING: 'bernstein commit-stats' is deprecated and will be removed in v4.0.0. "
-        "Use 'bernstein report commits' instead.",
-        err=True,
-    )
-    commit_stats_cmd.main(args=ctx.args, prog_name="bernstein commit-stats", standalone_mode=False)

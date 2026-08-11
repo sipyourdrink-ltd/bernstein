@@ -272,7 +272,8 @@ Everything else that triggers on `pull_request` is advisory:
 `contract-drift-autofix`, `dependabot-auto-merge`,
 `dependency-review`, `docs-drift`, `license-compliance`, `pr-labels`,
 `pr-observability-summary`, `pr-policy`, `required-check-canary`,
-`spiffe-extra-e2e`, `trufflehog`, `typecheck-ts`, `zizmor`.
+`spa-bundle-freshness`, `spiffe-extra-e2e`, `trufflehog`, `typecheck-ts`,
+`zizmor`.
 
 ### Pull requests opened by automation
 

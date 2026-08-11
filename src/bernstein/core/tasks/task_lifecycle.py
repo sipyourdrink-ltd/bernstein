@@ -498,7 +498,8 @@ def maybe_retry_task(
 
     Args:
         task: The failed task to potentially retry.
-        retried_task_ids: Set of task IDs already retried (mutated in-place).
+        retried_task_ids: Set of task IDs this path is finished with --
+            retried, or exhausted and therefore terminal (mutated in-place).
         max_task_retries: Maximum retries allowed.
         client: httpx client.
         server_url: Task server base URL.
@@ -529,12 +530,23 @@ def maybe_retry_task(
         effective_max = min(task.max_retries, _MAX_REGULAR_TASK_RETRIES)
 
     if retry_count >= effective_max:
-        quarantine.record_failure(task.title, "Max retries exhausted")
-        logger.warning(
-            "Task %r exhausted %d retries -- recorded cross-run failure in quarantine",
-            task.title,
-            effective_max,
-        )
+        # Exhaustion is terminal for this lineage, so record it in the same
+        # place that already stops a second retry: the tick loop re-offers a
+        # failed task on every pass, and without this the branch is re-entered
+        # forever. That is #3628 -- 1255 identical "exhausted 2 retries" lines
+        # in one 120 s run for a budget of 2. The transition is what was
+        # missing; the guard below only bounds the store.
+        retried_task_ids.add(task.id)
+        # Cross-run and cross-process duplicates: a fresh orchestrator starts
+        # with an empty set, so the store is asked whether this title is
+        # already at the quarantine threshold before it is incremented again.
+        if not quarantine.is_quarantined(task.title):
+            quarantine.record_failure(task.title, "Max retries exhausted")
+            logger.warning(
+                "Task %r exhausted %d retries -- recorded cross-run failure in quarantine",
+                task.title,
+                effective_max,
+            )
         return False
 
     next_retry = retry_count + 1

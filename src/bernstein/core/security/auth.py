@@ -30,13 +30,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from signxml import VerifyResult
 
 _PERM_BULLETIN_READ = "bulletin:read"
 
@@ -866,7 +868,11 @@ def _verify_saml_signature(xml_bytes: bytes, idp_x509_cert: str) -> bytes:
         msg = f"SAML signature verification error: {exc}"
         raise SAMLSignatureError(msg) from exc
 
-    signed_element = verified.signed_xml
+    # ``XMLVerifier.verify`` returns a list of results only when the
+    # signature configuration expects more than one reference; this call
+    # uses the default (``expect_references=1``), so the result is a single
+    # ``VerifyResult``.
+    signed_element = cast("VerifyResult", verified).signed_xml
     if signed_element is None:
         msg = "SAML signature verification returned no signed payload"
         raise SAMLSignatureError(msg)

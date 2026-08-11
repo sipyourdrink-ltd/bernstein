@@ -174,9 +174,7 @@ class ClaimReceipt:
     :attr:`backlog_head` and :attr:`filter_digest` anchor it to the backlog
     snapshot and eligibility filter, and :attr:`chain_head` embeds the
     audit-chain head the granting ``task.claim_receipt`` event recorded, so a
-    client can later verify the claim it made against the audited run. Strip
-    the chain and the signature and the receipt loses its meaning (an
-    unprovable queue mutation), not merely its log.
+    client can later verify the claim it made against the audited run.
 
     A refusal carries an empty :attr:`task_id`: a filter that matched no
     eligible row still produces a signed receipt, so a claim attempt is never

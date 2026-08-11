@@ -102,6 +102,23 @@ Sealed receipts live under `.sdd/adapters/admission/` and are
 content-addressed, so a tampered body no longer hashes to its recorded
 identity and is rejected without any key material.
 
+## Where the evidence comes from
+
+The verdict is derived from two trees that live under `tests/` in a source
+checkout — the pinned contract YAMLs in `tests/contract/contracts/` and the
+golden transcripts in `tests/golden/`. Both ship inside the wheel, at
+`bernstein/_default_templates/adapter_contracts/` and
+`bernstein/_default_templates/adapter_golden/`, so a `pip install` derives the
+same replay fingerprint a checkout does and `--seal` goes green on the install
+channel too. A checkout, when present, is read in preference to the bundled
+copy.
+
+To replay against a transcript tree of your own — a vendored fork, or an
+air-gapped mirror — point `BERNSTEIN_ADAPTER_GOLDEN_DIR` at it. It takes
+precedence over both layouts. Note that a different transcript tree changes the
+replay fingerprint, so receipts sealed against it are only comparable with
+other hosts using the same tree.
+
 ## Relationship to the other adapter gates
 
 The admission gate sits alongside two existing spawn-path gates and does not

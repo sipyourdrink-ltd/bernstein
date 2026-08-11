@@ -5,9 +5,9 @@ Each gate verdict is a signed adjudication record
     {inputs_hash, rubric_hash, panel_config, per_judge_verdict, final_verdict}
 
 anchored to the run journal (the lineage spine). The record is the primary
-artefact: strip the spine anchor and the record loses its meaning, not just
-its log. Panels must be genuinely independent - two judges sharing
-model+temp+prompt are rejected so a panel cannot agree on the same error.
+artefact, and its identity is the spine entry hash over its canonical bytes.
+Panels must be genuinely independent - two judges sharing model+temp+prompt
+are rejected so a panel cannot agree on the same error.
 """
 
 from __future__ import annotations

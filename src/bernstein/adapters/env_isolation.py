@@ -246,9 +246,8 @@ def record_embedded_teams_opt_in(
     embedded team must be *attested* rather than invisible: we append an
     ``adapter.embedded_agent_teams_enabled`` event to the per-worker HMAC audit
     chain so an auditor replaying the log can see exactly which spawn opted a
-    teammate hierarchy back in.  Removing the audit chain removes the meaning
-    of this feature, not just its log - the whole point is that a re-permitted
-    team stays inside the one-worker-one-audit-trail invariant.
+    teammate hierarchy back in, keeping a re-permitted team inside the
+    one-worker-one-audit-trail invariant.
 
     Failures (missing key, disk full) are caught and logged; audit emission
     must never mask the spawn.

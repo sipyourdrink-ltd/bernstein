@@ -16,6 +16,7 @@ import hashlib
 import logging
 import os
 import sqlite3
+import sys
 import threading as _threading
 import time
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from enum import Enum as _Enum
 from pathlib import Path
 from typing import Any
 
-from bernstein.core.persistence.fingerprint import MemoStore, default_store, memoize_persistent
+from bernstein.core.persistence.fingerprint import MemoStore, code_digest, default_store, memoize_persistent
 
 logger = logging.getLogger(__name__)
 
@@ -176,9 +177,20 @@ _memoized_chunker: Any = None
 def _chunk_for_memo(*, chunk_sha: str, rel_path: str, source: str, is_python: bool) -> list[dict[str, object]]:
     """Memoization shim around the AST/line chunker.
 
-    Fingerprint key = (chunk_sha, rel_path, this-function-body-hash).
-    A change to the chunker invalidates the cached chunks, so a bug fix
-    in chunk shaping correctly re-derives.
+    Keyed by (chunk_sha, rel_path, this-function-body-hash, hash of this
+    module's source).  ``chunk_sha`` forces invalidation when a file's
+    own bytes change.
+
+    The last component is what makes chunker fixes take effect: this
+    shim only dispatches, so its body is byte-identical before and after
+    any rewrite of :func:`_extract_python_chunks` or :func:`_line_chunks`,
+    and the function-body component of the fingerprint cannot see the
+    change.  ``_get_memoized_chunker`` therefore declares this module as
+    a memo dependency.  Declaring the whole module rather than the two
+    chunkers alone also covers the fallback edge between them (a syntax
+    error routes AST chunking to :func:`_line_chunks`) and the chunk-size
+    and overlap defaults, none of which a per-callable hash spanning only
+    the entry point can see.
     """
     if is_python:
         return _extract_python_chunks(source, rel_path)
@@ -190,8 +202,27 @@ def _get_memoized_chunker(workdir: Path) -> Any:
     global _rag_memo_store, _memoized_chunker
     if _memoized_chunker is None:
         _rag_memo_store = default_store(workdir)
-        _memoized_chunker = memoize_persistent(_rag_memo_store, site="rag")(_chunk_for_memo)
+        # The chunkers live in this module, so declare it as the memo
+        # dependency: ``_chunk_for_memo`` is a dispatch shim whose own body
+        # never moves when their behaviour does.  Resolved through
+        # ``sys.modules`` rather than a self-import so the reference is the
+        # canonical module object however this file was first imported.
+        _memoized_chunker = memoize_persistent(
+            _rag_memo_store,
+            site="rag",
+            depends_on=(sys.modules[__name__],),
+        )(_chunk_for_memo)
     return _memoized_chunker
+
+
+def _chunker_revision() -> str:
+    """Return a hex digest identifying the current chunker.
+
+    Deliberately the same :func:`code_digest` over the same module that
+    keys the memo store, so the two caching layers cannot disagree about
+    what "the current chunker" is.
+    """
+    return code_digest(sys.modules[__name__]).hex()
 
 
 def _chunk_with_memo(workdir: Path, source: str, rel_path: str, *, is_python: bool) -> list[dict[str, object]]:
@@ -269,6 +300,14 @@ class CodebaseIndexer:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS index_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
                 file_path,
                 line_start UNINDEXED,
@@ -320,6 +359,11 @@ class CodebaseIndexer:
         conn = self._connect()
         try:
             return self._build_inner(conn)
+        except Exception:
+            # Release the write lock taken in _build_inner without recording a
+            # revision the index does not actually reflect.
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -332,16 +376,39 @@ class CodebaseIndexer:
             rel = str(fpath.relative_to(self._root))
             current_paths[rel] = mtime
 
+        # Everything from the revision read to the commit is one read-decide-
+        # write step, so take the write lock up front rather than letting it be
+        # acquired implicitly at the first DELETE below.  Two processes can hold
+        # different chunker revisions - an upgrade while a long-lived process is
+        # still running - and on a deferred transaction the older one would read
+        # the revision the newer one just committed, conclude the chunker
+        # changed, reindex with its own older chunker and record that as
+        # current.  BEGIN IMMEDIATE makes SQLite serialize the whole step.
+        conn.execute("BEGIN IMMEDIATE")
+
+        # A chunker edit reshapes every chunk, but the mtime gate below only
+        # re-reads files whose own bytes moved, so rows written by the previous
+        # chunker would sit in FTS until each file happened to be touched.
+        # Memoising on the chunker source cannot help here - for an unchanged
+        # file the chunker is never called at all.  Retire the whole index
+        # instead when the revision moves.
+        revision = _chunker_revision()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'chunker_revision'").fetchone()
+        chunker_changed = meta_row is None or meta_row[0] != revision
+
         # Load stored mtimes.
         stored: dict[str, float] = {}
         for row in conn.execute("SELECT path, mtime FROM file_meta"):
             stored[row[0]] = row[1]
 
+        if chunker_changed and stored:
+            logger.info("Chunker revision changed; reindexing all %d file(s).", len(stored))
+
         # Determine which files need re-indexing.
         to_index: list[str] = []
         for rel, mtime in current_paths.items():
             old_mtime = stored.get(rel)
-            if old_mtime is None or mtime > old_mtime:
+            if chunker_changed or old_mtime is None or mtime > old_mtime:
                 to_index.append(rel)
 
         # Determine deleted files.
@@ -380,6 +447,13 @@ class CodebaseIndexer:
                 (rel, current_paths[rel]),
             )
             indexed += 1
+
+        if chunker_changed:
+            conn.execute(
+                "INSERT INTO index_meta (key, value) VALUES ('chunker_revision', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (revision,),
+            )
 
         conn.commit()
         return indexed

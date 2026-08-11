@@ -557,72 +557,6 @@ def _aggregate(
     return rows.copy()
 
 
-@click.command("estimate")
-@click.argument("goal")
-@click.option("--role", default="backend", help="Agent role for the task.")
-@click.option("--scope", type=click.Choice(["small", "medium", "large"]), default="medium", help="Task scope.")
-@click.option("--complexity", type=click.Choice(["low", "medium", "high"]), default="medium", help="Task complexity.")
-@click.option(
-    "--metrics-dir",
-    default=".sdd/metrics",
-    show_default=True,
-    help="Directory containing historical metrics.",
-)
-def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir: str) -> None:
-    """Predict the cost of a task before running it.
-
-    \b
-      bernstein estimate "Fix all typos in src/" --scope small
-      bernstein estimate "Implement RAG system" --scope large --complexity high
-    """
-    from bernstein.core.cost import predict_task_cost
-    from bernstein.core.models import Complexity, Scope, Task
-
-    # Create a dummy task for prediction
-    task = Task(
-        id="estimate",
-        title=goal[:100],
-        description=goal,
-        role=role,
-        scope=Scope(scope),
-        complexity=Complexity(complexity),
-    )
-
-    est_cost = predict_task_cost(task, metrics_dir=Path(metrics_dir))
-
-    if is_json():
-        print_json(
-            {
-                "goal": goal,
-                "role": role,
-                "scope": scope,
-                "complexity": complexity,
-                "estimated_cost_usd": round(est_cost, 4),
-            }
-        )
-        return
-
-    console.print(
-        Panel(
-            f"[bold]Cost Prediction[/bold]\n\n"
-            f"Goal:       [cyan]{goal}[/cyan]\n"
-            f"Role:       {role}\n"
-            f"Scope:      {scope}\n"
-            f"Complexity: {complexity}\n\n"
-            f"Estimated total: [bold green]${est_cost:.4f}[/bold green] (±20%)\n\n"
-            f"[dim]Note: Predictions use historical data when available and assume\n"
-            f"average token consumption for the given scope/complexity.[/dim]",
-            border_style="green",
-            expand=False,
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Command
-# ---------------------------------------------------------------------------
-
-
 def _cost_render_json(
     time_label: str,
     sorted_models: list[tuple[str, dict[str, Any]]],
@@ -734,10 +668,7 @@ def _cost_render_grouped(
     "group_by",
     type=click.Choice(["agent", "model", "task", "day", "role", "feature_label", "envelope", "profile"]),
     default=None,
-    help=(
-        "Group breakdown by agent, model, task, day, role, feature_label, "
-        "envelope (issue #1405), or profile (issue #2245)."
-    ),
+    help=("Group breakdown by agent, model, task, day, role, feature_label, envelope, or profile (issue #2245)."),
 )
 @click.option(
     "--ledger",
@@ -1331,7 +1262,7 @@ def _read_envelopes_from_yaml(yaml_path: Path) -> dict[str, dict[str, Any]]:
 
 @click.group("cost-envelopes")
 def cost_envelopes_group() -> None:
-    """Inspect per-quota-envelope cost attribution (issue #1405)."""
+    """Inspect per-quota-envelope cost attribution."""
 
 
 @cost_envelopes_group.command("show")
@@ -1705,4 +1636,129 @@ def cost_policy_verify_cmd(decision_hash: str, workdir: str, as_json: bool) -> N
     raise SystemExit(1)
 
 
-__all__ = ["cost_cmd", "cost_envelopes_group", "cost_profile_report_cmd", "estimate_cmd"]
+# ---------------------------------------------------------------------------
+# Subcommand registrations & deprecated top-level aliases
+# ---------------------------------------------------------------------------
+
+
+@cost_cmd.command("estimate")
+@click.argument("goal")
+@click.option("--role", default="backend", help="Agent role for the task.")
+@click.option("--scope", type=click.Choice(["small", "medium", "large"]), default="medium", help="Task scope.")
+@click.option("--complexity", type=click.Choice(["low", "medium", "high"]), default="medium", help="Task complexity.")
+@click.option(
+    "--metrics-dir",
+    default=".sdd/metrics",
+    show_default=True,
+    help="Directory containing historical metrics.",
+)
+def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir: str) -> None:
+    """Predict the cost of a task before running it.
+
+    \b
+      bernstein cost estimate "Fix all typos in src/" --scope small
+      bernstein cost estimate "Implement RAG system" --scope large --complexity high
+    """
+    from bernstein.core.cost import predict_task_cost
+    from bernstein.core.models import Complexity, Scope, Task
+
+    task = Task(
+        id="estimate",
+        title=goal[:100],
+        description=goal,
+        role=role,
+        scope=Scope(scope),
+        complexity=Complexity(complexity),
+    )
+
+    est_cost = predict_task_cost(task, metrics_dir=Path(metrics_dir))
+
+    if is_json():
+        print_json(
+            {
+                "goal": goal,
+                "role": role,
+                "scope": scope,
+                "complexity": complexity,
+                "estimated_cost_usd": round(est_cost, 4),
+            }
+        )
+        return
+
+    console.print(
+        Panel(
+            f"[bold]Cost Prediction[/bold]\n\n"
+            f"Goal:       [cyan]{goal}[/cyan]\n"
+            f"Role:       {role}\n"
+            f"Scope:      {scope}\n"
+            f"Complexity: {complexity}\n\n"
+            f"Estimated total: [bold green]${est_cost:.4f}[/bold green] (±20%)\n\n"
+            f"[dim]Note: Predictions use historical data when available and assume\n"
+            f"average token consumption for the given scope/complexity.[/dim]",
+            border_style="green",
+            expand=False,
+        )
+    )
+
+
+def _estimate_alias_callback(**kwargs: Any) -> None:
+    """Warn, then run the canonical command's own callback with the parsed values."""
+    click.echo(
+        "WARNING: 'bernstein estimate' is deprecated and will be removed in v4.0.0 (#3138): "
+        "use 'bernstein cost estimate' instead.",
+        err=True,
+    )
+    callback = estimate_cmd.callback
+    if callback is None:  # pragma: no cover - a Click command always carries one
+        raise RuntimeError("cost estimate has no callback to delegate to")
+    callback(**kwargs)
+
+
+#: The alias reuses the canonical command's Parameter objects rather than
+#: re-declaring them, so `bernstein estimate` cannot come to parse, default or
+#: reject an invocation differently from `bernstein cost estimate`. Re-declared
+#: options drift silently: a changed Choice set or default reads as identical
+#: under a name-by-name comparison.
+estimate_alias_cmd = click.Command(
+    "estimate",
+    params=list(estimate_cmd.params),
+    callback=_estimate_alias_callback,
+    help="[Deprecated] Predict task cost before running (use 'bernstein cost estimate').",
+    short_help="[Deprecated] Predict task cost before running.",
+)
+
+
+cost_cmd.add_command(cost_envelopes_group, "envelopes")
+
+
+@click.group("cost-envelopes")
+@click.pass_context
+def cost_envelopes_alias_cmd(ctx: click.Context) -> None:
+    """[Deprecated] Inspect per-quota-envelope cost attribution.
+
+    Use 'bernstein cost envelopes' instead; this spelling goes away in v4.0.0.
+    """
+    if ctx.invoked_subcommand is not None:
+        click.echo(
+            "WARNING: 'bernstein cost-envelopes' is deprecated and will be removed in v4.0.0 (#3138): "
+            "use 'bernstein cost envelopes' instead.",
+            err=True,
+        )
+
+
+# The alias has to keep the *group* shape: ``cost-envelopes show`` is the only
+# way this command has ever been useful, and a leaf alias would reject it at
+# parse time. Registering the same command objects (rather than re-declaring
+# them) means the two spellings cannot drift in subcommands or in options.
+for _envelope_sub_name, _envelope_sub_cmd in cost_envelopes_group.commands.items():
+    cost_envelopes_alias_cmd.add_command(_envelope_sub_cmd, _envelope_sub_name)
+
+
+__all__ = [
+    "cost_cmd",
+    "cost_envelopes_alias_cmd",
+    "cost_envelopes_group",
+    "cost_profile_report_cmd",
+    "estimate_alias_cmd",
+    "estimate_cmd",
+]

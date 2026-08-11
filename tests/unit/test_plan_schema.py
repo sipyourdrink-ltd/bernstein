@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from bernstein.core.plan_schema import (
     COMPLETION_SIGNAL_TYPES,
     COMPLEXITY_VALUES,
@@ -289,6 +290,215 @@ class TestValidatePlanInvalidEnums:
         plan = _minimal_plan(max_agents="four")
         errors = validate_plan(plan)
         assert any("max_agents" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_plan - parity with PLAN_JSON_SCHEMA (#3516)
+# ---------------------------------------------------------------------------
+
+
+class TestValidatePlanSchemaParity:
+    """validate_plan must reject what PLAN_JSON_SCHEMA rejects (#3516)."""
+
+    def test_issue_repro_is_rejected(self) -> None:
+        """The issue's exact reproduction: every violation must surface."""
+        plan: dict[str, Any] = {
+            "name": "P",
+            "stages": [{"name": "S", "steps": [{"title": "T", "role": 7, "files": [42], "unknown_key": 1}]}],
+            "max_agents": 0,
+        }
+        errors = validate_plan(plan)
+        assert any(".role:" in e for e in errors)
+        assert any("files[0]" in e for e in errors)
+        assert any("max_agents" in e for e in errors)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("role", 7, id="role-int"),
+            pytest.param("scope", 3, id="scope-int"),
+            pytest.param("complexity", None, id="complexity-none"),
+            pytest.param("model", False, id="model-bool"),
+            pytest.param("effort", 1.5, id="effort-float"),
+        ],
+    )
+    def test_non_string_enum_value_is_a_type_error_not_a_skip(self, field: str, value: object) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0][field] = value
+        errors = validate_plan(plan)
+        assert any(f".{field}:" in e and "string" in e for e in errors)
+
+    def test_files_items_must_be_strings(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["files"] = ["src/ok.py", 42]
+        errors = validate_plan(plan)
+        assert any("files[1]" in e and "string" in e for e in errors)
+
+    def test_constraints_items_must_be_strings(self) -> None:
+        plan = _minimal_plan(constraints=[1])
+        errors = validate_plan(plan)
+        assert any("constraints[0]" in e and "string" in e for e in errors)
+
+    def test_context_files_items_must_be_strings(self) -> None:
+        plan = _minimal_plan(context_files=[None])
+        errors = validate_plan(plan)
+        assert any("context_files[0]" in e and "string" in e for e in errors)
+
+    def test_stage_depends_on_items_must_be_strings(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"].append(
+            {"name": "stage-2", "depends_on": [1], "steps": [{"title": "another step", "role": "qa"}]}
+        )
+        errors = validate_plan(plan)
+        assert any("depends_on[0]" in e and "string" in e for e in errors)
+
+    def test_max_agents_zero_is_rejected(self) -> None:
+        errors = validate_plan(_minimal_plan(max_agents=0))
+        assert any("max_agents" in e and ">= 1" in e for e in errors)
+
+    def test_max_agents_negative_is_rejected(self) -> None:
+        errors = validate_plan(_minimal_plan(max_agents=-3))
+        assert any("max_agents" in e and ">= 1" in e for e in errors)
+
+    def test_max_agents_one_is_accepted(self) -> None:
+        assert validate_plan(_minimal_plan(max_agents=1)) == []
+
+    @pytest.mark.parametrize("value", [True, False], ids=["true", "false"])
+    def test_max_agents_boolean_is_a_type_error(self, value: bool) -> None:
+        """JSON Schema's integer excludes booleans; Python's bool subclasses int.
+
+        ``True`` must not satisfy ``minimum: 1`` and ``False`` must be a type
+        error, not a range error.
+        """
+        errors = validate_plan(_minimal_plan(max_agents=value))
+        assert any("max_agents" in e and "integer" in e and "bool" in e for e in errors)
+
+    def test_priority_boolean_is_a_type_error(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["priority"] = True
+        errors = validate_plan(plan)
+        assert any("priority" in e and "integer" in e and "bool" in e for e in errors)
+
+    def test_estimated_minutes_boolean_is_a_type_error(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["estimated_minutes"] = True
+        errors = validate_plan(plan)
+        assert any("estimated_minutes" in e and "integer" in e and "bool" in e for e in errors)
+
+    def test_completion_signal_type_must_be_a_string(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["completion_signals"] = [{"type": 3, "value": "x"}]
+        errors = validate_plan(plan)
+        assert any("completion_signals[0].type" in e and "string" in e for e in errors)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("value", 42, id="value-int"),
+            pytest.param("path", True, id="path-bool"),
+            pytest.param("command", ["pytest"], id="command-list"),
+            pytest.param("contains", None, id="contains-none"),
+        ],
+    )
+    def test_completion_signal_string_fields_are_type_checked(self, field: str, value: object) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["completion_signals"] = [{"type": "path_exists", field: value}]
+        errors = validate_plan(plan)
+        assert any(f"completion_signals[0].{field}" in e and "string" in e for e in errors)
+
+    def test_valid_completion_signal_passes(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["completion_signals"] = [{"type": "path_exists", "path": "out/report.md"}]
+        assert validate_plan(plan) == []
+
+    def test_phases_must_be_an_array(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = "implement"
+        errors = validate_plan(plan)
+        assert any(".phases:" in e and "array" in e for e in errors)
+
+    @pytest.mark.parametrize(
+        "value",
+        [pytest.param(True, id="bool"), pytest.param(2, id="int"), pytest.param(None, id="none")],
+    )
+    def test_phases_items_must_be_strings(self, value: object) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = ["research", value]
+        errors = validate_plan(plan)
+        assert any("phases[1]" in e and "string" in e for e in errors)
+
+    def test_phases_items_must_be_in_the_phase_enum(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = ["research", "deploy"]
+        errors = validate_plan(plan)
+        assert any("phases[1]" in e and "'deploy'" in e for e in errors)
+
+    def test_valid_phases_pass(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["phases"] = ["research", "plan", "implement", "verify"]
+        assert validate_plan(plan) == []
+
+    def test_name_must_be_a_string(self) -> None:
+        errors = validate_plan(_minimal_plan(name=123))
+        assert any("name" in e and "string" in e for e in errors)
+
+    def test_valid_plan_passes_with_no_warnings(self) -> None:
+        warnings: list[str] = []
+        assert validate_plan(_minimal_plan(), warnings=warnings) == []
+        assert warnings == []
+
+
+# ---------------------------------------------------------------------------
+# validate_plan - unknown keys reported as warnings (#3516)
+# ---------------------------------------------------------------------------
+
+
+class TestValidatePlanUnknownKeys:
+    """Keys additionalProperties:false rejects surface as warnings, not errors.
+
+    Plans carrying extra keys validate today; failing them outright needs a
+    deprecation path (warn first, error in the next major -- #3516).
+    """
+
+    def test_unknown_step_key_is_a_warning_not_an_error(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["unknown_key"] = 1
+        warnings: list[str] = []
+        errors = validate_plan(plan, warnings=warnings)
+        assert errors == []
+        assert any("unknown_key" in w and "stages[0].steps[0]" in w for w in warnings)
+
+    def test_unknown_top_level_key_is_a_warning(self) -> None:
+        plan = _minimal_plan(surprise="x")
+        warnings: list[str] = []
+        assert validate_plan(plan, warnings=warnings) == []
+        assert any("surprise" in w for w in warnings)
+
+    def test_unknown_stage_key_is_a_warning(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["colour"] = "blue"
+        warnings: list[str] = []
+        assert validate_plan(plan, warnings=warnings) == []
+        assert any("colour" in w and "stages[0]" in w for w in warnings)
+
+    def test_unknown_repo_key_is_a_warning(self) -> None:
+        plan = _minimal_plan(repos=[{"path": "../backend", "remote": "origin"}])
+        warnings: list[str] = []
+        assert validate_plan(plan, warnings=warnings) == []
+        assert any("remote" in w and "repos[0]" in w for w in warnings)
+
+    def test_unknown_completion_signal_key_is_a_warning(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["completion_signals"] = [{"type": "path_exists", "path": "x", "retries": 3}]
+        warnings: list[str] = []
+        assert validate_plan(plan, warnings=warnings) == []
+        assert any("retries" in w and "completion_signals[0]" in w for w in warnings)
+
+    def test_return_contract_unchanged_without_accumulator(self) -> None:
+        """Callers that pass no accumulator keep the historical contract."""
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["unknown_key"] = 1
+        assert validate_plan(plan) == []
 
 
 # ---------------------------------------------------------------------------

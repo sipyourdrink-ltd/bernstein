@@ -133,7 +133,7 @@ adapters at a glance.
 | `generic` | unsupported | unsupported | text-signals |
 | `goose` | unsupported | unsupported | text-signals |
 | `gptme` | unsupported | unsupported | text-signals |
-| `hermes` | unsupported | unsupported | text-signals |
+| `hermes` | unsupported | always-on | text-signals |
 | `iac` | unsupported | unsupported | text-signals |
 | `junie` | unsupported | unsupported | text-signals |
 | `kilo` | unsupported | unsupported | text-signals |
@@ -142,6 +142,7 @@ adapters at a glance.
 | `letta_code` | unsupported | cli-flag | text-signals |
 | `mistral` | unsupported | unsupported | text-signals |
 | `mock` | unsupported | unsupported | text-signals |
+| `muse` | unsupported | cli-flag | text-signals |
 | `ollama` | unsupported | unsupported | text-signals |
 | `open_interpreter` | unsupported | unsupported | text-signals |
 | `openai_agents` | flag | always-on | hooks |

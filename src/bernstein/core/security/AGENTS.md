@@ -13,6 +13,7 @@ subsystems anchor receipts to; treat its write path as load-bearing.
 | `audit_receipt.py` | Offline-verifiable receipt projection (COSE / in-toto) over a chain range |
 | `agent_card_keystore.py` | Ed25519 install-identity keystore |
 | `intent_capsule.py` | Signed task-goal capsules with drift escalation |
+| `sigstore_attestation.py` | Rekor attestation with a local Ed25519 fallback; verifies local bundles |
 
 ## Invariants
 
@@ -21,13 +22,17 @@ subsystems anchor receipts to; treat its write path as load-bearing.
   (`audit.py` module docstring).
 - Event-type constants are append-only: add new `EVENT_*` names, never
   edit or reuse existing ones (`audit_chain.py` module docstring).
-- Chain helpers accept the chain instance as a parameter (no singleton
-  imports) and log through `log_with_prev_digest` so
-  `prev_chain_digest` lands in the payload before the HMAC is computed
-  (`audit_chain.py`).
+- Chain helpers take the chain instance as a parameter (no singleton
+  imports) and log through `log_with_prev_digest`, so `prev_chain_digest`
+  lands in the payload before the HMAC is computed (`audit_chain.py`).
 - The audit chain is opt-in at runtime (`BERNSTEIN_AUDIT=1`, read in
-  `../orchestration/orchestrator.py`); features must degrade cleanly
-  without it.
+  `../orchestration/orchestrator.py`); features must degrade without it.
+- An attestation bundle is untrusted input: `public_key_file` must stay a
+  plain filename inside `attestation_dir`, decided from the string with no
+  `resolve` or `stat`, and read through a descriptor anchored to that
+  directory. A path-comparison containment check validates one lookup while
+  the open performs another (`sigstore_attestation.py`, "Local bundle
+  contract").
 
 ## Testing
 

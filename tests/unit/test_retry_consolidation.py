@@ -131,6 +131,10 @@ def test_maybe_retry_dlq_fires_from_typed_field():
     task = _build_task(retry_count=3, max_retries=3)
     client, posted = _capture_client()
     quarantine = MagicMock()
+    # The exhaustion path asks the store before recording, so a bare Mock
+    # would answer with a truthy Mock and suppress the very call this
+    # test asserts on (#3628).
+    quarantine.is_quarantined.return_value = False
 
     created = maybe_retry_task(
         task,
@@ -169,6 +173,10 @@ def test_maybe_retry_enforces_hard_ceiling_matching_retry_or_fail():
     task = _build_task(retry_count=2, max_retries=3)
     client, posted = _capture_client()
     quarantine = MagicMock()
+    # The exhaustion path asks the store before recording, so a bare Mock
+    # would answer with a truthy Mock and suppress the very call this
+    # test asserts on (#3628).
+    quarantine.is_quarantined.return_value = False
 
     created = maybe_retry_task(
         task,

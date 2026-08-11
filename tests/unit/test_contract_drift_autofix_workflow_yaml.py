@@ -14,6 +14,8 @@ Lock the structural shape so that regression is caught at unit-test time.
 
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -173,3 +175,132 @@ def test_recursion_guard_on_bot_author(workflow: dict[str, object]) -> None:
     cond = job.get("if", "")
     assert isinstance(cond, str)
     assert "github-actions[bot]" in cond, "missing recursion guard: PRs authored by github-actions[bot] must be skipped"
+
+
+_SELECTOR = re.compile(r"(tests/[\w./-]+\.py)((?:::[A-Za-z_]\w*)+)")
+
+# pytest's default collection rules (pyproject.toml sets no overrides). A name
+# that resolves in the AST but does not match these is still ``not found`` at
+# collection time, so name existence alone is not the property under test.
+_COLLECTED_CLASS = "Test"
+_COLLECTED_FUNCTION = "test"
+
+
+def _resolve_node_id(repo_root: Path, file_part: str, node_path: list[str]) -> bool:
+    """Return True if ``node_path`` names a node pytest would actually collect.
+
+    Walks the AST rather than importing, and applies pytest's default
+    ``python_classes`` / ``python_functions`` prefixes at each step: a private
+    helper such as ``_documented_commands_from_docs`` exists in the file but is
+    never collected, and selecting it fails exactly like a renamed test.
+    """
+    tests_root = (repo_root / "tests").resolve()
+    try:
+        target = (repo_root / file_part).resolve()
+        # ``file_part`` is workflow text, so it can carry ``..`` or point at a
+        # symlink. Only a real file under tests/ is ever read.
+        target.relative_to(tests_root)
+        if not target.is_file() or not target.name.startswith("test_"):
+            return False
+        source = target.read_text(encoding="utf-8")
+    except (ValueError, OSError):
+        return False
+    try:
+        scope: list[ast.stmt] = list(ast.parse(source).body)
+    except SyntaxError:
+        return False
+    for index, name in enumerate(node_path):
+        match = next(
+            (
+                node
+                for node in scope
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) and node.name == name
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        if isinstance(match, ast.ClassDef):
+            if not name.startswith(_COLLECTED_CLASS):
+                return False
+            scope = list(match.body)
+            continue
+        # A function must be the last segment and must be collectable.
+        return index == len(node_path) - 1 and name.startswith(_COLLECTED_FUNCTION)
+    return False
+
+
+# The two steps that actually execute the contract detectors: ``drift`` probes,
+# and ``reverify`` re-runs the same node ids after regen. Both are named here
+# rather than discovered, because "no step invokes pytest any more" is one of
+# the states this test has to fail on.
+_PROBE_STEP_IDS = ("drift", "reverify")
+
+
+def _pytest_probe_steps(steps: list[dict[str, object]]) -> dict[str, set[str]]:
+    """Map each probe step id to the node ids its ``run:`` command selects.
+
+    Keyed per step rather than flattened. Both probes select the same three node
+    ids, so a combined list stays non-empty and fully resolvable after a
+    deletion from either one -- the boundary between the commands is what makes
+    the deletion visible.
+
+    Reading the raw file instead of the parsed ``run:`` blocks would be looser
+    still: the same node id also appears in the header comment and in the
+    tracking-issue body string.
+    """
+    probes: dict[str, set[str]] = {}
+    for step_id in _PROBE_STEP_IDS:
+        step = next((s for s in steps if s.get("id") == step_id), None)
+        assert step is not None, (
+            f"contract-drift-autofix.yml has no step with id {step_id!r}. "
+            "The drift probe and its post-regen re-run are what select the contract detectors by node id."
+        )
+        run = step.get("run")
+        assert isinstance(run, str) and "pytest" in run, (
+            f"step {step_id!r} no longer invokes pytest, so it cannot probe for contract drift."
+        )
+        probes[step_id] = {f"{file_part}{node_part}" for file_part, node_part in _SELECTOR.findall(run)}
+    return probes
+
+
+def test_selected_test_node_ids_resolve(autofix_steps: list[dict[str, object]]) -> None:
+    """Every ``tests/...::node`` the workflow *runs* must be collectable.
+
+    The drift probe runs ``pytest <file>::<node>`` for the three contract
+    detectors. pytest exits non-zero with ``ERROR: not found`` when a node id
+    no longer resolves, and the workflow reads any non-zero exit as drift -- so
+    renaming a selected test makes the probe report drift unconditionally and
+    stop detecting the real thing. Observed on this branch before the name was
+    restored (run 31303712728).
+
+    Every pytest step is checked separately, and all of them must select the
+    same node ids: the reverify step re-runs exactly what the drift step
+    probed, and a probe that silently lost a detector is the same failure in a
+    quieter form.
+    """
+    repo_root = WORKFLOW.resolve().parent.parent.parent
+    probes = _pytest_probe_steps(autofix_steps)
+
+    empty = sorted(step for step, selectors in probes.items() if not selectors)
+    assert not empty, (
+        f"pytest step(s) {empty} in contract-drift-autofix.yml select no test node id. "
+        "A probe that selects nothing cannot detect drift."
+    )
+
+    selected = {step: sorted(selectors) for step, selectors in probes.items()}
+    assert len({tuple(v) for v in selected.values()}) == 1, (
+        f"pytest steps in contract-drift-autofix.yml no longer probe the same node ids: {selected}. "
+        "The reverify step must re-run exactly what the drift step probed."
+    )
+
+    unresolved = []
+    for node_id in sorted({n for selectors in probes.values() for n in selectors}):
+        file_part, *node_path = node_id.split("::")
+        if not _resolve_node_id(repo_root, file_part, node_path):
+            unresolved.append(node_id)
+    assert not unresolved, (
+        "contract-drift-autofix.yml runs test node ids pytest cannot collect: "
+        f"{sorted(set(unresolved))}. pytest would exit 'ERROR: not found' and the workflow "
+        "would report drift on every run. Restore the name or update the workflow."
+    )

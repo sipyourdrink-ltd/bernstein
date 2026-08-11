@@ -629,7 +629,13 @@ class _SignedArtifactActivity(_ObservationCollector):
             signer_public_key_pem=self._public_key_pem,
         )
 
-    def finish(
+    # Deliberately narrower than the base: this modality *derives* its artifact
+    # from the signed receipt rather than accepting one, so it drops the base's
+    # ``artifact`` keyword. That makes it non-substitutable for a bare
+    # _ObservationCollector -- callers must hold the concrete subclass. Widening
+    # it back would change the call contract, so the divergence is suppressed
+    # here rather than papered over.
+    def finish(  # type: ignore[override]
         self,
         *,
         terminal_state: TerminalState = TerminalState.COMPLETED,

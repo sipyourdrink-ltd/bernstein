@@ -1,0 +1,15 @@
+# Contract for the Python Runtime adapter (adapter: python_runtime).
+adapter: python_runtime
+binary: python
+install:
+  method: pip
+  spec: "bernstein"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "OPENAI_API_KEY"
+required_flags: []
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
