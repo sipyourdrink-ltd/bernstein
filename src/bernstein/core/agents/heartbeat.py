@@ -23,6 +23,7 @@ from bernstein.core.agents.heartbeat_escalation import (
 )
 from bernstein.core.defaults import AGENT
 from bernstein.core.models import AgentHeartbeat, ProgressSnapshot, Task
+from bernstein.core.orchestration.supervisor_receipt import StallReason
 
 logger = logging.getLogger(__name__)
 
@@ -449,6 +450,56 @@ def _agent_has_fresh_liveness_signal(orch: Any, session: Any) -> bool:
     return any(age is not None and age < grace_s for age in (result.get("log_age_s"), result.get("git_age_s")))
 
 
+def _emit_stall_verdict(
+    orch: Any,
+    session: Any,
+    *,
+    reason: str,
+    detector: str,
+    heartbeat_age_s: float | None = None,
+    identical_snapshot_count: int | None = None,
+    threshold: float | None = None,
+) -> None:
+    """Mirror a stall-kill verdict into the audit chain (#3277).
+
+    Best-effort by design: audit mirroring must never block or delay the
+    kill itself (mirrors ``emit_process_reap_receipt`` in the spawner). A
+    kill that cannot be recorded still has to happen -- the record is
+    evidence, not a permission slip. But the failure is never silent: the
+    warning names the session and the reason, so an unrecorded kill stays
+    observable rather than becoming indistinguishable from no kill.
+
+    The record attests the decision, not the outcome -- callers invoke
+    this at the moment the kill verdict is reached, before the kill runs.
+    """
+    workdir = getattr(orch, "_workdir", None)
+    if not isinstance(workdir, Path):
+        return
+    try:
+        from bernstein.core.security.audit_chain import (
+            AuditChainStore,
+            record_stall_verdict,
+        )
+
+        chain = AuditChainStore(workdir / ".sdd" / "audit")
+        record_stall_verdict(
+            chain=chain,
+            session_id=session.id,
+            reason=reason,
+            detector=detector,
+            heartbeat_age_s=heartbeat_age_s,
+            identical_snapshot_count=identical_snapshot_count,
+            threshold=threshold,
+        )
+    except Exception as exc:  # audit must never block the kill path
+        logger.warning(
+            "Could not emit stall.verdict audit event for session %s: %s: %s",
+            session.id,
+            type(exc).__name__,
+            exc,
+        )
+
+
 def _escalate_heartbeat(
     orch: Any,
     session: Any,
@@ -503,6 +554,14 @@ def _escalate_heartbeat(
     else:
         action = ladder.check_and_escalate(session.id, age, pid=session.pid)
         if action is not None and action.tier >= EscalationTier.SIGKILL:
+            _emit_stall_verdict(
+                orch,
+                session,
+                reason=StallReason.HEARTBEAT_STALE,
+                detector="heartbeat",
+                heartbeat_age_s=age,
+                threshold=kill_threshold,
+            )
             _terminate_stuck_agent(orch, session, age)
             if session.pid is None or not action.action_taken:
                 with contextlib.suppress(Exception):
@@ -658,6 +717,14 @@ def _escalate_stall_simple(
     """Apply simple fixed-threshold stall escalation (no workdir mode)."""
     elapsed = time.time() - session.spawn_ts
     if count >= AGENT.escalation_kill_count:
+        _emit_stall_verdict(
+            orch,
+            session,
+            reason=StallReason.NO_PROGRESS,
+            detector="stall_simple",
+            identical_snapshot_count=count,
+            threshold=AGENT.escalation_kill_count,
+        )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
         _reap_session_heartbeat_loop(orch, session, reason="stall_kill")
@@ -685,6 +752,14 @@ def _escalate_stall_profiled(
     """Apply profile-aware stall escalation (with workdir / log analysis)."""
     elapsed = time.time() - session.spawn_ts
     if count >= profile.kill_threshold:
+        _emit_stall_verdict(
+            orch,
+            session,
+            reason=StallReason.NO_PROGRESS,
+            detector="stall_profiled",
+            identical_snapshot_count=count,
+            threshold=profile.kill_threshold,
+        )
         logger.warning(
             "Stall-killing agent %s (task %s): %d identical snapshots (%s)",
             session.id,
