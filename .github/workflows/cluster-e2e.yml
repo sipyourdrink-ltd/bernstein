@@ -48,7 +48,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync dependencies
-        run: uv sync --frozen --all-extras
+        run: uv sync --frozen --all-extras --no-extra modal
 
       - name: Run cluster e2e suite
         env:
