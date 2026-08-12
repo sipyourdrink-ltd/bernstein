@@ -786,8 +786,16 @@ def test_adapter_without_a_contract_refuses(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_verify_cli_reports_a_refusal_with_exit_1(receipts_dir: Path, contracts_dir: Path) -> None:
+def test_verify_cli_reports_a_refusal_with_exit_1(
+    receipts_dir: Path,
+    contracts_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from bernstein.cli.commands.adapters_verify_cmd import _execute_verify  # pyright: ignore[reportPrivateUsage]
+
+    # Stub binary lookup so the refusal path is taken by construction on
+    # every host, rather than depending on the absence of a binary.
+    monkeypatch.setattr("shutil.which", lambda _: None)
 
     rc = _execute_verify(
         "kimi",
@@ -802,11 +810,18 @@ def test_verify_cli_reports_a_refusal_with_exit_1(receipts_dir: Path, contracts_
     assert rc == 1
 
 
-def test_verify_cli_seals_a_receipt_the_gate_then_accepts(receipts_dir: Path, contracts_dir: Path) -> None:
+def test_verify_cli_seals_a_receipt_the_gate_then_accepts(
+    receipts_dir: Path,
+    contracts_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from bernstein.cli.commands.adapters_verify_cmd import _execute_verify  # pyright: ignore[reportPrivateUsage]
 
-    # The host has no kimi binary, so the sealed receipt records a refusal -
-    # the negative path, written down rather than left silent.
+    # The adapter binary is stubbed out, so the sealed receipt records a
+    # refusal by construction on every host - the negative path, written
+    # down rather than left silent.
+    monkeypatch.setattr("shutil.which", lambda _: None)
+
     rc = _execute_verify(
         "kimi",
         output_format="text",
