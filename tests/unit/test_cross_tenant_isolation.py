@@ -356,11 +356,27 @@ class TestNamespaceIsolation:
         )
         assert result == "tenant-a"
 
-    def test_resolve_scope_default_allows_any_tenant(self) -> None:
-        """Default tenant (admin) can access named tenants."""
+    def test_resolve_scope_default_is_not_a_wildcard(self) -> None:
+        """The default tenant reaches named tenants only with the operator scope.
+
+        ``DEFAULT_TENANT_ID`` is the tenant a credential with no tenant of
+        its own lands in - the legacy operator bearer, the cluster worker
+        secret, a token whose IdP sends no ``tenant_id``.  Treating it as
+        "may reach every tenant" would hand each of those credentials the
+        whole estate, so reaching out of it takes an explicit grant.
+        """
+        with pytest.raises(PermissionError):
+            resolve_tenant_scope(
+                bound_tenant=DEFAULT_TENANT_ID,
+                requested_tenant="tenant-x",
+            )
+
+    def test_resolve_scope_operator_reaches_named_tenant(self) -> None:
+        """A principal carrying the operator scope can select another tenant."""
         result = resolve_tenant_scope(
             bound_tenant=DEFAULT_TENANT_ID,
             requested_tenant="tenant-x",
+            allow_cross_tenant=True,
         )
         assert result == "tenant-x"
 
@@ -371,6 +387,7 @@ class TestNamespaceIsolation:
                 bound_tenant=DEFAULT_TENANT_ID,
                 requested_tenant="not-registered",
                 registry=registry,
+                allow_cross_tenant=True,
             )
 
     def test_tenant_root_paths_do_not_overlap(self, sdd_dir: Path) -> None:

@@ -53,6 +53,45 @@ as unrestricted (manager / orchestrator tokens), and non-agent credentials
 (SSO users, the legacy operator bearer, the cluster secret) never reach this
 check at all.
 
+Tenant scope binding
+--------------------
+Every credential the middleware accepts is bound to exactly one tenant
+before the request reaches a handler, via
+:func:`~bernstein.core.security.tenanting.bind_request_tenant`.  Handlers
+read that binding through ``request_tenant_id`` and can therefore treat it
+as authenticated state rather than as request input:
+
+===========================  ==========================  ==============
+Credential                   Bound tenant                 May select
+                                                          another tenant
+===========================  ==========================  ==============
+SSO user JWT                 ``tenant_id`` claim, else    only with
+                             ``default``                  ``admin:manage``
+Agent identity token         the credential's own
+                             ``tenant_id`` (verified
+                             against the signed claim)    never
+Legacy static bearer         ``default``                  never
+Cluster worker secret        ``default``                  never
+Dashboard session / token    ``default``                  never
+HMAC webhook secret          ``default``                  never
+===========================  ==========================  ==============
+
+The legacy operator bearer and the cluster worker secret carry no tenant of
+their own, so they are bound to ``default`` with no reach beyond it - a
+single shared secret must not be able to name a tenant.  Deployments that
+need one operator credential to administer several tenants use an SSO
+``admin`` user, whose ``admin:manage`` permission is the explicit operator
+scope that permits selecting another tenant.
+
+``BERNSTEIN_AUTH_DISABLED`` is the one mode in which the caller's own
+``X-Tenant-Id`` becomes the bound tenant, defaulting to
+``DEFAULT_TENANT_ID`` when absent: with authentication switched off there is
+no credential to derive a scope from and no boundary left to cross, and
+local multi-tenant development depends on being able to pick a tenant.  Paths
+that reach a handler without authenticating at all - truly public paths, the
+static shell, the dev-only docs routes - are left unbound, and every reader
+of an unbound request sees ``DEFAULT_TENANT_ID`` with no reach beyond it.
+
 RFC 8707 resource indicators
 ----------------------------
 When ``expected_resource`` is configured (single string or list passed to
@@ -79,6 +118,11 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from bernstein.core.security.sanitize import sanitize_log
+from bernstein.core.security.tenanting import (
+    DEFAULT_TENANT_ID,
+    bind_request_tenant,
+    requested_tenant_override,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -459,6 +503,25 @@ def _resource_indicator_check(
     )
 
 
+def _claim_tenant_id(claims: dict[str, Any]) -> str:
+    """Return the tenant a validated token declares, or the default tenant.
+
+    Reads the ``tenant_id`` claim of an already-verified token.  A missing,
+    blank, or non-string claim resolves to :data:`DEFAULT_TENANT_ID` rather
+    than to "whatever the caller asked for".
+
+    Args:
+        claims: Decoded claims of a token whose signature has been verified.
+
+    Returns:
+        The declared tenant ID, or ``DEFAULT_TENANT_ID``.
+    """
+    raw = claims.get("tenant_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return DEFAULT_TENANT_ID
+
+
 def auth_disabled_via_opt_out() -> bool:
     """Return True when auth has been explicitly opted out for the process.
 
@@ -608,6 +671,19 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
 
         # Opt-out: pass every request through unauthenticated.
         if self._auth_disabled:
+            # No credential is presented in this mode, so there is no
+            # principal to derive a scope from and the caller's own
+            # ``X-Tenant-Id`` is the only tenant signal that exists.  Honour
+            # it as the bound scope - a request that sends none gets
+            # ``DEFAULT_TENANT_ID`` - so that developers can exercise
+            # multi-tenant behaviour locally.  This is the ONLY place a
+            # header ever becomes a bound tenant, and it is reached only when
+            # the operator has switched authentication off entirely (which
+            # logs the warning above), so there is no principal here to scope
+            # against.  ``cross_tenant`` stays False so a mismatched
+            # ``?tenant=`` selector is still refused, matching how the same
+            # request behaves once auth is switched back on.
+            bind_request_tenant(request, requested_tenant_override(request))
             response: StarletteResponse = await call_next(request)
             return response
 
@@ -634,6 +710,15 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         # HMAC-authenticated paths: the route handler verifies a shared
         # secret; the bearer middleware lets them through.
         if path in AUTH_HMAC_PATHS or path.startswith(AUTH_HMAC_PATH_PREFIXES):
+            # These handlers create tasks, so they need a scope like any
+            # other writer.  The secrets they verify against
+            # (``BERNSTEIN_WEBHOOK_SECRET``, ``GITHUB_WEBHOOK_SECRET``) are
+            # process-wide and carry no tenant, so the same rule as the
+            # legacy bearer applies: bind to the default tenant, with no
+            # reach beyond it.  Routing webhook-created work to a named
+            # tenant is a per-tenant-secret feature, not something a header
+            # on a globally-signed request can decide.
+            bind_request_tenant(request, DEFAULT_TENANT_ID)
             response = await call_next(request)
             return response
 
@@ -649,6 +734,9 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         if path.startswith(("/dashboard", "/api/v1/dashboard")) and bool(
             getattr(request.state, "dashboard_principal", "")
         ):
+            # Dashboard credentials carry no tenant of their own, so they are
+            # bound to the default tenant with no reach beyond it.
+            bind_request_tenant(request, DEFAULT_TENANT_ID)
             response = await call_next(request)
             return response
 
@@ -686,6 +774,12 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                 # Legacy tokens get operator-level access
                 request.state.user = None  # type: ignore[attr-defined]
                 request.state.auth_claims = {"legacy": True}  # type: ignore[attr-defined]
+                # The legacy bearer is one static string with no tenant of its
+                # own, so it is bound to the default tenant and cannot select
+                # another.  Administering several tenants with one credential
+                # is the SSO ``admin`` user's job, where the operator scope is
+                # an explicit, per-user, revocable grant.
+                bind_request_tenant(request, DEFAULT_TENANT_ID)
                 response = await call_next(request)
                 return response
 
@@ -712,6 +806,10 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                     )
                 request.state.user = None  # type: ignore[attr-defined]
                 request.state.auth_claims = {"cluster": True}  # type: ignore[attr-defined]
+                # Like the legacy bearer: one shared secret for the whole
+                # worker fleet, so it is bound to the default tenant and
+                # reaches nothing beyond it.
+                bind_request_tenant(request, DEFAULT_TENANT_ID)
                 response = await call_next(request)
                 return response
 
@@ -750,6 +848,17 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
 
         request.state.user = user  # type: ignore[attr-defined]
         request.state.auth_claims = claims  # type: ignore[attr-defined]
+
+        # Bind the tenant from the validated token, not from the request.  An
+        # IdP that scopes users to a tenant puts it in the ``tenant_id``
+        # claim; tokens without one are bound to the default tenant.  Only an
+        # ``admin:manage`` holder carries the operator scope that lets a
+        # request select some other tenant.
+        bind_request_tenant(
+            request,
+            _claim_tenant_id(claims),
+            cross_tenant=user.has_permission(_PERM_ADMIN_MANAGE),
+        )
 
         permission = _get_required_permission(path, request.method)
         if permission and not user.has_permission(permission):
@@ -801,6 +910,15 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             "task_ids": agent_identity.task_ids,
         }
         request.state.agent_identity = agent_identity  # type: ignore[attr-defined]
+
+        # Bind the tenant the credential was issued for.  For JWT credentials
+        # the stored ``tenant_id`` is checked against the signed ``tenant_id``
+        # claim on every authentication (``_validate_jwt_claims``), so the
+        # value is cryptographically pinned to the token the agent presented.
+        # An agent works one tenant's tasks - the tenant its token was issued
+        # for - whichever tenant it names in a header.
+        credential = getattr(agent_identity, "credential", None)
+        bind_request_tenant(request, getattr(credential, "tenant_id", None))
 
         # Agent identity JWTs - even manager-role / unrestricted ones - must
         # never reach operator-only endpoints (shutdown, broadcast, drain,

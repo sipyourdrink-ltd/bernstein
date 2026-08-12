@@ -203,10 +203,33 @@ audit-log writes are filtered by tenant ID, and tenant resolution
 happens at the API edge via `request_tenant_id()` /
 `resolve_tenant_scope()` (`core/tenanting.py`).
 
-When auth is configured, tenant scoping is automatic from JWT claims;
-unauthenticated dev mode falls back to `DEFAULT_TENANT_ID`. Operators
-audit cross-tenant leakage with `tenant_isolation_verify.py` and rate-
-limit per-tenant via `tenant_rate_limiter.py`.
+When auth is configured, tenant scoping is automatic from the credential:
+`SSOAuthMiddleware` binds the tenant a validated credential was issued for
+onto the request, and `request_tenant_id()` reports that binding.
+
+| Credential | Bound tenant | May select another tenant |
+|---|---|---|
+| SSO user JWT | `tenant_id` claim, else `default` | only with `admin:manage` |
+| Agent identity JWT | the credential's own `tenant_id` | no |
+| Legacy static bearer | `default` | no |
+| Cluster worker secret | `default` | no |
+| Dashboard session / scoped token | `default` | no |
+| HMAC webhook secret | `default` | no |
+
+`X-Tenant-Id` is a *requested* scope, not an identity: `resolve_tenant_scope()`
+authorizes it against the bound scope, so naming your own tenant is granted and
+naming a different one needs the operator scope (`admin:manage`). Credentials
+that are a single process-wide string carry no tenant of their own, so they bind
+to `default` and stay there — administering several tenants from one credential
+is the SSO `admin` user's job, where the grant is per-user and revocable.
+Note that `default` is a tenant like any other, not a wildcard.
+
+Unauthenticated dev mode (`BERNSTEIN_AUTH_DISABLED`) is the one mode where
+`X-Tenant-Id` is itself the bound scope, falling back to `DEFAULT_TENANT_ID`
+when absent — with auth off there is no credential to derive a scope from.
+
+Operators audit tenant leakage with `tenant_isolation_verify.py` and rate-limit
+per-tenant via `tenant_rate_limiter.py`.
 
 ## Identities API
 

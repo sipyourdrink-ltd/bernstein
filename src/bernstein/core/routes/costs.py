@@ -20,7 +20,12 @@ from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
 from bernstein.core.routes._sse import SSE_RESPONSES
-from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
+from bernstein.core.tenanting import (
+    request_tenant_cross_scope,
+    request_tenant_id,
+    requested_tenant_override,
+    resolve_tenant_scope,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -55,11 +60,20 @@ def _get_tenant_registry(request: Request) -> TenantRegistry | None:
 
 
 def _resolve_request_tenant_scope(request: Request, requested_tenant: str | None = None) -> str:
+    """Resolve the tenant scope for the current request.
+
+    Same rule as the task routes: the bound tenant comes from the
+    authenticated principal, and a caller-supplied selector is authorized
+    against it - naming your own scope is fine, naming a different one needs
+    the operator scope.
+    """
+    override = requested_tenant if requested_tenant is not None else requested_tenant_override(request)
     try:
         return resolve_tenant_scope(
             request_tenant_id(request),
-            requested_tenant,
+            override,
             registry=_get_tenant_registry(request),
+            allow_cross_tenant=request_tenant_cross_scope(request),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
