@@ -347,9 +347,7 @@ def test_rotation_capability_covers_every_call_rotation_makes() -> None:
         assert fn in os.supports_dir_fd, f"{fn.__name__} must accept dir_fd for rotation to anchor"
 
 
-def test_rotation_falls_back_when_the_platform_cannot_anchor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rotation_falls_back_when_the_platform_cannot_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """With the capability off, rotation still happens - by path."""
     monkeypatch.setattr(anchored_write, "ANCHORED_ROTATE_SUPPORTED", False)
     target = tmp_path / "metrics.jsonl"
