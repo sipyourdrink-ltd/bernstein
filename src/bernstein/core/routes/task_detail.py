@@ -180,6 +180,12 @@ async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
+    # Same gate the task-detail route applies: the stream carries agent log
+    # content, so the task must sit in the caller's scope before it opens.
+    from bernstein.core.routes.task_crud import _require_task_access
+
+    _require_task_access(task, request)
+
     runtime_dir = _get_runtime_dir(request)
 
     def _read_new_log_content(log_path: Path, last_size: int) -> tuple[str, int] | None:

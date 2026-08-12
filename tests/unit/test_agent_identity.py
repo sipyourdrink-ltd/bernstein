@@ -381,3 +381,63 @@ class TestHashToken:
         h1 = _hash_token("token-a")
         h2 = _hash_token("token-b")
         assert h1 != h2
+
+
+class TestAgentCredentialTenantDeserialization:
+    """The persisted ``tenant_id`` becomes the authenticated request scope.
+
+    ``AgentCredential.from_dict`` is the boundary where a stored record turns
+    into that scope, so it establishes the value as a real tenant id instead
+    of coercing whatever shape was on disk into a usable one.
+    """
+
+    def test_absent_tenant_resolves_to_the_default(self) -> None:
+        """Records written before the field existed still load."""
+        credential = AgentCredential.from_dict({"token_hash": "abc"})
+
+        assert credential.tenant_id == "default"
+
+    def test_named_tenant_is_preserved(self) -> None:
+        credential = AgentCredential.from_dict({"token_hash": "abc", "tenant_id": "tenant-a"})
+
+        assert credential.tenant_id == "tenant-a"
+
+    @pytest.mark.parametrize("stored", [123, 1.5, True, ["tenant-a"], {"id": "tenant-a"}])
+    def test_non_string_tenant_is_refused(self, stored: object) -> None:
+        """A non-string record is rejected rather than stringified.
+
+        ``str()`` would turn any of these into a non-blank value that reads
+        back as a legitimate scope.
+        """
+        with pytest.raises(ValueError, match="tenant_id"):
+            AgentCredential.from_dict({"token_hash": "abc", "tenant_id": stored})
+
+    @pytest.mark.parametrize("stored", ["", "   ", "\t"])
+    def test_blank_tenant_is_refused(self, stored: str) -> None:
+        with pytest.raises(ValueError, match="tenant_id"):
+            AgentCredential.from_dict({"token_hash": "abc", "tenant_id": stored})
+
+    def test_store_skips_an_identity_whose_credential_is_refused(self, tmp_path: Path) -> None:
+        """A record that cannot establish a scope is skipped, not listed.
+
+        ``list_identities`` reports what the store can vouch for; an identity
+        whose credential does not deserialise is left out entirely rather
+        than surfaced with a scope derived from the bad record.
+        """
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, _token = store.create_identity("session-good", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        corrupt = identities_dir / "session-corrupt.json"
+        payload = json.loads((identities_dir / f"{identity.id}.json").read_text())
+        payload["id"] = "session-corrupt"
+        payload["session_id"] = "session-corrupt"
+        payload["credential"]["tenant_id"] = 42
+        corrupt.write_text(json.dumps(payload))
+
+        listed = {found.id for found in store.list_identities()}
+
+        assert identity.id in listed
+        assert "session-corrupt" not in listed

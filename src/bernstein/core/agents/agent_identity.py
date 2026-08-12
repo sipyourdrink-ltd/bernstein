@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.sanitize import sanitize_log
-from bernstein.core.tenanting import normalize_tenant_id
+from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -144,6 +144,33 @@ def permissions_for_role(role: str) -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 
+def _credential_tenant_id(raw: Any) -> str:
+    """Return the tenant a persisted credential is scoped to.
+
+    The value is read back as the authenticated scope for every request this
+    credential authenticates, so the deserialisation boundary is where it has
+    to be established as a real tenant id.  ``str()`` coercion would accept
+    whatever shape happened to be stored and hand the result on as a usable
+    scope, so a stored value that is not a non-blank string is refused
+    instead.
+
+    An absent key stays lenient and resolves to :data:`DEFAULT_TENANT_ID`:
+    credentials written before the field existed carry no tenant and belong
+    to the default one.
+
+    Raises:
+        ValueError: The record carries a ``tenant_id`` that is not a
+            non-blank string.
+    """
+    if raw is None:
+        return DEFAULT_TENANT_ID
+    if not isinstance(raw, str):
+        raise ValueError(f"credential tenant_id must be a string, got {type(raw).__name__}")
+    if not raw.strip():
+        raise ValueError("credential tenant_id must not be blank")
+    return normalize_tenant_id(raw)
+
+
 @dataclass
 class AgentCredential:
     """Bearer token for agent-to-server authentication.
@@ -201,7 +228,7 @@ class AgentCredential:
             token_type=str(d.get("token_type", "opaque")),
             algorithm=str(d.get("algorithm", "HS256")),
             jti=str(d.get("jti", "")),
-            tenant_id=normalize_tenant_id(str(d.get("tenant_id", "default") or "default")),
+            tenant_id=_credential_tenant_id(d.get("tenant_id")),
             task_ids=[str(t) for t in d.get("task_ids", [])],
             allowed_files=[str(f) for f in d.get("allowed_files", [])],
         )
@@ -832,7 +859,10 @@ class AgentIdentityStore:
                 if role is not None and identity.role != role:
                     continue
                 results.append(identity)
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, ValueError):
+                # ``ValueError`` covers a record whose persisted enum or
+                # tenant field does not deserialise: the identity is skipped
+                # rather than listed with a value derived from a bad record.
                 logger.warning("Skipping corrupt identity file: %s", path)
         return results
 

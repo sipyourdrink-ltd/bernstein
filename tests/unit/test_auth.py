@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from bernstein.core.auth import (
+    DEFAULT_TENANT_ID,
     AuthRole,
     AuthService,
     AuthSession,
@@ -181,6 +182,30 @@ class TestGroupRoleMapping:
 
 
 class TestAuthUser:
+    def test_positional_construction_binds_the_declared_field_order(self) -> None:
+        """Every ``AuthUser`` field is positional, so their order is a contract.
+
+        A field added ahead of the timestamps rebinds them for any caller
+        that constructs positionally: the value meant for ``created_at``
+        lands in the inserted field and the timestamps shift one place right,
+        silently. This pins the order the constructor actually exposes.
+        """
+        user = AuthUser(
+            "u-positional",
+            "positional@example.com",
+            "Positional User",
+            AuthRole.OPERATOR,
+            "oidc",
+            "sub-positional",
+            ["devs"],
+            1000.0,
+            2000.0,
+        )
+
+        assert user.created_at == 1000.0
+        assert user.last_login_at == 2000.0
+        assert user.tenant_id == DEFAULT_TENANT_ID
+
     def test_serialization_roundtrip(self) -> None:
         user = AuthUser(
             id="u123",

@@ -534,3 +534,297 @@ async def test_dev_mode_without_a_header_falls_back_to_the_default_tenant(
 
     assert response.status_code == 200
     assert response.json()["tenant"] == DEFAULT_TENANT_ID
+
+
+# ---------------------------------------------------------------------------
+# Read paths beyond GET /tasks/{id}
+#
+# The scope a request resolves to has to be applied on every route that
+# reads or writes a task, not only the one that reads a task by id.  These
+# cases pin the routes that reach task rows by another route: a neighbour
+# walk, a log stream, and the three create paths that name an existing
+# parent in the request body.
+# ---------------------------------------------------------------------------
+
+
+# Each read credential paired with the tenant it is bound to, so a case can
+# address a row the caller may legitimately read.
+READ_CREDENTIALS_WITH_OWN_TENANT = [
+    ("sso_viewer", TENANT_A),
+    ("agent_task_scoped", TENANT_A),
+    ("agent_unrestricted", TENANT_A),
+    ("legacy_bearer", DEFAULT_TENANT_ID),
+    ("cluster_secret", DEFAULT_TENANT_ID),
+]
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize(("credential_name", "own_tenant"), READ_CREDENTIALS_WITH_OWN_TENANT)
+async def test_graph_neighbors_stay_inside_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+    own_tenant: str,
+) -> None:
+    """A dependency edge that leaves the caller's scope is not materialised.
+
+    The route reads the requested task under the scope gate, then builds its
+    two neighbour lists from a separate store walk.  If that walk is not
+    itself constrained, a row outside the scope that names the requested task
+    as a dependency comes back with its title, status and role attached.
+    """
+    credential = _credential(fx, credential_name)
+    own_task_id = fx.task_a_id if own_tenant == TENANT_A else fx.task_default_id
+    store: Any = fx.app.state.store
+    # A row outside the caller's scope that points at the in-scope task.
+    outsider = await store.create(
+        TaskCreate(
+            title="outside-scope dependent",
+            description="declares the in-scope task as a dependency",
+            role="backend",
+            tenant_id=TENANT_B,
+            depends_on=[own_task_id],
+        )
+    )
+
+    response = await client.get(
+        f"/tasks/{own_task_id}/graph-neighbors",
+        headers=credential.headers,
+    )
+
+    assert response.status_code == 200, f"{credential_name} could not read its own task's neighbours"
+    payload = response.json()
+    returned = {entry["id"] for entry in payload["upstream"]} | {entry["id"] for entry in payload["downstream"]}
+    assert outsider.id not in returned, f"{credential_name} saw an out-of-scope neighbour in {payload['downstream']}"
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", READ_CREDENTIALS)
+async def test_task_log_stream_requires_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """The log stream applies the same gate the task-detail route applies."""
+    credential = _credential(fx, credential_name)
+
+    response = await client.get(
+        f"/dashboard/tasks/{fx.task_b_id}/logs/stream",
+        headers=credential.crossing_headers(),
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} opened a log stream for an out-of-scope task: got {response.status_code}"
+    )
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", WRITE_CREDENTIALS)
+async def test_create_task_refuses_a_parent_outside_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """A body-supplied parent has to resolve inside the scope the child lands in.
+
+    The child row is written into the caller's own scope, so an accepted
+    request would leave a parent-child edge spanning two scopes and let one
+    side's write drive the other side's subtree completion logic.
+    """
+    credential = _credential(fx, credential_name)
+    before = _tenant_task_ids(fx, TENANT_B)
+
+    response = await client.post(
+        "/tasks",
+        headers=credential.headers,
+        json={
+            "title": "child naming an out-of-scope parent",
+            "description": "parent_task_id resolves outside the caller's scope",
+            "role": "backend",
+            "parent_task_id": fx.task_b_id,
+        },
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} attached a child to an out-of-scope parent: got {response.status_code}"
+    )
+    assert _tenant_task_ids(fx, TENANT_B) == before, f"{credential_name} wrote a row despite the refusal"
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", WRITE_CREDENTIALS)
+async def test_batch_create_refuses_a_parent_outside_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """The batch path applies the same parent rule as the single-create path."""
+    credential = _credential(fx, credential_name)
+    before = _tenant_task_ids(fx, TENANT_B)
+
+    response = await client.post(
+        "/tasks/batch",
+        headers=credential.headers,
+        json={
+            "tasks": [
+                {
+                    "title": "batch child naming an out-of-scope parent",
+                    "description": "parent_task_id resolves outside the caller's scope",
+                    "role": "backend",
+                    "parent_task_id": fx.task_b_id,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} batch-attached a child to an out-of-scope parent: got {response.status_code}"
+    )
+    assert _tenant_task_ids(fx, TENANT_B) == before, f"{credential_name} wrote a row despite the refusal"
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", WRITE_CREDENTIALS)
+async def test_self_create_subtask_refuses_a_parent_outside_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """The self-create path transitions its parent, so the parent must be in scope.
+
+    This route moves the named parent to ``waiting_for_subtasks``.  The
+    assertion covers the transition as well as the status code: a refusal
+    that still moved the parent would pass a status-only check.
+    """
+    credential = _credential(fx, credential_name)
+    store: Any = fx.app.state.store
+    before_status = store.get_task(fx.task_b_id).status.value
+
+    response = await client.post(
+        "/tasks/self-create",
+        headers=credential.headers,
+        json={
+            "title": "subtask naming an out-of-scope parent",
+            "description": "parent_task_id resolves outside the caller's scope",
+            "role": "backend",
+            "parent_task_id": fx.task_b_id,
+        },
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} subtasked an out-of-scope parent: got {response.status_code}"
+    )
+    assert store.get_task(fx.task_b_id).status.value == before_status, (
+        f"{credential_name} transitioned an out-of-scope parent despite the refusal"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cost surface
+#
+# A run's cost file holds the usages of every tenant that spent against that
+# run.  The aggregate readers therefore have to narrow to the caller's scope
+# before they total anything, or one scope's spend, model mix and task titles
+# are reported to another.  These cases seed one run with usages from two
+# scopes and assert each endpoint reports only the caller's own.
+# ---------------------------------------------------------------------------
+
+# ``/costs`` and ``/costs/live`` already narrowed before this change; the rest
+# are the readers that did not.
+SCOPED_COST_ENDPOINTS = [
+    "/costs",
+    "/costs/live",
+    "/costs/current",
+    "/costs/export",
+    "/costs/top-tasks",
+    "/costs/history",
+    "/costs/forecast",
+    "/costs/by-adapter",
+    "/costs/token-efficiency",
+    "/costs/cache-stats",
+    "/costs/efficiency",
+]
+
+# Spend recorded for the out-of-scope tenant. Distinctive enough that a leak
+# is visible as a literal in the response body.
+OUTSIDER_COST_USD = 987.654321
+OUTSIDER_MODEL = "outsider-only-model"
+OUTSIDER_AGENT = "outsider-only-agent"
+
+
+@pytest.fixture()
+def seeded_costs(fx: Fixture, sdd_dir: Path) -> float:
+    """Write one run file carrying usages from two scopes.
+
+    Returns the in-scope spend, which is what a correctly narrowed reader
+    must report.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    in_scope_cost = 1.5
+    tracker = CostTracker(run_id="mixed-scope-run", budget_usd=10_000.0)
+    tracker.record(
+        "agent-in-scope",
+        fx.task_default_id,
+        "in-scope-model",
+        1_000,
+        500,
+        cost_usd=in_scope_cost,
+        tenant_id=DEFAULT_TENANT_ID,
+    )
+    tracker.record(
+        OUTSIDER_AGENT,
+        fx.task_b_id,
+        OUTSIDER_MODEL,
+        9_000,
+        9_000,
+        cost_usd=OUTSIDER_COST_USD,
+        tenant_id=TENANT_B,
+    )
+    tracker.save(sdd_dir)
+    return in_scope_cost
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("endpoint", SCOPED_COST_ENDPOINTS)
+async def test_cost_endpoints_report_only_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    seeded_costs: float,
+    endpoint: str,
+) -> None:
+    """No cost reader surfaces spend recorded outside the caller's scope.
+
+    The assertion is on the serialised body rather than one parsed field:
+    these endpoints differ in shape, and the property under test is that the
+    out-of-scope figures appear in none of them - as a total, a per-model or
+    per-agent row, an export line, or a task title.
+    """
+    credential = _credential(fx, "legacy_bearer")
+
+    response = await client.get(endpoint, headers=credential.headers)
+
+    assert response.status_code == 200, f"{endpoint} returned {response.status_code}"
+    body = response.text
+    assert str(OUTSIDER_COST_USD) not in body, f"{endpoint} reported out-of-scope spend"
+    assert OUTSIDER_MODEL not in body, f"{endpoint} reported an out-of-scope model"
+    assert OUTSIDER_AGENT not in body, f"{endpoint} reported an out-of-scope agent"
+
+
+@pytest.mark.anyio()
+async def test_cost_current_still_reports_the_callers_own_spend(
+    fx: Fixture,
+    client: AsyncClient,
+    seeded_costs: float,
+) -> None:
+    """Narrowing does not over-refuse: in-scope spend is still reported.
+
+    The companion to the leak assertions - a reader that returned zero for
+    everyone would satisfy those and be useless.
+    """
+    credential = _credential(fx, "legacy_bearer")
+
+    response = await client.get("/costs/current", headers=credential.headers)
+
+    assert response.status_code == 200
+    assert response.json()["spent_usd"] == pytest.approx(seeded_costs)

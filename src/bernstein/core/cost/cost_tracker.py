@@ -1144,12 +1144,22 @@ class CostTracker:
         return file_path
 
     @classmethod
-    def load(cls, base_dir: Path, run_id: str) -> CostTracker | None:
+    def load(cls, base_dir: Path, run_id: str, *, tenant_id: str | None = None) -> CostTracker | None:
         """Load a previously persisted CostTracker from disk.
 
         Args:
             base_dir: The ``.sdd`` directory.
             run_id: Run identifier to look up.
+            tenant_id: When given, replay only the usages recorded for that
+                tenant.  A run file holds the usages of every tenant that
+                spent against it, so a reader that has to stay inside one
+                scope narrows the tracker here rather than filtering each
+                aggregate afterwards: every derived figure - ``status()``,
+                ``model_breakdowns()``, ``agent_summaries()``,
+                ``spent_by_model()``, envelope spend - is then computed from
+                the narrowed set and is in-scope by construction.  ``None``
+                keeps the whole file, for callers that legitimately span
+                tenants (the orchestrator's own budget enforcement).
 
         Returns:
             Restored ``CostTracker``, or ``None`` if the file doesn't exist
@@ -1168,8 +1178,11 @@ class CostTracker:
                 critical_threshold=float(data.get("critical_threshold", DEFAULT_CRITICAL_THRESHOLD)),
                 hard_stop_threshold=float(data.get("hard_stop_threshold", DEFAULT_HARD_STOP_THRESHOLD)),
             )
+            scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
             for u_dict in data.get("usages", []):
                 usage = TokenUsage.from_dict(u_dict)
+                if scope is not None and normalize_tenant_id(usage.tenant_id) != scope:
+                    continue
                 tracker._usages.append(usage)
                 tracker._spent_usd += usage.cost_usd
                 tracker._spent_by_agent[usage.agent_id] = (
@@ -1180,12 +1193,16 @@ class CostTracker:
                 # across reload (otherwise model_breakdowns() returns empty).
                 tracker._update_accumulators(usage)
 
-            # Restore cumulative token tracking for delta-safe recording
-            raw_cumul = data.get("cumulative_tokens", {})
-            for k_str, v_list in raw_cumul.items():
-                key = tuple(k_str.split("|"))
-                if len(key) == 3:
-                    tracker._cumulative_tokens[key] = tuple(v_list)  # type: ignore[assignment]
+            # Restore cumulative token tracking for delta-safe recording.
+            # Skipped for a narrowed load: these are whole-file rollups, and a
+            # scoped tracker is a read-only projection that must not carry
+            # totals accumulated outside its scope.
+            if scope is None:
+                raw_cumul = data.get("cumulative_tokens", {})
+                for k_str, v_list in raw_cumul.items():
+                    key = tuple(k_str.split("|"))
+                    if len(key) == 3:
+                        tracker._cumulative_tokens[key] = tuple(v_list)  # type: ignore[assignment]
 
             # Restore envelope state (issue #1405). Backwards compatible:
             # older snapshots without envelope blocks load as zero-state.
@@ -1196,12 +1213,18 @@ class CostTracker:
                     if isinstance(payload, dict):
                         env_map[name] = EnvelopeConfig.from_dict(name, cast("dict[str, Any]", payload))
                 tracker.envelopes = env_map
-            raw_env_spent = data.get("spent_by_envelope", {})
-            if isinstance(raw_env_spent, dict):
-                tracker._spent_by_envelope = {k: float(v) for k, v in cast("dict[str, Any]", raw_env_spent).items()}
-            raw_env_calls = data.get("calls_by_envelope", {})
-            if isinstance(raw_env_calls, dict):
-                tracker._calls_by_envelope = {k: int(v) for k, v in cast("dict[str, Any]", raw_env_calls).items()}
+            # Persisted envelope spend is a whole-file rollup. A narrowed load
+            # leaves it empty so the derive-from-usages step below rebuilds it
+            # from the in-scope usages only.
+            if scope is None:
+                raw_env_spent = data.get("spent_by_envelope", {})
+                if isinstance(raw_env_spent, dict):
+                    tracker._spent_by_envelope = {
+                        k: float(v) for k, v in cast("dict[str, Any]", raw_env_spent).items()
+                    }
+                raw_env_calls = data.get("calls_by_envelope", {})
+                if isinstance(raw_env_calls, dict):
+                    tracker._calls_by_envelope = {k: int(v) for k, v in cast("dict[str, Any]", raw_env_calls).items()}
 
             # If we loaded usages but not envelope spend, derive it from
             # usage records so old snapshots still aggregate by envelope.

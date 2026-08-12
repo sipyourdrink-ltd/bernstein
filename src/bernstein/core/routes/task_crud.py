@@ -301,6 +301,29 @@ def _enforce_parent_task_scope(request: Request, parent_task_ids: Sequence[str |
     named = [task_id for task_id in parent_task_ids if task_id]
     if named:
         enforce_agent_task_scope_for_ids(request, named)
+        _require_parent_tenant_scope(request, named)
+
+
+def _require_parent_tenant_scope(request: Request, parent_task_ids: Sequence[str]) -> None:
+    """Reject a parent association that reaches outside the caller's scope.
+
+    ``enforce_agent_task_scope_for_ids`` pins an *agent* credential to its own
+    task ids and says nothing about any other credential type, so on its own it
+    leaves the association open for the rest.  The child row is written into
+    the scope :func:`_resolve_request_tenant_scope` returns, and grafting it
+    onto a parent resolved outside that scope would let one scope's write
+    drive another's subtree lifecycle.  The parent has to sit where the child
+    lands.
+
+    A parent that does not resolve at all is left to the caller's existing
+    behaviour - this guard narrows scope, it does not add an existence check.
+    """
+    store = _get_store(request)
+    effective_tenant = _resolve_request_tenant_scope(request)
+    for parent_id in parent_task_ids:
+        parent = store.get_task(parent_id)
+        if parent is not None and parent.tenant_id != effective_tenant:
+            raise HTTPException(status_code=404, detail=f"Task '{parent_id}' not found")
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1137,11 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
     parent = store.get_task(body.parent_task_id)
     if parent is None:
         raise HTTPException(status_code=404, detail=f"Parent task '{body.parent_task_id}' not found")
+
+    # The parent is transitioned to ``waiting_for_subtasks`` below, so it has
+    # to sit in the scope this request resolves to - the same rule the other
+    # create paths apply to a body-supplied ``parent_task_id``.
+    _require_parent_tenant_scope(request, [body.parent_task_id])
 
     # Build a full TaskCreate from the self-create payload
     full_body = TaskCreate(
@@ -2186,7 +2214,10 @@ def get_task_graph_neighbors(task_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     _require_task_access(task, request)
 
-    all_tasks = store.list_tasks()
+    # Neighbours are materialised from the caller's scope, not from the whole
+    # store: an edge that crosses a tenant boundary would otherwise surface
+    # the other side's title, status and role through this panel.
+    all_tasks = store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))
     by_id = {t.id: t for t in all_tasks}
 
     def _neighbor(other: Task) -> dict[str, Any]:

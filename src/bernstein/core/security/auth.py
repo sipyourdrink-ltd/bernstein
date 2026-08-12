@@ -168,13 +168,17 @@ class AuthUser:
     sso_provider: str = ""  # "oidc" or "saml"
     sso_subject: str = ""  # Subject/NameID from the IdP
     sso_groups: list[str] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+    last_login_at: float = field(default_factory=time.time)
     # Tenant this user works in.  Carried into every token issued for them
     # (see ``AuthService._issue_token``) so the request scope is derived from
     # the user record rather than from request input.  Users provisioned
     # without one work in ``DEFAULT_TENANT_ID``.
+    #
+    # Declared last on purpose: every field here is positional, so inserting
+    # one ahead of ``created_at``/``last_login_at`` would silently rebind the
+    # timestamps of any caller that constructs positionally.
     tenant_id: str = DEFAULT_TENANT_ID
-    created_at: float = field(default_factory=time.time)
-    last_login_at: float = field(default_factory=time.time)
 
     def has_permission(self, permission: str) -> bool:
         """Check if this user has a specific permission."""
