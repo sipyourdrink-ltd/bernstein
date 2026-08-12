@@ -93,6 +93,11 @@ def test_stdout_carries_the_summary_when_the_sticky_post_fails(
     assert "403" in captured.err, "the failed post must still be reported somewhere"
 
 
+def _rendered(ack: ModuleType) -> str:
+    """What the gate job actually hands over: the text render_summary produces."""
+    return ack.render_summary(_clean_outcome(ack)) + "\n"
+
+
 def test_post_summary_file_posts_verbatim_without_evaluating(
     ack: ModuleType,
     tmp_path: Path,
@@ -114,14 +119,14 @@ def test_post_summary_file_posts_verbatim_without_evaluating(
     )
 
     handed = tmp_path / "summary.md"
-    handed.write_text("### handed over\n", encoding="utf-8")
+    handed.write_text(_rendered(ack), encoding="utf-8")
 
     rc = ack.main(
         ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
     )
 
     assert rc == 0
-    assert posted == {"pr": 42, "body": "### handed over\n"}
+    assert posted == {"pr": 42, "body": _rendered(ack)}
 
 
 def test_post_summary_file_fails_loudly_when_the_post_fails(
@@ -138,7 +143,7 @@ def test_post_summary_file_fails_loudly_when_the_post_fails(
     monkeypatch.setattr(ack, "upsert_sticky", forbidden)
 
     handed = tmp_path / "summary.md"
-    handed.write_text("### handed over\n", encoding="utf-8")
+    handed.write_text(_rendered(ack), encoding="utf-8")
 
     rc = ack.main(
         ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
@@ -170,3 +175,99 @@ def test_post_summary_file_missing_is_an_error_not_a_pass(
     )
 
     assert rc == 2
+
+
+# The hand-over file crosses a trust boundary. On a fork pull request the gate
+# job runs the fork's checkout, so every byte in the artifact is caller input,
+# while the publisher that reads it holds a base-repository token that can
+# write pull request comments. These pin the two halves of the answer: the
+# publisher posts only what looks like this script's own summary, and the
+# workflow around it refuses a pull request number that is not the one at the
+# head SHA the run was triggered for.
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("empty", ""),
+        ("arbitrary markdown", "### handed over\n"),
+        ("header without the heading", "<!-- review-bot-ack-summary: managed -->\nhi\n"),
+        ("heading without the header", "## Review-bot acknowledgement summary\n"),
+        ("header not first", "hi\n<!-- review-bot-ack-summary: managed -->\n"),
+    ],
+)
+def test_post_summary_file_refuses_text_that_is_not_a_rendered_summary(
+    ack: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    content: str,
+) -> None:
+    """A writable token must not become a general-purpose comment writer."""
+    monkeypatch.setenv("GH_TOKEN", "t")
+
+    def must_not_post(*_a: object, **_k: object) -> None:
+        raise AssertionError(f"posted {name} as the sticky comment")
+
+    monkeypatch.setattr(ack, "upsert_sticky", must_not_post)
+
+    handed = tmp_path / "summary.md"
+    handed.write_text(content, encoding="utf-8")
+
+    rc = ack.main(
+        ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
+    )
+
+    assert rc == 2
+
+
+def test_post_summary_file_reports_invalid_utf8_as_a_read_failure(
+    ack: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Undecodable bytes are a different fault from a well-formed wrong shape."""
+    monkeypatch.setenv("GH_TOKEN", "t")
+    monkeypatch.setattr(ack, "upsert_sticky", lambda *a, **k: None)
+
+    handed = tmp_path / "summary.md"
+    handed.write_bytes(b"\xff\xfe not utf-8")
+
+    rc = ack.main(
+        ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
+    )
+
+    assert rc == 2
+    assert "UTF-8" in capsys.readouterr().err, (
+        "an undecodable hand-over must say so rather than raise"
+    )
+
+
+def test_render_summary_satisfies_the_shape_the_publisher_requires(ack: ModuleType) -> None:
+    """The check and the renderer must not be able to drift apart."""
+    rendered = ack.render_summary(_clean_outcome(ack))
+    assert rendered.startswith(ack.STICKY_HEADER)
+    assert ack.SUMMARY_HEADING in rendered
+
+
+def test_publisher_workflow_binds_the_pull_request_to_the_triggering_head() -> None:
+    """A numeric pull request number is still someone else's pull request.
+
+    ``workflow_run.head_sha`` is event metadata rather than artifact content,
+    so it is the one value in this step the caller cannot choose. The step has
+    to compare the named pull request's head against it and refuse a mismatch.
+    """
+    workflow = (
+        REPO_ROOT / ".github" / "workflows" / "review-bot-ack-publish.yml"
+    ).read_text(encoding="utf-8")
+    step = workflow.split("Post the sticky summary the gate could not", 1)[1]
+    step = step.split("\n  republish:", 1)[0]
+
+    assert "HEAD_SHA: ${{ github.event.workflow_run.head_sha }}" in step
+    assert ".head.sha" in step, "the step must read the claimed pull request's head"
+    assert '!= "$HEAD_SHA"' in step, "the step must refuse a head that is not the trigger's"
+    refusal = step.index('!= "$HEAD_SHA"')
+    assert step.index("--post-summary-file") > refusal, (
+        "the binding check has to run before the post, not after it"
+    )

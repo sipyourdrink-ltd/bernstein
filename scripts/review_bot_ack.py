@@ -207,6 +207,7 @@ DID_NOT_RUN_PATTERNS = (
 _SHA_RE = re.compile(r"\b[0-9a-f]{40}\b", re.IGNORECASE)
 
 STICKY_HEADER = "<!-- review-bot-ack-summary: managed -->"
+SUMMARY_HEADING = "## Review-bot acknowledgement summary"
 ACK_MARKER_RE = re.compile(
     r"<!--\s*bot-ack:\s*(?P<id>[\w./-]+)\s*(?:reason=(?P<reason>[^>]+?))?\s*-->",
     re.IGNORECASE,
@@ -623,7 +624,7 @@ def _render_review_coverage(outcome: GateOutcome) -> list[str]:
 
 
 def render_summary(outcome: GateOutcome) -> str:
-    lines = [STICKY_HEADER, "## Review-bot acknowledgement summary", ""]
+    lines = [STICKY_HEADER, SUMMARY_HEADING, ""]
     total_must = len(outcome.must_unresolved) + len(outcome.must_acked)
     lines.append(
         f"- Must-address findings: **{total_must}** "
@@ -734,8 +735,24 @@ def main(argv: list[str] | None = None) -> int:
         # state, so this path deliberately only posts.
         try:
             body = Path(args.post_summary_file).read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            print(f"error: hand-over file is not UTF-8: {exc}", file=sys.stderr)
+            return 2
         except OSError as exc:
             print(f"error: {exc}", file=sys.stderr)
+            return 2
+        # The hand-over file crosses a trust boundary: the run that renders it
+        # may be a fork's checkout, and the run that posts it holds a token
+        # that can write to the base repository. Post only what looks like the
+        # summary this script renders, so the writable token cannot be turned
+        # into a general-purpose comment writer by an empty or substituted
+        # file. This is a shape check, not an authenticity claim - the caller
+        # of this mode is responsible for having bound the pull request.
+        if not body.startswith(STICKY_HEADER) or SUMMARY_HEADING not in body:
+            print(
+                "error: hand-over file is not a rendered review-bot-ack summary",
+                file=sys.stderr,
+            )
             return 2
         try:
             upsert_sticky(args.owner, args.repo, args.pr, token, body)
