@@ -11,6 +11,7 @@ ASSUMPTIONS - adjust if they don't match:
     `self` (check the final implementation for that).
   - `AgentSession` and `Task` are importable from their usual locations.
 """
+
 import copy
 
 import pytest

@@ -50,12 +50,10 @@ def _expected_bytes(session_id: str, tasks: list) -> bytes:
     return rendered.encode("utf-8")
 
 
-def test_written_bytes_match_render_pipeline_independent_of_audit(
-    tmp_path: Path, templates_dir: Path
-):
+def test_written_bytes_match_render_pipeline_independent_of_audit(tmp_path: Path, templates_dir: Path):
     workdir = tmp_path / "worktree"
     workdir.mkdir()
-    
+
     tasks = [
         Task(id="task-1", title="Setup DB", description="Init database", role="backend"),
         Task(id="task-2", title="Write API", description="Create endpoints", role="backend"),
@@ -77,12 +75,8 @@ def test_written_bytes_match_render_pipeline_independent_of_audit(
     assert actual_bytes == expected_bytes
 
 
-def test_writing_is_deterministic_across_repeated_calls(
-    tmp_path: Path, templates_dir: Path
-):
-    tasks = [
-        Task(id="task-1", title="Determinism Check", description="Test", role="backend")
-    ]
+def test_writing_is_deterministic_across_repeated_calls(tmp_path: Path, templates_dir: Path):
+    tasks = [Task(id="task-1", title="Determinism Check", description="Test", role="backend")]
 
     workdir_a = tmp_path / "worktree_a"
     workdir_b = tmp_path / "worktree_b"
@@ -90,12 +84,18 @@ def test_writing_is_deterministic_across_repeated_calls(
     workdir_b.mkdir()
 
     inject_skills(
-        workdir=workdir_a, role="backend", tasks=tasks,
-        session_id="sess-abc", templates_dir=templates_dir,
+        workdir=workdir_a,
+        role="backend",
+        tasks=tasks,
+        session_id="sess-abc",
+        templates_dir=templates_dir,
     )
     inject_skills(
-        workdir=workdir_b, role="backend", tasks=tasks,
-        session_id="sess-abc", templates_dir=templates_dir,
+        workdir=workdir_b,
+        role="backend",
+        tasks=tasks,
+        session_id="sess-abc",
+        templates_dir=templates_dir,
     )
 
     file_a = (workdir_a / ".claude" / "skills" / "example.md").read_bytes()
@@ -103,18 +103,17 @@ def test_writing_is_deterministic_across_repeated_calls(
     assert file_a == file_b
 
 
-def test_audit_record_digests_match_written_bytes(
-    tmp_path: Path, templates_dir: Path
-):
+def test_audit_record_digests_match_written_bytes(tmp_path: Path, templates_dir: Path):
     workdir = tmp_path / "worktree"
     workdir.mkdir()
-    tasks = [
-        Task(id="task-1", title="Digest test", description="Check hash", role="backend")
-    ]
+    tasks = [Task(id="task-1", title="Digest test", description="Check hash", role="backend")]
 
     audit_records = inject_skills(
-        workdir=workdir, role="backend", tasks=tasks,
-        session_id="sess-xyz", templates_dir=templates_dir,
+        workdir=workdir,
+        role="backend",
+        tasks=tasks,
+        session_id="sess-xyz",
+        templates_dir=templates_dir,
     )
 
     injected = [r for r in audit_records if r["template_name"] == "example.md"]
@@ -134,16 +133,17 @@ def test_empty_injection_returns_explicit_empty_list(tmp_path: Path):
     missing_templates_dir = tmp_path / "does_not_exist" / "roles"
 
     audit_records = inject_skills(
-        workdir=workdir, role="backend", tasks=[],
-        session_id="sess-empty", templates_dir=missing_templates_dir,
+        workdir=workdir,
+        role="backend",
+        tasks=[],
+        session_id="sess-empty",
+        templates_dir=missing_templates_dir,
     )
 
     assert audit_records == []
 
 
-def test_refused_record_has_full_shape_with_empty_digests(
-    tmp_path: Path, templates_dir: Path, monkeypatch
-):
+def test_refused_record_has_full_shape_with_empty_digests(tmp_path: Path, templates_dir: Path, monkeypatch):
     workdir = tmp_path / "worktree"
     workdir.mkdir()
 
@@ -154,13 +154,14 @@ def test_refused_record_has_full_shape_with_empty_digests(
             lambda wd: {"example.md", "example"},
         )
 
-    tasks = [
-        Task(id="task-1", title="Refused task", description="Will not run", role="backend")
-    ]
+    tasks = [Task(id="task-1", title="Refused task", description="Will not run", role="backend")]
 
     audit_records = inject_skills(
-        workdir=workdir, role="backend", tasks=tasks,
-        session_id="sess-revoked", templates_dir=templates_dir,
+        workdir=workdir,
+        role="backend",
+        tasks=tasks,
+        session_id="sess-revoked",
+        templates_dir=templates_dir,
     )
 
     refused = [r for r in audit_records if r["template_name"] == "example.md"]
