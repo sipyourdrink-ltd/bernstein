@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "load_skill",
-  "description": "List available skills when name is omitted, or load a named skill body, reference, or script.",
+  "description": "List available skills when name is omitted, or load a named skill body, reference, or script file contents. Returns file contents as text; executes nothing.",
   "type": "object",
   "additionalProperties": false,
   "dependencies": {
