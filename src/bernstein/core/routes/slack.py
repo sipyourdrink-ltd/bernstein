@@ -34,12 +34,14 @@ def _verify_slack_request(request: Request, body: bytes, verify_fn: Any) -> JSON
         "SLACK_SIGNING_SECRET", ""
     )
     if not signing_secret:
+        from bernstein.core.sanitize import sanitize_log
+
         logger.error(
             "Rejecting POST %s: SLACK_SIGNING_SECRET is not configured. "
             "Set the env var (or pass slack_signing_secret= when building "
             "the app) to enable the endpoint; only signed Slack requests "
             "are accepted.",
-            request.url.path,
+            sanitize_log(request.url.path),
         )
         return JSONResponse(
             status_code=UNCONFIGURED_STATUS,
