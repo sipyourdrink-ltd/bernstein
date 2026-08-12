@@ -28,7 +28,7 @@ plus lineage exposes all of them.
     bernstein_shutdown_orchestrator - whole-orchestrator shutdown signal
     bernstein_approve       - approve a pending/blocked task
     bernstein_complete      - complete a task the caller is executing
-    load_skill              - load a skill pack body / reference / script
+    load_skill              - return skill pack file contents; never execute
 
 Registered from sibling modules by the same ``create_mcp_server`` call:
 
@@ -1801,7 +1801,7 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
 
 
 def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
-    """Advertise each tool's enforced schema as its ``inputSchema``.
+    """Advertise each tool's enforced schema and host-effect description.
 
     FastMCP derives the advertised schema from the Python signature, which
     carries none of the constraints the input firewall enforces: a caller is
@@ -1830,9 +1830,9 @@ def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
             # Leave the derived schema alone and make the mismatch visible.
             logger.warning("MCP tool %s has no schema file; advertising the derived schema", name)
             continue
-        # Deep-copy so a client-side mutation of the advertised schema cannot
-        # reach the process-wide registry the validator reads.
+        # Copy client-visible metadata without exposing validator state.
         tool.parameters = copy.deepcopy(schema)
+        tool.description = str(schema["description"])
 
 
 def _register_deprecated_aliases(mcp: FastMCP[None], server_url: str) -> None:

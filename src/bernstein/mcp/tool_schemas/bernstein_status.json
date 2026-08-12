@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_status",
-  "description": "Liveness, task counts, and cost in one read. Pass status to include the matching tasks; pass detail=true for full per-role and per-task rows.",
+  "description": "Liveness, task counts, and cost in one read. Pass status to include the matching tasks; pass detail=true for full per-role and per-task rows. Retrieves data from the Bernstein server without changing it. Host effects: makes network requests.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

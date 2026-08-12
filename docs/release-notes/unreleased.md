@@ -125,6 +125,13 @@ landed since the newest one.
   failure (exit `2`). Verification is load-only and does not create an audit
   key or directory. Docs: `docs/observability/otel-span-projection.md`,
   `docs/observability/otlp-export.md`.
+- MCP `tools/list` descriptions now disclose each tool's host effects using a
+  reviewed vocabulary for file reads, file writes, agent-process spawning, and
+  network requests. The 25 canonical and deprecated tool schemas are the
+  source of the advertised text, and a coverage guard requires every schema
+  to declare effects consistent with its effective tool tier. `load_skill`
+  now says explicitly that it returns file contents and executes nothing.
+  Docs: `docs/mcp/server.md`. Refs #3645.
 - The `deep-review` label did not start a review on a PR that was already open.
   `.github/workflows/bernstein-pr-review.yml` gates its `review` job on that
   label but did not list `labeled` as a trigger type, so adding the label to a

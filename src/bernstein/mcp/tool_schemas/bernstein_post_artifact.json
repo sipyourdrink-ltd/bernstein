@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_post_artifact",
+  "description": "Post a versioned artifact to a task on the Bernstein server. Host effects: makes network requests.",
   "type": "object",
   "additionalProperties": false,
   "required": ["task_id", "key", "artifact_type", "poster"],

@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_context",
+  "description": "Deprecated alias of bernstein_task_capsule. Reads a task capsule and its local journal and audit evidence; verify=true may create the install audit key if it is absent. Host effects: reads files; writes files.",
   "type": "object",
   "additionalProperties": false,
   "required": ["task_id"],

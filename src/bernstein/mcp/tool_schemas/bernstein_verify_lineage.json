@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_verify_lineage",
+  "description": "Verify one artifact's lineage chain by reading its local lineage log without changing it. Host effects: reads files.",
   "type": "object",
   "additionalProperties": false,
   "required": ["artefact_path"],
