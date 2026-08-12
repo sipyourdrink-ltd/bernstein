@@ -564,7 +564,11 @@ def _transcripts_for(adapter: str, golden_dir: Path) -> list[Any]:
 
 
 def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_path: Path | None) -> str:
-    """Read the nightly canary's attestation for the installed version."""
+    """Read the nightly canary's attestation for the installed version.
+
+    PEP 440-equivalent spellings such as 1.0 and 1.0.0 intentionally identify
+    the same attested release.
+    """
     from packaging.version import InvalidVersion, Version
 
     from bernstein.adapters.canary import _VERSION_TOKEN_RE, load_last_green  # pyright: ignore[reportPrivateUsage]
