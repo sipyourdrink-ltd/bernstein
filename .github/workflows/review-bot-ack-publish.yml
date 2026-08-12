@@ -197,8 +197,22 @@ jobs:
             reason="the gate run succeeded but published no readable verdict artifact"
           fi
 
+          # Whether the check summary may point at a sticky comment. The
+          # summary post below is deliberately best-effort - a comment that
+          # cannot be written must not turn a decided verdict into a failure -
+          # but "see the sticky summary comment" printed when no summary was
+          # handed over is a dangling pointer, and the reader has no way to
+          # tell it from a comment they simply have not scrolled to.
+          pointer=""
+          if [ -r verdict/summary.md ] && [ -r verdict/pr_number ]; then
+            pointer=" See the sticky summary comment on the pull request for the per-finding breakdown."
+          else
+            pointer=" The gate run linked below carries the per-finding breakdown; this run received no summary to post."
+          fi
+
           echo "VERDICT=$verdict" >> "$GITHUB_ENV"
           echo "REASON=$reason" >> "$GITHUB_ENV"
+          echo "POINTER=$pointer" >> "$GITHUB_ENV"
           echo "resolved $verdict: $reason"
 
       - name: Publish the review-bot-ack context on the head commit
@@ -216,7 +230,7 @@ jobs:
             --name review-bot-ack \
             --conclusion "$VERDICT" \
             --title "Review-bot acknowledgement gate" \
-            --summary "Every must-address review-bot finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}. See the sticky summary comment on the pull request for the per-finding breakdown." \
+            --summary "Every must-address review-bot finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}.${POINTER}" \
             --details-url "$GATE_RUN_URL"
 
       # The gate job renders this text and, on a fork, cannot post it. Posting

@@ -256,3 +256,24 @@ def test_publisher_workflow_binds_the_pull_request_to_the_triggering_head() -> N
     assert '!= "$HEAD_SHA"' in step, "the step must refuse a head that is not the trigger's"
     refusal = step.index('!= "$HEAD_SHA"')
     assert step.index("--post-summary-file") > refusal, "the binding check has to run before the post, not after it"
+
+
+def test_check_summary_only_points_at_a_comment_that_was_handed_over() -> None:
+    """A green check must not send the reader after a comment that is not there.
+
+    The post is best-effort by design - a comment that cannot be written must
+    not turn a decided verdict into a failure - so the summary text has to say
+    which of the two happened. A fixed "see the sticky summary comment" reads
+    identically whether the comment exists or the handoff was empty.
+    """
+    workflow = (
+        REPO_ROOT / ".github" / "workflows" / "review-bot-ack-publish.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "POINTER=$pointer" in workflow
+    assert "${POINTER}" in workflow, "the published summary must use the resolved pointer"
+    assert workflow.count("See the sticky summary comment on the pull request") == 1, (
+        "the pointer sentence must exist only inside the branch that checked for the file"
+    )
+    resolve = workflow.index("pointer=\"\"")
+    assert resolve < workflow.index("${POINTER}"), "the pointer is resolved before it is published"
