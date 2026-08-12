@@ -1197,6 +1197,8 @@ HOSTILE_RELPATHS = [
     ".",
     "",
     "sub/../..",
+    "./",
+    "//",
     "nul\x00byte.py",
     "src/nul\x00byte.py",
     "C:/Windows/system32",
@@ -1215,11 +1217,31 @@ def test_validate_relative_path_refuses_hostile_candidates(bad: str) -> None:
 
 @pytest.mark.parametrize(
     "good",
-    ["main.py", "src/parser.py", "src/bernstein/core/quality/fast_path.py", "a/b/c/d.txt", "dir/.gitkeep"],
+    [
+        "main.py",
+        "src/parser.py",
+        "src/bernstein/core/quality/fast_path.py",
+        "a/b/c/d.txt",
+        "dir/.gitkeep",
+        # A leading "./" is an ordinary spelling of a relative path and
+        # normalisation drops it, so it must not be refused.
+        "./src/parser.py",
+        "src/./parser.py",
+    ],
 )
 def test_validate_relative_path_accepts_ordinary_relative_paths(good: str) -> None:
     """An ordinary project-relative path passes through unchanged."""
     assert validate_relative_path(good) == good
+
+
+def test_contained_subpath_accepts_a_dot_slash_prefix(tmp_path: Path) -> None:
+    """``./src/x.py`` resolves to the same contained path as ``src/x.py``."""
+    target = tmp_path / "src" / "mod.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("x", encoding="utf-8")
+
+    assert contained_subpath(tmp_path, "./src/mod.py") == target.resolve()
+    assert contained_subpath(tmp_path, "./src/mod.py") == contained_subpath(tmp_path, "src/mod.py")
 
 
 @pytest.mark.parametrize("bad", HOSTILE_RELPATHS)

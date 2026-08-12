@@ -225,15 +225,20 @@ def validate_relative_path(candidate: str, *, label: str = "path") -> str:
     if candidate[0] in "/\\" or _DRIVE_PREFIX_RE.match(candidate):
         msg = f"unsafe {label} {candidate!r}: must be relative to its base directory"
         raise PathContainmentError(msg)
+    named = 0
     for component in _SEPARATOR_RE.split(candidate):
-        # ``..`` is the escape; ``.`` is refused with it because a lone ``.``
-        # names the base itself rather than something under it, and the
-        # result of this function must always be a strict descendant.
-        # Interior ``.`` components carry no meaning either, so a value
-        # carrying one is malformed rather than merely redundant.
-        if component in _RESERVED_SEGMENTS:
-            msg = f"unsafe {label} {candidate!r}: must not contain a {component!r} component"
+        # A ``.`` component, or the empty one a doubled separator produces,
+        # is redundant rather than unsafe: ``./src/x.py`` is an ordinary way
+        # to spell a relative path and normalisation drops it. What it must
+        # not do is be the whole value - see the strict-descendant check
+        # below. ``..`` is the one that changes where the path points, and
+        # is refused wherever it appears.
+        if component == "..":
+            msg = f"unsafe {label} {candidate!r}: must not contain a '..' component"
             raise PathContainmentError(msg)
+        if component in ("", "."):
+            continue
+        named += 1
         encoded = len(component.encode("utf-8", errors="surrogatepass"))
         if encoded > MAX_SEGMENT_BYTES:
             msg = (
@@ -241,6 +246,12 @@ def validate_relative_path(candidate: str, *, label: str = "path") -> str:
                 f"{MAX_SEGMENT_BYTES}-byte filesystem limit for one path component"
             )
             raise PathTooLongError(msg)
+    # The result must be a strict descendant of the base, never the base
+    # itself, so a value that names no component at all ("." , "./", "//")
+    # is refused even though every component in it was individually safe.
+    if named == 0:
+        msg = f"unsafe {label} {candidate!r}: must name a path below its base directory"
+        raise PathContainmentError(msg)
     return candidate
 
 

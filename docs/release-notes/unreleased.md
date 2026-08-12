@@ -39,7 +39,7 @@ landed since the newest one.
 - **Behaviour change:** the same rule is applied at the input boundary, so a
   bad row does not reach a sink in the first place. `POST /tasks` and
   `POST /tasks/self-create` now answer `422` when an `owned_files` entry is
-  absolute, carries a `..` or `.` component, or contains a NUL byte;
+  absolute, carries a `..` component, or contains a NUL byte;
   ordinary project-relative paths such as `src/parser.py` are unaffected.
   The claim boundaries (`POST /tasks/{id}/claim`, `GET /tasks/next/{role}`,
   `POST /tasks/claim-batch`) answer `422` when `claimed_by_session` is not a

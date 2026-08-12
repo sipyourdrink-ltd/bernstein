@@ -239,7 +239,7 @@ def test_task_self_create_rejects_non_relative_owned_files(bad: str) -> None:
 
 @pytest.mark.parametrize(
     "good",
-    ["main.py", "src/parser.py", "src/bernstein/core/quality/fast_path.py", "docs/api/schema.json"],
+    ["main.py", "src/parser.py", "src/bernstein/core/quality/fast_path.py", "docs/api/schema.json", "./src/x.py"],
 )
 def test_task_create_accepts_ordinary_owned_files(good: str) -> None:
     """Ordinary project-relative paths are unaffected."""
