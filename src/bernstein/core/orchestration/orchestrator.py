@@ -101,6 +101,11 @@ from bernstein.core.orchestration.run_stall import (
     resolve_grace_s,
     resolve_min_ticks,
 )
+from bernstein.core.orchestration.schedule_projection import (
+    SCHEDULE_PROJECTION_REV,
+    TaskNode,
+    canonical_graph_digest,
+)
 from bernstein.core.orchestration.tick_pipeline import (
     CompletionData,
     RuffViolation,
@@ -681,6 +686,11 @@ class Orchestrator:
         # BERNSTEIN_REPLAY_RETENTION over past runs rather than an on/off
         # gate.
         self._recorder = EventJournal(run_id=run_id, sdd_dir=workdir / ".sdd")
+
+        # Last ``plan.graph`` digest appended this run (issue #3613). Empty
+        # until the first normal tick records one. Held on the instance so a
+        # 60-tick run whose graph never moves writes one row, not sixty.
+        self._last_graph_digest: str = ""
 
         # Live OTLP export of the journal projection : each
         # appended journal entry streams its journal-anchored span to the
@@ -1321,6 +1331,65 @@ class Orchestrator:
             logger.warning("Tick took %.1fs (threshold 30s)", tick_duration)
         return result
 
+    def _record_plan_graph_digest(self, all_tasks: list[Task]) -> None:
+        """Append a ``plan.graph`` event when the executed graph changes.
+
+        The graph snapshot on disk is overwritten every normal tick and
+        carries no chain identity; this binds the graph to the run by
+        putting its digest in the Merkle-chained journal (issue #3613).
+
+        The digest comes from
+        :func:`~bernstein.core.orchestration.schedule_projection.canonical_graph_digest`,
+        the same canonical encoder the schedule projection hashes its own
+        node set with, so a later fold from journal events back to a graph
+        compares two byte-identical definitions rather than two encoders
+        that happen to disagree.
+
+        Only the structural triple ``(task_id, role, sorted(depends_on))``
+        carries identity here: ``title`` and ``description`` are pinned
+        empty so a reworded task description does not read as a graph
+        change. Ordering is irrelevant - the encoder sorts by ``task_id``.
+
+        Appends only on change, so a 60-tick run whose graph never moves
+        writes one row rather than sixty. A failed append leaves
+        ``_last_graph_digest`` untouched so the next normal tick retries,
+        and never propagates out of the tick.
+
+        Args:
+            all_tasks: Every task in the graph built for this tick.
+        """
+        try:
+            nodes = [
+                TaskNode(
+                    task_id=task.id,
+                    role=task.role,
+                    title="",
+                    description="",
+                    depends_on=tuple(task.depends_on),
+                )
+                for task in all_tasks
+            ]
+            digest = canonical_graph_digest(nodes)
+        except Exception as exc:
+            logger.debug("Failed to compute plan.graph digest: %s", exc)
+            return
+
+        if digest == self._last_graph_digest:
+            return
+
+        try:
+            self._recorder.record(
+                "plan.graph",
+                digest=digest,
+                rev=SCHEDULE_PROJECTION_REV,
+                task_count=len(all_tasks),
+            )
+        except Exception as exc:
+            logger.debug("Failed to record plan.graph digest: %s", exc)
+            return
+
+        self._last_graph_digest = digest
+
     def _tick_internal(self) -> TickResult:
         """Actual tick implementation (previously tick())."""
         result = TickResult()
@@ -1562,29 +1631,11 @@ class Orchestrator:
                 task_graph.save(self._workdir / ".sdd" / "runtime")
             except OSError as exc:
                 logger.debug("Failed to save task graph: %s", exc)
-            
-            # Record plan.graph digest in the run journal (issue #3613)
-            # Only append when the digest changes to avoid 60 identical rows
-            # in a 60-tick run.
-            try:
-                import hashlib
-                graph_triples = sorted(
-                    (t.id, t.role, tuple(sorted(t.depends_on)))
-                    for t in all_tasks
-                )
-                graph_bytes = str(graph_triples).encode()
-                graph_digest = hashlib.sha256(graph_bytes).hexdigest()
-                
-                # Only record if digest changed since last recording
-                if not hasattr(self, '_last_graph_digest') or self._last_graph_digest != graph_digest:
-                    self._recorder.record(
-                        "plan.graph",
-                        digest=graph_digest,
-                        task_count=len(all_tasks),
-                    )
-                    self._last_graph_digest = graph_digest
-            except Exception as exc:
-                logger.debug("Failed to record plan.graph digest: %s", exc)
+
+            # The snapshot above is an overwritten file with no chain
+            # identity. Bind the graph that produced it to this run by
+            # appending its digest to the journal.
+            self._record_plan_graph_digest(all_tasks)
         else:
             # Fast tick: skip the expensive graph analysis, validation and
             # snapshot persistence, but still recompute the critical path -
