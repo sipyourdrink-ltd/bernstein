@@ -106,6 +106,7 @@ plugins:
         'architecture/CLUSTER.md': 'operations/cluster-mode.md'
         'quickstart/remote.md': 'getting-started/remote.md'
         'operations/observability.md': 'operations/error-telemetry.md'
+        'security/security-acknowledgments.md': 'security/bug-bounty.md'
   - minify:
       minify_html: true
 
@@ -447,7 +448,6 @@ nav:
           - Promptware: security/promptware.md
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
-          - Acknowledgments: security/security-acknowledgments.md
           - Log redaction: security/log-redaction.md
           - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:

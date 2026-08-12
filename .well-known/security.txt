@@ -4,15 +4,14 @@
 Contact: mailto:forte@bernstein.run
 Contact: https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new
 
-Acknowledgments: https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/security/security-acknowledgments.md
-
 Policy: https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md
 
 Preferred-Languages: en
 
 Canonical: https://bernstein.run/.well-known/security.txt
 
-# Do not open public issues for vulnerabilities. Reports are triaged
-# within 72 hours; coordinated disclosure per the linked policy.
+# Do not open public issues for vulnerabilities. A first substantive
+# response can take up to 90 days; you may disclose 90 days after your
+# report regardless of fix status. Full terms in the linked policy.
 
 Expires: 2027-01-24T00:00:00.000Z

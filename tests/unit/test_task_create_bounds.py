@@ -25,7 +25,7 @@ from bernstein.core.server.server_app import (
     ContentLengthMiddleware,
     create_app,
 )
-from bernstein.core.server.server_models import TaskCreate
+from bernstein.core.server.server_models import TaskCreate, TaskSelfCreate
 
 
 class TaskPostPayload(TypedDict, total=False):
@@ -199,6 +199,67 @@ def test_task_create_happy_path_still_works() -> None:
     )
     assert t.title == "Write parser"
     assert t.metadata == {"issue_number": 42}
+
+
+# ---------------------------------------------------------------------------
+# owned_files must name project-relative paths (reject -> 422)
+# ---------------------------------------------------------------------------
+
+#: Entries that must never be stored on a task, because every consumer of
+#: ``owned_files`` joins them onto a working directory.
+BAD_OWNED_FILES = [
+    "/etc/passwd",
+    "/",
+    "../x",
+    "../../etc/passwd",
+    "src/../../etc/passwd",
+    "..",
+    ".",
+    "",
+    "nul\x00byte.py",
+    "src/nul\x00byte.py",
+    "C:/Windows/system32",
+    "..\\..\\windows",
+]
+
+
+@pytest.mark.parametrize("bad", BAD_OWNED_FILES)
+def test_task_create_rejects_non_relative_owned_files(bad: str) -> None:
+    """An entry that does not name a path under the working directory is refused."""
+    with pytest.raises(ValidationError):
+        TaskCreate(title="ok", description="ok", owned_files=[bad])
+
+
+@pytest.mark.parametrize("bad", BAD_OWNED_FILES)
+def test_task_self_create_rejects_non_relative_owned_files(bad: str) -> None:
+    """The self-create copy of ``owned_files`` carries the same rule."""
+    with pytest.raises(ValidationError):
+        TaskSelfCreate(parent_task_id="T-1", title="ok", description="ok", owned_files=[bad])
+
+
+@pytest.mark.parametrize(
+    "good",
+    ["main.py", "src/parser.py", "src/bernstein/core/quality/fast_path.py", "docs/api/schema.json", "./src/x.py"],
+)
+def test_task_create_accepts_ordinary_owned_files(good: str) -> None:
+    """Ordinary project-relative paths are unaffected."""
+    assert TaskCreate(title="ok", description="ok", owned_files=[good]).owned_files == [good]
+    assert TaskSelfCreate(
+        parent_task_id="T-1",
+        title="ok",
+        description="ok",
+        owned_files=[good],
+    ).owned_files == [good]
+
+
+def test_post_tasks_absolute_owned_file_returns_422(_app_with_auth_disabled) -> None:
+    """The API boundary rejects the row rather than storing it."""
+    with TestClient(_app_with_auth_disabled) as client:
+        resp = client.post(
+            "/tasks",
+            json={"title": "ok", "description": "ok", "owned_files": ["/etc/passwd"]},
+        )
+    assert resp.status_code == 422, resp.text
 
 
 # ---------------------------------------------------------------------------

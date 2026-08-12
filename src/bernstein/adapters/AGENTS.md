@@ -32,6 +32,9 @@ invocation and streams results back; flat layout, one module per tool.
 
 ## Testing
 
-Per-adapter unit tests are `tests/unit/test_adapter_<name>.py`, run one
+Per-adapter unit tests are mostly flat as
+`tests/unit/test_adapter_<name>.py`, with a few under
+`tests/unit/adapters/` beside the shared subsystem tests. Both layouts
+are current, so follow the one an adapter already uses, and run one
 file at a time. Contract checks live under `tests/contract/`; live-
 binary conformance is opt-in via the `--live` pytest flag.

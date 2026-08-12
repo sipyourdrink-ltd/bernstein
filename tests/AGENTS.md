@@ -1,6 +1,6 @@
 # Test suite
 
-Layered pytest suite. `unit/` is the big one (1600+ files, no network);
+Layered pytest suite. `unit/` is the big one (2100+ files, no network);
 `integration/` needs a running server; `contract/` holds the adapter
 capability contracts; plus `property/`, `snapshot/`, `golden/`,
 `perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`.

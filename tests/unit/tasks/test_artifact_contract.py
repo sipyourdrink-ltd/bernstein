@@ -43,7 +43,7 @@ def test_artifact_kind_membership() -> None:
         "dataset",
         "action_log",
         "ops_result",
-	"finding",
+        "finding",
     }
 
 
