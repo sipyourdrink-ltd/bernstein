@@ -79,6 +79,12 @@ specific model.
 - `RENAME_SYMBOL` is a word-boundary regex substitution, not an AST-aware
   rename - it does not understand scope, so a common short identifier can
   match unrelated occurrences across `owned_files`.
+- `RENAME_SYMBOL` only edits files it can prove live under the task's
+  working directory. Each `owned_files` entry is joined onto the workdir
+  through `contained_subpath`, and an entry that resolves elsewhere - an
+  absolute path, a `..` component, or a symlinked component leaving the
+  tree - is skipped with a warning rather than edited. The rest of the
+  entries still run.
 - Classification is purely text-pattern-based (task title + description);
   there is no dry-run or confidence threshold exposed to the operator beyond
   the fixed `confidence` field recorded internally.

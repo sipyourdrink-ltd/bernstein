@@ -466,6 +466,89 @@ def test_auto_commit_skips_when_no_session(tmp_path: Path, caplog: pytest.LogCap
 
 
 # ---------------------------------------------------------------------------
+# (g2) session id that does not name a child of .sdd/worktrees
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "session_id",
+    [
+        "../../../../tmp",
+        "../sibling",
+        "a/../../b",
+        "..",
+        ".",
+        "null\x00byte",
+    ],
+)
+def test_auto_commit_refuses_session_id_outside_worktree_root(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    session_id: str,
+) -> None:
+    """The worktree path is asserted to stay under ``.sdd/worktrees``.
+
+    ``Path.__truediv__`` neither collapses ``..`` nor keeps the left side
+    when the right side is absolute, so a session id of this shape would
+    otherwise select a directory outside the worktree root and hand it to
+    ``subprocess.run(cwd=...)``.  The hook must decline and log instead.
+
+    Shape checking of the id itself belongs to the claim boundary that
+    accepts it; what this hook owns is that the path it actually uses is
+    under the worktree root, whatever is already stored on the task.
+    """
+    caplog.set_level(logging.INFO, logger="bernstein.core.routes.task_crud")
+    workdir = tmp_path / "workdir"
+    _init_git_repo(workdir)
+    # An out-of-tree git repo the traversal would otherwise land in.
+    _init_git_repo(tmp_path / "elsewhere")
+
+    task = _make_task("T-750", session_id)
+    request = _FakeRequest(workdir)
+    _run_auto_commit_pre_complete(request, task)  # type: ignore[arg-type]
+
+    log_lines = [r.message for r in caplog.records if "auto_commit_pre_complete" in r.message]
+    assert any("reason=unsafe_session_path" in m for m in log_lines), log_lines
+
+
+def test_auto_commit_refuses_absolute_session_id(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """An absolute session id must not become the auto-commit ``cwd``."""
+    caplog.set_level(logging.INFO, logger="bernstein.core.routes.task_crud")
+    workdir = tmp_path / "workdir"
+    _init_git_repo(workdir)
+    elsewhere = tmp_path / "elsewhere"
+    _init_git_repo(elsewhere)
+
+    task = _make_task("T-751", str(elsewhere))
+    request = _FakeRequest(workdir)
+    _run_auto_commit_pre_complete(request, task)  # type: ignore[arg-type]
+
+    log_lines = [r.message for r in caplog.records if "auto_commit_pre_complete" in r.message]
+    assert any("reason=unsafe_session_path" in m for m in log_lines), log_lines
+
+
+def test_auto_commit_still_runs_for_ordinary_session_id(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Containment is a barrier, not a ban: a normal session id still commits."""
+    caplog.set_level(logging.INFO, logger="bernstein.core.routes.task_crud")
+    session_id = "backend-a1b2c3d4"
+    task = _make_task("T-752", session_id)
+    wt = _setup_workdir_with_worktree(tmp_path, session_id)
+    (wt / "deliverable.py").write_text("print('x')\n", encoding="utf-8")
+
+    request = _FakeRequest(tmp_path)
+    _run_auto_commit_pre_complete(request, task)  # type: ignore[arg-type]
+
+    log = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=wt,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "T-752" in log
+
+
+# ---------------------------------------------------------------------------
 # (h) /complete end-to-end via TestClient - works on a tiny task
 #     (regression: existing /complete path stays green).
 # ---------------------------------------------------------------------------
