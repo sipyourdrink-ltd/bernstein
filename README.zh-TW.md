@@ -41,12 +41,12 @@
 Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 40 多個其他代理）的確定性編排器。它並行執行這些代理，對它們的產出設置門禁，並記錄足夠的執行資訊，供你事後核查。包含離線安裝（air-gap）設定。Apache-2.0 授權。
 
 ### 一覽
-<!-- l10n: en="at a glance" hash="sha256:0bde1c405b67" -->
+<!-- l10n: en="at a glance" hash="sha256:49601a2ba935" -->
 
 有四件事讓它與眾不同；其餘都是細節。
 
 - **協調迴圈中沒有 LLM。** 排程是純 Python，因此執行可以端到端重現。重播昨天的計畫，得到昨天的任務圖。
-- **事後可核查。** 重播日誌記錄每一次執行，常駐的血統脊柱記錄每個產生血統的步驟；選用的稽核鏈增加了可離線驗證的收據。不確定性會在精確步驟處以雜湊失配的形式浮出水面，而不是一次偶發的重跑。非程式碼交付物也享有同樣待遇：任務可以在計畫步驟、積壓條目或任務 CLI 上宣告產物契約（報告、資料集、動作日誌、維運結果），並以簽署的血統收據而非 git 提交來宣告完成。
+- **事後可核查。** 重播日誌記錄每一次執行，常駐的血統脊柱記錄每個產生血統的步驟；選用的 HMAC 鏈式稽核日誌（`BERNSTEIN_AUDIT=1`）增加了可離線驗證的收據。不確定性會在精確步驟處以雜湊失配的形式浮出水面，而不是一次偶發的重跑。非程式碼交付物也享有同樣待遇：任務可以在計畫步驟、積壓條目或任務 CLI 上宣告產物契約（報告、資料集、動作日誌、維運結果），並以簽署的血統收據而非 git 提交來宣告完成。
 - **構造上即隔離。** 每個編碼任務在合併門禁之後獲得自己的 git worktree；產物模式任務在 `.sdd/workspaces/` 下獲得工作目錄隔離。在這種預設隔離下，代理之間不共享可變的工作區；協調狀態（任務積壓）是共享的，並以原子方式認領。超出該隔離的檔案系統強制是選用的，來自[沙箱後端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（停用 worktree 會在共享檢出中執行每個任務）。
 - **廣泛且本地。** 40 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
 
@@ -133,9 +133,9 @@ bernstein stop                    # graceful shutdown with drain
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
 ### 支援的代理
-<!-- l10n: en="supported agents" hash="sha256:a000c5f56136" -->
+<!-- l10n: en="supported agents" hash="sha256:5889943d6abf" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令；`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 51 個已接線整合，該檔案是「什麼能解析」的唯一事實來源——其中 49 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔；`src/bernstein/adapters/use_cases.py` 為每個介面卡提供面向終端使用者的文案。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 51 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 49 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。每個介面卡的面向終端使用者文案在 `src/bernstein/adapters/use_cases.py`。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
 
 在同一執行中混用代理：用便宜的本地模型處理樣板，用更重的雲端模型處理架構。`bernstein integrations list --installed` 顯示你的機器上可用的內容。
 
