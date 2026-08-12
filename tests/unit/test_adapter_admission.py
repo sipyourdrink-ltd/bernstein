@@ -802,11 +802,17 @@ def test_verify_cli_reports_a_refusal_with_exit_1(receipts_dir: Path, contracts_
     assert rc == 1
 
 
-def test_verify_cli_seals_a_receipt_the_gate_then_accepts(receipts_dir: Path, contracts_dir: Path) -> None:
+def test_verify_cli_seals_a_receipt_the_gate_then_accepts(
+    receipts_dir: Path,
+    contracts_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from bernstein.cli.commands.adapters_verify_cmd import _execute_verify  # pyright: ignore[reportPrivateUsage]
 
-    # The host has no kimi binary, so the sealed receipt records a refusal -
-    # the negative path, written down rather than left silent.
+    # Keep the negative path independent of tools installed on the host.
+    monkeypatch.setattr("shutil.which", lambda _binary: None)
+
+    # The sealed receipt records a refusal, written down rather than left silent.
     rc = _execute_verify(
         "kimi",
         output_format="text",
