@@ -226,3 +226,60 @@ def test_a_symlinked_sdd_directory_is_still_the_operator_s_choice(tmp_path: Path
 
     assert (elsewhere / "tenant-a" / "backlog").is_dir()
     assert paths.backlog_dir.is_dir()
+
+
+# --- the full data layout ---------------------------------------------------
+#
+# `ensure_tenant_data_layout` adds `runtime`, `runtime/wal` and `audit` below
+# the tenant root. Those carry the WAL and the audit chain, so a link at any of
+# them redirects exactly the writes that are supposed to be tamper-evident.
+
+
+@needs_anchoring
+def test_data_layout_refuses_a_runtime_directory_linked_at_a_sibling_tenant(tmp_path: Path) -> None:
+    """The case the containment check passes and the walk still has to catch.
+
+    `.sdd/acme/runtime -> .sdd/other/runtime` resolves under `.sdd`, so the
+    derived path is contained by every measure available at derivation time.
+    Following it would put one tenant's WAL inside another's subtree.
+    """
+    from bernstein.core.security.tenant_isolation import ensure_tenant_data_layout
+
+    sdd_dir = tmp_path / ".sdd"
+    victim = ensure_tenant_data_layout(sdd_dir, "other")
+
+    attacker_root = sdd_dir / "acme"
+    attacker_root.mkdir(parents=True)
+    (attacker_root / "runtime").symlink_to(victim.runtime_dir, target_is_directory=True)
+
+    with pytest.raises(OSError):
+        ensure_tenant_data_layout(sdd_dir, "acme")
+
+    assert not (victim.runtime_dir / "wal" / "wal").exists()
+
+
+@needs_anchoring
+def test_data_layout_refuses_a_linked_audit_directory(tmp_path: Path) -> None:
+    """The audit chain is the one directory a redirect must never survive."""
+    from bernstein.core.security.tenant_isolation import ensure_tenant_data_layout
+
+    sdd_dir = tmp_path / ".sdd"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (sdd_dir / "acme").mkdir(parents=True)
+    (sdd_dir / "acme" / "audit").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(OSError):
+        ensure_tenant_data_layout(sdd_dir, "acme")
+
+
+def test_data_layout_is_created_on_a_first_run(tmp_path: Path) -> None:
+    """The ordinary path still works, `.sdd` absent included."""
+    from bernstein.core.security.tenant_isolation import ensure_tenant_data_layout
+
+    paths = ensure_tenant_data_layout(tmp_path / ".sdd", "acme")
+
+    assert paths.wal_dir.is_dir()
+    assert paths.audit_dir.is_dir()
+    assert paths.runtime_dir.is_dir()
+    assert paths.backlog_dir.is_dir()

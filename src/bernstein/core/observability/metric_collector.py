@@ -20,8 +20,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-from bernstein.core.persistence.anchored_write import AnchoredDir, anchored_append, mkdir_anchored
-from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.persistence.anchored_write import (
+    AnchoredDir,
+    anchored_append,
+    mkdir_anchored,
+    rotate_anchored,
+)
 from bernstein.core.tenanting import normalize_tenant_id, tenant_metrics_target
 
 logger = logging.getLogger(__name__)
@@ -37,7 +41,7 @@ def iter_metric_files(metrics_dir: Path, prefix: str) -> list[Path]:
     """Return live and rotated metric JSONL files matching *prefix*.
 
     The on-disk layout is ``{prefix}_YYYYMMDD.jsonl`` plus rotation suffixes
-    ``.1``, ``.2`` … applied by :func:`rotate_log_file`. Callers that
+    ``.1``, ``.2`` … applied by :func:`rotate_anchored`. Callers that
     aggregate across days must include rotated backups, otherwise any
     rollover silently truncates their view.
 
@@ -961,11 +965,15 @@ class MetricsCollector:
                 # Bound per-file growth: rotate *before* appending so the new
                 # write starts a fresh file once the threshold is crossed.
                 # See - previously these JSONL files grew unbounded.
-                # Rotation renames a file that is already written; it is the
-                # append below that decides where new content lands, so that
-                # is the one anchored.
-                rotate_log_file(
-                    directory.path / filename,
+                #
+                # Anchored for the same reason the append is, and it is the
+                # more pressing of the two: rotation stats, unlinks and renames.
+                # On a derived path a symlink at a managed parent redirects all
+                # three before the append can refuse anything, so the operation
+                # that destroys files was the one running unprotected.
+                rotate_anchored(
+                    directory,
+                    filename,
                     max_bytes=_METRIC_FILE_ROTATE_BYTES,
                     max_backups=_METRIC_FILE_MAX_BACKUPS,
                 )

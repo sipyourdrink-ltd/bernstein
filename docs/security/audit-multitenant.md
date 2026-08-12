@@ -83,6 +83,44 @@ scope to resolve); request surfaces already translate `LookupError` into
 JWT `tenant_id` claim is refused as a client error rather than surfacing
 as a server error.
 
+### The tenant subtree is store-managed, not operator-configurable
+
+`.sdd` itself may be a symlink - where the state directory lives is the
+operator's call. Everything below it is layout this store creates and
+owns, so from this release each component of
+`.sdd/<tenant_id>/{backlog,metrics,runtime,runtime/wal,audit}` is created
+and opened relative to a descriptor for its parent, with `O_NOFOLLOW`. A
+component that is a symlink is refused rather than followed.
+
+This is a behaviour change for one existing setup. Earlier releases
+created the layout with `Path.mkdir(parents=True, exist_ok=True)`, which
+treats a symlink to a directory as an existing directory, so a hand-made
+link - `.sdd/acme/metrics -> /var/data/acme-metrics`, say - was followed
+silently. That link now fails on first use with `OSError` (`ELOOP`, or
+`ENOTDIR` on platforms that report it that way) naming the component.
+
+Two ways out, both offline:
+
+1. **Move the data under `.sdd`.** Replace the link with a real
+   directory and copy the contents in:
+
+   ```bash
+   test -L .sdd/acme/metrics && target=$(readlink .sdd/acme/metrics) \
+     && rm .sdd/acme/metrics && mkdir .sdd/acme/metrics \
+     && cp -a "$target/." .sdd/acme/metrics/
+   ```
+
+2. **Move `.sdd` instead.** If the point of the link was to put state on
+   another volume, link the whole `.sdd` directory there. That one is
+   still followed, because it is the anchor rather than something below
+   it.
+
+Checking for the case is a one-liner:
+
+```bash
+find .sdd -mindepth 2 -maxdepth 3 -type l
+```
+
 ## CLI usage
 
 ### Bare HMAC chain (most common)

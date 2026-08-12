@@ -39,13 +39,17 @@ the gap itself.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
+import stat
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ANCHORED_WRITE_SUPPORTED",
@@ -54,6 +58,7 @@ __all__ = [
     "anchored_write_text",
     "mkdir_anchored",
     "open_anchored_write",
+    "rotate_anchored",
 ]
 
 
@@ -222,6 +227,108 @@ def open_anchored_write(directory: AnchoredDir, name: str, *, flags: int) -> int
     finally:
         with contextlib.suppress(OSError):
             os.close(parent_fd)
+
+
+def _walk_to_dir_fd(directory: AnchoredDir) -> int:
+    """Return an open descriptor for *directory*, refusing a linked component.
+
+    The walk every anchored operation starts from. The caller owns the
+    descriptor and must close it.
+
+    Raises:
+        OSError: As :func:`os.open` does. ``ELOOP`` or ``ENOTDIR`` means a
+            component was a symlink and the walk refused to follow it.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    parent_fd = os.open(directory.root, os.O_RDONLY | directory_flag)
+    try:
+        for component in directory.parts:
+            child_fd = os.open(component, os.O_RDONLY | nofollow | directory_flag, dir_fd=parent_fd)
+            stale_fd, parent_fd = parent_fd, child_fd
+            with contextlib.suppress(OSError):
+                os.close(stale_fd)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(parent_fd)
+        raise
+    return parent_fd
+
+
+def rotate_anchored(
+    directory: AnchoredDir,
+    name: str,
+    *,
+    max_bytes: int,
+    max_backups: int = 1,
+) -> bool:
+    """Rotate *name* inside *directory*, doing every step through the anchor.
+
+    The anchored counterpart to
+    ``persistence.runtime_state.rotate_log_file``. Rotation is not a read: it
+    stats, unlinks, and renames. Doing that on a derived path and only anchoring
+    the append that follows protects the wrong operation -- a symlink planted at
+    a managed parent redirects the renames and deletions before the append gets
+    a chance to refuse anything. Here the walk happens first, so a linked
+    component fails the rotation instead of relocating it.
+
+    Backup shifting matches ``rotate_log_file``: ``.1 -> .2``, ``.2 -> .3``, and
+    anything at or beyond *max_backups* is removed.
+
+    Args:
+        directory: Anchored parent directory.
+        name: File to rotate. A single name, never a path.
+        max_bytes: Rotation threshold. A file at or below this size is left
+            alone.
+        max_backups: Number of historical rollovers to retain (minimum 1).
+
+    Returns:
+        True when the file was rotated.
+
+    Raises:
+        ValueError: If *name* is not a single component name.
+        OSError: If the walk refuses a component. Failures of the individual
+            unlink/rename steps are swallowed, as in ``rotate_log_file``: a
+            rollover that cannot be shifted must not lose the row being written.
+    """
+    _validate_components((name,))
+    max_backups = max(max_backups, 1)
+
+    if not ANCHORED_WRITE_SUPPORTED:
+        from bernstein.core.persistence.runtime_state import rotate_log_file
+
+        return rotate_log_file(directory.path / name, max_bytes=max_bytes, max_backups=max_backups)
+
+    dir_fd = _walk_to_dir_fd(directory)
+    try:
+        try:
+            # `follow_symlinks=False`: a link at the name itself has no size
+            # worth rotating, and stat'ing through it would measure a file
+            # outside the layout.
+            info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        if not stat.S_ISREG(info.st_mode) or info.st_size <= max_bytes:
+            return False
+
+        for index in range(max_backups, 0, -1):
+            src = f"{name}.{index}"
+            if index >= max_backups:
+                with contextlib.suppress(OSError):
+                    os.unlink(src, dir_fd=dir_fd)
+                continue
+            with contextlib.suppress(OSError):
+                os.rename(src, f"{name}.{index + 1}", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+
+        try:
+            os.rename(name, f"{name}.1", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except OSError as exc:
+            logger.debug("Cannot rotate %s: %s", directory.path / name, exc)
+            return False
+        return True
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(dir_fd)
 
 
 def anchored_write_text(

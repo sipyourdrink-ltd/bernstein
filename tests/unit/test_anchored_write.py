@@ -24,6 +24,7 @@ from bernstein.core.persistence.anchored_write import (
     anchored_write_text,
     mkdir_anchored,
     open_anchored_write,
+    rotate_anchored,
 )
 
 if TYPE_CHECKING:
@@ -242,3 +243,87 @@ class TestUnsupportedPlatformIsNotDressedUp:
         doc = anchored_write.__doc__ or ""
         assert "refuses **nothing**" in doc
         assert "absence of one" in doc
+
+
+# --- rotation ---------------------------------------------------------------
+#
+# Rotation is the operation with the teeth: it stats, unlinks and renames.
+# Running it on a derived path and anchoring only the append that follows
+# protects the harmless half - a link planted at a managed parent has already
+# redirected every rename and deletion by the time the append refuses anything.
+
+
+def _fill(path: Path, size: int) -> None:
+    path.write_text("x" * size, encoding="utf-8")
+
+
+def test_rotate_leaves_a_file_under_the_threshold_alone(tmp_path: Path) -> None:
+    target = tmp_path / "metrics.jsonl"
+    _fill(target, 10)
+
+    assert rotate_anchored(AnchoredDir(root=tmp_path), "metrics.jsonl", max_bytes=100) is False
+    assert target.read_text(encoding="utf-8") == "x" * 10
+    assert not (tmp_path / "metrics.jsonl.1").exists()
+
+
+def test_rotate_shifts_backups_within_the_retention_limit(tmp_path: Path) -> None:
+    _fill(tmp_path / "metrics.jsonl", 200)
+    _fill(tmp_path / "metrics.jsonl.1", 1)
+    _fill(tmp_path / "metrics.jsonl.2", 2)
+
+    assert rotate_anchored(AnchoredDir(root=tmp_path), "metrics.jsonl", max_bytes=100, max_backups=2) is True
+
+    assert not (tmp_path / "metrics.jsonl").exists()
+    assert (tmp_path / "metrics.jsonl.1").stat().st_size == 200
+    # `.1` shifted down to `.2`; the old `.2` was at the limit and was dropped.
+    assert (tmp_path / "metrics.jsonl.2").stat().st_size == 1
+    assert not (tmp_path / "metrics.jsonl.3").exists()
+
+
+def test_rotate_missing_file_is_not_an_error(tmp_path: Path) -> None:
+    assert rotate_anchored(AnchoredDir(root=tmp_path), "absent.jsonl", max_bytes=1) is False
+
+
+@pytest.mark.parametrize("name", ["a/b.jsonl", "..", ".", ""])
+def test_rotate_refuses_a_name_that_is_not_one_component(tmp_path: Path, name: str) -> None:
+    with pytest.raises(ValueError, match="single names"):
+        rotate_anchored(AnchoredDir(root=tmp_path), name, max_bytes=1)
+
+
+@needs_anchoring
+def test_rotate_refuses_a_symlinked_parent_and_touches_nothing_outside(tmp_path: Path) -> None:
+    """The case the derived path could not decide: the parent is a link.
+
+    `outside/metrics.jsonl` is over the threshold and would be renamed if the
+    link were followed. Nothing in `outside` may move.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _fill(outside / "metrics.jsonl", 500)
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "metrics").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(OSError) as excinfo:
+        rotate_anchored(AnchoredDir(root=root, parts=("metrics",)), "metrics.jsonl", max_bytes=100)
+
+    assert excinfo.value.errno in {errno.ELOOP, errno.ENOTDIR}
+    assert (outside / "metrics.jsonl").stat().st_size == 500
+    assert not (outside / "metrics.jsonl.1").exists()
+
+
+@needs_anchoring
+def test_rotate_does_not_follow_a_link_planted_at_the_file_itself(tmp_path: Path) -> None:
+    """A link at the name has no size of its own worth rotating.
+
+    Stat'ing through it would measure - and then rename - a file the layout
+    does not own.
+    """
+    outside = tmp_path / "outside.jsonl"
+    _fill(outside, 500)
+    (tmp_path / "metrics.jsonl").symlink_to(outside)
+
+    assert rotate_anchored(AnchoredDir(root=tmp_path), "metrics.jsonl", max_bytes=100) is False
+    assert outside.stat().st_size == 500
+    assert (tmp_path / "metrics.jsonl").is_symlink()

@@ -1,7 +1,6 @@
 # Security: audit chain, identity, policy
 
-The HMAC-chained audit log, Ed25519 install identity, and approval / policy
-enforcement. Other subsystems anchor receipts to the chain, so its write path is load-bearing.
+The HMAC-chained audit log, Ed25519 install identity, and approval / policy enforcement. Other subsystems anchor receipts to the chain, so its write path is load-bearing.
 
 ## Key files
 
@@ -16,24 +15,25 @@ enforcement. Other subsystems anchor receipts to the chain, so its write path is
 
 ## Invariants
 
-- The HMAC key lives OUTSIDE the audit log directory and must be mode `0600`;
-  a group- or world-readable key is a hard error at load time (`audit.py`).
-- Event-type constants are append-only: add new `EVENT_*` names, never edit or
-  reuse existing ones (`audit_chain.py` module docstring).
+- The HMAC key lives OUTSIDE the audit log directory and must be mode `0600`; a
+  group- or world-readable key is a hard error at load time (`audit.py`).
+- Event-type constants are append-only: add `EVENT_*` names, never edit or reuse
+  existing ones (`audit_chain.py` module docstring).
 - Chain helpers take the chain instance as a parameter (no singleton imports)
   and log through `log_with_prev_digest`, so `prev_chain_digest` lands in the
-  payload before the HMAC is computed (`audit_chain.py`).
+  payload before the HMAC (`audit_chain.py`).
 - The audit chain is opt-in at runtime (`BERNSTEIN_AUDIT=1`, read in
-  `../orchestration/orchestrator.py`); features must degrade without it.
-- Untrusted paths are opened, never compared. `public_key_file` stays a plain
-  filename inside `attestation_dir`, decided from the string with no `resolve`
-  or `stat`; a path-comparison check validates one lookup while the open
-  performs another (`sigstore_attestation.py`).
-- Same rule on the tenant write side: deriving a path says where the layout
-  points, not where a write lands. Writers take `TenantPaths.anchor` (or
-  `tenant_metrics_target`) through `../persistence/anchored_write.py`, which
-  opens each component relative to its parent and refuses a symlink below `.sdd`
-  (`tenanting.py`).
+  `../orchestration/orchestrator.py`); features degrade without it.
+- Untrusted paths are opened, never compared: a path-comparison check validates
+  one lookup while the open performs another. `public_key_file` stays a plain
+  filename inside `attestation_dir` (`sigstore_attestation.py`).
+- Same rule on the tenant write side: a derived path says where the layout
+  points, not where a write lands. The whole subtree (`backlog`, `metrics`,
+  `runtime`, `runtime/wal`, `audit`) is created and opened through
+  `TenantPaths.anchor` / `tenant_metrics_target` via
+  `../persistence/anchored_write.py`: each component opens relative to its
+  parent, and a symlink below `.sdd` is refused. Rotation uses
+  `rotate_anchored` - it renames and unlinks, so it needs the anchor most.
 
 ## Testing
 

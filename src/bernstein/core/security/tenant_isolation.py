@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.anchored_write import mkdir_anchored
 from bernstein.core.security.tenanting import (
     DEFAULT_TENANT_ID,
     TenantRegistry,
@@ -23,6 +24,8 @@ from bernstein.core.security.tenanting import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.persistence.anchored_write import AnchoredDir
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +34,12 @@ class TenantDataPaths:
     """Complete set of tenant-scoped data paths.
 
     Extends the basic TenantPaths with WAL and audit directories.
+
+    ``anchor`` is the tenant root in anchored form. Writers under this layout
+    take it rather than one of the plain paths above: a derived path says where
+    the layout points, not where a write lands, and the two differ the moment a
+    component is replaced with a symlink. Reach a subdirectory with
+    ``anchor.child("runtime", "wal")``.
     """
 
     root: Path
@@ -39,6 +48,7 @@ class TenantDataPaths:
     wal_dir: Path
     audit_dir: Path
     runtime_dir: Path
+    anchor: AnchoredDir
 
 
 def tenant_data_paths(sdd_dir: Path, tenant_id: str) -> TenantDataPaths:
@@ -59,6 +69,7 @@ def tenant_data_paths(sdd_dir: Path, tenant_id: str) -> TenantDataPaths:
         wal_dir=base.root / "runtime" / "wal",
         audit_dir=base.root / "audit",
         runtime_dir=base.root / "runtime",
+        anchor=base.anchor,
     )
 
 
@@ -69,14 +80,25 @@ def ensure_tenant_data_layout(sdd_dir: Path, tenant_id: str) -> TenantDataPaths:
         sdd_dir: Root ``.sdd`` directory.
         tenant_id: Tenant identifier.
 
+    Every directory is created through the anchored walk, for the same reason
+    ``backlog`` and ``metrics`` are: ordinary ``mkdir`` treats an existing
+    symlink as an existing directory, so ``.sdd/<tenant>/runtime`` linked at a
+    sibling tenant would silently redirect every WAL and audit write that
+    followed. The refusal has to happen where the directory is created, not
+    where the path was derived.
+
     Returns:
         TenantDataPaths with directories created.
+
+    Raises:
+        OSError: If a component of the layout is a symlink (``ELOOP``) or is
+            not a directory (``ENOTDIR``), or if creation fails.
     """
     ensure_tenant_layout(sdd_dir, tenant_id)
     paths = tenant_data_paths(sdd_dir, tenant_id)
-    paths.wal_dir.mkdir(parents=True, exist_ok=True)
-    paths.audit_dir.mkdir(parents=True, exist_ok=True)
-    paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+    mkdir_anchored(paths.anchor.child("runtime"))
+    mkdir_anchored(paths.anchor.child("runtime", "wal"))
+    mkdir_anchored(paths.anchor.child("audit"))
     return paths
 
 

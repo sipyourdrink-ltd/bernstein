@@ -394,6 +394,24 @@ class TokenUsage:
         )
 
 
+def _validate_run_id(run_id: str) -> None:
+    """Refuse a run id that cannot be one filename component.
+
+    Cost state, the cost report, and the rotated usage log are all named after
+    the run id, so it has to be a single name. It comes from
+    ``BERNSTEIN_RUN_ID`` when the environment sets one
+    (``orchestration/orchestrator.py``), which makes it operator input rather
+    than something a caller controls.
+
+    Raises:
+        ValueError: If *run_id* is empty, is ``.`` or ``..``, or carries a path
+            separator or a NUL.
+    """
+    if not run_id or run_id in {".", ".."} or any(c in run_id for c in ("/", "\\", "\x00")):
+        msg = f"run_id must be a single path component, got {run_id!r} (from BERNSTEIN_RUN_ID?)"
+        raise ValueError(msg)
+
+
 @dataclass(frozen=True)
 class BudgetStatus:
     """Snapshot of the current budget state for a run.
@@ -599,7 +617,17 @@ class CostTracker:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Resolve the usage buffer size and rebuild the deque accordingly."""
+        """Validate the run id, then resolve the usage buffer and rebuild the deque.
+
+        ``run_id`` reaches disk as a filename component in three places, and it
+        arrives from ``BERNSTEIN_RUN_ID`` - operator input, not a constant. The
+        anchored writers refuse a component carrying a separator, which is
+        correct, but they refuse it at the write, deep inside best-effort
+        telemetry, after the in-memory accumulators have already moved. Refusing
+        it once here means a bad value fails on construction, naming itself,
+        instead of surfacing later as a rotation that cannot flush.
+        """
+        _validate_run_id(self.run_id)
         resolved = self.usage_buffer_size
         if resolved is None:
             resolved = _resolve_usage_buffer_size()
@@ -1495,7 +1523,11 @@ class CostTracker:
             rotation_dir.mkdir(parents=True, exist_ok=True)
             with anchored_append(AnchoredDir(root=rotation_dir), f"usages-{self.run_id}.jsonl") as fh:
                 fh.write(json.dumps(usage.to_dict()) + "\n")
-        except OSError as exc:  # pragma: no cover - best-effort IO
+        except (OSError, ValueError) as exc:  # pragma: no cover - best-effort IO
+            # ``ValueError`` belongs here even though ``__post_init__`` rejects
+            # the run ids that cause it: telemetry rotation is the hot path,
+            # and a path refusal reaching an orchestrator through the rotation
+            # of an evicted row would abort a run over a dropped metric.
             logger.debug("Failed to rotate evicted cost usage for run %s: %s", self.run_id, exc)
 
     def attach_retry_budget(self, budget: object) -> None:
