@@ -10,6 +10,11 @@ Report a vulnerability by email to **forte@bernstein.run**, or open a private
 security advisory on GitHub:
 https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new
 
+The project publishes no PGP key, so email to that address is not
+end-to-end encrypted. Use the GitHub private advisory for anything whose
+contents matter before a fix ships - a working exploit, a credential, a
+customer-identifying detail. Email is fine for everything else.
+
 ---
 
 ## Researcher sandbox

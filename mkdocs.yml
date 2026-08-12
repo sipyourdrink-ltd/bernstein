@@ -106,6 +106,7 @@ plugins:
         'architecture/CLUSTER.md': 'operations/cluster-mode.md'
         'quickstart/remote.md': 'getting-started/remote.md'
         'operations/observability.md': 'operations/error-telemetry.md'
+        'security/security-acknowledgments.md': 'security/bug-bounty.md'
   - minify:
       minify_html: true
 
