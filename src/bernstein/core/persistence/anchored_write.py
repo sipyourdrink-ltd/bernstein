@@ -52,6 +52,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ANCHORED_ROTATE_SUPPORTED",
     "ANCHORED_WRITE_SUPPORTED",
     "AnchoredDir",
     "anchored_append",
@@ -69,6 +70,20 @@ __all__ = [
 # refuse anything.  Mirrors ``ANCHORED_OPEN_SUPPORTED`` in ``anchored_read``.
 ANCHORED_WRITE_SUPPORTED: bool = (
     os.open in os.supports_dir_fd and os.mkdir in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")
+)
+
+# Rotation needs three more calls to accept a descriptor, and its own predicate
+# for the same reason the one above takes every capability rather than a
+# subset: a platform offering ``os.open`` but not ``os.rename`` would enter the
+# anchored branch and raise ``NotImplementedError`` mid-rotation instead of
+# taking the path-based fallback.  ``os.rename`` is spelled through
+# ``supports_dir_fd`` even though it takes ``src_dir_fd``/``dst_dir_fd``; that
+# is the set CPython records it in.
+ANCHORED_ROTATE_SUPPORTED: bool = (
+    ANCHORED_WRITE_SUPPORTED
+    and os.stat in os.supports_dir_fd
+    and os.unlink in os.supports_dir_fd
+    and os.rename in os.supports_dir_fd
 )
 
 
@@ -294,7 +309,7 @@ def rotate_anchored(
     _validate_components((name,))
     max_backups = max(max_backups, 1)
 
-    if not ANCHORED_WRITE_SUPPORTED:
+    if not ANCHORED_ROTATE_SUPPORTED:
         from bernstein.core.persistence.runtime_state import rotate_log_file
 
         return rotate_log_file(directory.path / name, max_bytes=max_bytes, max_backups=max_backups)

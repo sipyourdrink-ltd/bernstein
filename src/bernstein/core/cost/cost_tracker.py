@@ -1189,9 +1189,19 @@ class CostTracker:
             run_id: Run identifier to look up.
 
         Returns:
-            Restored ``CostTracker``, or ``None`` if the file doesn't exist
-            or is corrupt.
+            Restored ``CostTracker``, or ``None`` if the file doesn't exist,
+            is corrupt, or *run_id* does not name one file.
         """
+        # Before the join, not after. `run_id` arrives here from
+        # `GET /costs/{run_id}` as well as from the orchestrator, and a path
+        # segment that survives URL decoding is not automatically a filename:
+        # on Windows `Path` treats a backslash as a separator, so `..\outside`
+        # reaches `runtime/outside.json`. Validating in `__post_init__` alone
+        # would check the value after the read it was supposed to gate.
+        try:
+            _validate_run_id(run_id)
+        except ValueError:
+            return None
         file_path = base_dir / "runtime" / "costs" / f"{run_id}.json"
         if not file_path.exists():
             return None

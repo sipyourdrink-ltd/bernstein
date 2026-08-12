@@ -121,6 +121,23 @@ Checking for the case is a one-liner:
 find .sdd -mindepth 2 -maxdepth 3 -type l
 ```
 
+#### Where the refusal does not apply
+
+The refusal is `O_NOFOLLOW` on a descriptor-relative open, so it needs a
+platform whose `os.open`, `os.mkdir`, `os.stat`, `os.unlink` and
+`os.rename` all accept `dir_fd`, and which defines `O_NOFOLLOW`. Linux
+and macOS do. Where they are absent - Windows is the case that matters -
+`anchored_write.py` reports `ANCHORED_WRITE_SUPPORTED` (and
+`ANCHORED_ROTATE_SUPPORTED`) false and falls back to the joined-path
+calls that predate the module, which follow a link or a junction exactly
+as before.
+
+So on those platforms the tenant subtree is best-effort: nothing here
+detects a redirected `.sdd/<tenant>/audit`. Treat multi-tenant storage
+that has to resist a local attacker as supported on Linux and macOS, and
+keep `.sdd` on a filesystem only the service account can write to
+regardless of platform.
+
 ## CLI usage
 
 ### Bare HMAC chain (most common)

@@ -18,6 +18,7 @@ import pytest
 
 from bernstein.core.persistence import anchored_write
 from bernstein.core.persistence.anchored_write import (
+    ANCHORED_ROTATE_SUPPORTED,
     ANCHORED_WRITE_SUPPORTED,
     AnchoredDir,
     anchored_append,
@@ -327,3 +328,32 @@ def test_rotate_does_not_follow_a_link_planted_at_the_file_itself(tmp_path: Path
     assert rotate_anchored(AnchoredDir(root=tmp_path), "metrics.jsonl", max_bytes=100) is False
     assert outside.stat().st_size == 500
     assert (tmp_path / "metrics.jsonl").is_symlink()
+
+
+def test_rotation_capability_covers_every_call_rotation_makes() -> None:
+    """A partial platform must take the fallback, not fail halfway through.
+
+    `ANCHORED_WRITE_SUPPORTED` answers for `os.open` and `os.mkdir`. Rotation
+    also stats, unlinks and renames through a descriptor, and a platform with
+    the first pair but not the second would enter the anchored branch and raise
+    `NotImplementedError` mid-rotation - after the earlier steps had already
+    run.
+    """
+    if not ANCHORED_ROTATE_SUPPORTED:
+        pytest.skip("platform takes the path-based fallback")
+
+    assert ANCHORED_WRITE_SUPPORTED
+    for fn in (os.stat, os.unlink, os.rename):
+        assert fn in os.supports_dir_fd, f"{fn.__name__} must accept dir_fd for rotation to anchor"
+
+
+def test_rotation_falls_back_when_the_platform_cannot_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the capability off, rotation still happens - by path."""
+    monkeypatch.setattr(anchored_write, "ANCHORED_ROTATE_SUPPORTED", False)
+    target = tmp_path / "metrics.jsonl"
+    target.write_text("x" * 500, encoding="utf-8")
+
+    assert rotate_anchored(AnchoredDir(root=tmp_path), "metrics.jsonl", max_bytes=100) is True
+    assert (tmp_path / "metrics.jsonl.1").stat().st_size == 500
