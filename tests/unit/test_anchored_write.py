@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -497,3 +498,11 @@ def test_relative_root_is_pinned_at_construction(tmp_path: Path, monkeypatch: py
 
     assert (tmp_path / "here" / "m.jsonl").exists()
     assert not (tmp_path / "elsewhere" / "here" / "m.jsonl").exists()
+
+
+def test_created_files_are_owner_only(tmp_path: Path) -> None:
+    """Containing the write and then leaving the file readable answers half of it."""
+    fd = open_anchored_write(AnchoredDir(root=tmp_path), "state.json", flags=os.O_WRONLY | os.O_CREAT)
+    os.close(fd)
+
+    assert stat.S_IMODE((tmp_path / "state.json").stat().st_mode) == 0o600

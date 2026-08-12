@@ -268,9 +268,16 @@ def _open_regular(target: str | Path, flags: int, *, dir_fd: int | None = None) 
     error, and nothing downstream gets the chance to reject it.  So the open is
     non-blocking, the descriptor is stat'd through itself rather than by name
     again, and the flag comes off once the file is known to be an ordinary one.
+
+    Files are created ``0o600``.  Everything reached through an anchored write
+    is store-managed tenant state -- metrics, cost, the write-ahead log, the
+    audit chain -- and there is no reader of it but the process that wrote it.
+    Guarding which directory a write lands in and then leaving the file
+    world-readable would answer half the question.  It matches the mode the
+    audit HMAC key has always been required to have.
     """
     nonblock = getattr(os, "O_NONBLOCK", 0)
-    fd = os.open(target, flags | nonblock, 0o644, dir_fd=dir_fd)
+    fd = os.open(target, flags | nonblock, 0o600, dir_fd=dir_fd)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             msg = f"refusing to write through a non-regular file: {target}"
