@@ -228,6 +228,13 @@ Unauthenticated dev mode (`BERNSTEIN_AUTH_DISABLED`) is the one mode where
 `X-Tenant-Id` is itself the bound scope, falling back to `DEFAULT_TENANT_ID`
 when absent — with auth off there is no credential to derive a scope from.
 
+Scope: the binding above establishes *which* tenant a request is authorized for.
+Applying it is per-route — the task CRUD and `/costs`, `/costs/live` routes resolve
+the scope through `resolve_tenant_scope()`, and the store filters by the tenant it
+is given. Routes that aggregate process-global data or look rows up by ID without
+passing a tenant are not scoped by this binding; treat them as operator surfaces
+until they are converted.
+
 Operators audit tenant leakage with `tenant_isolation_verify.py` and rate-limit
 per-tenant via `tenant_rate_limiter.py`.
 

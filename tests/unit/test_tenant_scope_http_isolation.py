@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from bernstein.core.auth import AuthRole, AuthStore, AuthUser, create_jwt
+from bernstein.core.auth import AuthRole, AuthUser
 from bernstein.core.models import ClusterConfig
 from bernstein.core.tenanting import DEFAULT_TENANT_ID, request_tenant_id
 from fastapi import Request
@@ -118,20 +118,27 @@ def jsonl_path(sdd_dir: Path) -> Path:
     return path
 
 
-def _sso_credential(sdd_dir: Path, user_id: str, role: AuthRole, tenant_id: str) -> Credential:
-    """Persist an SSO user and mint a JWT the real ``AuthService`` accepts."""
-    AuthStore(sdd_dir).save_user(
-        AuthUser(
-            id=user_id,
-            email=f"{user_id}@example.test",
-            display_name=user_id,
-            role=role,
-            sso_provider="oidc",
-            sso_subject=user_id,
-        )
+def _sso_credential(app: FastAPI, user_id: str, role: AuthRole, tenant_id: str) -> Credential:
+    """Provision an SSO user and issue a token the shipped login path produces.
+
+    The token comes from ``AuthService._issue_token`` - the single producer
+    behind the OIDC callback, the SAML ACS handler and the device flow - so
+    the claim shape asserted here is the claim shape real logins carry.  A
+    hand-signed JWT would let this file pass while the tokens the product
+    actually mints bound nothing.
+    """
+    service: Any = app.state.auth_service
+    user = AuthUser(
+        id=user_id,
+        email=f"{user_id}@example.test",
+        display_name=user_id,
+        role=role,
+        sso_provider="oidc",
+        sso_subject=user_id,
+        tenant_id=tenant_id,
     )
-    token = create_jwt({"sub": user_id, "tenant_id": tenant_id}, secret=JWT_SECRET)
-    return Credential(name=user_id, token=token)
+    service.store.save_user(user)
+    return Credential(name=user_id, token=service._issue_token(user))
 
 
 def _agent_credential(app: FastAPI, session_id: str, tenant_id: str, task_ids: list[str]) -> Credential:
@@ -181,8 +188,8 @@ async def fx(
     )
 
     credentials = {
-        "sso_viewer": _sso_credential(sdd_dir, "sso-viewer-a", AuthRole.VIEWER, TENANT_A),
-        "sso_operator": _sso_credential(sdd_dir, "sso-operator-a", AuthRole.OPERATOR, TENANT_A),
+        "sso_viewer": _sso_credential(app, "sso-viewer-a", AuthRole.VIEWER, TENANT_A),
+        "sso_operator": _sso_credential(app, "sso-operator-a", AuthRole.OPERATOR, TENANT_A),
         "legacy_bearer": Credential(name="legacy_bearer", token=LEGACY_TOKEN),
         "cluster_secret": Credential(name="cluster_secret", token=CLUSTER_SECRET),
         # Scoped to BOTH task ids on purpose.  The middleware's pre-existing
