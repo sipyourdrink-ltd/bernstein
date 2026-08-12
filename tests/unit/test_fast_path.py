@@ -282,6 +282,86 @@ class TestExecuteFastPath:
         assert "get_cwd" in src.read_text()
         assert "getCwd" not in src.read_text()
 
+    def test_rename_ignores_absolute_owned_file(self, tmp_path: Path) -> None:
+        """An absolute entry in owned_files never reaches a file outside workdir.
+
+        ``Path.__truediv__`` drops the left operand entirely when the right
+        operand is absolute, so ``workdir / "/x/y"`` is ``/x/y``.  The entry
+        is skipped and the outside file is left byte-for-byte unchanged.
+        """
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        outside = tmp_path / "outside.py"
+        outside.write_text("def getCwd():\n    return 1\n", encoding="utf-8")
+        original = outside.read_bytes()
+
+        task = _make_task(
+            title="Rename getCwd to get_cwd",
+            complexity=Complexity.LOW,
+            owned_files=[str(outside)],
+        )
+        result = execute_fast_path(
+            FastPathAction.RENAME_SYMBOL,
+            workdir,
+            [str(outside)],
+            task=task,
+        )
+
+        assert outside.read_bytes() == original
+        assert result.files_modified == 0
+
+    def test_rename_ignores_parent_traversal_owned_file(self, tmp_path: Path) -> None:
+        """A ``..`` entry in owned_files never reaches a file outside workdir."""
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        outside = tmp_path / "outside.py"
+        outside.write_text("def getCwd():\n    return 1\n", encoding="utf-8")
+        original = outside.read_bytes()
+
+        rel = "../outside.py"
+        task = _make_task(
+            title="Rename getCwd to get_cwd",
+            complexity=Complexity.LOW,
+            owned_files=[rel],
+        )
+        result = execute_fast_path(
+            FastPathAction.RENAME_SYMBOL,
+            workdir,
+            [rel],
+            task=task,
+        )
+
+        assert outside.read_bytes() == original
+        assert result.files_modified == 0
+
+    def test_rename_skips_bad_entry_but_still_renames_good_one(self, tmp_path: Path) -> None:
+        """A refused entry is skipped and logged; the run does not crash."""
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        good = workdir / "main.py"
+        good.write_text("def getCwd():\n    return getCwd()\n", encoding="utf-8")
+        outside = tmp_path / "outside.py"
+        outside.write_text("def getCwd():\n    return 1\n", encoding="utf-8")
+        original = outside.read_bytes()
+
+        targets = ["../outside.py", "main.py"]
+        task = _make_task(
+            title="Rename getCwd to get_cwd",
+            complexity=Complexity.LOW,
+            owned_files=targets,
+        )
+        result = execute_fast_path(
+            FastPathAction.RENAME_SYMBOL,
+            workdir,
+            targets,
+            task=task,
+        )
+
+        assert result.success is True
+        assert result.files_modified == 1
+        assert "get_cwd" in good.read_text(encoding="utf-8")
+        assert outside.read_bytes() == original
+
     def test_rename_no_task_fails(self) -> None:
         result = execute_fast_path(
             FastPathAction.RENAME_SYMBOL,

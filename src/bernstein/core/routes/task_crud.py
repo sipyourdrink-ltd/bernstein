@@ -31,6 +31,11 @@ from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
 from bernstein.core.routes._sse import SSE_RESPONSES
 from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
+from bernstein.core.security.path_containment import (
+    PathContainmentError,
+    contained_subpath,
+    validate_path_segment,
+)
 from bernstein.core.security.sanitize import sanitize_log
 
 # Import Pydantic models from server - this works because server.py's
@@ -158,6 +163,40 @@ def _record_claim_receipt(request: Request, task: Task, claim_path: str) -> None
 def _get_workdir(request: Request) -> Path:
     """Return the repository root from application state."""
     return request.app.state.workdir  # type: ignore[no-any-return]
+
+
+def _checked_claim_session(claimed_by_session: str | None) -> str | None:
+    """Return *claimed_by_session* once it is a usable opaque identifier.
+
+    A claim records this value on the task, and later stages name a
+    directory with it (``.sdd/worktrees/<session id>``).  Checking the
+    shape here means a malformed value is refused at the boundary that
+    accepts it, with the request's own 422, rather than being stored and
+    then declined by a downstream consumer that can only log.
+
+    An absent or empty value means "no owning session" and is passed
+    through unchanged - the consumers already branch on that.
+
+    Args:
+        claimed_by_session: The raw query/body value, if any.
+
+    Returns:
+        The value, unchanged.
+
+    Raises:
+        HTTPException: 422 if the value is not a single safe identifier.
+    """
+    if not claimed_by_session:
+        return claimed_by_session
+    try:
+        return validate_path_segment(claimed_by_session, label="claimed_by_session")
+    except PathContainmentError as exc:
+        logger.warning(
+            "claim rejected: claimed_by_session=%s reason=%s",
+            sanitize_log(str(claimed_by_session)),
+            sanitize_log(str(exc)),
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _get_gate_report_path(request: Request, task_id: str) -> Path:
@@ -381,7 +420,25 @@ def _run_auto_commit_pre_complete(
         return
 
     workdir = _get_workdir(request)
-    worktree_path = workdir / ".sdd" / "worktrees" / session_id
+    # The session id is a stored, caller-supplied string and the joined path
+    # becomes a ``subprocess.run`` cwd below, so it is asserted to name a
+    # directory under the worktree root rather than assumed to.  A refusal is
+    # treated like a missing worktree: log and leave, matching this hook's
+    # fail-open contract.
+    try:
+        worktree_path = contained_subpath(
+            workdir / ".sdd" / "worktrees",
+            session_id,
+            label="session id",
+        )
+    except PathContainmentError as exc:
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s reason=unsafe_session_path error=%s",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
+        )
+        return
 
     if not worktree_path.exists() or not worktree_path.is_dir():
         logger.info(
@@ -1101,6 +1158,7 @@ async def next_task(
             status_code=503,
             detail=_DRAINING_DETAIL,
         )
+    claimed_by_session = _checked_claim_session(claimed_by_session)
     store = _get_store(request)
     task = await store.claim_next(
         role,
@@ -1134,6 +1192,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
         # otherwise claim task B here after being denied on
         # ``POST /tasks/B/claim``.
         enforce_agent_task_scope_for_ids(request, body.task_ids)
+        claim_session = _checked_claim_session(body.claimed_by_session)
         store = _get_store(request)
         tenant_id = _resolve_request_tenant_scope(request)
         # Tenant authorization is enforced inside store.claim_batch under
@@ -1142,7 +1201,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
         claimed, failed = await store.claim_batch(
             list(body.task_ids),
             body.agent_id,
-            claimed_by_session=body.claimed_by_session,
+            claimed_by_session=claim_session,
             tenant_id=tenant_id,
         )
         if failed:
@@ -1187,6 +1246,7 @@ async def claim_task(
             status_code=503,
             detail=_DRAINING_DETAIL,
         )
+    claimed_by_session = _checked_claim_session(claimed_by_session)
     with start_span("task.claim", {"task.id": task_id}):
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)

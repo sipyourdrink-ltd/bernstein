@@ -29,6 +29,7 @@ import httpx
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import Complexity, ModelConfig, Scope, Task
+from bernstein.core.security.path_containment import PathContainmentError, contained_subpath
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -362,7 +363,18 @@ def _run_rename(workdir: Path, owned_files: list[str], task: Task | None = None)
 
     modified = 0
     for rel_path in targets:
-        fpath = workdir / rel_path
+        # ``owned_files`` entries are caller-supplied strings, and
+        # ``workdir / rel_path`` is not by itself a path under ``workdir``:
+        # ``Path.__truediv__`` discards the left side when the right side is
+        # absolute and never collapses ``..``.  ``contained_subpath`` returns
+        # the normalised path only when it is proven to stay under the
+        # working directory; an entry that is not is skipped and logged, the
+        # same way an unreadable entry already is.
+        try:
+            fpath = contained_subpath(workdir, rel_path, label="owned file")
+        except PathContainmentError as exc:
+            logger.warning("Rename skipped for %s: %s", rel_path, exc)
+            continue
         if not fpath.is_file():
             continue
         try:
