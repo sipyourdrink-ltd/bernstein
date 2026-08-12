@@ -4,8 +4,6 @@
 Contact: mailto:forte@bernstein.run
 Contact: https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new
 
-Acknowledgments: https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/security/security-acknowledgments.md
-
 Policy: https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md
 
 Preferred-Languages: en

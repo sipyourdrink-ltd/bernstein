@@ -447,7 +447,6 @@ nav:
           - Promptware: security/promptware.md
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
-          - Acknowledgments: security/security-acknowledgments.md
           - Log redaction: security/log-redaction.md
           - PII scan gate: security/pii-scan-gate.md
       - Compliance & audit:

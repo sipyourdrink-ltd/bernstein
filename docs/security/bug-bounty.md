@@ -148,9 +148,12 @@ the sandbox guide.
 
 ---
 
-## Acknowledgments
+## Credit
 
-Researchers who discover and responsibly disclose valid vulnerabilities are listed in
-[`docs/security/security-acknowledgments.md`](security-acknowledgments.md).
+An advisory is published when a fix ships, crediting the reporter by the name,
+handle, or link they choose, and a CVE can be requested on it. The reporter is
+also named in the release notes of the release carrying the fix.
 
-An advisory is published when a fix ships, and a CVE can be requested on it.
+Credit lives on those two artefacts rather than in a separate roll of honour, so
+that it is produced by shipping the fix rather than by remembering to update a
+page.
