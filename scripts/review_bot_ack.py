@@ -45,6 +45,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # The review-bot accounts whose findings this gate tracks. Retired bots come
@@ -704,6 +705,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Reserved; gate already fails on unresolved must-address.",
     )
     p.add_argument(
+        "--summary-out",
+        metavar="PATH",
+        help=(
+            "Write the rendered summary here as well as to stdout. A fork's "
+            "read-only token cannot post the sticky comment, so the runner "
+            "hands the text to the publisher through this file instead."
+        ),
+    )
+    p.add_argument(
+        "--post-summary-file",
+        metavar="PATH",
+        help=(
+            "Post this already-rendered summary as the sticky comment and exit "
+            "0. Evaluates nothing: it is the publisher half of --summary-out, "
+            "running where the token can write."
+        ),
+    )
+    p.add_argument(
         "--require-review",
         action="store_true",
         help=(
@@ -718,6 +737,22 @@ def main(argv: list[str] | None = None) -> int:
         print("error: GH_TOKEN or GITHUB_TOKEN must be set", file=sys.stderr)
         return 2
 
+    if args.post_summary_file:
+        # Publisher mode. The verdict was decided by the run that produced this
+        # text; re-evaluating here could reach a different one from a later
+        # state, so this path deliberately only posts.
+        try:
+            body = Path(args.post_summary_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        try:
+            upsert_sticky(args.owner, args.repo, args.pr, token, body)
+        except Exception as exc:
+            print(f"error: could not post sticky summary: {exc}", file=sys.stderr)
+            return 2
+        return 0
+
     try:
         outcome = evaluate(args.owner, args.repo, args.pr, token)
     except Exception as exc:
@@ -726,6 +761,12 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = render_summary(outcome)
     print(summary)
+    if args.summary_out:
+        # Written before the post is attempted: the fork case is exactly the
+        # case where the post fails, and it is the case this file exists for.
+        out = Path(args.summary_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(summary, encoding="utf-8")
     if not args.no_comment:
         try:
             upsert_sticky(args.owner, args.repo, args.pr, token, summary)
