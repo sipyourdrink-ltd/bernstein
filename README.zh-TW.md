@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 確定性多代理 CLI 編排
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:ef82e5bfe3be" -->
+<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:470b2b2c31eb" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,10 +38,10 @@
 
 > **狀態：beta。** 由單人維護，正在積極開發中。版本號計的是發布次數，而非成熟度——次版本（minor）可能變更介面。凡有依賴請鎖定版本；回歸問題會被儘快修復，[歡迎回報](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 40 多個其他代理）的確定性編排器。排程是純 Python——協調迴圈中沒有 LLM——因此執行可以端到端重現。每個編碼任務都在自己的 git worktree 中執行，背後有 lint/type/test 門禁；產物模式（artifact-mode）任務以簽署的血統收據（lineage receipt）而非提交來宣告完成，獲得一個普通的工作目錄。結果事後仍可核查：常駐的血統脊柱（lineage spine）和重播日誌（replay journal），外加選用的 HMAC 鏈式稽核日誌（`BERNSTEIN_AUDIT=1`），其收據可離線驗證。包含離線安裝（air-gap）設定。Apache-2.0 授權。
+Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 40 多個其他代理）的確定性編排器。它並行執行這些代理，對它們的產出設置門禁，並記錄足夠的執行資訊，供你事後核查。包含離線安裝（air-gap）設定。Apache-2.0 授權。
 
 ### 一覽
-<!-- l10n: en="at a glance" hash="sha256:07445a1bace1" -->
+<!-- l10n: en="at a glance" hash="sha256:0bde1c405b67" -->
 
 有四件事讓它與眾不同；其餘都是細節。
 
@@ -53,7 +53,7 @@ Bernstein 是面向 CLI 編碼代理（Claude Code、Codex、Gemini CLI 以及 4
 完整清單見[能力頁面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩陣](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是詳盡的索引。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:2290842df4d0" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -82,7 +82,7 @@ CI 在每次推送到 main 時重新驗證已提交的收據——並證明被�
 | `bernstein live` — 終端機儀表板 | `bernstein gui serve` — 瀏覽器儀表板 |
 
 ### 證明一次執行
-<!-- l10n: en="prove a run" hash="sha256:84a465d512f0" -->
+<!-- l10n: en="prove a run" hash="sha256:10220d41f77e" -->
 
 這裡的確定性是你要去核查的東西，而不是憑空相信。啟用稽核執行一次，然後驗證記錄的內容：
 
@@ -133,7 +133,7 @@ bernstein stop                    # graceful shutdown with drain
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
 ### 支援的代理
-<!-- l10n: en="supported agents" hash="sha256:aef640e2b705" -->
+<!-- l10n: en="supported agents" hash="sha256:a000c5f56136" -->
 
 Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令；`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 51 個已接線整合，該檔案是「什麼能解析」的唯一事實來源——其中 49 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔；`src/bernstein/adapters/use_cases.py` 為每個介面卡提供面向終端使用者的文案。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
 
