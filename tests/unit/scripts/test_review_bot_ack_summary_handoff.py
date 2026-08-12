@@ -83,8 +83,7 @@ def test_stdout_carries_the_summary_when_the_sticky_post_fails(
     assert rc == 0, "an unreviewed bot must not fail the gate by default"
     captured = capsys.readouterr()
     assert captured.out == ack.render_summary(_clean_outcome(ack)) + "\n", (
-        "stdout is the artifact the publisher posts; it must be the summary and "
-        "nothing else"
+        "stdout is the artifact the publisher posts; it must be the summary and nothing else"
     )
     assert ack.STICKY_HEADER in captured.out
     assert "produced no review for this head commit" in captured.out, (
@@ -121,9 +120,7 @@ def test_post_summary_file_posts_verbatim_without_evaluating(
     handed = tmp_path / "summary.md"
     handed.write_text(_rendered(ack), encoding="utf-8")
 
-    rc = ack.main(
-        ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
-    )
+    rc = ack.main(["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)])
 
     assert rc == 0
     assert posted == {"pr": 42, "body": _rendered(ack)}
@@ -145,9 +142,7 @@ def test_post_summary_file_fails_loudly_when_the_post_fails(
     handed = tmp_path / "summary.md"
     handed.write_text(_rendered(ack), encoding="utf-8")
 
-    rc = ack.main(
-        ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
-    )
+    rc = ack.main(["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)])
 
     assert rc == 2
 
@@ -214,9 +209,7 @@ def test_post_summary_file_refuses_text_that_is_not_a_rendered_summary(
     handed = tmp_path / "summary.md"
     handed.write_text(content, encoding="utf-8")
 
-    rc = ack.main(
-        ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
-    )
+    rc = ack.main(["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)])
 
     assert rc == 2
 
@@ -234,14 +227,10 @@ def test_post_summary_file_reports_invalid_utf8_as_a_read_failure(
     handed = tmp_path / "summary.md"
     handed.write_bytes(b"\xff\xfe not utf-8")
 
-    rc = ack.main(
-        ["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)]
-    )
+    rc = ack.main(["--owner", "o", "--repo", "r", "--pr", "42", "--post-summary-file", str(handed)])
 
     assert rc == 2
-    assert "UTF-8" in capsys.readouterr().err, (
-        "an undecodable hand-over must say so rather than raise"
-    )
+    assert "UTF-8" in capsys.readouterr().err, "an undecodable hand-over must say so rather than raise"
 
 
 def test_render_summary_satisfies_the_shape_the_publisher_requires(ack: ModuleType) -> None:
@@ -258,9 +247,7 @@ def test_publisher_workflow_binds_the_pull_request_to_the_triggering_head() -> N
     so it is the one value in this step the caller cannot choose. The step has
     to compare the named pull request's head against it and refuse a mismatch.
     """
-    workflow = (
-        REPO_ROOT / ".github" / "workflows" / "review-bot-ack-publish.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github" / "workflows" / "review-bot-ack-publish.yml").read_text(encoding="utf-8")
     step = workflow.split("Post the sticky summary the gate could not", 1)[1]
     step = step.split("\n  republish:", 1)[0]
 
@@ -268,6 +255,4 @@ def test_publisher_workflow_binds_the_pull_request_to_the_triggering_head() -> N
     assert ".head.sha" in step, "the step must read the claimed pull request's head"
     assert '!= "$HEAD_SHA"' in step, "the step must refuse a head that is not the trigger's"
     refusal = step.index('!= "$HEAD_SHA"')
-    assert step.index("--post-summary-file") > refusal, (
-        "the binding check has to run before the post, not after it"
-    )
+    assert step.index("--post-summary-file") > refusal, "the binding check has to run before the post, not after it"
