@@ -1219,9 +1219,7 @@ class CostTracker:
             if scope is None:
                 raw_env_spent = data.get("spent_by_envelope", {})
                 if isinstance(raw_env_spent, dict):
-                    tracker._spent_by_envelope = {
-                        k: float(v) for k, v in cast("dict[str, Any]", raw_env_spent).items()
-                    }
+                    tracker._spent_by_envelope = {k: float(v) for k, v in cast("dict[str, Any]", raw_env_spent).items()}
                 raw_env_calls = data.get("calls_by_envelope", {})
                 if isinstance(raw_env_calls, dict):
                     tracker._calls_by_envelope = {k: int(v) for k, v in cast("dict[str, Any]", raw_env_calls).items()}
