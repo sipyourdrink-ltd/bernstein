@@ -8,11 +8,19 @@ reaches its tests. This test ties the two together: adding a conflict pair
 without excluding one side from an ``--all-extras`` step is a resolution
 failure, and it should be caught here rather than in CI minutes.
 
-The scan reads the workflow as YAML and looks only at ``run`` values, then
-tokenizes each command with :mod:`shlex`. Scanning raw file text instead would
-miss a command split across lines with a backslash -- the case a guard exists
-for -- and would flag ``echo "uv sync --all-extras"`` or a commented-out line,
-which are not steps at all.
+The scan reads the workflow as YAML, looks only at ``run`` values, and lexes
+each one with :class:`shlex.shlex` in punctuation mode so that shell operators
+are recognised as tokens rather than matched as text. Splitting on ``&&`` with a
+regex before tokenizing gets this wrong in both directions: an operator inside a
+quoted argument splits a command that should stay whole, and the resulting
+fragments then fail to lex.
+
+A guard that cannot read a command must say so rather than skip it. The one case
+where skipping is provably safe is a line that fails to lex and does not contain
+the literal string ``--all-extras`` anywhere in its raw text -- quoting cannot
+hide a substring from a substring search, so such a line cannot be a command
+this guard is about. Every other unreadable line is a failure naming the
+workflow.
 """
 
 from __future__ import annotations
@@ -34,10 +42,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
-#: Shell operators that end one logical command inside a ``run`` block.
-_COMMAND_SPLIT = re.compile(r"&&|\|\||[;\n|]")
 #: A backslash-continued newline: the two lines are one command.
 _CONTINUATION = re.compile(r"\\\s*\n\s*")
+#: Tokens ``shlex`` returns in punctuation mode that end one logical command.
+_OPERATORS = frozenset({"&&", "||", "|", ";", ";;", "&", "(", ")"})
+#: The flag whose presence this guard is about, as a literal substring.
+_ALL_EXTRAS_LITERAL = "--all-extras"
+
+
+class UnreadableCommand(Exception):
+    """A ``run`` line mentioning ``--all-extras`` that could not be lexed."""
 
 
 def _conflict_groups() -> list[set[str]]:
@@ -65,29 +79,46 @@ def _run_values(workflow: object) -> Iterator[str]:
             yield from _run_values(item)
 
 
+def _lex(line: str) -> Iterator[list[str]]:
+    """Yield each logical command in one already-joined line."""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    current: list[str] = []
+    for token in lexer:
+        if token in _OPERATORS:
+            if current:
+                yield current
+                current = []
+        else:
+            current.append(token)
+    if current:
+        yield current
+
+
 def _commands(run_value: str) -> Iterator[list[str]]:
-    """Yield the token list of each logical command in one ``run`` value."""
+    """Yield the token list of each logical command in one ``run`` value.
+
+    Raises:
+        UnreadableCommand: the line could not be lexed and mentions
+            ``--all-extras``, so the guard cannot vouch for it.
+    """
     joined = _CONTINUATION.sub(" ", run_value)
-    for fragment in _COMMAND_SPLIT.split(joined):
-        stripped = fragment.strip()
-        if not stripped:
+    for line in joined.splitlines():
+        if not line.strip():
             continue
         try:
-            # ``comments=True`` drops a trailing ``# ...`` outside quotes, so a
-            # commented-out flag is not read as if it were passed.
-            tokens = shlex.split(stripped, comments=True)
-        except ValueError:
-            # Unbalanced quoting -- most often a ``${{ }}`` expression. Skipping
-            # is the safe direction: the guard reports fewer commands, never a
-            # command it misread.
+            # Materialised inside the try: the lexer raises while iterating.
+            commands = list(_lex(line))
+        except ValueError as exc:
+            if _ALL_EXTRAS_LITERAL in line:
+                raise UnreadableCommand(line.strip()) from exc
             continue
-        if tokens:
-            yield tokens
+        yield from commands
 
 
 def _syncs_all_extras(tokens: list[str]) -> bool:
     """Whether this command is a ``uv sync`` requesting every extra."""
-    if "--all-extras" not in tokens:
+    if _ALL_EXTRAS_LITERAL not in tokens:
         return False
     return any(tok == "uv" and tokens[i + 1 : i + 2] == ["sync"] for i, tok in enumerate(tokens))
 
@@ -103,14 +134,20 @@ def _excluded_extras(tokens: list[str]) -> set[str]:
     return excluded
 
 
-def _all_extras_commands() -> list[tuple[Path, list[str]]]:
-    """Return every ``(workflow, tokens)`` pair that syncs all extras."""
+def _all_extras_commands() -> tuple[list[tuple[Path, list[str]]], list[str]]:
+    """Return ``(workflow, tokens)`` pairs that sync all extras, and unreadable lines."""
     found: list[tuple[Path, list[str]]] = []
+    unreadable: list[str] = []
     for path in sorted(WORKFLOW_DIR.glob("*.yml")) + sorted(WORKFLOW_DIR.glob("*.yaml")):
         loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
         for run_value in _run_values(loaded):
-            found.extend((path, tokens) for tokens in _commands(run_value) if _syncs_all_extras(tokens))
-    return found
+            try:
+                commands = list(_commands(run_value))
+            except UnreadableCommand as exc:
+                unreadable.append(f"{path.name}: {exc}")
+                continue
+            found.extend((path, tokens) for tokens in commands if _syncs_all_extras(tokens))
+    return found, unreadable
 
 
 def test_conflict_groups_are_declared() -> None:
@@ -118,12 +155,19 @@ def test_conflict_groups_are_declared() -> None:
     assert _conflict_groups(), "pyproject declares no [tool.uv] conflicts; drop this guard"
 
 
+def test_every_all_extras_command_is_readable() -> None:
+    """A command the guard cannot lex is a gap in the guard, not a pass."""
+    _, unreadable = _all_extras_commands()
+    assert not unreadable, "workflow lines mention --all-extras but could not be lexed:\n" + "\n".join(unreadable)
+
+
 def test_all_extras_syncs_exclude_one_side_of_every_conflict() -> None:
     """Each ``--all-extras`` step must exclude all but one extra per conflict group."""
     groups = _conflict_groups()
+    commands, _ = _all_extras_commands()
     offenders: list[str] = []
 
-    for path, tokens in _all_extras_commands():
+    for path, tokens in commands:
         excluded = _excluded_extras(tokens)
         for group in groups:
             remaining = group - excluded
@@ -135,21 +179,52 @@ def test_all_extras_syncs_exclude_one_side_of_every_conflict() -> None:
     assert not offenders, "uv sync --all-extras requests a declared-conflicting extra pair:\n" + "\n".join(offenders)
 
 
+def test_all_extras_syncs_are_frozen() -> None:
+    """A lane requesting every extra must resolve from the checked-in lock."""
+    commands, _ = _all_extras_commands()
+    assert commands, "no --all-extras sync found; this guard has nothing to check"
+    unfrozen = [f"{path.name}: {shlex.join(tokens)}" for path, tokens in commands if "--frozen" not in tokens]
+    assert not unfrozen, "uv sync --all-extras re-resolves instead of using uv.lock:\n" + "\n".join(unfrozen)
+
+
+def test_operators_inside_quotes_do_not_split_a_command() -> None:
+    """A quoted ``&&`` or ``|`` is an argument, not a command boundary."""
+    quoted_amp = 'uv sync --frozen --all-extras --no-extra modal --index-url "https://mirror/?a=1&&b=2"'
+    tokens = [t for t in _commands(quoted_amp) if _syncs_all_extras(t)]
+    assert len(tokens) == 1, "a quoted && split the command"
+    assert _excluded_extras(tokens[0]) == {"modal"}
+
+    quoted_pipe = "uv sync --all-extras --no-extra modal --config-setting 'dir|name'"
+    tokens = [t for t in _commands(quoted_pipe) if _syncs_all_extras(t)]
+    assert len(tokens) == 1, "a quoted | split the command"
+    assert _excluded_extras(tokens[0]) == {"modal"}
+
+
+def test_unreadable_all_extras_line_is_raised_not_skipped() -> None:
+    """An unbalanced quote around an --all-extras sync fails; unrelated lines do not."""
+    with pytest.raises(UnreadableCommand):
+        list(_commands('uv sync --all-extras --index-url "unterminated'))
+
+    # No --all-extras in the raw text, so quoting cannot be hiding one.
+    assert list(_commands('echo "unterminated')) == []
+
+
 def test_scan_reads_continuations_quotes_and_comments() -> None:
-    """The scan itself: the three shapes a raw-text scan gets wrong."""
-    # A command split across lines is still one command.
+    """The shapes a raw-text scan gets wrong."""
     continued = "uv sync --frozen \\\n  --all-extras --no-extra modal\n"
     tokens = [t for t in _commands(continued) if _syncs_all_extras(t)]
     assert len(tokens) == 1
     assert _excluded_extras(tokens[0]) == {"modal"}
 
-    # A quoted value is the same exclusion as a bare one.
     assert _excluded_extras(next(_commands('uv sync --all-extras --no-extra "modal"'))) == {"modal"}
     assert _excluded_extras(next(_commands("uv sync --all-extras --no-extra=modal"))) == {"modal"}
 
-    # Text that merely mentions the command is not the command.
     assert not [t for t in _commands('echo "uv sync --all-extras"') if _syncs_all_extras(t)]
     assert not [t for t in _commands("# uv sync --all-extras") if _syncs_all_extras(t)]
+
+    # Genuine operators still separate commands.
+    both = "uv sync --all-extras --no-extra modal && uv run pytest -q"
+    assert len([t for t in _commands(both) if _syncs_all_extras(t)]) == 1
 
 
 def test_scan_ignores_yaml_outside_run_steps() -> None:
