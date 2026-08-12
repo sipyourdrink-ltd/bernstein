@@ -177,6 +177,13 @@ def _canonical_text(value: str) -> str:
     * the result is NFC-normalised -- macOS hands back decomposed (NFD) path
       and text bytes where Linux hands back composed (NFC) ones, and ``café``
       is one filename, not two.
+
+    This repairs where ``core.tasks.artifacts._canonical_text_bytes`` rejects,
+    and the difference is deliberate. There the text *is* the artifact, so a
+    caller shipping two byte-different spellings of it should hear about it.
+    Here the text is only a projection into an address -- the SARIF result is
+    stored verbatim beside it -- and the normal form was chosen by the
+    scanner's filesystem, not by anyone we can send an error to.
     """
     return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
 
