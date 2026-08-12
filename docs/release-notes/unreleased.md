@@ -25,6 +25,16 @@ landed since the newest one.
   resolve. An input the filesystem cannot represent, such as an embedded NUL,
   is reported as that error too rather than as a raw filesystem message.
   Refs #3080.
+- The two Slack webhook receivers (`POST /webhooks/slack/commands`,
+  `POST /webhooks/slack/events`) now require a signing secret, matching the
+  GitHub receiver. **Behaviour change:** with `SLACK_SIGNING_SECRET` unset
+  (and no `slack_signing_secret=` passed to `create_app`), both routes answer
+  `404` and create no task; previously they processed the request without
+  checking a signature. A configured deployment is unaffected - a correctly
+  signed delivery still returns `200` and a wrongly signed one still returns
+  `401`. Set the secret before pointing Slack at the endpoint, since the
+  `url_verification` handshake is a signed delivery like any other. See
+  [`docs/operations/slack-webhooks.md`](../operations/slack-webhooks.md).
 
 ## Added
 
