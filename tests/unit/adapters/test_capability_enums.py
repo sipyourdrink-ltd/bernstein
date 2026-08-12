@@ -162,7 +162,7 @@ def test_stream_json_adapters_declared() -> None:
 
 
 def test_text_signal_default_for_plain_adapters() -> None:
-    for name in ("aider", "droid"):
+    for name in ("aider", "droid", "opencode"):
         assert strategy_for(name).event_channel is EventChannel.TEXT_SIGNALS
 
 
@@ -211,14 +211,6 @@ def test_strategy_conformance_table_covers_registry() -> None:
     rows = strategy_conformance_table()
     registry_names = {name for name, _ in iter_adapter_specs()}
     assert {r["adapter"] for r in rows} == registry_names
-
-
-def test_opencode_strategy_matches_verified_upstream_surface() -> None:
-    strategy = STRATEGY_MATRIX["opencode"]
-
-    assert strategy.resume is ResumeStrategy.FLAG
-    assert strategy.dangerous_mode is DangerousModeStrategy.CLI_FLAG
-    assert strategy.event_channel is EventChannel.STREAM_JSON
 
 
 # ---------------------------------------------------------------------------

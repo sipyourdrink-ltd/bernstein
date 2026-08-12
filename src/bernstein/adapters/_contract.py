@@ -744,13 +744,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "muse": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "ollama": AdapterStrategy(),
     "open_interpreter": AdapterStrategy(),
-    # OpenCode exposes native session binding, explicit unattended permission
-    # flags, and NDJSON events. Runtime wiring is tracked separately in #3676.
-    "opencode": AdapterStrategy(
-        resume=ResumeStrategy.FLAG,
-        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
-        event_channel=EventChannel.STREAM_JSON,
-    ),
+    "opencode": AdapterStrategy(),
     "openhands": AdapterStrategy(),
     "pi": AdapterStrategy(),
     "plandex": AdapterStrategy(),
