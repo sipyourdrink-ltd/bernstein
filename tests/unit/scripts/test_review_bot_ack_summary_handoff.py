@@ -266,14 +266,12 @@ def test_check_summary_only_points_at_a_comment_that_was_handed_over() -> None:
     which of the two happened. A fixed "see the sticky summary comment" reads
     identically whether the comment exists or the handoff was empty.
     """
-    workflow = (
-        REPO_ROOT / ".github" / "workflows" / "review-bot-ack-publish.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github" / "workflows" / "review-bot-ack-publish.yml").read_text(encoding="utf-8")
 
     assert "POINTER=$pointer" in workflow
     assert "${POINTER}" in workflow, "the published summary must use the resolved pointer"
     assert workflow.count("See the sticky summary comment on the pull request") == 1, (
         "the pointer sentence must exist only inside the branch that checked for the file"
     )
-    resolve = workflow.index("pointer=\"\"")
+    resolve = workflow.index('pointer=""')
     assert resolve < workflow.index("${POINTER}"), "the pointer is resolved before it is published"
