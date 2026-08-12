@@ -822,3 +822,18 @@ def test_load_still_finds_an_ordinary_run(tmp_path: Path) -> None:
 
     assert restored is not None
     assert restored.run_id == "20260812-120000"
+
+
+@pytest.mark.parametrize("payload", ['{"run_id": "other"}', '{"run_id": ""}', '{"run_id": 7}', "{}"])
+def test_load_refuses_a_file_that_names_a_different_run(tmp_path: Path, payload: str) -> None:
+    """The filename is validated; the identity inside the file has to agree.
+
+    `GET /costs/requested` reads `requested.json`. Were that file free to call
+    itself something else, the response would carry the other run's identity
+    and its spend under the id the caller asked about.
+    """
+    costs_dir = tmp_path / "runtime" / "costs"
+    costs_dir.mkdir(parents=True)
+    (costs_dir / "requested.json").write_text(payload, encoding="utf-8")
+
+    assert Tracker.load(tmp_path, "requested") is None

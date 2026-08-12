@@ -31,8 +31,9 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
   `runtime`, `runtime/wal`, `audit`) is created and opened through
   `TenantPaths.anchor` / `tenant_metrics_target` via
   `../persistence/anchored_write.py`, rotation included (`rotate_anchored` -
-  it renames and unlinks). Needs `dir_fd` + `O_NOFOLLOW`; without them the
-  refusal is absent, not weaker (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
+  it renames and unlinks). Needs `dir_fd` + `O_NOFOLLOW`; lacking either, the
+  refusal narrows to the final component or vanishes, never weakens
+  (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
 
 ## Testing
 

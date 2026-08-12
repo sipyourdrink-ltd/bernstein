@@ -355,3 +355,51 @@ def test_rotation_falls_back_when_the_platform_cannot_anchor(tmp_path: Path, mon
 
     assert rotate_anchored(AnchoredDir(root=tmp_path), "metrics.jsonl", max_bytes=100) is True
     assert (tmp_path / "metrics.jsonl.1").stat().st_size == 500
+
+
+# --- the degraded path, pinned -----------------------------------------------
+#
+# `ANCHORED_WRITE_SUPPORTED` is one flag over two capabilities: `O_NOFOLLOW`
+# and `dir_fd` on open and mkdir. A platform can have the first without the
+# second, and then `open_anchored_write` loses its walk but keeps the flag on
+# the final open. That is a narrower refusal, not an absent one, and the two
+# tests below say which half survives so nobody has to infer it from the flag.
+
+
+@pytest.mark.skipif(not getattr(os, "O_NOFOLLOW", 0), reason="needs O_NOFOLLOW")
+def test_degraded_open_still_refuses_a_linked_final_component(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the walk, the flag on the last open is all that is left."""
+    monkeypatch.setattr(anchored_write, "ANCHORED_WRITE_SUPPORTED", False)
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("kept\n", encoding="utf-8")
+    (tmp_path / "metrics.jsonl").symlink_to(outside)
+
+    with pytest.raises(OSError) as excinfo:
+        fd = open_anchored_write(
+            AnchoredDir(root=tmp_path),
+            "metrics.jsonl",
+            flags=os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        )
+        os.close(fd)
+
+    assert excinfo.value.errno in {errno.ELOOP, errno.ENOTDIR}
+    assert outside.read_text(encoding="utf-8") == "kept\n"
+
+
+def test_degraded_open_follows_a_linked_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The half that is genuinely lost, written down rather than discovered."""
+    monkeypatch.setattr(anchored_write, "ANCHORED_WRITE_SUPPORTED", False)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "metrics").symlink_to(outside)
+
+    fd = open_anchored_write(
+        AnchoredDir(root=root, parts=("metrics",)),
+        "usage.jsonl",
+        flags=os.O_WRONLY | os.O_CREAT,
+    )
+    os.close(fd)
+
+    assert (outside / "usage.jsonl").exists()

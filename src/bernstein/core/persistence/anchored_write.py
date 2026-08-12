@@ -219,6 +219,15 @@ def open_anchored_write(directory: AnchoredDir, name: str, *, flags: int) -> int
         OSError: As :func:`os.open` does.  ``ELOOP`` (or ``ENOTDIR`` for an
             intermediate component on some platforms) means one was a symlink
             and the open refused to follow it.
+
+    Note:
+        Without ``ANCHORED_WRITE_SUPPORTED`` the walk is gone but the flag on
+        the final open is not, so a linked *name* is still refused while a
+        linked parent is followed.  Keeping ``O_NOFOLLOW`` there is deliberate:
+        dropping it to make the degraded path uniformly permissive would trade
+        a real refusal for a tidier description of one.  What the caller loses
+        is the parent, not the file -- unlike :func:`mkdir_anchored`, whose
+        fallback refuses nothing at all.
     """
     _validate_components((name,))
     nofollow = getattr(os, "O_NOFOLLOW", 0)
@@ -226,18 +235,8 @@ def open_anchored_write(directory: AnchoredDir, name: str, *, flags: int) -> int
     if not ANCHORED_WRITE_SUPPORTED:
         return os.open(directory.path / name, flags | nofollow, 0o644)
 
-    directory_flag = getattr(os, "O_DIRECTORY", 0)
-    parent_fd = os.open(directory.root, os.O_RDONLY | directory_flag)
+    parent_fd = _walk_to_dir_fd(directory)
     try:
-        for component in directory.parts:
-            child_fd = os.open(
-                component,
-                os.O_RDONLY | nofollow | directory_flag,
-                dir_fd=parent_fd,
-            )
-            stale_fd, parent_fd = parent_fd, child_fd
-            with contextlib.suppress(OSError):
-                os.close(stale_fd)
         return os.open(name, flags | nofollow, 0o644, dir_fd=parent_fd)
     finally:
         with contextlib.suppress(OSError):

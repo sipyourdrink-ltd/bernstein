@@ -1207,8 +1207,15 @@ class CostTracker:
             return None
         try:
             data = json.loads(file_path.read_text())
+            # The filename was validated; the payload it holds was not. A
+            # `requested.json` carrying `{"run_id": "other"}` would otherwise
+            # build a tracker labelled `other`, and `GET /costs/requested`
+            # would answer with that identity and its spend. The file is
+            # authoritative about the numbers, never about whose they are.
+            if data.get("run_id") != run_id:
+                return None
             tracker = cls(
-                run_id=data["run_id"],
+                run_id=run_id,
                 budget_usd=float(data.get("budget_usd", 0.0)),
                 hard_budget_usd=float(data.get("hard_budget_usd", 0.0)),
                 warn_threshold=float(data.get("warn_threshold", DEFAULT_WARN_THRESHOLD)),

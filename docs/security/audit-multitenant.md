@@ -102,12 +102,17 @@ silently. That link now fails on first use with `OSError` (`ELOOP`, or
 Two ways out, both offline:
 
 1. **Move the data under `.sdd`.** Replace the link with a real
-   directory and copy the contents in:
+   directory and copy the contents in. Resolve the target with `realpath`
+   rather than `readlink`: a relative link target is relative to the link's
+   own directory, and `readlink` hands it back unchanged for the shell to
+   resolve against the working directory instead. Copy first and swap last,
+   so a wrong or missing target costs you nothing:
 
    ```bash
-   test -L .sdd/acme/metrics && target=$(readlink .sdd/acme/metrics) \
-     && rm .sdd/acme/metrics && mkdir .sdd/acme/metrics \
-     && cp -a "$target/." .sdd/acme/metrics/
+   link=.sdd/acme/metrics
+   test -L "$link" && target=$(realpath "$link") && test -d "$target" \
+     && mkdir "$link.new" && cp -a "$target/." "$link.new/" \
+     && rm "$link" && mv "$link.new" "$link"
    ```
 
 2. **Move `.sdd` instead.** If the point of the link was to put state on
