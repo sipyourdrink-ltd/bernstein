@@ -564,8 +564,14 @@ def _transcripts_for(adapter: str, golden_dir: Path) -> list[Any]:
 
 
 def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_path: Path | None) -> str:
-    """Read the nightly canary's attestation for the installed version."""
-    from bernstein.adapters.canary import load_last_green
+    """Read the nightly canary's attestation for the installed version.
+
+    PEP 440-equivalent spellings such as 1.0 and 1.0.0 intentionally identify
+    the same attested release.
+    """
+    from packaging.version import InvalidVersion, Version
+
+    from bernstein.adapters.canary import _VERSION_TOKEN_RE, load_last_green  # pyright: ignore[reportPrivateUsage]
 
     entries = load_last_green(last_green_path)
     entry = entries.get(adapter)
@@ -573,10 +579,17 @@ def _canary_verdict_for(adapter: str, installed_version: str | None, last_green_
         return CANARY_UNKNOWN
     if installed_version is None:
         return CANARY_STALE
-    # ``last_green`` records the parsed dotted-numeric token; the report
-    # captures the full ``--version`` first line. A row attests the installed
-    # binary when its version token appears in that line.
-    return CANARY_GREEN if entry.version and entry.version in installed_version else CANARY_STALE
+
+    match = _VERSION_TOKEN_RE.search(installed_version)
+    if not entry.version or match is None:
+        return CANARY_STALE
+
+    probed_version = match.group(0)
+    try:
+        versions_match = Version(entry.version) == Version(probed_version)
+    except InvalidVersion:
+        versions_match = entry.version == probed_version
+    return CANARY_GREEN if versions_match else CANARY_STALE
 
 
 def gather_admission_evidence(

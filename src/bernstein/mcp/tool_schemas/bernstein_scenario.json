@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_scenario",
-  "description": "List, run, or poll Bernstein scenarios. action=list needs nothing else; action=run needs scenario_id and returns the same pollable handle shape as bernstein_run; action=status needs orchestration_id.",
+  "description": "List, run, or poll Bernstein scenarios. action=list reads packaged scenario definitions; action=run queues file-writing agent work and returns the same pollable handle shape as bernstein_run; action=status queries the task server and needs orchestration_id. Host effects: reads files; writes files; spawns agent processes; makes network requests.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

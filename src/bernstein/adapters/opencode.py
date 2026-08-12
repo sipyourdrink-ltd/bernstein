@@ -1,6 +1,6 @@
 """OpenCode CLI adapter.
 
-Last verified against upstream OpenCode (sst/opencode) 1.14.x on 2026-08-10.
+Last verified against upstream OpenCode (anomalyco/opencode) 1.18.16 on 2026-08-12.
 Install: ``curl -fsSL https://opencode.ai/install | bash`` (fastest),
 ``brew install anomalyco/tap/opencode``, or ``npm i -g opencode-ai@latest``.
 """

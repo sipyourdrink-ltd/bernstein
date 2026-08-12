@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_task_capsule",
+  "description": "Read a task capsule together with its local journal and audit evidence. With verify=true, verification may create the install audit key if it is absent. Host effects: reads files; writes files.",
   "type": "object",
   "additionalProperties": false,
   "required": ["task_id"],

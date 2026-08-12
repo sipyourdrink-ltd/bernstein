@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_health",
+  "description": "Deprecated process-local liveness probe folded into bernstein_status. It returns a constant response without contacting the task server. Host effects: none.",
   "type": "object",
   "additionalProperties": false,
   "properties": {}

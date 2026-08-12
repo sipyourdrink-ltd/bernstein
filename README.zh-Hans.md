@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 确定性多智能体 CLI 编排
-<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:ef82e5bfe3be" -->
+<!-- l10n: en="deterministic multi-agent CLI orchestration" hash="sha256:470b2b2c31eb" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,22 +38,22 @@
 
 > **状态：beta。** 由单人维护，正在积极开发中。版本号计的是发布次数，而非成熟度——次版本（minor）可能改变接口。凡有依赖请锁定版本；回归问题会被尽快修复，[欢迎提交](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein 是一个面向 CLI 编码智能体（Claude Code、Codex、Gemini CLI 以及 40 多个其他智能体）的确定性编排器。调度是纯 Python——协调循环中没有 LLM——因此运行可以端到端复现。每个编码任务都在自己的 git worktree 中运行，背后有 lint/type/test 门禁；产物模式（artifact-mode）任务以签署的血统收据（lineage receipt）而非提交来宣告完成，获得一个普通的工作目录。结果事后仍可核查：常驻的血统脊柱（lineage spine）和回放日志（replay journal），外加可选的 HMAC 链式审计日志（`BERNSTEIN_AUDIT=1`），其收据可离线验证。包含离线安装（air-gap）配置。Apache-2.0 许可。
+Bernstein 是一个面向 CLI 编码智能体（Claude Code、Codex、Gemini CLI 以及 40 多个其他智能体）的确定性编排器。它并行运行这些智能体，对它们的产出设置门禁，并记录足够的运行信息，供你事后核查。包含离线安装（air-gap）配置。Apache-2.0 许可。
 
 ### 一览
-<!-- l10n: en="at a glance" hash="sha256:07445a1bace1" -->
+<!-- l10n: en="at a glance" hash="sha256:49601a2ba935" -->
 
 有四件事让它与众不同；其余都是细节。
 
 - **协调循环中没有 LLM。** 调度是纯 Python，因此运行可以端到端复现。重放昨天的计划，得到昨天的任务图。
-- **事后可核查。** 回放日志记录每一次运行，常驻的血统脊柱记录每个产生血统的步骤；可选的审计链增加了可离线验证的收据。不确定性会在精确步骤处以哈希失配的形式浮出水面，而不是一次偶发的重跑。非代码交付物也享受同样待遇：任务可以在计划步骤、积压条目或任务 CLI 上声明产物契约（报告、数据集、动作日志、运维结果），并以签署的血统收据而非 git 提交来宣告完成。
+- **事后可核查。** 回放日志记录每一次运行，常驻的血统脊柱记录每个产生血统的步骤；可选的 HMAC 链式审计日志（`BERNSTEIN_AUDIT=1`）增加了可离线验证的收据。不确定性会在精确步骤处以哈希失配的形式浮出水面，而不是一次偶发的重跑。非代码交付物也享受同样待遇：任务可以在计划步骤、积压条目或任务 CLI 上声明产物契约（报告、数据集、动作日志、运维结果），并以签署的血统收据而非 git 提交来宣告完成。
 - **构造上即隔离。** 每个编码任务在合并门禁之后获得自己的 git worktree；产物模式任务在 `.sdd/workspaces/` 下获得工作目录隔离。在这种默认隔离下，智能体之间不共享可变的工作区；协调状态（任务积压）是共享的，并以原子方式认领。超出该隔离的文件系统强制是可选的，来自[沙箱后端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（禁用 worktree 会在共享检出中运行每个任务）。
 - **广泛且本地。** 40 多个 CLI 智能体适配器，外加通用的 `--prompt` 包装器、基于文件的状态、无 SaaS 跳转、无第三方数据平面。
 
 完整列表见[能力页面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩阵](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是详尽的索引。
 
 ### 30 秒安装
-<!-- l10n: en="install in 30 seconds" hash="sha256:2290842df4d0" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:da2e6aa3f938" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -82,7 +82,7 @@ CI 在每次推送到 main 时重新验证已提交的收据——并证明被�
 | `bernstein live` — 终端仪表盘 | `bernstein gui serve` — 浏览器仪表盘 |
 
 ### 证明一次运行
-<!-- l10n: en="prove a run" hash="sha256:84a465d512f0" -->
+<!-- l10n: en="prove a run" hash="sha256:10220d41f77e" -->
 
 这里的确定性是需要你去核查的东西，而不是凭空相信。启用审计运行一次，然后验证记录的内容：
 
@@ -133,9 +133,9 @@ bernstein stop                    # graceful shutdown with drain
 仓库卫生门禁：`bernstein readme-l10n verify` 会让翻译版 README 偏离英文源的 PR 失败（并指出过期的章节），`bernstein readme-l10n sync` 在英文修改后重新绑定它们。见 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
 ### 支持的智能体
-<!-- l10n: en="supported agents" hash="sha256:aef640e2b705" -->
+<!-- l10n: en="supported agents" hash="sha256:5889943d6abf" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[适配器索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)为其中 30 个提供安装命令；`bernstein integrations list` 从 `src/bernstein/adapters/registry.py` 中的注册表枚举全部 51 个已接线集成，该文件是"什么能解析"的唯一事实来源——其中 49 个是可选择的智能体适配器，另外两行是 `mock` 测试桩和 `self-hosted-endpoints` 端点配置；`src/bernstein/adapters/use_cases.py` 为每个适配器提供面向终端用户的文案。任何带 `--prompt` 旗标的其他工具都可以通过通用包装器工作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[适配器索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)为其中 30 个提供安装命令。`bernstein integrations list` 从 `src/bernstein/adapters/registry.py` 中的注册表枚举全部 51 个已接线集成，该文件是"什么能解析"的唯一事实来源。其中 49 个是可选择的智能体适配器，另外两行是 `mock` 测试桩和 `self-hosted-endpoints` 端点配置。每个适配器的面向终端用户文案在 `src/bernstein/adapters/use_cases.py`。任何带 `--prompt` 旗标的其他工具都可以通过通用包装器工作。
 
 在同一运行中混用智能体：用便宜的本地模型处理样板，用更重的云模型处理架构。`bernstein integrations list --installed` 显示你的机器上可用的内容。
 

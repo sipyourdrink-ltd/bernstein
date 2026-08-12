@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_tasks",
+  "description": "Deprecated task-list action folded into bernstein_status. Retrieves tasks from the Bernstein server without changing them. Host effects: makes network requests.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

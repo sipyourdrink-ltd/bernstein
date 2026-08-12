@@ -901,3 +901,41 @@ def test_currency_ignores_runs_of_other_workflows() -> None:
     runs = module.gate_runs(payload)  # type: ignore[attr-defined]
     assert [run["id"] for run in runs] == [41]
     assert module.decide(runs, 41) == "publish"  # type: ignore[attr-defined]
+
+
+def test_gate_hands_the_summary_over_without_depending_on_a_pull_request_flag(
+    gate_doc: dict[str, object],
+) -> None:
+    """The published check-run points the reader at a sticky comment.
+
+    On a fork the gate cannot post that comment - the `GITHUB_TOKEN` is
+    read-only and `permissions:` cannot raise it - so the text has to travel
+    to the publisher in the verdict artifact instead. It has to travel by
+    stdout capture, not by a CLI flag: this job checks out the base ref, so it
+    runs the base branch's copy of the script, and a flag added by a pull
+    request does not exist on the run that would have to use it.
+    """
+    for job in _jobs(gate_doc).values():
+        script = _run_script(job)
+        if "review_bot_ack.py" not in script or "--post-summary-file" in script:
+            continue
+        assert "verdict/summary.md" in script, (
+            "the gate never captures its rendered summary, so the publisher has nothing to post and "
+            "the check-run's 'see the sticky summary comment' points at a comment that does not exist"
+        )
+        assert "tee verdict/summary.md" in script, (
+            "the summary must be captured from stdout; a flag would have to exist on the base branch "
+            "before the pull request that introduces it can run"
+        )
+        assert "set -o pipefail" in script, (
+            "without pipefail the pipe into tee masks the gate's exit code and every verdict reads success"
+        )
+
+
+def test_publisher_posts_the_captured_summary(publish_doc: dict[str, object]) -> None:
+    """The half the gate cannot do itself, in the context that can."""
+    scripts = "\n".join(_run_script(job) for job in publish_doc["jobs"].values())  # type: ignore[index]
+    assert "--post-summary-file" in scripts, (
+        "the publisher holds a writable token and is the only place the fork's summary can be posted"
+    )
+    assert "verdict/summary.md" in scripts, "the publisher reads a different path than the gate writes"

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_run",
-  "description": "Start an orchestration run. A run does real work and takes minutes to hours; the call returns once the run is queued, not when it finishes. Do not re-issue it while waiting, that starts a second run. Follow the run with bernstein_run_status, passing either the returned task_id or the returned run_id, after waiting the returned poll_after_ms. Pass parent_task_id to create the run as a subtask of an existing task.",
+  "description": "Start an orchestration run. A run does real work and takes minutes to hours; the call returns once the run is queued, not when it finishes. Do not re-issue it while waiting, that starts a second run. Follow the run with bernstein_run_status, passing either the returned task_id or the returned run_id, after waiting the returned poll_after_ms. Pass parent_task_id to create the run as a subtask of an existing task. The queued orchestration writes project state and starts agent work. Host effects: writes files; spawns agent processes; makes network requests.",
   "type": "object",
   "additionalProperties": false,
   "required": [

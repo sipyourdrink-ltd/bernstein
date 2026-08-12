@@ -101,6 +101,13 @@ jobs:
       actions: read
       checks: write
       contents: read
+      # The sticky summary is the only surface that says which findings are
+      # open and whether any bot reviewed the head at all. On a fork the gate
+      # job cannot post it - read-only token, 403 - so it hands the rendered
+      # text here and this job posts it. Without that, a fork pull request
+      # carries a bare green context and a check summary pointing at a
+      # comment that does not exist.
+      pull-requests: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
@@ -190,8 +197,22 @@ jobs:
             reason="the gate run succeeded but published no readable verdict artifact"
           fi
 
+          # Whether the check summary may point at a sticky comment. The
+          # summary post below is deliberately best-effort - a comment that
+          # cannot be written must not turn a decided verdict into a failure -
+          # but "see the sticky summary comment" printed when no summary was
+          # handed over is a dangling pointer, and the reader has no way to
+          # tell it from a comment they simply have not scrolled to.
+          pointer=""
+          if [ -r verdict/summary.md ] && [ -r verdict/pr_number ]; then
+            pointer=" See the sticky summary comment on the pull request for the per-finding breakdown."
+          else
+            pointer=" The gate run linked below carries the per-finding breakdown; this run received no summary to post."
+          fi
+
           echo "VERDICT=$verdict" >> "$GITHUB_ENV"
           echo "REASON=$reason" >> "$GITHUB_ENV"
+          echo "POINTER=$pointer" >> "$GITHUB_ENV"
           echo "resolved $verdict: $reason"
 
       - name: Publish the review-bot-ack context on the head commit
@@ -209,8 +230,54 @@ jobs:
             --name review-bot-ack \
             --conclusion "$VERDICT" \
             --title "Review-bot acknowledgement gate" \
-            --summary "Every must-address review-bot finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}. See the sticky summary comment on the pull request for the per-finding breakdown." \
+            --summary "Every must-address review-bot finding must be fixed in a later commit or acknowledged in the PR body. Resolved as ${VERDICT}: ${REASON}.${POINTER}" \
             --details-url "$GATE_RUN_URL"
+
+      # The gate job renders this text and, on a fork, cannot post it. Posting
+      # here is what makes the check summary's pointer to "the sticky summary
+      # comment" true for a fork pull request rather than a dangling
+      # reference. Best-effort: a summary that fails to post must not turn a
+      # decided verdict into a failure, and the same-repo case has already
+      # posted it from the gate job.
+      - name: Post the sticky summary the gate could not
+        if: steps.currency.outputs.decision == 'publish'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ ! -r verdict/summary.md ] || [ ! -r verdict/pr_number ]; then
+            echo "no summary handed over; nothing to post"
+            exit 0
+          fi
+          pr="$(tr -d '[:space:]' < verdict/pr_number)"
+          case "$pr" in
+            ''|*[!0-9]*) echo "refusing to post: pr number is not numeric"; exit 0 ;;
+          esac
+          # The artifact is written by the gate job, which on a fork pull
+          # request runs the fork's own checkout. Everything in it is
+          # therefore caller input, and this step holds a base-repository
+          # token that can write to any pull request. Numeric is not enough:
+          # a number naming someone else's pull request is still numeric.
+          #
+          # `workflow_run.head_sha` is event metadata, not artifact content,
+          # so it is the one value here the caller cannot choose. Requiring
+          # the named pull request to be the one currently at that head binds
+          # the write to the pull request that triggered this run.
+          claimed_head="$(gh api "repos/${OWNER}/${REPO_NAME}/pulls/${pr}" \
+            --jq '.head.sha' 2>/dev/null || true)"
+          if [ "$claimed_head" != "$HEAD_SHA" ]; then
+            echo "refusing to post: PR #${pr} is at '${claimed_head:-unknown}', not ${HEAD_SHA}"
+            exit 0
+          fi
+          python3 scripts/review_bot_ack.py \
+            --owner "$OWNER" \
+            --repo "$REPO_NAME" \
+            --pr "$pr" \
+            --post-summary-file verdict/summary.md
 
   # The other half of the rule above.
   #
