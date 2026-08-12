@@ -48,7 +48,7 @@ _FINALIZATION_TOTAL_TIMEOUT = 30.0
 _FINALIZATION_POLL_INTERVAL = 0.05
 
 
-def _wait_for_finalization(run_dir: Path) -> None:
+def _wait_for_finalization(project_dir: Path) -> None:
     """Bounded wait for the orchestrator to finish finalization.
 
     Two phases, both bounded by _FINALIZATION_TOTAL_TIMEOUT:
@@ -59,8 +59,9 @@ def _wait_for_finalization(run_dir: Path) -> None:
     behaviour (which may SIGKILL a still-finalizing orchestrator) — no
     worse than today, and strictly bounded.
     """
-    finalizing = Path(run_dir) / ".finalizing"
-    finalized = Path(run_dir) / ".finalized"
+    signals_dir = Path(project_dir) / ".sdd" / "runtime"
+    finalizing = signals_dir / ".finalizing"
+    finalized = signals_dir / ".finalized"
     deadline = time.monotonic() + _FINALIZATION_TOTAL_TIMEOUT
 
     # Phase 1: wait for finalization to start
@@ -502,7 +503,7 @@ def _process_group_of(pid: int) -> int:
         return pid
 
 
-def _stop_demo_processes(*, project_dir: Path | None = None) -> None:
+def _stop_demo_processes(project_dir: Path) -> None:
     """Reap the demo server, spawner, watchdog and their child processes.
 
     Each tracked process is launched in its own session
@@ -516,9 +517,6 @@ def _stop_demo_processes(*, project_dir: Path | None = None) -> None:
         project_dir: Demo project root whose .sdd/runtime/ holds PID files.
     """
     from bernstein.core.config.platform_compat import process_alive, reap_process_group
-
-    if project_dir is None:
-        return
 
     # Wait for the orchestrator to finish writing its run record before we
     # tear down its process group. Bounded; on timeout we proceed anyway.

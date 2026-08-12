@@ -2721,6 +2721,17 @@ class Orchestrator:
                 trigger_path,
             )
 
+    def _finalization_marker(self, name: str) -> Path:
+        """Return the path of a finalization sentinel, creating its directory.
+
+        Under ``.sdd/runtime/`` with the rest of the signal files rather than
+        at the project root: these are runtime state, and the root is the
+        operator's tracked working copy.
+        """
+        signals_dir = self._workdir / ".sdd" / "runtime"
+        signals_dir.mkdir(parents=True, exist_ok=True)
+        return signals_dir / name
+
     def _mark_finalization_started(self) -> None:
         """Write the entry sentinel for demo teardown.
 
@@ -2730,7 +2741,7 @@ class Orchestrator:
         from "crashed" — all three present as "no completion marker exists."
         """
         try:
-            (self._workdir / ".finalizing").touch()
+            self._finalization_marker(".finalizing").touch()
         except OSError as exc:
             logger.warning("failed to write .finalizing marker: %s", exc)
 
@@ -2742,7 +2753,7 @@ class Orchestrator:
         silently" — that is what makes it safe to wait on.
         """
         try:
-            (self._workdir / ".finalized").write_text(json.dumps({"ts": time.time()}))
+            self._finalization_marker(".finalized").write_text(json.dumps({"ts": time.time()}))
         except OSError as exc:
             logger.warning("failed to write .finalized marker: %s", exc)
 

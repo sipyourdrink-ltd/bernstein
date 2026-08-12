@@ -212,7 +212,7 @@ def test_stop_demo_processes_reaps_process_group(tmp_path):
     )
     (runtime / "server.pid").write_text(str(proc.pid))
     try:
-        run_confirm._stop_demo_processes(project_dir=tmp_path)
+        run_confirm._stop_demo_processes(tmp_path)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline and proc.poll() is None:
             time.sleep(0.1)
@@ -660,7 +660,7 @@ def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
         PROJECT_DIR = Path({str(project_dir)!r})
 
         # Entry marker: finalization has started.
-        (PROJECT_DIR / ".finalizing").touch()
+        (PROJECT_DIR / ".sdd" / "runtime" / ".finalizing").touch()
 
         # Block until the test signals us to proceed. This is the
         # fail-by-construction hinge: the child cannot write the
@@ -673,7 +673,7 @@ def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
         # Simulate finalization completing
         (PROJECT_DIR / "spine.sealed").write_text("sealed")
         (PROJECT_DIR / "run.receipt").write_text("signed")
-        (PROJECT_DIR / ".finalized").write_text("done")
+        (PROJECT_DIR / ".sdd" / "runtime" / ".finalized").write_text("done")
 
         # Idle until reaped
         time.sleep(60)
@@ -690,7 +690,7 @@ def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
     (runtime_dir / "spawner.pid").write_text(str(proc.pid))
 
     # Wait for child to write the entry marker (proves it's running)
-    while not (project_dir / ".finalizing").exists():
+    while not (runtime_dir / ".finalizing").exists():
         if proc.poll() is not None:
             stdout, stderr = proc.communicate()
             pytest.fail(f"child exited before writing .finalizing\\nSTDOUT:\\n{stdout}\\nSTDERR:\\n{stderr}")
@@ -701,7 +701,7 @@ def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
 
     def teardown():
         try:
-            run_confirm._stop_demo_processes(project_dir=project_dir)
+            run_confirm._stop_demo_processes(project_dir)
         finally:
             teardown_done.set()
 
@@ -724,7 +724,7 @@ def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
 
     # These fail on current teardown (child killed before .proceed)
     # and pass after the fix (teardown waited for .finalized).
-    assert (project_dir / ".finalized").exists(), (
+    assert (runtime_dir / ".finalized").exists(), (
         "finalization did not complete before teardown — "
         "teardown killed the orchestrator mid-finalization"
     )
