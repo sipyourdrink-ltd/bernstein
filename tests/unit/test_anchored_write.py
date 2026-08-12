@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import errno
 import os
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -27,9 +27,6 @@ from bernstein.core.persistence.anchored_write import (
     open_anchored_write,
     rotate_anchored,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 pytestmark = pytest.mark.ci
 
@@ -403,3 +400,100 @@ def test_degraded_open_follows_a_linked_parent(tmp_path: Path, monkeypatch: pyte
     os.close(fd)
 
     assert (outside / "usage.jsonl").exists()
+
+
+# --- what O_NOFOLLOW does not cover ------------------------------------------
+
+
+def test_capability_predicate_requires_o_directory() -> None:
+    """A walk that cannot say "directory" is not a walk over directories.
+
+    Without `O_DIRECTORY` a component that turned out to be a regular file
+    would be opened and handed on as the next parent, so the flag belongs in
+    the predicate next to the two that were already there.
+    """
+    every_capability = (
+        os.open in os.supports_dir_fd
+        and os.mkdir in os.supports_dir_fd
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+    )
+    assert ANCHORED_WRITE_SUPPORTED is every_capability
+
+
+@needs_anchoring
+def test_walk_refuses_a_regular_file_where_a_directory_belongs(tmp_path: Path) -> None:
+    (tmp_path / "a").write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(OSError) as excinfo:
+        fd = open_anchored_write(
+            AnchoredDir(root=tmp_path, parts=("a",)),
+            "f.jsonl",
+            flags=os.O_WRONLY | os.O_CREAT,
+        )
+        os.close(fd)
+
+    assert excinfo.value.errno == errno.ENOTDIR
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs mkfifo")
+@needs_anchoring
+def test_write_refuses_a_fifo_instead_of_blocking_on_it(tmp_path: Path) -> None:
+    """A FIFO is not a symlink, so `O_NOFOLLOW` lets it through.
+
+    Reader-less, the non-blocking open fails outright (`ENXIO`); with a reader
+    attached it opens and the `fstat` guard is what turns it away. Both are the
+    same requirement seen from two sides: a worker must not park on a name an
+    attacker chose.
+    """
+    fifo = tmp_path / "metrics.jsonl"
+    os.mkfifo(fifo)
+    target = AnchoredDir(root=tmp_path)
+
+    with pytest.raises(OSError) as excinfo:
+        fd = open_anchored_write(target, "metrics.jsonl", flags=os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+        os.close(fd)
+    assert excinfo.value.errno == errno.ENXIO
+
+    reader_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        with pytest.raises(OSError) as excinfo:
+            fd = open_anchored_write(target, "metrics.jsonl", flags=os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+            os.close(fd)
+        assert excinfo.value.errno == errno.EPERM
+    finally:
+        os.close(reader_fd)
+
+
+def test_ordinary_write_still_returns_a_blocking_descriptor(tmp_path: Path) -> None:
+    """The non-blocking open is a probe, not the mode the caller is handed."""
+    fd = open_anchored_write(AnchoredDir(root=tmp_path), "m.jsonl", flags=os.O_WRONLY | os.O_CREAT)
+    try:
+        assert os.get_blocking(fd) is True
+    finally:
+        os.close(fd)
+
+
+# --- the anchor is a directory, not a directory name -------------------------
+
+
+def test_relative_root_is_pinned_at_construction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`AnchoredDir` is built once and walked later, possibly elsewhere.
+
+    Deferring the walk is the design; deferring resolution of the anchor too
+    would mean a value built under one working directory and flushed under
+    another wrote into a different tree with no error to show for it.
+    """
+    (tmp_path / "here").mkdir()
+    (tmp_path / "elsewhere" / "here").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    target = AnchoredDir(root=Path("here"))
+    assert target.root == tmp_path / "here"
+
+    monkeypatch.chdir(tmp_path / "elsewhere")
+    fd = open_anchored_write(target, "m.jsonl", flags=os.O_WRONLY | os.O_CREAT)
+    os.close(fd)
+
+    assert (tmp_path / "here" / "m.jsonl").exists()
+    assert not (tmp_path / "elsewhere" / "here" / "m.jsonl").exists()

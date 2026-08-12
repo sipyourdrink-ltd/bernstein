@@ -39,6 +39,7 @@ the gap itself.
 from __future__ import annotations
 
 import contextlib
+import errno
 import logging
 import os
 import stat
@@ -64,12 +65,18 @@ __all__ = [
 
 
 # Every capability is required, not just ``dir_fd``.  The walk refuses a link
-# only because ``O_NOFOLLOW`` is among its flags, and it creates directories
-# only because ``os.mkdir`` accepts ``dir_fd``; selecting on a subset would, on
-# a platform offering one without the others, take the branch that cannot
-# refuse anything.  Mirrors ``ANCHORED_OPEN_SUPPORTED`` in ``anchored_read``.
+# only because ``O_NOFOLLOW`` is among its flags, it creates directories only
+# because ``os.mkdir`` accepts ``dir_fd``, and it stays a walk over directories
+# only because ``O_DIRECTORY`` is there to say so -- without it a component that
+# turned out to be a regular file would be opened as the next parent.  Selecting
+# on a subset would, on a platform offering one without the others, take the
+# branch that cannot refuse anything.  Mirrors ``ANCHORED_OPEN_SUPPORTED`` in
+# ``anchored_read``.
 ANCHORED_WRITE_SUPPORTED: bool = (
-    os.open in os.supports_dir_fd and os.mkdir in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")
+    os.open in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+    and hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
 )
 
 # Rotation needs three more calls to accept a descriptor, and its own predicate
@@ -112,7 +119,13 @@ class AnchoredDir:
 
     Attributes:
         root: Trusted anchor.  Opened without ``O_NOFOLLOW`` -- a symlinked
-            root is operator configuration, not something to refuse.
+            root is operator configuration, not something to refuse.  Made
+            absolute at construction: deferring the walk is the whole design,
+            and a relative root would defer resolution of the anchor too, so a
+            value built under one working directory and flushed under another
+            would walk a different tree than the caller named.  ``absolute()``
+            rather than ``resolve()`` -- the former fixes the anchor, the
+            latter would also follow the link the docstring above allows.
         parts: Component names below *root*, outermost first.  Each is refused
             if it turns out to be a link.
     """
@@ -121,8 +134,10 @@ class AnchoredDir:
     parts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Refuse non-component parts at construction rather than at the write."""
+        """Refuse non-component parts, and pin the anchor to one directory."""
         _validate_components(self.parts)
+        if not self.root.is_absolute():
+            object.__setattr__(self, "root", self.root.absolute())
 
     @property
     def path(self) -> Path:
@@ -218,7 +233,8 @@ def open_anchored_write(directory: AnchoredDir, name: str, *, flags: int) -> int
         ValueError: If *name* is not a single component name.
         OSError: As :func:`os.open` does.  ``ELOOP`` (or ``ENOTDIR`` for an
             intermediate component on some platforms) means one was a symlink
-            and the open refused to follow it.
+            and the open refused to follow it.  ``EPERM`` means *name* existed
+            and was not a regular file.
 
     Note:
         Without ``ANCHORED_WRITE_SUPPORTED`` the walk is gone but the flag on
@@ -233,14 +249,39 @@ def open_anchored_write(directory: AnchoredDir, name: str, *, flags: int) -> int
     nofollow = getattr(os, "O_NOFOLLOW", 0)
 
     if not ANCHORED_WRITE_SUPPORTED:
-        return os.open(directory.path / name, flags | nofollow, 0o644)
+        return _open_regular(directory.path / name, flags | nofollow)
 
     parent_fd = _walk_to_dir_fd(directory)
     try:
-        return os.open(name, flags | nofollow, 0o644, dir_fd=parent_fd)
+        return _open_regular(name, flags | nofollow, dir_fd=parent_fd)
     finally:
         with contextlib.suppress(OSError):
             os.close(parent_fd)
+
+
+def _open_regular(target: str | Path, flags: int, *, dir_fd: int | None = None) -> int:
+    """Open *target* for writing, refusing anything that is not a regular file.
+
+    ``O_NOFOLLOW`` answers for symlinks and for nothing else.  A FIFO sitting
+    where a log belongs is not a link, and ``O_WRONLY`` on one blocks until
+    some reader turns up -- on a worker thread that is a hang rather than an
+    error, and nothing downstream gets the chance to reject it.  So the open is
+    non-blocking, the descriptor is stat'd through itself rather than by name
+    again, and the flag comes off once the file is known to be an ordinary one.
+    """
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(target, flags | nonblock, 0o644, dir_fd=dir_fd)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            msg = f"refusing to write through a non-regular file: {target}"
+            raise OSError(errno.EPERM, msg)
+        if nonblock:
+            os.set_blocking(fd, True)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+        raise
+    return fd
 
 
 def _walk_to_dir_fd(directory: AnchoredDir) -> int:
