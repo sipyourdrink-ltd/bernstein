@@ -8,6 +8,7 @@ naming the artifact, and the progress vector cannot be inflated by posting.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,39 @@ from bernstein.core.evidence.run_artifacts import (
 )
 
 _KEY = b"artifact-test-hmac-key-0123456789"
+
+
+def _sarif_result(*, start_line: int = 8, snippet: str = "eval(user_input)") -> dict[str, object]:
+    return {
+        "ruleId": "PY-TAINT-001",
+        "message": {"text": "Untrusted input reaches eval"},
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": "./src/app.py"},
+                    "region": {
+                        "startLine": start_line,
+                        "endLine": start_line,
+                        "startColumn": 5,
+                        "endColumn": 21,
+                        "snippet": {"text": snippet},
+                    },
+                }
+            }
+        ],
+    }
+
+
+def _finding(result: dict[str, object] | None = None, **overrides: str) -> ArtifactPayload:
+    provenance = {
+        "tool": "semgrep",
+        "tool_version": "1.131.0",
+        "pinned_ruleset_or_feed_digest": "sha256:" + "a" * 64,
+        "invocation_argv_hash": "sha256:" + "b" * 64,
+        "target": "git:0123456789abcdef",
+    }
+    provenance.update(overrides)
+    return ArtifactPayload.finding(result or _sarif_result(), **provenance)
 
 
 def _sdd(tmp_path: Path) -> Path:
@@ -50,6 +84,73 @@ class TestPayloadValidation:
     def test_report_canonical_bytes_are_stable(self) -> None:
         p = ArtifactPayload.report("# Title\nbody")
         assert p.canonical_bytes() == b'{"body":"# Title\\nbody","type":"report"}'
+
+
+class TestFindingPayload:
+    def test_blank_lines_above_do_not_change_finding_address(self) -> None:
+        before = _finding(_sarif_result(start_line=8)).to_content_dict()
+        after = _finding(_sarif_result(start_line=12)).to_content_dict()
+        assert before["address"] == after["address"]
+
+    def test_different_snippets_have_different_addresses(self) -> None:
+        first = _finding(_sarif_result(snippet="eval(user_input)")).to_content_dict()
+        second = _finding(_sarif_result(snippet="exec(user_input)")).to_content_dict()
+        assert first["address"] != second["address"]
+
+    @pytest.mark.parametrize(
+        ("field", "changed"),
+        [
+            ("tool", "codeql"),
+            ("tool_version", "2.20.0"),
+            ("pinned_ruleset_or_feed_digest", "sha256:" + "c" * 64),
+            ("invocation_argv_hash", "sha256:" + "d" * 64),
+            ("target", "git:fedcba9876543210"),
+        ],
+    )
+    def test_every_provenance_field_is_in_address_preimage(self, field: str, changed: str) -> None:
+        baseline = _finding().to_content_dict()
+        modified = _finding(**{field: changed}).to_content_dict()
+        assert baseline["address"] != modified["address"]
+
+    def test_malformed_sarif_names_missing_field(self) -> None:
+        malformed = _sarif_result()
+        del malformed["locations"]
+        with pytest.raises(ArtifactValidationError, match=r"result\.locations\[0\]"):
+            _finding(malformed)
+
+    def test_finding_roundtrip_verifies(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="finding",
+            payload=_finding(),
+            actor="scanner",
+            hmac_key=_KEY,
+        )
+        result = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(result) == 1
+        assert result[0].ok, result[0].reason
+
+    def test_verify_rejects_recorded_address_mismatch(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        forged = _finding().to_content_dict()
+        forged["address"] = "sha256:" + "0" * 64
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="finding",
+            payload=ArtifactPayload(
+                artifact_type="finding",
+                finding_json=json.dumps(forged, sort_keys=True, separators=(",", ":")),
+            ),
+            actor="scanner",
+            hmac_key=_KEY,
+        )
+        result = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(result) == 1
+        assert not result[0].ok
+        assert "does not match recomputed address" in result[0].reason
 
 
 class TestPostRoundtrip:
