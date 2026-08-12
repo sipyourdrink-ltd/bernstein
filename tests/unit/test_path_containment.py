@@ -39,7 +39,9 @@ from bernstein.core.security.path_containment import (
     PathContainmentError,
     PathTooLongError,
     contained_path,
+    contained_subpath,
     validate_path_segment,
+    validate_relative_path,
 )
 
 #: Identifiers that must never be accepted as a single path segment.
@@ -1177,3 +1179,129 @@ def test_shutdown_signal_path_refuses_a_workdir_that_is_not_textual() -> None:
     for hostile in (123, ["/tmp"], {"workdir": "/tmp"}, None, b"/tmp"):
         with pytest.raises(ShutdownSignalPathError):
             shutdown_signal_path(hostile)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Multi-segment relative candidates (``contained_subpath``)
+# ---------------------------------------------------------------------------
+
+#: Relative-path candidates that must never resolve to a usable path.
+HOSTILE_RELPATHS = [
+    "/etc/passwd",
+    "/",
+    "../x",
+    "../../etc/passwd",
+    "src/../../etc/passwd",
+    "a/../../b",
+    "..",
+    ".",
+    "",
+    "sub/../..",
+    "./",
+    "//",
+    "nul\x00byte.py",
+    "src/nul\x00byte.py",
+    "C:/Windows/system32",
+    "C:\\Windows\\system32",
+    "\\\\server\\share\\x",
+    "..\\..\\windows",
+]
+
+
+@pytest.mark.parametrize("bad", HOSTILE_RELPATHS)
+def test_validate_relative_path_refuses_hostile_candidates(bad: str) -> None:
+    """Absolute paths, parent references, and NUL bytes are refused."""
+    with pytest.raises(PathContainmentError):
+        validate_relative_path(bad, label="owned file")
+
+
+@pytest.mark.parametrize(
+    "good",
+    [
+        "main.py",
+        "src/parser.py",
+        "src/bernstein/core/quality/fast_path.py",
+        "a/b/c/d.txt",
+        "dir/.gitkeep",
+        # A leading "./" is an ordinary spelling of a relative path and
+        # normalisation drops it, so it must not be refused.
+        "./src/parser.py",
+        "src/./parser.py",
+    ],
+)
+def test_validate_relative_path_accepts_ordinary_relative_paths(good: str) -> None:
+    """An ordinary project-relative path passes through unchanged."""
+    assert validate_relative_path(good) == good
+
+
+def test_contained_subpath_accepts_a_dot_slash_prefix(tmp_path: Path) -> None:
+    """``./src/x.py`` resolves to the same contained path as ``src/x.py``."""
+    target = tmp_path / "src" / "mod.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("x", encoding="utf-8")
+
+    assert contained_subpath(tmp_path, "./src/mod.py") == target.resolve()
+    assert contained_subpath(tmp_path, "./src/mod.py") == contained_subpath(tmp_path, "src/mod.py")
+
+
+@pytest.mark.parametrize("bad", HOSTILE_RELPATHS)
+def test_contained_subpath_refuses_hostile_candidates(tmp_path: Path, bad: str) -> None:
+    """No hostile candidate ever produces a path outside the base."""
+    with pytest.raises(PathContainmentError):
+        contained_subpath(tmp_path, bad, label="owned file")
+
+
+def test_contained_subpath_joins_multi_segment_under_base(tmp_path: Path) -> None:
+    """A nested relative path resolves under the base and is returned."""
+    target = tmp_path / "src" / "pkg" / "mod.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("x", encoding="utf-8")
+
+    assert contained_subpath(tmp_path, "src/pkg/mod.py") == target.resolve()
+
+
+def test_contained_subpath_refuses_symlink_escape(tmp_path: Path) -> None:
+    """A well-named child that symlinks out of the base is refused.
+
+    ``resolve()``/``realpath`` follows links, so the allowlist alone is not
+    enough here: every segment is an ordinary name, yet following the link
+    leaves the tree.
+    """
+    base = tmp_path / "base"
+    (base / "src").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("secret", encoding="utf-8")
+    _symlink_or_skip(base / "src" / "linked", outside, directory=True)
+
+    with pytest.raises(PathContainmentError):
+        contained_subpath(base, "src/linked/secret.py", label="owned file")
+
+
+def test_contained_subpath_allows_symlink_inside_base(tmp_path: Path) -> None:
+    """A symlink that stays inside the base is fine - containment, not a ban."""
+    base = tmp_path / "base"
+    (base / "real").mkdir(parents=True)
+    (base / "real" / "mod.py").write_text("x", encoding="utf-8")
+    _symlink_or_skip(base / "link", base / "real")
+
+    assert contained_subpath(base, "link/mod.py") == (base / "real" / "mod.py").resolve()
+
+
+def test_contained_subpath_refuses_sibling_prefix(tmp_path: Path) -> None:
+    """A sibling sharing the base's name prefix must not pass containment."""
+    base = tmp_path / "base"
+    base.mkdir()
+    sibling = tmp_path / "base-evil"
+    sibling.mkdir()
+    _symlink_or_skip(base / "link", sibling)
+
+    with pytest.raises(PathContainmentError):
+        contained_subpath(base, "link/file.py")
+
+
+def test_contained_subpath_refuses_candidate_over_path_max(tmp_path: Path) -> None:
+    """An over-long composed path is a capacity failure, not a containment one."""
+    deep = "/".join(["a" * 200] * 30)
+    with pytest.raises(PathTooLongError):
+        contained_subpath(tmp_path, deep, label="owned file")

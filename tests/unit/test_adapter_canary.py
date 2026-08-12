@@ -174,11 +174,25 @@ class TestCanaryMatrix:
 class TestRunCanaryTarget:
     """Probe one adapter: version capture + conformance verdict."""
 
-    def test_missing_binary_is_skip(self, tmp_path: Path) -> None:
+    def test_missing_binary_is_absent(self, tmp_path: Path) -> None:
+        """Issue #3562: a missing binary is gated, not skipped.
+
+        An uninstalled binary is a runner-environment fact, not an upstream
+        conformance signal, so :func:`run_canary_target` returns
+        ``verdict="absent"`` rather than ``"skip"`` (a ``"skip"`` would
+        accumulate toward a skip-streak issue, which would page operators
+        about a missing binary every SKIP_ISSUE_THRESHOLD nights -- noise).
+        ``skip_reason`` is deliberately unset: the absent path is its own
+        verdict and has no reason classification.
+        """
         target = CanaryTarget(adapter="agy", binary="agy", model="gemini-3.1-flash-lite")
         outcome = run_canary_target(target, which=lambda _n: None, contracts_dir=tmp_path)
-        assert outcome.verdict == "skip"
+        assert outcome.verdict == "absent"
         assert outcome.failures == ()
+        assert outcome.skip_reason is None
+        # The transcript still carries the gated reason so the receipt is
+        # reproducible on a runner that does ship the binary.
+        assert any("not on PATH" in line for line in outcome.transcript)
 
     def test_conforming_binary_passes(self, tmp_path: Path) -> None:
         bin_dir = tmp_path / "bin"
@@ -425,7 +439,15 @@ class TestSkipStreakEscalation:
         state: dict = {}
         for _ in range(SKIP_ISSUE_THRESHOLD):
             state, _ = apply_canary_outcome(state, self._skip(reason="probe inconclusive (all_absent)"))
-        state, should_open = apply_canary_outcome(state, self._skip(reason="binary not on PATH"))
+        # A new skip *reason* restarts the streak. The other valid skip
+        # reason (``"conformance skip"``) is the catch-all emitted by
+        # ``run_canary_target`` when the binary is on PATH but the
+        # in-process contract check produces no detail string; the
+        # previously-tested ``"binary not on PATH"`` reason no longer
+        # produces a ``skip`` verdict at all (it is now ``absent`` -- see
+        # :meth:`TestRunCanaryTarget.test_missing_binary_is_absent`), so it
+        # does not appear here.
+        state, should_open = apply_canary_outcome(state, self._skip(reason="conformance skip"))
         assert should_open is False
         assert state["aider"]["consecutive_skips"] == 1
 
@@ -455,7 +477,7 @@ class TestSkipStreakEscalation:
 
     def test_skip_fingerprint_depends_on_adapter_and_reason(self) -> None:
         a = skip_fingerprint(self._skip(adapter="aider", reason="probe inconclusive (all_absent)"))
-        b = skip_fingerprint(self._skip(adapter="aider", reason="binary not on PATH"))
+        b = skip_fingerprint(self._skip(adapter="aider", reason="conformance skip"))
         c = skip_fingerprint(self._skip(adapter="agy", reason="probe inconclusive (all_absent)"))
         assert len({a, b, c}) == 3
 
@@ -497,6 +519,110 @@ class TestSkipStreakEscalation:
         assert "skip" in opened[0]["title"].lower()
         # The receipt still records the degraded probe.
         assert all(o.verdict == "skip" for r in results for o in r.outcomes)
+
+
+# ---------------------------------------------------------------------------
+# Absent-binary gate (#3562)
+# ---------------------------------------------------------------------------
+
+
+class TestAbsentBinaryGate:
+    """Issue #3562: a missing binary is gated, not skipped.
+
+    An uninstalled binary is a runner-environment fact, not an upstream
+    conformance signal, so :func:`run_canary_target` emits
+    ``verdict="absent"`` and :func:`apply_canary_outcome` must leave the
+    per-adapter state untouched -- it must never count toward the failure
+    or skip streaks, never file an issue, and never perturb a prior
+    streak that is already in progress for a different reason.
+    """
+
+    def _absent(self, *, adapter: str = "aider") -> CanaryOutcome:
+        return _outcome(adapter=adapter, verdict="absent", failures=(), version=None)
+
+    def test_absent_never_opens_issue(self) -> None:
+        # A missing binary on a runner that has never shipped it must not
+        # page operators after SKIP_ISSUE_THRESHOLD nights (the previous
+        # behavior, before #3562).
+        state: dict = {}
+        for _ in range(SKIP_ISSUE_THRESHOLD * 4):
+            state, should_open = apply_canary_outcome(state, self._absent())
+            assert should_open is False
+
+    def test_absent_does_not_register_state_entry(self) -> None:
+        """An absent adapter is invisible to apply_canary_outcome.
+
+        The state mapping must remain empty for an adapter that has only
+        ever been ``absent`` -- it has produced no signal worth persisting,
+        so a later transition to ``fail`` or ``skip`` starts from a clean
+        slate (just like an adapter the canary has never run for).
+        """
+        state, _ = apply_canary_outcome({}, self._absent())
+        assert state == {}
+
+    def test_absent_does_not_reset_prior_skip_streak(self) -> None:
+        """An absent outcome is not a pass: it must not reset counters.
+
+        A ``pass`` resets every counter because a green run is positive
+        evidence that supersedes prior degradation. An ``absent`` outcome
+        is no evidence at all (the probe did not run), so it must neither
+        reset an in-progress skip streak nor reset an in-progress failure
+        streak. The next real ``pass`` is the only thing that resets.
+        """
+        state: dict = {}
+        for _ in range(SKIP_ISSUE_THRESHOLD - 1):
+            state, _ = apply_canary_outcome(state, _outcome(adapter="aider", verdict="skip", failures=(), version=None))
+        assert state["aider"]["consecutive_skips"] == SKIP_ISSUE_THRESHOLD - 1
+        # Two absent runs in a row -- the skip streak must be unchanged.
+        state, _ = apply_canary_outcome(state, self._absent())
+        state, _ = apply_canary_outcome(state, self._absent())
+        assert state["aider"]["consecutive_skips"] == SKIP_ISSUE_THRESHOLD - 1
+
+    def test_absent_does_not_reset_prior_fail_streak(self) -> None:
+        """Symmetric to the skip-streak case for the failure counter."""
+        state, _ = apply_canary_outcome({}, _outcome())  # one fail for agy
+        assert state["agy"]["consecutive_failures"] == 1
+        state, _ = apply_canary_outcome(state, self._absent(adapter="agy"))
+        assert state["agy"]["consecutive_failures"] == 1
+
+    def test_absent_after_full_skip_streak_does_not_open_issue(self) -> None:
+        """The streak that already escalated is the one that escalates.
+
+        After a full skip streak has already opened its issue, a switch
+        to absent (the binary was uninstalled on the runner that night)
+        must not re-open or escalate -- and the already-reported skip
+        fingerprint stays reported, so a switch back to skip with the
+        same reason does not re-open either.
+        """
+        state: dict = {}
+        for _ in range(SKIP_ISSUE_THRESHOLD):
+            state, _ = apply_canary_outcome(
+                state,
+                _outcome(
+                    adapter="aider",
+                    verdict="skip",
+                    failures=(),
+                    version=None,
+                    skip_reason="probe inconclusive (all_absent)",
+                ),
+            )
+        # Runner uninstalls aider: nightly absent outcomes.
+        for _ in range(SKIP_ISSUE_THRESHOLD * 2):
+            state, should_open = apply_canary_outcome(state, self._absent())
+            assert should_open is False
+        # Skip fingerprint already reported, so a return to skip does not
+        # re-open either.
+        state, should_open = apply_canary_outcome(
+            state,
+            _outcome(
+                adapter="aider",
+                verdict="skip",
+                failures=(),
+                version=None,
+                skip_reason="probe inconclusive (all_absent)",
+            ),
+        )
+        assert should_open is False
 
 
 # ---------------------------------------------------------------------------

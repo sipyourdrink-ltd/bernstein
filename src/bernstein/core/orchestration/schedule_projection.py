@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
 #: Schema-rev marker baked into the projection. Bumping the rev changes
 #: every projection_hash and is therefore the single source of truth for
@@ -195,6 +195,44 @@ def _node_to_dict(node: TaskNode) -> dict[str, Any]:
         "depends_on": sorted(node.depends_on),
         "metadata": sorted([list(item) for item in node.metadata]),
     }
+
+
+def canonical_graph_bytes(nodes: Iterable[TaskNode]) -> bytes:
+    """Encode a task-graph node set into the projection's canonical bytes.
+
+    This is the same encoding :func:`project_schedule_fire` applies to its
+    own ``nodes`` list - :func:`_canonical_nodes` for order, then
+    :func:`_node_to_dict` for field layout, then ``json.dumps`` with
+    sorted keys and no separator padding - lifted so that any producer of
+    a task graph digests it through one encoder rather than inventing a
+    second one. The ``rev`` marker rides in the payload, so bumping
+    :data:`SCHEDULE_PROJECTION_REV` moves every digest in lockstep.
+
+    The projection body itself keeps its own richer payload (schedule id,
+    fire time, state digest); this helper covers the graph-only case where
+    the nodes *are* the whole identity.
+
+    Args:
+        nodes: Task nodes in any order.
+
+    Returns:
+        The exact bytes to hash, so a verifier can re-check a digest
+        without recomputing the node set.
+    """
+    canonical_obj: dict[str, Any] = {
+        "rev": SCHEDULE_PROJECTION_REV,
+        "nodes": [_node_to_dict(n) for n in _canonical_nodes(list(nodes))],
+    }
+    return json.dumps(canonical_obj, sort_keys=True, separators=(",", ":")).encode()
+
+
+def canonical_graph_digest(nodes: Iterable[TaskNode]) -> str:
+    """Return the SHA-256 over :func:`canonical_graph_bytes` for *nodes*.
+
+    Order-independent by construction: two callers that iterate the same
+    graph differently land on the same hex digest.
+    """
+    return hashlib.sha256(canonical_graph_bytes(nodes)).hexdigest()
 
 
 def project_schedule_fire(

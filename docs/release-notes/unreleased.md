@@ -25,6 +25,28 @@ landed since the newest one.
   resolve. An input the filesystem cannot represent, such as an embedded NUL,
   is reported as that error too rather than as a raw filesystem message.
   Refs #3080.
+- Paths built from caller-supplied strings are now asserted to stay under
+  their base directory. One shared helper,
+  `bernstein.core.security.path_containment.contained_subpath`, joins a
+  project-relative candidate onto a base and returns it only when
+  `realpath` keeps the result inside the resolved base; it is the
+  multi-component counterpart to the existing `contained_path`, which takes
+  single opaque identifiers. It is used in the fast-path `rename_symbol`
+  executor (each `owned_files` entry) and in the `/complete` auto-commit
+  hook (the `.sdd/worktrees/<session id>` working directory). A refused
+  entry is skipped and logged, matching how each of those functions already
+  handles an entry it cannot use, so one bad row does not end a run.
+- **Behaviour change:** the same rule is applied at the input boundary, so a
+  bad row does not reach a sink in the first place. `POST /tasks` and
+  `POST /tasks/self-create` now answer `422` when an `owned_files` entry is
+  absolute, carries a `..` component, or contains a NUL byte;
+  ordinary project-relative paths such as `src/parser.py` are unaffected.
+  The claim boundaries (`POST /tasks/{id}/claim`, `GET /tasks/next/{role}`,
+  `POST /tasks/claim-batch`) answer `422` when `claimed_by_session` is not a
+  single opaque identifier (`[A-Za-z0-9_.-]+`), which is the shape the
+  orchestrator already generates. Both layers are kept: the validator stops
+  new bad rows, the helper protects the sink from rows that already exist or
+  arrive by another route.
 
 ## Added
 
@@ -78,6 +100,16 @@ landed since the newest one.
 
 ## Fixed
 
+- `bernstein trace verify-projection` now authenticates the complete
+  `otel.projection` audit binding instead of accepting any projection whose
+  signature and journal-derived span ids verify (#3551). A verified result
+  requires one integrity-checked live or archived event matching the run id,
+  journal head, trace id, span count, and canonical projection digest.
+  Missing or unreadable evidence is `unverifiable` (exit `1`), while a valid
+  same-run audit chain that contradicts the projection is a verification
+  failure (exit `2`). Verification is load-only and does not create an audit
+  key or directory. Docs: `docs/observability/otel-span-projection.md`,
+  `docs/observability/otlp-export.md`.
 - The `deep-review` label did not start a review on a PR that was already open.
   `.github/workflows/bernstein-pr-review.yml` gates its `review` job on that
   label but did not list `labeled` as a trigger type, so adding the label to a

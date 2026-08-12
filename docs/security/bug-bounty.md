@@ -6,9 +6,14 @@ Full details of the Bernstein vulnerability disclosure process and researcher sa
 
 Bernstein orchestrates AI coding agents that run directly on a user's machine. The attack surface is meaningful: agents read/write files, execute CLI commands, and communicate via a local HTTP task server. We treat security seriously and recognize researchers who find real issues.
 
-Report a vulnerability by email to **forte@bernstein.run** (PGP key at
-`/.well-known/security-pgp.asc`), or open a private security advisory on
-GitHub: https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new
+Report a vulnerability by email to **forte@bernstein.run**, or open a private
+security advisory on GitHub:
+https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new
+
+The project publishes no PGP key, so email to that address is not
+end-to-end encrypted. Use the GitHub private advisory for anything whose
+contents matter before a fix ships - a working exploit, a credential, a
+customer-identifying detail. Email is fine for everything else.
 
 ---
 
@@ -136,22 +141,24 @@ Relevant code: `src/bernstein/core/communication/bulletin.py`
 
 ## Disclosure policy
 
-We target coordinated disclosure: fix ships first, then you may publish. Timeline:
+A first substantive response can take up to 90 days, and no fix date is
+promised - severity sets the order work happens in, not a deadline. Bernstein
+has one unpaid maintainer, and that is the whole reason.
 
-| Severity | Fix deadline | Disclosure after fix |
-|----------|-------------|----------------------|
-| Critical | 7 days | 7 days |
-| High | 14 days | 7 days |
-| Medium | 30 days | 14 days |
-| Low | 90 days | 30 days |
+You may disclose 90 days after your report, whether or not a fix has shipped,
+without asking. Earlier is fine if we agree on it.
 
-If we miss a deadline we communicate proactively and you retain the right to disclose with 7 days' notice.
+The terms that govern are in [`SECURITY.md`](../../SECURITY.md); this page is
+the sandbox guide.
 
 ---
 
-## Acknowledgments
+## Credit
 
-Researchers who discover and responsibly disclose valid vulnerabilities are listed in
-[`docs/security/security-acknowledgments.md`](security-acknowledgments.md).
+An advisory is published when a fix ships, crediting the reporter by the name,
+handle, or link they choose, and a CVE can be requested on it. The reporter is
+also named in the release notes of the release carrying the fix.
 
-We also issue CVEs for confirmed vulnerabilities of Medium severity and above.
+Credit lives on those two artefacts rather than in a separate roll of honour, so
+that it is produced by shipping the fix rather than by remembering to update a
+page.

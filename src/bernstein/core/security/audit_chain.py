@@ -468,6 +468,18 @@ EVENT_ADAPTER_CAPABILITY_REFUSAL = "adapter.capability_refusal"
 #: reap path ran and on which platform semantics it relied.
 EVENT_PROCESS_REAP_RECEIPT = "process.reap_receipt"
 
+#: Issue #3277 -- emitted whenever a supervisor detector decides an agent must
+#: be force-killed. The event records WHY the decision was taken: the stall
+#: reason, which detector fired, and the measured inputs (heartbeat age,
+#: identical-snapshot count, the threshold crossed) that were in scope at the
+#: moment the verdict was reached. It attests a verdict, never an outcome: the
+#: worker may still be alive when this is written. The companion
+#: ``process.reap_receipt`` event (joined on ``session_id``) attests that the
+#: stop was actually delivered, so an operator reconstructing a failure window
+#: can put "this detector saw these inputs and decided" next to "this mechanism
+#: delivered the stop" without guessing.
+EVENT_STALL_VERDICT = "stall.verdict"
+
 #: Issue #2366 -- emitted whenever a scoped dashboard token is issued or
 #: revoked. The event mirrors the signed registry row: the short token id,
 #: the token digest, the principal, the scope, and the grant kind -- never
@@ -4963,6 +4975,73 @@ def record_process_reap_receipt(
     )
 
 
+def record_stall_verdict(
+    *,
+    chain: AuditChainStore,
+    session_id: str,
+    reason: str,
+    detector: str,
+    actor: str = "heartbeat",
+    heartbeat_age_s: float | None = None,
+    identical_snapshot_count: int | None = None,
+    threshold: float | None = None,
+) -> AuditEvent:
+    """Append a ``stall.verdict`` event into *chain* (#3277).
+
+    Mirrors a supervisor decision to force-kill a worker into the audit
+    chain. The record carries the ``StallReason``, which detector fired,
+    and the measured inputs that were in scope when the verdict was
+    reached (heartbeat age, identical-snapshot count, and the threshold
+    that was crossed). Each detector records only the inputs it actually
+    measured; the fields it does not use are left ``None``.
+
+    The event attests a verdict, never an outcome: it is written before
+    the kill is issued, so the worker may still be alive when it lands.
+    The companion :data:`EVENT_PROCESS_REAP_RECEIPT` record -- joined on
+    ``session_id`` -- is what attests that the stop was actually
+    delivered. An operator reconstructing a failure window reads the
+    verdict to learn why a kill was decided and the reap receipt to learn
+    how the stop was delivered.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        session_id: Agent session whose kill was decided. Matches the
+            ``session_id`` carried by the session's reap receipt, which is
+            the join key between the verdict and the delivered stop.
+        reason: The stall reason, a :class:`StallReason` value (e.g.
+            ``"heartbeat_stale"``, ``"no_progress"``).
+        detector: Identifier of the detector that fired (e.g.
+            ``"heartbeat"``, ``"stall_simple"``, ``"stall_profiled"``).
+        actor: Recorded actor; defaults to ``"heartbeat"``.
+        heartbeat_age_s: Measured heartbeat age in seconds when the
+            verdict was reached, or ``None`` when the detector did not
+            measure it.
+        identical_snapshot_count: Number of identical progress snapshots
+            observed when the verdict was reached, or ``None`` when not
+            measured.
+        threshold: The kill threshold that was crossed (seconds or
+            snapshot count), or ``None`` when not applicable.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_STALL_VERDICT,
+        actor=actor,
+        resource_type="stall_verdict",
+        resource_id=session_id,
+        details={
+            "session_id": session_id,
+            "reason": reason,
+            "detector": detector,
+            "heartbeat_age_s": heartbeat_age_s,
+            "identical_snapshot_count": identical_snapshot_count,
+            "threshold": threshold,
+        },
+    )
+
+
 def record_task_suspension(
     *,
     chain: AuditChainStore,
@@ -8241,6 +8320,7 @@ __all__ = [
     "EVENT_SOVEREIGN_DRIFT",
     "EVENT_SPEC_REQUIREMENT_SET",
     "EVENT_SPIFFE_SVID_BINDING",
+    "EVENT_STALL_VERDICT",
     "EVENT_STEERING_RECEIPT",
     "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TASK_CLAIM_RECEIPT",
@@ -8377,6 +8457,7 @@ __all__ = [
     "record_sovereign_drift",
     "record_spec_requirement_set",
     "record_spiffe_svid_binding",
+    "record_stall_verdict",
     "record_steering_receipt",
     "record_subagent_delegation",
     "record_taint_decision",

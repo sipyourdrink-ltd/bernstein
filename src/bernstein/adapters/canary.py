@@ -184,11 +184,15 @@ class CanaryOutcome:
         model: Model pinned for the probe.
         goal: The pinned goal text.
         installed_version: Parsed ``--version`` token, or ``None``.
-        verdict: ``"pass"`` / ``"fail"`` / ``"skip"`` / ``"refuse"``. A
-            ``refuse`` verdict marks a below-security-floor version the canary
-            declines to certify (see :data:`refused_below_floor`); it never
-            enters the last-green projection and is not an upstream-regression
-            signal.
+        verdict: ``"pass"`` / ``"fail"`` / ``"skip"`` / ``"refuse"`` /
+            ``"absent"``. A ``refuse`` verdict marks a below-security-floor
+            version the canary declines to certify (see
+            :data:`refused_below_floor`); it never enters the last-green
+            projection and is not an upstream-regression signal. An
+            ``absent`` verdict (#3562) marks a target whose binary was not
+            on ``PATH`` at probe time; it is a runner-environment fact, not
+            an upstream signal, so it never enters the failure or skip
+            counters and never files an issue.
         failures: Conformance failure lines (empty unless ``fail`` /
             ``refuse``).
         transcript: Human-readable probe transcript; rides into the
@@ -335,6 +339,13 @@ def run_canary_target(
 
     binary_resolved = resolver(target.binary)
     if binary_resolved is None:
+        # Gate on binary presence (issue #3562): an uninstalled binary is a
+        # runner-environment fact, not an upstream conformance signal. We
+        # return ``verdict="absent"`` rather than the original ``"skip"`` so
+        # the outcome never reaches the failure or skip counters in
+        # :func:`apply_canary_outcome` -- and therefore never files a
+        # skip-streak issue -- when the only reason the probe could not
+        # run is that the binary is not installed on this host.
         transcript.append(f"{target.binary}: not on PATH")
         return CanaryOutcome(
             adapter=target.adapter,
@@ -342,9 +353,8 @@ def run_canary_target(
             model=target.model,
             goal=target.goal,
             installed_version=None,
-            verdict="skip",
+            verdict="absent",
             transcript=tuple(transcript),
-            skip_reason="binary not on PATH",
         )
 
     # Record which file was actually probed. A shadowed or wrong binary on
@@ -569,6 +579,10 @@ def apply_canary_outcome(
       any prior degraded or failing streak.
     * ``refuse`` (#2515) leaves the state untouched: a below-floor version
       is an operator-environment issue, not an upstream signal.
+    * ``absent`` (#3562) leaves the state untouched and never opens an
+      issue: an uninstalled binary is a runner-environment fact, not an
+      upstream signal, so it cannot be the cause of a regression or a
+      chronic unverified-streak.
     * ``fail`` counts consecutively *per failure fingerprint*: a failure
       that fingerprints differently from the previous one restarts the
       count at 1, so a churning upstream must fail the same way twice in a
@@ -594,6 +608,17 @@ def apply_canary_outcome(
         # A below-floor version is an operator-environment issue, not an
         # upstream regression, so it never counts toward any threshold. The
         # refusal is still sealed as a receipt by ``run_matrix``.
+        return new_state, False
+
+    if outcome.verdict == "absent":
+        # Issue #3562: a target whose binary was not on PATH at probe time
+        # is a runner-environment fact, not an upstream signal. It must
+        # never count toward any threshold (a runner that simply does not
+        # ship the binary is not a degraded canary) and must never file a
+        # skip-streak issue (the only reason it cannot probe is that the
+        # binary is uninstalled). The receipt still records the transcript,
+        # so the next runner that DOES ship the binary is checked against
+        # the same outcome shape.
         return new_state, False
 
     entry = new_state.setdefault(

@@ -29,9 +29,11 @@ semantic-convention attributes while keeping every span id journal-anchored
 
 Every span carries `bernstein.journal.entry_hash` (the exact journal row it
 projects), `bernstein.audit.anchor` (the first-entry projection anchor the
-trace id derives from), and `bernstein.run.id`. Completing the projection
-also appends an `otel.projection` event to the HMAC audit chain, binding the
-trace id, span count, and the SHA-256 of the signed canonical span set.
+trace id derives from), and `bernstein.run.id`. Writing the projection also
+attempts to append an `otel.projection` event to the HMAC audit chain. That
+event binds the run id, journal head, trace id, span count, and SHA-256 of
+the canonical projection payload. `--json` only prints the signed document
+and deliberately records no audit event.
 
 Exit codes: `0` written, `1` no event journal for the run, or bad input.
 
@@ -41,16 +43,28 @@ Exit codes: `0` written, `1` no event journal for the run, or bad input.
 bernstein trace verify-projection RUN_ID [--workdir DIR] [--projection PATH]
 ```
 
-Reloads `RUN_ID`'s journal, recomputes every span id from it, and checks the
-signature against the install identity. `--projection` overrides the
-expected file location (default `.sdd/runs/<run_id>/projection.otel.json`).
-A span whose id was altered, or whose journal entry hash is no longer
-present in the chain, is rejected.
+Reloads `RUN_ID`'s journal, recomputes every span id from it, checks the
+signature against the install identity, and verifies the projection's full
+binding against an authenticated `otel.projection` audit event. The binding
+includes the run id, journal head, trace id, span count, and canonical
+projection digest. Archived audit segments participate in verification.
+`--projection` overrides the expected file location (default
+`.sdd/runs/<run_id>/projection.otel.json`).
 
-Exit codes: `0` OK (span ids recompute from the journal, signature chains to
-the install identity), `1` bad input (no journal, or no projection file at
-the expected/given path), `2` verification failed (recomputed ids diverge,
-or the signature does not chain).
+Verification is read-only with respect to audit evidence: it loads the
+existing audit key and never creates an audit key, audit directory, or event.
+Consequently, output produced only with
+`trace project --json` is unverifiable unless a matching audit event already
+exists.
+
+Exit codes:
+
+- `0` verified: span ids and signature match the journal, and one
+  authenticated audit event matches all five binding fields.
+- `1` could not be evaluated: an input, audit key, audit directory, or
+  matching event is missing or unreadable, or audit-chain integrity fails.
+- `2` verification failed: recomputed ids or the signature diverge, or
+  authenticated evidence for the run contradicts the projection binding.
 
 ## Guarantees
 
@@ -79,6 +93,9 @@ for the live-streaming and per-span verification workflow.
 ## Source
 
 `src/bernstein/cli/commands/advanced_cmd.py` (`trace project` /
-`trace verify-projection`), `src/bernstein/core/observability/otel_projection.py`
-(span projection, signing, verification),
+`trace verify-projection`),
+`src/bernstein/cli/commands/_otel_projection_audit.py` (authenticated audit
+binding verification),
+`src/bernstein/core/observability/otel_projection.py` (span projection,
+signing, verification),
 `src/bernstein/core/replay/journal.py` (the event journal projected from).

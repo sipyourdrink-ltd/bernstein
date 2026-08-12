@@ -1427,13 +1427,15 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     help="Projection path (defaults to .sdd/runs/<run>/projection.otel.json).",
 )
 def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str | None) -> None:
-    """Recompute span ids from ``RUN_ID``'s journal and verify the signature.
+    """Verify ``RUN_ID``'s signed projection and authenticated audit binding.
 
     Rejects a span whose id was altered or whose journal entry hash is absent
-    from the chain, and confirms the signature chains to the install identity.
+    from the chain, confirms the install signature, and authenticates the full
+    projection digest against the ``otel.projection`` audit event.
 
-    Exit codes: 0 = OK, 1 = bad input (incl. a corrupted journal), 2 = verification failed.
+    Exit codes: 0 = OK, 1 = could not be evaluated, 2 = verification failed.
     """
+    from bernstein.cli.commands._otel_projection_audit import verify_and_render_projection
     from bernstein.cli.commands.credential_cmd import (
         _load_or_create_install_key,
         _signing_key_path,
@@ -1441,7 +1443,6 @@ def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str 
     from bernstein.core.observability.otel_projection import (
         ProjectionError,
         projection_from_dict,
-        verify_projection,
     )
     from bernstein.core.replay.journal import JournalParseError, load_events
 
@@ -1471,20 +1472,15 @@ def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str 
         raise SystemExit(1) from exc
 
     public_key = _load_or_create_install_key(_signing_key_path(root)).public_key()
-    result = verify_projection(projection, events, public_key)
-
-    console.print()
-    console.print(
-        f"[bold]OTel projection[/bold] run={sanitize_log(run_id)} "
-        f"trace={projection.trace_id[:16]} spans={len(projection.spans)}"
+    exit_code = verify_and_render_projection(
+        console,
+        root,
+        run_id=run_id,
+        projection=projection,
+        journal_events=events,
+        public_key=public_key,
     )
-    if result.ok:
-        console.print("[green]OK[/green] -- span ids recompute from the journal, signature chains to install identity.")
-        raise SystemExit(0)
-    console.print(f"[red]VERIFICATION FAILED[/red] -- {len(result.errors)} error(s):")
-    for err in result.errors:
-        console.print(f"  - {sanitize_log(err)}")
-    raise SystemExit(2)
+    raise SystemExit(exit_code)
 
 
 def _record_otel_projection_event(

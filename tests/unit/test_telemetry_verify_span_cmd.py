@@ -322,7 +322,7 @@ def test_verify_span_and_verify_projection_share_one_exit_code_convention(projec
     assert "2 = verification failed" in span_help
     assert "2 = verification failed" in projection_help
     assert "1 = could not be evaluated" in span_help
-    assert "1 = bad input" in projection_help
+    assert "1 = could not be evaluated" in projection_help
 
 
 # --------------------------------------------------------------------------- #

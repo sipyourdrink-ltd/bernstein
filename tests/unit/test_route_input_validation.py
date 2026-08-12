@@ -190,3 +190,54 @@ def test_login_valid_provider_passes_validation(client: TestClient, provider: st
     """
     resp = client.get("/auth/login", params={"provider": provider})
     assert resp.status_code != 422, resp.text
+
+
+# ---------------------------------------------------------------------------
+# claim routes - ``claimed_by_session`` is a strict opaque identifier
+# ---------------------------------------------------------------------------
+
+#: Session ids that must not be recorded on a task.  The value is later
+#: joined onto ``.sdd/worktrees`` to select a working directory, so it has
+#: to name a single directory entry and nothing else.
+BAD_SESSION_IDS = [
+    "../../etc",
+    "../sibling",
+    "a/../../b",
+    "sub/dir",
+    "/absolute",
+    "with space",
+    "..",
+    ".",
+]
+
+
+@pytest.mark.parametrize("bad_session", BAD_SESSION_IDS)
+def test_claim_task_invalid_session_returns_422(client: TestClient, bad_session: str) -> None:
+    resp = client.post("/tasks/T-does-not-exist/claim", params={"claimed_by_session": bad_session})
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.parametrize("bad_session", BAD_SESSION_IDS)
+def test_next_task_invalid_session_returns_422(client: TestClient, bad_session: str) -> None:
+    resp = client.get("/tasks/next/backend", params={"claimed_by_session": bad_session})
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.parametrize("bad_session", BAD_SESSION_IDS)
+def test_claim_batch_invalid_session_returns_422(client: TestClient, bad_session: str) -> None:
+    resp = client.post(
+        "/tasks/claim-batch",
+        json={"task_ids": ["T-1"], "agent_id": "agent-1", "claimed_by_session": bad_session},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.parametrize("good_session", ["backend-a1b2c3d4", "batch-T-1-deadbeef", "A-1", "s.1_2-3"])
+def test_claim_routes_accept_ordinary_session_ids(client: TestClient, good_session: str) -> None:
+    """Validation is a shape check, not a ban: real session ids pass through.
+
+    ``/tasks/next`` answers 404 when the queue is empty - the point is that
+    the session id itself is never what rejects the request.
+    """
+    resp = client.get("/tasks/next/backend", params={"claimed_by_session": good_session})
+    assert resp.status_code != 422, resp.text

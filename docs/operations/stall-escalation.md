@@ -76,3 +76,22 @@ Each emitted receipt is mirrored into the HMAC-chained audit log as an
 journal head at stall, window size, and resume snapshot sha, so an operator can
 prove from the chain alone that an escalation was emitted, without recording any
 journal payloads.
+
+## Kill-decision verdicts
+
+Before any of this machinery runs, the orchestrator must first decide to kill a
+worker. That decision is mirrored into the audit chain as a `stall.verdict`
+event (`core.security.audit_chain.record_stall_verdict`), written at the moment
+the verdict is reached, before the kill is issued. The event carries the stall
+reason, which detector fired (`heartbeat` / `stall_simple` / `stall_profiled`),
+and the measured inputs that actually drove the decision (heartbeat age,
+identical-snapshot count, the threshold crossed) -- each detector records only
+what it measured.
+
+A verdict attests a decision, never an outcome: the worker may still be alive
+when the record lands. The stop itself is attested by the companion
+`process.reap_receipt` event, and the two join on `session_id`, so an operator
+reconstructing a failure window can place "this detector saw these inputs and
+decided" next to "this mechanism delivered the stop" without guessing. Recording
+is best-effort -- a chain failure never blocks the kill -- but never silent: the
+failure surfaces as a warning naming the session.

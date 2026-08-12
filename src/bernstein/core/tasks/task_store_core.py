@@ -1176,6 +1176,27 @@ class TaskStore:
             self._by_status[TaskStatus.CLOSED].values()
         )
         done_ids = {done_task.id for done_task in completed_tasks}
+
+        # Check for terminal-not-successful dependencies (issue #3621)
+        # A task whose depends_on contains any task in a terminal-not-successful
+        # status should not be re-queued forever.
+        terminal_failed = {
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.REFUSED,
+            TaskStatus.ORPHANED,
+        }
+        for dep_id in task.depends_on:
+            dep_task = self._tasks.get(dep_id)
+            if dep_task and dep_task.status in terminal_failed:
+                logger.warning(
+                    "Task %s dependency %s is %s — task will never run",
+                    task.id,
+                    dep_id,
+                    dep_task.status.value,
+                )
+                return False
+
         if not all(dep in done_ids for dep in task.depends_on):
             return False
         if task.depends_on_repo is None:
