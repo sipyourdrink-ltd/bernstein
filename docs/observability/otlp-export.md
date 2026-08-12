@@ -145,8 +145,12 @@ The offline projection tooling remains available for the whole-run surface:
 
 ```bash
 bernstein trace project <run_id>            # signed projection.otel.json + audit event
-bernstein trace verify-projection <run_id>  # recompute ids from the journal, check signature
+bernstein trace verify-projection <run_id>  # check journal, signature, and exact audit binding
 ```
+
+Whole-run verification also reads archived audit segments. It exits `1`
+when authenticated audit evidence is unavailable or cannot be trusted, and
+`2` when the signed projection or authenticated binding is contradictory.
 
 ## Relationship to the raw GenAI exporter
 

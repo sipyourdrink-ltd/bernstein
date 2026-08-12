@@ -78,6 +78,16 @@ landed since the newest one.
 
 ## Fixed
 
+- `bernstein trace verify-projection` now authenticates the complete
+  `otel.projection` audit binding instead of accepting any projection whose
+  signature and journal-derived span ids verify (#3551). A verified result
+  requires one integrity-checked live or archived event matching the run id,
+  journal head, trace id, span count, and canonical projection digest.
+  Missing or unreadable evidence is `unverifiable` (exit `1`), while a valid
+  same-run audit chain that contradicts the projection is a verification
+  failure (exit `2`). Verification is load-only and does not create an audit
+  key or directory. Docs: `docs/observability/otel-span-projection.md`,
+  `docs/observability/otlp-export.md`.
 - The `deep-review` label did not start a review on a PR that was already open.
   `.github/workflows/bernstein-pr-review.yml` gates its `review` job on that
   label but did not list `labeled` as a trigger type, so adding the label to a
