@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
+from bernstein.core.persistence.anchored_write import AnchoredDir, mkdir_anchored
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
@@ -31,11 +33,26 @@ class TenantConfig:
 
 @dataclass(frozen=True)
 class TenantPaths:
-    """Filesystem layout for a tenant-scoped `.sdd` subtree."""
+    """Filesystem layout for a tenant-scoped `.sdd` subtree.
+
+    The `Path` fields name the layout for callers that read it. `anchor` names
+    the same layout as a root plus the components below it, which is what a
+    caller that *writes* needs: joining `backlog_dir` at the moment of a write
+    derives the directory a second time, and the result is the directory that
+    was validated only while nothing replaced a component in between.
+
+    Attributes:
+        root: The tenant subtree.
+        backlog_dir: Backlog files for this tenant.
+        metrics_dir: Metrics files for this tenant.
+        anchor: The same subtree, anchored on the `.sdd` directory it was
+            derived from. Writers go through this; readers can use either.
+    """
 
     root: Path
     backlog_dir: Path
     metrics_dir: Path
+    anchor: AnchoredDir
 
 
 @dataclass(frozen=True)
@@ -239,6 +256,22 @@ def resolve_tenant_scope(
     return target
 
 
+def _assert_contained(base: Path, derived: Path, tenant_id: str) -> None:
+    """Refuse a derived directory that does not sit strictly under *base*.
+
+    A cheap invariant check on the layout as it stands, run before anything is
+    created. It is not what makes a write safe -- resolving a path says where
+    it pointed when it was resolved, and the write happens later -- but it
+    keeps the derivation honest on its own terms, and it is what fails first if
+    the identifier rule is ever widened.
+    """
+
+    resolved_derived = derived.resolve()
+    resolved_base = base.resolve()
+    if resolved_derived == resolved_base or not resolved_derived.is_relative_to(resolved_base):
+        raise InvalidTenantIdError(f"tenant id {_describe_tenant_id(str(tenant_id))} resolves outside the tenant root")
+
+
 def tenant_paths(sdd_dir: Path, tenant_id: str) -> TenantPaths:
     """Return derived tenant paths inside `.sdd`.
 
@@ -247,6 +280,14 @@ def tenant_paths(sdd_dir: Path, tenant_id: str) -> TenantPaths:
     single path segment, so this check is redundant by design: it keeps the
     layout invariant true on its own terms rather than as a consequence of
     the identifier rule, and it is what fails if that rule is ever widened.
+
+    The check answers where the layout points now. It cannot answer where a
+    later write lands, because a caller that joins the returned paths derives
+    the directory a second time, and the two derivations agree only while
+    nothing replaces a component between them. `TenantPaths.anchor` carries
+    the layout in the form that removes the second derivation; writers use it,
+    and the containment of *their* directory is a property of the walk rather
+    than of this check.
 
     Args:
         sdd_dir: The `.sdd` directory the tenant subtree lives under.
@@ -262,33 +303,93 @@ def tenant_paths(sdd_dir: Path, tenant_id: str) -> TenantPaths:
 
     normalized = normalize_tenant_id(tenant_id)
     root = sdd_dir / normalized
-    resolved_root = root.resolve()
-    resolved_base = sdd_dir.resolve()
-    if resolved_root == resolved_base or not resolved_root.is_relative_to(resolved_base):
-        raise InvalidTenantIdError(f"tenant id {_describe_tenant_id(str(tenant_id))} resolves outside the tenant root")
+    _assert_contained(sdd_dir, root, tenant_id)
     return TenantPaths(
         root=root,
         backlog_dir=root / "backlog",
         metrics_dir=root / "metrics",
+        anchor=AnchoredDir(root=sdd_dir, parts=(normalized,)),
     )
 
 
 def ensure_tenant_layout(sdd_dir: Path, tenant_id: str) -> TenantPaths:
-    """Create and return the tenant-scoped `.sdd` layout."""
+    """Create and return the tenant-scoped `.sdd` layout.
+
+    Every directory is created through the anchored walk, so a component that
+    turns out to be a symlink is refused at the `mkdir` rather than followed.
+    That covers the tenant segment itself as well as the two below it: a
+    tenant directory linked to a *sibling* tenant passes the containment check
+    above -- it does resolve under `.sdd` -- and would otherwise alias one
+    tenant's writes onto another's subtree.
+
+    Raises:
+        InvalidTenantIdError: If *tenant_id* is not usable, per `tenant_paths`.
+        OSError: If a component of the layout is a symlink (`ELOOP`) or is not
+            a directory (`ENOTDIR`), or if creation fails.
+    """
 
     paths = tenant_paths(sdd_dir, tenant_id)
-    paths.backlog_dir.mkdir(parents=True, exist_ok=True)
-    paths.metrics_dir.mkdir(parents=True, exist_ok=True)
+    mkdir_anchored(paths.anchor.child("backlog"))
+    mkdir_anchored(paths.anchor.child("metrics"))
     return paths
 
 
-def tenant_metrics_dir(metrics_dir: Path, tenant_id: str) -> Path:
-    """Return the tenant metrics directory derived from a shared metrics dir."""
+def _tenant_metrics_anchor(metrics_dir: Path, tenant_id: str) -> AnchoredDir:
+    """Return the anchored form of the tenant metrics directory.
+
+    A shared `.sdd/metrics` directory names the tenant subtree as a sibling
+    (`.sdd/<tenant>/metrics`), so the anchor is its parent; anything else is
+    treated as a base the tenant segment hangs directly off.
+
+    The containment assert runs before the anchor is constructed, not after.
+    `AnchoredDir` refuses a part that is not a single name, and that refusal is
+    a plain `ValueError` about a programming error -- correct for its own
+    callers, wrong here, where a bad tenant segment has to keep arriving as
+    `InvalidTenantIdError` so the request surfaces still report it as a client
+    error rather than as a 500.
+    """
 
     normalized = normalize_tenant_id(tenant_id)
+    base: Path
+    parts: tuple[str, ...]
     if metrics_dir.name == "metrics":
-        return metrics_dir.parent / normalized / "metrics"
-    return metrics_dir / normalized
+        base, parts = metrics_dir.parent, (normalized, "metrics")
+    else:
+        base, parts = metrics_dir, (normalized,)
+    _assert_contained(base, base.joinpath(*parts), tenant_id)
+    return AnchoredDir(root=base, parts=parts)
+
+
+def tenant_metrics_dir(metrics_dir: Path, tenant_id: str) -> Path:
+    """Return the tenant metrics directory derived from a shared metrics dir.
+
+    Carries the same containment contract as `tenant_paths`: the derived
+    directory must sit strictly under the base it was derived from. Callers
+    that write to the result should use `tenant_metrics_target` instead, which
+    returns the anchored form and does not require re-deriving the path.
+
+    Raises:
+        InvalidTenantIdError: If *tenant_id* is not a valid identifier, or if
+            the derived directory does not resolve under its base.
+    """
+
+    return _tenant_metrics_anchor(metrics_dir, tenant_id).path
+
+
+def tenant_metrics_target(metrics_dir: Path, tenant_id: str) -> AnchoredDir:
+    """Return the tenant metrics directory as an anchored target.
+
+    The write-side counterpart to `tenant_metrics_dir`. Holding the anchor
+    rather than the joined path is what lets a caller defer the write -- a
+    buffered metric point, flushed later -- without the directory it writes to
+    being re-derived at flush time.
+
+    Raises:
+        InvalidTenantIdError: If *tenant_id* is not a valid identifier, or if
+            the derived directory does not resolve under its base.
+    """
+
+    return _tenant_metrics_anchor(metrics_dir, tenant_id)
 
 
 def request_tenant_id(request: Request) -> str:

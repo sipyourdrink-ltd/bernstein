@@ -33,6 +33,16 @@ subsystems anchor receipts to; treat its write path as load-bearing.
   directory. A path-comparison containment check validates one lookup while
   the open performs another (`sigstore_attestation.py`, "Local bundle
   contract").
+- The tenant `.sdd` layout follows the same rule on the write side.
+  `tenant_paths` and `tenant_metrics_dir` derive a path and assert it stays
+  under its base, but that answers where the layout points when it is
+  derived, not where a later write lands. Writers take `TenantPaths.anchor`
+  (or `tenant_metrics_target`) and go through
+  `../persistence/anchored_write.py`, so each component is opened relative to
+  its parent and a symlink is refused rather than followed. `.sdd` itself may
+  be a symlink -- that is operator configuration; everything below it is
+  store-managed layout. Deriving a tenant path a second time at the moment of
+  a write puts the gap back (`tenanting.py`).
 
 ## Testing
 

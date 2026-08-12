@@ -33,6 +33,12 @@ from bernstein.core.models import (
     RunCostProjection,
     RunCostReport,
 )
+from bernstein.core.persistence.anchored_write import (
+    AnchoredDir,
+    anchored_append,
+    anchored_write_text,
+    mkdir_anchored,
+)
 from bernstein.core.tenanting import normalize_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -1117,9 +1123,13 @@ class CostTracker:
         Returns:
             Path to the written JSON file.
         """
-        costs_dir = base_dir / "runtime" / "costs"
-        costs_dir.mkdir(parents=True, exist_ok=True)
-        file_path = costs_dir / f"{self.run_id}.json"
+        # The anchor is created normally and the layout below it is not: a
+        # caller-supplied base directory is the location we are trusting, while
+        # ``runtime/costs`` is layout this module owns.  Same split as
+        # ``anchored_write`` draws between a root and its components.
+        base_dir.mkdir(parents=True, exist_ok=True)
+        costs_dir = AnchoredDir(root=base_dir, parts=("runtime", "costs"))
+        mkdir_anchored(costs_dir)
 
         data: dict[str, Any] = {
             "run_id": self.run_id,
@@ -1140,8 +1150,7 @@ class CostTracker:
             "spent_by_envelope": self._spent_by_envelope.copy(),
             "calls_by_envelope": self._calls_by_envelope.copy(),
         }
-        file_path.write_text(json.dumps(data, indent=2))
-        return file_path
+        return anchored_write_text(costs_dir, f"{self.run_id}.json", json.dumps(data, indent=2))
 
     @classmethod
     def load(cls, base_dir: Path, run_id: str) -> CostTracker | None:
@@ -1397,9 +1406,9 @@ class CostTracker:
 
         metrics_path = _Path(str(metrics_dir))
         metrics_path.mkdir(parents=True, exist_ok=True)
-        file_path = metrics_path / f"costs_{self.run_id}.json"
+        target = AnchoredDir(root=metrics_path)
         r = self.report()
-        file_path.write_text(json.dumps(r.to_dict(), indent=2))
+        file_path = anchored_write_text(target, f"costs_{self.run_id}.json", json.dumps(r.to_dict(), indent=2))
         logger.debug("Cost report for run %s saved to %s", self.run_id, file_path)
         return file_path
 
@@ -1484,8 +1493,7 @@ class CostTracker:
             return
         try:
             rotation_dir.mkdir(parents=True, exist_ok=True)
-            rotation_file = rotation_dir / f"usages-{self.run_id}.jsonl"
-            with rotation_file.open("a", encoding="utf-8") as fh:
+            with anchored_append(AnchoredDir(root=rotation_dir), f"usages-{self.run_id}.jsonl") as fh:
                 fh.write(json.dumps(usage.to_dict()) + "\n")
         except OSError as exc:  # pragma: no cover - best-effort IO
             logger.debug("Failed to rotate evicted cost usage for run %s: %s", self.run_id, exc)

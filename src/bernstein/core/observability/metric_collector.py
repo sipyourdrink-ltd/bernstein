@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+from bernstein.core.persistence.anchored_write import AnchoredDir, anchored_append, mkdir_anchored
 from bernstein.core.persistence.runtime_state import rotate_log_file
-from bernstein.core.tenanting import normalize_tenant_id, tenant_metrics_dir
+from bernstein.core.tenanting import normalize_tenant_id, tenant_metrics_target
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +299,12 @@ class MetricsCollector:
         self._usage_quotas: dict[str, UsageQuota] = {}
 
         # Write buffer for batched file I/O
-        self._buffer: list[tuple[Path, str]] = []
+        # Buffered points carry the directory as an anchor plus a filename
+        # rather than as a joined path.  A point is written at flush time, not
+        # at record time, so a path stored here would be resolved long after
+        # the directory it names was decided on -- the anchor defers the walk
+        # to the moment of the write instead.
+        self._buffer: list[tuple[AnchoredDir, str, str]] = []
         self._buffer_limit: int = 50
         self._flush_interval: float = 5.0  # seconds between time-based flushes
         self._last_flush: float = time.time()
@@ -907,7 +913,7 @@ class MetricsCollector:
 
         today = datetime.now().strftime("%Y-%m-%d")
         filename = f"{metric_type.value}_{today}.jsonl"
-        filepath = self._metrics_dir / filename
+        shared_dir = AnchoredDir(root=self._metrics_dir)
 
         point = {
             "timestamp": time.time(),
@@ -919,12 +925,12 @@ class MetricsCollector:
         file_disabled = EventSink.FILE in self._disabled_sinks
         if not file_disabled:
             with self._lock:
-                self._buffer.append((filepath, json.dumps(point)))
+                self._buffer.append((shared_dir, filename, json.dumps(point)))
                 tenant_id = normalize_tenant_id(labels.get("tenant_id"))
                 if tenant_id != "default":
-                    tenant_dir = tenant_metrics_dir(self._metrics_dir, tenant_id)
-                    tenant_dir.mkdir(parents=True, exist_ok=True)
-                    self._buffer.append((tenant_dir / filename, json.dumps(point)))
+                    tenant_dir = tenant_metrics_target(self._metrics_dir, tenant_id)
+                    mkdir_anchored(tenant_dir)
+                    self._buffer.append((tenant_dir, filename, json.dumps(point)))
                 should_flush = (
                     len(self._buffer) >= self._buffer_limit or (time.time() - self._last_flush) >= self._flush_interval
                 )
@@ -944,25 +950,29 @@ class MetricsCollector:
             self._buffer = []
             self._last_flush = time.time()
 
-        # Group lines by file path
-        by_file: dict[Path, list[str]] = {}
-        for filepath, line in batch:
-            by_file.setdefault(filepath, []).append(line)
+        # Group lines by target file. ``AnchoredDir`` is frozen, so the anchor
+        # and filename form the key directly.
+        by_file: dict[tuple[AnchoredDir, str], list[str]] = {}
+        for directory, filename, line in batch:
+            by_file.setdefault((directory, filename), []).append(line)
 
-        for filepath, lines in by_file.items():
+        for (directory, filename), lines in by_file.items():
             try:
                 # Bound per-file growth: rotate *before* appending so the new
                 # write starts a fresh file once the threshold is crossed.
                 # See - previously these JSONL files grew unbounded.
+                # Rotation renames a file that is already written; it is the
+                # append below that decides where new content lands, so that
+                # is the one anchored.
                 rotate_log_file(
-                    filepath,
+                    directory.path / filename,
                     max_bytes=_METRIC_FILE_ROTATE_BYTES,
                     max_backups=_METRIC_FILE_MAX_BACKUPS,
                 )
-                with filepath.open("a") as f:
+                with anchored_append(directory, filename) as f:
                     f.write("\n".join(lines) + "\n")
             except OSError:
-                logger.exception("Failed to flush metrics to %s", filepath)
+                logger.exception("Failed to flush metrics to %s", directory.path / filename)
 
     def flush(self) -> None:
         """Flush the write buffer to disk. Call this each orchestrator tick."""

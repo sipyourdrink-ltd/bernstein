@@ -22,6 +22,7 @@ from typing_extensions import TypedDict
 
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
+from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.security.sanitize import sanitize_log
@@ -366,7 +367,11 @@ async def _retry_io(fn: Any, *args: Any) -> Any:
     import errno
 
     max_retries = _TASK_DEFAULTS.max_io_retries
-    non_transient = {errno.ENOSPC, errno.EROFS, errno.EACCES, errno.EPERM}
+    # ELOOP/ENOTDIR come from an anchored write refusing a component that is a
+    # symlink or not a directory. That is a statement about the layout, not a
+    # condition that clears on its own, so retrying only delays the same
+    # failure and reports it as a store outage rather than as what it is.
+    non_transient = {errno.ENOSPC, errno.EROFS, errno.EACCES, errno.EPERM, errno.ELOOP, errno.ENOTDIR}
     last_exc: OSError | None = None
     for attempt in range(max_retries):
         try:
@@ -823,8 +828,7 @@ class TaskStore:
 
         try:
             tenant_paths = ensure_tenant_layout(self._sdd_dir, str(record["tenant_id"]))
-            target_path = tenant_paths.backlog_dir / "tasks.jsonl"
-            with target_path.open("a", encoding="utf-8") as handle:
+            with anchored_append(tenant_paths.anchor.child("backlog"), "tasks.jsonl") as handle:
                 handle.write(line)
         except OSError as exc:
             # Tenant mirror is best-effort during recovery; the authoritative
@@ -945,10 +949,10 @@ class TaskStore:
         """Mirror task lifecycle records into a tenant-scoped backlog file."""
 
         tenant_paths = ensure_tenant_layout(self._sdd_dir, str(record["tenant_id"]))
-        target_path = tenant_paths.backlog_dir / "tasks.jsonl"
+        backlog = tenant_paths.anchor.child("backlog")
 
         def _write() -> None:
-            with target_path.open("a", encoding="utf-8") as handle:
+            with anchored_append(backlog, "tasks.jsonl") as handle:
                 handle.write(line)
 
         await _retry_io(_write)
@@ -957,10 +961,10 @@ class TaskStore:
         """Mirror archive records into a tenant-scoped backlog archive file."""
 
         tenant_paths = ensure_tenant_layout(self._sdd_dir, tenant_id)
-        target_path = tenant_paths.backlog_dir / "archive.jsonl"
+        backlog = tenant_paths.anchor.child("backlog")
 
         def _write() -> None:
-            with target_path.open("a", encoding="utf-8") as handle:
+            with anchored_append(backlog, "archive.jsonl") as handle:
                 handle.write(line)
 
         await _retry_io(_write)
