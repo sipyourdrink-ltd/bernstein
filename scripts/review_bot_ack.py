@@ -705,15 +705,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Reserved; gate already fails on unresolved must-address.",
     )
     p.add_argument(
-        "--summary-out",
-        metavar="PATH",
-        help=(
-            "Write the rendered summary here as well as to stdout. A fork's "
-            "read-only token cannot post the sticky comment, so the runner "
-            "hands the text to the publisher through this file instead."
-        ),
-    )
-    p.add_argument(
         "--post-summary-file",
         metavar="PATH",
         help=(
@@ -759,14 +750,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    # Printed before the sticky post is attempted, and printed alone: the
+    # runner captures this stdout into the artifact the publisher reads,
+    # because a fork's read-only token makes the post below the step that
+    # fails. Keep diagnostics on stderr so the capture stays the summary.
     summary = render_summary(outcome)
     print(summary)
-    if args.summary_out:
-        # Written before the post is attempted: the fork case is exactly the
-        # case where the post fails, and it is the case this file exists for.
-        out = Path(args.summary_out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(summary, encoding="utf-8")
     if not args.no_comment:
         try:
             upsert_sticky(args.owner, args.repo, args.pr, token, summary)

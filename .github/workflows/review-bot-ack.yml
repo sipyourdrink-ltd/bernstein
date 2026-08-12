@@ -236,11 +236,20 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           mkdir -p verdict
+          # The summary is captured from stdout rather than through a flag on
+          # purpose. This job checks out the base ref (see `ref:` above), so
+          # it runs whatever `scripts/review_bot_ack.py` is on the base
+          # branch — a flag introduced by a pull request would not exist yet
+          # on the run that has to use it. The gate prints the rendered
+          # summary to stdout before it attempts the sticky comment, and the
+          # attempt is the part that fails on a fork; capturing stdout is
+          # therefore the version-independent way to keep the text.
+          # `test_review_bot_ack_summary_handoff.py` pins that contract.
+          set -o pipefail
           python3 scripts/review_bot_ack.py \
             --owner "$OWNER" \
             --repo "$REPO_NAME" \
-            --pr "$PR_NUMBER" \
-            --summary-out verdict/summary.md
+            --pr "$PR_NUMBER" | tee verdict/summary.md
 
       - name: Resolve verdict
         if: ${{ !cancelled() }}

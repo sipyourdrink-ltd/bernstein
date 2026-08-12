@@ -9,11 +9,17 @@ by integration``. The warning was computed correctly and written only to a
 workflow log, while the published check summary told the reader to consult a
 sticky comment that did not exist.
 
-These tests pin the handoff that fixes it: the runner writes the rendered
-summary to a file whatever the post does, and the publisher - which runs in the
-base repository with a writable token - posts that file verbatim without
-re-evaluating. Re-evaluating there would be wrong: the verdict belongs to the
-run that produced the text, and a later evaluation can reach a different one.
+These tests pin the handoff that fixes it. The runner captures stdout into the
+artifact, so the first test pins the stdout contract the workflow relies on:
+the summary reaches stdout whatever the post does, and nothing else does. That
+contract is what makes the capture work from the base checkout - the gate job
+runs the base branch's copy of this script, so it cannot use a flag introduced
+by the pull request that needs it.
+
+The publisher - which runs in the base repository with a writable token - then
+posts that captured text verbatim without re-evaluating. Re-evaluating there
+would be wrong: the verdict belongs to the run that produced the text, and a
+later evaluation can reach a different one.
 """
 
 from __future__ import annotations
@@ -53,12 +59,17 @@ def _clean_outcome(ack: ModuleType) -> Any:
     return ack.GateOutcome(head_sha="0" * 40, bot_statuses=[status])
 
 
-def test_summary_is_written_even_when_the_sticky_post_fails(
+def test_stdout_carries_the_summary_when_the_sticky_post_fails(
     ack: ModuleType,
-    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The fork case is exactly the case where the post fails."""
+    """The fork case is exactly the case where the post fails.
+
+    The runner tees this stdout into ``verdict/summary.md``. Anything else
+    printed to stdout would land in the artifact and be posted as the comment,
+    so this asserts stdout equals the summary rather than merely containing it.
+    """
     monkeypatch.setenv("GH_TOKEN", "t")
     monkeypatch.setattr(ack, "evaluate", lambda *a, **k: _clean_outcome(ack))
 
@@ -67,18 +78,19 @@ def test_summary_is_written_even_when_the_sticky_post_fails(
 
     monkeypatch.setattr(ack, "upsert_sticky", forbidden)
 
-    out = tmp_path / "verdict" / "summary.md"
-    rc = ack.main(
-        ["--owner", "o", "--repo", "r", "--pr", "1", "--summary-out", str(out)]
-    )
+    rc = ack.main(["--owner", "o", "--repo", "r", "--pr", "1"])
 
     assert rc == 0, "an unreviewed bot must not fail the gate by default"
-    assert out.exists(), "the summary was lost with the failed post"
-    written = out.read_text(encoding="utf-8")
-    assert ack.STICKY_HEADER in written
-    assert "produced no review for this head commit" in written, (
+    captured = capsys.readouterr()
+    assert captured.out == ack.render_summary(_clean_outcome(ack)) + "\n", (
+        "stdout is the artifact the publisher posts; it must be the summary and "
+        "nothing else"
+    )
+    assert ack.STICKY_HEADER in captured.out
+    assert "produced no review for this head commit" in captured.out, (
         "the handed-over text omits the only sentence that says the gate is not evidence"
     )
+    assert "403" in captured.err, "the failed post must still be reported somewhere"
 
 
 def test_post_summary_file_posts_verbatim_without_evaluating(

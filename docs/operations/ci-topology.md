@@ -195,7 +195,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"actions": "write", "attestations": "write", "contents": "write", "id-token": "write"} | GITHUB_TOKEN |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
-| .github/workflows/review-bot-ack-publish.yml | publish: {"actions": "read", "checks": "write", "contents": "read"}<br>republish: {"actions": "write", "checks": "read", "contents": "read"} | - |
+| .github/workflows/review-bot-ack-publish.yml | publish: {"actions": "read", "checks": "write", "contents": "read", "pull-requests": "write"}<br>republish: {"actions": "write", "checks": "read", "contents": "read"} | - |
 | .github/workflows/review-bot-ack.yml | merge-group-verify: {"checks": "write", "contents": "read", "pull-requests": "read"}<br>pr-gate: {"checks": "write", "contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, LANDING_REPO_PAT |
 | .github/workflows/roadmap-refresh.yml | workflow: {"contents": "read"}<br>refresh: {"contents": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
