@@ -35,6 +35,7 @@ import posixpath
 import re
 import threading
 import time
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
@@ -165,8 +166,23 @@ def _required_string(value: Mapping[str, Any], key: str, path: str) -> str:
     return child
 
 
+def _canonical_text(value: str) -> str:
+    """Fold the platform-dependent spellings of the same text into one form.
+
+    Two checkouts of the same source must address a finding identically, so the
+    preimage may not carry anything the platform chose rather than the author:
+
+    * line endings collapse to ``\\n`` -- a CRLF checkout on Windows and an LF
+      checkout on Linux are the same snippet; and
+    * the result is NFC-normalised -- macOS hands back decomposed (NFD) path
+      and text bytes where Linux hands back composed (NFC) ones, and ``café``
+      is one filename, not two.
+    """
+    return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
+
+
 def _normalise_artifact_uri(uri: str) -> str:
-    normalised = posixpath.normpath(uri.replace("\\", "/"))
+    normalised = posixpath.normpath(_canonical_text(uri).replace("\\", "/"))
     if normalised in {"", "."}:
         raise ArtifactValidationError("finding SARIF result has an empty normalized artifact URI")
     return normalised.removeprefix("./")
@@ -245,7 +261,7 @@ def _build_finding_content(
             "start_column": start_column,
             "end_column": end_column,
         },
-        "snippet_hash": _sha256_bytes(snippet_text.encode("utf-8")),
+        "snippet_hash": _sha256_bytes(_canonical_text(snippet_text).encode("utf-8")),
     }
     address_preimage = {"identity": identity, "provenance": provenance}
     address = _sha256_bytes(_canonical_json_bytes(address_preimage))
