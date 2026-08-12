@@ -14,12 +14,14 @@ assignees: []
 
 ## How to report a vulnerability
 
-1. **Email (preferred):** forte@bernstein.run (PGP key at `/.well-known/security-pgp.asc`)
+1. **Email (preferred):** forte@bernstein.run
 2. **GitHub private vulnerability reporting:** the "Report a vulnerability"
    button on the [Security tab](https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new).
 
-Initial triage acknowledgement: within 72 hours. SLA matrix and the
-disclosure scope live in [`SECURITY.md`](../../SECURITY.md).
+A first substantive response can take up to 90 days - Bernstein has one
+unpaid maintainer. You may disclose 90 days after your report whether or not a
+fix has shipped. Scope and the full terms are in
+[`SECURITY.md`](../../SECURITY.md).
 
 ## If you opened this issue anyway
 
