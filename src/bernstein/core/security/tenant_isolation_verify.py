@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.security.tenant_isolation import tenant_data_paths
-from bernstein.core.security.tenanting import normalize_tenant_id
+from bernstein.core.security.tenanting import normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -182,7 +182,7 @@ class TenantIsolationVerifier:
                         continue
                     record = json.loads(line)
                     rec_tenant = record.get("tenant_id") or record.get("tenant", "")
-                    if rec_tenant and normalize_tenant_id(str(rec_tenant)) == foreign_tenant:
+                    if rec_tenant and try_normalize_tenant_id(str(rec_tenant)) == foreign_tenant:
                         contamination_details.append(
                             f"{fpath.name}: record with tenant={rec_tenant} found in {owner_tenant} dir"
                         )
@@ -354,7 +354,7 @@ class TenantIsolationVerifier:
         """Check if a WAL record belongs to the given tenant."""
         actor = record.get("actor", "")
         tenant_field = record.get("tenant_id") or record.get("tenant", "")
-        return any(val and normalize_tenant_id(str(val)) == tenant for val in (actor, tenant_field))
+        return any(val and try_normalize_tenant_id(str(val)) == tenant for val in (actor, tenant_field))
 
     @staticmethod
     def _check_wal_content_leak(wal_dir: Path, foreign_tenant: str) -> str:
@@ -420,7 +420,7 @@ class TenantIsolationVerifier:
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                rec_tenant = normalize_tenant_id(str(record.get("tenant_id", "")))
+                rec_tenant = try_normalize_tenant_id(str(record.get("tenant_id", "")))
                 if rec_tenant == norm_a:
                     a_records.append(record)
                 elif rec_tenant == norm_b:
@@ -543,7 +543,7 @@ class TenantIsolationVerifier:
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                rec_tenant = normalize_tenant_id(str(record.get("tenant_id", "")))
+                rec_tenant = try_normalize_tenant_id(str(record.get("tenant_id", "")))
                 if rec_tenant == foreign_tenant:
                     task_id = record.get("task_id", "unknown")
                     return f"task_id={task_id} belongs to foreign tenant '{foreign_tenant}'"

@@ -115,6 +115,37 @@ class TestNormalizeTenantIdRejectsNonSegmentIds:
         assert "\n" not in str(excinfo.value)
 
 
+class TestTryNormalizeTenantIdForStoredData:
+    """Reading history must not abort on one unattributable row.
+
+    Archive reads and isolation checks scan records that predate these
+    rules. A row whose tenant id no longer normalizes is one the reader
+    cannot attribute - it must be skipped so the scan still returns a
+    result for the rows it can read.
+    """
+
+    @pytest.mark.parametrize("tenant_id", NON_SEGMENT_IDS)
+    def test_unusable_stored_value_returns_none(self, tenant_id: str) -> None:
+        assert tenanting.try_normalize_tenant_id(tenant_id) is None
+
+    @pytest.mark.parametrize("tenant_id", ["tenant-a", "Tenant_1.2", "acme"])
+    def test_valid_stored_value_normalizes(self, tenant_id: str) -> None:
+        assert tenanting.try_normalize_tenant_id(tenant_id) == tenant_id
+
+    @pytest.mark.parametrize("raw", ["", "   ", None])
+    def test_blank_stored_value_still_defaults(self, raw: str | None) -> None:
+        assert tenanting.try_normalize_tenant_id(raw) == DEFAULT_TENANT_ID
+
+    def test_none_result_matches_no_valid_tenant(self) -> None:
+        """Callers filter by equality, so an unusable row must never match."""
+        assert tenanting.try_normalize_tenant_id("../../etc") != normalize_tenant_id("tenant-a")
+        assert tenanting.try_normalize_tenant_id("../../etc") != DEFAULT_TENANT_ID
+
+    def test_it_does_not_raise_for_any_input(self) -> None:
+        for tenant_id in [*NON_SEGMENT_IDS, "A" * 500, "CON", "acme."]:
+            tenanting.try_normalize_tenant_id(tenant_id)
+
+
 class TestPlatformPortableIdentifiers:
     """One identifier must not name two different things across platforms."""
 

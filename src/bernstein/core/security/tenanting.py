@@ -175,6 +175,33 @@ def normalize_tenant_id(raw: str | None) -> str:
     return value
 
 
+def try_normalize_tenant_id(raw: str | None) -> str | None:
+    """Normalize a tenant ID read from stored data, or None if unusable.
+
+    For persisted records rather than request input. Rows written before
+    these rules existed, or by an operator editing a file by hand, may carry
+    a tenant ID that no longer normalizes. A reader scanning history should
+    treat such a row as one it cannot attribute and move on, not abort the
+    scan - archive reads and isolation checks must still return a result for
+    the records they *can* read.
+
+    Because `None` matches no valid tenant ID, callers filtering by tenant
+    can compare the result directly and an unattributable row simply never
+    matches.
+
+    Args:
+        raw: Tenant identifier as stored, possibly absent or malformed.
+
+    Returns:
+        The normalized tenant ID, or None if it cannot be normalized.
+    """
+
+    try:
+        return normalize_tenant_id(raw)
+    except InvalidTenantIdError:
+        return None
+
+
 def build_tenant_registry(configs: Sequence[TenantConfig] | None) -> TenantRegistry:
     """Build a registry from parsed tenant configs."""
 

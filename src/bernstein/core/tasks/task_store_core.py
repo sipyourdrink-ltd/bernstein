@@ -40,7 +40,7 @@ from bernstein.core.tasks.models import (
     TaskType,
     UpgradeProposalDetails,
 )
-from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id
+from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -906,7 +906,9 @@ class TaskStore:
 
         if tenant_id is not None:
             normalized = normalize_tenant_id(tenant_id)
-            records = [record for record in records if normalize_tenant_id(str(record.get("tenant_id"))) == normalized]
+            records = [
+                record for record in records if try_normalize_tenant_id(str(record.get("tenant_id"))) == normalized
+            ]
         return records[-limit:]
 
     async def _append_archive(self, task: Task, completed_at: float) -> None:
