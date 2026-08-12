@@ -14,10 +14,9 @@ ASSUMPTIONS - adjust if they don't match:
 
 import copy
 
-import pytest
+from bernstein.core.models import AgentSession, Task
 
 from bernstein.core.agents.spawner_core import AgentSpawner
-from bernstein.core.models import Task, AgentSession
 
 
 def _make_task(task_id: str, injected_skills=None) -> Task:

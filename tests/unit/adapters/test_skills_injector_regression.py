@@ -2,15 +2,14 @@ import hashlib
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.models import Task
+
 from bernstein.adapters import skills_injector
 from bernstein.adapters.skills_injector import (
     inject_skills,
-    sanitize_skill_body,
     render_skill_template,
+    sanitize_skill_body,
 )
-
 
 SKILL_BODY = """---
 version: 1.2.3
@@ -165,7 +164,7 @@ def test_refused_record_has_full_shape_with_empty_digests(tmp_path: Path, templa
     )
 
     refused = [r for r in audit_records if r["template_name"] == "example.md"]
-    assert len(refused) == 1, "Скилл должен быть в аудит-логе со статусом refused"
+    assert len(refused) == 1, "the skill must appear in the audit log with status refused"
 
     record = refused[0]
     assert record["status"] == "refused"

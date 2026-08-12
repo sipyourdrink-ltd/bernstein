@@ -1,5 +1,4 @@
-import pytest
-from bernstein.core.tasks.artifacts import artifact_content_hash, ArtifactKind
+from bernstein.core.tasks.artifacts import ArtifactKind, artifact_content_hash
 
 
 def test_finding_identity_stable_across_line_shift():
