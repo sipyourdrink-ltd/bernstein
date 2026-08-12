@@ -2721,6 +2721,34 @@ class Orchestrator:
                 trigger_path,
             )
 
+    def _mark_finalization_started(self) -> None:
+        """Write the entry sentinel for demo teardown.
+
+        Written *before* the seal/receipt so teardown can detect that
+        finalization is in progress. Without this, teardown cannot
+        distinguish "finalization hasn't started yet" from "already done"
+        from "crashed" — all three present as "no completion marker exists."
+        """
+        try:
+            (self._workdir / ".finalizing").touch()
+        except OSError as exc:
+            logger.warning("failed to write .finalizing marker: %s", exc)
+
+    def _mark_finalization_done(self) -> None:
+        """Write the completion sentinel for demo teardown.
+
+        Written in a finally so it appears on both success and failure.
+        A missing .finalized always means "still running", never "failed
+        silently" — that is what makes it safe to wait on.
+        """
+        try:
+            (self._workdir / ".finalized").write_text(
+                json.dumps({"ts": time.time()})
+            )
+        except OSError as exc:
+            logger.warning("failed to write .finalized marker: %s", exc)
+
+
     def run(self) -> None:
         """Run the orchestrator loop until stopped.
 
@@ -2909,10 +2937,14 @@ class Orchestrator:
             fingerprint=self._recorder.fingerprint(),
             outcome=self._closure_outcome.value,
         )
-        self._seal_journal_into_lineage_spine()
-        if self._otel_stream is not None:
-            self._otel_stream.finalize()
-        self._write_run_closure()
+        self._mark_finalization_started()
+        try:
+            self._seal_journal_into_lineage_spine()
+            if self._otel_stream is not None:
+                self._otel_stream.finalize()
+            self._write_run_closure()
+        finally:
+            self._mark_finalization_done()
         logger.info(
             "Orchestrator stopped (replay: %s, fingerprint: %s)",
             self._recorder.path,
