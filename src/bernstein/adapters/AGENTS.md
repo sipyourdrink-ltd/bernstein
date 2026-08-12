@@ -1,4 +1,3 @@
-<!-- ... -->
 # CLI agent adapters
 
 One adapter per upstream coding-agent CLI (claude, codex, gemini,
@@ -33,6 +32,7 @@ invocation and streams results back; flat layout, one module per tool.
 
 ## Testing
 
-Per-adapter unit tests are `tests/unit/test_adapter_<name>.py`, run one
+Per-adapter unit tests are `tests/unit/adapters/test_<name>_adapter.py`
+(older ones sit flat as `tests/unit/test_adapter_<name>.py`), run one
 file at a time. Contract checks live under `tests/contract/`; live-
 binary conformance is opt-in via the `--live` pytest flag.

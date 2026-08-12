@@ -1,4 +1,3 @@
-<!-- ... -->
 # Quality gates and verification
 
 The verification layer between a worker's diff and merge or human
@@ -35,3 +34,5 @@ verification.
 Single files only, e.g.
 `uv run pytest tests/unit/test_quality_gates.py -x -q`; runner and
 pipeline behaviour lives in the `test_gate_*.py` files.
+
+<!-- Reviewed 2026-08-12 against this subtree; the notes above still hold. -->
