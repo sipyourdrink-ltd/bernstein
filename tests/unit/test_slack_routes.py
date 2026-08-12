@@ -221,6 +221,61 @@ async def test_events_bad_payload_hides_parse_details(client_with_secret: AsyncC
 
 
 # ---------------------------------------------------------------------------
+# Test: the events route validates the payload shape before reading it
+#
+# A signed delivery whose JSON parses but is not the documented shape must
+# still land on the documented 400, not on an unhandled 500.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", [b"[]", b'"a string"', b"5", b"true", b"null"])
+@pytest.mark.anyio
+async def test_events_non_mapping_payload_returns_400(client_with_secret: AsyncClient, raw: bytes) -> None:
+    """A signed events payload that is valid JSON but not an object returns 400."""
+    sig_headers = _slack_sig_headers(raw, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/events",
+        content=raw,
+        headers={"content-type": "application/json"} | sig_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Bad events payload"}
+
+
+@pytest.mark.parametrize("event", [None, [], "a string", 5, True])
+@pytest.mark.anyio
+async def test_events_non_mapping_event_returns_400(client_with_secret: AsyncClient, event: object) -> None:
+    """An ``event_callback`` whose ``event`` member is not an object returns 400."""
+    body = json.dumps({"type": "event_callback", "event": event}).encode()
+    sig_headers = _slack_sig_headers(body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/events",
+        content=body,
+        headers={"content-type": "application/json"} | sig_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Bad events payload"}
+
+
+@pytest.mark.anyio
+async def test_events_missing_event_member_is_ignored(client_with_secret: AsyncClient) -> None:
+    """An ``event_callback`` with no ``event`` member is acknowledged, not rejected.
+
+    Absent is not the same as malformed: the route has always treated a
+    missing ``event`` as nothing to act on, and that stays a 200 ack.
+    """
+    body = json.dumps({"type": "event_callback"}).encode()
+    sig_headers = _slack_sig_headers(body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/events",
+        content=body,
+        headers={"content-type": "application/json"} | sig_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Test: invalid signature returns 401
 # ---------------------------------------------------------------------------
 

@@ -71,6 +71,12 @@ pass `slack_signing_secret=` when building the app) to enable the
 routes. A failed verification returns `401`; a malformed payload
 returns `400`.
 
+The Events API route checks the payload's shape before reading it: the
+body must be a JSON object, and a present `event` member must be one
+too. Anything else takes the same `400` as unparseable JSON. A payload
+with no `event` member at all is acknowledged with `200` - absent is not
+malformed, there is simply nothing to act on.
+
 The `url_verification` handshake is signed by Slack like any other
 delivery, so set the secret before pointing Slack at the endpoint.
 

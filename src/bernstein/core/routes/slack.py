@@ -168,14 +168,23 @@ async def slack_slash_command(request: Request) -> JSONResponse:
 
 
 def _parse_slack_body(body: bytes) -> dict[str, Any] | None:
-    """Parse a Slack events payload, returning None on failure."""
+    """Parse a Slack events payload, returning None on failure.
+
+    A payload that parses as JSON but is not an object (a list, a string, a
+    number, a boolean, ``null``) is a parse failure too: every reader below
+    treats the result as a mapping, so the shape is checked once here rather
+    than assumed at each use.
+    """
     try:
         import json as _json
 
-        return _json.loads(body)  # type: ignore[no-any-return]
+        parsed = _json.loads(body)
     # bot-ack: pre-existing-1723 (best-effort Slack event parse)
     except Exception:
         return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
 
 
 def _is_actionable_slack_event(event: dict[str, Any]) -> bool:
@@ -202,8 +211,11 @@ async def slack_events(request: Request) -> JSONResponse:
     disabled and returns ``UNCONFIGURED_STATUS``; only signed Slack
     requests are accepted.  Note that the ``url_verification`` handshake
     is signed by Slack too, so registering the endpoint works normally.
+    Payload shape is validated before it is read: the body and, when
+    present, its ``event`` member must both be JSON objects.
     Returns 200 on success, 401 on bad/missing signature, 400 on parse
-    error, ``UNCONFIGURED_STATUS`` when the endpoint is not configured.
+    error or malformed payload shape, ``UNCONFIGURED_STATUS`` when the
+    endpoint is not configured.
     """
     from bernstein.core.trigger_sources.slack import normalize_slack_message, verify_slack_signature
 
@@ -225,6 +237,12 @@ async def slack_events(request: Request) -> JSONResponse:
     if event_type != "event_callback":
         return JSONResponse(status_code=200, content={"ok": True})
 
+    # A present ``event`` must be an object.  Absent is fine - there is simply
+    # nothing to act on - but a non-object member is a malformed payload and
+    # takes the documented 400 rather than reaching the readers below, which
+    # (like ``normalize_slack_message``) all assume a mapping.
+    if "event" in payload and not isinstance(payload["event"], dict):
+        return JSONResponse(status_code=400, content={"detail": "Bad events payload"})
     event: dict[str, Any] = payload.get("event", {})
 
     if not _is_actionable_slack_event(event):

@@ -35,6 +35,11 @@ landed since the newest one.
   `401`. Set the secret before pointing Slack at the endpoint, since the
   `url_verification` handshake is a signed delivery like any other. See
   [`docs/operations/slack-webhooks.md`](../operations/slack-webhooks.md).
+- `POST /webhooks/slack/events` validates the payload's shape before reading
+  it. The body must be a JSON object, and a present `event` member must be one
+  too; a list, string, number, boolean, or `null` in either position now
+  returns the documented `400` instead of a `500`. A payload with no `event`
+  member is still acknowledged with `200`.
 
 ## Added
 
