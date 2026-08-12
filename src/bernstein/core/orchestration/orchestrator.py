@@ -2742,12 +2742,9 @@ class Orchestrator:
         silently" — that is what makes it safe to wait on.
         """
         try:
-            (self._workdir / ".finalized").write_text(
-                json.dumps({"ts": time.time()})
-            )
+            (self._workdir / ".finalized").write_text(json.dumps({"ts": time.time()}))
         except OSError as exc:
             logger.warning("failed to write .finalized marker: %s", exc)
-
 
     def run(self) -> None:
         """Run the orchestrator loop until stopped.

@@ -42,9 +42,11 @@ class RecipeStage:
     depends_on: list[str]
     step_titles: list[str]
 
+
 _FINALIZATION_START_TIMEOUT = 10.0
 _FINALIZATION_TOTAL_TIMEOUT = 30.0
 _FINALIZATION_POLL_INTERVAL = 0.05
+
 
 def _wait_for_finalization(run_dir: Path) -> None:
     """Bounded wait for the orchestrator to finish finalization.
@@ -73,6 +75,7 @@ def _wait_for_finalization(run_dir: Path) -> None:
         if finalized.exists():
             return
         time.sleep(_FINALIZATION_POLL_INTERVAL)
+
 
 def _parse_stage_entry(idx: int, raw_stage: object) -> RecipeStage | None:
     """Parse a single raw stage dict into a RecipeStage, or None if invalid."""
