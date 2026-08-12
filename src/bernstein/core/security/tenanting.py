@@ -65,6 +65,25 @@ class TenantRegistry:
         return bool(self.tenants)
 
 
+class InvalidTenantIdError(ValueError, LookupError):
+    """Raised when a tenant identifier cannot name a tenant.
+
+    Subclasses both builtins on purpose. It is a `ValueError` because the
+    identifier is malformed, and a `LookupError` because the practical
+    consequence is the same as naming a tenant that does not exist: there is
+    no such scope to resolve. The `LookupError` base is what lets the
+    existing request surfaces report it as a client error, since they
+    already map `LookupError` from `resolve_tenant_scope` to 404 - an
+    unvalidated identifier reaching a route would otherwise surface as an
+    unhandled 500.
+
+    `LookupError` is deliberate where `PermissionError` is not: the latter
+    derives from `OSError`, which several callers catch around filesystem
+    work that also normalizes tenant IDs, so a refusal would be silently
+    swallowed there.
+    """
+
+
 # A tenant ID is used verbatim as a single filesystem path segment (see
 # `tenant_paths`), so it is restricted to characters that name one directory
 # entry and nothing else. Equivalent to ``^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$``,
@@ -73,6 +92,14 @@ class TenantRegistry:
 # filesystems.
 TENANT_ID_MAX_LENGTH = 64
 _TENANT_ID_EXTRA_CHARS = frozenset("_.-")
+
+# Names Windows resolves to character devices rather than to a directory,
+# with or without an extension (`CON`, `CON.txt`). The suite runs on Windows,
+# so these are rejected everywhere to keep one tenant ID meaning one thing on
+# every supported platform.
+_WINDOWS_RESERVED_STEMS = frozenset(
+    {"con", "prn", "aux", "nul"} | {f"com{digit}" for digit in "123456789"} | {f"lpt{digit}" for digit in "123456789"}
+)
 
 
 def _is_ascii_alnum(char: str) -> bool:
@@ -89,11 +116,20 @@ def is_valid_tenant_id(value: str) -> bool:
     That excludes separators (``/``, ``\\``), relative segments (``.``,
     ``..``), and control characters, so joining it onto a directory always
     yields a child of that directory.
+
+    Two further rules keep one identifier from naming two different things
+    across supported platforms: a trailing dot is rejected because Windows
+    strips it (making ``acme.`` and ``acme`` the same directory), and names
+    Windows reserves for character devices are rejected outright.
     """
 
     if not value or len(value) > TENANT_ID_MAX_LENGTH:
         return False
     if not _is_ascii_alnum(value[0]):
+        return False
+    if value.endswith("."):
+        return False
+    if value.split(".", 1)[0].lower() in _WINDOWS_RESERVED_STEMS:
         return False
     return all(_is_ascii_alnum(char) or char in _TENANT_ID_EXTRA_CHARS for char in value)
 
@@ -124,16 +160,17 @@ def normalize_tenant_id(raw: str | None) -> str:
         The normalized tenant ID, or `DEFAULT_TENANT_ID` when *raw* is blank.
 
     Raises:
-        ValueError: If *raw* is non-blank and not a valid tenant ID.
+        InvalidTenantIdError: If *raw* is non-blank and not a valid tenant ID.
     """
 
     value = (raw or "").strip()
     if not value:
         return DEFAULT_TENANT_ID
     if not is_valid_tenant_id(value):
-        raise ValueError(
+        raise InvalidTenantIdError(
             f"invalid tenant id {_describe_tenant_id(value)}: expected 1-{TENANT_ID_MAX_LENGTH} characters "
-            "starting with an ASCII letter or digit, followed by ASCII letters, digits, '_', '.', or '-'"
+            "starting with an ASCII letter or digit, followed by ASCII letters, digits, '_', '.', or '-', "
+            "not ending in '.', and not a reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9)"
         )
     return value
 
@@ -219,8 +256,8 @@ def tenant_paths(sdd_dir: Path, tenant_id: str) -> TenantPaths:
         The derived tenant paths.
 
     Raises:
-        ValueError: If *tenant_id* is not a valid identifier, or if the
-            derived root does not resolve to a location under *sdd_dir*.
+        InvalidTenantIdError: If *tenant_id* is not a valid identifier, or if
+            the derived root does not resolve to a location under *sdd_dir*.
     """
 
     normalized = normalize_tenant_id(tenant_id)
@@ -228,7 +265,7 @@ def tenant_paths(sdd_dir: Path, tenant_id: str) -> TenantPaths:
     resolved_root = root.resolve()
     resolved_base = sdd_dir.resolve()
     if resolved_root == resolved_base or not resolved_root.is_relative_to(resolved_base):
-        raise ValueError(f"tenant id {_describe_tenant_id(str(tenant_id))} resolves outside the tenant root")
+        raise InvalidTenantIdError(f"tenant id {_describe_tenant_id(str(tenant_id))} resolves outside the tenant root")
     return TenantPaths(
         root=root,
         backlog_dir=root / "backlog",

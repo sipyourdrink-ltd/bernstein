@@ -58,6 +58,31 @@ Events that omit `details.tenant_id` are treated as belonging to the
 incremental - operators can switch on multi-tenant tagging without
 breaking pre-existing chains.
 
+### Accepted tenant identifiers
+
+A tenant id doubles as a directory name - the per-tenant subtree lives at
+`.sdd/<tenant_id>/{backlog,metrics}/` - so `normalize_tenant_id` accepts
+only values that name a single directory entry:
+
+| Rule | Accepted | Rejected |
+|---|---|---|
+| Length | 1-64 characters | 65+ |
+| Character set | ASCII letters, digits, `_`, `.`, `-` | anything else, including non-ASCII letters and digits |
+| First character | ASCII letter or digit | `-`, `.`, `_` |
+| Trailing dot | - | `acme.` (Windows strips it, aliasing `acme`) |
+| Reserved device names | - | `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with or without an extension |
+
+Surrounding whitespace is stripped. Absent, empty, or whitespace-only
+input resolves to `default`, which is what keeps tenant-unaware call
+sites working.
+
+Anything else raises `InvalidTenantIdError`. It subclasses both
+`ValueError` (the id is malformed) and `LookupError` (there is no such
+scope to resolve); request surfaces already translate `LookupError` into
+`404`, so a malformed `?tenant=` value, `X-Tenant-Id` header, or agent
+JWT `tenant_id` claim is refused as a client error rather than surfacing
+as a server error.
+
 ## CLI usage
 
 ### Bare HMAC chain (most common)

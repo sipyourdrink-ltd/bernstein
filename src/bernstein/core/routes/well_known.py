@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from bernstein import __version__ as _BERNSTEIN_VERSION
@@ -197,10 +197,18 @@ def _resolve_key_dir() -> Path:
 
 
 def _normalize_tenant(tenant_id: str | None) -> str:
-    """Return the normalised tenant id (empty / whitespace -> ``default``)."""
-    from bernstein.core.security.tenanting import normalize_tenant_id
+    """Return the normalised tenant id (empty / whitespace -> ``default``).
 
-    return normalize_tenant_id(tenant_id)
+    These routes derive a key directory from the tenant id (see
+    `_tenant_key_dir`), so an id that cannot name a directory has no keys to
+    serve and is reported as a miss rather than surfacing as a server error.
+    """
+    from bernstein.core.security.tenanting import InvalidTenantIdError, normalize_tenant_id
+
+    try:
+        return normalize_tenant_id(tenant_id)
+    except InvalidTenantIdError as exc:
+        raise HTTPException(status_code=404, detail="unknown tenant") from exc
 
 
 def _tenant_key_dir(tenant_id: str) -> Path:

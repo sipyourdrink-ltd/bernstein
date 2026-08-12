@@ -115,6 +115,64 @@ class TestNormalizeTenantIdRejectsNonSegmentIds:
         assert "\n" not in str(excinfo.value)
 
 
+class TestPlatformPortableIdentifiers:
+    """One identifier must not name two different things across platforms."""
+
+    @pytest.mark.parametrize("tenant_id", ["acme.", "tenant..", "a."])
+    def test_trailing_dot_is_rejected(self, tenant_id: str) -> None:
+        """Windows strips it, so `acme.` and `acme` would share a directory."""
+        with pytest.raises(tenanting.InvalidTenantIdError):
+            normalize_tenant_id(tenant_id)
+
+    @pytest.mark.parametrize(
+        "tenant_id",
+        ["CON", "con", "Con", "NUL", "PRN", "AUX", "COM1", "com9", "LPT1", "lpt9", "CON.txt", "nul.log"],
+    )
+    def test_windows_reserved_device_name_is_rejected(self, tenant_id: str) -> None:
+        with pytest.raises(tenanting.InvalidTenantIdError):
+            normalize_tenant_id(tenant_id)
+
+    @pytest.mark.parametrize("tenant_id", ["console", "context", "commerce", "lptx", "connect", "auxiliary"])
+    def test_names_merely_starting_with_a_reserved_stem_are_allowed(self, tenant_id: str) -> None:
+        """Only the exact device names are reserved, not every prefix match."""
+        assert normalize_tenant_id(tenant_id) == tenant_id
+
+
+class TestInvalidTenantIdErrorContract:
+    """The refusal type is what keeps request surfaces returning 4xx.
+
+    `resolve_tenant_scope` normalizes a caller-supplied tenant selector, and
+    the routes that call it already translate `LookupError` into a 404. The
+    refusal must therefore stay catchable as `LookupError`, or an
+    unvalidated selector surfaces as an unhandled 500 instead.
+
+    It must equally NOT be an `OSError`: `cost_tracker`, `metric_collector`,
+    `audit_multitenant`, `tenant_isolation_verify`, and `task_store_core`
+    all catch `OSError` around filesystem work that also normalizes tenant
+    IDs, and a refusal must not be swallowed there.
+    """
+
+    def test_refusal_is_a_value_error(self) -> None:
+        with pytest.raises(ValueError):
+            normalize_tenant_id("../../etc")
+
+    def test_refusal_is_a_lookup_error(self) -> None:
+        with pytest.raises(LookupError):
+            normalize_tenant_id("../../etc")
+
+    def test_refusal_is_not_an_os_error(self) -> None:
+        with pytest.raises(tenanting.InvalidTenantIdError) as excinfo:
+            normalize_tenant_id("../../etc")
+        assert not isinstance(excinfo.value, OSError)
+
+    def test_containment_failure_uses_the_same_type(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir()
+        monkeypatch.setattr(tenanting, "normalize_tenant_id", lambda raw: str(raw))
+        with pytest.raises(tenanting.InvalidTenantIdError):
+            tenanting.tenant_paths(sdd_dir, "../escape")
+
+
 class TestTenantPathsContainment:
     """Derived tenant roots stay under the `.sdd` directory."""
 
