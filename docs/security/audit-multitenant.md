@@ -83,6 +83,66 @@ scope to resolve); request surfaces already translate `LookupError` into
 JWT `tenant_id` claim is refused as a client error rather than surfacing
 as a server error.
 
+### The tenant subtree is store-managed, not operator-configurable
+
+`.sdd` itself may be a symlink - where the state directory lives is the
+operator's call. Everything below it is layout this store creates and
+owns, so from this release each component of
+`.sdd/<tenant_id>/{backlog,metrics,runtime,runtime/wal,audit}` is created
+and opened relative to a descriptor for its parent, with `O_NOFOLLOW`. A
+component that is a symlink is refused rather than followed.
+
+This is a behaviour change for one existing setup. Earlier releases
+created the layout with `Path.mkdir(parents=True, exist_ok=True)`, which
+treats a symlink to a directory as an existing directory, so a hand-made
+link - `.sdd/acme/metrics -> /var/data/acme-metrics`, say - was followed
+silently. That link now fails on first use with `OSError` (`ELOOP`, or
+`ENOTDIR` on platforms that report it that way) naming the component.
+
+Two ways out, both offline:
+
+1. **Move the data under `.sdd`.** Replace the link with a real
+   directory and copy the contents in. Resolve the target with `realpath`
+   rather than `readlink`: a relative link target is relative to the link's
+   own directory, and `readlink` hands it back unchanged for the shell to
+   resolve against the working directory instead. Copy first and swap last,
+   so a wrong or missing target costs you nothing:
+
+   ```bash
+   link=.sdd/acme/metrics
+   test -L "$link" && target=$(realpath "$link") && test -d "$target" \
+     && mkdir "$link.new" && cp -a "$target/." "$link.new/" \
+     && rm "$link" && mv "$link.new" "$link"
+   ```
+
+2. **Move `.sdd` instead.** If the point of the link was to put state on
+   another volume, link the whole `.sdd` directory there. That one is
+   still followed, because it is the anchor rather than something below
+   it.
+
+Checking for the case is a one-liner:
+
+```bash
+find .sdd -mindepth 2 -maxdepth 3 -type l
+```
+
+#### Where the refusal does not apply
+
+The refusal is `O_NOFOLLOW` on a descriptor-relative open, so it needs a
+platform whose `os.open`, `os.mkdir`, `os.stat`, `os.unlink` and
+`os.rename` all accept `dir_fd`, and which defines `O_NOFOLLOW`. Linux
+and macOS do. Where they are absent - Windows is the case that matters -
+`anchored_write.py` reports `ANCHORED_WRITE_SUPPORTED` (and
+`ANCHORED_ROTATE_SUPPORTED`) false and falls back to the joined-path
+calls that predate the module, which follow a link or a junction exactly
+as before.
+
+So on those platforms the tenant subtree is best-effort: nothing here
+detects a redirected `.sdd/<tenant>/audit`. Treat multi-tenant storage
+that has to resist a local attacker as supported on Linux and macOS, and
+keep `.sdd` on a filesystem only the service account can write to
+regardless of platform.
+
 ## CLI usage
 
 ### Bare HMAC chain (most common)
