@@ -1,8 +1,7 @@
 # Security: audit chain, identity, policy
 
-The HMAC-chained audit log, Ed25519 install identity, and approval /
-policy enforcement. The audit chain is the tamper-evident record other
-subsystems anchor receipts to; treat its write path as load-bearing.
+The HMAC-chained audit log, Ed25519 install identity, and approval / policy
+enforcement. Other subsystems anchor receipts to the chain, so its write path is load-bearing.
 
 ## Key files
 
@@ -17,34 +16,25 @@ subsystems anchor receipts to; treat its write path as load-bearing.
 
 ## Invariants
 
-- The HMAC key lives OUTSIDE the audit log directory and must be mode
-  `0600`; a group- or world-readable key is a hard error at load time
-  (`audit.py` module docstring).
-- Event-type constants are append-only: add new `EVENT_*` names, never
-  edit or reuse existing ones (`audit_chain.py` module docstring).
-- Chain helpers take the chain instance as a parameter (no singleton
-  imports) and log through `log_with_prev_digest`, so `prev_chain_digest`
-  lands in the payload before the HMAC is computed (`audit_chain.py`).
+- The HMAC key lives OUTSIDE the audit log directory and must be mode `0600`;
+  a group- or world-readable key is a hard error at load time (`audit.py`).
+- Event-type constants are append-only: add new `EVENT_*` names, never edit or
+  reuse existing ones (`audit_chain.py` module docstring).
+- Chain helpers take the chain instance as a parameter (no singleton imports)
+  and log through `log_with_prev_digest`, so `prev_chain_digest` lands in the
+  payload before the HMAC is computed (`audit_chain.py`).
 - The audit chain is opt-in at runtime (`BERNSTEIN_AUDIT=1`, read in
   `../orchestration/orchestrator.py`); features must degrade without it.
-- An attestation bundle is untrusted input: `public_key_file` must stay a
-  plain filename inside `attestation_dir`, decided from the string with no
-  `resolve` or `stat`, and read through a descriptor anchored to that
-  directory. A path-comparison containment check validates one lookup while
-  the open performs another (`sigstore_attestation.py`, "Local bundle
-  contract").
-- The tenant `.sdd` layout follows the same rule on the write side.
-  `tenant_paths` and `tenant_metrics_dir` derive a path and assert it stays
-  under its base, but that answers where the layout points when it is
-  derived, not where a later write lands. Writers take `TenantPaths.anchor`
-  (or `tenant_metrics_target`) and go through
-  `../persistence/anchored_write.py`, so each component is opened relative to
-  its parent and a symlink is refused rather than followed. `.sdd` itself may
-  be a symlink -- that is operator configuration; everything below it is
-  store-managed layout. Deriving a tenant path a second time at the moment of
-  a write puts the gap back (`tenanting.py`).
+- Untrusted paths are opened, never compared. `public_key_file` stays a plain
+  filename inside `attestation_dir`, decided from the string with no `resolve`
+  or `stat`; a path-comparison check validates one lookup while the open
+  performs another (`sigstore_attestation.py`).
+- Same rule on the tenant write side: deriving a path says where the layout
+  points, not where a write lands. Writers take `TenantPaths.anchor` (or
+  `tenant_metrics_target`) through `../persistence/anchored_write.py`, which
+  opens each component relative to its parent and refuses a symlink below `.sdd`
+  (`tenanting.py`).
 
 ## Testing
 
-Single files only, e.g. `uv run pytest tests/unit/test_audit.py -x -q`;
-most surfaces here have a dedicated `test_audit_*.py` file.
+Single files only: `uv run pytest tests/unit/test_audit.py -x -q`.

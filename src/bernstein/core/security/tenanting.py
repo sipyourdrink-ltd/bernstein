@@ -329,6 +329,14 @@ def ensure_tenant_layout(sdd_dir: Path, tenant_id: str) -> TenantPaths:
     """
 
     paths = tenant_paths(sdd_dir, tenant_id)
+    # The anchored walk deliberately never creates its own root: an anchor is
+    # the location everything below it is trusted relative to, so creating one
+    # would vouch for a place nothing has vouched for. `.sdd` is that root here
+    # and it is the caller's own base -- operator configuration, allowed to be
+    # a symlink -- so it is created the ordinary way when absent. Leaving it to
+    # the walk turned a first run in an empty directory into `FileNotFoundError`
+    # on the anchor's `open`, which is not a containment refusal at all.
+    sdd_dir.mkdir(parents=True, exist_ok=True)
     mkdir_anchored(paths.anchor.child("backlog"))
     mkdir_anchored(paths.anchor.child("metrics"))
     return paths

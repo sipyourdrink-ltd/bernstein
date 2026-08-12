@@ -188,3 +188,41 @@ class TestMetricsDirContract:
         monkeypatch.setattr(tenanting, "normalize_tenant_id", lambda raw: str(raw))
         with pytest.raises(InvalidTenantIdError):
             tenanting.tenant_metrics_dir(metrics, "..")
+
+
+def test_layout_is_created_when_the_sdd_directory_does_not_exist_yet(tmp_path: Path) -> None:
+    """A first run in an empty project must create the layout, not refuse it.
+
+    The anchored walk never creates its own root, by design. `.sdd` is that
+    root, so leaving its creation to the walk made the very first
+    `ensure_tenant_layout` in a fresh directory raise `FileNotFoundError` from
+    the anchor's `open` - a missing base reported as if it were a containment
+    refusal.
+    """
+    sdd_dir = tmp_path / ".sdd"
+    assert not sdd_dir.exists()
+
+    paths = ensure_tenant_layout(sdd_dir, "tenant-a")
+
+    assert paths.backlog_dir.is_dir()
+    assert paths.metrics_dir.is_dir()
+    assert paths.root.resolve().parent == sdd_dir.resolve()
+
+
+@needs_anchoring
+def test_a_symlinked_sdd_directory_is_still_the_operator_s_choice(tmp_path: Path) -> None:
+    """`.sdd` may be a symlink; everything below it may not.
+
+    The anchor root is the caller's own base - operator configuration, and the
+    only place in the layout a link is legitimate. Creating it when absent must
+    not turn into following a link *below* it, which the walk still refuses.
+    """
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    sdd_dir = tmp_path / ".sdd"
+    sdd_dir.symlink_to(elsewhere, target_is_directory=True)
+
+    paths = ensure_tenant_layout(sdd_dir, "tenant-a")
+
+    assert (elsewhere / "tenant-a" / "backlog").is_dir()
+    assert paths.backlog_dir.is_dir()
