@@ -160,16 +160,13 @@ class TestFindingPayload:
         multiline = f"if flag:{newline}    eval(user_input){newline}"
         assert _address(snippet=multiline) == _address(snippet=multiline.replace(newline, "\n"))
 
-    @pytest.mark.parametrize("text", ["src/café.py", "x = 'café'"])
-    def test_unicode_normal_form_does_not_change_address(self, text: str) -> None:
+    @pytest.mark.parametrize(("field", "text"), [("uri", "src/café.py"), ("snippet", "x = 'café'")])
+    def test_unicode_normal_form_does_not_change_address(self, field: str, text: str) -> None:
         # macOS hands back decomposed (NFD) bytes where Linux hands back
         # composed (NFC) ones; one file must not address as two.
         nfc, nfd = unicodedata.normalize("NFC", text), unicodedata.normalize("NFD", text)
         assert nfc != nfd, "fixture must actually differ between normal forms"
-        if text.startswith("src/"):
-            assert _address(uri=nfc) == _address(uri=nfd)
-        else:
-            assert _address(snippet=nfc) == _address(snippet=nfd)
+        assert _address(**{field: nfc}) == _address(**{field: nfd})
 
     def test_address_ignores_sarif_key_order_and_untracked_fields(self) -> None:
         baseline = _address()
@@ -297,11 +294,10 @@ class TestFindingPayload:
         # payload whose narrated identity disagrees with its own evidence is
         # rejected -- verification never reads the field and believes it.
         sdd = _sdd(tmp_path)
+        # The address is left correct on purpose, so the only thing wrong with
+        # the payload is the field being forged.
         content = _finding().to_content_dict()
         content[field] = forged  # type: ignore[literal-required]
-        if field != "type":
-            # Keep the address self-consistent so only the forged field is wrong.
-            content["address"] = _finding().to_content_dict()["address"]
         post_run_artifact(
             sdd_dir=sdd,
             task_id="task-1",
