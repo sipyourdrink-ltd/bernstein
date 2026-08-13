@@ -67,7 +67,10 @@ JOURNAL_EVENT_ARTIFACT_POSTED: Final[str] = "artifact_posted"
 ARTIFACT_TYPE_REPORT: Final[str] = "report"
 ARTIFACT_TYPE_TABLE: Final[str] = "table"
 ARTIFACT_TYPE_LINK: Final[str] = "link"
-ARTIFACT_TYPES: Final[frozenset[str]] = frozenset({ARTIFACT_TYPE_REPORT, ARTIFACT_TYPE_TABLE, ARTIFACT_TYPE_LINK})
+ARTIFACT_TYPE_FINDING: Final[str] = "finding"
+ARTIFACT_TYPES: Final[frozenset[str]] = frozenset(
+    {ARTIFACT_TYPE_REPORT, ARTIFACT_TYPE_TABLE, ARTIFACT_TYPE_LINK, ARTIFACT_TYPE_FINDING}
+)
 """Artifact types accepted by the worker posting boundary."""
 
 LINK_KINDS: Final[frozenset[str]] = frozenset({"preview", "dashboard", "document"})

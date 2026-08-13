@@ -75,6 +75,42 @@ def test_artifacts_show_renders_content_and_history(project: Path) -> None:
     assert "Version history" in result.output
 
 
+def test_artifacts_show_renders_finding_provenance(project: Path) -> None:
+    sarif_result = {
+        "ruleId": "PY-TAINT-001",
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": "src/app.py"},
+                    "region": {"startLine": 8, "snippet": {"text": "eval(user_input)"}},
+                }
+            }
+        ],
+    }
+    post_run_artifact(
+        sdd_dir=project / ".sdd",
+        task_id="task-1",
+        key="security-finding",
+        payload=ArtifactPayload.finding(
+            sarif_result,
+            tool="semgrep",
+            tool_version="1.131.0",
+            pinned_ruleset_or_feed_digest="sha256:" + "a" * 64,
+            invocation_argv_hash="sha256:" + "b" * 64,
+            target="git:0123456789abcdef",
+        ),
+        actor="worker-a",
+        hmac_key=load_or_create_audit_key(),
+    )
+    result = CliRunner().invoke(
+        artifacts_group,
+        ["show", "task-1", "security-finding", "-w", str(project)],
+    )
+    assert result.exit_code == 0, result.output
+    for rendered in ("semgrep", "1.131.0", "pinned_ruleset_or_feed_digest", "invocation_argv_hash"):
+        assert rendered in result.output
+
+
 def test_artifacts_show_tampered_withholds_content(project: Path) -> None:
     _post(project, body="secret-content")
     # Flip a byte in the stored blob.
