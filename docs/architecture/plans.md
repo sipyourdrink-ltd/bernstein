@@ -86,7 +86,7 @@ alias).
 | `priority` | int 1-5 | `2` | 1 = highest, 5 = lowest. Affects orchestrator ordering when multiple steps are ready. |
 | `scope` | enum | `medium` | `small` (<30min), `medium` (30-90min), `large` (90min+). Influences cost/model picks. |
 | `complexity` | enum | `medium` | `low`, `medium`, `high`. Drives router/cascade tier choice. |
-| `model` | string | - | Override model with an adapter/provider-specific identifier, such as `gpt-5.3-codex-spark` or `qwen/qwen3-coder`. |
+| `model` | string | - | Override model with an adapter/provider-specific identifier, such as `provider/model-name`. |
 | `effort` | enum | - | Effort knob: `low`, `normal`, `high`, `max`. |
 | `estimated_minutes` | int | `30` | Used by the duration predictor and plan cost estimate. |
 | `mode` | string | - | Execution mode (e.g. `batch`). |

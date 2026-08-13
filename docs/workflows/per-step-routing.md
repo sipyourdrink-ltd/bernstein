@@ -52,7 +52,7 @@ error rather than silently substituting a different one.
 ### `model`
 
 Pins the provider-specific model identifier for one step, such as
-`gpt-5.3-codex-spark` or `qwen/qwen3-coder`. When set,
+`provider/model-name`. When set,
 the cascade router skips its initial selection logic and uses the
 pinned model as attempt 0.
 

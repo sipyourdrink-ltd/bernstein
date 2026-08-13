@@ -206,12 +206,12 @@ nodes:
     agent: reviewer
     prompt: "Review the change"
     cli: pi
-    model: qwen/qwen3-coder
+    model: provider/model-name
     effort: high
 """
     node = load_workflow_spec_from_text(text).nodes[0]
     assert node.cli == "pi"
-    assert node.model == "qwen/qwen3-coder"
+    assert node.model == "provider/model-name"
     assert node.effort == "high"
 
 
@@ -224,7 +224,7 @@ version: "1.0.0"
 nodes:
   - id: tests
     command: "pytest"
-    model: qwen/qwen3-coder
+    model: provider/model-name
 """
     with pytest.raises(WorkflowSpecError, match="require an agent node"):
         load_workflow_spec_from_text(text)

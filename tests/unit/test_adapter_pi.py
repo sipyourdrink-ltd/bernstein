@@ -28,11 +28,11 @@ class TestPiAdapterSpawn:
             adapter.spawn(
                 prompt="fix the bug",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="qwen/qwen3-coder", effort="high"),
+                model_config=ModelConfig(model="provider/model-name", effort="high"),
                 session_id="pi-s1",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "--model", "qwen/qwen3-coder", "fix the bug"]
+        assert inner == ["pi", "--model", "provider/model-name", "fix the bug"]
 
     def test_spawn_leaves_model_selection_to_pi_for_auto(self, tmp_path: Path) -> None:
         adapter = PiAdapter()

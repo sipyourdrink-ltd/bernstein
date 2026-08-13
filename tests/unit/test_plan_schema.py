@@ -252,7 +252,7 @@ class TestValidatePlanInvalidEnums:
 
     def test_arbitrary_model_identifier_is_valid(self) -> None:
         plan = _minimal_plan()
-        plan["stages"][0]["steps"][0]["model"] = "gpt-5.3-codex-spark"
+        plan["stages"][0]["steps"][0]["model"] = "provider/model-name"
         errors = validate_plan(plan)
         assert errors == []
 

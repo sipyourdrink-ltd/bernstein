@@ -297,7 +297,7 @@ nodes:
     agent: reviewer
     prompt: "Review {goal}"
     cli: pi
-    model: qwen/qwen3-coder
+    model: provider/model-name
     effort: high
 """
     )
@@ -306,7 +306,7 @@ nodes:
     assert execution.succeeded is True
     assert len(captured) == 1
     assert captured[0].cli == "pi"
-    assert captured[0].model == "qwen/qwen3-coder"
+    assert captured[0].model == "provider/model-name"
     assert captured[0].effort == "high"
 
 
