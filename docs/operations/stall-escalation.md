@@ -95,3 +95,41 @@ reconstructing a failure window can place "this detector saw these inputs and
 decided" next to "this mechanism delivered the stop" without guessing. Recording
 is best-effort -- a chain failure never blocks the kill -- but never silent: the
 failure surfaces as a warning naming the session.
+
+## Automatic kills emit receipts
+
+The three automatic stall-kill paths in `core.agents.heartbeat`
+(`_escalate_heartbeat`, `_escalate_stall_simple`, `_escalate_stall_profiled`)
+emit a full escalation receipt for every kill they issue, not just the verdict.
+The ordering is:
+
+1. `stall.verdict` is recorded (the decision, before the kill).
+2. The worker is killed (SIGTERM/SIGKILL ladder or `spawner.kill`).
+3. `escalation.receipt` is emitted (the failure window, after the kill).
+
+The receipt assembly runs *after* the kill so the kill path is never delayed or
+blocked, and inside the single-threaded tick loop nothing else appends to the
+journal between the verdict and the receipt, so the receipt binds exactly the
+window the verdict observed. Because the audit chain is read fresh from disk on
+every append, the `escalation.receipt` event chains directly off the
+`stall.verdict` that precedes it.
+
+The automatic path reuses the same assembly and verification machinery as a
+manually issued receipt -- `bernstein escalation verify <receipt-id>` works on
+automatic receipts unchanged, and they appear in `bernstein escalation show`.
+The receipt records the stalled worker's `session_id`, and the mirrored
+`escalation.receipt` audit event carries it too, so the session link is read
+from the record itself rather than reconstructed by matching ids.
+
+The `worktree_id` on an automatic receipt is derived from the worktree the
+orchestrator runs (`sha256` of the resolved workdir, truncated to 16 hex chars
+-- the same convention `worktree_id_for` uses elsewhere), so a receipt stays
+attributable to the worktree that processed the kill without taking a skills
+catalogue dependency.
+
+Emission is best-effort, like the verdict: a missing or empty run journal, a
+failing install identity, or a chain write failure never prevents the kill
+that already happened, and surfaces as a warning naming the session and
+detector. Only when the orchestrator carries no `_run_id` is the skip silent
+(`info`) -- without a run there is no journal to anchor, so there is nothing
+to emit.

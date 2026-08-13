@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -500,6 +501,97 @@ def _emit_stall_verdict(
         )
 
 
+def _emit_escalation_receipt(
+    orch: Any,
+    session: Any,
+    *,
+    stall_reason: StallReason,
+    detector: str,
+) -> None:
+    """Emit a signed, journal-anchored escalation receipt after a stall kill (#3685).
+
+    Called AFTER the automatic stall kill has been issued, mirroring the
+    ``stall.verdict`` that recorded the decision earlier in the same kill
+    path. The receipt binds the trailing journal window by its Merkle hashes,
+    is signed with the install escalation identity, and is mirrored into the
+    HMAC chained audit log as ``escalation.receipt`` -- chained directly off
+    the ``stall.verdict`` it follows.
+
+    Best-effort by design, like ``_emit_stall_verdict``: the receipt must
+    never block, delay, retry, or undo the kill that already happened. A
+    receipt that cannot be produced (missing/empty journal, no identity, a
+    chain write failure) is logged as a warning naming the session -- with
+    one exception: when the orchestrator carries no ``_run_id`` there is no
+    journal to anchor, so the skip is silent info rather than a spurious
+    warning.
+    """
+    workdir = getattr(orch, "_workdir", None)
+    if not isinstance(workdir, Path):
+        return
+    run_id = getattr(orch, "_run_id", None) or ""
+    if not run_id:
+        logger.info(
+            "Skipping escalation receipt for session %s: no run id to anchor a journal",
+            session.id,
+        )
+        return
+    try:
+        from bernstein.core.identity.install_rev import get_install_rev
+        from bernstein.core.orchestration.escalation import (
+            DEFAULT_ESCALATION_WINDOW,
+            assemble_escalation_receipt,
+            load_or_create_escalation_identity,
+        )
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import (
+            AuditChainStore,
+            record_escalation_receipt,
+        )
+
+        identity_dir = workdir / ".sdd" / "escalation"
+        private_key_pem, public_key_pem = load_or_create_escalation_identity(identity_dir)
+        worktree_id = hashlib.sha256(str(workdir.resolve()).encode("utf-8")).hexdigest()[:16]
+        receipt = assemble_escalation_receipt(
+            sdd_dir=workdir / ".sdd",
+            lineage_root=workdir / ".sdd" / "lineage",
+            hmac_key=load_or_create_audit_key(),
+            private_key_pem=private_key_pem,
+            public_key_pem=public_key_pem,
+            run_id=run_id,
+            worker_id=session.id,
+            session_id=session.id,
+            worktree_id=worktree_id,
+            stall_reason=stall_reason,
+            respawn_budget_remaining=0,
+            fork_step=None,
+            window=DEFAULT_ESCALATION_WINDOW,
+            install_rev=get_install_rev(),
+            timestamp=int(time.time()),
+            extra_binding=None,
+        )
+        chain = AuditChainStore(workdir / ".sdd" / "audit")
+        record_escalation_receipt(
+            chain=chain,
+            run_id=receipt.run_id,
+            worker_id=receipt.worker_id,
+            session_id=receipt.session_id,
+            stall_reason=receipt.stall_reason.value,
+            recommended_action=receipt.recommended_action.value,
+            journal_head_at_stall=receipt.journal_head_at_stall,
+            window_size=len(receipt.window_entry_hashes),
+            fork_snapshot_sha=receipt.fork_ref.snapshot_sha if receipt.fork_ref else "",
+            journal_entry_hash=receipt.journal_entry_hash,
+        )
+    except Exception as exc:  # the receipt must never block or undo the kill
+        logger.warning(
+            "Could not emit escalation.receipt for session %s (%s detector): %s: %s",
+            session.id,
+            detector,
+            type(exc).__name__,
+            exc,
+        )
+
+
 def _escalate_heartbeat(
     orch: Any,
     session: Any,
@@ -566,6 +658,12 @@ def _escalate_heartbeat(
             if session.pid is None or not action.action_taken:
                 with contextlib.suppress(Exception):
                     orch._spawner.kill(session)
+            _emit_escalation_receipt(
+                orch,
+                session,
+                stall_reason=StallReason.HEARTBEAT_STALE,
+                detector="heartbeat",
+            )
 
     if age >= shutdown_threshold:
         with contextlib.suppress(OSError):
@@ -727,6 +825,12 @@ def _escalate_stall_simple(
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
+        _emit_escalation_receipt(
+            orch,
+            session,
+            stall_reason=StallReason.NO_PROGRESS,
+            detector="stall_simple",
+        )
         _reap_session_heartbeat_loop(orch, session, reason="stall_kill")
         orch._stall_counts[task_id] = 0
     elif count >= AGENT.escalation_high_count:
@@ -769,6 +873,12 @@ def _escalate_stall_profiled(
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
+        _emit_escalation_receipt(
+            orch,
+            session,
+            stall_reason=StallReason.NO_PROGRESS,
+            detector="stall_profiled",
+        )
         _reap_session_heartbeat_loop(orch, session, reason=f"stall_kill:{profile.reason}")
         orch._stall_counts[task_id] = 0
     elif count >= profile.shutdown_threshold:
