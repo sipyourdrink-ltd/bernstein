@@ -38,6 +38,21 @@ JSON) without paying for one.
   runs `bernstein trace verify <id>` explicitly. The explicit verify
   command remains for an on-demand check that returns a boolean.
 
+## Credential safety
+
+Both live trace persistence and the content-addressed archive redact PII and
+credential-shaped text before writing. This covers authorization headers,
+known API-key prefixes, private-key blocks, and random-looking values assigned
+to names containing `token`, `secret`, `password`, or `key`. Entropy by itself
+does not trigger redaction, so ordinary content hashes, UUIDs, and base64
+payloads remain intact.
+
+For content-addressed blobs, redaction happens before sha256 calculation. The
+index digest therefore identifies the exact safe bytes on disk, and a redacted
+trace continues to pass `store.verify()`. Debug and ticket bundles copy these
+already-redacted trace bytes; they cannot restore a credential removed at the
+write boundary.
+
 ## CLI
 
 | Command                                | What it does                                      |

@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from bernstein.core.observability.log_redact import redact_sensitive_text
+
 _JSONL_GLOB = "*.jsonl"
 
 logger = logging.getLogger(__name__)
@@ -384,7 +386,10 @@ class TraceStore:
                 # Single field, top-level, JSON-serialisable.  Doesn't
                 # collide with any existing ``AgentTrace`` field name.
                 payload["_rev"] = header["_rev"]
-        data = json.dumps(payload)
+        # Redact before any bytes reach either live trace location.  Both the
+        # direct lookup file and per-task JSONL therefore persist identical,
+        # credential-safe bytes.
+        data = redact_sensitive_text(json.dumps(payload))
 
         # Write per-trace file (overwrites on update)
         self._path_for_trace(trace.trace_id).write_text(data + "\n")
