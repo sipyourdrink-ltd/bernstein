@@ -321,7 +321,9 @@ class TenantIsolationVerifier:
             results.append(
                 IsolationTest(
                     name="cost_content_not_cross_contaminated",
-                    description=f"No '{norm_b}' cost records appear in '{norm_a}' metrics dir",
+                    description=(
+                        f"Every record in '{norm_a}' metrics dir names a readable tenant, and none names '{norm_b}'"
+                    ),
                     passed=True,
                     details="one or both metrics dirs do not exist on disk; no cross-contamination possible",
                 )
