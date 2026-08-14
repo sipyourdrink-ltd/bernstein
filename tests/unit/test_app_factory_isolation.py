@@ -25,7 +25,13 @@ from _pytest.outcomes import Exit
 
 from bernstein.core.routes import api_v1
 from bernstein.core.server import create_app
-from tests.conftest import _MAX_RSS_BYTES, _enforce_memory_guard
+from tests.conftest import (
+    _GC_WATERMARK_BYTES,
+    _MAX_RSS_BYTES,
+    _enforce_memory_guard,
+    _memory_guard_teardown,
+    _run_memory_guard,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,3 +87,92 @@ def test_memory_guard_above_cap_aborts_session_once() -> None:
 
     assert not isinstance(excinfo.value, SystemExit)
     assert excinfo.value.returncode == 137
+
+
+def test_guard_skips_the_collection_while_rss_is_far_below_the_cap() -> None:
+    """A quiet test must not pay for a full heap walk.
+
+    ``gc.collect()`` is O(live heap), so collecting after every test made a
+    file's teardown scale with the object graph that file builds. Nothing is
+    worth reclaiming this far below the cap, and the generational collector
+    still runs on its own.
+    """
+    collections: list[int] = []
+
+    _run_memory_guard(
+        rss_probe=lambda: _GC_WATERMARK_BYTES - 1,
+        collect=lambda: collections.append(1),
+        enforce=lambda _rss: None,
+    )
+
+    assert collections == []
+
+
+def test_guard_still_enforces_the_cap_when_it_skips_the_collection() -> None:
+    """Positive control: skipping the collection must not skip the guard.
+
+    Without this, an implementation that simply returned early below the
+    watermark would pass the test above while silently disarming the cap.
+    """
+    enforced: list[int] = []
+
+    _run_memory_guard(
+        rss_probe=lambda: _GC_WATERMARK_BYTES - 1,
+        collect=lambda: None,
+        enforce=enforced.append,
+    )
+
+    assert enforced == [_GC_WATERMARK_BYTES - 1]
+
+
+def test_guard_collects_once_at_the_watermark() -> None:
+    """At the watermark the reclamation is worth its cost, and runs exactly once."""
+    collections: list[int] = []
+
+    _run_memory_guard(
+        rss_probe=lambda: _GC_WATERMARK_BYTES,
+        collect=lambda: collections.append(1),
+        enforce=lambda _rss: None,
+    )
+
+    assert collections == [1]
+
+
+def test_guard_reads_nothing_on_a_platform_it_does_not_police(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off Darwin the teardown must not even probe RSS.
+
+    Reading RSS goes through psutil, which on Linux reads ``/proc``. Since the
+    cap is only enforced on Darwin, probing elsewhere adds a filesystem read to
+    every test's teardown - which the suites that assert a resolver touched no
+    clock, filesystem, or network correctly refuse.
+    """
+    probes: list[int] = []
+    monkeypatch.setattr(
+        "tests.conftest._current_rss_bytes",
+        lambda: probes.append(1) or 0,
+    )
+
+    _memory_guard_teardown("Linux")
+
+    assert probes == []
+
+
+def test_cap_is_enforced_against_the_rss_that_survived_the_collection() -> None:
+    """The figure that matters is what is left after reclaiming, not before.
+
+    A run that peaks above the cap and then frees the memory must continue;
+    enforcing on the pre-collection reading would abort the whole session on
+    memory that no longer exists.
+    """
+    readings = iter([_MAX_RSS_BYTES + 1, _GC_WATERMARK_BYTES])
+    enforced: list[int] = []
+
+    _run_memory_guard(
+        rss_probe=lambda: next(readings),
+        collect=lambda: None,
+        enforce=enforced.append,
+    )
+
+    assert enforced == [_GC_WATERMARK_BYTES]

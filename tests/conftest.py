@@ -58,6 +58,16 @@ if TYPE_CHECKING:
 
 _MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
+#: Force a full collection only once RSS has climbed past this share of the
+#: cap. ``gc.collect()`` walks the whole live heap, so collecting after every
+#: test made a file's teardown cost scale with the object graph that file
+#: builds. On ``tests/unit/test_tenant_scope_http_isolation.py`` -- 137 tests,
+#: each building a full app, ~4.5M live objects by the end -- the collections
+#: alone accounted for 84s of the file's 201s, which put it over the per-file
+#: subprocess budget on slower hosts. Below the watermark there is nothing
+#: worth reclaiming and the generational collector is already running.
+_GC_WATERMARK_BYTES = _MAX_RSS_BYTES // 2
+
 _SPAWNER_TMP_REPO_TESTS = {
     "test_adapter_model_default.py",
     "test_agent_signals.py",
@@ -123,14 +133,45 @@ def _enforce_memory_guard(rss_bytes: int) -> None:
         )
 
 
+def _run_memory_guard(
+    rss_probe: Callable[[], int],
+    collect: Callable[[], None],
+    enforce: Callable[[int], None],
+) -> None:
+    """Reclaim only when it can matter, then enforce the cap on what is left.
+
+    Collecting unconditionally cost every test the price of walking the whole
+    live heap, whether or not anything was reclaimable. Reading RSS first and
+    collecting only above the watermark keeps the reclamation where it does
+    work; re-reading afterwards means the cap is enforced against the RSS that
+    survived the collection, not the pre-collection figure.
+    """
+    rss_bytes = rss_probe()
+    if rss_bytes >= _GC_WATERMARK_BYTES:
+        collect()
+        rss_bytes = rss_probe()
+    enforce(rss_bytes)
+
+
+def _memory_guard_teardown(system: str) -> None:
+    """Run the guard only on the platform whose cap it enforces.
+
+    ``_current_rss_bytes`` asks psutil for the process's memory info, which on
+    Linux means reading ``/proc``. The cap has only ever been enforced on
+    Darwin, so probing anywhere else buys nothing and puts a filesystem read
+    into the teardown of every test -- including the purity suites that assert
+    a resolver touched no clock, filesystem, or network.
+    """
+    if system != "Darwin":
+        return
+    _run_memory_guard(_current_rss_bytes, gc.collect, _enforce_memory_guard)
+
+
 @pytest.fixture(autouse=True)
 def _memory_guard():
-    """Force GC after every test; abort the session if live RSS exceeds the cap."""
+    """Reclaim as RSS approaches the cap; abort the session once it exceeds it."""
     yield
-    # Aggressive garbage collection to prevent accumulation
-    gc.collect()
-    if platform.system() == "Darwin":
-        _enforce_memory_guard(_current_rss_bytes())
+    _memory_guard_teardown(platform.system())
 
 
 @pytest.fixture(autouse=True)
