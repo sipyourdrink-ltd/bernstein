@@ -271,14 +271,29 @@ strips them before responses (`:82`).
 
 A credential's persisted `tenant_id` is read back as the scope every request
 that credential authenticates is served under, so the store requires it to be
-a real tenant id rather than coercing whatever is on disk into one. A record
-written before the field existed omits it and resolves to `default`; a record
-carrying a blank or non-string value is not one the store can write, and it is
-treated as corrupt.
+a real tenant id rather than coercing whatever is on disk into one.
 
-A corrupt record is skipped, never fatal: `GET /identities` leaves it out, and
-a request presenting its token is answered `401` like any other unrecognised
-token — not `500`. Each skip logs `Skipping corrupt identity file: <path>`.
+The distinction is key presence, not emptiness:
+
+| Stored | Read as | Why |
+|---|---|---|
+| key absent | `default` | written before the field existed — the upgrade path |
+| `"acme"` / `"  acme  "` | `acme` | normalized |
+| `null` | corrupt | something wrote a tenant and wrote a non-tenant |
+| `""` / `"   "` | corrupt | a blank is not a tenant |
+| `42` / `true` / `[…]` / `{…}` | corrupt | coercing it would invent a scope |
+
+An explicit `null` is deliberately *not* treated as an omitted key. Only the
+absent key is the legacy case; a key that is present carries an assertion
+about scope, and a null assertion is refused rather than authenticated under
+`default`.
+
+A corrupt record is skipped, never fatal: `GET /identities` leaves it out, the
+startup token-index scan skips it instead of failing to boot, and a request
+presenting its token is answered `401` like any other unrecognised token —
+not `500`. The same applies to a file that is not valid JSON, is not a JSON
+object at all, or cannot be read. Each skip logs
+`Skipping corrupt identity file: <path>`.
 
 Operator repair, for a record hand-edited or written by an external tool:
 

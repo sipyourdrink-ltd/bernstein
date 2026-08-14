@@ -16,7 +16,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.sanitize import sanitize_log
@@ -144,6 +144,12 @@ def permissions_for_role(role: str) -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 
+# Sentinel for "the record has no ``tenant_id`` key at all", which is not the
+# same thing as a key whose stored value happens to be ``null``.  Only the
+# former is a pre-field record; see :func:`_credential_tenant_id`.
+_TENANT_KEY_ABSENT: Final[object] = object()
+
+
 def _credential_tenant_id(raw: Any) -> str:
     """Return the tenant a persisted credential is scoped to.
 
@@ -154,15 +160,23 @@ def _credential_tenant_id(raw: Any) -> str:
     scope, so a stored value that is not a non-blank string is refused
     instead.
 
-    An absent key stays lenient and resolves to :data:`DEFAULT_TENANT_ID`:
-    credentials written before the field existed carry no tenant and belong
-    to the default one.
+    Leniency is keyed on the *key* being absent, not on the value being
+    empty: a record written before the field existed carries no ``tenant_id``
+    at all and belongs to :data:`DEFAULT_TENANT_ID`.  A record that carries
+    the key with ``null`` in it is a different thing - something wrote a
+    tenant and wrote a non-tenant - and it is refused like any other value
+    that is not a real tenant id, rather than being quietly authenticated
+    under the default tenant.
+
+    Args:
+        raw: The stored value, or :data:`_TENANT_KEY_ABSENT` when the record
+            has no ``tenant_id`` key.
 
     Raises:
         ValueError: The record carries a ``tenant_id`` that is not a
             non-blank string.
     """
-    if raw is None:
+    if raw is _TENANT_KEY_ABSENT:
         return DEFAULT_TENANT_ID
     if not isinstance(raw, str):
         raise ValueError(f"credential tenant_id must be a string, got {type(raw).__name__}")
@@ -228,7 +242,7 @@ class AgentCredential:
             token_type=str(d.get("token_type", "opaque")),
             algorithm=str(d.get("algorithm", "HS256")),
             jti=str(d.get("jti", "")),
-            tenant_id=_credential_tenant_id(d.get("tenant_id")),
+            tenant_id=_credential_tenant_id(d.get("tenant_id", _TENANT_KEY_ABSENT)),
             task_ids=[str(t) for t in d.get("task_ids", [])],
             allowed_files=[str(f) for f in d.get("allowed_files", [])],
         )
@@ -421,45 +435,60 @@ class AgentIdentityStore:
         path = self._identity_path(identity.id)
         path.write_text(json.dumps(identity.to_dict(), indent=2), encoding="utf-8")
 
-    def _load(self, identity_id: str) -> AgentIdentity | None:
-        """Read one persisted identity, or None when it does not deserialise.
+    def _read_identity(self, path: Path) -> AgentIdentity | None:
+        """Deserialise one persisted identity file, or None when unusable.
 
-        This is the single boundary every caller reaches a stored identity
-        through - ``authenticate``, ``authorize``, ``get``, the lifecycle
-        mutators - so it is where a record that cannot be turned into an
-        identity has to stop.  A record whose persisted enum or tenant value
-        is not a legitimate one is treated exactly like a missing file: the
-        caller gets ``None`` and answers "not authenticated", instead of an
-        exception escaping into the authentication middleware and turning an
-        unusable credential into a 500.
+        Every reader in this store goes through here, so a record that cannot
+        be turned into an identity is skipped identically everywhere: the
+        startup token-index scan, ``list_identities``, and the ``_load``
+        lookup behind authentication and the lifecycle mutators.  Before this
+        was shared, each reader picked off raw JSON with its own exception
+        list, so the same bad file could block startup on one path, escape as
+        a 500 on another, and merely be omitted on a third.
 
-        The same failure modes ``list_identities`` skips are handled here, so
-        a corrupt record is consistently invisible rather than fatal on one
-        path and merely absent on the other.
+        Everything a bad record can raise is caught: a top-level value that
+        is not an object, a nested value that is not subscriptable, a missing
+        key, an enum or tenant value that is not a legitimate one, and the
+        filesystem errors of reading the file at all.  All of them mean the
+        same thing to a caller - there is no identity here - so all of them
+        produce ``None`` rather than an exception the caller cannot act on.
         """
-        path = self._identity_path(identity_id)
-        if not path.exists():
-            return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return AgentIdentity.from_dict(data)
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            if not isinstance(data, dict):
+                msg = f"identity record must be a JSON object, got {type(data).__name__}"
+                raise TypeError(msg)
+            return AgentIdentity.from_dict(cast("dict[str, Any]", data))
+        except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
             logger.warning("Skipping corrupt identity file: %s", path)
             return None
 
+    def _load(self, identity_id: str) -> AgentIdentity | None:
+        """Read one identity by id, or None when it is missing or unusable."""
+        path = self._identity_path(identity_id)
+        if not path.exists():
+            return None
+        return self._read_identity(path)
+
     def _rebuild_token_index(self) -> None:
-        """Scan persisted identities and populate the token→identity lookup."""
+        """Scan persisted identities and populate the token→identity lookup.
+
+        Runs from ``__init__``, so anything that escapes here blocks server
+        startup.  It indexes only records that fully deserialise, which is
+        also the only useful set: a record ``_read_identity`` rejects cannot
+        authenticate anyway, so indexing its token would map a live token to
+        an identity that always resolves to ``None``.
+        """
         self._token_index.clear()
         if not self._identities_dir.exists():
             return
         for path in self._identities_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                cred = data.get("credential")
-                if cred and not cred.get("revoked", False):
-                    self._token_index[cred["token_hash"]] = data["id"]
-            except (json.JSONDecodeError, KeyError):
-                logger.warning("Skipping corrupt identity file: %s", path)
+            identity = self._read_identity(path)
+            if identity is None:
+                continue
+            cred = identity.credential
+            if cred is not None and not cred.revoked:
+                self._token_index[cred.token_hash] = identity.id
 
     def _append_audit(self, event: IdentityAuditEvent) -> None:
         with self._audit_path.open("a", encoding="utf-8") as f:
@@ -870,19 +899,17 @@ class AgentIdentityStore:
         """List all identities, optionally filtered by status and/or role."""
         results: list[AgentIdentity] = []
         for path in sorted(self._identities_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                identity = AgentIdentity.from_dict(data)
-                if status is not None and identity.status != status:
-                    continue
-                if role is not None and identity.role != role:
-                    continue
-                results.append(identity)
-            except (json.JSONDecodeError, KeyError, ValueError):
-                # ``ValueError`` covers a record whose persisted enum or
-                # tenant field does not deserialise: the identity is skipped
-                # rather than listed with a value derived from a bad record.
-                logger.warning("Skipping corrupt identity file: %s", path)
+            # Shared reader: a record that does not deserialise is skipped
+            # rather than listed with a value derived from a bad record, and
+            # a malformed file cannot escape this route as a 500 either.
+            identity = self._read_identity(path)
+            if identity is None:
+                continue
+            if status is not None and identity.status != status:
+                continue
+            if role is not None and identity.role != role:
+                continue
+            results.append(identity)
         return results
 
     def get_audit_trail(self, identity_id: str | None = None, *, limit: int = 100) -> list[IdentityAuditEvent]:

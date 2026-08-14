@@ -523,3 +523,100 @@ class TestCorruptIdentityDoesNotBreakAuthentication:
         authenticated = reloaded.authenticate(good_token)
         assert authenticated is not None
         assert authenticated.id == good.id
+
+
+class TestIdentityReadersSkipCorruptFilesIdentically:
+    """Every reader of the identity directory survives the same bad file.
+
+    The store has three readers - the startup token-index scan, the listing
+    route, and the by-id lookup behind authentication - and each used to pick
+    the JSON apart with its own exception list.  A file that is not an object
+    at all made the startup scan raise `AttributeError` and refuse to
+    construct the store; a malformed `metadata` or `permissions` value made
+    the listing route raise `TypeError` out of `GET /identities`.  All three
+    now share one validated reader, so a bad file is skipped everywhere.
+    """
+
+    @staticmethod
+    def _write(identities_dir: Path, name: str, raw: str) -> None:
+        (identities_dir / f"{name}.json").write_text(raw)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "null",
+            "42",
+            '"a string, not a record"',
+            "[]",
+            '{"id": "x", "role": "backend", "session_id": "x", "credential": 5}',
+            "{not json at all",
+        ],
+    )
+    def test_store_constructs_despite_a_malformed_file(self, tmp_path: Path, raw: str) -> None:
+        """A malformed file must not stop the store from being built.
+
+        ``_rebuild_token_index`` runs from ``__init__``, so anything escaping
+        it takes the server down at startup rather than degrading one record.
+        """
+        store = AgentIdentityStore(tmp_path)
+        _identity, token = store.create_identity("session-good", "backend")
+        self._write(tmp_path / "agent_identities", "session-broken", raw)
+
+        reloaded = AgentIdentityStore(tmp_path)
+
+        assert reloaded.authenticate(token) is not None
+        assert reloaded.get("session-broken") is None
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("metadata", 7), ("permissions", 7), ("status", "not-a-status")],
+    )
+    def test_listing_skips_a_record_with_a_malformed_field(self, tmp_path: Path, field: str, value: object) -> None:
+        """``GET /identities`` lists what it can vouch for and skips the rest."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        good, _token = store.create_identity("session-good", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        payload = json.loads((identities_dir / f"{good.id}.json").read_text())
+        payload["id"] = "session-broken"
+        payload["session_id"] = "session-broken"
+        payload[field] = value
+        (identities_dir / "session-broken.json").write_text(json.dumps(payload))
+
+        listed = {found.id for found in AgentIdentityStore(tmp_path).list_identities()}
+
+        assert good.id in listed
+        assert "session-broken" not in listed
+
+
+class TestExplicitNullTenantIsRefused:
+    """An omitted tenant is the legacy case; an explicit null is not.
+
+    Leniency exists for records written before the field existed, which carry
+    no key at all.  A record that carries the key with `null` in it asserted a
+    scope and asserted a non-scope, so treating it as the legacy case would
+    authenticate it under the default tenant on the strength of a value that
+    is not a tenant.
+    """
+
+    def test_absent_key_still_resolves_to_the_default(self) -> None:
+        assert AgentCredential.from_dict({"token_hash": "abc"}).tenant_id == "default"
+
+    def test_explicit_null_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="tenant_id"):
+            AgentCredential.from_dict({"token_hash": "abc", "tenant_id": None})
+
+    def test_explicit_null_does_not_authenticate(self, tmp_path: Path) -> None:
+        """The refusal reaches authentication as a miss, not as a 500."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-null", "backend")
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        payload["credential"]["tenant_id"] = None
+        path.write_text(json.dumps(payload))
+
+        assert AgentIdentityStore(tmp_path).authenticate(token) is None
