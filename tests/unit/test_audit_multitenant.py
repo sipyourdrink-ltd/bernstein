@@ -60,6 +60,24 @@ def _today_window() -> tuple[str, str]:
     return since, until
 
 
+def _exported_bundle(tmp_path: Path) -> dict:
+    """Export a clean acme slice and return it as a mutable dict."""
+    audit_dir = tmp_path / ".sdd" / "audit"
+    _seed_two_tenants(audit_dir)
+    since, until = _today_window()
+    export = export_tenant_slice(
+        audit_dir=audit_dir,
+        tenant_id="acme",
+        since=since,
+        until=until,
+        key=_TEST_KEY,
+        output_dir=tmp_path / "out",
+        write=True,
+    )
+    assert export.bundle_path is not None
+    return json.loads(export.bundle_path.read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------------------
 # Tenant filter
 # ---------------------------------------------------------------------------
@@ -670,3 +688,115 @@ class TestMalformedTenantValuesAreReportedNotCoerced:
 
         assert not result.ok
         assert result.errors
+
+
+class TestABundleMustDeclareAUsableTenant:
+    """`tenant_id` was checked for presence only, never for shape."""
+
+    @pytest.mark.parametrize("declared", [None, "", "   ", 123, True, ["acme"], {"id": "acme"}, "../escape"])
+    def test_unusable_declaration_is_a_schema_error(self, tmp_path: Path, declared: object) -> None:
+        """Reported as a malformed declaration, not defaulted and then compared.
+
+        Reading an unusable declaration as the default tenant left a bundle
+        with no events verifying clean, and one with events failing for the
+        wrong reason -- a mismatch against a tenant the bundle never declared.
+        """
+        bundle = _exported_bundle(tmp_path)
+        bundle["tenant_id"] = declared
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        schema_phrases = ("must be a string", "must not be blank", "not a usable tenant identifier")
+        assert any(phrase in err for err in result.errors for phrase in schema_phrases)
+
+    def test_an_empty_slice_cannot_hide_an_unusable_declaration(self, tmp_path: Path) -> None:
+        """With no events there is nothing to mismatch against."""
+        bundle = _exported_bundle(tmp_path)
+        bundle["events"] = []
+        bundle["event_count"] = 0
+        bundle["tenant_id"] = None
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert any("tenant_id" in err for err in result.errors)
+
+    def test_a_missing_declaration_is_still_a_schema_error(self, tmp_path: Path) -> None:
+        bundle = _exported_bundle(tmp_path)
+        del bundle["tenant_id"]
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert any("tenant_id" in err for err in result.errors)
+
+
+class TestVerificationReturnsFindingsForEveryBundleShape:
+    """A verifier that raises hands the caller an exception, not findings."""
+
+    @pytest.mark.parametrize("event", [[1, 2, 3], "a string", 42, None])
+    def test_a_non_object_event_is_reported_not_raised(self, tmp_path: Path, event: object) -> None:
+        bundle = _exported_bundle(tmp_path)
+        bundle["events"] = [event]
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert result.errors
+
+    @pytest.mark.parametrize("details", [[], ["x"], "a string", 42])
+    def test_a_non_object_details_is_reported_not_raised(self, tmp_path: Path, details: object) -> None:
+        bundle = _exported_bundle(tmp_path)
+        for evt in bundle["events"]:
+            evt["details"] = details
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert result.errors
+
+
+class TestExportRefusesToDropUnreadableEvidence:
+    """An export that silently omits records looks complete and is not."""
+
+    def test_an_unreadable_in_window_tenant_stops_the_export(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+
+        segment = next(iter(audit_dir.glob("*.jsonl")))
+        lines = segment.read_text(encoding="utf-8").splitlines()
+        first = json.loads(lines[0])
+        first.setdefault("details", {})["tenant_id"] = "../escape"
+        lines[0] = json.dumps(first)
+        segment.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="unreadable"):
+            export_tenant_slice(
+                audit_dir=audit_dir,
+                tenant_id="acme",
+                since=since,
+                until=until,
+                key=_TEST_KEY,
+                output_dir=tmp_path / "out",
+                write=True,
+            )
+
+    def test_a_clean_log_still_exports(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+
+        export = export_tenant_slice(
+            audit_dir=audit_dir,
+            tenant_id="acme",
+            since=since,
+            until=until,
+            key=_TEST_KEY,
+            output_dir=tmp_path / "out",
+            write=True,
+        )
+
+        assert export.bundle_path is not None
+        assert verify_tenant_slice(export.bundle_path, key=_TEST_KEY).ok
