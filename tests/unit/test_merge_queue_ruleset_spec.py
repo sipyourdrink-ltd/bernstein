@@ -6,9 +6,9 @@ itself to anything. The shipped ruleset drifted from it on two axes that
 each break the queue in a different direction, and both survived because
 nothing read the live settings back:
 
-    * `required_status_checks` carries only `CI gate`. Branch protection
-      requires `CI gate` *and* `review-bot-ack` to enter the queue, so a
-      queue configured this way merges without the gate it enforced at
+    * `required_status_checks` must match branch protection. Branch
+      protection requires `CI gate` to enter the queue, so a queue whose
+      required checks omit it merges without the gate it enforced at
       entry.
     * `check_response_timeout_minutes` is 30. Every measured CI run on
       `main` takes longer, so every queue entry is ejected as timed out.
@@ -45,7 +45,7 @@ SPEC = Path("docs/operations/merge-queue-ruleset.json")
 # Mirrors repos/sipyourdrink-ltd/bernstein/branches/main/protection
 # -> required_status_checks.contexts. A context required to ENTER the
 # queue but not to MERGE from it is a gate the queue silently drops.
-BRANCH_PROTECTION_CONTEXTS = ("CI gate", "review-bot-ack")
+BRANCH_PROTECTION_CONTEXTS = ("CI gate",)
 
 # Floor for `check_response_timeout_minutes`, in minutes.
 #
@@ -170,10 +170,10 @@ def test_verifier_accepts_a_live_ruleset_matching_the_spec(intended: dict[str, A
 
 
 def test_verifier_reports_the_shipped_ruleset_as_drifted(intended: dict[str, Any]) -> None:
-    """The real 2026-07-27 ruleset must be rejected, naming both faults."""
+    """The real 2026-07-27 ruleset must be rejected, naming its tunable faults."""
     drifts = diff_ruleset(LIVE_RULESET_2026_07_27, intended)
     fields = {d.field for d in drifts}
-    assert "required_status_checks" in fields
+    assert "max_entries_to_build" in fields
     assert "check_response_timeout_minutes" in fields
 
 
@@ -181,10 +181,10 @@ def test_verifier_catches_a_dropped_required_context(intended: dict[str, Any]) -
     live = json.loads(json.dumps(intended))
     for rule in live["rules"]:
         if rule["type"] == "required_status_checks":
-            rule["parameters"]["required_status_checks"] = [{"context": "CI gate", "integration_id": 15368}]
+            rule["parameters"]["required_status_checks"] = []
     drifts = diff_ruleset(live, intended)
     assert [d.field for d in drifts] == ["required_status_checks"]
-    assert "review-bot-ack" in drifts[0].detail
+    assert "CI gate" in drifts[0].detail
 
 
 def test_verifier_catches_a_timeout_below_the_spec(intended: dict[str, Any]) -> None:
@@ -235,10 +235,10 @@ def test_drift_carries_machine_readable_expected_and_actual(intended: dict[str, 
     live = json.loads(json.dumps(intended))
     for rule in live["rules"]:
         if rule["type"] == "required_status_checks":
-            rule["parameters"]["required_status_checks"] = [{"context": "CI gate", "integration_id": 15368}]
+            rule["parameters"]["required_status_checks"] = []
     (drift,) = diff_ruleset(live, intended)
-    assert drift.actual == ["CI gate"]
-    assert drift.expected == ["CI gate", "review-bot-ack"]
+    assert drift.actual == []
+    assert drift.expected == ["CI gate"]
 
 
 def test_verifier_ignores_context_ordering(intended: dict[str, Any]) -> None:

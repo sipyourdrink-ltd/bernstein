@@ -11,9 +11,8 @@ Also guarded:
 * the required-status contexts the runbook tells the operator to put on
   the ruleset match the ones branch protection enforces at queue entry,
   so the two gates cannot silently diverge;
-* claims that went stale once ``review-bot-ack.yml`` gained a
-  ``merge_group`` trigger, and once ``main-red-guard.yml`` was folded
-  into ``pr-policy.yml``, do not creep back in.
+* claims that went stale once ``main-red-guard.yml`` was folded into
+  ``pr-policy.yml`` do not creep back in.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ MERGE_GATE = Path("docs/operations/merge-gate.md")
 
 # Mirrors repos/sipyourdrink-ltd/bernstein/branches/main/protection
 # -> required_status_checks.contexts (app_id 15368 == GitHub Actions).
-BRANCH_PROTECTION_CONTEXTS = ("CI gate", "review-bot-ack")
+BRANCH_PROTECTION_CONTEXTS = ("CI gate",)
 ACTIONS_INTEGRATION_ID = 15368
 
 # Tunable -> the value the Enable payload must carry. Sourced from the
@@ -169,21 +168,6 @@ def test_enable_payload_does_not_activate_the_ruleset(
     """
     assert enable_payload.get("enforcement") == "disabled", (
         "the Step 1 payload must keep `enforcement: disabled`; the flip is a separate, reviewable call in Step 3."
-    )
-
-
-@pytest.mark.parametrize("doc", [RUNBOOK, MERGE_GATE])
-def test_no_stale_review_bot_ack_claim(doc: Path) -> None:
-    """`review-bot-ack` does run on merge_group; the old warning must not return."""
-    text = doc.read_text(encoding="utf-8")
-    stale = re.search(
-        r"review-bot-ack[^.\n]{0,80}(triggers only on|runs on `pull_request` only)",
-        text,
-    )
-    assert stale is None, (
-        f"{doc} repeats the stale claim that review-bot-ack cannot report on a "
-        f"merge_group ref ({stale.group(0)!r} if matched). review-bot-ack.yml "
-        "declares `merge_group: {}` and carries a pass-through emitter."
     )
 
 

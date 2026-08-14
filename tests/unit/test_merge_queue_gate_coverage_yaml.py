@@ -241,33 +241,3 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
         "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or PUSH_ONLY with "
         "the reason its skip is safe, or drop the event condition."
     )
-
-
-def test_review_bot_ack_queue_emitter_reads_the_repository_tree(
-    queue_required_contexts: tuple[str, ...],
-) -> None:
-    """The queue emitter must not execute the queued entry's code.
-
-    The counterpart of the wedge: a job that *can* report on the queue but
-    takes its publisher from the candidate tree. It holds ``checks:
-    write``, which is enough to post a completed ``CI gate`` success on
-    any commit in the repository, so the entry's author would gain the
-    ability to forge the other required context. The base ref is the only
-    repository-controlled tree available on a ``merge_group`` run.
-    """
-    assert "review-bot-ack" in queue_required_contexts
-    doc = _load(WORKFLOWS / "review-bot-ack.yml")
-    jobs = doc.get("jobs")
-    assert isinstance(jobs, dict)
-    job = jobs.get("merge-group-verify")
-    assert isinstance(job, dict), "review-bot-ack.yml must keep its queue-side emitter"
-    assert "merge_group" in str(job.get("if", "")), "the queue-side emitter must be gated to the merge_group event"
-    checkouts = [s for s in job.get("steps") or [] if "checkout" in str(s.get("uses", ""))]
-    assert checkouts, "the queue-side emitter must check out the publisher script"
-    for step in checkouts:
-        ref = str((step.get("with") or {}).get("ref", "")).strip()
-        assert "merge_group.base_ref" in ref, (
-            f"the queue-side emitter checks out {ref!r}; on a merge_group run anything other than "
-            "`github.event.merge_group.base_ref` is the queued entry's own tree, which the pull request author "
-            "controls, and this job runs Python from it with `checks: write`."
-        )

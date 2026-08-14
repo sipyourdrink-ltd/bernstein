@@ -716,8 +716,8 @@ def render_report_markdown(report: PRReviewReport) -> str:
 
     Each surfaced cluster now carries a detected-by provenance tag
     (``[detected by N/M bots, agreement Y%]``) sourced from
-    :mod:`bernstein.core.quality.review_consensus` so the review-bot-ack
-    sticky comment shows cross-reviewer agreement at a glance.
+    :mod:`bernstein.core.quality.review_consensus` so the PR review
+    summary comment shows cross-reviewer agreement at a glance.
     """
     lines: list[str] = [
         "# PR review summary",

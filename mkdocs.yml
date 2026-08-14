@@ -407,7 +407,6 @@ nav:
           - Autofix ladder: autofix/ladder.md
           - Telemetry-grounded autofix: autofix/telemetry-grounded.md
           - Review responder: operations/review-responder.md
-          - Review-bot acknowledgement: operations/review-bot-ack.md
           - Coverage ratchet: operations/coverage-ratchet.md
           - Nightly canary: operations/nightly-canary.md
           - CI: operations/ci.md

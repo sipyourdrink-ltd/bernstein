@@ -28,9 +28,7 @@ patches as PR suggestions - it never auto-merges. Triage as normal review work.
 
 Both apps are retired and no longer in use on this repository. Their repo
 configuration is gone: `.coderabbit.yaml`, `.sourcery.yaml`, and the advisory
-CLI lane `.github/workflows/code-review-bots-ci.yml` were removed, and the
-`review-bot-ack` gate no longer lists either account in `REVIEW_BOT_LOGINS`
-(`scripts/review_bot_ack.py`).
+CLI lane `.github/workflows/code-review-bots-ci.yml` were removed.
 
 Remaining operator actions (owner-only, browser):
 
@@ -39,10 +37,6 @@ Remaining operator actions (owner-only, browser):
 - Delete the stale repo secrets `CODERABBIT_API_KEY` and `SOURCERY_API_KEY`
   (**Settings** → **Secrets and variables** → **Actions**); nothing reads
   them any more.
-
-The acknowledgement gate itself stays: it tracks whichever reviewer accounts
-`REVIEW_BOT_LOGINS` names (currently `baz-reviewer[bot]`). See
-`docs/operations/review-bot-ack.md` for the protocol.
 
 ---
 

@@ -25,7 +25,7 @@ name: Coverage ratchet (total)
 #
 # Why the PR is opened with BERNSTEIN_AUTOSYNC_TOKEN and not GITHUB_TOKEN:
 # a pull request created with GITHUB_TOKEN does not trigger workflows, so
-# neither required context (`CI gate`, `review-bot-ack`) ever reports on
+# the required context (`CI gate`) never reports on
 # it. The PR then reads MERGEABLE with a SUCCESS rollup while branch
 # protection holds it at BLOCKED forever, and the only way out is for an
 # operator to close it by hand. Closing it is what produced the apparent
@@ -314,7 +314,7 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # A PR opened with GITHUB_TOKEN never triggers the workflows that
-          # publish `CI gate` and `review-bot-ack`, so it can never satisfy
+          # publish `CI gate`, so it can never satisfy
           # branch protection. See the header block.
           token: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
           # The checkout above is a detached commit (the measured SHA), so

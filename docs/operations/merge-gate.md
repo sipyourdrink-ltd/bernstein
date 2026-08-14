@@ -75,20 +75,19 @@ After enabling, `gh pr merge --auto` will route the PR into the merge queue inst
 
 ### 3. Require the `CI gate` aggregator
 
-Do not enumerate individual CI job names in `required_status_checks.contexts`. The literal job names drift (the type-check context is `Type check report`, and the test matrix reports sharded contexts such as `Test (ubuntu-latest, Python 3.13, shard 1)`), and a context that never reports wedges every merge on `main`. The `ci-gate` job in `ci.yml` (context `CI gate`) already rolls up every upstream job result with conditional allowed-skips, so it is the single *CI* context to require, alongside `review-bot-ack` - the same recommendation as [merge-queue.md](merge-queue.md).
+Do not enumerate individual CI job names in `required_status_checks.contexts`. The literal job names drift (the type-check context is `Type check report`, and the test matrix reports sharded contexts such as `Test (ubuntu-latest, Python 3.13, shard 1)`), and a context that never reports wedges every merge on `main`. The `ci-gate` job in `ci.yml` (context `CI gate`) already rolls up every upstream job result with conditional allowed-skips, so it is the single *CI* context to require - the same recommendation as [merge-queue.md](merge-queue.md).
 
 ```bash
 gh api -X PATCH "repos/sipyourdrink-ltd/bernstein/branches/main/protection" \
   -H "Accept: application/vnd.github+json" \
   -f required_status_checks.strict=true \
-  -F required_status_checks.contexts[]='CI gate' \
-  -F required_status_checks.contexts[]='review-bot-ack'
+  -F required_status_checks.contexts[]='CI gate'
 ```
 
 Notes:
 
 - `CI gate` covers `Repo hygiene`, `Lint`, `Type check report`, `Workflow lint`, `Lineage Gate`, `Bandit (security)`, `pip-audit (deps)`, the full sharded test matrix, and the rest of the `ci.yml` jobs it declares in `needs:`.
-- `review-bot-ack` runs on `pull_request`, `pull_request_review` **and** `merge_group`. It belongs in the legacy branch-protection list above (queue entry) *and* in the merge-queue ruleset's `required_status_checks`: `review-bot-ack.yml` carries a `merge-group-verify` job that publishes the identical context on the queue's ephemeral ref, so requiring it there cannot wedge the queue. See [merge-queue.md](merge-queue.md) for the coverage table. The main-red-guard step in `pr-policy.yml` is advisory (it warns, never fails) and is not a required context.
+- The main-red-guard step in `pr-policy.yml` is advisory (it warns, never fails) and is not a required context.
 - `docs-drift / Run drift check` is path-filtered (it does not report on PRs that touch no docs-relevant paths), so it must not be a blanket required check; its main-branch failure mode is the post-merge gate described in the TL;DR.
 - `PR policy` (the consolidated per-PR policy job that carries the autosync steps) is intentionally NOT required. The autosync steps run to amend the PR; if the amend fails (e.g. branch-protection rejects the push) we want the next push to retry rather than blocking the merge.
 

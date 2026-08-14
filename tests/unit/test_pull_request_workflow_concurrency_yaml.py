@@ -16,7 +16,8 @@ Suppressing cancellation does not fix that. A concurrency group with
 executing and a second is pending, a third arriving in the same group
 cancels the pending one. The tombstone lands either way. What fixes it
 is not naming a job after the required context, so no job state can
-write it - see ``tests/unit/test_review_bot_ack_workflow_yaml.py``.
+write it - it is published explicitly instead (see
+``scripts/publish_required_check.py``).
 
 Every ``pull_request`` workflow therefore cancels superseded runs, and
 ``NO_CANCEL_EXCEPTIONS`` is empty. This module pins both halves: the
@@ -42,14 +43,13 @@ _WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 # Workflows that do NOT cancel a superseded run on a pull_request event.
 # Documented in docs/operations/ci.md under "Gating vs advisory workflows".
 #
-# Empty on purpose. `review-bot-ack.yml` used to sit here, on the theory
-# that turning cancellation off keeps a required context from being
-# poisoned. It does not: with `cancel-in-progress: false` a group is a
-# one-deep queue, so a third run in the same group cancels the pending one
-# and the tombstone lands anyway. The durable fix was to stop naming a job
-# after the required context - see
-# `tests/unit/test_review_bot_ack_workflow_yaml.py` - which makes
-# cancellation harmless and lets that workflow follow the ordinary rule.
+# Empty on purpose. Turning cancellation off does not keep a required
+# context from being poisoned: with `cancel-in-progress: false` a group is
+# a one-deep queue, so a third run in the same group cancels the pending
+# one and the tombstone lands anyway. The durable fix is to not let a
+# job's fate write a required context - it is published explicitly instead
+# (see `scripts/publish_required_check.py`), which makes cancellation
+# harmless and lets every workflow follow the ordinary rule.
 #
 # Before adding an entry here, check that suppressing cancellation
 # actually prevents the failure you have in mind. It usually does not.
@@ -61,7 +61,7 @@ NO_CANCEL_EXCEPTIONS: set[str] = set()
 _PR_ONLY_CANCEL = "github.event_name == 'pull_request'"
 
 # Workflows that publish a context branch protection requires on `main`.
-GATING_WORKFLOWS = {"ci.yml", "ci-gate-stub.yml", "review-bot-ack.yml"}
+GATING_WORKFLOWS = {"ci.yml", "ci-gate-stub.yml"}
 
 
 def _load(path: Path) -> dict:
@@ -123,13 +123,10 @@ def test_cancellation_is_off_only_for_documented_exceptions(name: str, workflow:
 
 
 def test_gating_workflows_are_the_only_required_context_emitters() -> None:
-    """Guard the premise of the exception list."""
-    emitters = set()
-    for path in sorted(_WORKFLOWS.glob("*.yml")):
-        text = path.read_text(encoding="utf-8")
-        if "review-bot-ack" in text and "pull_request" in text:
-            emitters.add(path.name)
-    assert "review-bot-ack.yml" in emitters
+    """Guard the premise of the exception list: only gating workflows may
+    skip cancellation, and each gating workflow exists."""
+    for name in GATING_WORKFLOWS:
+        assert (_WORKFLOWS / name).exists(), f"{name} is listed as gating but does not exist"
     assert NO_CANCEL_EXCEPTIONS <= GATING_WORKFLOWS, (
         "a no-cancel exception was granted to a workflow that publishes no required context; advisory work must cancel"
     )

@@ -442,14 +442,14 @@ def must_address(
 
 
 # ---------------------------------------------------------------------------
-# Rendering - the review-bot-ack sticky comment provenance line
+# Rendering - the PR review summary provenance line
 # ---------------------------------------------------------------------------
 
 
 def render_provenance(finding: ConsensusFinding) -> str:
     """Render the ``[detected by N/M bots, agreement Y%]`` provenance tag.
 
-    This is the snippet the review-bot-ack sticky comment renderer appends
+    This is the snippet the PR review summary renderer appends
     to each finding so an operator can see consensus at a glance.
     """
     percent = round(finding.agreement_ratio * 100)

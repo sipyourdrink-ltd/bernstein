@@ -1,6 +1,6 @@
 name: Required-check name canary
 
-# Branch protection on `main` requires `CI gate` and `review-bot-ack`.
+# Branch protection on `main` requires a single context, `CI gate`.
 # This workflow verifies the in-tree `CI gate` emitters. The scheduled
 # branch-protection audit reads `BRANCH_PROTECTION_CONTEXTS_JSON` below
 # and compares it with live repository settings.
@@ -64,7 +64,7 @@ jobs:
       - name: Verify required-check invariants
         env:
           REQUIRED_CONTEXT: "CI gate"
-          BRANCH_PROTECTION_CONTEXTS_JSON: '["CI gate","review-bot-ack"]'
+          BRANCH_PROTECTION_CONTEXTS_JSON: '["CI gate"]'
           REQUIRED_JOB_KEY: "ci-gate"
           MACOS_JOB_KEY: "test-macos"
           MACOS_JOB_NAME: "Test (macos-latest, Python 3.13)"
