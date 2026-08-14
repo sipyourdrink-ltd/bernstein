@@ -91,11 +91,15 @@ no new patterns.
 P2 in [web-ui-principles.md](web-ui-principles.md) is enforced by using it
 rather than by hand-rolling per screen.
 
+## Reference route
+
+`/ui/vocabulary` is a developer-visible route kept out of operator navigation.
+It renders the CSS custom properties available at runtime, the Tailwind type
+scale, and the shared states from `lib/states.tsx` without making a request.
+
 ## Known gaps
 
 Recorded here rather than in a comment nobody greps.
 
 - The token set has no documented contrast measurements. `success` and
   `warning` on `surface-raised` are the pairs most likely to be short.
-- No route renders a design-system reference page, so the only way to see the
-  vocabulary is to read this file next to the code.

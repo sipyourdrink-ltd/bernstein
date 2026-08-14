@@ -23,6 +23,7 @@ import Costs from './routes/Costs';
 import Fleet from './routes/Fleet';
 import Missions from './routes/Missions';
 import Settings from './routes/Settings';
+import Vocabulary from './routes/Vocabulary';
 
 // ── QueryClient ────────────────────────────────────────────────────────────
 // - retry: skip 4xx (operator error / unauth - never recovers); only retry on
@@ -58,6 +59,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/missions': 'Missions',
   '/fleet': 'Fleet',
   '/settings': 'Settings',
+  '/vocabulary': 'Vocabulary',
 };
 
 function RouteEffects() {
@@ -190,6 +192,29 @@ function NotFound() {
   );
 }
 
+function DashboardRoutes() {
+  const { pathname } = useLocation();
+  const routes = (
+    <RouteErrorBoundary>
+      <Routes>
+        <Route path="/" element={<Navigate to="/tasks" replace />} />
+        <Route path="/tasks" element={<Tasks />} />
+        <Route path="/agents" element={<Agents />} />
+        <Route path="/approvals" element={<Approvals />} />
+        <Route path="/audit" element={<Audit />} />
+        <Route path="/costs" element={<Costs />} />
+        <Route path="/missions" element={<Missions />} />
+        <Route path="/fleet" element={<Fleet />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/vocabulary" element={<Vocabulary />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </RouteErrorBoundary>
+  );
+
+  return pathname === '/vocabulary' ? routes : <AppShell>{routes}</AppShell>;
+}
+
 export default function App() {
   return (
     <ThemeProvider defaultTheme={DEFAULT_THEME} storageKey={DEFAULT_THEME_STORAGE_KEY}>
@@ -199,23 +224,7 @@ export default function App() {
             in either case. */}
         <BrowserRouter basename="/ui">
           <RouteEffects />
-          <AppShell>
-            <RouteErrorBoundary>
-              <Routes>
-                <Route path="/" element={<Navigate to="/tasks" replace />} />
-                <Route path="/tasks" element={<Tasks />} />
-                <Route path="/agents" element={<Agents />} />
-                <Route path="/approvals" element={<Approvals />} />
-                <Route path="/audit" element={<Audit />} />
-                <Route path="/costs" element={<Costs />} />
-                <Route path="/missions" element={<Missions />} />
-                {/* Fleet + Settings live in topbar / user-menu but stay deep-linkable. */}
-                <Route path="/fleet" element={<Fleet />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </RouteErrorBoundary>
-          </AppShell>
+          <DashboardRoutes />
         </BrowserRouter>
       </QueryClientProvider>
     </ThemeProvider>
