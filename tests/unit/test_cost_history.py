@@ -111,3 +111,126 @@ def test_get_active_alerts_emits_expected_thresholds(tmp_path: Path) -> None:
     assert warn[0].alert_type == "budget_80pct"
     assert critical[0].alert_type == "budget_95pct"
     assert unlimited == []
+
+
+# ---------------------------------------------------------------------------
+# Tenant attribution (issue #3702)
+# ---------------------------------------------------------------------------
+
+
+def test_append_daily_snapshot_persists_tenant_id(tmp_path: Path) -> None:
+    """A snapshot appended with a tenant id round-trips through load_history."""
+    sdd_dir = _sdd_dir(tmp_path)
+
+    append_daily_snapshot(sdd_dir, spent_usd=4.0, snapshot_date=date.today(), tenant_id="acme")
+
+    snapshots = load_history(sdd_dir, tenant_id="acme")
+    assert [s.tenant_id for s in snapshots] == ["acme"]
+    assert snapshots[0].spent_usd == pytest.approx(4.0)
+
+
+def test_from_dict_treats_missing_tenant_key_as_unattributed(tmp_path: Path) -> None:
+    """A JSONL row written before the tenant field existed loads with tenant_id=None.
+
+    This is the "records written before the change must still load" contract:
+    the row is not rejected, and it is not silently attributed to any tenant.
+    """
+    sdd_dir = _sdd_dir(tmp_path)
+    history_file = sdd_dir / "metrics" / "cost_history.jsonl"
+    history_file.write_text(
+        json.dumps({"date_str": date.today().isoformat(), "spent_usd": 1.0, "budget_usd": 0.0, "timestamp": 1.0})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshots = load_history(sdd_dir)
+
+    assert len(snapshots) == 1
+    assert snapshots[0].tenant_id is None
+    assert snapshots[0].spent_usd == pytest.approx(1.0)
+
+
+def test_from_dict_treats_non_string_tenant_as_unattributed(tmp_path: Path) -> None:
+    """A stored tenant_id of the wrong type is read as unattributed, not coerced.
+
+    str(True) == "True" and str(123) == "123" both pass the identifier rules,
+    so coercing would attribute the row to a tenant that never wrote it.
+    """
+    sdd_dir = _sdd_dir(tmp_path)
+    history_file = sdd_dir / "metrics" / "cost_history.jsonl"
+    history_file.write_text(
+        json.dumps(
+            {
+                "date_str": date.today().isoformat(),
+                "spent_usd": 1.0,
+                "budget_usd": 0.0,
+                "timestamp": 1.0,
+                "tenant_id": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshots = load_history(sdd_dir)
+
+    assert snapshots[0].tenant_id is None
+
+
+def test_load_history_excludes_unattributed_records_from_every_scoped_query(tmp_path: Path) -> None:
+    """An unattributed historical record never appears in a scoped result -
+
+    not even the default tenant's. Defaulting it to "default" would silently
+    credit that one tenant with spend that was never verified as its own.
+    """
+    sdd_dir = _sdd_dir(tmp_path)
+    append_daily_snapshot(sdd_dir, spent_usd=9.0, snapshot_date=date.today())  # no tenant_id -> unattributed
+    append_daily_snapshot(sdd_dir, spent_usd=2.0, snapshot_date=date.today() - timedelta(days=1), tenant_id="default")
+
+    default_scoped = load_history(sdd_dir, tenant_id="default")
+    acme_scoped = load_history(sdd_dir, tenant_id="acme")
+
+    assert [s.spent_usd for s in default_scoped] == [2.0]
+    assert acme_scoped == []
+
+
+def test_load_history_narrows_to_requested_tenant_only(tmp_path: Path) -> None:
+    """A tenant's scoped read returns its own snapshots, not another tenant's."""
+    sdd_dir = _sdd_dir(tmp_path)
+    append_daily_snapshot(sdd_dir, spent_usd=3.0, snapshot_date=date.today(), tenant_id="tenant-a")
+    append_daily_snapshot(sdd_dir, spent_usd=99.0, snapshot_date=date.today() - timedelta(days=1), tenant_id="tenant-b")
+
+    scoped = load_history(sdd_dir, tenant_id="tenant-a")
+
+    assert [s.spent_usd for s in scoped] == [3.0]
+    assert all(s.tenant_id == "tenant-a" for s in scoped)
+
+
+def test_load_history_without_tenant_filter_returns_every_record(tmp_path: Path) -> None:
+    """Omitting tenant_id keeps the unscoped, whole-install read available."""
+    sdd_dir = _sdd_dir(tmp_path)
+    append_daily_snapshot(sdd_dir, spent_usd=1.0, snapshot_date=date.today())
+    append_daily_snapshot(sdd_dir, spent_usd=2.0, snapshot_date=date.today() - timedelta(days=1), tenant_id="acme")
+
+    snapshots = load_history(sdd_dir)
+
+    assert sorted(s.spent_usd for s in snapshots) == [1.0, 2.0]
+
+
+def test_upsert_daily_snapshot_does_not_clobber_another_tenants_same_day_entry(tmp_path: Path) -> None:
+    """A same-day upsert for one tenant must not overwrite another tenant's snapshot.
+
+    Matching the replace target on date alone - the pre-tenant behaviour -
+    would let tenant A's daily write erase tenant B's snapshot for that day.
+    """
+    sdd_dir = _sdd_dir(tmp_path)
+    today = date.today()
+    append_daily_snapshot(sdd_dir, spent_usd=5.0, snapshot_date=today, tenant_id="tenant-a")
+    append_daily_snapshot(sdd_dir, spent_usd=7.0, snapshot_date=today, tenant_id="tenant-b")
+
+    upsert_daily_snapshot(sdd_dir, spent_usd=50.0, snapshot_date=today, tenant_id="tenant-a")
+
+    tenant_a_snapshots = load_history(sdd_dir, tenant_id="tenant-a")
+    tenant_b_snapshots = load_history(sdd_dir, tenant_id="tenant-b")
+    assert [s.spent_usd for s in tenant_a_snapshots] == [50.0]
+    assert [s.spent_usd for s in tenant_b_snapshots] == [7.0]

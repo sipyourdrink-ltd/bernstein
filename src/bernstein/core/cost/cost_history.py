@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.tenanting import InvalidTenantIdError, normalize_tenant_id
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -37,6 +39,32 @@ _HISTORY_FILE = "cost_history.jsonl"
 # ---------------------------------------------------------------------------
 
 
+def _read_tenant_id(d: dict[str, Any]) -> str | None:
+    """Read a persisted snapshot's tenant, treating absence as unattributed.
+
+    This is deliberately stricter than :func:`~bernstein.core.security.tenanting.
+    normalize_tenant_id`, which is built for *request-facing* input: there,
+    a caller who did not specify a tenant is treated as wanting the default
+    one, which is the right call for an authenticated request that has to
+    resolve to *some* scope. A persisted snapshot is different - a *missing*
+    ``tenant_id`` key means the record predates per-tenant attribution
+    entirely, and defaulting it to the default tenant would silently credit
+    (or blame) that one tenant for spend that was never verified to be its
+    own. So here, absence, ``null``, a blank string, a non-string value, and
+    a value that fails the identifier rules all map to the same ``None`` -
+    "cannot attribute" - rather than to a guess.
+    """
+    if "tenant_id" not in d:
+        return None
+    raw = d["tenant_id"]
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return normalize_tenant_id(raw)
+    except InvalidTenantIdError:
+        return None
+
+
 @dataclass
 class DailyCostSnapshot:
     """Aggregated cost snapshot for a single calendar day.
@@ -47,6 +75,16 @@ class DailyCostSnapshot:
         budget_usd: Configured daily budget (0 = unlimited).
         run_count: Number of orchestrator runs that contributed spend.
         timestamp: Unix timestamp when the snapshot was written.
+        tenant_id: Tenant this snapshot's spend is attributed to, or
+            ``None`` for a record written before this field existed (or one
+            whose stored value could not be read as a tenant id - see
+            :func:`_read_tenant_id`). ``None`` is a genuine absence marker,
+            not a stand-in for the default tenant: unlike a caller-supplied
+            request selector, where a blank value means "no preference, use
+            the default tenant", a pre-migration snapshot's spend was never
+            attributed to any one tenant, so it must not surface in *any*
+            tenant-scoped trend - including the default tenant's - once one
+            is asked for. See :func:`load_history`.
     """
 
     date_str: str
@@ -54,6 +92,7 @@ class DailyCostSnapshot:
     budget_usd: float
     run_count: int
     timestamp: float
+    tenant_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,6 +105,7 @@ class DailyCostSnapshot:
             budget_usd=float(d.get("budget_usd", 0.0)),
             run_count=int(d.get("run_count", 1)),
             timestamp=float(d.get("timestamp", 0.0)),
+            tenant_id=_read_tenant_id(d),
         )
 
 
@@ -143,6 +183,7 @@ def append_daily_snapshot(
     budget_usd: float = 0.0,
     run_count: int = 1,
     snapshot_date: date | None = None,
+    tenant_id: str | None = None,
 ) -> DailyCostSnapshot:
     """Append a daily cost snapshot to the history file.
 
@@ -156,6 +197,13 @@ def append_daily_snapshot(
         budget_usd: Configured daily budget (0 = unlimited).
         run_count: Number of runs contributing to this day's spend.
         snapshot_date: Date to record; defaults to today (UTC).
+        tenant_id: Tenant this snapshot's spend is attributed to. Pass the
+            resolved request-scope tenant when the caller has one. A caller
+            with no request scope to draw from (a deployment-wide rollup run
+            outside any request) should pass ``None`` explicitly rather than
+            guessing - an unattributed snapshot is simply excluded from every
+            tenant-scoped trend later, which is the correct outcome when the
+            tenant genuinely is not known.
 
     Returns:
         The newly written :class:`DailyCostSnapshot`.
@@ -169,6 +217,7 @@ def append_daily_snapshot(
         budget_usd=round(budget_usd, 6),
         run_count=run_count,
         timestamp=time.time(),
+        tenant_id=normalize_tenant_id(tenant_id) if tenant_id is not None else None,
     )
     path = _history_path(sdd_dir)
     with path.open("a") as fh:
@@ -184,11 +233,13 @@ def upsert_daily_snapshot(
     budget_usd: float = 0.0,
     run_count: int = 1,
     snapshot_date: date | None = None,
+    tenant_id: str | None = None,
 ) -> DailyCostSnapshot:
-    """Update today's snapshot in-place (last-write-wins by date).
+    """Update today's snapshot in-place (last-write-wins by date and tenant).
 
-    Loads the full history, replaces any existing entry for *snapshot_date*,
-    rewrites the file, and prunes entries older than 6 months.
+    Loads the full history, replaces any existing entry for *snapshot_date*
+    that carries the same *tenant_id*, rewrites the file, and prunes entries
+    older than 6 months.
 
     Args:
         sdd_dir: The ``.sdd`` directory.
@@ -196,6 +247,11 @@ def upsert_daily_snapshot(
         budget_usd: Configured daily budget (0 = unlimited).
         run_count: Number of runs contributing to this day's spend.
         snapshot_date: Date to record; defaults to today (UTC).
+        tenant_id: Tenant this snapshot's spend is attributed to. See
+            :func:`append_daily_snapshot` for how ``None`` is handled. Only
+            an existing entry for the same date **and** the same tenant is
+            replaced - a same-day upsert for one tenant must not clobber
+            another tenant's snapshot for that date.
 
     Returns:
         The upserted :class:`DailyCostSnapshot`.
@@ -209,13 +265,19 @@ def upsert_daily_snapshot(
         budget_usd=round(budget_usd, 6),
         run_count=run_count,
         timestamp=time.time(),
+        tenant_id=normalize_tenant_id(tenant_id) if tenant_id is not None else None,
     )
 
     existing = load_history(sdd_dir)
-    # Replace any same-date entry; keep the rest within the 6-month window.
+    # Replace only the same (date, tenant) entry; keep the rest within the
+    # 6-month window. Matching on date alone would let one tenant's upsert
+    # overwrite another tenant's snapshot for the same calendar day.
     cutoff = date.today() - timedelta(days=_HISTORY_DAYS)
     updated: list[DailyCostSnapshot] = [
-        s for s in existing if s.date_str != snap.date_str and date.fromisoformat(s.date_str) >= cutoff
+        s
+        for s in existing
+        if not (s.date_str == snap.date_str and s.tenant_id == snap.tenant_id)
+        and date.fromisoformat(s.date_str) >= cutoff
     ]
     updated.append(snap)
     updated.sort(key=lambda s: s.date_str)
@@ -227,21 +289,37 @@ def upsert_daily_snapshot(
     return snap
 
 
-def load_history(sdd_dir: Path, days: int = _HISTORY_DAYS) -> list[DailyCostSnapshot]:
+def load_history(
+    sdd_dir: Path,
+    days: int = _HISTORY_DAYS,
+    *,
+    tenant_id: str | None = None,
+) -> list[DailyCostSnapshot]:
     """Load cost history snapshots from disk.
 
     Args:
         sdd_dir: The ``.sdd`` directory.
         days: Maximum age of snapshots to return (default: 180).
+        tenant_id: When given, narrow to snapshots attributed to exactly this
+            tenant. A snapshot with no tenant attribution (``tenant_id`` is
+            ``None`` - see :class:`DailyCostSnapshot`) never matches a scoped
+            read, however *tenant_id* is set: it predates per-tenant
+            attribution, so its spend is not verified to belong to any one
+            tenant and must not be folded into whichever tenant happens to
+            ask. Leaving *tenant_id* unset returns every snapshot in the
+            window regardless of attribution, for callers that genuinely want
+            the whole install's history.
 
     Returns:
         List of :class:`DailyCostSnapshot` sorted oldest-first, limited to
-        the last *days* calendar days.
+        the last *days* calendar days and, when *tenant_id* is given, to that
+        tenant's own snapshots.
     """
     path = _history_path(sdd_dir)
     if not path.exists():
         return []
 
+    scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
     cutoff = date.today() - timedelta(days=days)
     snapshots: list[DailyCostSnapshot] = []
     try:
@@ -252,6 +330,8 @@ def load_history(sdd_dir: Path, days: int = _HISTORY_DAYS) -> list[DailyCostSnap
             try:
                 d = json.loads(line)
                 snap = DailyCostSnapshot.from_dict(d)
+                if scope is not None and snap.tenant_id != scope:
+                    continue
                 if date.fromisoformat(snap.date_str) >= cutoff:
                     snapshots.append(snap)
             except Exception as exc:

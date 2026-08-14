@@ -496,12 +496,13 @@ def get_cost_alerts(request: Request) -> JSONResponse:
     has reached the 80% or 95% alert threshold, and returns trend data
     computed from ``.sdd/metrics/cost_history.jsonl``.
 
-    Scope: the two halves of this response are scoped differently, and
-    ``tenant_id`` names the scope of the first.  ``alerts`` is computed from
-    the caller's tenant's spend against the caller's tenant's cap.  ``trend``
-    and ``history_days`` come from the run-wide cost history file, which is
-    not tenant-partitioned, so they describe the deployment rather than the
-    caller's scope.
+    Both halves of this response are scoped to ``tenant_id``: ``alerts`` is
+    computed from the caller's tenant's spend against the caller's tenant's
+    cap, and ``trend`` / ``history_days`` are narrowed to snapshots recorded
+    for that same tenant.  A history snapshot written before per-tenant
+    attribution existed carries no tenant and is excluded from every scoped
+    trend, so a fresh deployment's 30/90-day averages start empty and fill in
+    as new, attributed snapshots accumulate.
     """
     from bernstein.core.cost_history import compute_trends, get_active_alerts, load_history
     from bernstein.core.cost_tracker import CostTracker
@@ -523,7 +524,7 @@ def get_cost_alerts(request: Request) -> JSONResponse:
                 budget_usd = tracker.budget_usd
 
     alerts = get_active_alerts(sdd_dir, spent_usd, budget_usd)
-    history = load_history(sdd_dir)
+    history = load_history(sdd_dir, tenant_id=tenant_id)
     trend = compute_trends(history)
 
     return JSONResponse(
@@ -532,10 +533,10 @@ def get_cost_alerts(request: Request) -> JSONResponse:
             "trend": trend.to_dict(),
             "history_days": len(history),
             "tenant_id": tenant_id,
-            # ``trend`` and ``history_days`` are read from the run-wide cost
-            # history file, which carries no tenant, so they are not narrowed
-            # to ``tenant_id`` the way ``alerts`` is.
-            "trend_scope": "run-wide",
+            # Both halves are now narrowed to ``tenant_id``; this label
+            # stays so an existing consumer that special-cased "run-wide"
+            # sees the scope change rather than silently reinterpreting it.
+            "trend_scope": "tenant",
         }
     )
 
@@ -592,7 +593,8 @@ def get_cost_history(
       usages over the last *hours* window.
     * ``GET /costs/history`` *or* ``?envelope=1`` (legacy/CLI) - returns the
       original ``{history, trend, burn_rate_*, history_days}`` envelope
-      built from ``.sdd/metrics/cost_history.jsonl`` daily snapshots.
+      built from ``.sdd/metrics/cost_history.jsonl`` daily snapshots, narrowed
+      to the caller's tenant the same way ``/costs/alerts`` is.
 
     The sparkline branch lets the GUI feed `recharts` directly without
     unwrapping a ``.history`` field.
@@ -610,8 +612,9 @@ def get_cost_history(
         series = _bucket_usages(sdd_dir, costs_dir, since_ts=since, granularity=gran, tenant_id=tenant_id)
         return JSONResponse(content=series)
 
-    # Legacy envelope - unchanged shape so TUI / CLI keep working.
-    history = load_history(sdd_dir)
+    # Legacy envelope - shape unchanged so TUI / CLI keep working; the
+    # snapshots feeding it are now narrowed to the caller's tenant.
+    history = load_history(sdd_dir, tenant_id=tenant_id)
     trend = compute_trends(history)
     recent_7d = history[-7:] if len(history) >= 7 else history
     daily_avg = sum(s.spent_usd for s in recent_7d) / len(recent_7d) if recent_7d else 0.0

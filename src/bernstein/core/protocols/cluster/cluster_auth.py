@@ -44,6 +44,18 @@ class ClusterAuthError(Exception):
     """Raised when cluster authentication fails."""
 
 
+class ClusterAuthScopeError(ClusterAuthError):
+    """Raised when a verified credential lacks the scope a call requires.
+
+    Split out from the generic failure so a caller can tell "this credential
+    is not valid" from "this credential is valid but not allowed here". HTTP
+    collapses both onto 401; gRPC has distinct codes (``UNAUTHENTICATED`` vs
+    ``PERMISSION_DENIED``) and must not report a scope refusal as a bad
+    credential -- a worker would respond by re-minting a token that would be
+    refused identically.
+    """
+
+
 @dataclass(frozen=True)
 class ClusterAuthConfig:
     """Configuration for cluster JWT authentication.
@@ -186,7 +198,7 @@ class ClusterAuthenticator:
         # Check required scope
         if required_scope not in payload.scopes:
             _record_admission_failure("scope_denied")
-            raise ClusterAuthError(f"Token lacks required scope '{required_scope}' (has: {payload.scopes})")
+            raise ClusterAuthScopeError(f"Token lacks required scope '{required_scope}' (has: {payload.scopes})")
 
         return payload
 

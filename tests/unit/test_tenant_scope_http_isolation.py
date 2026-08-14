@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1053,3 +1054,96 @@ async def test_scoped_cost_responses_name_their_scope(
 
     assert response.status_code == 200
     assert response.json()["tenant_id"] == DEFAULT_TENANT_ID
+
+
+# ---------------------------------------------------------------------------
+# Cost-history trend scoping (issue #3702)
+# ---------------------------------------------------------------------------
+# The 30/90-day trend behind /costs/alerts (and the legacy /costs/history
+# envelope) is read from .sdd/metrics/cost_history.jsonl, which historically
+# carried no tenant field at all, so it could not be narrowed and mixed every
+# tenant's daily spend into one figure. These cases pin that it is now
+# narrowed the same way the rest of the cost surface is.
+
+OUTSIDER_HISTORY_SPEND_USD = 741.852963
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("endpoint", ["/costs/alerts", "/costs/history"])
+async def test_cost_history_trend_excludes_another_tenants_snapshots(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+    endpoint: str,
+) -> None:
+    """The trend/history figures behind these endpoints narrow by tenant.
+
+    Two tenants each get a daily snapshot in the shared history file; the
+    caller bound to the default tenant must see only its own.
+    """
+    from bernstein.core.cost_history import append_daily_snapshot
+
+    own_spend = 3.25
+    append_daily_snapshot(sdd_dir, spent_usd=own_spend, tenant_id=DEFAULT_TENANT_ID)
+    append_daily_snapshot(sdd_dir, spent_usd=OUTSIDER_HISTORY_SPEND_USD, tenant_id=TENANT_B)
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get(endpoint, headers=credential.headers)
+
+    assert response.status_code == 200
+    body = response.text
+    assert str(OUTSIDER_HISTORY_SPEND_USD) not in body, f"{endpoint} leaked another tenant's daily snapshot"
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("endpoint", ["/costs/alerts", "/costs/history"])
+async def test_cost_history_trend_excludes_unattributed_pre_migration_snapshots(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+    endpoint: str,
+) -> None:
+    """A snapshot written before the tenant field existed never surfaces in a scoped trend.
+
+    Not even the default tenant's - the record's spend was never verified to
+    belong to any one tenant, default included, so folding it in would credit
+    a scope it cannot be shown to belong to.
+    """
+    from bernstein.core.cost_history import append_daily_snapshot
+
+    unattributed_spend = 615.243978
+    # A recent date, well inside the 180-day retention window, so the only
+    # thing that can exclude it from a scoped response is tenant narrowing -
+    # not the window cutoff.
+    append_daily_snapshot(sdd_dir, spent_usd=unattributed_spend, snapshot_date=date.today())  # no tenant_id
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get(endpoint, headers=credential.headers)
+
+    assert response.status_code == 200
+    body = response.text
+    assert str(unattributed_spend) not in body, f"{endpoint} attributed a pre-migration record to the default tenant"
+
+
+@pytest.mark.anyio()
+async def test_costs_alerts_trend_still_reports_the_callers_own_history(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+) -> None:
+    """Narrowing does not over-refuse: the caller's own snapshot still counts.
+
+    The companion to the leak assertions above - a trend reader that dropped
+    every snapshot would satisfy those and be useless.
+    """
+    from bernstein.core.cost_history import append_daily_snapshot
+
+    append_daily_snapshot(sdd_dir, spent_usd=4.0, tenant_id=DEFAULT_TENANT_ID)
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get("/costs/alerts", headers=credential.headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["history_days"] == 1
+    assert body["trend"]["avg_30d_usd"] == pytest.approx(4.0)

@@ -155,6 +155,15 @@ _CLEAR_TEXT_SCHEMES = frozenset({_PLAINTEXT_SCHEME, "ws", "ftp"})
 # non-loopback origin is required to be TLS.
 _DEFAULT_CORS_ORIGINS: tuple[str, ...] = (f"{_PLAINTEXT_SCHEME}://localhost:*",)
 
+#: The only ``RemoteMCPConfig.auth_type`` values ``_authenticate`` implements.
+#: An ``"oauth"`` value used to be documented here but ``_authenticate`` never
+#: implemented it and fell through to deny (issue #3463): a server configured
+#: with it refused every request, including correctly authenticated ones. The
+#: OAuth-2 discovery surface (``bernstein.mcp.oauth``) is unaffected -- it
+#: serves protected-resource metadata so a client can locate an external IdP,
+#: which is orthogonal to how this transport authenticates a bearer token.
+_VALID_AUTH_TYPES: tuple[str, ...] = ("none", "bearer")
+
 
 class RemoteMCPConfigError(RuntimeError):
     """Raised when an MCP remote transport config is unsafe to start with.
@@ -256,6 +265,9 @@ class RemoteMCPConfig:
     Validation (in ``__post_init__``) refuses any combination that would
     expose MCP JSON-RPC without authentication:
 
+    * an ``auth_type`` outside :data:`_VALID_AUTH_TYPES` (``"none"``,
+      ``"bearer"``) → :class:`RemoteMCPConfigError`, raised at construction
+      time rather than left to deny every request at serve time
     * ``auth_type='none'`` on a non-loopback host → :class:`RemoteMCPConfigError`
     * ``auth_type='bearer'`` with an empty token on a non-loopback host →
       :class:`RemoteMCPConfigError`
@@ -266,12 +278,21 @@ class RemoteMCPConfig:
     host: str = "127.0.0.1"
     port: int = 8053
     path: str = "/mcp"
-    auth_type: str = "bearer"  # "none", "bearer", "oauth"
+    auth_type: str = "bearer"  # "none", "bearer"
     auth_token: str = ""
     cors_origins: list[str] = field(default_factory=lambda: list(_DEFAULT_CORS_ORIGINS))
 
     def __post_init__(self) -> None:
         """Enforce safe-by-default policy and pick up env-provided tokens."""
+        if self.auth_type not in _VALID_AUTH_TYPES:
+            msg = (
+                f"Refusing to start MCP remote transport: auth_type={self.auth_type!r} "
+                f"is not one of {_VALID_AUTH_TYPES!r}. Fixing this at startup, rather "
+                "than letting every request reach _authenticate and be denied, avoids "
+                "shipping a server that looks configured but refuses all traffic."
+            )
+            raise RemoteMCPConfigError(msg)
+
         # Pull token from env when not explicitly provided. Use object.__setattr__
         # because the dataclass is frozen.
         if self.auth_type == "bearer" and not self.auth_token:
@@ -1617,7 +1638,11 @@ class StreamableHTTPTransport:
             token = auth_header[7:]
             return _constant_time_eq(token, expected)
 
-        # Unknown auth type - deny.
+        # Unreachable through normal construction: __post_init__ already
+        # rejects any auth_type outside _VALID_AUTH_TYPES. Kept as defence in
+        # depth for a config that reached this frozen dataclass by some other
+        # path (e.g. object.__setattr__), so an unrecognised value still
+        # denies rather than falling open.
         return False
 
 
