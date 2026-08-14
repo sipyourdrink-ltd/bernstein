@@ -910,9 +910,12 @@ class TaskStore:
 
         if tenant_id is not None:
             normalized = normalize_tenant_id(tenant_id)
-            records = [
-                record for record in records if try_normalize_tenant_id(str(record.get("tenant_id"))) == normalized
-            ]
+            # The stored value goes through unchanged. Coercing it first turns
+            # a row that cannot be read into one that reads as a tenant name:
+            # `str(True)` is `"True"` and `str(None)` is `"None"`, both valid
+            # identifiers, so the row would be handed to whichever tenant
+            # happens to be called that.
+            records = [record for record in records if try_normalize_tenant_id(record.get("tenant_id")) == normalized]
         return records[-limit:]
 
     async def _append_archive(self, task: Task, completed_at: float) -> None:

@@ -29,6 +29,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _tenant_fields(record: dict[str, Any], *fields: str) -> tuple[set[str], list[str]]:
+    """Split a record's tenant-bearing fields into readable and unreadable.
+
+    Each named field is normalized on its own. Reading only the first field
+    that happens to be truthy lets one field silence another: a ``tenant_id``
+    that no longer normalizes would hide a ``tenant`` that still does, and a
+    scan would report clean for a record it can in fact attribute. Which field
+    a writer used is a question about the record's age, not about who owns it.
+
+    A field that is absent, null, or blank states nothing and is skipped -- it
+    is not evidence either way. A field that holds something the tenant rules
+    cannot read is reported: the record names an owner, and the scan cannot
+    say who. That is the case a caller must not silently treat as clean.
+
+    Args:
+        record: One decoded JSONL record.
+        fields: Field names to read, in no particular order.
+
+    Returns:
+        The tenant IDs the record can be attributed to, and a rendering of the
+        fields that name an owner the rules cannot read.
+    """
+
+    attributable: set[str] = set()
+    unreadable: list[str] = []
+    for field in fields:
+        if field not in record:
+            continue
+        value = record[field]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        normalized = try_normalize_tenant_id(value)
+        if normalized is None:
+            unreadable.append(f"{field}={value!r}")
+        else:
+            attributable.add(normalized)
+    return attributable, unreadable
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -168,11 +207,21 @@ class TenantIsolationVerifier:
         owner_tenant: str,
         foreign_tenant: str,
     ) -> tuple[bool, list[str]]:
-        """Scan JSONL files in metrics_dir for records belonging to foreign_tenant.
+        """Scan JSONL files in metrics_dir for records not owned by owner_tenant.
 
-        Returns (contaminated, details) tuple.
+        Two things fail the scan. A record that reads as *foreign_tenant* is
+        contamination. A record that names an owner the tenant rules cannot
+        read is not contamination -- it names no tenant, so it cannot be
+        pinned on one -- but it is equally not a record this scan has cleared,
+        and reporting it as clean would let a hand-edited or pre-rules row
+        stand in for a verified one.
+
+        Returns:
+            Whether anything was flagged, and one detail line per flagged
+            record.
         """
         contamination_details: list[str] = []
+        unreadable_details: list[str] = []
         for fpath in metrics_dir.iterdir():
             if not fpath.is_file():
                 continue
@@ -181,12 +230,20 @@ class TenantIsolationVerifier:
                     if not line.strip():
                         continue
                     record = json.loads(line)
-                    rec_tenant = record.get("tenant_id") or record.get("tenant", "")
-                    if rec_tenant and try_normalize_tenant_id(str(rec_tenant)) == foreign_tenant:
+                    if not isinstance(record, dict):
+                        continue
+                    tenants, unreadable = _tenant_fields(record, "tenant_id", "tenant")
+                    if foreign_tenant in tenants:
                         contamination_details.append(
-                            f"{fpath.name}: record with tenant={rec_tenant} found in {owner_tenant} dir"
+                            f"{fpath.name}: record with tenant={foreign_tenant} found in {owner_tenant} dir"
                         )
-        return bool(contamination_details), contamination_details
+                    elif unreadable:
+                        unreadable_details.append(
+                            f"{fpath.name}: record names an unreadable tenant ({', '.join(unreadable)}); "
+                            "cannot be attributed"
+                        )
+        details = contamination_details + unreadable_details
+        return bool(details), details
 
     @staticmethod
     def _check_dirs_overlap(dir_a: Path, dir_b: Path) -> bool:
@@ -253,7 +310,9 @@ class TenantIsolationVerifier:
             results.append(
                 IsolationTest(
                     name="cost_content_not_cross_contaminated",
-                    description=f"No '{norm_b}' cost records appear in '{norm_a}' metrics dir",
+                    description=(
+                        f"Every record in '{norm_a}' metrics dir names a readable tenant, and none names '{norm_b}'"
+                    ),
                     passed=not contaminated,
                     details="; ".join(details) if contaminated else "no cross-contamination",
                 )
@@ -332,7 +391,9 @@ class TenantIsolationVerifier:
             results.append(
                 IsolationTest(
                     name="wal_content_no_cross_leak",
-                    description=f"No '{norm_b}' entries found in '{norm_a}' WAL files",
+                    description=(
+                        f"Every entry in '{norm_a}' WAL files names a readable tenant, and none names '{norm_b}'"
+                    ),
                     passed=not cross_leak,
                     details=cross_leak or "no cross-tenant WAL entries",
                 )
@@ -341,7 +402,9 @@ class TenantIsolationVerifier:
             results.append(
                 IsolationTest(
                     name="wal_content_no_cross_leak",
-                    description=f"No '{norm_b}' entries found in '{norm_a}' WAL files",
+                    description=(
+                        f"Every entry in '{norm_a}' WAL files names a readable tenant, and none names '{norm_b}'"
+                    ),
                     passed=True,
                     details="one or both WAL dirs do not exist on disk",
                 )
@@ -351,17 +414,28 @@ class TenantIsolationVerifier:
 
     @staticmethod
     def _wal_record_belongs_to_tenant(record: dict[str, Any], tenant: str) -> bool:
-        """Check if a WAL record belongs to the given tenant."""
-        actor = record.get("actor", "")
-        tenant_field = record.get("tenant_id") or record.get("tenant", "")
-        return any(val and try_normalize_tenant_id(str(val)) == tenant for val in (actor, tenant_field))
+        """Check if a WAL record belongs to the given tenant.
+
+        Every tenant-bearing field is read on its own, so a value that no
+        longer normalizes cannot stand in for the record's answer and hide a
+        sibling field that still does.
+        """
+        tenants, _ = _tenant_fields(record, "actor", "tenant_id", "tenant")
+        return tenant in tenants
 
     @staticmethod
     def _check_wal_content_leak(wal_dir: Path, foreign_tenant: str) -> str:
-        """Scan WAL JSONL files in *wal_dir* for entries belonging to *foreign_tenant*.
+        """Scan WAL JSONL files in *wal_dir* for entries not owned by this tenant.
 
-        Returns an empty string if no leak is found, or a descriptive string
-        of the first leaked entry.
+        An entry that reads as *foreign_tenant* is a leak. An entry that names
+        an owner the tenant rules cannot read is not a leak -- it names no
+        tenant -- but it is an entry the scan could not clear, and saying
+        nothing about it would report a directory as verified on the strength
+        of the rows that happened to be readable.
+
+        Returns:
+            An empty string when every entry was read and none was foreign, or
+            a description of the first entry that failed either way.
         """
         for wal_file in wal_dir.glob("*.jsonl"):
             try:
@@ -372,8 +446,16 @@ class TenantIsolationVerifier:
                         record = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if TenantIsolationVerifier._wal_record_belongs_to_tenant(record, foreign_tenant):
+                    if not isinstance(record, dict):
+                        continue
+                    tenants, unreadable = _tenant_fields(record, "actor", "tenant_id", "tenant")
+                    if foreign_tenant in tenants:
                         return f"{wal_file.name}: entry belongs to foreign tenant '{foreign_tenant}'"
+                    if unreadable:
+                        return (
+                            f"{wal_file.name}: entry names an unreadable tenant "
+                            f"({', '.join(unreadable)}); cannot be attributed"
+                        )
             except OSError:
                 continue
         return ""
@@ -420,7 +502,10 @@ class TenantIsolationVerifier:
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                rec_tenant = try_normalize_tenant_id(str(record.get("tenant_id", "")))
+                # Unchanged, not coerced: `str()` on a stored `true` or `123`
+                # yields a string the tenant rules accept, which would sort the
+                # record into a tenant nothing wrote it for.
+                rec_tenant = try_normalize_tenant_id(record.get("tenant_id"))
                 if rec_tenant == norm_a:
                     a_records.append(record)
                 elif rec_tenant == norm_b:
@@ -543,7 +628,10 @@ class TenantIsolationVerifier:
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                rec_tenant = try_normalize_tenant_id(str(record.get("tenant_id", "")))
+                # Unchanged, not coerced: `str()` on a stored `true` or `123`
+                # yields a string the tenant rules accept, which would sort the
+                # record into a tenant nothing wrote it for.
+                rec_tenant = try_normalize_tenant_id(record.get("tenant_id"))
                 if rec_tenant == foreign_tenant:
                     task_id = record.get("task_id", "unknown")
                     return f"task_id={task_id} belongs to foreign tenant '{foreign_tenant}'"

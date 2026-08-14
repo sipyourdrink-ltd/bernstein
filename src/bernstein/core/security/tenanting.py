@@ -192,7 +192,7 @@ def normalize_tenant_id(raw: str | None) -> str:
     return value
 
 
-def try_normalize_tenant_id(raw: str | None) -> str | None:
+def try_normalize_tenant_id(raw: object) -> str | None:
     """Normalize a tenant ID read from stored data, or None if unusable.
 
     For persisted records rather than request input. Rows written before
@@ -206,13 +206,24 @@ def try_normalize_tenant_id(raw: str | None) -> str | None:
     can compare the result directly and an unattributable row simply never
     matches.
 
+    The parameter is `object` rather than `str | None` because the values
+    arrive from JSON, where the field's type is whatever was written. A caller
+    that coerces first hides the problem: `str(True)` is `"True"` and
+    `str(123)` is `"123"`, both of which satisfy the identifier rules, so a row
+    carrying a boolean would be attributed to a tenant named after it. A
+    non-string is not a malformed identifier that can be repaired by coercion;
+    it is a row this function cannot read, which is exactly what `None` says.
+
     Args:
-        raw: Tenant identifier as stored, possibly absent or malformed.
+        raw: Tenant identifier as stored, possibly absent, malformed, or of
+            some type other than `str`.
 
     Returns:
         The normalized tenant ID, or None if it cannot be normalized.
     """
 
+    if raw is not None and not isinstance(raw, str):
+        return None
     try:
         return normalize_tenant_id(raw)
     except InvalidTenantIdError:

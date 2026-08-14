@@ -406,3 +406,118 @@ class TestRenderIsolationReport:
         assert "**Total:** 2" in md
         assert "**Passed:** 2" in md
         assert "**Failed:** 0" in md
+
+
+# ---------------------------------------------------------------------------
+# Tenant-bearing fields are read independently
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedTenantFieldCannotSilenceASiblingField:
+    """A record's tenant fields answer for themselves, one at a time.
+
+    Reading only the first field that happened to be truthy let a `tenant_id`
+    that no longer normalizes stand in for the record's answer, hiding a
+    `tenant` field that still does. The scan then reported a directory clean
+    while a foreign record sat in it.
+    """
+
+    def test_metrics_leak_found_behind_a_malformed_tenant_id(
+        self, verifier: TenantIsolationVerifier, sdd: Path
+    ) -> None:
+        paths_a = tenant_data_paths(sdd, "tenant-a")
+        _write_jsonl(
+            paths_a.metrics_dir / "cost.jsonl",
+            [{"cost_usd": 1.0, "tenant_id": "not a tenant id", "tenant": "tenant-b"}],
+        )
+
+        results = verifier.verify_cost_isolation(sdd, "tenant-a", "tenant-b")
+
+        content_test = next(r for r in results if r.name == "cost_content_not_cross_contaminated")
+        assert content_test.passed is False
+        assert "tenant-b" in content_test.details
+
+    def test_wal_leak_found_behind_a_malformed_tenant_id(self, verifier: TenantIsolationVerifier, sdd: Path) -> None:
+        paths_a = tenant_data_paths(sdd, "tenant-a")
+        _write_jsonl(
+            paths_a.wal_dir / "run.jsonl",
+            [{"seq": 0, "tenant_id": "not a tenant id", "tenant": "tenant-b"}],
+        )
+
+        results = verifier.verify_wal_isolation(sdd, "tenant-a", "tenant-b")
+
+        wal_test = next(r for r in results if r.name == "wal_content_no_cross_leak")
+        assert wal_test.passed is False
+        assert "tenant-b" in wal_test.details
+
+    def test_wal_leak_found_behind_a_malformed_actor(self, verifier: TenantIsolationVerifier, sdd: Path) -> None:
+        paths_a = tenant_data_paths(sdd, "tenant-a")
+        _write_jsonl(
+            paths_a.wal_dir / "run.jsonl",
+            [{"seq": 0, "actor": "not an actor id", "tenant_id": "tenant-b"}],
+        )
+
+        results = verifier.verify_wal_isolation(sdd, "tenant-a", "tenant-b")
+
+        wal_test = next(r for r in results if r.name == "wal_content_no_cross_leak")
+        assert wal_test.passed is False
+
+
+class TestUnreadableTenantIsNotReportedAsClean:
+    """A record naming an owner nothing can read is not a verified record.
+
+    It is not contamination either -- it names no tenant, so it cannot be
+    pinned on one -- but counting it as passed lets a hand-edited or
+    pre-rules row stand in for one the scan actually cleared.
+    """
+
+    def test_metrics_record_with_unreadable_tenant_fails_the_check(
+        self, verifier: TenantIsolationVerifier, sdd: Path
+    ) -> None:
+        paths_a = tenant_data_paths(sdd, "tenant-a")
+        _write_jsonl(paths_a.metrics_dir / "cost.jsonl", [{"cost_usd": 1.0, "tenant_id": "../escape"}])
+
+        results = verifier.verify_cost_isolation(sdd, "tenant-a", "tenant-b")
+
+        content_test = next(r for r in results if r.name == "cost_content_not_cross_contaminated")
+        assert content_test.passed is False
+        assert "unreadable" in content_test.details
+
+    def test_wal_record_with_unreadable_tenant_fails_the_check(
+        self, verifier: TenantIsolationVerifier, sdd: Path
+    ) -> None:
+        paths_a = tenant_data_paths(sdd, "tenant-a")
+        _write_jsonl(paths_a.wal_dir / "run.jsonl", [{"seq": 0, "tenant_id": "../escape"}])
+
+        results = verifier.verify_wal_isolation(sdd, "tenant-a", "tenant-b")
+
+        wal_test = next(r for r in results if r.name == "wal_content_no_cross_leak")
+        assert wal_test.passed is False
+        assert "unreadable" in wal_test.details
+
+    def test_non_string_tenant_id_is_not_coerced_into_a_tenant_name(
+        self, verifier: TenantIsolationVerifier, sdd: Path
+    ) -> None:
+        """`str(True)` is `"True"`, which the identifier rules accept."""
+        # The foreign tenant's own directory has to exist, or the check
+        # short-circuits before it reads a single record.
+        ensure_tenant_data_layout(sdd, "True")
+        paths_a = tenant_data_paths(sdd, "tenant-a")
+        _write_jsonl(paths_a.metrics_dir / "cost.jsonl", [{"cost_usd": 1.0, "tenant_id": True}])
+
+        results = verifier.verify_cost_isolation(sdd, "tenant-a", "True")
+
+        content_test = next(r for r in results if r.name == "cost_content_not_cross_contaminated")
+        assert "found in tenant-a dir" not in content_test.details
+
+    def test_absent_and_blank_fields_say_nothing_either_way(self, verifier: TenantIsolationVerifier, sdd: Path) -> None:
+        paths_a = tenant_data_paths(sdd, "tenant-a")
+        _write_jsonl(
+            paths_a.metrics_dir / "cost.jsonl",
+            [{"cost_usd": 1.0}, {"cost_usd": 2.0, "tenant_id": ""}, {"cost_usd": 3.0, "tenant_id": None}],
+        )
+
+        results = verifier.verify_cost_isolation(sdd, "tenant-a", "tenant-b")
+
+        content_test = next(r for r in results if r.name == "cost_content_not_cross_contaminated")
+        assert content_test.passed is True

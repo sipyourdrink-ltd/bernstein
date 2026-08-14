@@ -265,3 +265,31 @@ class TestEnsureTenantLayoutCreatesNothingOutside:
         assert paths.backlog_dir.is_dir()
         assert paths.metrics_dir.is_dir()
         assert paths.root.resolve().is_relative_to(sdd_dir.resolve())
+
+
+class TestTryNormalizeRejectsNonStrings:
+    """A stored tenant id that is not a string is unreadable, not coercible.
+
+    The values come out of JSON, so the field holds whatever was written.
+    Coercing before validating turns `true` into `"True"` and `123` into
+    `"123"`, both of which satisfy the identifier rules, and the row is then
+    attributed to a tenant nothing wrote it for.
+    """
+
+    @pytest.mark.parametrize("stored", [True, False, 123, 1.5, ["a"], {"id": "a"}, ("a",)])
+    def test_non_string_values_are_unattributable(self, stored: object) -> None:
+        assert tenanting.try_normalize_tenant_id(stored) is None
+
+    def test_coercing_first_would_have_produced_a_valid_looking_id(self) -> None:
+        """The bug this rules out, stated as the assertion that used to hold."""
+        assert tenanting.is_valid_tenant_id(str(True))
+        assert tenanting.try_normalize_tenant_id(True) is None
+
+    def test_absent_value_still_means_the_default_tenant(self) -> None:
+        assert tenanting.try_normalize_tenant_id(None) == tenanting.DEFAULT_TENANT_ID
+
+    def test_valid_string_is_unaffected(self) -> None:
+        assert tenanting.try_normalize_tenant_id("  team-a  ") == "team-a"
+
+    def test_malformed_string_is_still_unattributable(self) -> None:
+        assert tenanting.try_normalize_tenant_id("../escape") is None
