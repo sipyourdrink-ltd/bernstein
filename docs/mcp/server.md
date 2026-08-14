@@ -60,6 +60,15 @@ removal date.
 | Anonymous | default on loopback | Allowed only on `127.0.0.1` / `localhost` / `::1`. |
 | Static bearer | `BERNSTEIN_MCP_TOKEN` (or `BERNSTEIN_MCP_AUTH_TOKEN`) | Constant-time check; required on non-loopback binds. |
 
+These two are the only modes `RemoteMCPConfig.auth_type` accepts (`"none"`
+or `"bearer"`); construction refuses any other value with
+`RemoteMCPConfigError` rather than starting a server that would deny every
+request. There is no `"oauth"` mode: the discovery surface described below
+proves only that the resource is *pointed at* an authorization server, not
+that this transport can *validate* a token that server issues. An IdP-issued
+token is not a `BERNSTEIN_MCP_TOKEN` value, so presenting one under static
+bearer is refused like any other wrong token.
+
 OAuth-2 PKCE token issuance is delegated to an external IdP. Bernstein is
 the **resource server**: it does not host an authorization server and so
 does not publish RFC 8414 authorization-server metadata. When the operator
@@ -97,8 +106,13 @@ The discovery handshake is:
    example `https://idp.example.com/.well-known/oauth-authorization-server`
    or whatever path the IdP uses (Keycloak, Auth0, Okta all differ).
 4. Client completes the PKCE S256 authorization-code flow against the
-   IdP and presents the resulting bearer token to the streamable HTTP
-   transport.
+   IdP, obtaining a token minted by that IdP.
+
+The discovery handshake ends there: the streamable HTTP transport does not
+accept the IdP-minted token as a credential (see the `auth_type` note
+above). An operator who wants this discovery flow to end in a working
+request still configures `auth_type="bearer"` and hands the client a
+`BERNSTEIN_MCP_TOKEN` value out of band; the IdP token is not that value.
 
 The protected-resource path is served without authentication, since a
 client probing discovery has no token yet. When the env var is unset,
