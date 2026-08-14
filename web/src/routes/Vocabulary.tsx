@@ -16,6 +16,7 @@ type StyleDeclaration = {
 
 type StyleRule = {
   cssRules?: ArrayLike<StyleRule>;
+  selectorText?: string;
   style?: StyleDeclaration;
 };
 
@@ -28,7 +29,18 @@ export type CssToken = {
   value: string;
 };
 
-function collectCustomPropertyNames(
+function isDashboardTokenRule(rule: StyleRule): boolean {
+  return rule.selectorText?.split(',').some((selector) => {
+    const trimmed = selector.trim();
+    return trimmed === ':root' || trimmed === '.dark';
+  }) ?? false;
+}
+
+function isDashboardTokenName(name: string): boolean {
+  return !name.startsWith('--tw-') && !name.startsWith('--lightningcss-');
+}
+
+function collectDashboardTokenNames(
   rules: CSSRuleList | ArrayLike<StyleRule> | undefined,
   names: Set<string>,
 ): void {
@@ -36,13 +48,13 @@ function collectCustomPropertyNames(
 
   for (const rule of Array.from(rules as ArrayLike<StyleRule | CSSRule>)) {
     const styleRule = rule as StyleRule;
-    if (styleRule.style) {
+    if (styleRule.style && isDashboardTokenRule(styleRule)) {
       for (let index = 0; index < styleRule.style.length; index += 1) {
         const name = styleRule.style.item(index);
-        if (name.startsWith('--')) names.add(name);
+        if (name.startsWith('--') && isDashboardTokenName(name)) names.add(name);
       }
     }
-    collectCustomPropertyNames(styleRule.cssRules, names);
+    collectDashboardTokenNames(styleRule.cssRules, names);
   }
 }
 
@@ -54,7 +66,7 @@ export function collectCssTokens(
 
   for (const styleSheet of styleSheets) {
     try {
-      collectCustomPropertyNames(styleSheet.cssRules, names);
+      collectDashboardTokenNames(styleSheet.cssRules, names);
     } catch {
       // A cross-origin stylesheet may not expose cssRules. The dashboard's own
       // styles stay readable, so ignore only the inaccessible sheet.
@@ -64,6 +76,10 @@ export function collectCssTokens(
   return [...names]
     .sort()
     .map((name) => ({ name, value: resolveValue(name).trim() || 'unresolved' }));
+}
+
+function isHslToken(value: string): boolean {
+  return /^-?[\d.]+(?:deg)?\s+-?[\d.]+%\s+-?[\d.]+%(?:\s*\/\s*-?[\d.]+%)?$/.test(value);
 }
 
 function useCssTokens(): CssToken[] {
@@ -99,7 +115,13 @@ export function VocabularyContent({ tokens }: { tokens: CssToken[] }) {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {tokens.map((token) => (
               <article key={token.name} data-token={token.name} className="rounded-md border border-border bg-card p-3">
-                <div className="mb-3 h-14 rounded-sm border border-border-subtle" style={{ background: `hsl(var(${token.name}))` }} />
+                {isHslToken(token.value) ? (
+                  <div data-token-preview="color" className="mb-3 h-14 rounded-sm border border-border-subtle" style={{ background: `hsl(var(${token.name}))` }} />
+                ) : (
+                  <div data-token-preview="value" className="mb-3 flex h-14 items-center rounded-sm border border-border-subtle bg-muted px-3">
+                    <div className="h-7 w-full bg-foreground" style={{ borderRadius: `var(${token.name})` }} />
+                  </div>
+                )}
                 <code className="block text-body-md text-foreground">{token.name}</code>
                 <code className="mt-1 block text-log text-muted-foreground">{token.value}</code>
               </article>

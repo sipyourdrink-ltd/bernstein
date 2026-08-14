@@ -37,7 +37,6 @@ docs/roadmap-200-tickets.md
 
 # AI/assistant/Claude-specific tooling
 .claude/
-.qmd/
 
 # Package and dependency caches
 node_modules/

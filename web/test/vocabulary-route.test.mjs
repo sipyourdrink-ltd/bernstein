@@ -21,6 +21,10 @@ function fakeDeclaration(properties) {
   };
 }
 
+function fakeRule(selectorText, properties) {
+  return { selectorText, style: fakeDeclaration(properties) };
+}
+
 test('developer vocabulary route renders every custom property and Tailwind type step', async (t) => {
   const css = await readFile(new URL('../src/index.css', import.meta.url), 'utf8');
   const expectedTokens = declaredCustomProperties(css);
@@ -39,7 +43,13 @@ test('developer vocabulary route renders every custom property and Tailwind type
     vite.ssrLoadModule('/tailwind.config.js'),
   ]);
   const tokens = collectCssTokens(
-    [{ cssRules: [{ cssRules: [{ style: fakeDeclaration(expectedTokens) }] }] }],
+    [{
+      cssRules: [
+        fakeRule(':root', expectedTokens),
+        fakeRule(':root', ['--lightningcss-light']),
+        fakeRule('*', ['--tw-ring-color']),
+      ],
+    }],
     (name) => `resolved ${name}`,
   );
 
@@ -49,6 +59,9 @@ test('developer vocabulary route renders every custom property and Tailwind type
   for (const token of expectedTokens) {
     assert.ok(html.includes(`data-token="${token}"`), `${token} is absent from the rendered route`);
   }
+  assert.ok(!html.includes('data-token="--tw-ring-color"'), 'Tailwind internals leak into the route');
+  assert.ok(!html.includes('data-token="--lightningcss-light"'), 'LightningCSS internals leak into the route');
+  assert.ok(!html.includes('hsl(var(--radius))'), '--radius is rendered as a color swatch');
 
   const typeSteps = Object.keys(tailwindModule.default.theme.extend.fontSize);
   for (const step of typeSteps) {
