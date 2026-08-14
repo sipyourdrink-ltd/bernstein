@@ -489,9 +489,6 @@ def test_mock_agent_attributes_evidence_to_correct_task_id(tmp_path: Path) -> No
     """
     project = _make_demo_workdir(tmp_path)
 
-    # Both tasks have the EXACT same prompt to simulate a worst-case collision
-    colliding_prompt = "Fix the broken test and the off-by-one error in app.py"
-
     # Spawn session for Task A
     log_path_a = project / ".sdd" / "runtime" / "agent-task-a.log"
     task_info_a = json.dumps({
