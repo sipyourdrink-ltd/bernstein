@@ -692,7 +692,7 @@ class TestPersistedScopeCollectionsAreValidated:
         assert AgentIdentityStore(tmp_path).authenticate(token) is None
 
     @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
-    @pytest.mark.parametrize("value", [["ok", 7], ["ok", None], "t-1", {"t-1": True}])
+    @pytest.mark.parametrize("value", [["ok", 7], ["ok", None], "t-1", {"t-1": True}, {}, "", 0, False])
     def test_a_bad_scope_is_refused_before_a_token_is_minted(self, tmp_path: Path, field: str, value: object) -> None:
         """A scope the reader would refuse must not become a signed credential.
 
@@ -706,6 +706,46 @@ class TestPersistedScopeCollectionsAreValidated:
             store.create_identity("session-bad-scope", "backend", **{field: value})  # type: ignore[arg-type]
 
         assert not list((tmp_path / "agent_identities").glob("session-bad-scope*.json"))
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    @pytest.mark.parametrize("value", [None, []])
+    def test_an_absent_or_empty_scope_still_means_unrestricted(self, tmp_path: Path, field: str, value: object) -> None:
+        """Refusing falsy junk must not also refuse the two real "no scope" values.
+
+        ``None`` is the argument's default and an empty list is a caller
+        explicitly asking for no restriction.  Both stay valid; it is the other
+        falsy shapes that are refused rather than read as "unrestricted".
+        """
+        store = AgentIdentityStore(tmp_path)
+
+        identity, token = store.create_identity("session-open-scope", "backend", **{field: value})  # type: ignore[arg-type]
+
+        assert getattr(identity, field) == []
+        assert AgentIdentityStore(tmp_path).authenticate(token) is not None
+
+    def test_a_legacy_shaped_record_is_refused_before_its_claims_are_read(self, tmp_path: Path) -> None:
+        """A stored non-string scope dies at the read, not at the claim comparison.
+
+        Both copies of the scope are written together, so a token can only
+        carry a non-string entry if the record beside it carries one too - and
+        that record is refused when it loads, a step before the claim check
+        runs.  Tightening the claim comparison therefore takes no token out of
+        service that was still in service without it.
+        """
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-legacy", "backend", task_ids=["7"])
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        payload["task_ids"] = [7]
+        payload["credential"]["task_ids"] = [7]
+        path.write_text(json.dumps(payload))
+
+        reloaded = AgentIdentityStore(tmp_path)
+
+        assert reloaded._load(identity.id) is None
+        assert reloaded.authenticate(token) is None
 
 
 class TestIdentityAndCredentialScopeMustAgree:

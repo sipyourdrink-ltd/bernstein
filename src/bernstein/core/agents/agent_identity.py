@@ -637,8 +637,12 @@ class AgentIdentityStore:
         # signed into the token and persisted beside it, so a caller passing a
         # non-string entry would mint a credential that its own reader refuses,
         # leaving an agent whose token authenticates as an unknown identity.
-        scoped_task_ids = _string_list(task_ids or (), "task_ids")
-        scoped_files = _string_list(allowed_files or (), "allowed_files")
+        # Only ``None`` means "not supplied".  ``or ()`` would have sent every
+        # falsy value down the unrestricted path, so an empty mapping or an
+        # empty string - refused as corrupt when read back - would instead have
+        # signed a token with no task scope at all.
+        scoped_task_ids = _string_list(() if task_ids is None else task_ids, "task_ids")
+        scoped_files = _string_list(() if allowed_files is None else allowed_files, "allowed_files")
 
         now = time.time()
         # Use shorter expiry (4 h) for task-scoped tokens to limit blast radius.
