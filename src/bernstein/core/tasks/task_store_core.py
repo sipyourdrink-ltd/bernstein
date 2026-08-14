@@ -3248,10 +3248,51 @@ class TaskStore:
 
     # -- status summary / cost tracking --------------------------------------
 
-    def status_summary(self) -> dict[str, Any]:
-        """Return aggregated task counts for the dashboard."""
-        role_counts = self._build_role_counts()
-        total_cost, cost_by_role = self._compute_costs()
+    def status_summary(self, tenant_id: str | None = None) -> dict[str, Any]:
+        """Return aggregated task counts for the dashboard.
+
+        Args:
+            tenant_id: If provided, the task figures are computed over that
+                tenant's rows only.  ``None`` keeps the whole-store roll-up,
+                matching :meth:`list_tasks`, whose ``tenant_id`` is optional
+                for the same reason: the CLI, the TUI and the supervisor read
+                this store outside any request and have no scope to apply.
+
+        Note:
+            A tenant scope narrows the *task* figures.  The cost figures keep
+            folding in the per-role metrics JSONL, which carries no tenant of
+            its own, exactly as they did before - narrowing untenanted cost
+            records is a separate question from narrowing task rows, and
+            ``/status`` reads that same file directly for its headline spend
+            besides.
+
+            Per-status counts are read from the same by-status index the
+            unscoped roll-up and :meth:`count_by_status` read, filtered rather
+            than recomputed, so a scoped ``/status`` and a scoped
+            ``/tasks/counts`` cannot disagree with each other.
+        """
+        normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+        counted_statuses = (
+            TaskStatus.OPEN,
+            TaskStatus.CLAIMED,
+            TaskStatus.DONE,
+            TaskStatus.FAILED,
+            TaskStatus.REFUSED,
+        )
+        if normalized_tenant is None:
+            tasks = list(self._tasks.values())
+            status_counts = {status: len(self._by_status.get(status, {})) for status in counted_statuses}
+        else:
+            tasks = [task for task in self._tasks.values() if task.tenant_id == normalized_tenant]
+            status_counts = {
+                status: sum(
+                    1 for task in self._by_status.get(status, {}).values() if task.tenant_id == normalized_tenant
+                )
+                for status in counted_statuses
+            }
+
+        role_counts = self._build_role_counts(tasks)
+        total_cost, cost_by_role = self._compute_costs(tasks)
 
         per_role = []
         for role, counts in sorted(role_counts.items()):
@@ -3263,22 +3304,22 @@ class TaskStore:
             per_role.append(entry)
 
         summary: dict[str, Any] = {
-            "total": len(self._tasks),
-            "open": len(self._by_status.get(TaskStatus.OPEN, {})),
-            "claimed": len(self._by_status.get(TaskStatus.CLAIMED, {})),
-            "done": len(self._by_status.get(TaskStatus.DONE, {})),
-            "failed": len(self._by_status.get(TaskStatus.FAILED, {})),
-            "refused": len(self._by_status.get(TaskStatus.REFUSED, {})),
+            "total": len(tasks),
+            "open": status_counts[TaskStatus.OPEN],
+            "claimed": status_counts[TaskStatus.CLAIMED],
+            "done": status_counts[TaskStatus.DONE],
+            "failed": status_counts[TaskStatus.FAILED],
+            "refused": status_counts[TaskStatus.REFUSED],
             "per_role": per_role,
             "total_cost_usd": round(total_cost, 4),
         }
         self._attach_bandit_stats(summary)
         return summary
 
-    def _build_role_counts(self) -> dict[str, dict[str, int]]:
-        """Build per-role breakdown across all statuses."""
+    def _build_role_counts(self, tasks: list[Task]) -> dict[str, dict[str, int]]:
+        """Build per-role breakdown across all statuses for *tasks*."""
         role_counts: dict[str, dict[str, int]] = {}
-        for task in self._tasks.values():
+        for task in tasks:
             if task.role not in role_counts:
                 role_counts[task.role] = {"open": 0, "claimed": 0, "done": 0, "failed": 0}
             status_key = task.status.value
@@ -3286,9 +3327,9 @@ class TaskStore:
                 role_counts[task.role][status_key] += 1
         return role_counts
 
-    def _compute_costs(self) -> tuple[float, dict[str, float]]:
-        """Compute total cost from in-memory tasks and metrics JSONL."""
-        total_cost = sum(t.cost_usd for t in self._tasks.values() if hasattr(t, "cost_usd") and t.cost_usd)
+    def _compute_costs(self, tasks: list[Task]) -> tuple[float, dict[str, float]]:
+        """Compute total cost from *tasks* and the metrics JSONL."""
+        total_cost = sum(t.cost_usd for t in tasks if hasattr(t, "cost_usd") and t.cost_usd)
         cost_by_role = self._read_cost_by_role()
         metrics_cost = sum(cost_by_role.values())
         if metrics_cost > total_cost:

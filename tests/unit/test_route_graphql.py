@@ -35,12 +35,13 @@ class _MockStore:
             return self._tasks
         return [t for t in self._tasks if t.get("tenant_id", DEFAULT_TENANT_ID) == tenant_id]
 
-    def status_summary(self) -> dict[str, Any]:
+    def status_summary(self, tenant_id: str | None = None) -> dict[str, Any]:
+        scoped = self.list_tasks(tenant_id)
         return {
-            "total": len(self._tasks),
+            "total": len(scoped),
             "completed": 0,
             "failed": 0,
-            "open": len(self._tasks),
+            "open": len(scoped),
         }
 
 
@@ -189,6 +190,24 @@ class TestExecuteGraphQL:
         result = execute_graphql("garbage", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         assert "errors" in result
         assert "Could not parse" in result["errors"][0]["message"]
+
+    def test_status_query_counts_only_the_named_tenant(self) -> None:
+        """The status resolver answers under the scope it was handed.
+
+        ``status_summary`` takes the scope the same way ``list_tasks`` does,
+        so a resolver that stopped passing it through reports another
+        tenant's figures here rather than raising.
+        """
+        mock_store = _MockStore(
+            [
+                {"id": "t1", "title": "Task 1", "status": "open", "tenant_id": "tenant-a"},
+                {"id": "t2", "title": "Task 2", "status": "open", "tenant_id": "tenant-b"},
+            ]
+        )
+
+        result = execute_graphql("{ status { total open } }", store=mock_store, tenant_id="tenant-a")
+
+        assert result["data"]["status"] == {"total": 1, "open": 1}
 
     def test_tasks_query_resolves_only_the_named_tenant(self) -> None:
         """The scope reaches the store, rather than being accepted and dropped.

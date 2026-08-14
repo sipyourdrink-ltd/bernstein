@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 
 import pytest
 from bernstein.core.predictive_alerts import (
@@ -12,7 +14,9 @@ from bernstein.core.predictive_alerts import (
     forecast_budget_exhaustion,
     forecast_completion_rate,
     forecast_run_duration,
+    load_cost_history,
 )
+from bernstein.core.tenanting import DEFAULT_TENANT_ID
 
 
 class TestOLS:
@@ -281,3 +285,69 @@ class TestPredictiveAlertEngine:
                 assert severity_order.get(str(alerts[i].severity), 9) <= severity_order.get(
                     str(alerts[i + 1].severity), 9
                 )
+
+
+def _point(ts: float, value: float, tenant_id: str | None = None) -> dict[str, object]:
+    """A cost-efficiency metric point as the collector writes it."""
+    labels: dict[str, str] = {"task_id": "t", "role": "backend", "model": "m"}
+    if tenant_id is not None:
+        labels["tenant_id"] = tenant_id
+    return {"timestamp": ts, "metric_type": "cost_efficiency", "value": value, "labels": labels}
+
+
+def _write_points(tmp_path: Path, points: list[dict[str, object]]) -> None:
+    metrics_dir = tmp_path / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    with (metrics_dir / "cost_efficiency_2026-08-14.jsonl").open("a", encoding="utf-8") as fh:
+        for point in points:
+            fh.write(json.dumps(point) + "\n")
+
+
+class TestLoadCostHistory:
+    """Tenant narrowing of the cumulative spend series (issue #3800)."""
+
+    def test_narrows_to_requested_tenant_only(self, tmp_path: Path) -> None:
+        _write_points(
+            tmp_path,
+            [
+                _point(1000.0, 1.0, "tenant-a"),
+                _point(1100.0, 1.0, "tenant-a"),
+                _point(1200.0, 1.0, "tenant-b"),
+                _point(1300.0, 1.0, "tenant-b"),
+            ],
+        )
+
+        series = load_cost_history(tmp_path / "metrics", tenant_id="tenant-a")
+
+        assert series == [(1000.0, 1.0), (1100.0, 2.0)]
+
+    def test_untagged_rows_are_treated_as_default_tenant(self, tmp_path: Path) -> None:
+        # A legacy single-tenant install's records predate any tenant field;
+        # folding them into the default scope is what keeps its numbers.
+        _write_points(
+            tmp_path,
+            [
+                _point(1000.0, 1.0),  # no tenant label at all
+                _point(1100.0, 2.0),
+                _point(1200.0, 3.0, DEFAULT_TENANT_ID),
+            ],
+        )
+
+        default_series = load_cost_history(tmp_path / "metrics", tenant_id=DEFAULT_TENANT_ID)
+        other_series = load_cost_history(tmp_path / "metrics", tenant_id="tenant-b")
+
+        assert default_series == [(1000.0, 1.0), (1100.0, 3.0), (1200.0, 6.0)]
+        assert other_series == []
+
+    def test_without_tenant_filter_returns_every_record(self, tmp_path: Path) -> None:
+        _write_points(
+            tmp_path,
+            [
+                _point(1000.0, 1.0, "tenant-a"),
+                _point(1100.0, 1.0, "tenant-b"),
+            ],
+        )
+
+        series = load_cost_history(tmp_path / "metrics")
+
+        assert series == [(1000.0, 1.0), (1100.0, 2.0)]

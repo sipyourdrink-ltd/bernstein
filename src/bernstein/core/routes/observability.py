@@ -56,20 +56,50 @@ def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
         return default
 
 
-def _tasks_by_id(request: Request, store: TaskStore) -> dict[str, Any]:
-    """Return a ``{task.id: task}`` map materialised once per request.
+def _tasks_by_id(request: Request, store: TaskStore, tenant_id: str) -> dict[str, Any]:
+    """Return a ``{task.id: task}`` map for *tenant_id*, materialised once per request.
 
     Both ``observability_agents`` and ``observability_token_budget`` need the
     same dict in a single request lifecycle. Caching it on ``request.state``
     avoids rebuilding ``{t.id: t for t in store.list_tasks()}`` twice on each
     /observability call (issue #1728 finding 2).
+
+    ``tenant_id`` is required rather than defaulted: this map is what both
+    callers render task content from, and a default would make "every tenant"
+    the map a caller gets by forgetting to say anything.  The narrowing is
+    pushed into ``list_tasks`` rather than applied to the built dict so that a
+    row outside the scope is never materialised at all.
     """
     cached = getattr(request.state, "tasks_by_id", None)
     if isinstance(cached, dict):
         return cast("dict[str, Any]", cached)
-    fresh: dict[str, Any] = {task.id: task for task in store.list_tasks()}
+    fresh: dict[str, Any] = {task.id: task for task in store.list_tasks(tenant_id=tenant_id)}
     request.state.tasks_by_id = fresh
     return fresh
+
+
+def _snapshot_agents_in_scope(
+    request: Request,
+    raw_agents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop the runtime agent records whose task sits outside the caller's scope.
+
+    One orchestrator process serves every tenant it is configured for, so its
+    ``agents.json`` holds the sessions of all of them and carries no tenant of
+    its own.  What places a session is the task it was spawned for, so that is
+    what the record is resolved against.  A record naming no task has no
+    tenant to resolve and is left alone: it describes the process rather than
+    anybody's work.
+    """
+    from bernstein.core.routes.task_crud import task_ids_outside_tenant_scope
+
+    named_ids = [str(task_id) for raw in raw_agents for task_id in cast("list[Any]", raw.get("task_ids", []))]
+    out_of_scope = task_ids_outside_tenant_scope(request, named_ids)
+    return [
+        raw
+        for raw in raw_agents
+        if not any(str(task_id) in out_of_scope for task_id in cast("list[Any]", raw.get("task_ids", [])))
+    ]
 
 
 def _overall_trend(scores: list[int]) -> str:
@@ -89,6 +119,8 @@ def _overall_trend(scores: list[int]) -> str:
 @router.get("/observability/agents")
 def observability_agents(request: Request) -> dict[str, Any]:
     """Return runtime heartbeat, stall-profile, and log-summary data per agent."""
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     workdir = _get_workdir(request)
     store = _get_store(request)
     runtime_dir = workdir / ".sdd" / "runtime"
@@ -96,13 +128,14 @@ def observability_agents(request: Request) -> dict[str, Any]:
     timeout_s = float(getattr(getattr(request.app.state, "seed_config", None), "heartbeat_timeout_s", 120) or 120)
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     aggregator = AgentLogAggregator(workdir)
-    tasks_by_id = _tasks_by_id(request, store)
+    tasks_by_id = _tasks_by_id(request, store, _resolve_request_tenant_scope(request))
+    raw_agents = _snapshot_agents_in_scope(request, cast(_CAST_LIST_DICT_STR_ANY, snapshot.get("agents", [])))
 
     agents: list[dict[str, Any]] = []
     active = 0
     stalled = 0
     idle = 0
-    for raw in cast(_CAST_LIST_DICT_STR_ANY, snapshot.get("agents", [])):
+    for raw in raw_agents:
         session_id = str(raw.get("id", ""))
         task_ids = [str(task_id) for task_id in cast("list[Any]", raw.get("task_ids", []))]
         heartbeat = monitor.check(session_id)
@@ -212,8 +245,15 @@ def observability_budget(request: Request) -> dict[str, Any]:
 
 @router.get("/observability/deps")
 def observability_deps(request: Request) -> dict[str, Any]:
-    """Return dependency-graph validation status for current tasks."""
-    tasks = _get_store(request).list_tasks()
+    """Return dependency-graph validation status for current tasks.
+
+    The response names the ids it walked - the ready set, the critical path,
+    and both broken-edge lists - so the walk is narrowed to the caller's
+    tenant scope rather than the whole store.
+    """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
+    tasks = _get_store(request).list_tasks(tenant_id=_resolve_request_tenant_scope(request))
     validator = DependencyValidator()
     validation = validator.validate(tasks)
     return {
@@ -240,10 +280,14 @@ async def recap(request: Request) -> dict[str, Any]:
     - Quality score distribution
     - Cost breakdown by model and role
     """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     workdir = _get_workdir(request)
 
-    # Get all tasks from the store
-    all_tasks = _get_store(request).list_tasks()
+    # The recap lists every row it read, with id, title, status and role, so
+    # the read is narrowed to the caller's tenant scope before anything is
+    # summarised over it - the counts below have to describe the same rows.
+    all_tasks = _get_store(request).list_tasks(tenant_id=_resolve_request_tenant_scope(request))
 
     # Compute basic stats
     total = len(all_tasks)
@@ -872,16 +916,21 @@ def token_breakdown(request: Request) -> dict[str, Any]:
     Returns:
         Dict with ``sessions`` list and aggregate ``summary``.
     """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     workdir = _get_workdir(request)
     store = _get_store(request)
     runtime_dir = workdir / ".sdd" / "runtime"
 
-    # Load agents snapshot for role/task_id mapping
+    # Load agents snapshot for role/task_id mapping.  Each entry below is
+    # rendered with the ids and titles of the tasks it priced, so the snapshot
+    # is narrowed to the caller's scope before it becomes ``session_info``.
     snapshot = _read_json(runtime_dir / "agents.json", {"agents": []})
-    tasks_by_id = _tasks_by_id(request, store)
+    tasks_by_id = _tasks_by_id(request, store, _resolve_request_tenant_scope(request))
+    raw_agents = _snapshot_agents_in_scope(request, cast(_CAST_LIST_DICT_STR_ANY, snapshot.get("agents", [])))
 
     session_info: dict[str, dict[str, Any]] = {}
-    for raw in cast(_CAST_LIST_DICT_STR_ANY, snapshot.get("agents", [])):
+    for raw in raw_agents:
         sid = str(raw.get("id", ""))
         if sid:
             session_info[sid] = {
@@ -889,10 +938,23 @@ def token_breakdown(request: Request) -> dict[str, Any]:
                 "task_ids": [str(t) for t in cast("list[Any]", raw.get("task_ids", []))],
             }
 
+    # Sidecars are found by globbing the runtime directory, so a session the
+    # narrowing above dropped would otherwise come back through the glob with
+    # its token totals attached.  Names that appear in the snapshot but not in
+    # ``session_info`` are exactly the dropped ones; a sidecar with no snapshot
+    # entry at all keeps its pre-existing "unknown" rendering.
+    dropped_sessions = {
+        str(raw.get("id", ""))
+        for raw in cast(_CAST_LIST_DICT_STR_ANY, snapshot.get("agents", []))
+        if str(raw.get("id", "")) and str(raw.get("id", "")) not in session_info
+    }
+
     sessions: list[dict[str, Any]] = []
 
     for tokens_file in sorted(runtime_dir.glob("*.tokens")):
         session_id = tokens_file.stem
+        if session_id in dropped_sessions:
+            continue
         input_tokens, output_tokens = _parse_token_file(tokens_file)
 
         if input_tokens == output_tokens == 0:

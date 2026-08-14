@@ -283,11 +283,29 @@ Unauthenticated dev mode (`BERNSTEIN_AUTH_DISABLED`) is the one mode where
 when absent — with auth off there is no credential to derive a scope from.
 
 Scope: the binding above establishes *which* tenant a request is authorized for.
-Applying it is per-route — the task CRUD and `/costs`, `/costs/live` routes resolve
-the scope through `resolve_tenant_scope()`, and the store filters by the tenant it
-is given. Routes that aggregate process-global data or look rows up by ID without
-passing a tenant are not scoped by this binding; treat them as operator surfaces
-until they are converted.
+Applying it is per-route — the task CRUD, `/costs`, `/costs/live`, the task export
+and GraphQL front doors, and the dashboard and observability readers (`/status`,
+`/status/duration-predictions`, `/dashboard/data`, `/dashboard/team`, `/badge.json`,
+`/recap`, `/observability/deps`, `/observability/agents`,
+`/observability/token-breakdown`, `/agents`, `/agents/comparison`, `/export/agents`)
+resolve the scope through `resolve_tenant_scope()`, and the store filters by the
+tenant it is given. Routes that aggregate process-global data or look rows up by ID
+without passing a tenant are not scoped by this binding; treat them as operator
+surfaces until they are converted.
+
+Runtime records carry no tenant of their own. The agent snapshot
+(`.sdd/runtime/agents.json`) and the token sidecars beside it are written by one
+orchestrator process serving every tenant it is configured for, so the readers over
+them derive the tenant from the task each record names rather than from a field in
+the file. A record naming no task, or naming one that no longer resolves, has no
+tenant to derive and is left in place.
+
+Aggregate figures follow the rows they are computed from. `TaskStore.status_summary()`
+takes an optional `tenant_id`; when one is given, the counts and the cost totals come
+from that tenant's rows alone, and the untenanted per-role metrics file is not folded
+in — attributing an unattributable total to whichever tenant asked for it would report
+somebody else's spend as theirs. Called without a tenant it keeps the whole-store
+roll-up, which is what the CLI, the TUI and the supervisor read.
 
 Budget figures follow the same scope. A run's cost file records the spend of
 every tenant that spent against it, and the caps stored beside it bound the run

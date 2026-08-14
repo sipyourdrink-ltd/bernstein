@@ -140,9 +140,15 @@ def _active_worktree_count(request: Request) -> int:
     return sum(1 for entry in worktrees_dir.iterdir() if entry.is_dir())
 
 
-def _last_completion(store: TaskStore) -> dict[str, Any] | None:
-    """Return the latest archive record in a dashboard-friendly shape."""
-    latest = store.read_archive(limit=1)
+def _last_completion(store: TaskStore, tenant_id: str | None = None) -> dict[str, Any] | None:
+    """Return the latest archive record in a dashboard-friendly shape.
+
+    The record is rendered with its task id and title, so ``tenant_id`` is
+    pushed into ``read_archive`` - which narrows before taking the last
+    record, so a caller still gets its own most recent completion rather than
+    nothing whenever the newest archived row belongs to somebody else.
+    """
+    latest = store.read_archive(limit=1, tenant_id=tenant_id)
     if not latest:
         return None
     record = latest[-1]
@@ -206,7 +212,7 @@ def _seed_config_overrides(
     return overrides, seed_path if isinstance(seed_path, str) else None
 
 
-def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
+def _runtime_summary(request: Request, store: TaskStore, tenant_id: str | None = None) -> dict[str, Any]:
     """Build runtime operational metadata for status and TUI consumers.
 
     Expensive ops (disk scan, git subprocess) are cached for 10 seconds
@@ -215,6 +221,11 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     Every field is wrapped in ``_safe_call`` so a single broken metric cannot
     take the whole endpoint down. Failing fields fall back to neutral defaults
     and are logged at WARNING.
+
+    ``last_completed`` is the one field here built from a task row, so it
+    takes *tenant_id*.  It is recomputed on the cache fast path as well as on
+    a rebuild, which is what keeps the shared 10-second cache from handing one
+    caller's completion to the next.
     """
     import time as _time
 
@@ -224,7 +235,9 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     # Fast path: return cached result if fresh
     if _runtime_cache and (now - _runtime_cache_ts) < _RUNTIME_CACHE_TTL:
         # Update only the cheap fields
-        _runtime_cache["last_completed"] = _safe_call("last_completed", lambda: _last_completion(store), None)
+        _runtime_cache["last_completed"] = _safe_call(
+            "last_completed", lambda: _last_completion(store, tenant_id), None
+        )
         return _runtime_cache
 
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
@@ -252,7 +265,7 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         "memory_mb": _safe_call("memory_mb", memory_usage_mb, 0.0),
         "active_worktrees": _safe_call("active_worktrees", lambda: _active_worktree_count(request), 0),
         "disk_usage_mb": round(disk_usage_bytes / (1024 * 1024), 2),
-        "last_completed": _safe_call("last_completed", lambda: _last_completion(store), None),
+        "last_completed": _safe_call("last_completed", lambda: _last_completion(store, tenant_id), None),
         "config_reloaded_at": float(config_state["reloaded_at"])
         if config_state and config_state.get("reloaded_at")
         else 0.0,
@@ -576,10 +589,16 @@ def _read_cost_history(store: TaskStore) -> list[dict[str, Any]]:
     return points
 
 
-def _task_status_alerts(store: TaskStore) -> list[dict[str, str]]:
-    """Generate alerts for failed and blocked tasks."""
+def _task_status_alerts(store: TaskStore, tenant_id: str | None = None) -> list[dict[str, str]]:
+    """Generate alerts for failed and blocked tasks.
+
+    Each alert's ``detail`` is built from the titles of the rows behind it, so
+    the read narrows to *tenant_id* when one is given.  It stays optional
+    because the alert builder is also called from the webhook dispatcher,
+    which has no request and therefore no scope to resolve.
+    """
     alerts: list[dict[str, str]] = []
-    all_tasks = store.list_tasks()
+    all_tasks = store.list_tasks(tenant_id=tenant_id)
     failed_tasks = [t for t in all_tasks if t.status.value == "failed"]
     if failed_tasks:
         alerts.append(
@@ -652,10 +671,11 @@ def build_alerts(
     total_cost: float,
     now: float,
     agent_snapshots: dict[str, dict[str, Any]] | None = None,
+    tenant_id: str | None = None,
 ) -> list[dict[str, str]]:
-    """Generate alerts for the dashboard."""
+    """Generate alerts for the dashboard, narrowed to *tenant_id* when given."""
     alerts: list[dict[str, str]] = []
-    alerts.extend(_task_status_alerts(store))
+    alerts.extend(_task_status_alerts(store, tenant_id))
     alerts.extend(_agent_health_alerts(alive_agents, now))
     alerts.extend(_snapshot_context_alerts(agent_snapshots))
 
@@ -858,13 +878,18 @@ def _summarise_lineage(sdd_dir: Any) -> dict[str, Any]:
 def status_dashboard(request: Request) -> JSONResponse:
     """Dashboard summary of task counts."""
     from bernstein.core.dependency_scan import read_latest_dependency_scan
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
 
     store = _get_store(request)
-    payload = store.status_summary()
-    runtime = _runtime_summary(request, store)
+    # Every task-derived block below - the summary counts, the task panel, the
+    # completion panel and the alerts - is answered under one scope, so they
+    # describe the same rows as each other rather than three different sets.
+    tenant_id = _resolve_request_tenant_scope(request)
+    payload = store.status_summary(tenant_id=tenant_id)
+    runtime = _runtime_summary(request, store, tenant_id)
     payload["runtime"] = runtime
     now = time.time()
-    tasks = store.list_tasks()
+    tasks = store.list_tasks(tenant_id=tenant_id)
     live_costs = _load_live_costs(request)
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     agent_snapshots = _read_agents_snapshot(sdd_dir if isinstance(sdd_dir, Path) else None)
@@ -872,8 +897,11 @@ def status_dashboard(request: Request) -> JSONResponse:
     live_agents = [agent for agent in store.agents.values() if str(agent.status) != "dead"]
     total_spent = float(live_costs.get("spent_usd") or sum(total_cost_by_role.values()))
 
-    # Recently completed tasks still within grace period (visible in panels)
-    recent = store.recently_completed()
+    # Recently completed tasks still within grace period (visible in panels).
+    # Narrowed on the returned rows rather than in the store call: the grace
+    # window is a time cutoff, not a page, so there is no short-page problem
+    # to avoid here and no reason to widen ``recently_completed``'s signature.
+    recent = [task for task in store.recently_completed() if task.tenant_id == tenant_id]
     if recent:
         payload["recently_completed"] = [
             {
@@ -916,7 +944,7 @@ def status_dashboard(request: Request) -> JSONResponse:
         "items": _status_agent_items(store, agent_snapshots, total_cost_by_role, now),
     }
     payload["costs"] = live_costs
-    payload["alerts"] = build_alerts(store, live_agents, total_spent, now, agent_snapshots)
+    payload["alerts"] = build_alerts(store, live_agents, total_spent, now, agent_snapshots, tenant_id)
     try:
         payload["bandit"] = _bandit_state_payload(store)
     # bot-ack: pre-existing-1723 (bandit payload must not break /status)
@@ -959,6 +987,7 @@ def duration_predictions(request: Request) -> JSONResponse:
     """
 
     from bernstein.core.duration_predictor import get_predictor
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
 
     store = _get_store(request)
     sdd_dir: Any = getattr(request.app.state, "sdd_dir", None)
@@ -976,7 +1005,9 @@ def duration_predictions(request: Request) -> JSONResponse:
             return f"{m}m {sec}s"
         return f"{sec}s"
 
-    tasks = store.list_tasks()
+    # One prediction row per active task, each carrying that task's id and
+    # title, so the read is narrowed to the caller's tenant scope.
+    tasks = store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))
     active_statuses = {"open", "claimed", "in_progress"}
     predictions: list[dict[str, Any]] = []
     for task in tasks:
@@ -1176,9 +1207,15 @@ def dashboard_data(request: Request) -> JSONResponse:
     Includes stats, tasks with timeline data, agent details with costs,
     file ownership map, cost history, and alerts.
     """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     store = _get_store(request)
-    summary = store.status_summary()
-    tasks = store.list_tasks()
+    # The Gantt timeline, the file-ownership map and the alerts are all built
+    # from ``tasks`` below, and the summary counts have to agree with them, so
+    # one scope answers the whole payload.
+    tenant_id = _resolve_request_tenant_scope(request)
+    summary = store.status_summary(tenant_id=tenant_id)
+    tasks = store.list_tasks(tenant_id=tenant_id)
     agents = store.agents
     now = time.time()
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
@@ -1208,7 +1245,7 @@ def dashboard_data(request: Request) -> JSONResponse:
     cost_history = _read_cost_history(store)
 
     # -- Alerts --------------------------------------------------------------
-    alerts = build_alerts(store, alive_agents, total_cost, now, agent_snapshots)
+    alerts = build_alerts(store, alive_agents, total_cost, now, agent_snapshots, tenant_id)
 
     # -- Merge queue snapshot ------------------------------------------------
     merge_queue = _read_merge_queue(request)
@@ -1237,7 +1274,7 @@ def dashboard_data(request: Request) -> JSONResponse:
     )
 
     live_spent = float(live_costs.get("spent_usd") or total_cost)
-    runtime = _runtime_summary(request, store)
+    runtime = _runtime_summary(request, store, tenant_id)
     return JSONResponse(
         content={
             "ts": now,

@@ -137,13 +137,17 @@ def _serialize_agent(store: Any, sid: str, s: Any, now: float) -> dict[str, Any]
     }
 
 
-def _synthesize_agents_from_tasks(store: Any, now: float) -> list[dict[str, Any]]:
-    """Fabricate one agent entry per claimed/in-progress task.
+def _synthesize_agents_from_tasks(store: Any, now: float, tenant_id: str) -> list[dict[str, Any]]:
+    """Fabricate one agent entry per claimed/in-progress task in *tenant_id*.
 
     Mock adapters never call ``TaskStore.heartbeat()``, so ``store.agents`` is
     empty even when the orchestrator has obviously claimed work. Without this
     fallback the GUI would render an empty grid and the "live" counter would
     perpetually read zero, despite the backlog clearly being in flight.
+
+    Each fabricated entry carries the id and title of the task it was built
+    from, so ``tenant_id`` is required rather than defaulted and is pushed
+    into ``list_tasks``: a row outside the scope never becomes an entry.
     """
     if not hasattr(store, "list_tasks"):
         return []
@@ -151,7 +155,7 @@ def _synthesize_agents_from_tasks(store: Any, now: float) -> list[dict[str, Any]
     seen: set[str] = set()
     for status_value in ("claimed", "in_progress"):
         try:
-            tasks = store.list_tasks(status=status_value)
+            tasks = store.list_tasks(status=status_value, tenant_id=tenant_id)
         # bot-ack: pre-existing-1723 (best-effort task synthesis for GUI fallback)
         except Exception:
             tasks = []
@@ -209,15 +213,30 @@ def list_agents(request: Request) -> list[dict[str, Any]]:
     claimed/in-progress task, marked with ``"synthetic": true``. That keeps
     the GUI grid populated during demos and avoids the dreaded "0 sessions"
     empty state when work is obviously in flight.
+
+    Both branches render the id and title of the task a session is on, so
+    both narrow to the caller's tenant scope: the live sessions carry no
+    tenant of their own and are placed by the task they name, while the
+    synthesised entries are built from a scoped read in the first place.
     """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope, task_ids_outside_tenant_scope
+
     store = _task_store(request)
     sessions = getattr(store, "agents", {}) or {}
 
     now = time.time()
-    out: list[dict[str, Any]] = [_serialize_agent(store, sid, s, now) for sid, s in sessions.items()]
+    out_of_scope = task_ids_outside_tenant_scope(
+        request,
+        [str(task_id) for s in sessions.values() for task_id in (getattr(s, "task_ids", None) or [])],
+    )
+    out: list[dict[str, Any]] = [
+        _serialize_agent(store, sid, s, now)
+        for sid, s in sessions.items()
+        if not any(str(task_id) in out_of_scope for task_id in (getattr(s, "task_ids", None) or []))
+    ]
 
     if not out:
-        out = _synthesize_agents_from_tasks(store, now)
+        out = _synthesize_agents_from_tasks(store, now, _resolve_request_tenant_scope(request))
 
     return out
 

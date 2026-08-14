@@ -167,17 +167,22 @@ def _resolve_tasks(parsed: ParsedQuery, store: Any, tenant_id: str) -> list[dict
     return results
 
 
-def _resolve_status(parsed: ParsedQuery, store: Any) -> dict[str, Any]:
-    """Resolve a status query against the store.
+def _resolve_status(parsed: ParsedQuery, store: Any, tenant_id: str) -> dict[str, Any]:
+    """Resolve a status query against the store, narrowed to *tenant_id*.
 
     Args:
         parsed: Parsed query with field selection.
         store: TaskStore (or mock) with a ``status_summary()`` method.
+        tenant_id: The effective tenant scope the query is answered under.
+            Pushed into ``status_summary`` so rows outside it are never
+            counted.  Required rather than defaulted, for the same reason
+            ``_resolve_tasks``' is: a default would make "every tenant" the
+            figure a caller gets by forgetting to say anything.
 
     Returns:
         Dict with only the requested status fields.
     """
-    summary = store.status_summary()
+    summary = store.status_summary(tenant_id=tenant_id)
     return {f: summary.get(f) for f in parsed.fields if f in summary}
 
 
@@ -214,7 +219,7 @@ def execute_graphql(
             data = _resolve_tasks(parsed, store, tenant_id)
             return {"data": {"tasks": data}}
         case "status":
-            data_status = _resolve_status(parsed, store)
+            data_status = _resolve_status(parsed, store, tenant_id)
             return {"data": {"status": data_status}}
         case "agents":
             return {"data": {"agents": []}}

@@ -61,8 +61,24 @@ def _task_to_export_dict(task: Any) -> dict[str, Any]:
 
 
 def _agents_snapshot(request: Request) -> list[dict[str, Any]]:
-    """Read the current agents snapshot from disk."""
+    """Read the current agents snapshot from disk, narrowed to the caller's scope.
+
+    The snapshot file carries no tenant field of its own: one orchestrator
+    process serves every tenant it is configured for and writes all their
+    sessions into a single ``agents.json``.  Rather than migrate the on-disk
+    format, the tenant is *derived* at read time from the task each record
+    names - which is what placed the session in the first place, since a
+    session exists to run one task.
+
+    A record naming no task has no tenant to derive and is kept: it describes
+    the process, not anybody's work.  So does a record whose task no longer
+    resolves - dropping it would be an existence check on the task table
+    rather than a scope narrowing, and would silently empty the export as
+    tasks age out of the store.
+    """
     from pathlib import Path
+
+    from bernstein.core.routes.task_crud import task_ids_outside_tenant_scope
 
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     if not isinstance(sdd_dir, Path):
@@ -91,7 +107,9 @@ def _agents_snapshot(request: Request) -> list[dict[str, Any]]:
                     "started_at": agent_dict.get("started_at", ""),
                 }
             )
-    return agents_raw
+
+    out_of_scope = task_ids_outside_tenant_scope(request, [agent["task_id"] for agent in agents_raw])
+    return [agent for agent in agents_raw if agent["task_id"] not in out_of_scope]
 
 
 def _make_csv(rows: list[dict[str, Any]], fields: list[str]) -> str:

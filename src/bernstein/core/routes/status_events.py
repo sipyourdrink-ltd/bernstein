@@ -136,13 +136,16 @@ def get_badge(request: Request) -> JSONResponse:
     """
     from bernstein.core.cost_tracker import CostTracker
     from bernstein.core.models import TaskStatus
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
 
     store = _get_store(request)
     workdir = _get_workdir(request)
     sdd_dir = workdir / ".sdd"
 
-    # Task counts
-    tasks = store.list_tasks()
+    # Task counts.  The badge publishes a figure rather than a row, but the
+    # figure is still computed over whichever rows this reads, so the read is
+    # narrowed to the caller's tenant scope.
+    tasks = store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))
     completed = sum(1 for t in tasks if t.status == TaskStatus.DONE)
     failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
 
