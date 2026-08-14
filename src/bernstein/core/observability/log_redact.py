@@ -50,6 +50,44 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 _REDACTED = "[REDACTED]"
 
+
+def _luhn_check(digits: str) -> bool:
+    """Validate a digit string using the Luhn algorithm.
+
+    Args:
+        digits: String of digits, separators already stripped.
+
+    Returns:
+        True when the digit string passes Luhn validation.
+    """
+    if not digits or not digits.isdigit():
+        return False
+    total = 0
+    for index, char in enumerate(reversed(digits)):
+        value = int(char)
+        if index % 2 == 1:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return total % 10 == 0
+
+
+def _redact_card(match: re.Match[str]) -> str:
+    """Redact a card-shaped match only when it actually checksums as a card.
+
+    Sixteen consecutive digits on their own are not a card number: trace ids,
+    order numbers, and ledger sequences share the shape. Redacting those
+    rewrites legitimate identifiers in persisted records, which is the same
+    false-positive class the credential rules below already avoid.
+    """
+    digits = re.sub(r"[\s\-]", "", match.group(0))
+    return _REDACTED if _luhn_check(digits) else match.group(0)
+
+
+# Patterns whose match needs validating before it is treated as PII.
+_PII_VALIDATORS = {"credit_card": _redact_card}
+
 # Credential matches deliberately require either a known prefix/header/block or
 # a sensitive field name.  Entropy alone is not a signal: content hashes,
 # UUIDs, and base64 payloads are legitimate trace data and must remain stable.
@@ -86,8 +124,9 @@ def redact_pii(text: str) -> str:
         Sanitised copy with PII spans replaced.
     """
     result = text
-    for _label, pattern in _PII_PATTERNS:
-        result = pattern.sub(_REDACTED, result)
+    for label, pattern in _PII_PATTERNS:
+        validator = _PII_VALIDATORS.get(label)
+        result = pattern.sub(validator, result) if validator else pattern.sub(_REDACTED, result)
     return result
 
 

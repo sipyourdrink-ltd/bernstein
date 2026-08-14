@@ -71,6 +71,20 @@ class TestRedactCreditCard:
     def test_no_cc(self) -> None:
         assert redact_pii("id 12345") == "id 12345"
 
+    def test_sixteen_digit_identifier_that_fails_luhn_survives(self) -> None:
+        # A trace id drawn from uuid4().hex[:16] that happened to be all
+        # digits. It is not a card number -- no card validator would accept it
+        # -- and rewriting it loses the record's own identity on disk.
+        assert redact_pii("trace 2018678836144587") == "trace 2018678836144587"
+
+    def test_luhn_valid_cards_are_still_redacted(self) -> None:
+        # Spot-check a second issuer prefix so the Luhn gate is not passing
+        # purely because of the repeated-digit test Visa above.
+        assert redact_pii("card 5500005555555559") == "card [REDACTED]"
+
+    def test_sequential_digits_are_not_treated_as_a_card(self) -> None:
+        assert redact_pii("order 1234567890123456") == "order 1234567890123456"
+
 
 class TestRedactMultiple:
     def test_mixed_pii(self) -> None:
