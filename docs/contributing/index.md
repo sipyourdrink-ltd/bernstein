@@ -59,3 +59,6 @@ organized, and the contracts new adapters and hooks must satisfy.
     [Trend scan automation](../devops/trend-scan-automation.md)
 
 </div>
+
+Everyone whose work has been merged is listed in
+[CONTRIBUTORS.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTORS.md).

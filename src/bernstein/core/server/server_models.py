@@ -109,6 +109,27 @@ def _ensure_task_enum(value: str, field_name: str) -> str:
     return value
 
 
+def _ensure_relative_owned_files(value: list[str]) -> list[str]:
+    """Reject ``owned_files`` entries that do not name a path under a workdir.
+
+    Every consumer of ``owned_files`` joins the entry onto a working
+    directory before reading or writing it, and ``Path.__truediv__`` neither
+    collapses ``..`` nor keeps the left side when the right side is absolute.
+    Checking the shape as the row is created keeps such an entry out of the
+    store in the first place; the consumers assert containment again on the
+    path they actually open, so a row that predates this rule or arrives by
+    another route is still handled there.
+    """
+    from bernstein.core.security.path_containment import PathContainmentError, validate_relative_path
+
+    for entry in value:
+        try:
+            validate_relative_path(entry, label="owned_files entry")
+        except PathContainmentError as exc:
+            raise ValueError(str(exc)) from None
+    return value
+
+
 class TaskCreate(BaseModel):
     """Body for POST /tasks."""
 
@@ -180,6 +201,11 @@ class TaskCreate(BaseModel):
     def _validate_task_enums(cls, value: str, info: ValidationInfo) -> str:
         return _ensure_task_enum(value, info.field_name or "")
 
+    @field_validator("owned_files")
+    @classmethod
+    def _validate_owned_files(cls, value: list[str]) -> list[str]:
+        return _ensure_relative_owned_files(value)
+
     @field_validator("artifact_spec")
     @classmethod
     def _validate_artifact_spec(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -232,6 +258,11 @@ class TaskSelfCreate(BaseModel):
     @classmethod
     def _validate_scope_complexity(cls, value: str, info: ValidationInfo) -> str:
         return _ensure_task_enum(value, info.field_name or "")
+
+    @field_validator("owned_files")
+    @classmethod
+    def _validate_owned_files(cls, value: list[str]) -> list[str]:
+        return _ensure_relative_owned_files(value)
 
 
 class WebhookTaskCreate(TaskCreate):

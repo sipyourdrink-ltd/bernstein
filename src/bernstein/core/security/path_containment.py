@@ -51,6 +51,16 @@ SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+\Z")
 #: Segments that match the alphabet but name the current/parent directory.
 _RESERVED_SEGMENTS = frozenset({".", ".."})
 
+#: Component separator on either platform. A relative path is stored on one
+#: host and consumed on another, so both spellings are split on regardless of
+#: which platform is doing the checking.
+_SEPARATOR_RE = re.compile(r"[\\/]")
+
+#: A leading Windows drive designator (``C:``), absolute or drive-relative.
+#: ``ntpath.isabs`` accepts ``C:x`` as relative, but it is relative to the
+#: drive's working directory, not to any base this module is given.
+_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
+
 
 #: Longest single path component, in encoded bytes. ``NAME_MAX`` is 255 on
 #: every filesystem this project supports.
@@ -173,6 +183,134 @@ def contained_path(base: Path | str, *segments: str, label: str = "identifier") 
     return Path(candidate)
 
 
+def validate_relative_path(candidate: str, *, label: str = "path") -> str:
+    """Return *candidate* unchanged when it names a path below a base directory.
+
+    This is the string-only half of the barrier, so request-validation layers
+    can apply the same rule as :func:`contained_subpath` without touching the
+    filesystem. It is deliberately weaker than
+    :func:`validate_path_segment`: a project-relative path is allowed to have
+    several components and to use characters that are illegal in an opaque
+    identifier (spaces, ``+``, non-ASCII names all occur in real repositories).
+    What it must not do is select a location the base does not contain.
+
+    Both separators are examined, not just this platform's. A stored value is
+    written on one host and consumed on another, so ``..\\..\\x`` has to be
+    refused on POSIX as well - it is a parent reference wherever it is read.
+
+    Args:
+        candidate: The externally-influenced relative path to check.
+        label: Noun used in the error message (e.g. ``"owned file"``).
+
+    Returns:
+        The candidate, unchanged, when it is a usable relative path.
+
+    Raises:
+        PathContainmentError: If the candidate is empty, absolute (POSIX
+            root, Windows drive, or UNC share), carries a ``..`` component,
+            or contains a NUL byte.
+        PathTooLongError: If any component exceeds
+            :data:`MAX_SEGMENT_BYTES` once encoded.
+    """
+    if not candidate:
+        msg = f"unsafe {label}: must not be empty"
+        raise PathContainmentError(msg)
+    if "\x00" in candidate:
+        msg = f"unsafe {label}: must not contain a NUL byte"
+        raise PathContainmentError(msg)
+    # A leading separator is a POSIX absolute path or a UNC share; a leading
+    # drive letter is absolute or drive-relative on Windows. Neither is a
+    # path *under* a base, and ``Path.__truediv__`` discards the base for
+    # both, so both are refused before the join happens.
+    if candidate[0] in "/\\" or _DRIVE_PREFIX_RE.match(candidate):
+        msg = f"unsafe {label} {candidate!r}: must be relative to its base directory"
+        raise PathContainmentError(msg)
+    named = 0
+    for component in _SEPARATOR_RE.split(candidate):
+        # A ``.`` component, or the empty one a doubled separator produces,
+        # is redundant rather than unsafe: ``./src/x.py`` is an ordinary way
+        # to spell a relative path and normalisation drops it. What it must
+        # not do is be the whole value - see the strict-descendant check
+        # below. ``..`` is the one that changes where the path points, and
+        # is refused wherever it appears.
+        if component == "..":
+            msg = f"unsafe {label} {candidate!r}: must not contain a '..' component"
+            raise PathContainmentError(msg)
+        if component in ("", "."):
+            continue
+        named += 1
+        encoded = len(component.encode("utf-8", errors="surrogatepass"))
+        if encoded > MAX_SEGMENT_BYTES:
+            msg = (
+                f"{label} component is {encoded} bytes, over the "
+                f"{MAX_SEGMENT_BYTES}-byte filesystem limit for one path component"
+            )
+            raise PathTooLongError(msg)
+    # The result must be a strict descendant of the base, never the base
+    # itself, so a value that names no component at all ("." , "./", "//")
+    # is refused even though every component in it was individually safe.
+    if named == 0:
+        msg = f"unsafe {label} {candidate!r}: must name a path below its base directory"
+        raise PathContainmentError(msg)
+    return candidate
+
+
+def contained_subpath(base: Path | str, candidate: str, *, label: str = "path") -> Path:
+    """Join *candidate* under *base* and prove the result stays inside it.
+
+    The multi-component counterpart to :func:`contained_path`, for callers
+    whose input is a project-relative path (``src/pkg/mod.py``) rather than a
+    single opaque identifier. Both halves of the barrier still apply and
+    neither is sufficient alone: :func:`validate_relative_path` rejects the
+    shapes that can be seen in the string, and the realpath comparison
+    catches the one it cannot - an ordinary-looking component that is itself
+    a symlink out of the tree.
+
+    Args:
+        base: The intended containing directory. Trusted by configuration;
+            it need not exist yet.
+        candidate: The relative path to append. Must be a strict descendant
+            of *base*, never *base* itself.
+        label: Noun used in error messages (e.g. ``"owned file"``).
+
+    Returns:
+        The normalised, containment-checked path. Callers must use this
+        return value for filesystem access - it is the only value proven
+        to be inside *base*.
+
+    Raises:
+        PathContainmentError: If the candidate is not a usable relative path,
+            or if it resolves outside the resolved base.
+        PathTooLongError: If a component, or the composed path, exceeds what
+            the filesystem can represent.
+    """
+    validate_relative_path(candidate, label=label)
+    base_real = os.path.realpath(base)
+    # ``os.path.join(x, "")`` appends the separator without doubling it on a
+    # drive root such as ``C:\``, so the prefix test below stays correct for
+    # every base. The trailing separator is what stops a sibling directory
+    # like ``<base>-evil`` from passing a bare prefix comparison.
+    base_prefix = os.path.join(base_real, "")
+    # ``realpath`` resolves symlinks and normalises ``.``/``..`` even for a
+    # path that does not exist yet, so the containment test sees exactly the
+    # location a later open() would reach.
+    resolved = os.path.realpath(os.path.join(base_real, candidate))
+    if not resolved.startswith(base_prefix):
+        # The base is deliberately left out of the message: these errors can
+        # surface to an API caller, and the absolute layout is not theirs.
+        msg = f"{label} {candidate!r} resolves outside its base directory"
+        raise PathContainmentError(msg)
+    # A legal-length component under an already-deep base can still exceed
+    # PATH_MAX, which would surface as OSError(ENAMETOOLONG) at open() -
+    # outside the ValueError hierarchy callers guard on. Checked after
+    # containment so an escape attempt is never reported as a length problem.
+    encoded_path = len(resolved.encode("utf-8", errors="surrogatepass"))
+    if encoded_path > MAX_PATH_BYTES:
+        msg = f"path for {label} is {encoded_path} bytes, over the {MAX_PATH_BYTES}-byte filesystem limit"
+        raise PathTooLongError(msg)
+    return Path(resolved)
+
+
 __all__ = [
     "MAX_PATH_BYTES",
     "MAX_SEGMENT_BYTES",
@@ -180,5 +318,7 @@ __all__ = [
     "PathContainmentError",
     "PathTooLongError",
     "contained_path",
+    "contained_subpath",
     "validate_path_segment",
+    "validate_relative_path",
 ]

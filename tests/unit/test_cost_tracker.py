@@ -422,3 +422,86 @@ class TestCostTrackerBudgetReport:
         status = tracker.status()
         assert status.remaining_usd == pytest.approx(0.0)
         assert status.percentage_used == pytest.approx(1.6)
+
+
+class TestLoadRejectsUnreadableUsageRows:
+    """A run file is replayed row by row, and a bad row is skipped alone.
+
+    ``load()`` used to deserialise every row inside a single guard, so one
+    unreadable row discarded the whole file and reported a run that spent
+    money as having spent nothing.  It also handed the stored tenant to
+    ``TokenUsage.from_dict``, which coerces with ``str()``, so a row whose
+    tenant is a number or a boolean was filed under a scope label invented
+    from it - visible in the whole-file totals that the orchestrator's own
+    budget enforcement reads.
+    """
+
+    @staticmethod
+    def _write_run(sdd_dir: Path, run_id: str, rows: list[dict[str, object]]) -> None:
+        costs_dir = sdd_dir / "runtime" / "costs"
+        costs_dir.mkdir(parents=True, exist_ok=True)
+        (costs_dir / f"{run_id}.json").write_text(json.dumps({"run_id": run_id, "budget_usd": 100.0, "usages": rows}))
+
+    @staticmethod
+    def _row(**overrides: object) -> dict[str, object]:
+        row: dict[str, object] = {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "model": "m",
+            "cost_usd": 1.0,
+            "agent_id": "a",
+            "task_id": "t",
+            "tenant_id": "default",
+        }
+        row.update(overrides)
+        return row
+
+    def test_a_malformed_row_does_not_discard_the_whole_file(self, tmp_path: Path) -> None:
+        self._write_run(
+            tmp_path,
+            "run-mixed",
+            [self._row(cost_usd=1.5), {"input_tokens": 1}, self._row(cost_usd=2.5)],
+        )
+
+        tracker = CostTracker.load(tmp_path, "run-mixed")
+
+        assert tracker is not None
+        assert tracker.spent_usd == pytest.approx(4.0)
+        assert len(tracker.usages) == 2
+
+    @pytest.mark.parametrize("bad_tenant", [42, 1.5, True, ["default"], {"id": "default"}])
+    def test_a_non_string_tenant_is_excluded_from_the_whole_file_total(
+        self, tmp_path: Path, bad_tenant: object
+    ) -> None:
+        """The unscoped load is where a coerced tenant would land in a total.
+
+        A scoped load happens to drop these because the invented label does
+        not match the requested scope; the whole-file load has no scope to
+        mismatch, so without validation the row's spend is simply counted.
+        """
+        self._write_run(
+            tmp_path,
+            "run-bad-tenant",
+            [self._row(cost_usd=1.0), self._row(cost_usd=9.0, tenant_id=bad_tenant, agent_id="ghost")],
+        )
+
+        tracker = CostTracker.load(tmp_path, "run-bad-tenant")
+
+        assert tracker is not None
+        assert tracker.spent_usd == pytest.approx(1.0)
+        assert tracker.spent_for_agent("ghost") == pytest.approx(0.0)
+        assert [u.agent_id for u in tracker.usages] == ["a"]
+
+    def test_absent_and_blank_tenants_stay_in_the_default_scope(self, tmp_path: Path) -> None:
+        """Leniency for rows that predate the field is preserved."""
+        rows = [self._row(cost_usd=1.0)]
+        rows.append(self._row(cost_usd=2.0, agent_id="blank", tenant_id=""))
+        no_key = self._row(cost_usd=4.0, agent_id="absent")
+        del no_key["tenant_id"]
+        rows.append(no_key)
+        self._write_run(tmp_path, "run-lenient", rows)
+
+        tracker = CostTracker.load(tmp_path, "run-lenient", tenant_id="default")
+
+        assert tracker is not None
+        assert tracker.spent_usd == pytest.approx(7.0)

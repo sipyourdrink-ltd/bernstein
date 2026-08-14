@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_shutdown_orchestrator",
+  "description": "Shut down the ENTIRE Bernstein orchestrator for this project, including every run and worker; use bernstein_cancel to stop one task while the orchestrator keeps running. Writes the local SHUTDOWN signal file. Host effects: writes files.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

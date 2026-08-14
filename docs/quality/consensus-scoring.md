@@ -88,8 +88,8 @@ A CI gate requires `consensus_level >= confirmed` for blocking issues via
 
 ## Provenance rendering
 
-`render_provenance` produces the tag the review-bot-ack sticky comment
-appends to each finding:
+`render_provenance` produces the provenance tag appended to each
+finding:
 
 ```
 [detected by 2/4 bots, agreement 50%]

@@ -276,6 +276,40 @@ nodes:
     assert any("@iter2" in tid for tid in captured)
 
 
+def test_agent_node_forwards_routing_hints_to_task(runner_workdir: Path) -> None:
+    """Workflow routing hints reach the Task handed to the spawner."""
+    captured: list[Any] = []
+
+    class StubSpawner:
+        def spawn_for_tasks(self, tasks: list[Any]) -> Any:
+            captured.append(tasks[0])
+            session = MagicMock()
+            session.id = "sess-routed"
+            return session
+
+    spec = _spec_from(
+        """
+name: routed-agent
+description: "Route one workflow node"
+version: "1.0.0"
+nodes:
+  - id: review
+    agent: reviewer
+    prompt: "Review {goal}"
+    cli: pi
+    model: provider/model-name
+    effort: high
+"""
+    )
+    execution = WorkflowRunner(spawner=StubSpawner(), workdir=runner_workdir).run(spec, goal="the patch")
+
+    assert execution.succeeded is True
+    assert len(captured) == 1
+    assert captured[0].cli == "pi"
+    assert captured[0].model == "provider/model-name"
+    assert captured[0].effort == "high"
+
+
 # ---------------------------------------------------------------------------
 # Interactive stub for #1110
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_scenario_status",
+  "description": "Deprecated status action folded into bernstein_scenario. Retrieves orchestration status from the Bernstein server without changing it. Host effects: makes network requests.",
   "type": "object",
   "additionalProperties": false,
   "required": ["orchestration_id"],

@@ -9,11 +9,55 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.tenanting import request_tenant_id
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _verify_slack_request(request: Request, body: bytes, verify_fn: Any) -> JSONResponse | None:
+    """Return an error response unless the request is a verified Slack delivery.
+
+    A signing secret must be configured.  When it is not, the endpoint is
+    disabled and answers ``UNCONFIGURED_STATUS``: only signed Slack
+    deliveries are accepted, and without the secret no delivery can be
+    shown to be one.  This matches the GitHub webhook handler in
+    ``routes/webhooks.py``.
+
+    Returns ``None`` when the request carries a valid signature, a 401
+    response when the signature is missing or wrong, and an
+    ``UNCONFIGURED_STATUS`` response when no signing secret is set.
+    """
+    signing_secret: str = getattr(request.app.state, "slack_signing_secret", None) or os.environ.get(
+        "SLACK_SIGNING_SECRET", ""
+    )
+    if not signing_secret:
+        from bernstein.core.sanitize import sanitize_log
+
+        logger.error(
+            "Rejecting POST %s: SLACK_SIGNING_SECRET is not configured. "
+            "Set the env var (or pass slack_signing_secret= when building "
+            "the app) to enable the endpoint; only signed Slack requests "
+            "are accepted.",
+            sanitize_log(request.url.path),
+        )
+        return JSONResponse(
+            status_code=UNCONFIGURED_STATUS,
+            content={
+                "detail": (
+                    "Slack webhook endpoint is not configured: set "
+                    "SLACK_SIGNING_SECRET to the signing secret issued "
+                    "by the Slack app."
+                ),
+            },
+        )
+    timestamp = request.headers.get("x-slack-request-timestamp", "")
+    signature = request.headers.get("x-slack-signature", "")
+    if not timestamp or not signature or not verify_fn(body, timestamp, signature, signing_secret):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Slack signature"})
+    return None
 
 
 @router.post("/webhooks/slack/commands", status_code=200)
@@ -26,7 +70,11 @@ async def slack_slash_command(request: Request) -> JSONResponse:
     should be dispatched asynchronously using ``response_url``.
 
     Reads ``SLACK_SIGNING_SECRET`` from environment for HMAC verification.
-    Returns 200 on success, 401 on bad/missing signature, 400 on parse error.
+    The secret MUST be configured: when it is not, the endpoint is
+    disabled and returns ``UNCONFIGURED_STATUS``; only signed Slack
+    requests are accepted.
+    Returns 200 on success, 401 on bad/missing signature, 400 on parse
+    error, ``UNCONFIGURED_STATUS`` when the endpoint is not configured.
 
     Slash command form fields parsed:
         - ``command``      - the slash command (e.g. ``/bernstein``)
@@ -40,18 +88,10 @@ async def slack_slash_command(request: Request) -> JSONResponse:
 
     body = await request.body()
 
-    # Verify Slack request signature if a signing secret is configured
-    signing_secret: str = getattr(request.app.state, "slack_signing_secret", None) or os.environ.get(
-        "SLACK_SIGNING_SECRET", ""
-    )
-    if signing_secret:
-        timestamp = request.headers.get("x-slack-request-timestamp", "")
-        signature = request.headers.get("x-slack-signature", "")
-        if not timestamp or not signature or not verify_slack_signature(body, timestamp, signature, signing_secret):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid Slack signature"},
-            )
+    # Verify the Slack request signature - the signing secret MUST be configured.
+    error_resp = _verify_slack_request(request, body, verify_slack_signature)
+    if error_resp is not None:
+        return error_resp
 
     # Parse URL-encoded form payload
     try:
@@ -127,29 +167,24 @@ async def slack_slash_command(request: Request) -> JSONResponse:
     )
 
 
-def _verify_slack_request(request: Request, body: bytes, verify_fn: Any) -> JSONResponse | None:
-    """Return a 401 JSONResponse if the Slack signature is invalid, else None."""
-    signing_secret: str = getattr(request.app.state, "slack_signing_secret", None) or os.environ.get(
-        "SLACK_SIGNING_SECRET", ""
-    )
-    if not signing_secret:
-        return None
-    timestamp = request.headers.get("x-slack-request-timestamp", "")
-    signature = request.headers.get("x-slack-signature", "")
-    if not timestamp or not signature or not verify_fn(body, timestamp, signature, signing_secret):
-        return JSONResponse(status_code=401, content={"detail": "Invalid Slack signature"})
-    return None
-
-
 def _parse_slack_body(body: bytes) -> dict[str, Any] | None:
-    """Parse a Slack events payload, returning None on failure."""
+    """Parse a Slack events payload, returning None on failure.
+
+    A payload that parses as JSON but is not an object (a list, a string, a
+    number, a boolean, ``null``) is a parse failure too: every reader below
+    treats the result as a mapping, so the shape is checked once here rather
+    than assumed at each use.
+    """
     try:
         import json as _json
 
-        return _json.loads(body)  # type: ignore[no-any-return]
+        parsed = _json.loads(body)
     # bot-ack: pre-existing-1723 (best-effort Slack event parse)
     except Exception:
         return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
 
 
 def _is_actionable_slack_event(event: dict[str, Any]) -> bool:
@@ -172,7 +207,15 @@ async def slack_events(request: Request) -> JSONResponse:
       prevent loops.
 
     Reads ``SLACK_SIGNING_SECRET`` from environment for HMAC verification.
-    Returns 200 on success, 401 on bad/missing signature, 400 on parse error.
+    The secret MUST be configured: when it is not, the endpoint is
+    disabled and returns ``UNCONFIGURED_STATUS``; only signed Slack
+    requests are accepted.  Note that the ``url_verification`` handshake
+    is signed by Slack too, so registering the endpoint works normally.
+    Payload shape is validated before it is read: the body and, when
+    present, its ``event`` member must both be JSON objects.
+    Returns 200 on success, 401 on bad/missing signature, 400 on parse
+    error or malformed payload shape, ``UNCONFIGURED_STATUS`` when the
+    endpoint is not configured.
     """
     from bernstein.core.trigger_sources.slack import normalize_slack_message, verify_slack_signature
 
@@ -194,6 +237,12 @@ async def slack_events(request: Request) -> JSONResponse:
     if event_type != "event_callback":
         return JSONResponse(status_code=200, content={"ok": True})
 
+    # A present ``event`` must be an object.  Absent is fine - there is simply
+    # nothing to act on - but a non-object member is a malformed payload and
+    # takes the documented 400 rather than reaching the readers below, which
+    # (like ``normalize_slack_message``) all assume a mapping.
+    if "event" in payload and not isinstance(payload["event"], dict):
+        return JSONResponse(status_code=400, content={"detail": "Bad events payload"})
     event: dict[str, Any] = payload.get("event", {})
 
     if not _is_actionable_slack_event(event):

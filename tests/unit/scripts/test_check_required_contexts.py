@@ -53,7 +53,7 @@ def test_canary_without_the_key_is_rejected(module: ModuleType, tmp_path: Path) 
 
 def test_absent_context_is_missing_not_passing(module: ModuleType) -> None:
     """A required context with no check-run is reported as never having run."""
-    report = module.classify(["CI gate", "review-bot-ack"], [_run("review-bot-ack")], sha="abc123")
+    report = module.classify(["CI gate", "other-context"], [_run("other-context")], sha="abc123")
     assert [state.name for state in report.missing] == ["CI gate"]
     assert not report.ok
     assert "never ran" in module.summary_line(report)
@@ -62,7 +62,7 @@ def test_absent_context_is_missing_not_passing(module: ModuleType) -> None:
 
 def test_all_present_and_passing_is_ok(module: ModuleType) -> None:
     """Everything present and green reads as such."""
-    report = module.classify(["CI gate", "review-bot-ack"], [_run("CI gate"), _run("review-bot-ack")], sha="abc123")
+    report = module.classify(["CI gate", "other-context"], [_run("CI gate"), _run("other-context")], sha="abc123")
     assert report.ok
     assert module.summary_line(report) == "all required contexts present and completed"
 
@@ -85,7 +85,7 @@ def test_pending_context_is_present(module: ModuleType) -> None:
 
 def test_cancelled_context_is_failing(module: ModuleType) -> None:
     """A cancelled run is a completed non-pass, not an absence."""
-    report = module.classify(["review-bot-ack"], [_run("review-bot-ack", conclusion="cancelled")], sha="abc")
+    report = module.classify(["CI gate"], [_run("CI gate", conclusion="cancelled")], sha="abc")
     assert report.states[0].state == module.FAILING
 
 
@@ -126,7 +126,7 @@ def test_cli_reports_missing_context_and_exits_non_zero(
 ) -> None:
     """End to end: an absent required context exits non-zero and says why."""
     runs = tmp_path / "runs.json"
-    runs.write_text(json.dumps({"check_runs": [_run("review-bot-ack")]}), encoding="utf-8")
+    runs.write_text(json.dumps({"check_runs": [_run("other-context")]}), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["check_required_contexts.py", "--sha", "deadbeef", "--check-runs", str(runs)])
 
     exit_code = module.main()

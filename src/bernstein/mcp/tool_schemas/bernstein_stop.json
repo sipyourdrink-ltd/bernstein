@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_stop",
+  "description": "Deprecated alias of bernstein_shutdown_orchestrator. Requests a local orchestrator stop by writing its SHUTDOWN signal file. Host effects: writes files.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

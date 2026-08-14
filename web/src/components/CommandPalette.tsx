@@ -2,16 +2,18 @@
 // task screens can extend by hooking into a shared store later.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, ListChecks, Activity, ShieldCheck, ScrollText, DollarSign, Settings as SettingsIcon, Command } from 'lucide-react';
+import { Search, ListChecks, Activity, ShieldCheck, ScrollText, DollarSign, Settings as SettingsIcon, Command, GitPullRequest } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 type NavItem = { label: string; to: string };
+type ExternalNavItem = { label: string; href: string };
 
 type ActionItem = {
   id: string;
   label: string;
   hint?: string;
   to?: string;
+  href?: string;
   icon: typeof Search;
 };
 
@@ -20,6 +22,7 @@ interface Props {
   onClose: () => void;
   onNavigate: (path: string) => void;
   nav: NavItem[];
+  externalNav: ExternalNavItem[];
 }
 
 const ICON_FOR_LABEL: Record<string, typeof Search> = {
@@ -31,7 +34,7 @@ const ICON_FOR_LABEL: Record<string, typeof Search> = {
   Settings: SettingsIcon,
 };
 
-export function CommandPalette({ open, onClose, onNavigate, nav }: Props) {
+export function CommandPalette({ open, onClose, onNavigate, nav, externalNav }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
@@ -44,6 +47,15 @@ export function CommandPalette({ open, onClose, onNavigate, nav }: Props) {
       to: n.to,
       icon: ICON_FOR_LABEL[n.label] ?? Search,
     }));
+    rows.push(
+      ...externalNav.map((n) => ({
+        id: `external-${n.href}`,
+        label: n.label,
+        hint: 'Open',
+        href: n.href,
+        icon: GitPullRequest,
+      })),
+    );
     rows.push({
       id: 'nav-settings',
       label: 'Settings',
@@ -85,6 +97,7 @@ export function CommandPalette({ open, onClose, onNavigate, nav }: Props) {
         e.preventDefault();
         const item = items[activeIdx];
         if (item?.to) onNavigate(item.to);
+        if (item?.href) window.location.assign(item.href);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -132,7 +145,10 @@ export function CommandPalette({ open, onClose, onNavigate, nav }: Props) {
                 <button
                   type="button"
                   onMouseEnter={() => setActiveIdx(i)}
-                  onClick={() => it.to && onNavigate(it.to)}
+                  onClick={() => {
+                    if (it.to) onNavigate(it.to);
+                    if (it.href) window.location.assign(it.href);
+                  }}
                   className={cn(
                     'w-full flex items-center gap-3 px-3 py-2 text-left text-[13px]',
                     i === activeIdx ? 'bg-secondary text-foreground' : 'text-muted-foreground',

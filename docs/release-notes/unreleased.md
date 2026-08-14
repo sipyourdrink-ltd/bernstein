@@ -25,6 +25,43 @@ landed since the newest one.
   resolve. An input the filesystem cannot represent, such as an embedded NUL,
   is reported as that error too rather than as a raw filesystem message.
   Refs #3080.
+- The two Slack webhook receivers (`POST /webhooks/slack/commands`,
+  `POST /webhooks/slack/events`) now require a signing secret, matching the
+  GitHub receiver. **Behaviour change:** with `SLACK_SIGNING_SECRET` unset
+  (and no `slack_signing_secret=` passed to `create_app`), both routes answer
+  `404` and create no task; previously they processed the request without
+  checking a signature. A configured deployment is unaffected - a correctly
+  signed delivery still returns `200` and a wrongly signed one still returns
+  `401`. Set the secret before pointing Slack at the endpoint, since the
+  `url_verification` handshake is a signed delivery like any other. See
+  [`docs/operations/slack-webhooks.md`](../operations/slack-webhooks.md).
+- `POST /webhooks/slack/events` validates the payload's shape before reading
+  it. The body must be a JSON object, and a present `event` member must be one
+  too; a list, string, number, boolean, or `null` in either position now
+  returns the documented `400` instead of a `500`. A payload with no `event`
+  member is still acknowledged with `200`.
+- Paths built from caller-supplied strings are now asserted to stay under
+  their base directory. One shared helper,
+  `bernstein.core.security.path_containment.contained_subpath`, joins a
+  project-relative candidate onto a base and returns it only when
+  `realpath` keeps the result inside the resolved base; it is the
+  multi-component counterpart to the existing `contained_path`, which takes
+  single opaque identifiers. It is used in the fast-path `rename_symbol`
+  executor (each `owned_files` entry) and in the `/complete` auto-commit
+  hook (the `.sdd/worktrees/<session id>` working directory). A refused
+  entry is skipped and logged, matching how each of those functions already
+  handles an entry it cannot use, so one bad row does not end a run.
+- **Behaviour change:** the same rule is applied at the input boundary, so a
+  bad row does not reach a sink in the first place. `POST /tasks` and
+  `POST /tasks/self-create` now answer `422` when an `owned_files` entry is
+  absolute, carries a `..` component, or contains a NUL byte;
+  ordinary project-relative paths such as `src/parser.py` are unaffected.
+  The claim boundaries (`POST /tasks/{id}/claim`, `GET /tasks/next/{role}`,
+  `POST /tasks/claim-batch`) answer `422` when `claimed_by_session` is not a
+  single opaque identifier (`[A-Za-z0-9_.-]+`), which is the shape the
+  orchestrator already generates. Both layers are kept: the validator stops
+  new bad rows, the helper protects the sink from rows that already exist or
+  arrive by another route.
 
 ## Added
 
@@ -78,6 +115,15 @@ landed since the newest one.
 
 ## Fixed
 
+- The CLI reference no longer names command spellings that do not resolve. It
+  claimed `bernstein commit-stats`, `bernstein incident`, and `bernstein
+  postmortem` were live deprecated aliases after v4.0.0 removed them, and
+  listed `bernstein task compose`, `task sync`, `task notes`, and `task parts`
+  as invocable when those commands are registered at the top level (or, for
+  `notes`, nowhere). `bernstein report commits --help` printed the removed
+  spelling in its own examples. Every command spelling named in a reference
+  table cell is now resolved through the real CLI in CI, so a documented
+  invocation that would exit "No such command" fails the build.
 - `bernstein trace verify-projection` now authenticates the complete
   `otel.projection` audit binding instead of accepting any projection whose
   signature and journal-derived span ids verify (#3551). A verified result
@@ -88,6 +134,13 @@ landed since the newest one.
   failure (exit `2`). Verification is load-only and does not create an audit
   key or directory. Docs: `docs/observability/otel-span-projection.md`,
   `docs/observability/otlp-export.md`.
+- MCP `tools/list` descriptions now disclose each tool's host effects using a
+  reviewed vocabulary for file reads, file writes, agent-process spawning, and
+  network requests. The 25 canonical and deprecated tool schemas are the
+  source of the advertised text, and a coverage guard requires every schema
+  to declare effects consistent with its effective tool tier. `load_skill`
+  now says explicitly that it returns file contents and executes nothing.
+  Docs: `docs/mcp/server.md`. Refs #3645.
 - The `deep-review` label did not start a review on a PR that was already open.
   `.github/workflows/bernstein-pr-review.yml` gates its `review` job on that
   label but did not list `labeled` as a trigger type, so adding the label to a

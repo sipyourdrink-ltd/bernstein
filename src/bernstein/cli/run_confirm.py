@@ -43,6 +43,41 @@ class RecipeStage:
     step_titles: list[str]
 
 
+_FINALIZATION_START_TIMEOUT = 10.0
+_FINALIZATION_TOTAL_TIMEOUT = 30.0
+_FINALIZATION_POLL_INTERVAL = 0.05
+
+
+def _wait_for_finalization(project_dir: Path) -> None:
+    """Bounded wait for the orchestrator to finish finalization.
+
+    Two phases, both bounded by _FINALIZATION_TOTAL_TIMEOUT:
+    1. Wait for .finalizing — proves finalization has started.
+    2. Wait for .finalized — proves finalization is complete.
+
+    On timeout, proceed to reap anyway. This degrades to the pre-fix
+    behaviour (which may SIGKILL a still-finalizing orchestrator) — no
+    worse than today, and strictly bounded.
+    """
+    signals_dir = Path(project_dir) / ".sdd" / "runtime"
+    finalizing = signals_dir / ".finalizing"
+    finalized = signals_dir / ".finalized"
+    deadline = time.monotonic() + _FINALIZATION_TOTAL_TIMEOUT
+
+    # Phase 1: wait for finalization to start
+    start_deadline = min(time.monotonic() + _FINALIZATION_START_TIMEOUT, deadline)
+    while time.monotonic() < start_deadline:
+        if finalizing.exists() or finalized.exists():
+            break
+        time.sleep(_FINALIZATION_POLL_INTERVAL)
+
+    # Phase 2: wait for finalization to complete
+    while time.monotonic() < deadline:
+        if finalized.exists():
+            return
+        time.sleep(_FINALIZATION_POLL_INTERVAL)
+
+
 def _parse_stage_entry(idx: int, raw_stage: object) -> RecipeStage | None:
     """Parse a single raw stage dict into a RecipeStage, or None if invalid."""
     if not isinstance(raw_stage, dict):
@@ -482,6 +517,10 @@ def _stop_demo_processes(project_dir: Path) -> None:
         project_dir: Demo project root whose .sdd/runtime/ holds PID files.
     """
     from bernstein.core.config.platform_compat import process_alive, reap_process_group
+
+    # Wait for the orchestrator to finish writing its run record before we
+    # tear down its process group. Bounded; on timeout we proceed anyway.
+    _wait_for_finalization(project_dir)
 
     runtime_dir = project_dir / ".sdd" / "runtime"
     for pid_filename in ("watchdog.pid", "spawner.pid", "server.pid"):

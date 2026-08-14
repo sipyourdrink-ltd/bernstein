@@ -11,8 +11,8 @@ on:
   # Path-scoped on pull_request: CodeQL analyzes Python sources only, so
   # PRs that touch no analyzable path (docs-only, workflow-only) skip the
   # run and free a runner slot. This is safe for branch protection: the
-  # required status checks on `main` are `CI gate` and `review-bot-ack`
-  # only, so a skipped CodeQL run cannot deadlock a PR. Push-to-main and
+  # required status check on `main` is `CI gate` only, so a skipped
+  # CodeQL run cannot deadlock a PR. Push-to-main and
   # the weekly schedule keep full-coverage analysis on everything that
   # lands.
   pull_request:
@@ -56,7 +56,7 @@ jobs:
         language: [python]
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

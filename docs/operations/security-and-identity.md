@@ -203,10 +203,50 @@ audit-log writes are filtered by tenant ID, and tenant resolution
 happens at the API edge via `request_tenant_id()` /
 `resolve_tenant_scope()` (`core/tenanting.py`).
 
-When auth is configured, tenant scoping is automatic from JWT claims;
-unauthenticated dev mode falls back to `DEFAULT_TENANT_ID`. Operators
-audit cross-tenant leakage with `tenant_isolation_verify.py` and rate-
-limit per-tenant via `tenant_rate_limiter.py`.
+When auth is configured, tenant scoping is automatic from the credential:
+`SSOAuthMiddleware` binds the tenant a validated credential was issued for
+onto the request, and `request_tenant_id()` reports that binding.
+
+| Credential | Bound tenant | May select another tenant |
+|---|---|---|
+| SSO user JWT | `tenant_id` claim, else `default` | only with `admin:manage` |
+| Agent identity JWT | the credential's own `tenant_id` | no |
+| Legacy static bearer | `default` | no |
+| Cluster worker secret | `default` | no |
+| Dashboard session / scoped token | `default` | no |
+| HMAC webhook secret | `default` | no |
+
+`X-Tenant-Id` is a *requested* scope, not an identity: `resolve_tenant_scope()`
+authorizes it against the bound scope, so naming your own tenant is granted and
+naming a different one needs the operator scope (`admin:manage`). Credentials
+that are a single process-wide string carry no tenant of their own, so they bind
+to `default` and stay there — administering several tenants from one credential
+is the SSO `admin` user's job, where the grant is per-user and revocable.
+Note that `default` is a tenant like any other, not a wildcard.
+
+Unauthenticated dev mode (`BERNSTEIN_AUTH_DISABLED`) is the one mode where
+`X-Tenant-Id` is itself the bound scope, falling back to `DEFAULT_TENANT_ID`
+when absent — with auth off there is no credential to derive a scope from.
+
+Scope: the binding above establishes *which* tenant a request is authorized for.
+Applying it is per-route — the task CRUD and `/costs`, `/costs/live` routes resolve
+the scope through `resolve_tenant_scope()`, and the store filters by the tenant it
+is given. Routes that aggregate process-global data or look rows up by ID without
+passing a tenant are not scoped by this binding; treat them as operator surfaces
+until they are converted.
+
+Budget figures follow the same scope. A run's cost file records the spend of
+every tenant that spent against it, and the caps stored beside it bound the run
+as a whole — so a tenant-scoped read reports the tenant's spend against the
+tenant's configured `budget_usd`, not the run's. Where no tenants are
+configured the run and the scope are the same thing and the run's caps stand.
+The retained-usage limit applies as before: a cost file holds the usage buffer
+(`BERNSTEIN_COST_USAGE_BUFFER`, 10 000 rows by default), so on a long run these
+figures cover the retained window, and full history lives in the rotation files
+when `rotation_dir` is configured.
+
+Operators audit tenant leakage with `tenant_isolation_verify.py` and rate-limit
+per-tenant via `tenant_rate_limiter.py`.
 
 ## Identities API
 
@@ -226,6 +266,98 @@ Backing store: `core/security/agent_identity.py` (`AgentIdentityStore`) under
 `.sdd/auth/`. The store is created lazily on first request
 (`routes/identities.py:17-27`). Credentials are stored hashed; the API
 strips them before responses (`:82`).
+
+### Unreadable identity records
+
+A credential's persisted `tenant_id` is read back as the scope every request
+that credential authenticates is served under, so the store requires it to be
+a real tenant id rather than coercing whatever is on disk into one.
+
+The distinction is key presence, not emptiness:
+
+| Stored | Read as | Why |
+|---|---|---|
+| key absent | `default` | written before the field existed — the upgrade path |
+| `"acme"` / `"  acme  "` | `acme` | normalized |
+| `null` | corrupt | something wrote a tenant and wrote a non-tenant |
+| `""` / `"   "` | corrupt | a blank is not a tenant |
+| `42` / `true` / `[…]` / `{…}` | corrupt | coercing it would invent a scope |
+
+An explicit `null` is deliberately *not* treated as an omitted key. Only the
+absent key is the legacy case; a key that is present carries an assertion
+about scope, and a null assertion is refused rather than authenticated under
+`default`.
+
+The same requirement applies to the three collection fields that carry what an
+agent may do — `permissions`, `task_ids` and `allowed_files`, on the identity
+and on `credential` alike:
+
+| Stored | Read as | Why |
+|---|---|---|
+| key absent | `[]` | the field defaults to empty |
+| `["a", "b"]` | `["a", "b"]` | the canonical form `create_identity` writes |
+| `null` | corrupt | a null is not a list |
+| `"admin:manage"` | corrupt | a string would otherwise yield its characters |
+| `{"admin:manage": 1}` | corrupt | a mapping would otherwise yield its keys, granting them |
+| `{}` | corrupt | an empty mapping would otherwise read as "no restriction" |
+| `[1]` / `[null]` | corrupt | coercing an entry would invent a task id or a permission |
+
+An empty *list* is not corrupt, and it is not "no data": for `task_ids` and
+`allowed_files` it means **no restriction**. That is exactly why the shapes
+above are refused rather than coerced — each of them collapses to an empty
+list, which widens a scoped credential into an unscoped one.
+
+`task_ids` and `allowed_files` are stored twice, once on the identity and once
+on its credential, and the two copies must agree. Different consumers read
+different copies — the request middleware reads the identity's, the JWT claim
+check reads the credential's — so a record carrying two answers is refused
+rather than authenticated under whichever is read first. `create_identity`
+writes the same list to both, so a mismatch means the record was hand-edited or
+written by something else.
+
+A corrupt record is skipped, never fatal: `GET /identities` leaves it out, the
+startup token-index scan skips it instead of failing to boot, and a request
+presenting its token is answered `401` like any other unrecognised token —
+not `500`. The same applies to a file that is not valid JSON, is not a JSON
+object at all, or cannot be read. Each skip logs
+`Skipping corrupt identity file: <path>`.
+
+Calling `AgentIdentity.from_dict()` / `AgentCredential.from_dict()` directly
+raises `ValueError` on the same records; the store is what turns that into a
+skip. `create_identity()` applies the same check to its `task_ids` and
+`allowed_files` arguments before the token is signed, so a bad scope is refused
+at the call rather than becoming a credential nobody can load. It cannot repair
+records already on disk — for those, use the repair below.
+
+Operator repair, for a record hand-edited or written by an external tool:
+
+1. Find the path in the warning, under `.sdd/auth/agent_identities/`.
+2. Set `credential.tenant_id` to the tenant the agent belongs to, or delete the
+   key to place it in `default`.
+3. Make `permissions`, `task_ids` and `allowed_files` JSON arrays of strings, or
+   delete the keys to read as empty. Where `task_ids` and `allowed_files` appear
+   both on the identity and on `credential`, make the two copies match; take the
+   credential's copy as authoritative, since that is the one the issued token
+   was signed with.
+4. No restart is needed — the store reads each record on demand — but a running
+   server keeps a token index built at startup, so restart it if the repaired
+   identity uses an opaque token.
+
+Revoking and re-spawning the agent is always a valid alternative: identities are
+per-session and cheap to reissue.
+
+### `allowed_files` is not a write boundary
+
+`allowed_files` is recorded on the credential, signed into the token, and
+checked for agreement between the two on every JWT authentication — so it is
+part of what makes a token that token. It is **not** consulted when an agent
+writes a file. No write, staging, or completion path reads it; file access is
+bounded by the sandbox and by the worktree the agent is confined to, and task
+authority is bounded by `task_ids`.
+
+Treat it as a label on the credential, not a permission. An agent whose
+credential names one file can still write any other file its sandbox allows.
+Where a real per-file boundary is needed, scope the agent's worktree.
 
 ## Delegation capability tokens
 

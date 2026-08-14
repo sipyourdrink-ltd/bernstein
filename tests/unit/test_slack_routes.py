@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
@@ -23,8 +24,9 @@ def jsonl_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def app(jsonl_path: Path):
-    """App without a signing secret - signature verification disabled."""
+def app(jsonl_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """App without a signing secret - the Slack routes refuse every request."""
+    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
     return create_app(jsonl_path=jsonl_path)
 
 
@@ -67,13 +69,18 @@ def _slack_sig_headers(body: bytes, secret: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Test: slash command creates task with correct slack_context
+# Test: with no signing secret configured, both routes refuse
+#
+# These two tests replace earlier ones that asserted the opposite - that an
+# unsigned slash command was processed and left a task in the store. Both
+# routes now answer UNCONFIGURED_STATUS when no signing secret is set, so
+# the assertions were rewritten rather than added to.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
-async def test_slash_command_creates_task_with_slack_context(client: AsyncClient) -> None:
-    """POST /webhooks/slack/commands creates a task and returns the task ID."""
+async def test_slash_command_without_signing_secret_is_refused(client: AsyncClient) -> None:
+    """POST /webhooks/slack/commands refuses and creates no task when unconfigured."""
     form_body = (
         b"command=%2Fbernstein"
         b"&text=fix+the+login+bug"
@@ -87,13 +94,68 @@ async def test_slash_command_creates_task_with_slack_context(client: AsyncClient
         content=form_body,
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
+    assert resp.status_code == UNCONFIGURED_STATUS
+    assert "not configured" in resp.json()["detail"]
+    # Nothing reached the store
+    tasks_resp = await client.get("/tasks?status=open")
+    assert tasks_resp.status_code == 200
+    assert tasks_resp.json() == []
+
+
+@pytest.mark.anyio
+async def test_events_without_signing_secret_is_refused(client: AsyncClient) -> None:
+    """POST /webhooks/slack/events refuses and creates no task when unconfigured."""
+    payload = {
+        "type": "event_callback",
+        "event": {
+            "type": "message",
+            "text": "ship it",
+            "channel": "C456DEF",
+            "user": "U123ABC",
+            "ts": "1700000000.000100",
+        },
+    }
+    resp = await client.post(
+        "/webhooks/slack/events",
+        content=json.dumps(payload).encode(),
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == UNCONFIGURED_STATUS
+    assert "not configured" in resp.json()["detail"]
+    tasks_resp = await client.get("/tasks?status=open")
+    assert tasks_resp.status_code == 200
+    assert tasks_resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Test: slash command creates task with correct slack_context
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_slash_command_creates_task_with_slack_context(client_with_secret: AsyncClient) -> None:
+    """POST /webhooks/slack/commands creates a task and returns the task ID."""
+    form_body = (
+        b"command=%2Fbernstein"
+        b"&text=fix+the+login+bug"
+        b"&user_id=U123ABC"
+        b"&channel_id=C456DEF"
+        b"&response_url=https%3A%2F%2Fhooks.slack.com%2Fcommands%2Fresponse"
+        b"&trigger_id=T789GHI"
+    )
+    sig_headers = _slack_sig_headers(form_body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/commands",
+        content=form_body,
+        headers={"content-type": "application/x-www-form-urlencoded"} | sig_headers,
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["response_type"] == "ephemeral"
     # Response must reference the created task ID
     assert "fix the login bug" in data["text"] or data["text"].startswith("Task `")
     # Verify the task was stored with correct slack_context
-    tasks_resp = await client.get("/tasks?status=open")
+    tasks_resp = await client_with_secret.get("/tasks?status=open")
     assert tasks_resp.status_code == 200
     tasks = tasks_resp.json()
     assert len(tasks) == 1
@@ -108,7 +170,7 @@ async def test_slash_command_creates_task_with_slack_context(client: AsyncClient
 
 
 @pytest.mark.anyio
-async def test_events_url_verification_challenge(client: AsyncClient) -> None:
+async def test_events_url_verification_challenge(client_with_secret: AsyncClient) -> None:
     """POST /webhooks/slack/events returns the challenge for url_verification."""
     challenge_token = "3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P"
     payload = {
@@ -116,25 +178,101 @@ async def test_events_url_verification_challenge(client: AsyncClient) -> None:
         "challenge": challenge_token,
         "token": "fake_verification_token",
     }
-    resp = await client.post(
+    body = json.dumps(payload).encode()
+    sig_headers = _slack_sig_headers(body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
         "/webhooks/slack/events",
-        content=json.dumps(payload).encode(),
-        headers={"content-type": "application/json"},
+        content=body,
+        headers={"content-type": "application/json"} | sig_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["challenge"] == challenge_token
 
 
 @pytest.mark.anyio
-async def test_events_bad_payload_hides_parse_details(client: AsyncClient) -> None:
-    """POST /webhooks/slack/events does not echo JSON parse internals."""
-    resp = await client.post(
+async def test_events_invalid_signature_returns_401(client_with_secret: AsyncClient) -> None:
+    """POST /webhooks/slack/events with a wrong signature returns 401."""
+    body = json.dumps({"type": "url_verification", "challenge": "c"}).encode()
+    resp = await client_with_secret.post(
         "/webhooks/slack/events",
-        content=b"{",
-        headers={"content-type": "application/json"},
+        content=body,
+        headers={
+            "content-type": "application/json",
+            "x-slack-request-timestamp": str(int(time.time())),
+            "x-slack-signature": "v0=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        },
+    )
+    assert resp.status_code == 401
+    assert "Invalid Slack signature" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_events_bad_payload_hides_parse_details(client_with_secret: AsyncClient) -> None:
+    """POST /webhooks/slack/events does not echo JSON parse internals."""
+    body = b"{"
+    sig_headers = _slack_sig_headers(body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/events",
+        content=body,
+        headers={"content-type": "application/json"} | sig_headers,
     )
     assert resp.status_code == 400
     assert resp.json() == {"detail": "Bad events payload"}
+
+
+# ---------------------------------------------------------------------------
+# Test: the events route validates the payload shape before reading it
+#
+# A signed delivery whose JSON parses but is not the documented shape must
+# still land on the documented 400, not on an unhandled 500.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", [b"[]", b'"a string"', b"5", b"true", b"null"])
+@pytest.mark.anyio
+async def test_events_non_mapping_payload_returns_400(client_with_secret: AsyncClient, raw: bytes) -> None:
+    """A signed events payload that is valid JSON but not an object returns 400."""
+    sig_headers = _slack_sig_headers(raw, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/events",
+        content=raw,
+        headers={"content-type": "application/json"} | sig_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Bad events payload"}
+
+
+@pytest.mark.parametrize("event", [None, [], "a string", 5, True])
+@pytest.mark.anyio
+async def test_events_non_mapping_event_returns_400(client_with_secret: AsyncClient, event: object) -> None:
+    """An ``event_callback`` whose ``event`` member is not an object returns 400."""
+    body = json.dumps({"type": "event_callback", "event": event}).encode()
+    sig_headers = _slack_sig_headers(body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/events",
+        content=body,
+        headers={"content-type": "application/json"} | sig_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Bad events payload"}
+
+
+@pytest.mark.anyio
+async def test_events_missing_event_member_is_ignored(client_with_secret: AsyncClient) -> None:
+    """An ``event_callback`` with no ``event`` member is acknowledged, not rejected.
+
+    Absent is not the same as malformed: the route has always treated a
+    missing ``event`` as nothing to act on, and that stays a 200 ack.
+    """
+    body = json.dumps({"type": "event_callback"}).encode()
+    sig_headers = _slack_sig_headers(body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
+        "/webhooks/slack/events",
+        content=body,
+        headers={"content-type": "application/json"} | sig_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -193,18 +331,19 @@ async def test_slash_command_valid_signature_accepted(client_with_secret: AsyncC
 
 
 @pytest.mark.anyio
-async def test_slash_command_empty_text_returns_error(client: AsyncClient) -> None:
+async def test_slash_command_empty_text_returns_error(client_with_secret: AsyncClient) -> None:
     """POST /webhooks/slack/commands with empty text returns an error message."""
     form_body = b"command=%2Fbernstein&text=&user_id=U123&channel_id=C456"
-    resp = await client.post(
+    sig_headers = _slack_sig_headers(form_body, "test_secret_key")  # NOSONAR - test fixture
+    resp = await client_with_secret.post(
         "/webhooks/slack/commands",
         content=form_body,
-        headers={"content-type": "application/x-www-form-urlencoded"},
+        headers={"content-type": "application/x-www-form-urlencoded"} | sig_headers,
     )
     assert resp.status_code == 200
     data = resp.json()
     assert "no task text provided" in data["text"]
     # No task should have been created
-    tasks_resp = await client.get("/tasks?status=open")
+    tasks_resp = await client_with_secret.get("/tasks?status=open")
     assert tasks_resp.status_code == 200
     assert tasks_resp.json() == []

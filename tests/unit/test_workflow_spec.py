@@ -195,6 +195,41 @@ nodes:
         load_workflow_spec_from_text(text)
 
 
+def test_agent_node_accepts_routing_hints() -> None:
+    """Agent nodes may pin an adapter, model, and effort independently."""
+    text = """
+name: routed
+description: "Agent routing hints"
+version: "1.0.0"
+nodes:
+  - id: review
+    agent: reviewer
+    prompt: "Review the change"
+    cli: pi
+    model: provider/model-name
+    effort: high
+"""
+    node = load_workflow_spec_from_text(text).nodes[0]
+    assert node.cli == "pi"
+    assert node.model == "provider/model-name"
+    assert node.effort == "high"
+
+
+def test_command_node_rejects_routing_hints() -> None:
+    """Routing hints must not be silently ignored on command nodes."""
+    text = """
+name: invalid-routing
+description: "Command routing hints"
+version: "1.0.0"
+nodes:
+  - id: tests
+    command: "pytest"
+    model: provider/model-name
+"""
+    with pytest.raises(WorkflowSpecError, match="require an agent node"):
+        load_workflow_spec_from_text(text)
+
+
 def test_command_node_rejects_prompt() -> None:
     """Command-typed nodes carrying a prompt must be rejected."""
     text = """

@@ -466,3 +466,63 @@ def test_repo_artifacts_are_not_anchored_by_reference() -> None:
     second, weaker identity for content the chain can hash directly."""
     with pytest.raises(ArtifactURIError):
         external_reference_content_hash("src/a.py", digest="sha256:" + "ab" * 32)
+
+
+def test_external_reference_extractor_absent_keeps_legacy_address() -> None:
+    """A reference with no extraction step must serialise the extractor as
+    ABSENT, not as an empty string -- an empty-string default would silently
+    change its content address and is the most likely way to get this wrong."""
+    uri = "pkg://pypi/bernstein/3.9.0"
+    digest = "sha256:" + "ab" * 32
+    assert external_reference_bytes(uri, digest=digest) == (
+        b'{"artifact_uri":"pkg://pypi/bernstein/3.9.0","digest":"sha256:' + b"ab" * 32 + b'","v":1}'
+    )
+    assert external_reference_content_hash(uri, digest=digest) == external_reference_content_hash(
+        uri, digest=digest, extractor=None
+    )
+
+
+def test_external_reference_extractor_is_deterministic() -> None:
+    """Same URI + same digest + same extractor => same content address."""
+    uri = "doc://example.test/lineage"
+    digest = "sha256:" + "cd" * 32
+    a = external_reference_content_hash(uri, digest=digest, extractor="html-readability@2.4.1")
+    b = external_reference_content_hash(uri, digest=digest, extractor="html-readability@2.4.1")
+    assert a == b
+
+
+def test_external_reference_extractor_version_changes_address() -> None:
+    """Changing only the extractor version => different content address."""
+    uri = "doc://example.test/lineage"
+    digest = "sha256:" + "cd" * 32
+    a = external_reference_content_hash(uri, digest=digest, extractor="html-readability@2.4.1")
+    b = external_reference_content_hash(uri, digest=digest, extractor="html-readability@2.5.0")
+    assert a != b
+
+
+def test_external_reference_extractor_changes_address_from_absent() -> None:
+    """Adding an extractor to a reference that had none changes the address."""
+    uri = "doc://example.test/lineage"
+    digest = "sha256:" + "cd" * 32
+    plain = external_reference_content_hash(uri, digest=digest)
+    extracted = external_reference_content_hash(uri, digest=digest, extractor="html-readability@2.4.1")
+    assert plain != extracted
+
+
+def test_external_reference_extractor_joins_canonical_document() -> None:
+    """The extractor identity lands inside the hashed document (sorted keys)."""
+    payload = external_reference_bytes(
+        "pr://github.com/acme/widget/1", digest="sha1:" + "cd" * 20, extractor="git@1.0.0"
+    )
+    assert payload == (
+        b'{"artifact_uri":"pr://github.com/acme/widget/1","digest":"sha1:'
+        + b"cd" * 20
+        + b'","extractor":"git@1.0.0","v":1}'
+    )
+
+
+def test_external_reference_empty_extractor_is_refused() -> None:
+    """An empty-string extractor is refused: absent and empty must not
+    collapse into the same serialised document."""
+    with pytest.raises(ArtifactURIError):
+        external_reference_bytes("pkg://pypi/x/1.0", digest="sha256:" + "ab" * 32, extractor="")

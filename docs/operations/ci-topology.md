@@ -40,6 +40,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
+| .github/workflows/feature-matrix-drift.yml | Feature matrix drift | pull_request, push | {"cancel-in-progress": "true", "group": "feature-matrix-drift-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
 | .github/workflows/license-compliance.yml | License Compliance | pull_request, push | {"cancel-in-progress": "true", "group": "license-${{ github.ref }}"} | 1 |
 | .github/workflows/main-sha-marker.yml | Main SHA marker | push | {"cancel-in-progress": "false", "group": "main-sha-marker-${{ github.sha }}"} | 1 |
@@ -59,9 +60,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/review-bot-ack-publish.yml | Review-bot acknowledgement publisher | workflow_run | {"cancel-in-progress": "false", "group": "review-bot-ack-publish-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.id }}"} | 2 |
-| .github/workflows/review-bot-ack.yml | Review-bot acknowledgement gate | merge_group, pull_request, pull_request_review | {"cancel-in-progress": "true", "group": "review-bot-ack-${{ github.event.pull_request.number \|\| github.ref }}"} | 2 |
-| .github/workflows/review-bot-sweep.yml | Review-bot post-merge sweep | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/roadmap-refresh.yml | Roadmap refresh | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "roadmap-refresh"} | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
@@ -108,6 +106,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-drift.yml | drift-check: Run drift check<br>drift-publish: Publish drift surfaces |
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture snapshot |
 | .github/workflows/eval-nightly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
+| .github/workflows/feature-matrix-drift.yml | matrix-rows: registered CLI commands have a matrix row |
 | .github/workflows/hotfix-r-tracker.yml | track: Detect hotfix-begets-hotfix |
 | .github/workflows/license-compliance.yml | license-check |
 | .github/workflows/main-sha-marker.yml | marker: Main SHA marker |
@@ -127,9 +126,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs published channels |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
-| .github/workflows/review-bot-ack-publish.yml | publish: review-bot-ack-publisher<br>republish: review-bot-ack-republisher |
-| .github/workflows/review-bot-ack.yml | merge-group-verify: review-bot-ack-queue-verify<br>pr-gate: review-bot-ack-runner |
-| .github/workflows/review-bot-sweep.yml | sweep: Sweep recently merged PRs for unprocessed bot findings |
 | .github/workflows/roadmap-refresh.yml | refresh: Regenerate the milestone projection |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
@@ -176,6 +172,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read"}<br>drift-publish: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED |
+| .github/workflows/feature-matrix-drift.yml | workflow: {"contents": "read"}<br>matrix-rows: {"contents": "read"} | - |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/license-compliance.yml | workflow: {"contents": "read"}<br>license-check: {"contents": "read"} | - |
 | .github/workflows/main-sha-marker.yml | - | - |
@@ -195,9 +192,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"actions": "write", "attestations": "write", "contents": "write", "id-token": "write"} | GITHUB_TOKEN |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
-| .github/workflows/review-bot-ack-publish.yml | publish: {"actions": "read", "checks": "write", "contents": "read"}<br>republish: {"actions": "write", "checks": "read", "contents": "read"} | - |
-| .github/workflows/review-bot-ack.yml | merge-group-verify: {"checks": "write", "contents": "read", "pull-requests": "read"}<br>pr-gate: {"checks": "write", "contents": "read", "issues": "write", "pull-requests": "write"} | - |
-| .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, LANDING_REPO_PAT |
 | .github/workflows/roadmap-refresh.yml | workflow: {"contents": "read"}<br>refresh: {"contents": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
@@ -237,8 +231,6 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |
 | .github/workflows/pentest.yml | pentest: upload pentest-results-${{ github.run_number }} |
 | .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist |
-| .github/workflows/review-bot-ack-publish.yml | publish: download review-bot-ack-verdict |
-| .github/workflows/review-bot-ack.yml | pr-gate: upload review-bot-ack-verdict |
 | .github/workflows/sbom.yml | sbom: upload sbom |
 | .github/workflows/scorecard.yml | analysis: upload scorecard-results<br>upload: download scorecard-results |
 | .github/workflows/soc2-evidence-nightly.yml | pack: upload soc2-evidence-${{ github.run_id }} |

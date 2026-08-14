@@ -35,6 +35,8 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -168,6 +170,15 @@ class AuthUser:
     sso_groups: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_login_at: float = field(default_factory=time.time)
+    # Tenant this user works in.  Carried into every token issued for them
+    # (see ``AuthService._issue_token``) so the request scope is derived from
+    # the user record rather than from request input.  Users provisioned
+    # without one work in ``DEFAULT_TENANT_ID``.
+    #
+    # Declared last on purpose: every field here is positional, so inserting
+    # one ahead of ``created_at``/``last_login_at`` would silently rebind the
+    # timestamps of any caller that constructs positionally.
+    tenant_id: str = DEFAULT_TENANT_ID
 
     def has_permission(self, permission: str) -> bool:
         """Check if this user has a specific permission."""
@@ -183,6 +194,7 @@ class AuthUser:
             "sso_provider": self.sso_provider,
             "sso_subject": self.sso_subject,
             "sso_groups": self.sso_groups,
+            "tenant_id": self.tenant_id,
             "created_at": self.created_at,
             "last_login_at": self.last_login_at,
         }
@@ -198,6 +210,7 @@ class AuthUser:
             sso_provider=str(d.get("sso_provider", "")),
             sso_subject=str(d.get("sso_subject", "")),
             sso_groups=list(d.get("sso_groups", [])),
+            tenant_id=normalize_tenant_id(str(d.get("tenant_id", "") or "")),
             created_at=float(d.get("created_at", 0)),
             last_login_at=float(d.get("last_login_at", 0)),
         )
@@ -1286,6 +1299,11 @@ class AuthService:
                 "email": user.email,
                 "role": user.role.value,
                 "session_id": session.id,
+                # Signed into the token so the auth middleware can bind the
+                # request's tenant from the credential.  The value comes from
+                # the persisted user record, never from the login request, so
+                # a caller cannot influence which tenant their token carries.
+                "tenant_id": normalize_tenant_id(user.tenant_id),
             },
             secret=self.config.jwt_secret,
             algorithm=self.config.jwt_algorithm,

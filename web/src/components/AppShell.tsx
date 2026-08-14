@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Command,
   DollarSign,
+  GitPullRequest,
   ListChecks,
   Moon,
   Network,
@@ -47,6 +48,7 @@ const TOPBAR_LABELS: Record<string, string> = {};
 
 const FLEET_STORAGE_KEY = 'bernstein-fleet-mode';
 const FLEET_URL_PARAM = 'fleet';
+const REVIEW_BOARD_PATH = '/dashboard/review-board';
 
 /** Hoisted helper so it can be reused by tests and the deep-link card. */
 function readInitialFleetMode(): boolean {
@@ -321,6 +323,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 </Link>
               );
             })}
+            <a
+              href={REVIEW_BOARD_PATH}
+              className="flex items-center gap-[10px] px-3 py-[9px] rounded-md text-[13px] -tracking-[0.005em] text-muted-foreground hover:text-foreground hover:bg-card/60"
+            >
+              <GitPullRequest className="size-3.5 shrink-0" strokeWidth={1.5} />
+              <span className="flex-1">Review board</span>
+            </a>
           </nav>
 
           {/* Variant A signature: thin score-line stub */}
@@ -482,6 +491,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           navigate(path);
         }}
         nav={NAV.map((n) => ({ label: n.label, to: n.to }))}
+        externalNav={[{ label: 'Review board', href: REVIEW_BOARD_PATH }]}
       />
     </>
   );

@@ -675,6 +675,12 @@ def _render_auth_section(token_path: Path) -> str:
         "form and the correct token path, and retry. Do not report a task as done, "
         "or give up, based solely on a non-2xx response without first confirming "
         "the command form was correct.\n"
+        "**A 404 naming a task id is permanent - do not re-send the same body.** "
+        "It means that id does not resolve for you: it does not exist, or it "
+        "exists outside the scope your token reaches. Either way the identical "
+        "request will keep returning 404, so re-issuing it wastes turns. Pick a "
+        "task id you can already read through `GET /tasks`, or drop the "
+        "association (omit `parent_task_id`) and create the task standalone.\n"
         "Example - creating a subtask (pass the whole line to `run_command` as ONE string):\n"
         "```bash\n"
         f"curl -sS -w '\\n%{{http_code}}' -X POST {base}/tasks \\\n"
@@ -4416,9 +4422,10 @@ class AgentSpawner:
                             # tasks carry a value the largest wins, mirroring
                             # budget_multiplier above.
                             _extra_spawn_kwargs: dict[str, Any] = {}
+                            _spawn_params = inspect.signature(target_adapter.spawn).parameters
                             _explicit_turns = max((t.max_turns for t in tasks if t.max_turns is not None), default=None)
                             if _explicit_turns is not None:
-                                if "explicit_max_turns" in inspect.signature(target_adapter.spawn).parameters:
+                                if "explicit_max_turns" in _spawn_params:
                                     _extra_spawn_kwargs["explicit_max_turns"] = _explicit_turns
                                 else:
                                     logger.warning(
@@ -4427,6 +4434,15 @@ class AgentSpawner:
                                         adapter_name,
                                         _explicit_turns,
                                     )
+                            # Task identity for adapters that brand their
+                            # output per task (log attribution, per-task
+                            # behaviour). Grouped spawns are led by their
+                            # first task, the same order the prompt lists
+                            # them in.
+                            if "task_id" in _spawn_params:
+                                _extra_spawn_kwargs["task_id"] = tasks[0].id
+                            if "task_title" in _spawn_params:
+                                _extra_spawn_kwargs["task_title"] = tasks[0].title
                             # Cacheable prefix extraction is deferred to adapters
                             # that support provider-specific caching.
                             result = target_adapter.spawn(
@@ -4844,12 +4860,21 @@ class AgentSpawner:
 
         _scope_order = {"small": 0, "medium": 1, "large": 2}
         resume_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))
+        # Same task-identity forwarding as the primary spawn path: a resumed
+        # agent must attribute its output to the task it continues.
+        _resume_extra: dict[str, Any] = {}
+        _resume_params = inspect.signature(self._adapter.spawn).parameters
+        if "task_id" in _resume_params:
+            _resume_extra["task_id"] = tasks[0].id
+        if "task_title" in _resume_params:
+            _resume_extra["task_title"] = tasks[0].title
         result = self._adapter.spawn(
             prompt=prompt,
             workdir=worktree_path,
             model_config=model_config,
             session_id=session_id,
             task_scope=resume_scope,
+            **_resume_extra,
         )
         session.pid = result.pid
         session.abort_reason = result.abort_reason

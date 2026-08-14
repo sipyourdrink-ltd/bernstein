@@ -62,11 +62,23 @@ signing secret, using `verify_slack_signature()` from
 `app.state.slack_signing_secret` if the server was started with one, else
 from the `SLACK_SIGNING_SECRET` environment variable.
 
-**If no signing secret is configured, verification is skipped entirely**
-- both routes accept unsigned requests in that case. Set
-`SLACK_SIGNING_SECRET` (or pass `slack_signing_secret=` when building the
-app) to enforce verification. A failed verification returns `401`; a
-malformed payload returns `400`.
+**The signing secret is required.** If none is configured, both routes
+are disabled and answer `404` - only signed Slack deliveries are
+accepted, and without the secret no delivery can be shown to be one.
+This matches the GitHub webhook receiver, which refuses the same way
+when `GITHUB_WEBHOOK_SECRET` is unset. Set `SLACK_SIGNING_SECRET` (or
+pass `slack_signing_secret=` when building the app) to enable the
+routes. A failed verification returns `401`; a malformed payload
+returns `400`.
+
+The Events API route checks the payload's shape before reading it: the
+body must be a JSON object, and a present `event` member must be one
+too. Anything else takes the same `400` as unparseable JSON. A payload
+with no `event` member at all is acknowledged with `200` - absent is not
+malformed, there is simply nothing to act on.
+
+The `url_verification` handshake is signed by Slack like any other
+delivery, so set the secret before pointing Slack at the endpoint.
 
 The Events API route additionally reads `SLACK_BOT_USER_ID` from the
 environment to recognize `@`-mentions. If it's unset, every message in a
@@ -79,21 +91,24 @@ is skipped).
 
 1. Create a Slack app (or reuse the one from [Chat bridges](chat-bridges.md)
    if you also run the Socket Mode driver).
-2. Point the app's **Slash Commands** request URL at
-   `https://<your-host>/webhooks/slack/commands`.
-3. Point the app's **Event Subscriptions** request URL at
-   `https://<your-host>/webhooks/slack/events`, complete the
-   `url_verification` challenge, and subscribe to the `message.channels`
-   (or equivalent) bot event.
-4. Set the environment variables on the machine running `bernstein serve`:
+2. Set the environment variables on the machine running `bernstein serve`:
 
    ```sh
    export SLACK_SIGNING_SECRET=...
    export SLACK_BOT_USER_ID=...   # optional; recognizes @-mentions
    ```
 
-5. Run the server: `bernstein serve` (or however your deployment starts
+   Do this before step 4 - the routes stay disabled until the signing
+   secret is set, so the `url_verification` challenge would be refused.
+
+3. Run the server: `bernstein serve` (or however your deployment starts
    `core/server/server_app.py`).
+4. Point the app's **Slash Commands** request URL at
+   `https://<your-host>/webhooks/slack/commands`.
+5. Point the app's **Event Subscriptions** request URL at
+   `https://<your-host>/webhooks/slack/events`, complete the
+   `url_verification` challenge, and subscribe to the `message.channels`
+   (or equivalent) bot event.
 
 ---
 

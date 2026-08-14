@@ -18,6 +18,7 @@ from bernstein.adapters.admission import (
     ADMISSION_EXEMPT,
     CANARY_GREEN,
     CANARY_RED,
+    CANARY_STALE,
     CANARY_UNKNOWN,
     GATE_RECEIPT_KIND,
     POLICY_ENFORCE,
@@ -38,6 +39,7 @@ from bernstein.adapters.admission import (
     AdapterAdmissionRefusal,
     AdmissionEvidence,
     AdmissionGate,
+    _canary_verdict_for,  # pyright: ignore[reportPrivateUsage]
     audit_admission_no_unproven_spawn,
     build_admission_receipt,
     capability_split,
@@ -52,6 +54,7 @@ from bernstein.adapters.admission import (
     verify_admission_receipt,
     write_admission_receipt,
 )
+from bernstein.adapters.canary import LastGreenEntry, save_last_green
 from bernstein.adapters.conformance import StepResult, TranscriptResult
 from bernstein.adapters.registry import get_adapter
 
@@ -153,6 +156,38 @@ def test_replay_fingerprint_changes_when_the_binary_version_changes(contracts_di
     after = _evidence(contracts_dir, version="kimi 1.0.0").replay_fingerprint
 
     assert before != after
+
+
+@pytest.mark.parametrize(
+    ("attested_version", "installed_version", "expected"),
+    [
+        ("0.21.10", "qwen-code 0.21.100", CANARY_STALE),
+        ("0.21.100", "qwen-code 0.21.100", CANARY_GREEN),
+        ("0.21.100", "qwen-code development build", CANARY_STALE),
+    ],
+)
+def test_canary_verdict_compares_extracted_version_tokens(
+    tmp_path: Path,
+    attested_version: str,
+    installed_version: str,
+    expected: str,
+) -> None:
+    """Admission requires the installed binary's exact normalised version."""
+    last_green_path = tmp_path / "last-green.json"
+    save_last_green(
+        last_green_path,
+        {
+            "qwen": LastGreenEntry(
+                adapter="qwen",
+                binary="qwen-code",
+                version=attested_version,
+                receipt_sha256="a" * 64,
+                recorded_at="2026-08-12T00:00:00+00:00",
+            )
+        },
+    )
+
+    assert _canary_verdict_for("qwen", installed_version, last_green_path) == expected
 
 
 def test_replay_fingerprint_ignores_step_messages() -> None:
@@ -751,8 +786,16 @@ def test_adapter_without_a_contract_refuses(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_verify_cli_reports_a_refusal_with_exit_1(receipts_dir: Path, contracts_dir: Path) -> None:
+def test_verify_cli_reports_a_refusal_with_exit_1(
+    receipts_dir: Path,
+    contracts_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from bernstein.cli.commands.adapters_verify_cmd import _execute_verify  # pyright: ignore[reportPrivateUsage]
+
+    # Stub binary lookup so the refusal path is taken by construction on
+    # every host, rather than depending on the absence of a binary.
+    monkeypatch.setattr("shutil.which", lambda _: None)
 
     rc = _execute_verify(
         "kimi",
@@ -767,11 +810,18 @@ def test_verify_cli_reports_a_refusal_with_exit_1(receipts_dir: Path, contracts_
     assert rc == 1
 
 
-def test_verify_cli_seals_a_receipt_the_gate_then_accepts(receipts_dir: Path, contracts_dir: Path) -> None:
+def test_verify_cli_seals_a_receipt_the_gate_then_accepts(
+    receipts_dir: Path,
+    contracts_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from bernstein.cli.commands.adapters_verify_cmd import _execute_verify  # pyright: ignore[reportPrivateUsage]
 
-    # The host has no kimi binary, so the sealed receipt records a refusal -
-    # the negative path, written down rather than left silent.
+    # The adapter binary is stubbed out, so the sealed receipt records a
+    # refusal by construction on every host - the negative path, written
+    # down rather than left silent.
+    monkeypatch.setattr("shutil.which", lambda _: None)
+
     rc = _execute_verify(
         "kimi",
         output_format="text",

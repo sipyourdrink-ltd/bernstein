@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_approve",
+  "description": "Sign off a finished result only when the task is in pending_approval; every other status is refused. This completes the task on the Bernstein server. Host effects: makes network requests.",
   "type": "object",
   "additionalProperties": false,
   "required": ["task_id"],
