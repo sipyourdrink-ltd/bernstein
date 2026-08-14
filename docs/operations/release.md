@@ -102,8 +102,8 @@ python3 scripts/build_copr_srpm.py --version v3.13.0 --render-only   # no rpmbui
 Run the install smoke locally exactly the way CI runs it (needs Docker):
 
 ```
-scripts/rpm_install_smoke.sh fedora:43 3.14.159
-scripts/rpm_install_smoke.sh quay.io/centos/centos:stream9 3.14.159
+scripts/rpm_install_smoke.sh fedora:43 3.15.0
+scripts/rpm_install_smoke.sh quay.io/centos/centos:stream9 3.15.0
 ```
 
 ### Chroots
