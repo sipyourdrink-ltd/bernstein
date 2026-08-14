@@ -987,6 +987,7 @@ def duration_predictions(request: Request) -> JSONResponse:
     """
 
     from bernstein.core.duration_predictor import get_predictor
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
 
     store = _get_store(request)
     sdd_dir: Any = getattr(request.app.state, "sdd_dir", None)
@@ -1006,8 +1007,6 @@ def duration_predictions(request: Request) -> JSONResponse:
 
     # One prediction row per active task, each carrying that task's id and
     # title, so the read is narrowed to the caller's tenant scope.
-    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
-
     tasks = store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))
     active_statuses = {"open", "claimed", "in_progress"}
     predictions: list[dict[str, Any]] = []

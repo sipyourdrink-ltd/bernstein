@@ -3252,47 +3252,47 @@ class TaskStore:
         """Return aggregated task counts for the dashboard.
 
         Args:
-            tenant_id: If provided, every figure is computed over that
+            tenant_id: If provided, the task figures are computed over that
                 tenant's rows only.  ``None`` keeps the whole-store roll-up,
                 matching :meth:`list_tasks`, whose ``tenant_id`` is optional
                 for the same reason: the CLI, the TUI and the supervisor read
                 this store outside any request and have no scope to apply.
 
         Note:
-            Under a tenant scope the cost figures come from the scoped rows
-            alone.  The per-role metrics JSONL that the whole-store roll-up
-            folds in carries no tenant of its own, and attributing an
-            untenanted total to whichever tenant happened to ask for it would
-            report somebody else's spend as theirs.
+            A tenant scope narrows the *task* figures.  The cost figures keep
+            folding in the per-role metrics JSONL, which carries no tenant of
+            its own, exactly as they did before - narrowing untenanted cost
+            records is a separate question from narrowing task rows, and
+            ``/status`` reads that same file directly for its headline spend
+            besides.
+
+            Per-status counts are read from the same by-status index the
+            unscoped roll-up and :meth:`count_by_status` read, filtered rather
+            than recomputed, so a scoped ``/status`` and a scoped
+            ``/tasks/counts`` cannot disagree with each other.
         """
         normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+        counted_statuses = (
+            TaskStatus.OPEN,
+            TaskStatus.CLAIMED,
+            TaskStatus.DONE,
+            TaskStatus.FAILED,
+            TaskStatus.REFUSED,
+        )
         if normalized_tenant is None:
             tasks = list(self._tasks.values())
-            status_counts = {
-                status: len(self._by_status.get(status, {}))
-                for status in (
-                    TaskStatus.OPEN,
-                    TaskStatus.CLAIMED,
-                    TaskStatus.DONE,
-                    TaskStatus.FAILED,
-                    TaskStatus.REFUSED,
-                )
-            }
+            status_counts = {status: len(self._by_status.get(status, {})) for status in counted_statuses}
         else:
             tasks = [task for task in self._tasks.values() if task.tenant_id == normalized_tenant]
             status_counts = {
-                status: sum(1 for task in tasks if task.status is status)
-                for status in (
-                    TaskStatus.OPEN,
-                    TaskStatus.CLAIMED,
-                    TaskStatus.DONE,
-                    TaskStatus.FAILED,
-                    TaskStatus.REFUSED,
+                status: sum(
+                    1 for task in self._by_status.get(status, {}).values() if task.tenant_id == normalized_tenant
                 )
+                for status in counted_statuses
             }
 
         role_counts = self._build_role_counts(tasks)
-        total_cost, cost_by_role = self._compute_costs(tasks, scoped=normalized_tenant is not None)
+        total_cost, cost_by_role = self._compute_costs(tasks)
 
         per_role = []
         for role, counts in sorted(role_counts.items()):
@@ -3327,16 +3327,9 @@ class TaskStore:
                 role_counts[task.role][status_key] += 1
         return role_counts
 
-    def _compute_costs(self, tasks: list[Task], *, scoped: bool = False) -> tuple[float, dict[str, float]]:
-        """Compute total cost from *tasks* and, unscoped, the metrics JSONL."""
+    def _compute_costs(self, tasks: list[Task]) -> tuple[float, dict[str, float]]:
+        """Compute total cost from *tasks* and the metrics JSONL."""
         total_cost = sum(t.cost_usd for t in tasks if hasattr(t, "cost_usd") and t.cost_usd)
-        if scoped:
-            cost_by_role: dict[str, float] = {}
-            for task in tasks:
-                cost = getattr(task, "cost_usd", 0.0) or 0.0
-                if cost:
-                    cost_by_role[task.role] = cost_by_role.get(task.role, 0.0) + cost
-            return total_cost, cost_by_role
         cost_by_role = self._read_cost_by_role()
         metrics_cost = sum(cost_by_role.values())
         if metrics_cost > total_cost:

@@ -1425,7 +1425,7 @@ async def test_costs_alerts_trend_still_reports_the_callers_own_history(
 #   the other tenant's id and title;
 # - a surface that renders only figures is asserted on not moving when the
 #   other tenant gains a task, because there is no id in the body to look
-#   for and a figure that shifts is the whole of what leaked.
+#   for, and a figure that shifts is the whole of what crossed the scope.
 #
 # Every one is paired with a positive control, because both shapes above are
 # satisfied by a reader that returns nothing at all.
