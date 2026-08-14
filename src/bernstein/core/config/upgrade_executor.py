@@ -19,6 +19,8 @@ import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
+
+from bernstein.evolution.admission import AdmissionPolicy
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -91,6 +93,24 @@ class UpgradeTransaction:
 
     # Changes to apply
     file_changes: list[FileChange] = field(default_factory=list)
+
+    @property
+    def category(self) -> UpgradeType:
+        """The admission gate's category for this lineage.
+
+        Named `upgrade_type` here and `category` on `UpgradeProposal`. The
+        alias is explicit rather than letting the gate guess between attribute
+        names, which would silently key on the wrong field the day a third
+        lineage appears.
+        """
+        return self.upgrade_type
+
+    #: Agent that produced this upgrade. The admission gate measures the
+    #: proposer; the reviewer that approves it is a different actor.
+    produced_by: str = ""
+    #: What caused this upgrade to be proposed. Constant for this path, but
+    #: named so the decision key matches the evolution-loop key shape.
+    triggered_by: str = "reviewer_approval"
 
     # Review results
     reviewer_feedback: str = ""
@@ -263,10 +283,14 @@ class UpgradeExecutor:
         workdir: Path | None = None,
         reviewer: UpgradeReviewer | None = None,
         auto_git: bool = True,
+        admission: AdmissionPolicy | None = None,
     ) -> None:
         self._workdir = workdir or Path.cwd()
         self._reviewer = reviewer or UpgradeReviewer(workdir=self._workdir)
         self._auto_git = auto_git
+        # The same service the FileUpgradeExecutor path uses, not a second
+        # gate with its own semantics.
+        self._admission = admission if admission is not None else AdmissionPolicy()
         self._transactions: dict[str, UpgradeTransaction] = {}
         self._backup_dir = self._workdir / ".sdd" / "upgrades" / "backups"
         self._backup_dir.mkdir(parents=True, exist_ok=True)
@@ -322,8 +346,32 @@ class UpgradeExecutor:
         if result.verdict == "approve":
             transaction.status = UpgradeStatus.REVIEW_APPROVED
             logger.info("Upgrade %s approved by reviewer", transaction.id)
-            # Auto-execute if approved
-            self._execute_upgrade(transaction)
+            # Reviewer approval is not admission. Without this the path
+            # auto-executes on a reviewer verdict alone, which is the bypass
+            # the gate exists to close: an approved upgrade from a producer
+            # with a poor measured history would still apply.
+            decision = self._admission.evaluate(transaction)
+            if not decision.admitted:
+                transaction.status = UpgradeStatus.REVIEW_REJECTED
+                transaction.error_message = (
+                    f"Refused by admission policy: {decision.reason}"
+                )
+                logger.warning(
+                    "Upgrade %s refused by admission policy: %s",
+                    transaction.id,
+                    decision.reason,
+                )
+                return
+            applied = True
+            try:
+                self._execute_upgrade(transaction)
+            except Exception:
+                applied = False
+                raise
+            finally:
+                # Recorded against the key admission used, including the
+                # failure path.
+                self._admission.record_outcome(decision, applied)
         elif result.verdict == "reject":
             transaction.status = UpgradeStatus.REVIEW_REJECTED
             transaction.error_message = result.reasoning

@@ -29,7 +29,7 @@ import logging
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from bernstein.core.quality.empirical_confidence import (
     Confidence,
@@ -52,6 +52,21 @@ DEFAULT_MIN_CONFIDENCE: float = 0.5
 #: any real agent type so unattributed proposals accumulate their own history
 #: instead of silently borrowing someone else's.
 UNATTRIBUTED_PRODUCER = "unattributed"
+
+
+@runtime_checkable
+class Admissible(Protocol):
+    """The three things the gate needs, wherever the upgrade came from.
+
+    Deliberately structural rather than a base class: ``UpgradeProposal`` and
+    ``UpgradeTransaction`` are separate lineages that reach the same executor
+    families, and a shared parent would couple them for no reason. The gate
+    needs a category, a trigger and a producer, and nothing else.
+    """
+
+    category: object
+    triggered_by: object
+    produced_by: str
 
 
 class ColdStartMode(StrEnum):
@@ -101,14 +116,14 @@ class AdmissionDecision:
         }
 
 
-def producer_identity(proposal: UpgradeProposal) -> str:
+def producer_identity(proposal: "Admissible | UpgradeProposal") -> str:
     """The agent that produced this proposal, not the one that applies it."""
     produced_by = getattr(proposal, "produced_by", "") or ""
     produced_by = produced_by.strip()
     return produced_by or UNATTRIBUTED_PRODUCER
 
 
-def decision_key(proposal: UpgradeProposal) -> str:
+def decision_key(proposal: "Admissible | UpgradeProposal") -> str:
     """``category:<category>|trigger:<triggered_by>``.
 
     Both halves are read through ``getattr(..., "value", ...)`` so the key is
@@ -199,7 +214,7 @@ class AdmissionPolicy:
     def min_confidence(self) -> float:
         return self._min_confidence
 
-    def evaluate(self, proposal: UpgradeProposal) -> AdmissionDecision:
+    def evaluate(self, proposal: "Admissible | UpgradeProposal") -> AdmissionDecision:
         """Decide whether this proposal may be applied."""
         agent_type = producer_identity(proposal)
         key = decision_key(proposal)
@@ -273,6 +288,7 @@ class AdmissionPolicy:
 __all__ = [
     "DEFAULT_MIN_CONFIDENCE",
     "UNATTRIBUTED_PRODUCER",
+    "Admissible",
     "AdmissionDecision",
     "AdmissionMode",
     "AdmissionPolicy",
