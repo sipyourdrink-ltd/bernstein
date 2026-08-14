@@ -66,10 +66,20 @@ class AccessLogEntry:
 
 
 def extract_tenant_id(request: Request) -> str:
-    """Return the tenant ID for *request*.
+    """Return the tenant label to record for *request*.
 
-    Prefers an already-derived ``request.state.tenant_id`` value. Falls back to
-    the ``X-Tenant-ID`` header, then finally ``"default"``.
+    Read-only, for the log line alone.  When authentication has bound a
+    tenant to the request that binding is reported verbatim; otherwise - an
+    unauthenticated public path, or the development mode with auth off - the
+    caller's ``X-Tenant-ID`` header is recorded as the tenant it claimed,
+    falling back to ``"default"``.
+
+    This function deliberately does not write ``request.state.tenant_id``.
+    That attribute is the request's authorization scope, established by the
+    authentication layer alone (see
+    :func:`bernstein.core.security.tenanting.bind_request_tenant`); a logging
+    middleware that populated it would let a request header decide which
+    tenant's data the request reaches.
     """
 
     state_tenant = getattr(request.state, "tenant_id", None)
@@ -187,14 +197,15 @@ class StructuredAccessLogMiddleware(BaseHTTPMiddleware):
     ) -> StarletteResponse:
         request_id = request.headers.get("x-request-id", "").strip() or uuid.uuid4().hex
         request.state.request_id = request_id
-        request.state.tenant_id = extract_tenant_id(request)
         started = time.perf_counter()
         response: StarletteResponse = await call_next(request)
         duration_ms = round((time.perf_counter() - started) * 1000.0, 3)
         entry = AccessLogEntry(
             timestamp=datetime.now(tz=UTC).isoformat(),
             request_id=request_id,
-            tenant_id=str(request.state.tenant_id),
+            # Read the tenant, never establish it: the authenticated binding
+            # if there is one, the caller's claim otherwise.
+            tenant_id=extract_tenant_id(request),
             actor=extract_request_actor(request),
             method=request.method,
             path=request.url.path,

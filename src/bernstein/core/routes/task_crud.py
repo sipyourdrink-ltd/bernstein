@@ -91,7 +91,12 @@ from bernstein.core.tasks.contracts import (
     parse_terminal_payload_text,
 )
 from bernstein.core.telemetry import start_span
-from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
+from bernstein.core.tenanting import (
+    request_tenant_cross_scope,
+    request_tenant_id,
+    requested_tenant_override,
+    resolve_tenant_scope,
+)
 from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
 
 logger = logging.getLogger(__name__)
@@ -242,13 +247,22 @@ def _get_tenant_registry(request: Request) -> TenantRegistry | None:
 
 
 def _resolve_request_tenant_scope(request: Request, requested_tenant: str | None = None) -> str:
-    """Resolve the tenant scope for the current request."""
+    """Resolve the tenant scope for the current request.
 
+    The bound tenant comes from the authenticated principal.  A selector -
+    the ``?tenant=`` query parameter where a route offers one, otherwise the
+    ``X-Tenant-Id`` header - is treated as a *request* for a scope and only
+    takes effect when the principal carries the operator scope that permits
+    it; otherwise it is a 403 rather than a silent widening.
+    """
+
+    override = requested_tenant if requested_tenant is not None else requested_tenant_override(request)
     try:
         return resolve_tenant_scope(
             request_tenant_id(request),
-            requested_tenant,
+            override,
             registry=_get_tenant_registry(request),
+            allow_cross_tenant=request_tenant_cross_scope(request),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -287,6 +301,29 @@ def _enforce_parent_task_scope(request: Request, parent_task_ids: Sequence[str |
     named = [task_id for task_id in parent_task_ids if task_id]
     if named:
         enforce_agent_task_scope_for_ids(request, named)
+        _require_parent_tenant_scope(request, named)
+
+
+def _require_parent_tenant_scope(request: Request, parent_task_ids: Sequence[str]) -> None:
+    """Reject a parent association that reaches outside the caller's scope.
+
+    ``enforce_agent_task_scope_for_ids`` pins an *agent* credential to its own
+    task ids and says nothing about any other credential type, so on its own it
+    leaves the association open for the rest.  The child row is written into
+    the scope :func:`_resolve_request_tenant_scope` returns, and grafting it
+    onto a parent resolved outside that scope would let one scope's write
+    drive another's subtree lifecycle.  The parent has to sit where the child
+    lands.
+
+    A parent that does not resolve at all is left to the caller's existing
+    behaviour - this guard narrows scope, it does not add an existence check.
+    """
+    store = _get_store(request)
+    effective_tenant = _resolve_request_tenant_scope(request)
+    for parent_id in parent_task_ids:
+        parent = store.get_task(parent_id)
+        if parent is not None and parent.tenant_id != effective_tenant:
+            raise HTTPException(status_code=404, detail=f"Task '{parent_id}' not found")
 
 
 # ---------------------------------------------------------------------------
@@ -864,7 +901,13 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     _enforce_parent_task_scope(request, [body.parent_task_id])
-    effective_body = body.model_copy(update={"tenant_id": request_tenant_id(request)})
+    # The row is written into the caller's authorized scope, never into a
+    # tenant the request names.  ``body.tenant_id`` is ignored (it always was);
+    # a header selector is authorized before it can take effect, so a request
+    # naming a tenant the caller cannot reach is refused rather than quietly
+    # landing a row somewhere else.
+    effective_tenant = _resolve_request_tenant_scope(request)
+    effective_body = body.model_copy(update={"tenant_id": effective_tenant})
     if effective_body.metadata is None:
         effective_body.metadata = {}
     traceparent = request.headers.get("traceparent")
@@ -905,7 +948,6 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
             None,
         )
         if tenant_mgr is not None:
-            effective_tenant = request_tenant_id(request)
             current_count = store.count_by_status(tenant_id=effective_tenant).get("total", 0)
             allowed, reason = tenant_mgr.check_quota(effective_tenant, current_count)
             if not allowed:
@@ -1010,8 +1052,9 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
 
     prepared: list[TaskCreate] = []
     assessments: list[TaskRiskAssessment] = []
+    batch_tenant = _resolve_request_tenant_scope(request)
     for task_body in body.tasks:
-        effective = task_body.model_copy(update={"tenant_id": request_tenant_id(request)})
+        effective = task_body.model_copy(update={"tenant_id": batch_tenant})
 
         # Auto-classify role if not specified
         if effective.role == "auto":
@@ -1095,6 +1138,11 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
     if parent is None:
         raise HTTPException(status_code=404, detail=f"Parent task '{body.parent_task_id}' not found")
 
+    # The parent is transitioned to ``waiting_for_subtasks`` below, so it has
+    # to sit in the scope this request resolves to - the same rule the other
+    # create paths apply to a body-supplied ``parent_task_id``.
+    _require_parent_tenant_scope(request, [body.parent_task_id])
+
     # Build a full TaskCreate from the self-create payload
     full_body = TaskCreate(
         title=body.title,
@@ -1107,7 +1155,7 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
         depends_on=body.depends_on,
         parent_task_id=body.parent_task_id,
         owned_files=body.owned_files,
-        tenant_id=request_tenant_id(request),
+        tenant_id=_resolve_request_tenant_scope(request),
     )
 
     # Auto-estimate difficulty if minutes not provided
@@ -2166,7 +2214,10 @@ def get_task_graph_neighbors(task_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     _require_task_access(task, request)
 
-    all_tasks = store.list_tasks()
+    # Neighbours are materialised from the caller's scope, not from the whole
+    # store: an edge that crosses a tenant boundary would otherwise surface
+    # the other side's title, status and role through this panel.
+    all_tasks = store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))
     by_id = {t.id: t for t in all_tasks}
 
     def _neighbor(other: Task) -> dict[str, Any]:

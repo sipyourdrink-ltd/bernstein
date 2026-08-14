@@ -247,8 +247,8 @@ workflows so the shared runner pool serves the test matrix first:
 Step-level gating inside `pr-policy.yml` preserves the original
 per-check semantics (bot-author skips, `skip-text-hygiene` /
 `skip-autosync` labels, same-repo-only autosync). None of these
-checks is required by branch protection; the required contexts remain
-`CI gate` and `review-bot-ack` only.
+checks is required by branch protection; the required context remains
+`CI gate` only.
 
 Advisory scanners that duplicate other signal do not run per PR:
 the vulture / refurb / perflint jobs in
@@ -258,14 +258,13 @@ findings stay out of the code-scanning alert feed.
 
 ## Gating vs advisory workflows
 
-Two contexts gate a merge. Everything else is advisory and cannot
-block or unblock one.
+One context gates a merge. Everything else is advisory and cannot
+block or unblock it.
 
 | Role | Workflow | Context published |
 |------|----------|-------------------|
 | Gating | `ci.yml` | `CI gate` |
 | Gating | `ci-gate-stub.yml` | `CI gate` (fully-ignored diffs only) |
-| Gating | `review-bot-ack.yml` | `review-bot-ack` |
 
 Everything else that triggers on `pull_request` is advisory:
 `a2a-federation-e2e`, `airgap-e2e`, `bernstein-pr-review`,
@@ -340,17 +339,12 @@ only reads pull requests.
 
 The free-tier public-repo ceiling is 20 concurrent jobs, so the budget
 is jobs, not runs. Measured on one head SHA of a workflow-touching PR
-(#3157), 18 workflow runs resolved to 47 runner jobs:
+(#3157), 14 workflow runs resolved to 43 runner jobs:
 
 | Role | Runs | Runner jobs | Share |
 |------|------|-------------|-------|
-| Gating (`ci.yml`) | 1 | 34 | 72% |
-| Gating (`review-bot-ack`) | 4 | 4 | 9% |
-| Advisory (all of it) | 13 | 9 | 19% |
-
-The `review-bot-ack` row predates its concurrency change: those four runs
-are the duplicate storm a non-cancelling group produced on one head SHA.
-It now cancels superseded runs like everything else, so expect one or two.
+| Gating (`ci.yml`) | 1 | 34 | 79% |
+| Advisory (all of it) | 13 | 9 | 21% |
 
 Counting runs instead of jobs inverts that picture and makes advisory
 work look dominant. It is not: an advisory workflow is one job, `ci.yml`
@@ -382,97 +376,26 @@ the rule and the exception list, so a new `pull_request` workflow
 cannot land without a concurrency group and an exception cannot be
 added silently.
 
-#### Why suppressing cancellation is not a fix
+#### Publishing a required context independent of a job's fate
 
-`review-bot-ack.yml` used to be an exception, on the theory that a
-required context must never be cancelled. That reasoning was sound and
-the remedy was not.
+A job publishes a check-run named after itself, so that check-run
+inherits the job's fate: branch protection folds every check-run of a
+required name into its verdict, and a later success does not clear an
+earlier non-success. A cancelled required job then holds the commit at
+BLOCKED for its whole life, and a skipped one counts as passing without
+running (#3042, #3154).
 
-Branch protection folds every check-run of a required name into its
-verdict, and a later success does not clear an earlier non-success. A
-job publishes a check-run named after itself, so a job named after a
-required context turns two ordinary job states into permanent blocks on
-that commit:
-
-| Job state | Resulting check-run | Effect on the gate |
-|---|---|---|
-| cancelled | `cancelled` | commit stays BLOCKED for its whole life |
-| skipped | `skipped` | counts as **passing** - the gate is satisfied without running |
-
-`cancel-in-progress: false` does not prevent the first row. A
-concurrency group is a one-deep queue: when a run is executing and a
-second is pending, a third arriving in the same group cancels the
-pending one. Both event lanes reach three events on one head SHA
-routinely - `synchronize` plus two body edits on `pull_request`, and two
-review bots plus a human on `pull_request_review` - so both lanes
-produced cancelled instances. Adding `github.event_name` to the group
-key only separated the lanes; it did nothing inside either one.
-
-The durable fix is to stop letting a job's fate write the context.
-`scripts/publish_required_check.py` upserts a single terminal check-run
-per head SHA:
-
-- existing instances are patched to the current verdict, so a commit
-  never accumulates two contradictory verdicts, and a SHA already
-  poisoned by the old mechanism is healed on the next run
-- the conclusion set is closed to `success` and `failure` - `cancelled`
-  is unrecoverable and `skipped`/`neutral` read as passing, so none of
-  them are writable
-- the publish step is guarded by `if: ${{ !cancelled() }}`, so a
-  cancelled job writes nothing and the context stays absent, which reads
-  as BLOCKED until a run reports for real
-
-Cancellation is harmless once the context is published this way, which
-is why the workflow now follows the ordinary rule. Two invariants keep
-it that way: no job in `review-bot-ack.yml` may be named after the
-context, and every job in it must publish through the script. Both are
-pinned in `tests/unit/test_review_bot_ack_workflow_yaml.py`, with the
-publisher's own logic covered in
+When a required context must survive those states,
+`scripts/publish_required_check.py` decouples it from any job's fate: it
+upserts a single terminal check-run per head SHA, patching any existing
+instance in place so a commit never accumulates two contradictory
+verdicts. Its conclusion set is closed to `success` and `failure` -
+`cancelled` is unrecoverable and `skipped`/`neutral` read as passing, so
+neither is writable - and the publish step is guarded by
+`if: ${{ !cancelled() }}`, so a cancelled job writes nothing and the
+context stays absent (which reads as BLOCKED) until a run reports for
+real. The publisher's logic is covered by
 `tests/unit/test_publish_required_check.py`.
-
-#### Every head gets a verdict, or the gate is re-dispatched
-
-A fork's gate run holds a read-only token, so the context is written by
-`review-bot-ack-publish.yml`, a `workflow_run` hop that runs in the base
-repository's context. One head SHA collects several gate runs - a push,
-two body edits, a review from each bot - and each of them wakes a
-publisher, so the hop has to elect exactly one writer per head.
-
-Electing it by run id alone is wrong, and heads that carried no
-`review-bot-ack` context at all were the symptom:
-
-- Runs released together are cancelled in an order unrelated to their
-  ids. When the cancelled run holds the higher id, the run that actually
-  passed reads itself as stale and stays quiet, while the cancelled run
-  has no verdict to publish. Nobody writes.
-- `pull_request_review` gate runs 403 on their in-job publish exactly as
-  `pull_request` ones do, so they need the hop too.
-
-The publisher now elects its writer from what each run *can* do rather
-than from its id:
-
-| Situation on the head | Outcome |
-|---|---|
-| a newer gate run can still publish | this publisher stands down |
-| this run can publish and no newer one can | this publisher writes the verdict |
-| an older run can publish | it writes; this one stands down |
-| no gate run on the head can publish | the newest re-dispatches the gate |
-
-The re-dispatch is bounded to one per head SHA: it is skipped once any
-gate run on the head carries `run_attempt > 1`, which is the mark a
-re-dispatch - or an operator's own re-run - leaves in GitHub's state. It
-is also skipped when the head already carries a terminal context.
-
-The rule is a pure function in `scripts/ack_publisher_currency.py` so it
-can be replayed against recorded run histories in
-`tests/unit/test_review_bot_ack_workflow_yaml.py`, which also pins the
-property that matters: for any history of gate runs on a head, exactly
-one publisher writes or re-dispatches, never zero and never two.
-
-Operator note: closing and reopening a pull request to republish an
-absent `review-bot-ack` should no longer be necessary. If it still is,
-the run history for that head is the evidence to attach - specifically
-each gate run's id, event, conclusion and `run_attempt`.
 
 ## Required check
 

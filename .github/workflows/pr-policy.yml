@@ -11,8 +11,8 @@ name: PR policy
 #
 # Consolidating them into sequential steps cuts three runner slots per
 # PR event and reduces queue wait on the shared runner pool. None of
-# these checks is in the required-status-check list ("CI gate" and
-# "review-bot-ack" are the only required contexts), so the check-name
+# these checks is in the required-status-check list ("CI gate" is the
+# only required context), so the check-name
 # change is safe for branch protection.
 #
 # Step gating preserves the original per-workflow semantics:

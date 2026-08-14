@@ -131,7 +131,6 @@ UNDOCUMENTED_EXEMPTIONS: dict[str, str] = {
     "sla": "Per-goal SLA contract receipts (#2549)",
     "spec": "Specification renderer group (#2550)",
     "supervisor": "Process supervisor group (#2550)",
-    "sync": "Task synchronization helper (#2358)",
     "team": "Agent team coordination group (#2550)",
     "telemetry": "Telemetry collection group (#2550)",
     "trackers": "Issue tracker integration group (#2550)",

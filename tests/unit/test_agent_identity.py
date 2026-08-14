@@ -381,3 +381,526 @@ class TestHashToken:
         h1 = _hash_token("token-a")
         h2 = _hash_token("token-b")
         assert h1 != h2
+
+
+class TestAgentCredentialTenantDeserialization:
+    """The persisted ``tenant_id`` becomes the authenticated request scope.
+
+    ``AgentCredential.from_dict`` is the boundary where a stored record turns
+    into that scope, so it establishes the value as a real tenant id instead
+    of coercing whatever shape was on disk into a usable one.
+    """
+
+    def test_absent_tenant_resolves_to_the_default(self) -> None:
+        """Records written before the field existed still load."""
+        credential = AgentCredential.from_dict({"token_hash": "abc"})
+
+        assert credential.tenant_id == "default"
+
+    def test_named_tenant_is_preserved(self) -> None:
+        credential = AgentCredential.from_dict({"token_hash": "abc", "tenant_id": "tenant-a"})
+
+        assert credential.tenant_id == "tenant-a"
+
+    @pytest.mark.parametrize("stored", [123, 1.5, True, ["tenant-a"], {"id": "tenant-a"}])
+    def test_non_string_tenant_is_refused(self, stored: object) -> None:
+        """A non-string record is rejected rather than stringified.
+
+        ``str()`` would turn any of these into a non-blank value that reads
+        back as a legitimate scope.
+        """
+        with pytest.raises(ValueError, match="tenant_id"):
+            AgentCredential.from_dict({"token_hash": "abc", "tenant_id": stored})
+
+    @pytest.mark.parametrize("stored", ["", "   ", "\t"])
+    def test_blank_tenant_is_refused(self, stored: str) -> None:
+        with pytest.raises(ValueError, match="tenant_id"):
+            AgentCredential.from_dict({"token_hash": "abc", "tenant_id": stored})
+
+    def test_store_skips_an_identity_whose_credential_is_refused(self, tmp_path: Path) -> None:
+        """A record that cannot establish a scope is skipped, not listed.
+
+        ``list_identities`` reports what the store can vouch for; an identity
+        whose credential does not deserialise is left out entirely rather
+        than surfaced with a scope derived from the bad record.
+        """
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, _token = store.create_identity("session-good", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        corrupt = identities_dir / "session-corrupt.json"
+        payload = json.loads((identities_dir / f"{identity.id}.json").read_text())
+        payload["id"] = "session-corrupt"
+        payload["session_id"] = "session-corrupt"
+        payload["credential"]["tenant_id"] = 42
+        corrupt.write_text(json.dumps(payload))
+
+        listed = {found.id for found in store.list_identities()}
+
+        assert identity.id in listed
+        assert "session-corrupt" not in listed
+
+
+class TestCorruptIdentityDoesNotBreakAuthentication:
+    """A record that will not deserialise authenticates as nobody, not as a 500.
+
+    ``AgentCredential.from_dict`` refuses a persisted ``tenant_id`` that is
+    not a real tenant id, and that refusal reaches every caller through
+    ``AgentIdentityStore._load``.  ``_load`` sits under the authentication
+    entry points, which sit under the server's auth middleware, so an escape
+    there turns an unusable stored record into a 500 on an unauthenticated
+    request - a corrupt file on disk becoming a server error any caller can
+    trigger. The store answers "no such identity" instead.
+    """
+
+    @staticmethod
+    def _corrupt_tenant(identities_dir: Path, identity_id: str) -> None:
+        """Rewrite one persisted record's credential tenant to a bad value."""
+        import json
+
+        path = identities_dir / f"{identity_id}.json"
+        payload = json.loads(path.read_text())
+        payload["credential"]["tenant_id"] = 42
+        path.write_text(json.dumps(payload))
+
+    def test_jwt_authentication_returns_none_for_a_corrupt_record(self, tmp_path: Path) -> None:
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-jwt", "backend")
+        assert store.authenticate(token) is not None, "precondition: the token authenticates before corruption"
+
+        self._corrupt_tenant(tmp_path / "agent_identities", identity.id)
+
+        assert AgentIdentityStore(tmp_path).authenticate(token) is None
+
+    def test_opaque_authentication_returns_none_for_a_corrupt_record(self, tmp_path: Path) -> None:
+        """The opaque-token path reaches ``_load`` through the token index.
+
+        The index is rebuilt from the raw JSON and never validates the
+        tenant, so it hands out the identity id and the failure lands in
+        ``_load`` - a different route to the same record than the JWT path.
+        """
+        import json
+
+        opaque_token = "opaque-agent-token"
+        store = AgentIdentityStore(tmp_path)
+        identity, _token = store.create_identity("session-opaque", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        path = identities_dir / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        payload["credential"]["token_type"] = "opaque"
+        payload["credential"]["token_hash"] = _hash_token(opaque_token)
+        path.write_text(json.dumps(payload))
+        assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is not None, (
+            "precondition: the opaque token authenticates before corruption"
+        )
+
+        self._corrupt_tenant(identities_dir, identity.id)
+
+        assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is None
+
+    def test_a_valid_identity_still_authenticates_alongside_a_corrupt_one(self, tmp_path: Path) -> None:
+        """Skipping the bad record does not take the good ones with it."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        good, good_token = store.create_identity("session-good", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        corrupt = identities_dir / "session-corrupt.json"
+        payload = json.loads((identities_dir / f"{good.id}.json").read_text())
+        payload["id"] = "session-corrupt"
+        payload["session_id"] = "session-corrupt"
+        payload["credential"]["token_hash"] = _hash_token("some-other-token")
+        payload["credential"]["tenant_id"] = 42
+        corrupt.write_text(json.dumps(payload))
+
+        reloaded = AgentIdentityStore(tmp_path)
+
+        assert reloaded.get("session-corrupt") is None
+        authenticated = reloaded.authenticate(good_token)
+        assert authenticated is not None
+        assert authenticated.id == good.id
+
+
+class TestIdentityReadersSkipCorruptFilesIdentically:
+    """Every reader of the identity directory survives the same bad file.
+
+    The store has three readers - the startup token-index scan, the listing
+    route, and the by-id lookup behind authentication - and each used to pick
+    the JSON apart with its own exception list.  A file that is not an object
+    at all made the startup scan raise `AttributeError` and refuse to
+    construct the store; a malformed `metadata` or `permissions` value made
+    the listing route raise `TypeError` out of `GET /identities`.  All three
+    now share one validated reader, so a bad file is skipped everywhere.
+    """
+
+    @staticmethod
+    def _write(identities_dir: Path, name: str, raw: str) -> None:
+        (identities_dir / f"{name}.json").write_text(raw)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "null",
+            "42",
+            '"a string, not a record"',
+            "[]",
+            '{"id": "x", "role": "backend", "session_id": "x", "credential": 5}',
+            "{not json at all",
+        ],
+    )
+    def test_store_constructs_despite_a_malformed_file(self, tmp_path: Path, raw: str) -> None:
+        """A malformed file must not stop the store from being built.
+
+        ``_rebuild_token_index`` runs from ``__init__``, so anything escaping
+        it takes the server down at startup rather than degrading one record.
+        """
+        store = AgentIdentityStore(tmp_path)
+        _identity, token = store.create_identity("session-good", "backend")
+        self._write(tmp_path / "agent_identities", "session-broken", raw)
+
+        reloaded = AgentIdentityStore(tmp_path)
+
+        assert reloaded.authenticate(token) is not None
+        assert reloaded.get("session-broken") is None
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("metadata", 7), ("permissions", 7), ("status", "not-a-status")],
+    )
+    def test_listing_skips_a_record_with_a_malformed_field(self, tmp_path: Path, field: str, value: object) -> None:
+        """``GET /identities`` lists what it can vouch for and skips the rest."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        good, _token = store.create_identity("session-good", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        payload = json.loads((identities_dir / f"{good.id}.json").read_text())
+        payload["id"] = "session-broken"
+        payload["session_id"] = "session-broken"
+        payload[field] = value
+        (identities_dir / "session-broken.json").write_text(json.dumps(payload))
+
+        listed = {found.id for found in AgentIdentityStore(tmp_path).list_identities()}
+
+        assert good.id in listed
+        assert "session-broken" not in listed
+
+
+class TestExplicitNullTenantIsRefused:
+    """An omitted tenant is the legacy case; an explicit null is not.
+
+    Leniency exists for records written before the field existed, which carry
+    no key at all.  A record that carries the key with `null` in it asserted a
+    scope and asserted a non-scope, so treating it as the legacy case would
+    authenticate it under the default tenant on the strength of a value that
+    is not a tenant.
+    """
+
+    def test_absent_key_still_resolves_to_the_default(self) -> None:
+        assert AgentCredential.from_dict({"token_hash": "abc"}).tenant_id == "default"
+
+    def test_explicit_null_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="tenant_id"):
+            AgentCredential.from_dict({"token_hash": "abc", "tenant_id": None})
+
+    def test_explicit_null_does_not_authenticate(self, tmp_path: Path) -> None:
+        """The refusal reaches authentication as a miss, not as a 500."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-null", "backend")
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        payload["credential"]["tenant_id"] = None
+        path.write_text(json.dumps(payload))
+
+        assert AgentIdentityStore(tmp_path).authenticate(token) is None
+
+
+class TestPersistedScopeCollectionsAreValidated:
+    """Permissions and scopes are authorization, so their shape is checked.
+
+    ``frozenset()`` and ``list()`` take any iterable, which is the wrong
+    behaviour for reading a stored grant: a mapping yields its keys, so a
+    corrupt ``permissions`` object hands out real permissions, and a mapping
+    in ``task_ids`` collapses to an empty list - which does not mean "no
+    tasks" but "no restriction".
+    """
+
+    def test_a_mapping_does_not_become_held_permissions(self) -> None:
+        """The keys of a mapping are not a grant."""
+        with pytest.raises(ValueError, match="permissions"):
+            AgentIdentity.from_dict(
+                {
+                    "id": "x",
+                    "role": "backend",
+                    "session_id": "x",
+                    "permissions": {"admin:manage": 1},
+                }
+            )
+
+    def test_a_string_does_not_become_per_character_permissions(self) -> None:
+        with pytest.raises(ValueError, match="permissions"):
+            AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", "permissions": "admin:manage"})
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    @pytest.mark.parametrize("value", [{}, {"t-1": True}, "t-1", 7, None])
+    def test_a_scope_field_that_is_not_a_list_is_refused(self, field: str, value: object) -> None:
+        """An empty scope means unrestricted, so a bad shape must not reach it."""
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", field: value})
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    def test_a_non_string_entry_is_refused(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", field: ["ok", 7]})
+
+    def test_credential_scopes_are_validated_too(self) -> None:
+        """The credential carries its own copy of the task scope."""
+        with pytest.raises(ValueError, match="task_ids"):
+            AgentCredential.from_dict({"token_hash": "abc", "task_ids": {"t-1": True}})
+
+    def test_well_formed_records_still_round_trip(self, tmp_path: Path) -> None:
+        """Validation does not reject what the store actually writes."""
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-ok", "backend", task_ids=["t-1", "t-2"])
+
+        reloaded = AgentIdentityStore(tmp_path).authenticate(token)
+
+        assert reloaded is not None
+        assert reloaded.task_ids == ["t-1", "t-2"]
+        assert reloaded.permissions == identity.permissions
+
+    def test_a_record_with_a_corrupt_scope_does_not_authenticate(self, tmp_path: Path) -> None:
+        """The refusal reaches authentication as a miss, not as a wide grant."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-scope", "backend", task_ids=["t-1"])
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        # An empty mapping would deserialise to [] - "no task restriction".
+        payload["credential"]["task_ids"] = {}
+        payload["task_ids"] = {}
+        path.write_text(json.dumps(payload))
+
+        assert AgentIdentityStore(tmp_path).authenticate(token) is None
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    @pytest.mark.parametrize("value", [["ok", 7], ["ok", None], "t-1", {"t-1": True}, {}, "", 0, False])
+    def test_a_bad_scope_is_refused_before_a_token_is_minted(self, tmp_path: Path, field: str, value: object) -> None:
+        """A scope the reader would refuse must not become a signed credential.
+
+        Validating only on the read side leaves the caller able to mint a
+        token whose own record cannot be loaded - the agent then authenticates
+        as an unknown identity for the whole life of the token.
+        """
+        store = AgentIdentityStore(tmp_path)
+
+        with pytest.raises(ValueError, match=field):
+            store.create_identity("session-bad-scope", "backend", **{field: value})  # type: ignore[arg-type]
+
+        assert not list((tmp_path / "agent_identities").glob("session-bad-scope*.json"))
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    @pytest.mark.parametrize("value", [None, []])
+    def test_an_absent_or_empty_scope_still_means_unrestricted(self, tmp_path: Path, field: str, value: object) -> None:
+        """Refusing falsy junk must not also refuse the two real "no scope" values.
+
+        ``None`` is the argument's default and an empty list is a caller
+        explicitly asking for no restriction.  Both stay valid; it is the other
+        falsy shapes that are refused rather than read as "unrestricted".
+        """
+        store = AgentIdentityStore(tmp_path)
+
+        identity, token = store.create_identity("session-open-scope", "backend", **{field: value})  # type: ignore[arg-type]
+
+        assert getattr(identity, field) == []
+        assert AgentIdentityStore(tmp_path).authenticate(token) is not None
+
+    def test_a_legacy_shaped_record_is_refused_before_its_claims_are_read(self, tmp_path: Path) -> None:
+        """A stored non-string scope dies at the read, not at the claim comparison.
+
+        Both copies of the scope are written together, so a token can only
+        carry a non-string entry if the record beside it carries one too - and
+        that record is refused when it loads, a step before the claim check
+        runs.  Tightening the claim comparison therefore takes no token out of
+        service that was still in service without it.
+        """
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-legacy", "backend", task_ids=["7"])
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        payload["task_ids"] = [7]
+        payload["credential"]["task_ids"] = [7]
+        path.write_text(json.dumps(payload))
+
+        reloaded = AgentIdentityStore(tmp_path)
+
+        assert reloaded._load(identity.id) is None
+        assert reloaded.authenticate(token) is None
+
+
+class TestIdentityAndCredentialScopeMustAgree:
+    """Two copies of the task scope must not disagree about what is allowed.
+
+    ``task_ids`` and ``allowed_files`` are persisted on the identity and on
+    its credential.  Different consumers read different copies - the request
+    middleware reads the identity's, the JWT claim check reads the
+    credential's - so a record holding two answers is authorized under
+    whichever copy the reader happens to reach.  An identity holding an empty
+    list beside a scoped credential is the dangerous direction: empty means
+    unrestricted.
+    """
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    def test_an_empty_identity_scope_beside_a_scoped_credential_is_refused(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict(
+                {
+                    "id": "x",
+                    "role": "backend",
+                    "session_id": "x",
+                    "credential": {"token_hash": "abc", field: ["t-1"]},
+                    field: [],
+                }
+            )
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    def test_a_wider_identity_scope_is_refused(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict(
+                {
+                    "id": "x",
+                    "role": "backend",
+                    "session_id": "x",
+                    "credential": {"token_hash": "abc", field: ["t-1"]},
+                    field: ["t-1", "t-2"],
+                }
+            )
+
+    def test_matching_scopes_in_any_order_are_accepted(self) -> None:
+        """Ordering is not a scope difference - only membership is."""
+        identity = AgentIdentity.from_dict(
+            {
+                "id": "x",
+                "role": "backend",
+                "session_id": "x",
+                "credential": {"token_hash": "abc", "task_ids": ["t-2", "t-1"]},
+                "task_ids": ["t-1", "t-2"],
+            }
+        )
+
+        assert identity.task_ids == ["t-1", "t-2"]
+
+    def test_an_identity_without_a_credential_is_unaffected(self) -> None:
+        identity = AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", "task_ids": ["t-1"]})
+
+        assert identity.task_ids == ["t-1"]
+
+    def test_a_divergent_record_does_not_authenticate_an_opaque_token(self, tmp_path: Path) -> None:
+        """An opaque token never reaches the claim check that would disagree.
+
+        The JWT path compares the token's claims against the credential, so a
+        widened identity copy is caught there.  An opaque token skips that
+        comparison entirely, which is exactly the case the read-side check has
+        to cover.
+        """
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, _ = store.create_identity("session-opaque", "backend", task_ids=["t-1"])
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        opaque_token = "opaque-token-value"
+        payload["credential"]["token_type"] = "opaque"
+        payload["credential"]["token_hash"] = _hash_token(opaque_token)
+        # The credential stays scoped; the identity copy is widened to
+        # "unrestricted", which is what the request middleware reads.
+        payload["task_ids"] = []
+        path.write_text(json.dumps(payload))
+
+        assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is None
+
+    def test_what_the_store_writes_still_loads(self, tmp_path: Path) -> None:
+        store = AgentIdentityStore(tmp_path)
+        _, token = store.create_identity("session-agree", "backend", task_ids=["t-1"], allowed_files=["src/a.py"])
+
+        reloaded = AgentIdentityStore(tmp_path).authenticate(token)
+
+        assert reloaded is not None
+        assert reloaded.task_ids == ["t-1"]
+        assert reloaded.allowed_files == ["src/a.py"]
+
+
+class TestSignedClaimsAreComparedWithoutCoercion:
+    """A claim is compared as stored, not as ``str()`` renders it.
+
+    ``sorted(map(str, claim))`` makes a claim of ``[1]`` compare equal to a
+    stored ``["1"]``.  The comparison exists to establish that the token's
+    scope is the credential's scope, and a coerced match does not establish
+    that.
+    """
+
+    @staticmethod
+    def _claims_for(identity: AgentIdentity, **overrides: object) -> dict[str, object]:
+        cred = identity.credential
+        assert cred is not None
+        return {
+            "sub": identity.id,
+            "sid": identity.session_id,
+            "role": identity.role,
+            "jti": cred.jti,
+            "scopes": sorted(identity.permissions),
+            "tenant_id": cred.tenant_id,
+            "task_ids": list(cred.task_ids),
+            "allowed_files": list(cred.allowed_files),
+            **overrides,
+        }
+
+    @pytest.mark.parametrize(
+        ("field", "stored", "claimed"),
+        [
+            ("task_ids", ["1"], [1]),
+            ("task_ids", ["True"], [True]),
+            ("allowed_files", ["1"], [1]),
+            ("scopes", None, [1]),
+        ],
+    )
+    def test_a_coercible_claim_is_not_accepted_as_a_match(
+        self, tmp_path: Path, field: str, stored: list[str] | None, claimed: list[object]
+    ) -> None:
+        """``str()`` on a claim would make a number match a stored string."""
+        store = AgentIdentityStore(tmp_path)
+        task_ids = stored if field == "task_ids" else None
+        allowed_files = stored if field == "allowed_files" else None
+        identity, token = store.create_identity(
+            f"session-claims-{field}", "backend", task_ids=task_ids, allowed_files=allowed_files
+        )
+        claims = self._claims_for(identity, **{field: claimed})
+
+        assert store._validate_jwt_claims(claims, identity, token) is False
+
+    def test_a_claim_that_is_not_a_list_is_not_accepted(self, tmp_path: Path) -> None:
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-claims-shape", "backend", task_ids=["t-1"])
+        claims = self._claims_for(identity, task_ids={"t-1": True})
+
+        assert store._validate_jwt_claims(claims, identity, token) is False
+
+    def test_the_issued_claims_still_validate(self, tmp_path: Path) -> None:
+        """The tightened comparison does not reject a real token."""
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity(
+            "session-claims-ok", "backend", task_ids=["t-1"], allowed_files=["src/a.py"]
+        )
+
+        assert store._validate_jwt_claims(self._claims_for(identity), identity, token) is True
+        assert AgentIdentityStore(tmp_path).authenticate(token) is not None

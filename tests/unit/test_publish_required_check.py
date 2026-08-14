@@ -35,7 +35,7 @@ from publish_required_check import (
 
 REPO = "sipyourdrink-ltd/bernstein"
 SHA = "8059528db8ac407b6f8232e425885f80d7560ffd"
-NAME = "review-bot-ack"
+NAME = "CI gate"
 
 
 class FakeTransport:

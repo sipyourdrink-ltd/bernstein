@@ -12,8 +12,8 @@ The failures this module exists to prevent
    percentage would open a fresh PR on every fire.
 
 2. **A PR that can never merge.** A pull request created with
-   ``GITHUB_TOKEN`` does not trigger workflows, so neither required
-   context (``CI gate``, ``review-bot-ack``) ever reports on it. Branch
+   ``GITHUB_TOKEN`` does not trigger workflows, so the required
+   context (``CI gate``) never reports on it. Branch
    protection then holds it at BLOCKED forever while the rollup reads
    SUCCESS, and the only way out is an operator closing it by hand. A
    closed PR cannot be reopened by force-pushing its branch, so the next
@@ -111,7 +111,7 @@ def test_pr_is_opened_with_a_token_that_triggers_workflows(steps: list[dict]) ->
     token = _create_pr_step(steps)["with"]["token"]
     assert "BERNSTEIN_AUTOSYNC_TOKEN" in token, (
         "a PR created with GITHUB_TOKEN does not trigger workflows, so `CI gate` "
-        "and `review-bot-ack` never report and the PR can never merge"
+        "never reports and the PR can never merge"
     )
     assert token.index("BERNSTEIN_AUTOSYNC_TOKEN") < token.index("GITHUB_TOKEN"), (
         "GITHUB_TOKEN may only be the fallback, never the preferred token"

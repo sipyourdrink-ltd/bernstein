@@ -11,8 +11,8 @@ on:
   # Path-scoped on pull_request: CodeQL analyzes Python sources only, so
   # PRs that touch no analyzable path (docs-only, workflow-only) skip the
   # run and free a runner slot. This is safe for branch protection: the
-  # required status checks on `main` are `CI gate` and `review-bot-ack`
-  # only, so a skipped CodeQL run cannot deadlock a PR. Push-to-main and
+  # required status check on `main` is `CI gate` only, so a skipped
+  # CodeQL run cannot deadlock a PR. Push-to-main and
   # the weekly schedule keep full-coverage analysis on everything that
   # lands.
   pull_request:

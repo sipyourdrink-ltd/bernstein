@@ -522,13 +522,10 @@ def test_ci_gate_rollup_passes_on_push(ci_doc: dict[str, object], tmp_path: Path
 # "Required-check coverage under `merge_group`".
 # ---------------------------------------------------------------------------
 
-REVIEW_BOT_ACK_CONTEXT = "review-bot-ack"
-REVIEW_BOT_ACK_WF = Path(".github/workflows/review-bot-ack.yml")
-
 # Mirrors `repos/sipyourdrink-ltd/bernstein/branches/main/protection`
 # -> required_status_checks.contexts. Keep in sync with the canary's
 # BRANCH_PROTECTION_CONTEXTS_JSON.
-BRANCH_PROTECTION_CONTEXTS = (REQUIRED_CONTEXT, REVIEW_BOT_ACK_CONTEXT)
+BRANCH_PROTECTION_CONTEXTS = (REQUIRED_CONTEXT,)
 
 
 def _on(doc: dict[str, object]) -> dict[str, object]:
@@ -624,51 +621,6 @@ def test_ci_merge_group_trigger_is_unconditional(ci_doc: dict[str, object]) -> N
         f"found {merge_group!r}. A filtered merge_group trigger means some "
         "merge groups never publish `CI gate` and sit in the queue forever."
     )
-
-
-def test_review_bot_ack_has_merge_group_passthrough() -> None:
-    """The queue-side emitter for `review-bot-ack` must stay wired.
-
-    The real gate evaluates PR review threads and has nothing to evaluate on
-    the queue's ephemeral ref, so a dedicated queue-side job publishes the
-    identical context name there. Without it the context cannot be required on
-    the ruleset, and the two gates (PR entry vs queue merge) drift apart.
-
-    The job must not be *named* after the context - a job's check-run inherits
-    the job's fate, and for a required name both `cancelled` and `skipped` are
-    unrecoverable states (#3042, #3154). It writes the context explicitly
-    instead, on the merge group's own head SHA.
-    """
-    doc = yaml.safe_load(REVIEW_BOT_ACK_WF.read_text(encoding="utf-8"))
-    assert isinstance(doc, dict)
-    assert "merge_group" in _on(doc), "review-bot-ack.yml must trigger on merge_group"
-
-    jobs = doc.get("jobs")
-    assert isinstance(jobs, dict)
-    queue_side = [
-        key
-        for key, body in jobs.items()
-        if isinstance(body, dict)
-        and REVIEW_BOT_ACK_CONTEXT in _api_published_contexts(body)
-        and "merge_group" in str(body.get("if") or "")
-        and "!=" not in str(body.get("if") or "")
-    ]
-    assert queue_side, (
-        f"review-bot-ack.yml must keep a job gated to `github.event_name == 'merge_group'` that publishes "
-        f"{REVIEW_BOT_ACK_CONTEXT!r} via scripts/publish_required_check.py, so the context reports on queued groups."
-    )
-    for key in queue_side:
-        job = jobs[key]
-        assert isinstance(job, dict)
-        assert job.get("name") != REVIEW_BOT_ACK_CONTEXT, (
-            f"job {key!r} must not be named after the required context; a cancelled or skipped job would then "
-            "write the context itself"
-        )
-        env = "\n".join(str(s.get("env") or {}) for s in job.get("steps") or [] if isinstance(s, dict))
-        assert "merge_group.head_sha" in env, (
-            f"job {key!r} must publish the context on the merge group's own head SHA, which is the ref the queue "
-            "evaluates required checks against"
-        )
 
 
 # ---------------------------------------------------------------------------

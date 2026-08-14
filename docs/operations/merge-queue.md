@@ -13,9 +13,9 @@ shipped ruleset is currently out of sync with it; see
 | Topic | Status | Where |
 |-------|--------|-------|
 | Queue state today | Ruleset exists, `enforcement: disabled` | ruleset `main-merge-queue` |
-| Safe to flip today? | **No** - 4 blockers, one substantive | [Blockers](#blockers-to-the-flip) |
+| Safe to flip today? | **No** - 2 blockers, one substantive | [Blockers](#blockers-to-the-flip) |
 | What it solves | Tests the A+B *combination* before merge | this doc |
-| Required checks on the queue | `CI gate` **and** `review-bot-ack` | `ci.yml`, `review-bot-ack.yml` |
+| Required checks on the queue | `CI gate` | `ci.yml` |
 | What the group's CI is planned against | The group's `base_sha`, never `HEAD~1` | [What the group's CI actually tests](#what-the-groups-ci-actually-tests) |
 | Merge method | Squash | ruleset `merge_queue` rule |
 | Grouping | `ALLGREEN` (all entries in a group must pass) | ruleset |
@@ -53,8 +53,8 @@ Two distinct gates, do not conflate them:
 
 | Gate | Checks enforced | Trigger event |
 |------|-----------------|---------------|
-| **Enter the queue** | Legacy branch-protection required checks (`CI gate` + `review-bot-ack`) | `pull_request` |
-| **Merge from the queue** | Ruleset `required_status_checks` (must be `CI gate` + `review-bot-ack`) | `merge_group` |
+| **Enter the queue** | Legacy branch-protection required checks (`CI gate`) | `pull_request` |
+| **Merge from the queue** | Ruleset `required_status_checks` (must be `CI gate`) | `merge_group` |
 
 `CI gate` (the `ci-gate` aggregator job in `ci.yml`) runs on `merge_group`
 because the workflow declares `merge_group: {}` and `ci-gate` has
@@ -62,26 +62,12 @@ because the workflow declares `merge_group: {}` and `ci-gate` has
 
 ### Required-check coverage under `merge_group`
 
-Every context required on a PR also reports on a `merge_group` ref:
+The single required context also reports on a `merge_group` ref:
 
 | Required context | Emitting workflow | Runs on `merge_group`? |
 |------------------|-------------------|------------------------|
 | `CI gate` | `ci.yml` :: `ci-gate` | Yes - `merge_group: {}` |
 | `CI gate` | `ci-gate-stub.yml` :: `ci-gate` | No - `pull_request` only, and **correct** (see below) |
-| `review-bot-ack` | `review-bot-ack.yml` :: `merge-group-verify` | Yes - `if: github.event_name == 'merge_group'` |
-
-The queue-side emitter checks out
-`github.event.merge_group.base_ref`, not the group. `actions/checkout`
-with no `ref:` takes the triggering ref, which on a `merge_group` event is
-the ephemeral `gh-readonly-queue/...` branch carrying the *candidate pull
-request's tree*. That job holds `checks: write`, and `checks: write` is
-enough to post a completed check-run named `CI gate` with conclusion
-`success` on any commit in the repository - so running its publisher out
-of a candidate tree would hand the entry's author the ability to forge the
-other required context. Pinning the base ref is the same reasoning that
-pins the `pr-gate` job to the pull request's base ref. Locked by
-`tests/unit/test_merge_queue_gate_coverage_yaml.py` and
-`tests/unit/test_review_bot_ack_workflow_yaml.py`.
 
 `ci-gate-stub.yml` deliberately has no `merge_group` trigger. It exists
 only because `ci.yml`'s `pull_request` trigger carries a `paths-ignore:`
@@ -96,17 +82,9 @@ required-context name on the queue for no benefit.
 That makes `ci.yml`'s **unconditional** `merge_group: {}` trigger a
 load-bearing invariant: adding any filter to it would silently wedge the
 queue for every diff the filter excludes. It is locked by
-`tests/unit/test_required_check_canary_workflow_yaml.py`.
-
-> **`review-bot-ack` belongs in the ruleset `required_status_checks`.**
-> An earlier revision of this runbook said the opposite, on the grounds
-> that the workflow triggered only on `pull_request` /
-> `pull_request_review`. That is no longer true: `review-bot-ack.yml`
-> declares `merge_group: {}` and carries a `merge-group-verify` job that
-> publishes the identical `review-bot-ack` context on the queue's
-> ephemeral ref. Requiring it on the queue cannot wedge anything, and
-> leaving it out would leave two divergent definitions of "required" -
-> the PR gate enforcing two contexts and the queue enforcing one.
+`tests/unit/test_required_check_canary_workflow_yaml.py`, and the queue's
+required-context coverage by
+`tests/unit/test_merge_queue_gate_coverage_yaml.py`.
 
 ### What the group's CI actually tests
 
@@ -283,12 +261,9 @@ safer.
 | # | Blocker | Evidence | Clears when |
 |---|---------|----------|-------------|
 | 1 | The shipped ruleset would eject **every** entry. `check_response_timeout_minutes` is `30`; every measured `CI` run on `main` took longer than that. | p50 49 min, p90 214 min, max 243 min, 30/30 over 30 min. Re-checked 2026-07-27 over the last 40 concluded runs (`created_at` -> `updated_at`, which is what the queue timeout measures): p50 110, p90 224, max 243, **0 of 40** under 30 min | Step 1 is applied (raises it to `240`) and the verifier exits `0` |
-| 2 | The shipped ruleset requires only `CI gate`. `review-bot-ack` is absent, so the queue would merge without the gate that branch protection requires at entry. | `python scripts/verify_merge_queue_ruleset.py` -> `required_status_checks: missing 'review-bot-ack'` | Step 1 is applied and the verifier exits `0` |
-| 3 | CI wall time makes serialised merging impractical. `max_entries_to_build` is the number of groups built at once, but `max_entries_to_merge` is pinned to `1` for the release path, so a burst of N ready PRs costs N sequential merges. At p90 = 214 min that is most of a day for five PRs. | same distribution as #1 | CI wall time is bounded, or the release gate stops keying on the push head SHA so batches can merge |
-| 4 | The queue-side `review-bot-ack` emitter has never executed. `merge-group-verify` was written after the last live queue window (2026-05-22) and the queue has been disabled since. A required context whose emitter has never run is exactly the "waits forever on a check that cannot report" failure. | `gh run list --event merge_group` -> newest run 2026-05-22T02:04:46Z | The Step 4 smoke test observes it reporting on one real entry |
+| 2 | CI wall time makes serialised merging impractical. `max_entries_to_build` is the number of groups built at once, but `max_entries_to_merge` is pinned to `1` for the release path, so a burst of N ready PRs costs N sequential merges. At p90 = 214 min that is most of a day for five PRs. | same distribution as #1 | CI wall time is bounded, or the release gate stops keying on the push head SHA so batches can merge |
 
-Blocker 3 is the substantive one. Blockers 1 and 2 are two `gh api` calls;
-blocker 4 can only be retired by flipping once and watching. So the
+Blocker 2 is the substantive one. Blocker 1 is a single `gh api` call. So the
 recommended order is: apply Step 1, fix CI wall time, then flip with a
 single low-risk pull request as the canary and Step 4 open in front of
 you.
@@ -317,8 +292,7 @@ gh api "repos/$REPO/branches/main/protection/required_status_checks" \
 ```
 
 Expected: ruleset `main-merge-queue` at `enforcement: disabled`, and
-exactly two contexts - `CI gate` and `review-bot-ack`, both `app_id`
-`15368` (GitHub Actions).
+exactly one context - `CI gate`, `app_id` `15368` (GitHub Actions).
 
 Then diff the live ruleset against the spec. This is the check that
 names the drift instead of asking you to spot it:
@@ -333,16 +307,14 @@ Exit `1` prints one line per drifted field; as of 2026-07-27 it prints:
 ```console
 ruleset main-merge-queue (id 16719298)
 enforcement: disabled
-DRIFT: 3 field(s) disagree with the spec
+DRIFT: 2 field(s) disagree with the spec
   - max_entries_to_build: max_entries_to_build: live 1, spec 5
   - check_response_timeout_minutes: check_response_timeout_minutes: live 30, spec 240
-  - required_status_checks: missing 'review-bot-ack'
 ```
 
 **Step 1 - correct the rules while still disabled.** This applies the
-tunables above and adds `review-bot-ack` to the queue's required checks.
-Keep `enforcement: disabled` in this payload: a mis-typed rule set then
-cannot enable the queue as a side effect.
+tunables above. Keep `enforcement: disabled` in this payload: a mis-typed
+rule set then cannot enable the queue as a side effect.
 
 The spec file is the payload, so the whole step is one call:
 
@@ -384,8 +356,7 @@ gh api -X PUT "repos/$REPO/rulesets/$RULESET_ID" --input - <<'JSON'
         "strict_required_status_checks_policy": false,
         "do_not_enforce_on_create": true,
         "required_status_checks": [
-          { "context": "CI gate", "integration_id": 15368 },
-          { "context": "review-bot-ack", "integration_id": 15368 }
+          { "context": "CI gate", "integration_id": 15368 }
         ]
       }
     }
@@ -418,12 +389,8 @@ gh api -X PUT "repos/$REPO/rulesets/$RULESET_ID" -f enforcement=active
 chain, in order:
 
 1. A `merge_group` run appears: `gh run list --repo "$REPO" --event merge_group --limit 5`.
-2. Both `CI gate` **and** `review-bot-ack` report on it. `review-bot-ack`
-   is the one to watch: its queue-side emitter (`merge-group-verify` in
-   `review-bot-ack.yml`) has never executed against a live queue, because
-   it was written after the 2026-05-22 window and the queue has been
-   disabled since. If it does not report, the entry sits forever - pause
-   immediately rather than waiting it out.
+2. `CI gate` reports on it. If it does not report, the entry sits forever -
+   pause immediately rather than waiting it out.
 3. The PR merges and `main` gains a new commit. Do **not** assert it is
    the SHA the queue tested: under `merge_method: SQUASH` it is a new
    commit with a different SHA and possibly a different tree (see

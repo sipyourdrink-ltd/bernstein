@@ -325,12 +325,14 @@ def _run_mock_script(workdir: Path, task_title: str, tmp_path: Path) -> Path:
     script = tmp_path / "mock_script.py"
     script.write_text(MockAgentAdapter._build_mock_script())
     log_path = workdir / ".sdd" / "runtime" / "agent-mock-test.log"
-    task_info = json.dumps({
-        "workdir": str(workdir),
-        "log_path": str(log_path),
-        "task_id": "test-task-id",
-        "task_title": task_title,
-    })
+    task_info = json.dumps(
+        {
+            "workdir": str(workdir),
+            "log_path": str(log_path),
+            "task_id": "test-task-id",
+            "task_title": task_title,
+        }
+    )
     subprocess.run(
         [sys.executable, str(script), task_info],
         check=True,
@@ -429,7 +431,14 @@ def test_noop_task_neither_commits_nor_claims_evidence(tmp_path: Path) -> None:
     unrelated.write_text(unrelated.read_text() + "\n# unrelated local edit\n")
 
     log_path = project / ".sdd" / "runtime" / "agent-rerun.log"
-    task_info = json.dumps({"workdir": str(project), "task_id": "rerun", "task_title": "Fix off-by-one in get_item route", "log_path": str(log_path)})
+    task_info = json.dumps(
+        {
+            "workdir": str(project),
+            "task_id": "rerun",
+            "task_title": "Fix off-by-one in get_item route",
+            "log_path": str(log_path),
+        }
+    )
     script = tmp_path / "mock_script.py"
     subprocess.run([sys.executable, str(script), task_info], check=True, timeout=60, capture_output=True)
 
@@ -479,6 +488,7 @@ def test_commit_contains_only_the_fixed_file(tmp_path: Path) -> None:
     evidence_at = next(i for i, ln in enumerate(lines) if ln.startswith("Modified: app.py"))
     assert committed_at < evidence_at
 
+
 def test_mock_agent_attributes_evidence_to_correct_task_id(tmp_path: Path) -> None:
     """Two tasks with identical prompts must resolve to distinct task identities.
 
@@ -491,14 +501,17 @@ def test_mock_agent_attributes_evidence_to_correct_task_id(tmp_path: Path) -> No
 
     # Spawn session for Task A
     log_path_a = project / ".sdd" / "runtime" / "agent-task-a.log"
-    task_info_a = json.dumps({
-        "workdir": str(project),
-        "log_path": str(log_path_a),
-        "task_id": "task-a-123",
-        "task_title": "Task A",
-    })
+    task_info_a = json.dumps(
+        {
+            "workdir": str(project),
+            "log_path": str(log_path_a),
+            "task_id": "task-a-123",
+            "task_title": "Task A",
+        }
+    )
     script_path = tmp_path / "mock_script.py"
     from bernstein.adapters.mock import MockAgentAdapter
+
     script_path.write_text(MockAgentAdapter._build_mock_script())
 
     subprocess.run(
@@ -510,12 +523,14 @@ def test_mock_agent_attributes_evidence_to_correct_task_id(tmp_path: Path) -> No
 
     # Spawn session for Task B
     log_path_b = project / ".sdd" / "runtime" / "agent-task-b.log"
-    task_info_b = json.dumps({
-        "workdir": str(project),
-        "log_path": str(log_path_b),
-        "task_id": "task-b-456",
-        "task_title": "Task B",
-    })
+    task_info_b = json.dumps(
+        {
+            "workdir": str(project),
+            "log_path": str(log_path_b),
+            "task_id": "task-b-456",
+            "task_title": "Task B",
+        }
+    )
     subprocess.run(
         [sys.executable, str(script_path), task_info_b],
         check=True,

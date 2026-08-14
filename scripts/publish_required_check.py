@@ -37,7 +37,7 @@ Usage:
     python scripts/publish_required_check.py \\
         --repo sipyourdrink-ltd/bernstein \\
         --sha 8059528db8ac407b6f8232e425885f80d7560ffd \\
-        --name review-bot-ack \\
+        --name "CI gate" \\
         --conclusion success \\
         --title "No unresolved must-address findings" \\
         --summary "..."
@@ -83,7 +83,7 @@ class Transport(Protocol):
 
 
 def urllib_transport(token: str) -> Transport:
-    """Build a `Transport` backed by urllib, matching review_bot_ack.py."""
+    """Build a `Transport` backed by urllib."""
 
     def _call(method: str, url: str, body: dict[str, Any] | None = None) -> Any:
         payload = None if body is None else json.dumps(body).encode("utf-8")
@@ -214,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Publish a required status context as a single check-run.")
     p.add_argument("--repo", required=True, help="owner/name slug")
     p.add_argument("--sha", required=True, help="head SHA the context is published on")
-    p.add_argument("--name", required=True, help="required context name, e.g. review-bot-ack")
+    p.add_argument("--name", required=True, help="required context name, e.g. CI gate")
     p.add_argument("--conclusion", required=True, help=f"one of: {', '.join(ALLOWED_CONCLUSIONS)}")
     p.add_argument("--title", default="", help="check-run output title")
     p.add_argument("--summary", default="", help="check-run output summary")
