@@ -5,10 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from bernstein.core.guardrails import GuardrailsConfig, run_guardrails
 from bernstein.core.models import Task
 
 from bernstein.plugins import hookimpl
+
+
+@pytest.fixture(autouse=True)
+def _trusted_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the permission-denied hook against a trusted workspace.
+
+    Trust gating (untrusted / indeterminate workspaces) is owned by
+    tests/unit/test_plugins.py; this suite assumes trust has been granted.
+    """
+    monkeypatch.setattr("bernstein.plugins.manager.is_workspace_trusted", lambda _root: True)
 
 
 class HintPlugin:
@@ -23,7 +34,7 @@ def test_guardrail_triggers_hook_and_appends_hint(tmp_path: Path):
     # Setup plugin manager with our test plugin
     from bernstein.plugins.manager import PluginManager
 
-    pm = PluginManager()
+    pm = PluginManager(workdir=tmp_path)
     pm._pm.register(HintPlugin())
 
     # Mock get_plugin_manager to return our custom pm

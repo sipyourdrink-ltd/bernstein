@@ -11,6 +11,16 @@ import pytest
 from bernstein.plugins.manager import HookBlockingError, PluginManager
 
 
+@pytest.fixture(autouse=True)
+def _trusted_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise hook-execution mechanics against a trusted workspace.
+
+    Trust gating (untrusted / indeterminate workspaces) is owned by
+    tests/unit/test_plugins.py; these suites assume trust has been granted.
+    """
+    monkeypatch.setattr("bernstein.plugins.manager.is_workspace_trusted", lambda _root: True)
+
+
 @pytest.fixture
 def hooks_dir(tmp_path: Path) -> Path:
     d = tmp_path / ".bernstein" / "hooks" / "on_task_created"

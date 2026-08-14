@@ -1,5 +1,8 @@
 import threading
 import time
+from pathlib import Path
+
+import pytest
 
 from bernstein.plugins import hookimpl, hookspec
 from bernstein.plugins.manager import PluginManager
@@ -7,6 +10,16 @@ from bernstein.plugins.manager import PluginManager
 # Generous upper bound for a thread hand-off. Only ever reached when dispatch
 # is broken, so a loaded runner cannot turn it into a flake.
 DISPATCH_TIMEOUT = 5.0
+
+
+@pytest.fixture(autouse=True)
+def _trusted_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise hook-dispatch mechanics against a trusted workspace.
+
+    Trust gating (untrusted / indeterminate workspaces) is owned by
+    tests/unit/test_plugins.py; these tests assume trust has been granted.
+    """
+    monkeypatch.setattr("bernstein.plugins.manager.is_workspace_trusted", lambda _root: True)
 
 
 class BackgroundSpec:
@@ -38,8 +51,8 @@ class SlowPlugin:
         self.done.set()
 
 
-def test_background_hook_is_non_blocking():
-    pm = PluginManager()
+def test_background_hook_is_non_blocking(tmp_path: Path):
+    pm = PluginManager(workdir=tmp_path)
     # Replace spec for testing
     pm._pm.add_hookspecs(BackgroundSpec)
 
@@ -82,8 +95,8 @@ class BlockingPlugin:
         self.finished = True
 
 
-def test_sync_hook_blocks():
-    pm = PluginManager()
+def test_sync_hook_blocks(tmp_path: Path):
+    pm = PluginManager(workdir=tmp_path)
     pm._pm.add_hookspecs(SyncSpec)
 
     plugin = BlockingPlugin()

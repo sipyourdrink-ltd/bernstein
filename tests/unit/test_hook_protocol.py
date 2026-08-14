@@ -11,6 +11,16 @@ from bernstein.plugins.manager import CommandHook
 from tests.fixtures.command_hook_harness import CommandHookHarness
 
 
+@pytest.fixture(autouse=True)
+def _trusted_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise hook-execution mechanics against a trusted workspace.
+
+    Trust gating (untrusted / indeterminate workspaces) is owned by
+    tests/unit/test_plugins.py; these suites assume trust has been granted.
+    """
+    monkeypatch.setattr("bernstein.plugins.manager.is_workspace_trusted", lambda _root: True)
+
+
 def test_command_hook_rejects_invalid_payload(tmp_path: Path) -> None:
     hooks_dir = tmp_path / ".bernstein" / "hooks"
     hooks_dir.mkdir(parents=True)
