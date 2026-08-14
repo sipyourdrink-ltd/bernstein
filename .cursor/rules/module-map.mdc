@@ -229,8 +229,6 @@ alwaysApply: false
 | `benchmark.py`             | Tiered benchmark runner for evolution validation |
 | `circuit.py`               | CircuitBreaker - halt evolution when safety conditions are violated |
 | `creative.py`              | Creative evolution pipeline - visionary → analyst → production gate |
-| `cycle_helpers.py`         | Evolution cycle helper logic - community, creative, and GitHub sync |
-| `cycle_runner.py`          | Evolution cycle execution engine |
 | `data_collector.py`        | Metric record types and file-based metrics collection for the evolution system |
 | `detector.py`              | Opportunity detection from aggregated metrics |
 | `gate.py`                  | ApprovalGate and EvalGate - risk-stratified routing for evolution proposals |
