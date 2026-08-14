@@ -159,3 +159,29 @@ def test_time_based_flush_triggers(collector: MetricsCollector) -> None:
     files = _jsonl_files(collector)
     total = sum(_count_lines(f) for f in files)
     assert total >= 1
+
+
+# ---------------------------------------------------------------------------
+# Buffer is appended to all-or-nothing
+# ---------------------------------------------------------------------------
+
+
+def test_rejected_tenant_label_leaves_the_buffer_untouched(collector: MetricsCollector) -> None:
+    """A point is queued for both destinations or for neither.
+
+    Deriving the tenant target inside the buffer append left the shared copy
+    of the point queued behind a write that never completed: the caller saw
+    the failure, the plugin hook never fired, and the buffer still described a
+    point as half-recorded.
+    """
+    with pytest.raises(ValueError, match="tenant"):
+        collector._write_metric_point(MetricType.API_USAGE, 1.0, {"tenant_id": "../escape"})
+
+    assert collector._buffer == []
+
+
+def test_accepted_tenant_label_queues_both_destinations(collector: MetricsCollector) -> None:
+    collector._write_metric_point(MetricType.API_USAGE, 1.0, {"tenant_id": "team-a"})
+
+    assert len(collector._buffer) == 2
+    assert len({directory for directory, _, _ in collector._buffer}) == 2

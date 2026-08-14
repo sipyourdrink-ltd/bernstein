@@ -928,13 +928,24 @@ class MetricsCollector:
 
         file_disabled = EventSink.FILE in self._disabled_sinks
         if not file_disabled:
+            # Both targets are resolved before either is queued. Resolving the
+            # tenant target inside the buffer append made a rejected tenant
+            # label leave the shared copy of the point queued behind a write
+            # that never completed: the point was recorded for one of its two
+            # destinations and the caller saw the failure, so the buffer no
+            # longer described what had been asked for. Deriving first makes
+            # the append all-or-nothing.
+            targets: list[AnchoredDir] = [shared_dir]
+            tenant_id = normalize_tenant_id(labels.get("tenant_id"))
+            if tenant_id != "default":
+                tenant_dir = tenant_metrics_target(self._metrics_dir, tenant_id)
+                mkdir_anchored(tenant_dir)
+                targets.append(tenant_dir)
+
+            serialized = json.dumps(point)
             with self._lock:
-                self._buffer.append((shared_dir, filename, json.dumps(point)))
-                tenant_id = normalize_tenant_id(labels.get("tenant_id"))
-                if tenant_id != "default":
-                    tenant_dir = tenant_metrics_target(self._metrics_dir, tenant_id)
-                    mkdir_anchored(tenant_dir)
-                    self._buffer.append((tenant_dir, filename, json.dumps(point)))
+                for target in targets:
+                    self._buffer.append((target, filename, serialized))
                 should_flush = (
                     len(self._buffer) >= self._buffer_limit or (time.time() - self._last_flush) >= self._flush_interval
                 )
