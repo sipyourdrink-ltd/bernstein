@@ -150,6 +150,39 @@ def permissions_for_role(role: str) -> frozenset[str]:
 _TENANT_KEY_ABSENT: Final[object] = object()
 
 
+def _string_list(raw: Any, field: str) -> list[str]:
+    """Return a persisted list-of-strings field, refusing any other shape.
+
+    ``list()`` and ``frozenset()`` accept any iterable, which makes them the
+    wrong tool for reading a stored authorization decision.  A stored string
+    becomes a collection of its characters; a stored mapping becomes a
+    collection of its *keys*, so ``{"admin:manage": 1}`` deserialises into a
+    real held permission.  And an empty mapping becomes an empty list, which
+    for ``task_ids`` and ``allowed_files`` is not "no data" but "no
+    restriction" - collapsing a scoped credential into an unscoped one.
+
+    These three fields are what an agent is allowed to do, so a value that is
+    not a list of strings is refused rather than reinterpreted into one.  The
+    ``ValueError`` is already handled by :meth:`AgentIdentityStore._read_identity`,
+    so the record is skipped like any other unreadable one.
+
+    Args:
+        raw: The stored value.  An absent key is passed as an empty tuple by
+            the caller; ``None`` is a stored null and is refused.
+        field: Field name, for the error message.
+
+    Raises:
+        ValueError: The value is not a list, or holds a non-string entry.
+    """
+    if not isinstance(raw, list | tuple):
+        raise ValueError(f"{field} must be a list, got {type(raw).__name__}")
+    entries = cast("list[Any]", list(raw))
+    for entry in entries:
+        if not isinstance(entry, str):
+            raise ValueError(f"{field} entries must be strings, got {type(entry).__name__}")
+    return [str(entry) for entry in entries]
+
+
 def _credential_tenant_id(raw: Any) -> str:
     """Return the tenant a persisted credential is scoped to.
 
@@ -243,8 +276,8 @@ class AgentCredential:
             algorithm=str(d.get("algorithm", "HS256")),
             jti=str(d.get("jti", "")),
             tenant_id=_credential_tenant_id(d.get("tenant_id", _TENANT_KEY_ABSENT)),
-            task_ids=[str(t) for t in d.get("task_ids", [])],
-            allowed_files=[str(f) for f in d.get("allowed_files", [])],
+            task_ids=_string_list(d.get("task_ids", ()), "credential task_ids"),
+            allowed_files=_string_list(d.get("allowed_files", ()), "credential allowed_files"),
         )
 
 
@@ -330,7 +363,7 @@ class AgentIdentity:
             id=str(d["id"]),
             role=str(d["role"]),
             session_id=str(d["session_id"]),
-            permissions=frozenset(d.get("permissions", [])),
+            permissions=frozenset(_string_list(d.get("permissions", ()), "permissions")),
             status=AgentIdentityStatus(d.get("status", "active")),
             created_at=float(d.get("created_at", 0)),
             last_authenticated_at=float(d.get("last_authenticated_at", 0)),
@@ -339,8 +372,8 @@ class AgentIdentity:
             credential=AgentCredential.from_dict(cred_data) if cred_data else None,
             parent_identity_id=d.get("parent_identity_id"),
             metadata=dict(d.get("metadata", {})),
-            task_ids=[str(t) for t in d.get("task_ids", [])],
-            allowed_files=[str(f) for f in d.get("allowed_files", [])],
+            task_ids=_string_list(d.get("task_ids", ()), "task_ids"),
+            allowed_files=_string_list(d.get("allowed_files", ()), "allowed_files"),
         )
 
 

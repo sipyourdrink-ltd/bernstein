@@ -620,3 +620,73 @@ class TestExplicitNullTenantIsRefused:
         path.write_text(json.dumps(payload))
 
         assert AgentIdentityStore(tmp_path).authenticate(token) is None
+
+
+class TestPersistedScopeCollectionsAreValidated:
+    """Permissions and scopes are authorization, so their shape is checked.
+
+    ``frozenset()`` and ``list()`` take any iterable, which is the wrong
+    behaviour for reading a stored grant: a mapping yields its keys, so a
+    corrupt ``permissions`` object hands out real permissions, and a mapping
+    in ``task_ids`` collapses to an empty list - which does not mean "no
+    tasks" but "no restriction".
+    """
+
+    def test_a_mapping_does_not_become_held_permissions(self) -> None:
+        """The keys of a mapping are not a grant."""
+        with pytest.raises(ValueError, match="permissions"):
+            AgentIdentity.from_dict(
+                {
+                    "id": "x",
+                    "role": "backend",
+                    "session_id": "x",
+                    "permissions": {"admin:manage": 1},
+                }
+            )
+
+    def test_a_string_does_not_become_per_character_permissions(self) -> None:
+        with pytest.raises(ValueError, match="permissions"):
+            AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", "permissions": "admin:manage"})
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    @pytest.mark.parametrize("value", [{}, {"t-1": True}, "t-1", 7, None])
+    def test_a_scope_field_that_is_not_a_list_is_refused(self, field: str, value: object) -> None:
+        """An empty scope means unrestricted, so a bad shape must not reach it."""
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", field: value})
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    def test_a_non_string_entry_is_refused(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", field: ["ok", 7]})
+
+    def test_credential_scopes_are_validated_too(self) -> None:
+        """The credential carries its own copy of the task scope."""
+        with pytest.raises(ValueError, match="task_ids"):
+            AgentCredential.from_dict({"token_hash": "abc", "task_ids": {"t-1": True}})
+
+    def test_well_formed_records_still_round_trip(self, tmp_path: Path) -> None:
+        """Validation does not reject what the store actually writes."""
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-ok", "backend", task_ids=["t-1", "t-2"])
+
+        reloaded = AgentIdentityStore(tmp_path).authenticate(token)
+
+        assert reloaded is not None
+        assert reloaded.task_ids == ["t-1", "t-2"]
+        assert reloaded.permissions == identity.permissions
+
+    def test_a_record_with_a_corrupt_scope_does_not_authenticate(self, tmp_path: Path) -> None:
+        """The refusal reaches authentication as a miss, not as a wide grant."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-scope", "backend", task_ids=["t-1"])
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        # An empty mapping would deserialise to [] - "no task restriction".
+        payload["credential"]["task_ids"] = {}
+        payload["task_ids"] = {}
+        path.write_text(json.dumps(payload))
+
+        assert AgentIdentityStore(tmp_path).authenticate(token) is None
