@@ -1,7 +1,7 @@
 """Shared constants, data classes, and helpers for the evolution loop modules.
 
-Extracted from cycle_runner.py and loop.py to eliminate code duplication.
-Both modules import from here instead of redefining the same symbols.
+Extracted from loop.py to eliminate code duplication; importers take the
+symbols from here instead of redefining them.
 """
 
 from __future__ import annotations
