@@ -4,16 +4,16 @@ Operator-facing notes on the GitHub merge queue for `main`. The queue is
 configured by a repository **ruleset** (not legacy branch protection).
 
 **This document is the source of truth for the queue configuration.** The
-shipped ruleset is currently out of sync with it; see
-[Tunables](#tunables-source-of-truth) for the reconciliation and
-[Enable](#enable-mechanical-steps) for the exact calls that close the gap.
+live ruleset matches it (`scripts/verify_merge_queue_ruleset.py` exits `0`
+as of 2026-08-14); [Enable](#enable-mechanical-steps) records the calls
+that applied and activated it.
 
 ## TL;DR
 
 | Topic | Status | Where |
 |-------|--------|-------|
-| Queue state today | Ruleset exists, `enforcement: disabled` | ruleset `main-merge-queue` |
-| Safe to flip today? | **No** - 2 blockers, one substantive | [Blockers](#blockers-to-the-flip) |
+| Queue state today | `enforcement: active` since 2026-08-14 | ruleset `main-merge-queue` |
+| Flip status | Flipped 2026-08-14 - both blockers cleared by re-measurement | [Blockers](#blockers-to-the-flip) |
 | What it solves | Tests the A+B *combination* before merge | this doc |
 | Required checks on the queue | `CI gate` | `ci.yml` |
 | What the group's CI is planned against | The group's `base_sha`, never `HEAD~1` | [What the group's CI actually tests](#what-the-groups-ci-actually-tests) |
@@ -229,9 +229,9 @@ reason; see [Tunables](#tunables-source-of-truth).
 
 ## Tunables (source of truth)
 
-The values below are authoritative. **The shipped ruleset does not match
-them yet** - the "Shipped" column records the drift to be corrected when
-the queue is enabled.
+The values below are authoritative. The live ruleset was reconciled to
+them on 2026-08-14 (Step 1; verifier exits `0`) - the "Shipped" column
+records what the ruleset carried before that reconciliation.
 
 The machine-readable copy is
 [`merge-queue-ruleset.json`](merge-queue-ruleset.json). It is the exact
@@ -253,20 +253,36 @@ and the Step 1 payload from becoming three different answers.
 
 ## Blockers to the flip
 
-Measured 2026-07-27. These are conditions on the repository, not code
-changes; none of them is fixed by a pull request. Until each is cleared,
-enabling the queue makes `main` slower to advance without making it
-safer.
+**Both cleared 2026-08-14; the queue was flipped the same day.** The
+re-measurement over the last 40 concluded `CI` push runs on `main`
+(`created_at` -> `updated_at`, the same window the queue timeout
+measures): p50 **46** min, p90 **93** min, max **115** min, 0 of 40 over
+240. Blocker 1 fell to Step 1 (timeout raised to `240`, verifier exits
+`0`). Blocker 2's arithmetic was measured against the July runner-pool
+contention (p90 214) *and* the shipped `max_entries_to_build: 1`; with
+build concurrency `5`, a burst of up to five ready PRs is built as
+stacked groups concurrently, so its wall-clock cost is one CI cycle
+(p90 ~93 min), not N sequential cycles. Sequential cost returns only
+when an entry ejects and the groups behind it rebuild.
+
+The table below is the July record, kept because the timeout row's
+rationale depends on it. These were conditions on the repository, not
+code changes; neither was fixed by a pull request.
 
 | # | Blocker | Evidence | Clears when |
 |---|---------|----------|-------------|
 | 1 | The shipped ruleset would eject **every** entry. `check_response_timeout_minutes` is `30`; every measured `CI` run on `main` took longer than that. | p50 49 min, p90 214 min, max 243 min, 30/30 over 30 min. Re-checked 2026-07-27 over the last 40 concluded runs (`created_at` -> `updated_at`, which is what the queue timeout measures): p50 110, p90 224, max 243, **0 of 40** under 30 min | Step 1 is applied (raises it to `240`) and the verifier exits `0` |
 | 2 | CI wall time makes serialised merging impractical. `max_entries_to_build` is the number of groups built at once, but `max_entries_to_merge` is pinned to `1` for the release path, so a burst of N ready PRs costs N sequential merges. At p90 = 214 min that is most of a day for five PRs. | same distribution as #1 | CI wall time is bounded, or the release gate stops keying on the push head SHA so batches can merge |
 
-Blocker 2 is the substantive one. Blocker 1 is a single `gh api` call. So the
-recommended order is: apply Step 1, fix CI wall time, then flip with a
-single low-risk pull request as the canary and Step 4 open in front of
-you.
+That order was followed on 2026-08-14: Step 1 applied, wall time
+re-measured (above), flip, and a docs-only canary through the queue with
+Step 4 open. One operator-facing change follows from the flip: a direct
+`PUT /pulls/{n}/merge` no longer lands a PR - merging means enqueueing,
+via `gh pr merge <n> --squash` (add `--auto` to enqueue before checks
+finish) or the merge button. Everything a sweep used to do after the
+merge call - confirm the merge landed, fetch `main`, check its tip - is
+unchanged; it just happens after the queue reports rather than after the
+API call returns.
 
 ## Enable (mechanical steps)
 
