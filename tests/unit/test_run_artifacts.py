@@ -8,7 +8,10 @@ naming the artifact, and the progress vector cannot be inflated by posting.
 
 from __future__ import annotations
 
+import json
+import unicodedata
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,6 +29,60 @@ from bernstein.core.evidence.run_artifacts import (
 )
 
 _KEY = b"artifact-test-hmac-key-0123456789"
+
+
+def _sarif_result(
+    *,
+    start_line: int = 8,
+    snippet: str = "eval(user_input)",
+    uri: str = "./src/app.py",
+    rule_id: str = "PY-TAINT-001",
+) -> dict[str, object]:
+    return {
+        "ruleId": rule_id,
+        "message": {"text": "Untrusted input reaches eval"},
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": uri},
+                    "region": {
+                        "startLine": start_line,
+                        "endLine": start_line,
+                        "startColumn": 5,
+                        "endColumn": 21,
+                        "snippet": {"text": snippet},
+                    },
+                }
+            }
+        ],
+    }
+
+
+def _physical(result: dict[str, Any]) -> dict[str, Any]:
+    physical: dict[str, Any] = result["locations"][0]["physicalLocation"]
+    return physical
+
+
+def _region(result: dict[str, Any]) -> dict[str, Any]:
+    region: dict[str, Any] = _physical(result)["region"]
+    return region
+
+
+def _address(**kwargs: Any) -> object:
+    """The content address of the default finding, varied by ``_sarif_result`` kwargs."""
+    return _finding(_sarif_result(**kwargs)).to_content_dict()["address"]
+
+
+def _finding(result: dict[str, object] | None = None, **overrides: str) -> ArtifactPayload:
+    provenance = {
+        "tool": "semgrep",
+        "tool_version": "1.131.0",
+        "pinned_ruleset_or_feed_digest": "sha256:" + "a" * 64,
+        "invocation_argv_hash": "sha256:" + "b" * 64,
+        "target": "git:0123456789abcdef",
+    }
+    provenance.update(overrides)
+    return ArtifactPayload.finding(result or _sarif_result(), **provenance)
 
 
 def _sdd(tmp_path: Path) -> Path:
@@ -50,6 +107,212 @@ class TestPayloadValidation:
     def test_report_canonical_bytes_are_stable(self) -> None:
         p = ArtifactPayload.report("# Title\nbody")
         assert p.canonical_bytes() == b'{"body":"# Title\\nbody","type":"report"}'
+
+
+class TestFindingPayload:
+    def test_blank_lines_above_do_not_change_finding_address(self) -> None:
+        before = _finding(_sarif_result(start_line=8)).to_content_dict()
+        after = _finding(_sarif_result(start_line=12)).to_content_dict()
+        assert before["address"] == after["address"]
+
+    def test_different_snippets_have_different_addresses(self) -> None:
+        first = _finding(_sarif_result(snippet="eval(user_input)")).to_content_dict()
+        second = _finding(_sarif_result(snippet="exec(user_input)")).to_content_dict()
+        assert first["address"] != second["address"]
+
+    @pytest.mark.parametrize(
+        ("field", "changed"),
+        [
+            ("tool", "codeql"),
+            ("tool_version", "2.20.0"),
+            ("pinned_ruleset_or_feed_digest", "sha256:" + "c" * 64),
+            ("invocation_argv_hash", "sha256:" + "d" * 64),
+            ("target", "git:fedcba9876543210"),
+        ],
+    )
+    def test_every_provenance_field_is_in_address_preimage(self, field: str, changed: str) -> None:
+        baseline = _finding().to_content_dict()
+        modified = _finding(**{field: changed}).to_content_dict()
+        assert baseline["address"] != modified["address"]
+
+    # -- The address is a cross-platform, cross-run constant -----------------
+    #
+    # An address that is only stable on the machine that minted it is not an
+    # address. Each of the next four tests pins one way the platform could
+    # otherwise leak into the preimage.
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "src\\app.py",  # a Windows scanner reporting the same file
+            "./src/app.py",
+            "src//app.py",
+            "src/helpers/../app.py",
+        ],
+    )
+    def test_path_spelling_does_not_change_address(self, spelling: str) -> None:
+        assert _address(uri=spelling) == _address(uri="src/app.py")
+
+    @pytest.mark.parametrize("newline", ["\r\n", "\r"])
+    def test_line_ending_style_does_not_change_address(self, newline: str) -> None:
+        # A CRLF checkout and an LF checkout are the same source, so the same
+        # finding, so the same address.
+        multiline = f"if flag:{newline}    eval(user_input){newline}"
+        assert _address(snippet=multiline) == _address(snippet=multiline.replace(newline, "\n"))
+
+    @pytest.mark.parametrize(("field", "text"), [("uri", "src/café.py"), ("snippet", "x = 'café'")])
+    def test_unicode_normal_form_does_not_change_address(self, field: str, text: str) -> None:
+        # macOS hands back decomposed (NFD) bytes where Linux hands back
+        # composed (NFC) ones; one file must not address as two.
+        nfc, nfd = unicodedata.normalize("NFC", text), unicodedata.normalize("NFD", text)
+        assert nfc != nfd, "fixture must actually differ between normal forms"
+        assert _address(**{field: nfc}) == _address(**{field: nfd})
+
+    def test_address_ignores_sarif_key_order_and_untracked_fields(self) -> None:
+        baseline = _address()
+        reordered = _sarif_result()
+        reordered = {key: reordered[key] for key in reversed(list(reordered))}
+        assert _finding(reordered).to_content_dict()["address"] == baseline
+        # Fields outside the preimage -- severity, fingerprints, the human
+        # message -- must not reissue the identity when a scanner reworks them.
+        noisier = _sarif_result()
+        noisier["level"] = "error"
+        noisier["fingerprints"] = {"vendor/v1": "abc"}
+        noisier["message"] = {"text": "reworded advisory copy"}
+        assert _finding(noisier).to_content_dict()["address"] == baseline
+
+    def test_address_of_the_reference_fixture_is_frozen(self) -> None:
+        # A recomputation on any machine, any run, any Python version must land
+        # here. If this constant moves, the preimage changed and every stored
+        # finding address in the field changed with it -- so it moves only on
+        # purpose, never as a side effect.
+        assert _address() == "sha256:9ba1d731f13c4a92c54010b588ab16e549a5f6346daf76c71ad010d12676ad11"
+
+    # -- Separation and the deliberate collision ----------------------------
+
+    @pytest.mark.parametrize(
+        "variant",
+        [
+            {"rule_id": "PY-TAINT-002"},
+            {"uri": "src/other.py"},
+            {"snippet": "exec(user_input)"},
+        ],
+    )
+    def test_findings_differing_in_a_bound_field_address_differently(self, variant: dict[str, str]) -> None:
+        assert _address(**variant) != _address()
+
+    def test_identical_snippets_at_different_lines_share_one_address(self) -> None:
+        # Documents the design, not an accident: identity is line-independent,
+        # so two textually identical hits of one rule in one file are one
+        # address. Triage state keyed on it therefore covers both.
+        assert _address(start_line=8) == _address(start_line=200)
+
+    # -- Malformed input never yields a partial preimage --------------------
+
+    @pytest.mark.parametrize(
+        ("mutate", "expected"),
+        [
+            (lambda r: r.pop("locations"), r"result\.locations\[0\]"),
+            (lambda r: r.pop("ruleId"), r"result\.ruleId"),
+            (lambda r: _region(r).pop("snippet"), r"region\.snippet"),
+            (lambda r: _region(r)["snippet"].pop("text"), r"region\.snippet\.text"),
+            (lambda r: _region(r).pop("startLine"), r"region\.startLine"),
+            (lambda r: _region(r).update(endLine=1), r"region\.endLine"),
+            (lambda r: _region(r).update(endColumn=1), r"region\.endColumn"),
+            (lambda r: _physical(r).pop("artifactLocation"), r"artifactLocation"),
+            (lambda r: _physical(r)["artifactLocation"].update(uri="."), r"empty normalized artifact URI"),
+        ],
+    )
+    def test_malformed_sarif_names_the_field_and_yields_nothing(self, mutate: Any, expected: str) -> None:
+        malformed = _sarif_result()
+        mutate(malformed)
+        with pytest.raises(ArtifactValidationError, match=expected):
+            _finding(malformed)
+
+    @pytest.mark.parametrize(
+        "field",
+        ["tool", "tool_version", "pinned_ruleset_or_feed_digest", "invocation_argv_hash", "target"],
+    )
+    def test_empty_provenance_field_is_refused(self, field: str) -> None:
+        with pytest.raises(ArtifactValidationError, match=f"provenance requires non-empty {field}"):
+            _finding(**{field: ""})
+
+    def test_finding_roundtrip_verifies(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="finding",
+            payload=_finding(),
+            actor="scanner",
+            hmac_key=_KEY,
+        )
+        result = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(result) == 1
+        assert result[0].ok, result[0].reason
+
+    def test_verify_rejects_recorded_address_mismatch(self, tmp_path: Path) -> None:
+        sdd = _sdd(tmp_path)
+        forged = _finding().to_content_dict()
+        forged["address"] = "sha256:" + "0" * 64
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="finding",
+            payload=ArtifactPayload(
+                artifact_type="finding",
+                finding_json=json.dumps(forged, sort_keys=True, separators=(",", ":")),
+            ),
+            actor="scanner",
+            hmac_key=_KEY,
+        )
+        result = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(result) == 1
+        assert not result[0].ok
+        assert "does not match recomputed address" in result[0].reason
+
+    @pytest.mark.parametrize(
+        ("field", "forged", "expected"),
+        [
+            (
+                "identity",
+                {"rule_id": "SOMETHING-ELSE", "artifact_uri": "src/app.py"},
+                "recorded finding identity does not match normalized SARIF result",
+            ),
+            (
+                "location",
+                {"artifact_uri": "src/elsewhere.py", "start_line": 1},
+                "recorded finding location does not match normalized SARIF result",
+            ),
+            ("type", "report", "recorded finding payload has wrong artifact type"),
+        ],
+    )
+    def test_verify_recomputes_rather_than_trusting_stored_fields(
+        self, tmp_path: Path, field: str, forged: object, expected: str
+    ) -> None:
+        # The stored address is re-derived from the stored SARIF result, so a
+        # payload whose narrated identity disagrees with its own evidence is
+        # rejected -- verification never reads the field and believes it.
+        sdd = _sdd(tmp_path)
+        # The address is left correct on purpose, so the only thing wrong with
+        # the payload is the field being forged.
+        content = _finding().to_content_dict()
+        content[field] = forged  # type: ignore[literal-required]
+        post_run_artifact(
+            sdd_dir=sdd,
+            task_id="task-1",
+            key="finding",
+            payload=ArtifactPayload(
+                artifact_type="finding",
+                finding_json=json.dumps(content, sort_keys=True, separators=(",", ":")),
+            ),
+            actor="scanner",
+            hmac_key=_KEY,
+        )
+        result = verify_run_artifacts(sdd, "task-1", hmac_key=_KEY)
+        assert len(result) == 1
+        assert not result[0].ok
+        assert expected in result[0].reason
 
 
 class TestPostRoundtrip:

@@ -28,7 +28,9 @@ about:
     Gemini CLI, Aider, OpenHands and 40+ other agent CLIs. The MCP server
     exposes 14 tools covering run control, task listing and claiming, progress
     updates, artifact posting, approvals, subtasks, cost reporting, and skill
-    loading.
+    loading. Every MCP tool description states whether the call reads files,
+    writes files, spawns agent processes, or makes network requests.
+    load_skill only returns file contents and executes nothing.
   icon: https://avatars.githubusercontent.com/u/271707709?v=4
 source:
   project: https://github.com/sipyourdrink-ltd/bernstein

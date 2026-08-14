@@ -177,18 +177,18 @@ export BERNSTEIN_MCP_COST_METER=0
 
 ## Consolidated tool surface and deprecated aliases
 
-The advertised surface answers each operator question once:
+The advertised surface answers each operator question once. Every MCP tool
+description states whether the call reads files, writes files, spawns agent
+processes, or makes network requests. load_skill only returns file contents
+and executes nothing.
 
-- `bernstein_status` folds the former `bernstein_health`, `bernstein_tasks`
-  and `bernstein_cost` into one read: the tool answering at all is the
-  liveness signal, `counts` carries the task totals, `cost` the spend, an
-  optional `status` filter appends the matching tasks, and `detail=true`
-  switches per-role and per-task rows from compact to full.
-- `bernstein_run` absorbs `bernstein_create_subtask`: pass
-  `parent_task_id` to queue the run as a subtask.
-- `bernstein_scenario` absorbs the three scenario tools behind an `action`
-  selector (`list` / `run` / `status`); a scenario run returns the same
-  handle shape as `bernstein_run`, so `bernstein_run_status` polls it.
+- `bernstein_status` folds `bernstein_health`, `bernstein_tasks`, and
+  `bernstein_cost` into one read. The response is the liveness signal,
+  `counts` carries task totals, `cost` the spend, `status` filters tasks,
+  and `detail=true` expands compact per-role and per-task rows.
+- `bernstein_run` absorbs `bernstein_create_subtask`; use `parent_task_id` for a subtask.
+- `bernstein_scenario` absorbs the three scenario tools behind `action=list`,
+  `action=run`, or `action=status`; runs return a `bernstein_run` handle polled by `bernstein_run_status`.
 - Misleading names were renamed: `bernstein_task_handle` is now
   `bernstein_run_status`, `bernstein_update` (which never updated a task's
   fields) is `bernstein_post_message`, `bernstein_context` is

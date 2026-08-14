@@ -21,6 +21,7 @@ Browser-based operator surface for live Bernstein runs. Mounted on the same Fast
 
 - Vite + React 19 + Tailwind 3 + shadcn/ui SPA. Source in `web/`. Built bundle ships in the wheel under `src/bernstein/gui/static/`.
 - Eight routes: Tasks, Agents, Approvals, Audit, Costs, Missions, Fleet, Settings. Missions is the outcome-level timeline over a multi-day run: phase lanes, gate verdicts, envelope burn, and evidence links, each element tied to the receipt it was derived from. See [Screens](screens.md).
+- The sidebar and command palette link to the server-rendered [review board](../operations/review-board.md) for attested merge-queue decisions.
 - Reads from `GET /api/v1/*` and the central SSE stream `GET /api/v1/events`. Uses TanStack Query 5 for caching; SSE events trigger invalidate-and-refetch (`invalidateQueries` on the affected query keys) rather than writing payloads into the cache directly.
 - Known limitation: the SSE client uses the browser-native `EventSource`, which cannot send the `Authorization` header, so with auth enabled the event stream currently returns 401 and live invalidation does not run ([#3563](https://github.com/sipyourdrink-ltd/bernstein/issues/3563)). Panels still update via their interval polling (10-60 s).
 - Auth via `Authorization: Bearer ${localStorage.bernstein_token}`. Token comes from `BERNSTEIN_AUTH_TOKEN` (auto-minted only on a loopback serve with auto-open - see quickstart above).

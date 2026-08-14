@@ -14,8 +14,8 @@ bernstein report commits --repo-dir ../other-repo
 bernstein report commits --json              # machine-readable output
 ```
 
-`bernstein commit-stats` remains as a deprecated alias with identical
-behaviour until v4.0.0; it prints a migration notice on stderr.
+The top-level `bernstein commit-stats` alias was removed in v4.0.0 (#3472).
+`bernstein report commits` is the only spelling.
 
 | Flag | Default | Meaning |
 |---|---|---|

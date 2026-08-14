@@ -264,6 +264,16 @@ jobs:
           echo "No references to removed CLI verbs."
         shell: bash
 
+      - name: Run narrative prose CLI drift gate (#3620)
+        # The gate extracts `bernstein` invocations from the getting-started
+        # pages and fails if any names a command or flag the CLI rejects.
+        # Like the removed-verb check above it also fails on pull requests:
+        # a doc naming a deleted surface is a factual error, not staleness.
+        run: |
+          uv sync --group dev --frozen
+          uv run pytest tests/unit/test_docs_prose_cli_drift.py -q --no-cov --timeout=120
+        shell: bash
+
       - name: Fail the gate on main-branch drift
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |

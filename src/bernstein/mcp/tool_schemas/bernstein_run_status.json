@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_run_status",
-  "description": "Poll a verifiable handle for a run started with bernstein_run. Accepts either identifier that call returned: the task_id or the run_id.",
+  "description": "Poll a verifiable handle for a run started with bernstein_run. Accepts either identifier that call returned: the task_id or the run_id. Reads the local run journal and audit evidence without changing them. Host effects: reads files.",
   "type": "object",
   "additionalProperties": false,
   "required": ["run_id"],

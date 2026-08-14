@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import sys
+import textwrap
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
@@ -626,3 +632,100 @@ def test_fetch_outcome_counts_done_lineages_not_done_rows():
     assert outcome.done == 1
     assert outcome.failed == 1
     assert not outcome.all_fixed
+
+
+# ---------------------------------------------------------------------------
+# _stop_demo_processes - wait for finalization marker before reaping (#3627)
+# ---------------------------------------------------------------------------
+
+
+def test_stop_demo_processes_waits_for_finalization_before_reap(tmp_path):
+    """Teardown must not kill the orchestrator before finalization completes.
+
+    Fails by construction against the current (no-wait) teardown: the child
+    blocks on a .proceed file before writing seal/receipt/.finalized, and
+    .proceed is only written after teardown has started. Without the wait,
+    the child is SIGTERM'd while blocked, so the completion files are never
+    written — regardless of machine speed.
+    """
+    project_dir = tmp_path / "demo_project"
+    runtime_dir = project_dir / ".sdd" / "runtime"
+    runtime_dir.mkdir(parents=True)
+
+    child_script = textwrap.dedent(
+        f"""
+        import sys, time
+        from pathlib import Path
+
+        PROJECT_DIR = Path({str(project_dir)!r})
+
+        # Entry marker: finalization has started.
+        (PROJECT_DIR / ".sdd" / "runtime" / ".finalizing").touch()
+
+        # Block until the test signals us to proceed. This is the
+        # fail-by-construction hinge: the child cannot write the
+        # completion files until .proceed appears, and .proceed only
+        # appears after teardown has started. If teardown doesn't wait,
+        # the child is killed here and the files are never written.
+        while not (PROJECT_DIR / ".proceed").exists():
+            time.sleep(0.02)
+
+        # Simulate finalization completing
+        (PROJECT_DIR / "spine.sealed").write_text("sealed")
+        (PROJECT_DIR / "run.receipt").write_text("signed")
+        (PROJECT_DIR / ".sdd" / "runtime" / ".finalized").write_text("done")
+
+        # Idle until reaped
+        time.sleep(60)
+        """
+    )
+
+    # start_new_session=True is CRITICAL here, otherwise the child is in
+    # the pytest process group and reap_process_group will kill pytest!
+    proc = subprocess.Popen(
+        [sys.executable, "-c", child_script],
+        start_new_session=True,
+    )
+    # Write the PID file where _stop_demo_processes expects it
+    (runtime_dir / "spawner.pid").write_text(str(proc.pid))
+
+    # Wait for child to write the entry marker (proves it's running)
+    while not (runtime_dir / ".finalizing").exists():
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate()
+            pytest.fail(f"child exited before writing .finalizing\\nSTDOUT:\\n{stdout}\\nSTDERR:\\n{stderr}")
+        time.sleep(0.01)
+
+    # Call teardown in a thread
+    teardown_done = threading.Event()
+
+    def teardown():
+        try:
+            run_confirm._stop_demo_processes(project_dir)
+        finally:
+            teardown_done.set()
+
+    t = threading.Thread(target=teardown)
+    t.start()
+
+    # Give teardown time to start and (with the fix) begin waiting
+    # for .finalized. Then signal the child to proceed.
+    time.sleep(0.2)
+    (project_dir / ".proceed").touch()
+
+    # Teardown should complete (bounded)
+    assert teardown_done.wait(timeout=15.0), "teardown did not complete"
+
+    # Cleanup
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait(timeout=5)
+    t.join(timeout=5)
+
+    # These fail on current teardown (child killed before .proceed)
+    # and pass after the fix (teardown waited for .finalized).
+    assert (runtime_dir / ".finalized").exists(), (
+        "finalization did not complete before teardown — teardown killed the orchestrator mid-finalization"
+    )
+    assert (project_dir / "spine.sealed").exists(), "lineage spine was not sealed"
+    assert (project_dir / "run.receipt").exists(), "run receipt was not written"

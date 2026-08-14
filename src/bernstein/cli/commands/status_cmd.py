@@ -1225,7 +1225,7 @@ def _detect_runtime_environment() -> str:
 
 
 # ---------------------------------------------------------------------------
-# commit-stats - agent attribution report
+# report commits - agent attribution report
 # ---------------------------------------------------------------------------
 
 
@@ -1238,9 +1238,9 @@ def commit_stats_cmd(since: str | None, until: str | None, repo_dir: str, as_jso
     """Show commit attribution by agent role.
 
     \b
-      bernstein commit-stats                    # all-time stats
-      bernstein commit-stats --since 2025-01-01 # since a date
-      bernstein commit-stats --json             # machine-readable output
+      bernstein report commits                    # all-time stats
+      bernstein report commits --since 2025-01-01 # since a date
+      bernstein report commits --json             # machine-readable output
     """
     from bernstein.cli.commit_stats import collect_commit_stats, render_commit_stats
 

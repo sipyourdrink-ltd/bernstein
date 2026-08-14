@@ -45,6 +45,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # The review-bot accounts whose findings this gate tracks. Retired bots come
@@ -206,6 +207,7 @@ DID_NOT_RUN_PATTERNS = (
 _SHA_RE = re.compile(r"\b[0-9a-f]{40}\b", re.IGNORECASE)
 
 STICKY_HEADER = "<!-- review-bot-ack-summary: managed -->"
+SUMMARY_HEADING = "## Review-bot acknowledgement summary"
 ACK_MARKER_RE = re.compile(
     r"<!--\s*bot-ack:\s*(?P<id>[\w./-]+)\s*(?:reason=(?P<reason>[^>]+?))?\s*-->",
     re.IGNORECASE,
@@ -622,7 +624,7 @@ def _render_review_coverage(outcome: GateOutcome) -> list[str]:
 
 
 def render_summary(outcome: GateOutcome) -> str:
-    lines = [STICKY_HEADER, "## Review-bot acknowledgement summary", ""]
+    lines = [STICKY_HEADER, SUMMARY_HEADING, ""]
     total_must = len(outcome.must_unresolved) + len(outcome.must_acked)
     lines.append(
         f"- Must-address findings: **{total_must}** "
@@ -704,6 +706,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Reserved; gate already fails on unresolved must-address.",
     )
     p.add_argument(
+        "--post-summary-file",
+        metavar="PATH",
+        help=(
+            "Post this already-rendered summary as the sticky comment and exit "
+            "0. Evaluates nothing: it is the publisher half of --summary-out, "
+            "running where the token can write."
+        ),
+    )
+    p.add_argument(
         "--require-review",
         action="store_true",
         help=(
@@ -718,12 +729,48 @@ def main(argv: list[str] | None = None) -> int:
         print("error: GH_TOKEN or GITHUB_TOKEN must be set", file=sys.stderr)
         return 2
 
+    if args.post_summary_file:
+        # Publisher mode. The verdict was decided by the run that produced this
+        # text; re-evaluating here could reach a different one from a later
+        # state, so this path deliberately only posts.
+        try:
+            body = Path(args.post_summary_file).read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            print(f"error: hand-over file is not UTF-8: {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        # The hand-over file crosses a trust boundary: the run that renders it
+        # may be a fork's checkout, and the run that posts it holds a token
+        # that can write to the base repository. Post only what looks like the
+        # summary this script renders, so the writable token cannot be turned
+        # into a general-purpose comment writer by an empty or substituted
+        # file. This is a shape check, not an authenticity claim - the caller
+        # of this mode is responsible for having bound the pull request.
+        if not body.startswith(STICKY_HEADER) or SUMMARY_HEADING not in body:
+            print(
+                "error: hand-over file is not a rendered review-bot-ack summary",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            upsert_sticky(args.owner, args.repo, args.pr, token, body)
+        except Exception as exc:
+            print(f"error: could not post sticky summary: {exc}", file=sys.stderr)
+            return 2
+        return 0
+
     try:
         outcome = evaluate(args.owner, args.repo, args.pr, token)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    # Printed before the sticky post is attempted, and printed alone: the
+    # runner captures this stdout into the artifact the publisher reads,
+    # because a fork's read-only token makes the post below the step that
+    # fails. Keep diagnostics on stderr so the capture stays the summary.
     summary = render_summary(outcome)
     print(summary)
     if not args.no_comment:

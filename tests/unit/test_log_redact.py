@@ -17,6 +17,7 @@ from bernstein.core.log_redact import (
     PiiRedactingFilter,
     install_pii_filter,
     redact_pii,
+    redact_sensitive_text,
 )
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,49 @@ class TestCleanTextUnchanged:
 
     def test_empty(self) -> None:
         assert redact_pii("") == ""
+
+
+class TestCredentialRedaction:
+    def test_explicit_credential_shapes_are_redacted(self) -> None:
+        private_key = (
+            "-----BEGIN PRIVATE KEY-----\n"
+            "VGhpcyBpcyBhIHRlc3QgY2FuYXJ5LCBub3QgYSByZWFsIGtleQ==\n"
+            "-----END PRIVATE KEY-----"
+        )
+        canaries = [
+            "BearerTokenCanary0123456789",
+            "JsonBearerTokenCanary0123456789",
+            "ghp_0123456789abcdefghijklmnopqrstuv",
+            "sk-proj-0123456789abcdefghijklmnop",
+            "A1b2C3d4E5f6G7h8I9j0K1l2",
+            "A1b2!C3d4@E5f6#G7h8$",
+            private_key,
+        ]
+        text = "\n".join(
+            [
+                f"Authorization: Bearer {canaries[0]}",
+                f'{{"Authorization": "Bearer {canaries[1]}"}}',
+                canaries[2],
+                canaries[3],
+                f'api_token="{canaries[4]}"',
+                f'accessToken="{canaries[5]}"',
+                canaries[6],
+            ]
+        )
+
+        redacted = redact_sensitive_text(text)
+
+        for canary in canaries:
+            assert canary not in redacted
+        assert redacted.count("[REDACTED]") == len(canaries)
+
+    def test_entropy_without_sensitive_name_survives(self) -> None:
+        sha256 = "a3" * 32
+        uuid = "123e4567-e89b-12d3-a456-426614174000"
+        base64_payload = "VGhpcyBpcyBhIGxlZ2l0aW1hdGUgcGF5bG9hZA=="
+        text = f"sha256={sha256} request_id={uuid} payload={base64_payload}"
+
+        assert redact_sensitive_text(text) == text
 
 
 # ---------------------------------------------------------------------------

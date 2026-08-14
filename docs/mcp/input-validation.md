@@ -102,6 +102,35 @@ constrained field, and that the set of schema file stems equals the set of
 registered tool names in both directions. Tightening enforcement without
 updating what is advertised fails the build.
 
+## Declared execution bounds (timeouts)
+
+The four tools that leave the process — `bernstein_create_subtask`,
+`bernstein_post_artifact`, `bernstein_update` and `load_skill` — carry a
+`timeoutSeconds` key at the top of their schema file. That number is the
+upper execution bound the server enforces per call: the tool manager's
+`call_tool` path wraps the call in `asyncio.wait_for` (via
+`_apply_tool_timeouts` in `src/bernstein/mcp/server.py`) and, when the
+bound is exceeded, returns a structured error naming the tool and the
+limit instead of letting the client block indefinitely or guess its own
+timeout. The bound is advertised to clients with the schema, so a caller
+can plan against it. `_HTTP_TIMEOUT` inside the handlers bounds only the
+httpx hop to the task server; `timeoutSeconds` bounds the whole tool call.
+
+The streamable HTTP transport (`bernstein.mcp.remote_transport`) is a
+separate execution path and does not apply these bounds; see the scope
+note above (issue #3083 tracks unifying both transports).
+
+## `bernstein_create_subtask.role` is a known-role enum
+
+`bernstein_create_subtask` constrains `scope` and `complexity` to enums but
+leaves `role` a free string in the schema file — JSON has no way to import
+a Python constant. At registry load time (`load_registry` in
+`src/bernstein/mcp/input_validation.py`), the `role` property's `enum` is
+bound to `plan_schema.KNOWN_ROLES` itself, so the schema and the constant
+are the same object: adding a role to `KNOWN_ROLES` widens the MCP boundary
+automatically, and an unknown role is refused at the schema boundary with
+the offending value echoed in the validation message (issue #3647).
+
 ## Permissive mode (migration aid)
 
 Set `BERNSTEIN_MCP_VALIDATION=permissive` to log rejected payloads instead of

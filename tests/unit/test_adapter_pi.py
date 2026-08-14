@@ -28,8 +28,21 @@ class TestPiAdapterSpawn:
             adapter.spawn(
                 prompt="fix the bug",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="sonnet", effort="high"),
+                model_config=ModelConfig(model="provider/model-name", effort="high"),
                 session_id="pi-s1",
+            )
+        inner = inner_cmd(popen.call_args.args[0])
+        assert inner == ["pi", "--model", "provider/model-name", "fix the bug"]
+
+    def test_spawn_leaves_model_selection_to_pi_for_auto(self, tmp_path: Path) -> None:
+        adapter = PiAdapter()
+        proc_mock = make_popen_mock(pid=801)
+        with patch("bernstein.adapters.pi.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="fix the bug",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="auto", effort="high"),
+                session_id="pi-s2",
             )
         inner = inner_cmd(popen.call_args.args[0])
         assert inner == ["pi", "fix the bug"]

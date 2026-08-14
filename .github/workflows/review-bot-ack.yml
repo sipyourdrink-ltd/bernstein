@@ -235,10 +235,21 @@ jobs:
           REPO_NAME: ${{ github.event.repository.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          mkdir -p verdict
+          # The summary is captured from stdout rather than through a flag on
+          # purpose. This job checks out the base ref (see `ref:` above), so
+          # it runs whatever `scripts/review_bot_ack.py` is on the base
+          # branch — a flag introduced by a pull request would not exist yet
+          # on the run that has to use it. The gate prints the rendered
+          # summary to stdout before it attempts the sticky comment, and the
+          # attempt is the part that fails on a fork; capturing stdout is
+          # therefore the version-independent way to keep the text.
+          # `test_review_bot_ack_summary_handoff.py` pins that contract.
+          set -o pipefail
           python3 scripts/review_bot_ack.py \
             --owner "$OWNER" \
             --repo "$REPO_NAME" \
-            --pr "$PR_NUMBER"
+            --pr "$PR_NUMBER" | tee verdict/summary.md
 
       - name: Resolve verdict
         if: ${{ !cancelled() }}
@@ -273,11 +284,16 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           mkdir -p verdict
           printf '%s\n' "$VERDICT" > verdict/conclusion
           printf '%s\n' "$HEAD_SHA" > verdict/head_sha
+          # The publisher needs the number to address the comment. It cannot
+          # take it from its own payload: a `workflow_run` event carries the
+          # run, not the pull request.
+          printf '%s\n' "$PR_NUMBER" > verdict/pr_number
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}

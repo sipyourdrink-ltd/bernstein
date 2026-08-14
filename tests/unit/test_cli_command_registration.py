@@ -475,6 +475,107 @@ def test_subcommand_rows_resolve_and_accept_their_flags(path: str, flags: frozen
     assert not ghosts, f"`bernstein {path}`'s subcommand row mentions flags it does not accept: {ghosts}"
 
 
+# ---------------------------------------------------------------------------
+# Command spellings named inside table cells (#3730 follow-up)
+# ---------------------------------------------------------------------------
+#
+# The heading sweep above resolves a command only where the reference gives it
+# its own section.  A spelling asserted inside a *table cell* escaped every
+# check, so the reference kept claiming `bernstein commit-stats` was a live
+# deprecated alias for ~4 months after #3472 deleted it, and told readers to
+# invoke `bernstein task compose` / `task parts`, which were never registered
+# under `task` at all.  Each read to a user exactly like the command being
+# broken, and CI stayed green throughout.
+#
+# This resolves every ``bernstein <verb>`` spelling a table cell names --
+# purpose cells and replacement cells included, not just the first cell --
+# through the real ``cli`` object.
+#
+# Deliberately out of scope: the ``Deprecated | Canonical`` alias-mapping
+# table, whose left column exists precisely to name spellings that no longer
+# resolve.  Rows are skipped from that header to the end of the table.
+
+# Spellings a table cell names that do not resolve, each with the reason it is
+# tolerated.  An entry here records a documented invocation that fails; keep
+# this as close to empty as the surface allows.
+UNREGISTERED_MENTION_EXEMPTIONS: dict[str, str] = {
+    "cost report": (
+        "never existed as a command; `bernstein fleet bulk-cost-report` dispatches it "
+        "to every project, so the doc row mirrors a live runtime bug in "
+        "src/bernstein/core/fleet/bulk.py:238 -- tracked separately, fixing it here "
+        "would change fleet behaviour"
+    ),
+}
+
+
+def _table_command_mentions() -> list[pytest.param]:
+    """Every ``bernstein <verb>`` spelling named in a reference table cell.
+
+    Rows of the alias-mapping table are skipped: its whole purpose is to name
+    deprecated spellings alongside their canonical replacement, so a left-hand
+    cell that no longer resolves is the documented outcome, not a defect.
+    """
+    reference = Path(__file__).resolve().parents[2] / "docs" / "reference" / "cli-reference.md"
+    mentions: dict[str, int] = {}
+    in_fence = False
+    in_alias_table = False
+
+    for lineno, line in enumerate(reference.read_text(encoding="utf-8").splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not stripped.startswith("|"):
+            in_alias_table = False
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if cells and cells[0].strip("`").lower() == "deprecated":
+            in_alias_table = True
+            continue
+        if in_alias_table:
+            continue
+        for raw in _CMD_IN_HEADING.findall(stripped):
+            if "--" in raw or not (path := _strip_argument_placeholders(raw)):
+                continue
+            mentions.setdefault(path, lineno)
+
+    return [pytest.param(path, lineno, id=path) for path, lineno in sorted(mentions.items())]
+
+
+@pytest.mark.parametrize(("path", "lineno"), _table_command_mentions())
+def test_table_cell_command_mentions_resolve(path: str, lineno: int) -> None:
+    """Every command spelling a reference table names resolves through ``cli``.
+
+    A cell asserting that ``bernstein X`` is a usable spelling is a contract
+    with the reader in exactly the way a heading is.  Following one that does
+    not resolve produces "No such command".
+    """
+    if path in UNREGISTERED_MENTION_EXEMPTIONS:
+        pytest.skip(f"known-unregistered spelling: {UNREGISTERED_MENTION_EXEMPTIONS[path]}")
+    assert _resolve(path) is not None, (
+        f"docs/reference/cli-reference.md:{lineno} names `bernstein {path}`, "
+        "which does not resolve through the top-level CLI"
+    )
+
+
+def test_unregistered_mention_exemptions_are_still_needed() -> None:
+    """Every exemption names a spelling that is still both documented and broken.
+
+    An entry that starts resolving -- or that no longer appears in the
+    reference -- would silently exempt nothing while reading as if it did,
+    so the set can only shrink deliberately.
+    """
+    documented = {param.values[0] for param in _table_command_mentions()}
+    for path, reason in UNREGISTERED_MENTION_EXEMPTIONS.items():
+        assert reason.strip(), f"exemption for `bernstein {path}` carries no reason"
+        assert path in documented, f"exempted spelling `bernstein {path}` is no longer named in the reference"
+        assert _resolve(path) is None, (
+            f"exempted spelling `bernstein {path}` resolves now -- drop it from UNREGISTERED_MENTION_EXEMPTIONS"
+        )
+
+
 @pytest.mark.parametrize(
     "exemptions",
     [GHOST_FLAG_EXEMPTIONS, PARTIAL_FLAG_TABLES],

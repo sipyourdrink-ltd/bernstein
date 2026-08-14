@@ -210,6 +210,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein ticket` | Ticket integration group. | `cli/commands/ticket_cmd.py:246` |
 | `bernstein plan validate PLAN.yaml` | Validate a plan file's schema (`bernstein validate` is a deprecated alias, removed in 4.0.0). | `cli/plan_validate_cmd.py:142` |
 | `bernstein validate PLAN.yaml` | Deprecated alias of `bernstein plan validate`; removed in v4.0.0. | `cli/plan_validate_cmd.py` |
+| `bernstein task` | Durable task lifecycle: complete, park, and resume a task. | `cli/commands/task_cmd.py:837` |
 
 #### `bernstein plan`
 
@@ -265,6 +266,66 @@ See [`cli/task-lifecycle.md#bernstein-add-task`](cli/task-lifecycle.md#bernstein
 
 See [`cli/task-lifecycle.md#bernstein-review-bernstein-verify`](cli/task-lifecycle.md#bernstein-review-bernstein-verify).
 
+#### `bernstein task`
+
+A group, with four subcommands. A task that must wait on something outside
+the run - a mid-flight approval, an external review, a credential rotation, a
+dependency landing - can be *parked* rather than left holding its resources:
+the park writes an attested receipt, releases the seat, sandbox and budget
+headroom, and `resume` restores from that receipt.
+
+| Subcommand | Purpose | Source |
+|---|---|---|
+| `complete TASK_ID` | Mark a task complete on the running task server. | `cli/commands/task_cmd.py:861` |
+| `suspend TASK_ID` | Park a running task and free its seat, sandbox and budget. | `cli/commands/task_cmd.py:918` |
+| `resume TASK_ID` | Resume a parked task from its attested suspend receipt. | `cli/commands/task_cmd.py:1035` |
+| `list-suspended` | List parked tasks with their parked-at hash and freed resources. | `cli/commands/task_cmd.py:1154` |
+
+The group itself takes no flags beyond `--help`; each subcommand carries its
+own, below.
+
+##### `bernstein task complete`
+
+Resolves the task-server URL and the session token itself, from
+`BERNSTEIN_SERVER_URL` / `.sdd/runtime/server.port` and `BERNSTEIN_AUTH_TOKEN`
+/ the persisted run-token file, so a completion does not have to be
+hand-assembled as a request with a bearer header.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--summary TEXT` / `-s` | required | Result summary recorded on the task (max 2000 chars). |
+| `--json` | off | Print the server's task payload as JSON. |
+
+##### `bernstein task suspend`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | `.` | Project root (the parent of `.sdd/`). |
+| `--adapter TEXT` | latest checkpoint | Adapter owning the session. |
+| `--session-id TEXT` | latest checkpoint | Native session id. |
+| `--worktree TEXT` | checkpoint worktree, else cwd | Worktree to hash. |
+| `--envelope TEXT` | `subscription` | Quota envelope whose headroom is freed. |
+| `--reserved-usd FLOAT` | none | Envelope headroom reserved for the task. |
+| `--spent-usd FLOAT` | none | Spend recorded against the reservation at park time. |
+| `--until approval` | off | Resume only once `bernstein approve TASK_ID` lands. |
+| `--json` | off | Print the park result as JSON. |
+
+##### `bernstein task resume`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | `.` | Project root (the parent of `.sdd/`). |
+| `--worktree TEXT` | the parked path | Re-materialized worktree to hash. |
+| `--mode [warm\|fork\|cold]` | `warm` | Requested continuation mode; downgraded, never upgraded, on drift. |
+| `--json` | off | Print the resume result as JSON. |
+
+##### `bernstein task list-suspended`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir PATH` | `.` | Project root (the parent of `.sdd/`). |
+| `--json` | off | Print the parked tasks as JSON. |
+
 ---
 
 ## Status & monitoring
@@ -281,12 +342,12 @@ See [`cli/task-lifecycle.md#bernstein-review-bernstein-verify`](cli/task-lifecyc
 | `bernstein retro` | Detailed retrospective. | `cli/commands/advanced_cmd.py:299` |
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
 | `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
-| `bernstein report commits` | Per-run git diff stats. Deprecated alias until v4.0.0: `bernstein commit-stats`. | `cli/commands/status_cmd.py:914` |
+| `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
 | `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
-| `bernstein report incident` | Open an incident report. Deprecated alias until v4.0.0: `bernstein incident`. | `cli/incident_cmd.py:53` |
-| `bernstein report postmortem` | Failed-task postmortem. Deprecated alias until v4.0.0: `bernstein postmortem`. | `cli/postmortem_cmd.py:12` |
+| `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
+| `bernstein report postmortem` | Failed-task postmortem. | `cli/commands/postmortem_cmd.py:12` |
 
 #### `bernstein status`
 
@@ -1516,16 +1577,29 @@ First slice of the prompt-to-repo scaffolder. See
 
 ## Hidden commands
 
-Four task-related commands are wired but hidden from `--help`. They are stable and supported; just not surfaced because their UX is uneven or because their visible counterpart (`bernstein add-task`, `bernstein logs`) is what most users want.
+Three task-related commands carry `hidden=True`, so they do not appear in
+`--help`. They are stable and supported, and each is registered at the **top
+level** -- not under `bernstein task`. The spellings below are the ones that
+resolve.
 
-| Command | Source | Replacement |
+| Command | Source | Notes |
 |---|---|---|
-| `bernstein task compose TITLE` | `cli/commands/task_cmd.py:37` | Use `bernstein add-task TITLE` (it's the same command, registered with a different name at `cli/main.py:696`). |
-| `bernstein task sync` | `cli/commands/task_cmd.py:116` | Reconciles on-disk task files with the running server. Use when you've hand-edited backlog files and want them registered without restarting. |
-| `bernstein task notes` | `cli/commands/task_cmd.py:614` | Tail server / spawner logs. Prefer `bernstein logs tail`. |
-| `bernstein task parts` | `cli/commands/task_cmd.py:637` | Same as `bernstein list-tasks`. |
+| `bernstein add-task TITLE` | `cli/commands/task_cmd.py:155` | Declared as `compose`, registered top-level as `add-task`. |
+| `bernstein sync` | `cli/commands/task_cmd.py:337` | Reconciles on-disk task files with the running server. Use when you've hand-edited backlog files and want them registered without restarting. |
+| `bernstein list-tasks` | `cli/commands/task_cmd.py:776` | Declared as `parts`, registered top-level as `list-tasks`. |
 
-To invoke any of them, just type the full path (`bernstein task compose ...`) - they accept the same flags as their visible siblings.
+A command's declared name and its registered name differ here, so the
+declared spelling is not an invocation: `bernstein task compose` and
+`bernstein task parts` resolve to nothing. Type the names in the table.
+
+`bernstein task` itself is a real group and is not hidden - it carries the
+durable lifecycle subcommands documented under
+[Plan & tasks](#bernstein-task). It is only these three that are *not* under
+it, despite their declared names suggesting otherwise.
+
+`task_cmd.py` also declares a `notes` command (`_notes_legacy`,
+`cli/commands/task_cmd.py:753`) that is registered nowhere and therefore
+cannot be invoked at all. To tail server / spawner logs, use `bernstein logs`.
 
 ---
 
