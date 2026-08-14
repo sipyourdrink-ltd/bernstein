@@ -104,7 +104,7 @@ logger = logging.getLogger(__name__)
 _DRAINING_DETAIL = "Server is draining -- no new claims accepted"
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Sequence
+    from collections.abc import AsyncGenerator, Iterable, Sequence
     from pathlib import Path
 
     from bernstein.core.models import Task
@@ -322,6 +322,32 @@ def require_tenant_scope_for_ids(request: Request, task_ids: Sequence[str]) -> N
         task = store.get_task(task_id)
         if task is not None and task.tenant_id != effective_tenant:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+
+
+def task_ids_outside_tenant_scope(request: Request, task_ids: Iterable[str]) -> set[str]:
+    """Return the members of *task_ids* that resolve outside the caller's scope.
+
+    The reading counterpart to :func:`require_tenant_scope_for_ids`.  The
+    routes that render *runtime records* - an agent session, a token sidecar -
+    do not hold a tenant of their own; what places such a record is the task
+    it names.  Resolving that task is therefore how those readers narrow, and
+    this returns the ids they have to drop.
+
+    An id that does not resolve at all is NOT reported: it has no tenant to
+    compare against, so refusing it would be an existence check rather than a
+    scope narrowing, and would hide records whose task has since been
+    archived out of the store.
+    """
+    store = _get_store(request)
+    effective_tenant = _resolve_request_tenant_scope(request)
+    outside: set[str] = set()
+    for task_id in task_ids:
+        if not task_id:
+            continue
+        task = store.get_task(task_id)
+        if task is not None and task.tenant_id != effective_tenant:
+            outside.add(task_id)
+    return outside
 
 
 def _require_parent_tenant_scope(request: Request, parent_task_ids: Sequence[str]) -> None:

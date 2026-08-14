@@ -134,9 +134,16 @@ def _aggregate_quality(sdd_dir: Path) -> dict[str, Any]:
     }
 
 
-def _task_stats(store: TaskStore) -> dict[str, Any]:
-    """Compute task completion statistics from the task store."""
-    tasks = store.list_tasks()
+def _task_stats(store: TaskStore, tenant_id: str) -> dict[str, Any]:
+    """Compute task completion statistics from the task store, for *tenant_id*.
+
+    The roll-up renders figures rather than ids, but every one of them - the
+    totals, the per-status and per-role splits, and the per-agent map keyed on
+    agent identifiers - is computed over whichever rows this reads.  So the
+    narrowing happens on the read, and ``tenant_id`` is required rather than
+    defaulted: there is no whole-store roll-up this route wants.
+    """
+    tasks = store.list_tasks(tenant_id=tenant_id)
     total = len(tasks)
     by_status: dict[str, int] = defaultdict(int)
     by_role: dict[str, int] = defaultdict(int)
@@ -205,13 +212,15 @@ def team_adoption_dashboard(request: Request) -> JSONResponse:
     Returns total runs, tasks completed, cost saved vs. budget,
     code merge stats, and quality gate pass rate.
     """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     sdd_dir = _get_sdd_dir(request)
     store = _get_store(request)
     team_store = TeamStateStore(sdd_dir)
 
     costs = _aggregate_costs(sdd_dir)
     quality = _aggregate_quality(sdd_dir)
-    tasks = _task_stats(store)
+    tasks = _task_stats(store, _resolve_request_tenant_scope(request))
     merges = _merge_stats(sdd_dir)
     team = team_store.summary()
 
