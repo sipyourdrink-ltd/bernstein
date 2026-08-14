@@ -26,9 +26,7 @@ def _proposal(produced_by: str = "detector") -> UpgradeProposal:
         current_state="a",
         proposed_change="b",
         benefits=["x"],
-        risk_assessment=RiskAssessment(
-            level="low", breaking_changes=False, affected_components=[], mitigation=""
-        ),
+        risk_assessment=RiskAssessment(level="low", breaking_changes=False, affected_components=[], mitigation=""),
         rollback_plan=RollbackPlan(steps=["revert"], estimated_rollback_minutes=5),
         cost_estimate_usd=0.0,
         expected_improvement="better",
@@ -86,9 +84,7 @@ def test_failures_are_recorded_too(tmp_path, query, monkeypatch) -> None:
         admission=AdmissionPolicy(query=query, cold_start=ColdStartMode.FAIL_OPEN),
     )
     proposal = _proposal()
-    monkeypatch.setattr(
-        executor, "_apply_policy_update", lambda _p: (_ for _ in ()).throw(RuntimeError("boom"))
-    )
+    monkeypatch.setattr(executor, "_apply_policy_update", lambda _p: (_ for _ in ()).throw(RuntimeError("boom")))
 
     assert executor.execute_upgrade(proposal) is False
 
@@ -103,9 +99,7 @@ def test_a_bad_producer_gates_itself_out_over_time(tmp_path, query, monkeypatch)
         admission=AdmissionPolicy(query=query, cold_start=ColdStartMode.FAIL_OPEN),
     )
     proposal = _proposal()
-    monkeypatch.setattr(
-        executor, "_apply_policy_update", lambda _p: (_ for _ in ()).throw(RuntimeError("boom"))
-    )
+    monkeypatch.setattr(executor, "_apply_policy_update", lambda _p: (_ for _ in ()).throw(RuntimeError("boom")))
 
     for _ in range(5):
         executor.execute_upgrade(proposal)

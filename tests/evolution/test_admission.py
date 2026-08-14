@@ -33,9 +33,7 @@ def _proposal(
         current_state="slow",
         proposed_change="fast",
         benefits=["speed"],
-        risk_assessment=RiskAssessment(
-            level="low", breaking_changes=False, affected_components=[], mitigation=""
-        ),
+        risk_assessment=RiskAssessment(level="low", breaking_changes=False, affected_components=[], mitigation=""),
         rollback_plan=RollbackPlan(steps=["revert"], estimated_rollback_minutes=5),
         cost_estimate_usd=0.0,
         expected_improvement="faster",
@@ -51,9 +49,7 @@ def query(tmp_path) -> ConfidenceQuery:
 
 
 def test_decision_key_is_category_and_trigger(tmp_path) -> None:
-    proposal = _proposal(
-        category=UpgradeCategory.POLICY_UPDATE, trigger=AnalysisTrigger.SCHEDULED
-    )
+    proposal = _proposal(category=UpgradeCategory.POLICY_UPDATE, trigger=AnalysisTrigger.SCHEDULED)
     key = decision_key(proposal)
     assert key.startswith("category:")
     assert "|trigger:" in key
