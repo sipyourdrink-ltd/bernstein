@@ -12,9 +12,5 @@
     "webui-tasks.png": "captured"
   },
   "spa_bundle_files": 8,
-<<<<<<< HEAD
-  "spa_bundle_sha256": "d5b6e36e2c8d0569cb3bc12f04b4622c067829ac5b463942ef393c3529f5dbed"
-=======
-  "spa_bundle_sha256": "b79e9fceaf8c68943f0851ef524c118ef10423aff9838675ea333e471710057c"
->>>>>>> origin/main
+  "spa_bundle_sha256": "80dbc0ca78ce9518e18bb8ddc1f64bc6f6628c4a3e9d1be232fcbe64984e6590"
 }
