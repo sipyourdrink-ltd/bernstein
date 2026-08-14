@@ -27,6 +27,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from bernstein.core.protocols.cluster import NodeRegistry
+    from bernstein.core.protocols.cluster.cluster_auth import ClusterAuthenticator
 
 logger = logging.getLogger(__name__)
 
@@ -223,14 +224,67 @@ class TaskServiceImpl:
 
 
 class ClusterServiceImpl:
-    """gRPC implementation of ClusterService, bridging to NodeRegistry."""
+    """gRPC implementation of ClusterService, bridging to NodeRegistry.
 
-    def __init__(self, node_registry: NodeRegistry) -> None:
+    Mutating RPCs carry the same credential scopes as the equivalent REST
+    routes in ``routes/task_cluster.py``: registration needs
+    ``node:register``, heartbeats need ``node:heartbeat``, and the lifecycle
+    verbs (unregister / cordon / uncordon / drain) need ``node:admin``. Reads
+    (``ListNodes``, ``GetClusterStatus``) are unauthenticated on both surfaces.
+
+    When no authenticator is passed, or one is passed with
+    ``require_auth=False``, every call is admitted -- the same escape hatch the
+    REST routes have, and the same one tests use.
+    """
+
+    def __init__(self, node_registry: NodeRegistry, authenticator: ClusterAuthenticator | None = None) -> None:
         self._registry = node_registry
+        self._auth = authenticator
+
+    def _bearer_from_metadata(self, context: Any) -> str | None:
+        """Return the ``authorization`` metadata value, or None when absent.
+
+        gRPC lowercases metadata keys on the wire, but a hand-built context may
+        not, so the lookup is case-insensitive.
+        """
+        metadata = context.invocation_metadata() or ()
+        for key, value in metadata:
+            if key.lower() == "authorization":
+                return str(value)
+        return None
+
+    async def _authorize(self, context: Any, required_scope: str) -> None:
+        """Abort the call unless the caller presents ``required_scope``.
+
+        Missing/invalid credentials abort ``UNAUTHENTICATED``; a valid
+        credential without the scope aborts ``PERMISSION_DENIED``.
+        """
+        if self._auth is None or not self._auth.require_auth:
+            return
+
+        from bernstein.core.protocols.cluster.cluster_auth import (
+            ClusterAuthError,
+            ClusterAuthScopeError,
+        )
+
+        try:
+            self._auth.verify_request(self._bearer_from_metadata(context), required_scope)
+        except ClusterAuthScopeError as exc:
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, str(exc))
+            # ``abort`` raises on a live grpc.aio context; the explicit raise
+            # keeps a context that only records the abort from falling through
+            # into the mutation below.
+            raise
+        except ClusterAuthError as exc:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, str(exc))
+            raise
 
     async def RegisterNode(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
         from bernstein.core.grpc_gen import cluster_pb2
         from bernstein.core.models import NodeCapacity, NodeInfo
+        from bernstein.core.protocols.cluster.cluster_auth import SCOPE_NODE_REGISTER
+
+        await self._authorize(context, SCOPE_NODE_REGISTER)
 
         if request.HasField("capacity"):
             # proto3 scalars carry no presence, so a supplied capacity is
@@ -248,21 +302,39 @@ class ClusterServiceImpl:
                 cap.supported_models = list(request.capacity.supported_models)
         else:
             cap = NodeCapacity()
-        node = self._registry.register(
-            NodeInfo(
-                name=request.name,
-                url=request.url,
-                capacity=cap,
-                labels=dict(request.labels) if request.labels else {},
-                cell_ids=list(request.cell_ids) if request.cell_ids else [],
-            )
+        # Re-registration is keyed on the node's operator-visible identity
+        # (name + url), not on a per-call id. A worker that restarts has no
+        # memory of the id the server gave it, so minting a fresh NodeInfo per
+        # call would leave the old entry behind: the registry would carry one
+        # row per restart and cluster_summary would count that worker's
+        # capacity once per row.
+        existing = self._registry.find_by_identity(request.name, request.url)
+        info = NodeInfo(
+            name=request.name,
+            url=request.url,
+            capacity=cap,
+            labels=dict(request.labels) if request.labels else {},
+            cell_ids=list(request.cell_ids) if request.cell_ids else [],
         )
+        if existing is not None:
+            info.id = existing.id
+        node = self._registry.register(info)
         resp = cluster_pb2.RegisterNodeResponse()
         self._fill_node_proto(resp.node, node)
+        # auth_token is the node's own credential for subsequent heartbeats,
+        # minted against the registered id -- the gRPC counterpart of
+        # AuthenticatedNodeRegistry.register. With no authenticator wired there
+        # is nothing to verify it against, so the field stays empty rather than
+        # handing back a token no handler would accept.
+        if self._auth is not None:
+            resp.auth_token = self._auth.issue_node_token(node.id)
         return resp
 
     async def Heartbeat(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
         from bernstein.core.grpc_gen import cluster_pb2
+        from bernstein.core.protocols.cluster.cluster_auth import SCOPE_NODE_HEARTBEAT
+
+        await self._authorize(context, SCOPE_NODE_HEARTBEAT)
 
         node = self._registry.get(request.node_id)
         if node is None:
@@ -287,6 +359,11 @@ class ClusterServiceImpl:
 
     async def StreamHeartbeats(self, request_iterator: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
         from bernstein.core.grpc_gen import cluster_pb2
+        from bernstein.core.protocols.cluster.cluster_auth import SCOPE_NODE_HEARTBEAT
+
+        # Verified once per stream, before the first message is read: the
+        # credential rides in the call's metadata, not in the message frames.
+        await self._authorize(context, SCOPE_NODE_HEARTBEAT)
 
         async for request in request_iterator:
             self._registry.heartbeat(request.node_id)
@@ -297,12 +374,18 @@ class ClusterServiceImpl:
 
     async def UnregisterNode(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
         from bernstein.core.grpc_gen import cluster_pb2
+        from bernstein.core.protocols.cluster.cluster_auth import SCOPE_NODE_ADMIN
+
+        await self._authorize(context, SCOPE_NODE_ADMIN)
 
         removed = self._registry.unregister(request.node_id)
         return cluster_pb2.UnregisterNodeResponse(removed=removed)
 
     async def CordonNode(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
         from bernstein.core.grpc_gen import cluster_pb2
+        from bernstein.core.protocols.cluster.cluster_auth import SCOPE_NODE_ADMIN
+
+        await self._authorize(context, SCOPE_NODE_ADMIN)
 
         node = self._registry.get(request.node_id)
         if node is None:
@@ -315,6 +398,9 @@ class ClusterServiceImpl:
 
     async def UncordonNode(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
         from bernstein.core.grpc_gen import cluster_pb2
+        from bernstein.core.protocols.cluster.cluster_auth import SCOPE_NODE_ADMIN
+
+        await self._authorize(context, SCOPE_NODE_ADMIN)
 
         node = self._registry.get(request.node_id)
         if node is None:
@@ -327,6 +413,9 @@ class ClusterServiceImpl:
 
     async def DrainNode(self, request: Any, context: Any) -> Any:  # NOSONAR - gRPC method name
         from bernstein.core.grpc_gen import cluster_pb2
+        from bernstein.core.protocols.cluster.cluster_auth import SCOPE_NODE_ADMIN
+
+        await self._authorize(context, SCOPE_NODE_ADMIN)
 
         node = self._registry.get(request.node_id)
         if node is None:
@@ -401,6 +490,7 @@ class BernsteinGrpcServer:
         self,
         task_store: Any,
         node_registry: NodeRegistry | None = None,
+        cluster_authenticator: ClusterAuthenticator | None = None,
     ) -> None:
         if not GRPC_AVAILABLE:
             logger.warning("grpcio not installed - gRPC server disabled")
@@ -423,7 +513,10 @@ class BernsteinGrpcServer:
         if node_registry is not None:
             from bernstein.core.grpc_gen import cluster_pb2_grpc
 
-            cluster_pb2_grpc.add_ClusterServiceServicer_to_server(ClusterServiceImpl(node_registry), server)
+            cluster_pb2_grpc.add_ClusterServiceServicer_to_server(
+                ClusterServiceImpl(node_registry, cluster_authenticator),
+                server,
+            )
 
         if self.config.enable_reflection:
             try:
@@ -457,6 +550,15 @@ class BernsteinGrpcServer:
         else:
             server.add_insecure_port(bind)
             logger.info("gRPC server listening on %s (insecure)", bind)
+            if cluster_authenticator is not None and cluster_authenticator.require_auth:
+                # Credential enforcement still applies -- the servicer verifies
+                # every mutating call regardless of transport. The warning is
+                # about confidentiality: node tokens cross this port in
+                # cleartext, so anyone on the path can replay them.
+                logger.warning(
+                    "gRPC cluster auth is enabled but %s has no TLS: node credentials cross it in cleartext",
+                    bind,
+                )
 
         await server.start()
         self._server = server

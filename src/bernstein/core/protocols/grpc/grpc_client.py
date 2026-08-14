@@ -26,13 +26,21 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class GrpcClientConfig:
-    """Configuration for gRPC client connections."""
+    """Configuration for gRPC client connections.
+
+    ``auth_token`` is the credential a cluster node presents to join: the
+    cluster shared secret or an operator-minted node JWT. It is sent as the
+    ``authorization`` metadata entry, the gRPC counterpart of the REST
+    ``Authorization`` header. Leave it unset against a server that runs
+    without a cluster authenticator.
+    """
 
     server_address: str = "localhost:50051"
     tls_enabled: bool = False
     tls_ca_cert_path: str | None = None
     timeout_s: float = 10.0
     max_message_length: int = 16 * 1024 * 1024
+    auth_token: str | None = None
 
 
 @dataclass
@@ -180,6 +188,17 @@ class ClusterClient:
     config: GrpcClientConfig = field(default_factory=GrpcClientConfig)
     _channel: Any = field(default=None, init=False, repr=False)
     _stub: Any = field(default=None, init=False, repr=False)
+    _node_token: str | None = field(default=None, init=False, repr=False)
+
+    def _metadata(self) -> list[tuple[str, str]]:
+        """Build the call metadata carrying this node's credential.
+
+        The node token handed back by ``RegisterNode`` supersedes the join
+        credential once registration succeeds, so heartbeats travel under the
+        node's own least-privilege token rather than the shared secret.
+        """
+        token = self._node_token or self.config.auth_token
+        return [("authorization", f"Bearer {token}")] if token else []
 
     async def connect(self) -> None:
         if not GRPC_AVAILABLE:
@@ -206,6 +225,7 @@ class ClusterClient:
             await self._channel.close()
             self._channel = None
             self._stub = None
+            self._node_token = None
 
     async def register_node(
         self,
@@ -228,7 +248,9 @@ class ClusterClient:
             capacity=cap,
             labels=labels or {},
         )
-        resp = await self._stub.RegisterNode(req, timeout=self.config.timeout_s)
+        resp = await self._stub.RegisterNode(req, timeout=self.config.timeout_s, metadata=self._metadata())
+        if resp.auth_token:
+            self._node_token = resp.auth_token
         return {
             "node": self._node_to_dict(resp.node),
             "auth_token": resp.auth_token,
@@ -249,7 +271,7 @@ class ClusterClient:
                 active_agents=active_agents or 0,
             )
         req = cluster_pb2.HeartbeatRequest(node_id=node_id, capacity=cap)
-        resp = await self._stub.Heartbeat(req, timeout=self.config.timeout_s)
+        resp = await self._stub.Heartbeat(req, timeout=self.config.timeout_s, metadata=self._metadata())
         return {
             "acknowledged": resp.acknowledged,
             "node": self._node_to_dict(resp.node) if resp.HasField("node") else None,
@@ -259,7 +281,7 @@ class ClusterClient:
         from bernstein.core.grpc_gen import cluster_pb2
 
         req = cluster_pb2.UnregisterNodeRequest(node_id=node_id)
-        resp = await self._stub.UnregisterNode(req, timeout=self.config.timeout_s)
+        resp = await self._stub.UnregisterNode(req, timeout=self.config.timeout_s, metadata=self._metadata())
         return resp.removed
 
     async def cluster_status(self) -> dict[str, Any]:
@@ -282,7 +304,7 @@ class ClusterClient:
         from bernstein.core.grpc_gen import cluster_pb2
 
         req = cluster_pb2.StealTasksRequest(queue_depths=queue_depths)
-        resp = await self._stub.StealTasks(req, timeout=self.config.timeout_s)
+        resp = await self._stub.StealTasks(req, timeout=self.config.timeout_s, metadata=self._metadata())
         return {
             "actions": [
                 {

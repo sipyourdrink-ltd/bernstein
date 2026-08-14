@@ -62,6 +62,25 @@ landed since the newest one.
   orchestrator already generates. Both layers are kept: the validator stops
   new bad rows, the helper protects the sink from rows that already exist or
   arrive by another route.
+- The gRPC `ClusterService` now enforces the same credential scopes as the
+  equivalent REST cluster routes. `RegisterNode` requires `node:register`,
+  `Heartbeat` and `StreamHeartbeats` require `node:heartbeat`, and
+  `UnregisterNode` / `CordonNode` / `UncordonNode` / `DrainNode` require
+  `node:admin`; the credential travels in the `authorization` call metadata as
+  `Bearer <token>`. A missing or invalid credential is refused
+  `UNAUTHENTICATED`, a valid one lacking the scope `PERMISSION_DENIED`. Reads
+  (`ListNodes`, `GetClusterStatus`) stay unauthenticated, as on REST.
+  Enforcement lives in the servicer, so it holds on the insecure-port fallback
+  too - that path now also logs a warning that node credentials cross it in
+  cleartext. `RegisterNodeResponse.auth_token`, previously declared and read by
+  our own client but never populated, now carries a node JWT minted against the
+  registered node id (`node:register` + `node:heartbeat`, never `node:admin`),
+  which `ClusterClient` adopts for subsequent calls. **Behaviour change:**
+  `RegisterNode` is now idempotent on `(name, url)` - a restarting worker
+  updates its existing entry instead of adding one, so the registry no longer
+  accumulates a row per restart and `GET /cluster/status` no longer counts that
+  worker's capacity once per row. Nothing in `src/` starts the gRPC server, so
+  this surface only runs where an operator has wired it up. Refs #3537.
 
 ## Added
 
