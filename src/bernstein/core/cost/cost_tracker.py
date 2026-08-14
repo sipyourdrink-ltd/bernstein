@@ -33,6 +33,12 @@ from bernstein.core.models import (
     RunCostProjection,
     RunCostReport,
 )
+from bernstein.core.persistence.anchored_write import (
+    AnchoredDir,
+    anchored_append,
+    anchored_write_text,
+    mkdir_anchored,
+)
 from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -413,6 +419,24 @@ class TokenUsage:
         )
 
 
+def _validate_run_id(run_id: str) -> None:
+    """Refuse a run id that cannot be one filename component.
+
+    Cost state, the cost report, and the rotated usage log are all named after
+    the run id, so it has to be a single name. It comes from
+    ``BERNSTEIN_RUN_ID`` when the environment sets one
+    (``orchestration/orchestrator.py``), which makes it operator input rather
+    than something a caller controls.
+
+    Raises:
+        ValueError: If *run_id* is empty, is ``.`` or ``..``, or carries a path
+            separator or a NUL.
+    """
+    if not run_id or run_id in {".", ".."} or any(c in run_id for c in ("/", "\\", "\x00")):
+        msg = f"run_id must be a single path component, got {run_id!r} (from BERNSTEIN_RUN_ID?)"
+        raise ValueError(msg)
+
+
 @dataclass(frozen=True)
 class BudgetStatus:
     """Snapshot of the current budget state for a run.
@@ -618,7 +642,17 @@ class CostTracker:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Resolve the usage buffer size and rebuild the deque accordingly."""
+        """Validate the run id, then resolve the usage buffer and rebuild the deque.
+
+        ``run_id`` reaches disk as a filename component in three places, and it
+        arrives from ``BERNSTEIN_RUN_ID`` - operator input, not a constant. The
+        anchored writers refuse a component carrying a separator, which is
+        correct, but they refuse it at the write, deep inside best-effort
+        telemetry, after the in-memory accumulators have already moved. Refusing
+        it once here means a bad value fails on construction, naming itself,
+        instead of surfacing later as a rotation that cannot flush.
+        """
+        _validate_run_id(self.run_id)
         resolved = self.usage_buffer_size
         if resolved is None:
             resolved = _resolve_usage_buffer_size()
@@ -1142,9 +1176,13 @@ class CostTracker:
         Returns:
             Path to the written JSON file.
         """
-        costs_dir = base_dir / "runtime" / "costs"
-        costs_dir.mkdir(parents=True, exist_ok=True)
-        file_path = costs_dir / f"{self.run_id}.json"
+        # The anchor is created normally and the layout below it is not: a
+        # caller-supplied base directory is the location we are trusting, while
+        # ``runtime/costs`` is layout this module owns.  Same split as
+        # ``anchored_write`` draws between a root and its components.
+        base_dir.mkdir(parents=True, exist_ok=True)
+        costs_dir = AnchoredDir(root=base_dir, parts=("runtime", "costs"))
+        mkdir_anchored(costs_dir)
 
         data: dict[str, Any] = {
             "run_id": self.run_id,
@@ -1165,8 +1203,7 @@ class CostTracker:
             "spent_by_envelope": self._spent_by_envelope.copy(),
             "calls_by_envelope": self._calls_by_envelope.copy(),
         }
-        file_path.write_text(json.dumps(data, indent=2))
-        return file_path
+        return anchored_write_text(costs_dir, f"{self.run_id}.json", json.dumps(data, indent=2))
 
     @classmethod
     def load(
@@ -1207,8 +1244,8 @@ class CostTracker:
                 has no hard cap of its own rather than inherit the run's.
 
         Returns:
-            Restored ``CostTracker``, or ``None`` if the file doesn't exist
-            or is corrupt.
+            Restored ``CostTracker``, or ``None`` if the file doesn't exist,
+            is corrupt, or *run_id* does not name one file.
 
         Note:
             Replay is bounded by what the run file holds.  ``save()`` writes
@@ -1218,13 +1255,30 @@ class CostTracker:
             history.  Full history lives in the JSONL rotation files under
             :attr:`rotation_dir` when one is configured.
         """
+        # Before the join, not after. `run_id` arrives here from
+        # `GET /costs/{run_id}` as well as from the orchestrator, and a path
+        # segment that survives URL decoding is not automatically a filename:
+        # on Windows `Path` treats a backslash as a separator, so `..\outside`
+        # reaches `runtime/outside.json`. Validating in `__post_init__` alone
+        # would check the value after the read it was supposed to gate.
+        try:
+            _validate_run_id(run_id)
+        except ValueError:
+            return None
         file_path = base_dir / "runtime" / "costs" / f"{run_id}.json"
         if not file_path.exists():
             return None
         try:
             data = json.loads(file_path.read_text())
+            # The filename was validated; the payload it holds was not. A
+            # `requested.json` carrying `{"run_id": "other"}` would otherwise
+            # build a tracker labelled `other`, and `GET /costs/requested`
+            # would answer with that identity and its spend. The file is
+            # authoritative about the numbers, never about whose they are.
+            if data.get("run_id") != run_id:
+                return None
             tracker = cls(
-                run_id=data["run_id"],
+                run_id=run_id,
                 budget_usd=float(data.get("budget_usd", 0.0) if budget_usd is None else budget_usd),
                 hard_budget_usd=float(data.get("hard_budget_usd", 0.0) if hard_budget_usd is None else hard_budget_usd),
                 warn_threshold=float(data.get("warn_threshold", DEFAULT_WARN_THRESHOLD)),
@@ -1485,9 +1539,9 @@ class CostTracker:
 
         metrics_path = _Path(str(metrics_dir))
         metrics_path.mkdir(parents=True, exist_ok=True)
-        file_path = metrics_path / f"costs_{self.run_id}.json"
+        target = AnchoredDir(root=metrics_path)
         r = self.report()
-        file_path.write_text(json.dumps(r.to_dict(), indent=2))
+        file_path = anchored_write_text(target, f"costs_{self.run_id}.json", json.dumps(r.to_dict(), indent=2))
         logger.debug("Cost report for run %s saved to %s", self.run_id, file_path)
         return file_path
 
@@ -1572,10 +1626,13 @@ class CostTracker:
             return
         try:
             rotation_dir.mkdir(parents=True, exist_ok=True)
-            rotation_file = rotation_dir / f"usages-{self.run_id}.jsonl"
-            with rotation_file.open("a", encoding="utf-8") as fh:
+            with anchored_append(AnchoredDir(root=rotation_dir), f"usages-{self.run_id}.jsonl") as fh:
                 fh.write(json.dumps(usage.to_dict()) + "\n")
-        except OSError as exc:  # pragma: no cover - best-effort IO
+        except (OSError, ValueError) as exc:  # pragma: no cover - best-effort IO
+            # ``ValueError`` belongs here even though ``__post_init__`` rejects
+            # the run ids that cause it: telemetry rotation is the hot path,
+            # and a path refusal reaching an orchestrator through the rotation
+            # of an evicted row would abort a run over a dropped metric.
             logger.debug("Failed to rotate evicted cost usage for run %s: %s", self.run_id, exc)
 
     def attach_retry_budget(self, budget: object) -> None:

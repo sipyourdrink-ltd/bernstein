@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 import pytest
 
 from bernstein.plugins import hookimpl
 from bernstein.plugins.manager import HookBlockingError, PluginManager
+
+
+@pytest.fixture(autouse=True)
+def _trusted_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise hook-execution mechanics against a trusted workspace.
+
+    Trust gating (untrusted / indeterminate workspaces) is owned by
+    tests/unit/test_plugins.py; these suites assume trust has been granted.
+    """
+    monkeypatch.setattr("bernstein.plugins.manager.is_workspace_trusted", lambda _root: True)
 
 
 class _NoopPlugin:
@@ -22,9 +33,9 @@ class _NoopPlugin:
 class TestHookTiming:
     """Tests for hook execution timing and outcome logging."""
 
-    def test_successful_hook_logs_debug_duration(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_successful_hook_logs_debug_duration(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """Successful hook execution logs debug-level duration."""
-        pm = PluginManager()
+        pm = PluginManager(workdir=tmp_path)
         pm.register(_NoopPlugin(), name="noop")
 
         caplog.set_level(logging.DEBUG)
@@ -36,7 +47,7 @@ class TestHookTiming:
         assert "outcome=success" in timing_msgs[0]
         assert "foreground" in timing_msgs[0]
 
-    def test_failing_hook_logs_exception_outcome(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_failing_hook_logs_exception_outcome(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """Failing hook logs warning with exception in message."""
 
         class FailingPlugin:
@@ -44,7 +55,7 @@ class TestHookTiming:
             def on_task_created(self, task_id: str, role: str, title: str) -> None:
                 raise ValueError("plugin bug")
 
-        pm = PluginManager()
+        pm = PluginManager(workdir=tmp_path)
         pm.register(FailingPlugin(), name="failing")
 
         pm.fire_task_created(task_id="t1", role="backend", title="Test")
@@ -54,7 +65,7 @@ class TestHookTiming:
         assert len(raised) >= 1
         assert "plugin bug" in raised[0]
 
-    def test_slow_hook_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_slow_hook_logs_warning(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """Slow hook (above threshold) logs a warning with timing detail."""
 
         class SlowPlugin:
@@ -62,7 +73,7 @@ class TestHookTiming:
             def on_task_created(self, task_id: str, role: str, title: str) -> None:
                 time.sleep(0.05)  # 50ms - small but measurable
 
-        pm = PluginManager()
+        pm = PluginManager(workdir=tmp_path)
         pm.register(SlowPlugin(), name="slow")
 
         import bernstein.plugins.manager as mgr_mod
@@ -81,7 +92,7 @@ class TestHookTiming:
         assert "on_task_created" in slow_msgs[0]
         assert "foreground" in slow_msgs[0]
 
-    def test_hook_blocking_error_propagates(self) -> None:
+    def test_hook_blocking_error_propagates(self, tmp_path: Path) -> None:
         """Blocking errors are re-raised, not swallowed."""
 
         class BlockingPlugin:
@@ -89,7 +100,7 @@ class TestHookTiming:
             def on_task_created(self, task_id: str, role: str, title: str) -> None:
                 raise HookBlockingError("on_task_created", "blocked by policy")
 
-        pm = PluginManager()
+        pm = PluginManager(workdir=tmp_path)
         pm.register(BlockingPlugin(), name="blocking")
 
         with pytest.raises(HookBlockingError) as exc_info:

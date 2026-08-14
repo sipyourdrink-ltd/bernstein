@@ -813,8 +813,13 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
         write_config_snapshot,
     )
     from bernstein.core.runtime_state import hash_file, write_config_state
+    from bernstein.core.security.tenant_isolation import ensure_tenant_data_layout
     from bernstein.core.seed import SeedError, parse_seed, resolve_seed_path
-    from bernstein.core.tenanting import TenantRegistry, ensure_tenant_layout, tenant_registry_from_seed
+    from bernstein.core.tenanting import (
+        InvalidTenantIdError,
+        TenantRegistry,
+        tenant_registry_from_seed,
+    )
 
     # resolve_seed_path() checks BERNSTEIN_SEED_PATH env first so this reload
     # picks up the same seed file the bootstrap process actually parsed,
@@ -826,6 +831,14 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
     current_snapshot = load_redacted_config(seed_path if seed_path.exists() else None)
     diff = diff_config_snapshots(previous_snapshot, current_snapshot)
     config_hash = hash_file(seed_path if seed_path.exists() else None)
+    # A reload that cannot use the seed must not widen what the running server
+    # accepts. An empty registry reports `is_configured` false, and
+    # `resolve_tenant_scope` skips its membership check when nothing is
+    # configured, so blanking the registry on a bad reload turned a refusal
+    # into "every tenant name is allowed". The last registry that loaded is
+    # kept instead; only a server that never had one starts out empty.
+    previous_registry = getattr(application.state, "tenant_registry", None)
+    fallback_registry = previous_registry if isinstance(previous_registry, TenantRegistry) else TenantRegistry()
     payload: dict[str, Any] = {
         "seed_path": str(seed_path) if seed_path.exists() else None,
         "config_hash": config_hash,
@@ -838,14 +851,52 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
             application.state.seed_config = parse_seed(seed_path)  # type: ignore[attr-defined]
             application.state.tenant_registry = tenant_registry_from_seed(application.state.seed_config)  # type: ignore[attr-defined]
             for tenant in application.state.tenant_registry.tenants:  # type: ignore[attr-defined]
-                ensure_tenant_layout(sdd_dir, tenant.id)
+                # `ensure_tenant_layout` refuses a tenant directory whose
+                # component is a symlink or is not a directory, because
+                # following it would write one tenant's state through a path
+                # another one controls. The refusal is the point; escaping as a
+                # raw `OSError` was not, since it took the server down on boot
+                # with nothing naming which tenant to look at. Only the layout
+                # call is wrapped, so a filesystem error from anywhere else in
+                # this block still surfaces as itself.
+                try:
+                    # The full data layout, not just backlog and metrics: the
+                    # runtime, WAL and audit directories are anchored the same
+                    # way, and validating only half of it left a linked `audit`
+                    # to surface much later as a failed task write.
+                    ensure_tenant_data_layout(sdd_dir, tenant.id)
+                except OSError as exc:
+                    msg = (
+                        f"tenant '{tenant.id}' layout unusable under {sdd_dir}: {exc}. Replace the linked "
+                        "or non-directory component with a real directory, copying its contents across "
+                        "rather than linking them."
+                    )
+                    raise SeedError(msg) from exc
             payload["loaded"] = True
         except SeedError as exc:
             payload["error"] = str(exc)
-            application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
+            application.state.tenant_registry = fallback_registry  # type: ignore[attr-defined]
+        except InvalidTenantIdError as exc:
+            # Runs from lifespan startup and from SIGHUP, and both treat a seed
+            # they cannot use as a configuration error to report rather than as
+            # a reason to refuse to run. A tenant id that is not a usable path
+            # segment is still refused -- no registry, no layout -- but it is
+            # refused as an answer instead of as a crash on boot.
+            payload["error"] = (
+                f"tenant configuration rejected: {exc}. Rename the tenant in the seed file, then move its "
+                "existing directory under .sdd to the new name."
+            )
+            application.state.tenant_registry = fallback_registry  # type: ignore[attr-defined]
+            logger.error("Seed reload rejected a tenant id: %s", exc)
     else:
+        # A seed that is gone is not a seed that says "no tenants". Blanking
+        # the registry here dropped the allowlist a running server was already
+        # enforcing, and an unconfigured registry accepts every tenant name, so
+        # deleting the file or pointing BERNSTEIN_SEED_PATH at a missing one
+        # widened the server rather than narrowing it. The last registry that
+        # loaded is kept; a server that never had one still starts empty.
         application.state.seed_config = None  # type: ignore[attr-defined]
-        application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
+        application.state.tenant_registry = fallback_registry  # type: ignore[attr-defined]
     write_config_state(
         sdd_dir,
         config_hash=config_hash,

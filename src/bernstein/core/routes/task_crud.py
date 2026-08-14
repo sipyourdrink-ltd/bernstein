@@ -967,7 +967,7 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
 
         # Pre-create hook: may block via HookBlockingError (T719)
         try:
-            pm = get_plugin_manager()
+            pm = get_plugin_manager(_get_workdir(request))
             pm.fire_pre_task_create(
                 task_id="",  # ID not yet assigned - use empty string
                 role=effective_body.role,
@@ -1029,7 +1029,7 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
             build_log_record(task.id, task, assessment),
         )
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
-        get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        get_plugin_manager(_get_workdir(request)).fire_task_created(task_id=task.id, role=task.role, title=task.title)
         return task_to_response(task)
 
 
@@ -1076,7 +1076,7 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
 
         # Pre-create hook: skip individual task if blocked (don't fail entire batch)
         try:
-            pm = get_plugin_manager()
+            pm = get_plugin_manager(_get_workdir(request))
             pm.fire_pre_task_create(
                 task_id="",
                 role=effective.role,
@@ -1102,7 +1102,7 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
                 build_log_record(task.id, task, task_assessment),
             )
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
-        get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        get_plugin_manager(_get_workdir(request)).fire_task_created(task_id=task.id, role=task.role, title=task.title)
 
     return BatchCreateResponse(
         created=[task_to_response(t) for t in created_tasks],
@@ -1177,7 +1177,7 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
                     json.dumps({"id": parent.id, "status": "waiting_for_subtasks"}),
                 )
 
-        get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        get_plugin_manager(_get_workdir(request)).fire_task_created(task_id=task.id, role=task.role, title=task.title)
         return task_to_response(task)
 
 
@@ -1385,7 +1385,7 @@ async def _handle_contract_violation(
         sanitize_log(violation.path),
     )
     sse_bus.publish("task_update", json.dumps({"id": failed_task.id, "status": failed_task.status.value}))
-    get_plugin_manager().fire_task_failed(
+    get_plugin_manager(_get_workdir(request)).fire_task_failed(
         task_id=failed_task.id,
         role=failed_task.role,
         error=f"contract_violation: {violation.path}",
@@ -1535,7 +1535,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                     "task_update",
                     json.dumps({"id": failed_task.id, "status": failed_task.status.value}),
                 )
-                get_plugin_manager().fire_task_failed(
+                get_plugin_manager(_get_workdir(request)).fire_task_failed(
                     task_id=failed_task.id,
                     role=failed_task.role,
                     error="completion missing summary",
@@ -1553,7 +1553,9 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
         if refusal is not None:
             return await _finalize_refusal(request, task, refusal, store, sse_bus)
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
-        get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=result_summary)
+        get_plugin_manager(_get_workdir(request)).fire_task_completed(
+            task_id=task.id, role=task.role, result_summary=result_summary
+        )
 
         # Sigstore/Ed25519 attestation for the task completion (fire-and-forget)
         _try_attest_task_completion(request, task.id, task.role, result_summary)
@@ -1631,7 +1633,7 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "failed"}))
-    get_plugin_manager().fire_task_failed(task_id=task.id, role=task.role, error=body.reason)
+    get_plugin_manager(_get_workdir(request)).fire_task_failed(task_id=task.id, role=task.role, error=body.reason)
 
     # Update per-file health scores with failure outcome (fire-and-forget)
     _update_file_health(request, task.id, list(task.owned_files), "failure")

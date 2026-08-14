@@ -58,6 +58,106 @@ Events that omit `details.tenant_id` are treated as belonging to the
 incremental - operators can switch on multi-tenant tagging without
 breaking pre-existing chains.
 
+### Accepted tenant identifiers
+
+A tenant id doubles as a directory name - the per-tenant subtree lives at
+`.sdd/<tenant_id>/{backlog,metrics}/` - so `normalize_tenant_id` accepts
+only values that name a single directory entry:
+
+| Rule | Accepted | Rejected |
+|---|---|---|
+| Length | 1-64 characters | 65+ |
+| Character set | ASCII letters, digits, `_`, `.`, `-` | anything else, including non-ASCII letters and digits |
+| First character | ASCII letter or digit | `-`, `.`, `_` |
+| Trailing dot | - | `acme.` (Windows strips it, aliasing `acme`) |
+| Reserved device names | - | `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with or without an extension |
+
+Surrounding whitespace is stripped. Absent, empty, or whitespace-only
+input resolves to `default`, which is what keeps tenant-unaware call
+sites working.
+
+Anything else raises `InvalidTenantIdError`. It subclasses both
+`ValueError` (the id is malformed) and `LookupError` (there is no such
+scope to resolve); request surfaces already translate `LookupError` into
+`404`, so a malformed `?tenant=` value, `X-Tenant-Id` header, or agent
+JWT `tenant_id` claim is refused as a client error rather than surfacing
+as a server error.
+
+### The tenant subtree is store-managed, not operator-configurable
+
+`.sdd` itself may be a symlink - where the state directory lives is the
+operator's call. Everything below it is layout this store creates and
+owns, so from this release each component of
+`.sdd/<tenant_id>/{backlog,metrics,runtime,runtime/wal,audit}` is created
+and opened relative to a descriptor for its parent, with `O_NOFOLLOW`. A
+component that is a symlink is refused rather than followed.
+
+This is a behaviour change for one existing setup. Earlier releases
+created the layout with `Path.mkdir(parents=True, exist_ok=True)`, which
+treats a symlink to a directory as an existing directory, so a hand-made
+link - `.sdd/acme/metrics -> /var/data/acme-metrics`, say - was followed
+silently. That link now fails on first use with `OSError` (`ELOOP`, or
+`ENOTDIR` on platforms that report it that way) naming the component.
+
+The server does not refuse to start over it. Seed reload - which runs on
+startup and again on `SIGHUP` - reports the refusal in its result instead:
+the reload payload carries an `error` naming the tenant and the component,
+that tenant is left out of the registry, and nothing is written through the
+link. A seed naming a tenant whose id is not a valid identifier is reported
+the same way. Both are configuration errors to fix and re-signal, not
+reasons for the process to fail to come up.
+
+Two ways out, both offline:
+
+1. **Move the data under `.sdd`.** Replace the link with a real
+   directory and copy the contents in. Resolve the target with `realpath`
+   rather than `readlink`: a relative link target is relative to the link's
+   own directory, and `readlink` hands it back unchanged for the shell to
+   resolve against the working directory instead. Copy first and swap last,
+   so a wrong or missing target costs you nothing:
+
+   ```bash
+   link=.sdd/acme/metrics
+   test -L "$link" && target=$(realpath "$link") && test -d "$target" \
+     && mkdir "$link.new" && cp -a "$target/." "$link.new/" \
+     && rm "$link" && mv "$link.new" "$link"
+   ```
+
+2. **Move `.sdd` instead.** If the point of the link was to put state on
+   another volume, link the whole `.sdd` directory there. That one is
+   still followed, because it is the anchor rather than something below
+   it.
+
+Checking for the case is a one-liner:
+
+```bash
+find .sdd -mindepth 2 -maxdepth 3 -type l
+```
+
+#### Where the refusal does not apply
+
+The refusal is `O_NOFOLLOW` on a descriptor-relative open, so it needs a
+platform whose `os.open`, `os.mkdir`, `os.stat`, `os.unlink` and
+`os.rename` all accept `dir_fd`, and which defines `O_NOFOLLOW`. Linux
+and macOS do. Where they are absent - Windows is the case that matters -
+`anchored_write.py` reports `ANCHORED_WRITE_SUPPORTED` (and
+`ANCHORED_ROTATE_SUPPORTED`) false and falls back to the joined-path
+calls that predate the module, which follow a link or a junction exactly
+as before.
+
+So on those platforms the tenant subtree is best-effort: nothing here
+detects a redirected `.sdd/<tenant>/audit`. Treat multi-tenant storage
+that has to resist a local attacker as supported on Linux and macOS, and
+keep `.sdd` on a filesystem only the service account can write to
+regardless of platform.
+
+The same split applies to file permissions. Files created through the
+anchored helper are created `0o600`, which covers the tenant backlog
+mirrors, the collector's metric files, and the per-run cost files. That is
+a POSIX mode; Windows ignores it and there is no ACL fallback here, so on
+Windows those files land under the process umask. The write-ahead log and
+the audit chain open their own files and are under the umask everywhere.
+
 ## CLI usage
 
 ### Bare HMAC chain (most common)

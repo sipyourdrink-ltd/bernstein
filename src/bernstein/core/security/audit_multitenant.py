@@ -85,7 +85,7 @@ from bernstein.core.security.audit_head_signature import (
     build_head_signature,
     verify_head_signature,
 )
-from bernstein.core.security.tenanting import normalize_tenant_id
+from bernstein.core.security.tenanting import normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
     from cryptography import x509
@@ -243,17 +243,29 @@ def _read_audit_events(audit_dir: Path) -> list[dict[str, Any]]:
     return events
 
 
-def _event_tenant_id(event: dict[str, Any]) -> str:
+def _event_tenant_id(event: dict[str, Any]) -> str | None:
     """Extract the canonical tenant id for an event.
 
-    Looks at ``details.tenant_id`` first (the canonical opt-in path);
-    falls back to ``DEFAULT_TENANT_ID`` via :func:`normalize_tenant_id`.
+    Looks at ``details.tenant_id`` first (the canonical opt-in path); an
+    absent value falls back to ``DEFAULT_TENANT_ID``.
+
+    The stored value is read as written rather than coerced. ``str()`` on a
+    ``true`` or a ``123`` yields a string the tenant rules accept, so a
+    malformed event would have been exported and matched under a tenant name
+    nothing wrote it for. A value that cannot be read returns ``None``, which
+    matches no tenant.
+
+    ``details`` that is not a mapping is unreadable for the same reason a
+    malformed ``tenant_id`` inside one is: the event carries a details field
+    and nothing can be read out of it. Treating it as an absent details -- the
+    reading that produced ``DEFAULT_TENANT_ID`` -- filed such an event under
+    the default tenant's evidence, which is an attribution no writer made.
     """
-    details = event.get("details") or {}
-    raw = None
-    if isinstance(details, dict):
-        raw = details.get("tenant_id")
-    return normalize_tenant_id(str(raw) if raw is not None else None)
+    details = event.get("details")
+    if details is not None and not isinstance(details, dict):
+        return None
+    raw = details.get("tenant_id") if isinstance(details, dict) else None
+    return try_normalize_tenant_id(raw)
 
 
 def _event_in_window(event: dict[str, Any], since: str, until: str) -> bool:
@@ -269,16 +281,25 @@ def _filter_tenant_events(
     tenant_id: str,
     since: str,
     until: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[int]]:
     """Filter to events that match ``tenant_id`` and ``[since, until)``.
 
     Stable order is preserved (chronological because the source log is
     append-only). If two events share a timestamp we fall back to the
     original ``hmac`` for determinism.
     """
-    matched = [e for e in events if _event_tenant_id(e) == tenant_id and _event_in_window(e, since, until)]
+    matched: list[dict[str, Any]] = []
+    unreadable: list[int] = []
+    for idx, event in enumerate(events):
+        if not _event_in_window(event, since, until):
+            continue
+        observed = _event_tenant_id(event)
+        if observed is None:
+            unreadable.append(idx)
+        elif observed == tenant_id:
+            matched.append(event)
     matched.sort(key=lambda e: (str(e.get("timestamp", "")), str(e.get("hmac", ""))))
-    return matched
+    return matched, unreadable
 
 
 def _rebuild_slice_chain(
@@ -466,7 +487,9 @@ def export_tenant_slice(
         ValueError: ``since`` is not strictly less than ``until``, or
             ``tenant_id`` is empty after normalization, or required
             signing material (``rfc3161_token_b64`` /
-            ``head_kms_adapter``) is missing for the declared kind.
+            ``head_kms_adapter``) is missing for the declared kind, or an
+            event inside the window carries a ``details.tenant_id`` that
+            cannot be read as a tenant.
     """
     if since >= until:
         raise ValueError(f"since={since!r} must be < until={until!r}")
@@ -484,7 +507,17 @@ def export_tenant_slice(
         )
 
     all_events = _read_audit_events(audit_dir)
-    matched = _filter_tenant_events(all_events, normalized_tenant, since, until)
+    matched, unreadable = _filter_tenant_events(all_events, normalized_tenant, since, until)
+    if unreadable:
+        # An event in the window whose tenant cannot be read is evidence this
+        # export cannot place. Dropping it silently is the one outcome an audit
+        # export must not produce: the slice would look complete while omitting
+        # records, and nothing downstream could tell. Name them and stop.
+        msg = (
+            f"{len(unreadable)} event(s) in [{since}, {until}) carry an unreadable details.tenant_id "
+            f"(first at index {unreadable[0]}); repair or remove them before exporting a slice"
+        )
+        raise ValueError(msg)
     rebuilt, head_hmac = _rebuild_slice_chain(matched, key)
 
     events_canonical = _events_jsonl_bytes(rebuilt)
@@ -595,6 +628,18 @@ def _validate_bundle_envelope(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"chain_anchor missing {required_anchor}")
     if not isinstance(bundle.get("events"), list):
         errors.append("events must be a list")
+    # `tenant_id` was checked for presence only, so `null`, `""`, and a number
+    # all reached the tenant check and were read as the default tenant -- a
+    # bundle that declares no usable tenant verified as a clean default-tenant
+    # slice. The declaration is the thing the slice is *about*; a bundle that
+    # cannot state it is malformed here, not defaulted later.
+    declared_tenant = bundle.get("tenant_id")
+    if not isinstance(declared_tenant, str):
+        errors.append(f"tenant_id must be a string, got {type(declared_tenant).__name__}")
+    elif not declared_tenant.strip():
+        errors.append("tenant_id must not be blank")
+    elif try_normalize_tenant_id(declared_tenant) is None:
+        errors.append(f"tenant_id {declared_tenant!r} is not a usable tenant identifier")
     return errors
 
 
@@ -616,15 +661,33 @@ def _verify_anchor_consistency(bundle: dict[str, Any]) -> list[str]:
 def _verify_tenant_purity(
     bundle: dict[str, Any],
 ) -> list[str]:
-    """Ensure every event in the slice carries the declared tenant id."""
-    declared = normalize_tenant_id(str(bundle.get("tenant_id", "")))
+    """Ensure every event in the slice carries the declared tenant id.
+
+    Values are read as stored. Coercing with ``str()`` first turned a bundle
+    carrying a ``true`` or a ``123`` into one declaring a valid-looking tenant,
+    so a malformed slice verified clean. Reading them as written also keeps
+    this a verifier: an unreadable value is one more error in the returned
+    list, where strict normalization would have raised out of the check and
+    left the caller with no findings at all.
+    """
+    declared = try_normalize_tenant_id(bundle.get("tenant_id"))
     errors: list[str] = []
+    if declared is None:
+        errors.append(f"tenant_id: unreadable declared tenant {bundle.get('tenant_id')!r}")
     for idx, event in enumerate(bundle.get("events") or []):
+        # An event is whatever the bundle says it is. A list or a string has
+        # no `.get`, and reading one raised out of the verifier, which is the
+        # one thing a verifier must not do: the caller gets an exception where
+        # it asked for a list of findings.
+        if not isinstance(event, dict):
+            errors.append(f"events[{idx}]: expected object, got {type(event).__name__}")
+            continue
         details = event.get("details") or {}
-        observed = normalize_tenant_id(
-            str(details.get("tenant_id", "")) if isinstance(details, dict) else None,
-        )
-        if observed != declared:
+        raw = details.get("tenant_id") if isinstance(details, dict) else None
+        observed = try_normalize_tenant_id(raw)
+        if observed is None:
+            errors.append(f"events[{idx}]: unreadable tenant_id {raw!r}")
+        elif observed != declared:
             errors.append(
                 f"events[{idx}]: tenant_id mismatch (declared {declared!r}, observed {observed!r})",
             )

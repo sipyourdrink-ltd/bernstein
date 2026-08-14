@@ -272,3 +272,55 @@ async def test_replay_progress_restores_entries_and_snapshots_after_restart(tmp_
     assert progress_file.exists()
     lines = progress_file.read_text().splitlines()
     assert len(lines) == 13  # 10 entries + 3 snapshots
+
+
+def _write_archive(archive_path: Path, records: list[dict[str, Any]]) -> None:
+    """Write archive rows verbatim, as a hand edit or an older writer would."""
+    import json
+
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    archive_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+
+def test_read_archive_does_not_coerce_a_stored_tenant_id(tmp_path: Path) -> None:
+    """A non-string tenant id is a row that cannot be read, not one to convert.
+
+    The archive is JSON, so the field holds whatever was written. Coercing
+    before validating turns `true` into `"True"` and `null` into `"None"`,
+    both of which satisfy the identifier rules, and the row is then handed to
+    whichever tenant happens to carry that name.
+    """
+    archive_path = tmp_path / "archive" / "tasks.jsonl"
+    _write_archive(
+        archive_path,
+        [
+            {"task_id": "boolean-row", "tenant_id": True},
+            {"task_id": "numeric-row", "tenant_id": 123},
+            {"task_id": "owned-row", "tenant_id": "True"},
+        ],
+    )
+    store = TaskStore(tmp_path / "runtime" / "tasks.jsonl", archive_path=archive_path)
+
+    records = store.read_archive(limit=50, tenant_id="True")
+
+    assert [record["task_id"] for record in records] == ["owned-row"]
+
+
+def test_read_archive_keeps_filtering_out_malformed_tenant_ids(tmp_path: Path) -> None:
+    """A string that no longer normalizes still matches no tenant."""
+    archive_path = tmp_path / "archive" / "tasks.jsonl"
+    _write_archive(
+        archive_path,
+        [
+            {"task_id": "legacy-row", "tenant_id": "../escape"},
+            {"task_id": "owned-row", "tenant_id": "team-a"},
+        ],
+    )
+    store = TaskStore(tmp_path / "runtime" / "tasks.jsonl", archive_path=archive_path)
+
+    records = store.read_archive(limit=50, tenant_id="team-a")
+
+    assert [record["task_id"] for record in records] == ["owned-row"]

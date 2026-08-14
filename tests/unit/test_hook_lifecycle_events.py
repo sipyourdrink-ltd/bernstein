@@ -20,6 +20,16 @@ from bernstein.plugins.manager import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _trusted_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise hook-execution mechanics against a trusted workspace.
+
+    Trust gating (untrusted / indeterminate workspaces) is owned by
+    tests/unit/test_plugins.py; these suites assume trust has been granted.
+    """
+    monkeypatch.setattr("bernstein.plugins.manager.is_workspace_trusted", lambda _root: True)
+
+
 @pytest.fixture()
 def plugin_mgr(tmp_path: Path) -> PluginManager:
     """PluginManager with no plugins loaded."""

@@ -27,6 +27,7 @@ import pytest
 from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.audit_multitenant import (
     EXPORT_SCHEMA_VERSION,
+    _filter_tenant_events,
     export_tenant_slice,
     verify_tenant_slice,
 )
@@ -58,6 +59,30 @@ def _today_window() -> tuple[str, str]:
     since = f"{today.isoformat()}T00:00:00+00:00"
     until = f"{(today + timedelta(days=1)).isoformat()}T00:00:00+00:00"
     return since, until
+
+
+def _in_window_timestamp(since: str, until: str) -> str:
+    """Return a timestamp the window filter accepts."""
+    assert since < until
+    return since
+
+
+def _exported_bundle(tmp_path: Path) -> dict:
+    """Export a clean acme slice and return it as a mutable dict."""
+    audit_dir = tmp_path / ".sdd" / "audit"
+    _seed_two_tenants(audit_dir)
+    since, until = _today_window()
+    export = export_tenant_slice(
+        audit_dir=audit_dir,
+        tenant_id="acme",
+        since=since,
+        until=until,
+        key=_TEST_KEY,
+        output_dir=tmp_path / "out",
+        write=True,
+    )
+    assert export.bundle_path is not None
+    return json.loads(export.bundle_path.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -614,3 +639,242 @@ class TestInputValidation:
             write=False,
         )
         assert export.tenant_id == "default"
+
+
+class TestMalformedTenantValuesAreReportedNotCoerced:
+    """A bundle's tenant fields are read as written.
+
+    `str()` on a stored `true` or `123` yields a string the tenant rules
+    accept, so a bundle declaring one verified clean under a tenant name
+    nothing wrote it for.
+    """
+
+    @pytest.mark.parametrize("malformed", [True, 123, "../escape", "tenant with spaces"])
+    def test_unreadable_declared_tenant_is_an_error_not_a_pass(self, tmp_path: Path, malformed: object) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+        export = export_tenant_slice(
+            audit_dir=audit_dir,
+            tenant_id="acme",
+            since=since,
+            until=until,
+            key=_TEST_KEY,
+            output_dir=tmp_path / "out",
+            write=True,
+        )
+        assert export.bundle_path is not None
+        bundle = json.loads(export.bundle_path.read_text(encoding="utf-8"))
+        bundle["tenant_id"] = malformed
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert any("tenant" in err for err in result.errors)
+
+    def test_verification_returns_findings_rather_than_raising(self, tmp_path: Path) -> None:
+        """A verifier that raises leaves the caller with no findings at all."""
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+        export = export_tenant_slice(
+            audit_dir=audit_dir,
+            tenant_id="acme",
+            since=since,
+            until=until,
+            key=_TEST_KEY,
+            output_dir=tmp_path / "out",
+            write=True,
+        )
+        assert export.bundle_path is not None
+        bundle = json.loads(export.bundle_path.read_text(encoding="utf-8"))
+        for event in bundle.get("events") or []:
+            event.setdefault("details", {})["tenant_id"] = "../escape"
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert result.errors
+
+
+class TestABundleMustDeclareAUsableTenant:
+    """`tenant_id` was checked for presence only, never for shape."""
+
+    @pytest.mark.parametrize("declared", [None, "", "   ", 123, True, ["acme"], {"id": "acme"}, "../escape"])
+    def test_unusable_declaration_is_a_schema_error(self, tmp_path: Path, declared: object) -> None:
+        """Reported as a malformed declaration, not defaulted and then compared.
+
+        Reading an unusable declaration as the default tenant left a bundle
+        with no events verifying clean, and one with events failing for the
+        wrong reason -- a mismatch against a tenant the bundle never declared.
+        """
+        bundle = _exported_bundle(tmp_path)
+        bundle["tenant_id"] = declared
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        schema_phrases = ("must be a string", "must not be blank", "not a usable tenant identifier")
+        assert any(phrase in err for err in result.errors for phrase in schema_phrases)
+
+    def test_an_empty_slice_cannot_hide_an_unusable_declaration(self, tmp_path: Path) -> None:
+        """With no events there is nothing to mismatch against."""
+        bundle = _exported_bundle(tmp_path)
+        bundle["events"] = []
+        bundle["event_count"] = 0
+        bundle["tenant_id"] = None
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert any("tenant_id" in err for err in result.errors)
+
+    def test_a_missing_declaration_is_still_a_schema_error(self, tmp_path: Path) -> None:
+        bundle = _exported_bundle(tmp_path)
+        del bundle["tenant_id"]
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert any("tenant_id" in err for err in result.errors)
+
+
+class TestVerificationReturnsFindingsForEveryBundleShape:
+    """A verifier that raises hands the caller an exception, not findings."""
+
+    @pytest.mark.parametrize("event", [[1, 2, 3], "a string", 42, None])
+    def test_a_non_object_event_is_reported_not_raised(self, tmp_path: Path, event: object) -> None:
+        bundle = _exported_bundle(tmp_path)
+        bundle["events"] = [event]
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert result.errors
+
+    @pytest.mark.parametrize("details", [[], ["x"], "a string", 42])
+    def test_a_non_object_details_is_reported_not_raised(self, tmp_path: Path, details: object) -> None:
+        bundle = _exported_bundle(tmp_path)
+        for evt in bundle["events"]:
+            evt["details"] = details
+
+        result = verify_tenant_slice(bundle, key=_TEST_KEY)
+
+        assert not result.ok
+        assert result.errors
+
+
+class TestExportRefusesToDropUnreadableEvidence:
+    """An export that silently omits records looks complete and is not."""
+
+    def test_an_unreadable_in_window_tenant_stops_the_export(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+
+        segment = next(iter(audit_dir.glob("*.jsonl")))
+        lines = segment.read_text(encoding="utf-8").splitlines()
+        first = json.loads(lines[0])
+        first.setdefault("details", {})["tenant_id"] = "../escape"
+        lines[0] = json.dumps(first)
+        segment.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="unreadable"):
+            export_tenant_slice(
+                audit_dir=audit_dir,
+                tenant_id="acme",
+                since=since,
+                until=until,
+                key=_TEST_KEY,
+                output_dir=tmp_path / "out",
+                write=True,
+            )
+
+    def test_a_clean_log_still_exports(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+
+        export = export_tenant_slice(
+            audit_dir=audit_dir,
+            tenant_id="acme",
+            since=since,
+            until=until,
+            key=_TEST_KEY,
+            output_dir=tmp_path / "out",
+            write=True,
+        )
+
+        assert export.bundle_path is not None
+        assert verify_tenant_slice(export.bundle_path, key=_TEST_KEY).ok
+
+
+class TestNonMappingDetailsIsUnreadableNotDefault:
+    """A details field nothing can be read out of names no tenant.
+
+    Reading it as an absent details filed the event under the default
+    tenant's evidence, which is an attribution no writer made.
+    """
+
+    @pytest.mark.parametrize("details", [["x"], [], "a string", 42, True])
+    def test_filter_quarantines_a_non_mapping_details(self, details: object) -> None:
+        since, until = _today_window()
+        stamp = _in_window_timestamp(since, until)
+        events = [
+            {"timestamp": stamp, "hmac": "a", "details": {"tenant_id": "acme"}},
+            {"timestamp": stamp, "hmac": "b", "details": details},
+        ]
+
+        matched, unreadable = _filter_tenant_events(events, "default", since, until)
+
+        assert matched == []
+        assert unreadable == [1]
+
+    @pytest.mark.parametrize("details", [["x"], "a string", 42])
+    def test_a_non_mapping_details_never_joins_another_tenant_slice(self, details: object) -> None:
+        since, until = _today_window()
+        stamp = _in_window_timestamp(since, until)
+        events = [{"timestamp": stamp, "hmac": "b", "details": details}]
+
+        for tenant in ("default", "acme", "globex"):
+            matched, unreadable = _filter_tenant_events(events, tenant, since, until)
+            assert matched == []
+            assert unreadable == [0]
+
+    def test_an_absent_details_still_reads_as_the_default_tenant(self) -> None:
+        """Absent states nothing; unreadable states something illegible."""
+        since, until = _today_window()
+        stamp = _in_window_timestamp(since, until)
+        events = [
+            {"timestamp": stamp, "hmac": "a"},
+            {"timestamp": stamp, "hmac": "b", "details": {}},
+            {"timestamp": stamp, "hmac": "c", "details": None},
+        ]
+
+        matched, unreadable = _filter_tenant_events(events, "default", since, until)
+
+        assert unreadable == []
+        assert len(matched) == 3
+
+    def test_export_refuses_a_slice_holding_a_non_mapping_details(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / ".sdd" / "audit"
+        _seed_two_tenants(audit_dir)
+        since, until = _today_window()
+
+        segment = next(iter(audit_dir.glob("*.jsonl")))
+        lines = segment.read_text(encoding="utf-8").splitlines()
+        first = json.loads(lines[0])
+        first["details"] = ["not", "a", "mapping"]
+        lines[0] = json.dumps(first)
+        segment.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="unreadable"):
+            export_tenant_slice(
+                audit_dir=audit_dir,
+                tenant_id="acme",
+                since=since,
+                until=until,
+                key=_TEST_KEY,
+                output_dir=tmp_path / "out",
+                write=True,
+            )

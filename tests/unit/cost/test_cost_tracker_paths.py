@@ -788,3 +788,52 @@ class TestRetryBudgetAttachment:
         assert t.retry_budget is None
         t.attach_retry_budget(sentinel)
         assert t.retry_budget is sentinel
+
+
+# --- run_id as a filename component -----------------------------------------
+#
+# The run id names three files on disk and arrives from `BERNSTEIN_RUN_ID` or
+# from `GET /costs/{run_id}`. Both are input, so it is checked on the way in
+# and on the way out - `load` builds a path from it before any instance exists
+# for `__post_init__` to have validated.
+
+
+@pytest.mark.parametrize("bad", ["a/b", "a\\b", "..", ".", "", "x\x00y"])
+def test_construction_refuses_a_run_id_that_is_not_one_component(bad: str) -> None:
+    with pytest.raises(ValueError, match="single path component"):
+        Tracker(run_id=bad)
+
+
+@pytest.mark.parametrize("bad", ["../outside", "..\\outside", "sub/dir"])
+def test_load_refuses_a_traversing_run_id_before_it_builds_the_path(tmp_path: Path, bad: str) -> None:
+    """The file it would have reached exists, so a pass here would be a read."""
+    outside = tmp_path / "runtime" / "outside.json"
+    outside.parent.mkdir(parents=True)
+    outside.write_text('{"run_id": "outside", "budget_usd": 1.0}', encoding="utf-8")
+
+    assert Tracker.load(tmp_path, bad) is None
+
+
+def test_load_still_finds_an_ordinary_run(tmp_path: Path) -> None:
+    tracker = Tracker(run_id="20260812-120000", budget_usd=5.0)
+    tracker.save(tmp_path)
+
+    restored = Tracker.load(tmp_path, "20260812-120000")
+
+    assert restored is not None
+    assert restored.run_id == "20260812-120000"
+
+
+@pytest.mark.parametrize("payload", ['{"run_id": "other"}', '{"run_id": ""}', '{"run_id": 7}', "{}"])
+def test_load_refuses_a_file_that_names_a_different_run(tmp_path: Path, payload: str) -> None:
+    """The filename is validated; the identity inside the file has to agree.
+
+    `GET /costs/requested` reads `requested.json`. Were that file free to call
+    itself something else, the response would carry the other run's identity
+    and its spend under the id the caller asked about.
+    """
+    costs_dir = tmp_path / "runtime" / "costs"
+    costs_dir.mkdir(parents=True)
+    (costs_dir / "requested.json").write_text(payload, encoding="utf-8")
+
+    assert Tracker.load(tmp_path, "requested") is None

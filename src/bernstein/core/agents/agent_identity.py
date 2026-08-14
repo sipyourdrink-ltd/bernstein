@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.sanitize import sanitize_log
-from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
+from bernstein.core.tenanting import (
+    DEFAULT_TENANT_ID,
+    InvalidTenantIdError,
+    normalize_tenant_id,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -828,7 +832,15 @@ class AgentIdentityStore:
             return False
         if str(claims.get("role", "")) != identity.role:
             return False
-        if normalize_tenant_id(str(claims.get("tenant_id", "default"))) != cred.tenant_id:
+        # A malformed tenant claim can never match the credential's own
+        # (already valid) tenant, so it is a claim mismatch like any other -
+        # deny rather than letting the refusal escape this bool-returning
+        # validator and surface as a server error at the auth boundary.
+        try:
+            claim_tenant = normalize_tenant_id(str(claims.get("tenant_id", "default")))
+        except InvalidTenantIdError:
+            return False
+        if claim_tenant != cred.tenant_id:
             return False
         claim_scopes = _claim_string_list(claims.get("scopes", []))
         if claim_scopes is None or set(claim_scopes) != set(identity.permissions):

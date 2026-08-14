@@ -11,6 +11,16 @@ import pytest
 from bernstein.plugins.manager import HookBlockingError, PluginManager
 
 
+@pytest.fixture(autouse=True)
+def _trusted_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise hook-execution mechanics against a trusted workspace.
+
+    Trust gating (untrusted / indeterminate workspaces) is owned by
+    tests/unit/test_plugins.py; these suites assume trust has been granted.
+    """
+    monkeypatch.setattr("bernstein.plugins.manager.is_workspace_trusted", lambda _root: True)
+
+
 class TestPreTaskCreateHook:
     """T719 - pre-task-create hooks can block task creation."""
 
@@ -20,7 +30,7 @@ class TestPreTaskCreateHook:
         pm.fire_pre_task_create(task_id="t1", role="backend", title="Test", description="A task")
 
     def test_fire_pre_task_create_blocked_by_hook(self, tmp_path: Path) -> None:
-        pm = PluginManager()
+        pm = PluginManager(workdir=tmp_path)
 
         class BlockingPlugin:
             from bernstein.plugins import hookimpl

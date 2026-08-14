@@ -160,3 +160,146 @@ class TestTenantMetricsAndCosts:
         assert live_b.status_code == 200
         assert live_b.json()["tenant_id"] == "team-b"
         assert live_b.json()["spent_usd"] == pytest.approx(3.0)
+
+
+class TestSeedReloadReportsTenantProblemsInsteadOfAborting:
+    """A seed the server cannot use is an error to report, not a crash on boot.
+
+    `reload_seed_config` runs from lifespan startup and again on SIGHUP. Both
+    tenant refusals below are correct -- no registry, no layout, nothing
+    written -- but letting either escape the handler took the whole server
+    down with nothing in the response naming what to fix.
+    """
+
+    def _app(self, tmp_path: Path) -> FastAPI:
+        return create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+
+    def test_unusable_tenant_id_is_reported_and_leaves_the_registry_empty(self, tmp_path: Path) -> None:
+        (tmp_path / "bernstein.yaml").write_text(
+            'goal: "Ship it"\ntenants:\n  - id: tenant with spaces\n    budget: 10\n',
+            encoding="utf-8",
+        )
+        application = self._app(tmp_path)
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert "tenant with spaces" in payload["error"]
+        assert "Rename the tenant" in payload["error"]
+        assert application.state.tenant_registry.tenants == ()
+
+    def test_linked_tenant_component_is_reported_and_leaves_the_registry_empty(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True, exist_ok=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        # A tenant directory that is a link resolves under `.sdd` and so passes
+        # containment; the anchored walk is what refuses to write through it.
+        (sdd_dir / "team-a").symlink_to(elsewhere, target_is_directory=True)
+        application = self._app(tmp_path)
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert "team-a" in payload["error"]
+        assert application.state.tenant_registry.tenants == ()
+        assert not (elsewhere / "backlog").exists()
+
+    def test_a_usable_seed_still_loads(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        application = self._app(tmp_path)
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is True
+        assert [t.id for t in application.state.tenant_registry.tenants] == ["team-a", "team-b"]
+
+
+class TestFailedReloadDoesNotWidenWhatTheServerAccepts:
+    """An unusable seed must not turn a refusal into an open namespace.
+
+    An empty registry reports `is_configured` false, and `resolve_tenant_scope`
+    skips its membership check when nothing is configured. Blanking the
+    registry on a bad reload therefore meant every tenant name was accepted.
+    """
+
+    def test_a_bad_reload_keeps_the_last_registry_that_loaded(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        application = create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+        assert application.state.reload_seed_config()["loaded"] is True
+
+        (tmp_path / "bernstein.yaml").write_text(
+            'goal: "Ship it"\ntenants:\n  - id: tenant with spaces\n    budget: 10\n',
+            encoding="utf-8",
+        )
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert [t.id for t in application.state.tenant_registry.tenants] == ["team-a", "team-b"]
+        assert application.state.tenant_registry.is_configured is True
+
+    def test_a_linked_component_reload_keeps_the_last_registry(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        application = create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+        assert application.state.reload_seed_config()["loaded"] is True
+
+        sdd_dir = tmp_path / ".sdd"
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        audit_dir = sdd_dir / "team-a" / "audit"
+        audit_dir.rmdir()
+        audit_dir.symlink_to(elsewhere, target_is_directory=True)
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert "team-a" in payload["error"]
+        assert [t.id for t in application.state.tenant_registry.tenants] == ["team-a", "team-b"]
+
+
+class TestReloadValidatesTheWholeTenantLayout:
+    """Runtime, WAL and audit are anchored the same way backlog and metrics are."""
+
+    @pytest.mark.parametrize("component", ["backlog", "metrics", "runtime", "audit"])
+    def test_a_linked_component_is_refused_at_reload(self, tmp_path: Path, component: str) -> None:
+        _write_seed(tmp_path)
+        sdd_dir = tmp_path / ".sdd"
+        (sdd_dir / "team-a").mkdir(parents=True, exist_ok=True)
+        elsewhere = tmp_path / f"elsewhere-{component}"
+        elsewhere.mkdir()
+        (sdd_dir / "team-a" / component).symlink_to(elsewhere, target_is_directory=True)
+        application = create_app(jsonl_path=sdd_dir / "runtime" / "tasks.jsonl")
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert "team-a" in payload["error"]
+
+
+class TestADisappearingSeedDoesNotDropTheAllowlist:
+    """A seed that is gone is not a seed that says "no tenants".
+
+    An unconfigured registry accepts every tenant name, so blanking it when
+    the file goes missing widened the running server instead of narrowing it.
+    """
+
+    def test_deleting_the_seed_keeps_the_registry_that_loaded(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        application = create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+        assert application.state.reload_seed_config()["loaded"] is True
+
+        (tmp_path / "bernstein.yaml").unlink()
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert [t.id for t in application.state.tenant_registry.tenants] == ["team-a", "team-b"]
+        assert application.state.tenant_registry.is_configured is True
+
+    def test_a_server_that_never_had_a_seed_starts_empty(self, tmp_path: Path) -> None:
+        application = create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert application.state.tenant_registry.tenants == ()

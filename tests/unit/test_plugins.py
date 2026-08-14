@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
+from bernstein.core.persistence.workspace import grant_workspace_trust
 from bernstein.plugins import hookimpl
 from bernstein.plugins.manager import PluginManager
 
@@ -70,9 +69,15 @@ class _BrokenPlugin:
 
 
 @pytest.fixture()
-def pm() -> PluginManager:
-    """Fresh PluginManager with no external plugins loaded."""
-    return PluginManager()
+def pm(tmp_path: Path) -> PluginManager:
+    """Fresh PluginManager anchored to a trusted workspace.
+
+    Hook dispatch is fail-closed: it only runs in a workspace whose trust has
+    been granted.  These tests exercise dispatch mechanics, not the trust
+    policy, so they run against an explicitly-trusted temp workspace.
+    """
+    grant_workspace_trust(tmp_path)
+    return PluginManager(workdir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -380,15 +385,36 @@ class TestWorkspaceTrustGating:
         # Must not have fired any hooks
         assert len(plugin.calls) == 0
 
-    def test_hooks_run_without_workdir(self) -> None:
-        """Hooks execute when no workdir is set (defaults to trusting)."""
+    def test_hooks_gated_without_workdir(self) -> None:
+        """Hooks are gated when the workspace root is indeterminate.
+
+        A ``None`` workdir must fail closed rather than auto-trust: an
+        indeterminate root cannot be shown to be trusted, so hooks do not run.
+        """
         pm = PluginManager()
+        assert pm.workdir is None
         plugin = _CollectorPlugin()
         pm.register(plugin, name="c")
 
         pm.fire_task_completed(task_id="t2", role="qa", result_summary="ok")
 
-        assert len(plugin.calls) == 1
+        assert len(plugin.calls) == 0
+
+    def test_hooks_gated_when_cwd_untrusted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Being *inside* a workspace does not by itself grant trust.
+
+        The old short-circuit trusted any workspace equal to ``Path.cwd()``.
+        That is the workspace-trust bypass: hooks must consult the recorded
+        trust state even when the workdir is the current directory.
+        """
+        monkeypatch.chdir(tmp_path)
+        pm = PluginManager(workdir=tmp_path)  # == Path.cwd(), but untrusted
+        plugin = _CollectorPlugin()
+        pm.register(plugin, name="c")
+
+        pm.fire_task_completed(task_id="t2", role="qa", result_summary="ok")
+
+        assert len(plugin.calls) == 0
 
     def test_fire_permission_denied_gated(self, tmp_path: Path) -> None:
         """fire_permission_denied returns None when trust is gated."""
@@ -428,6 +454,128 @@ class TestWorkspaceTrustGating:
             args={"cmd": "#file/edit"},
         )
         assert result == "use safe command"
+
+
+class TestCommittedHookExecutionGate:
+    """End-to-end trust gate for committed ``.bernstein/hooks`` scripts.
+
+    A committed hook script is local code-execution: it must run only when the
+    workspace it lives in has been explicitly trusted.  These tests drive the
+    real ``get_plugin_manager`` / ``subprocess`` path an operator would hit.
+    """
+
+    @staticmethod
+    def _install_hook(workdir: Path, sentinel: Path) -> None:
+        """Write a committed on_task_created hook that touches *sentinel*."""
+        import os
+        import stat
+
+        hook_dir = workdir / ".bernstein" / "hooks" / "on_task_created"
+        hook_dir.mkdir(parents=True)
+        script = hook_dir / "touch.sh"
+        script.write_text(f"#!/bin/sh\ntouch {sentinel}\n", encoding="utf-8")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        assert os.access(script, os.X_OK)
+
+    @staticmethod
+    def _set_trust(workdir: Path, *, trusted: bool) -> None:
+        import json as _json
+
+        trust_dir = workdir / ".sdd" / "runtime"
+        trust_dir.mkdir(parents=True, exist_ok=True)
+        (trust_dir / "workspace_trust.json").write_text(
+            _json.dumps({"trusted": trusted, "granted_by": "test", "granted_at": 0}),
+            encoding="utf-8",
+        )
+
+    def test_committed_hook_not_executed_when_untrusted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A committed hook must NOT run when workspace_trust.json is false.
+
+        Reproduces the production bug faithfully: the caller invokes
+        ``get_plugin_manager()`` with *no* workdir while sitting inside the
+        untrusted project (exactly what the task route did).  The side effect
+        must never happen and the shell must never be invoked.
+        """
+        from bernstein.plugins.manager import get_plugin_manager
+
+        sentinel = tmp_path / "hook_ran.marker"
+        self._install_hook(tmp_path, sentinel)
+        self._set_trust(tmp_path, trusted=False)
+        monkeypatch.chdir(tmp_path)
+
+        with (
+            patch("bernstein.plugins.manager.subprocess.run") as mock_run,
+            patch("bernstein.plugins.manager.entry_points", return_value=[]),
+        ):
+            pm = get_plugin_manager(reload=True)  # no workdir -> the vulnerable path
+            pm.fire_task_created(task_id="t1", role="backend", title="Build auth")
+
+        assert not sentinel.exists(), "untrusted committed hook must not run"
+        mock_run.assert_not_called()
+
+    def test_committed_hook_not_executed_when_untrusted_explicit_workdir(self, tmp_path: Path) -> None:
+        """The exec-boundary gate also holds when the workdir is passed explicitly."""
+        from bernstein.plugins.manager import get_plugin_manager
+
+        sentinel = tmp_path / "hook_ran.marker"
+        self._install_hook(tmp_path, sentinel)
+        self._set_trust(tmp_path, trusted=False)
+
+        with (
+            patch("bernstein.plugins.manager.subprocess.run") as mock_run,
+            patch("bernstein.plugins.manager.entry_points", return_value=[]),
+        ):
+            pm = get_plugin_manager(tmp_path, reload=True)
+            pm.fire_task_created(task_id="t1", role="backend", title="Build auth")
+
+        assert not sentinel.exists(), "untrusted committed hook must not run"
+        mock_run.assert_not_called()
+
+    def test_committed_hook_executed_when_trusted(self, tmp_path: Path) -> None:
+        """The same committed hook DOES run once trust is granted (no regression)."""
+        from bernstein.plugins.manager import get_plugin_manager
+
+        sentinel = tmp_path / "hook_ran.marker"
+        self._install_hook(tmp_path, sentinel)
+        self._set_trust(tmp_path, trusted=True)
+
+        with patch("bernstein.plugins.manager.entry_points", return_value=[]):
+            pm = get_plugin_manager(tmp_path, reload=True)
+            pm.fire_task_created(task_id="t1", role="backend", title="Build auth")
+
+        assert sentinel.exists(), "trusted committed hook must run"
+
+    def test_get_plugin_manager_receives_real_workdir(self, tmp_path: Path) -> None:
+        """get_plugin_manager on the hook path anchors to a real workdir, not None."""
+        from bernstein.plugins.manager import get_plugin_manager
+
+        with patch("bernstein.plugins.manager.entry_points", return_value=[]):
+            pm = get_plugin_manager(tmp_path, reload=True)
+
+        assert pm.workdir == tmp_path
+
+    def test_concrete_workdir_supersedes_indeterminate_singleton(self, tmp_path: Path) -> None:
+        """A workdir-less first caller must not pin the singleton to an untrusted root.
+
+        Mirrors production ordering: an internal caller (e.g. guardrails) builds
+        the singleton with no workdir, then a request-scoped caller supplies the
+        real project root.  The later concrete workdir must win so trust is
+        evaluated against the real tree.
+        """
+        from bernstein.plugins.manager import get_plugin_manager
+
+        sentinel = tmp_path / "hook_ran.marker"
+        self._install_hook(tmp_path, sentinel)
+        self._set_trust(tmp_path, trusted=True)
+
+        with patch("bernstein.plugins.manager.entry_points", return_value=[]):
+            first = get_plugin_manager(reload=True)  # no workdir (internal caller)
+            second = get_plugin_manager(tmp_path)  # real project root (request path)
+            second.fire_task_created(task_id="t1", role="backend", title="Build auth")
+
+        assert second.workdir == tmp_path
+        assert first is not second
+        assert sentinel.exists(), "hook must run against the adopted, trusted workdir"
 
 
 # ---------------------------------------------------------------------------
