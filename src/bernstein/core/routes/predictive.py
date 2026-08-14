@@ -8,7 +8,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Annotated, Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from bernstein.core.predictive_alerts import (
@@ -16,9 +16,17 @@ from bernstein.core.predictive_alerts import (
     load_completion_timestamps,
     load_cost_history,
 )
+from bernstein.core.tenanting import (
+    request_tenant_cross_scope,
+    request_tenant_id,
+    requested_tenant_override,
+    resolve_tenant_scope,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bernstein.core.tenanting import TenantRegistry
 
 router = APIRouter()
 
@@ -27,6 +35,33 @@ _engine = PredictiveAlertEngine()
 
 def _get_sdd_dir(request: Request) -> Any:
     return getattr(request.app.state, "sdd_dir", None)
+
+
+def _get_tenant_registry(request: Request) -> TenantRegistry | None:
+    registry = getattr(request.app.state, "tenant_registry", None)
+    return registry if registry is not None else None
+
+
+def _resolve_request_tenant_scope(request: Request) -> str:
+    """Resolve the tenant scope for the current request.
+
+    Same rule as the rest of the cost surface: the bound tenant comes from
+    the authenticated principal, and a caller-supplied selector (the
+    ``X-Tenant-Id`` header) is authorized against it - naming your own scope
+    is fine, naming a different one needs the operator scope.
+    """
+    override = requested_tenant_override(request)
+    try:
+        return resolve_tenant_scope(
+            request_tenant_id(request),
+            override,
+            registry=_get_tenant_registry(request),
+            allow_cross_tenant=request_tenant_cross_scope(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _read_task_counts(request: Request) -> tuple[int, int]:
@@ -94,6 +129,13 @@ def get_predictions(
     Use ``budget_cap`` to enable the budget forecast. The run duration
     forecast requires at least one completed task.
 
+    The budget forecast is scoped to ``tenant_id``: the spend series it is
+    built from is narrowed to cost points recorded for the caller's tenant,
+    the same way the rest of the cost surface is (see
+    ``load_cost_history``).  Cost points written before per-tenant
+    attribution existed are treated as the default tenant's spend, so a
+    legacy single-tenant install keeps its existing numbers.
+
     Returns a list of ``alerts`` ordered by severity (critical first).
     Each alert has: ``kind``, ``severity``, ``message``,
     ``minutes_until_impact``, ``confidence``.
@@ -101,13 +143,14 @@ def get_predictions(
 
     sdd_dir = _get_sdd_dir(request)
     metrics_dir: Path | None = sdd_dir / "metrics" if sdd_dir is not None else None
+    tenant_id = _resolve_request_tenant_scope(request)
 
     cost_history: list[tuple[float, float]] = []
     completion_timestamps: list[float] = []
 
     if metrics_dir is not None and metrics_dir.exists():
         if budget_cap > 0:
-            cost_history = load_cost_history(metrics_dir)
+            cost_history = load_cost_history(metrics_dir, tenant_id=tenant_id)
         completion_timestamps = load_completion_timestamps(metrics_dir)
 
     tasks_done, tasks_remaining = _read_task_counts(request)

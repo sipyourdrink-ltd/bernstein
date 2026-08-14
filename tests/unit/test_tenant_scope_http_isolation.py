@@ -1407,3 +1407,149 @@ async def test_costs_alerts_trend_still_reports_the_callers_own_history(
     body = response.json()
     assert body["history_days"] == 1
     assert body["trend"]["avg_30d_usd"] == pytest.approx(4.0)
+
+
+# ---------------------------------------------------------------------------
+# Predictive forecast scoping (issue #3800)
+#
+# The budget-exhaustion forecast behind GET /metrics/predictions is built
+# from .sdd/metrics/cost_efficiency_*.jsonl points. Like the /costs/alerts
+# trend before #3702, it used to mix every tenant's spend into one series;
+# these cases pin that it is now narrowed to the caller's tenant the same
+# way the rest of the cost surface is.
+# ---------------------------------------------------------------------------
+
+_BASE_TS = 1_700_000_000.0
+
+
+def _write_cost_efficiency_point(metrics_dir: Path, ts: float, value: float, tenant_id: str | None) -> None:
+    """Append one cost-efficiency JSONL point to the shared metrics dir."""
+    import json
+
+    labels: dict[str, str] = {"task_id": "t", "role": "backend", "model": "m"}
+    if tenant_id is not None:
+        labels["tenant_id"] = tenant_id
+    record = {
+        "timestamp": ts,
+        "metric_type": "cost_efficiency",
+        "value": value,
+        "labels": labels,
+    }
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    path = metrics_dir / "cost_efficiency_2026-08-14.jsonl"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def _prediction_view(body: dict[str, Any]) -> dict[str, Any]:
+    """The prediction body with the per-call clock fields stripped.
+
+    ``timestamp`` at the top level and ``timestamp`` / ``predicted_at`` on
+    each alert are wall-clock values that legitimately differ between two
+    requests; everything else is a pure function of the cost series.
+    """
+    view = {k: v for k, v in body.items() if k != "timestamp"}
+    view["alerts"] = [
+        {k: v for k, v in alert.items() if k not in ("predicted_at", "timestamp")} for alert in view["alerts"]
+    ]
+    return view
+
+
+@pytest.mark.anyio()
+async def test_predictions_forecast_excludes_another_tenants_spend(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+) -> None:
+    """Tenant A's forecast does not move when tenant B's spend arrives.
+
+    The caller scoped to tenant A reads the endpoint, then tenant B's spend
+    is recorded and the endpoint is read again.  The forecast is asserted
+    identical across the two reads - the numbers prove the narrowing, not a
+    filter call.
+    """
+    metrics_dir = sdd_dir / "metrics"
+    for i, value in enumerate([1.0, 1.5, 2.0]):
+        _write_cost_efficiency_point(metrics_dir, _BASE_TS + i * 60, value, TENANT_A)
+
+    credential = _credential(fx, "sso_viewer")
+    before = await client.get("/metrics/predictions?budget_cap=5.0", headers=credential.headers)
+    assert before.status_code == 200
+
+    for i, value in enumerate([100.0, 100.0, 100.0]):
+        _write_cost_efficiency_point(metrics_dir, _BASE_TS + 1000 + i * 60, value, TENANT_B)
+
+    after = await client.get("/metrics/predictions?budget_cap=5.0", headers=credential.headers)
+    assert after.status_code == 200
+
+    assert _prediction_view(after.json()) == _prediction_view(before.json())
+
+
+@pytest.mark.anyio()
+async def test_predictions_forecast_reaches_the_callers_own_spend(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+) -> None:
+    """Positive control: tenant A's own rows still reach the forecast.
+
+    Without this, the leak assertion above would be satisfied by an endpoint
+    that returned nothing to anyone.
+    """
+    from bernstein.core.predictive_alerts import forecast_budget_exhaustion
+
+    metrics_dir = sdd_dir / "metrics"
+    values = [1.0, 1.5, 2.0]
+    series = [(_BASE_TS + i * 60, sum(values[: i + 1])) for i in range(len(values))]
+    for i, value in enumerate(values):
+        _write_cost_efficiency_point(metrics_dir, _BASE_TS + i * 60, value, TENANT_A)
+
+    expected = forecast_budget_exhaustion(series, 5.0)
+    assert expected is not None
+
+    credential = _credential(fx, "sso_viewer")
+    response = await client.get("/metrics/predictions?budget_cap=5.0", headers=credential.headers)
+    assert response.status_code == 200
+
+    budget_alerts = [a for a in response.json()["alerts"] if a["kind"] == "budget_exhaustion"]
+    assert budget_alerts, "tenant A's own cost rows produced no budget forecast"
+    meta = budget_alerts[0]["metadata"]
+    assert meta["current_spend_usd"] == pytest.approx(expected.current_spend_usd)
+    assert meta["velocity_usd_per_min"] == pytest.approx(expected.spend_velocity_usd_per_min)
+    assert budget_alerts[0]["minutes_until_impact"] == pytest.approx(expected.minutes_until_exhaustion, abs=0.05)
+    assert budget_alerts[0]["confidence"] == pytest.approx(expected.confidence, abs=0.001)
+
+
+@pytest.mark.anyio()
+async def test_predictions_default_scope_keeps_legacy_install_numbers(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+) -> None:
+    """A legacy default-tenant install keeps its current numbers.
+
+    cost_efficiency records written before per-tenant attribution carry no
+    tenant label.  On the only install that holds such records - a legacy
+    single-tenant one - every row was the one tenant's spend, so the default
+    scope keeps folding them in rather than letting the forecast go empty.
+    """
+    from bernstein.core.predictive_alerts import forecast_budget_exhaustion
+
+    metrics_dir = sdd_dir / "metrics"
+    values = [1.0, 2.0, 3.0, 4.0]
+    for i, value in enumerate(values):
+        tenant = DEFAULT_TENANT_ID if i >= 2 else None
+        _write_cost_efficiency_point(metrics_dir, _BASE_TS + i * 60, value, tenant)
+
+    expected = forecast_budget_exhaustion([(_BASE_TS + i * 60, sum(values[: i + 1])) for i in range(len(values))], 20.0)
+    assert expected is not None
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get("/metrics/predictions?budget_cap=20.0", headers=credential.headers)
+    assert response.status_code == 200
+
+    budget_alerts = [a for a in response.json()["alerts"] if a["kind"] == "budget_exhaustion"]
+    assert budget_alerts, "default-tenant forecast dropped pre-migration rows"
+    meta = budget_alerts[0]["metadata"]
+    assert meta["current_spend_usd"] == pytest.approx(expected.current_spend_usd)
+    assert meta["velocity_usd_per_min"] == pytest.approx(expected.spend_velocity_usd_per_min)

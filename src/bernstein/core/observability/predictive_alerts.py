@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id, try_normalize_tenant_id
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -603,15 +605,44 @@ class PredictiveAlertEngine:
 # ---------------------------------------------------------------------------
 
 
-def load_cost_history(metrics_dir: Path) -> list[tuple[float, float]]:
+def _record_tenant(rec: dict[str, Any]) -> str:
+    """Return the tenant a persisted cost-efficiency point is attributed to.
+
+    The metrics collector writes the tenant under ``labels.tenant_id``,
+    already normalized.  A point recorded before per-tenant attribution
+    existed - no ``labels`` dict, or no ``tenant_id`` inside it - or one
+    whose stored value cannot be read as a tenant id is treated as the
+    **default** tenant's spend.  On the only install that can hold such
+    points (a legacy single-tenant one), every point was that one tenant's
+    spend, so folding them into the default scope is what keeps that
+    install's numbers unchanged.  This is deliberately the opposite of the
+    ``cost_history.jsonl`` reader's choice (#3702), whose acceptance bar was
+    a fresh install starting empty; here it is a legacy install keeping its
+    numbers, so absence names the one tenant the install can have had.
+    """
+    labels = rec.get("labels")
+    if isinstance(labels, dict):
+        normalized = try_normalize_tenant_id(labels.get("tenant_id"))
+        if normalized is not None:
+            return normalized
+    return DEFAULT_TENANT_ID
+
+
+def load_cost_history(metrics_dir: Path, tenant_id: str | None = None) -> list[tuple[float, float]]:
     """Read cumulative spend time-series from metrics JSONL files.
 
     Args:
         metrics_dir: Path to ``.sdd/metrics/`` directory.
+        tenant_id: When given, narrow to cost points attributed to exactly
+            this tenant (see :func:`_record_tenant`); every other point is
+            skipped.  Leaving it unset returns every point regardless of
+            attribution, for callers that genuinely want the whole install's
+            series.
 
     Returns:
         List of ``(timestamp, cumulative_spend_usd)`` pairs, ascending.
     """
+    scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
     points: list[tuple[float, float]] = []
     running_total = 0.0
 
@@ -625,6 +656,8 @@ def load_cost_history(metrics_dir: Path) -> list[tuple[float, float]]:
                 try:
                     rec: dict[str, Any] = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if scope is not None and _record_tenant(rec) != scope:
                     continue
                 ts = float(rec.get("timestamp", 0))
                 value = float(rec.get("value", 0))
