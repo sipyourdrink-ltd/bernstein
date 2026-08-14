@@ -116,14 +116,14 @@ class AdmissionDecision:
         }
 
 
-def producer_identity(proposal: "Admissible | UpgradeProposal") -> str:
+def producer_identity(proposal: Admissible | UpgradeProposal) -> str:
     """The agent that produced this proposal, not the one that applies it."""
     produced_by = getattr(proposal, "produced_by", "") or ""
     produced_by = produced_by.strip()
     return produced_by or UNATTRIBUTED_PRODUCER
 
 
-def decision_key(proposal: "Admissible | UpgradeProposal") -> str:
+def decision_key(proposal: Admissible | UpgradeProposal) -> str:
     """``category:<category>|trigger:<triggered_by>``.
 
     Both halves are read through ``getattr(..., "value", ...)`` so the key is
@@ -214,7 +214,7 @@ class AdmissionPolicy:
     def min_confidence(self) -> float:
         return self._min_confidence
 
-    def evaluate(self, proposal: "Admissible | UpgradeProposal") -> AdmissionDecision:
+    def evaluate(self, proposal: Admissible | UpgradeProposal) -> AdmissionDecision:
         """Decide whether this proposal may be applied."""
         agent_type = producer_identity(proposal)
         key = decision_key(proposal)

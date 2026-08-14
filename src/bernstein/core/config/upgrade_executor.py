@@ -19,8 +19,6 @@ import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
-
-from bernstein.evolution.admission import AdmissionPolicy
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -40,6 +38,7 @@ from bernstein.core.models import (
     Task,
     TaskType,
 )
+from bernstein.evolution.admission import AdmissionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -353,9 +352,7 @@ class UpgradeExecutor:
             decision = self._admission.evaluate(transaction)
             if not decision.admitted:
                 transaction.status = UpgradeStatus.REVIEW_REJECTED
-                transaction.error_message = (
-                    f"Refused by admission policy: {decision.reason}"
-                )
+                transaction.error_message = f"Refused by admission policy: {decision.reason}"
                 logger.warning(
                     "Upgrade %s refused by admission policy: %s",
                     transaction.id,
