@@ -934,7 +934,10 @@ class MetricsCollector:
             # that never completed: the point was recorded for one of its two
             # destinations and the caller saw the failure, so the buffer no
             # longer described what had been asked for. Deriving first makes
-            # the append all-or-nothing.
+            # the *buffer append* all-or-nothing. It says nothing about the
+            # writes: `_flush_buffer` reports per file and one destination can
+            # still fail on its own, which is the same best-effort contract
+            # file metrics have always had.
             targets: list[AnchoredDir] = [shared_dir]
             tenant_id = normalize_tenant_id(labels.get("tenant_id"))
             if tenant_id != "default":
