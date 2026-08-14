@@ -114,14 +114,16 @@ def _task(application: FastAPI, task_id: str) -> Any:
 
 
 def _grant_non_admin_permission(monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
-    """Stop *prefix* falling through to the fail-closed ``admin:manage``.
+    """Give *prefix* a permission the agent under test holds.
 
-    Agent tokens are refused outright on any write whose required permission
-    is ``admin:manage``, which would answer 403 whatever the task scope says.
-    Giving the prefix ``tasks:write`` for the duration of a test isolates the
-    task-scope rule, and states the invariant the rule has to hold under: the
-    scoping must not depend on which prefixes are absent from
-    ``_ROUTE_PERMISSIONS``.
+    An agent token is refused outright on any route whose required
+    permission it does not hold - ``admin:manage`` for a prefix missing from
+    ``_ROUTE_PERMISSIONS``, ``cluster:write`` for ``/cluster``, and so on -
+    which would answer 403 whatever the task scope says.  Giving the prefix
+    ``tasks:write`` for the duration of a test isolates the task-scope rule
+    from the permission gate, and states the invariant the rule has to hold
+    under: the scoping must not depend on which permission a prefix carries
+    in ``_ROUTE_PERMISSIONS``.
     """
     from bernstein.core.security import auth_middleware
 
@@ -410,7 +412,7 @@ def _register_node(application: FastAPI, index: int, name: str, slots: int) -> s
     return str(response.json()["id"])
 
 
-def test_cluster_steal_denies_an_out_of_scope_task(app: FastAPI) -> None:
+def test_cluster_steal_denies_an_out_of_scope_task(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
     """Steal reassigns tasks the caller never named; the ids are still bound.
 
     ``POST /cluster/steal`` reaches ``force_claim`` on tasks the policy picks,
@@ -418,6 +420,7 @@ def test_cluster_steal_denies_an_out_of_scope_task(app: FastAPI) -> None:
     path gate.  The check runs on the ids the policy resolved, so a
     task-scoped token cannot reset a task it does not hold.
     """
+    _grant_non_admin_permission(monkeypatch, "/cluster")
     victim_id = _create_task(app, 28, "victim-steal")
     own_id = _create_task(app, 29, "own-steal")
     claimed = _client(app, 30).post(f"/tasks/{victim_id}/claim", headers=_operator_headers())
@@ -441,8 +444,9 @@ def test_cluster_steal_denies_an_out_of_scope_task(app: FastAPI) -> None:
     assert after.version == before.version
 
 
-def test_cluster_steal_is_unrestricted_for_an_unscoped_token(app: FastAPI) -> None:
+def test_cluster_steal_is_unrestricted_for_an_unscoped_token(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
     """A manager token (``task_ids == []``) redistributes as before."""
+    _grant_non_admin_permission(monkeypatch, "/cluster")
     victim_id = _create_task(app, 34, "manager-steal")
     claimed = _client(app, 35).post(f"/tasks/{victim_id}/claim", headers=_operator_headers())
     assert claimed.status_code == 200, claimed.text

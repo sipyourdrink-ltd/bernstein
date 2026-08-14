@@ -82,11 +82,33 @@ rejected.
    (`jwt_tokens.py:78-93`) which returns `None` on bad signature or
    expiry.
 3. Resolves the user (operator) or identity (agent), populates
-   `request.state.user` / `request.state.identity`, and enforces
-   `task_ids` scoping on every mutating request. The rule is applied to the
-   task the request acts on, not to a list of blessed URLs, so it holds
-   wherever that id comes from (see the table below).
-4. Returns `JSONResponse(401)` on any verification failure.
+   `request.state.user` / `request.state.identity`, and checks the
+   permission the requested route declares (see *Route permissions* below).
+4. Enforces `task_ids` scoping on every mutating request carrying an agent
+   identity. The rule is applied to the task the request acts on, not to a
+   list of blessed URLs, so it holds wherever that id comes from (see the
+   table below).
+5. Returns `JSONResponse(401)` on any verification failure, `403` when the
+   credential authenticates but does not hold the route's permission.
+
+**Route permissions.** Both credential kinds are gated on the permission
+`_get_required_permission(path, method)` resolves for the route, before the
+request reaches a handler: an SSO user against its RBAC role, an agent
+identity against the permission set its token pins. An agent that does not
+hold the permission gets `403` — a worker token reaches neither the agent
+log and stream reads (`agents:read`) nor the session-kill route
+(`agents:kill`), and neither the `/cluster` nor the `/bulletin` surface.
+Reads are gated as well as writes, because a read route's declared
+permission is what keeps one agent's output out of another agent's reach.
+
+Agent grants use a narrower vocabulary than the route map, and spell the
+per-task write authority `tasks:claim` where the route map says
+`tasks:write`. The two names denote the same authority and are resolved
+through `_AGENT_PERMISSION_EQUIVALENTS` in `auth_middleware.py`, so a worker
+still claims, progresses, completes and decomposes its own tasks — bounded
+by `task_ids` as before. Nothing else in the two vocabularies is treated as
+equivalent: a new agent-reachable surface needs its permission granted
+outright in `AGENT_ROLE_PERMISSIONS`.
 
 **Where the task id comes from.** A rule enforced on only some of these is
 enforced on an arbitrary subset, so all of them are covered:

@@ -53,6 +53,21 @@ as unrestricted (manager / orchestrator tokens), and non-agent credentials
 (SSO users, the legacy operator bearer, the cluster secret) never reach this
 check at all.
 
+Route permission enforcement
+----------------------------
+Every credential that authenticates is also gated on the permission the
+requested route declares (:func:`_get_required_permission`), before the
+request reaches a handler.  SSO users are checked against their RBAC role,
+agent identities against the signed permission set their token pins, and
+both are refused with HTTP 403 when the permission is not held.  Agent
+grants use a narrower vocabulary than the route map, so the one authority
+the two spell differently is resolved through
+:data:`_AGENT_PERMISSION_EQUIVALENTS`; nothing else is implied.
+
+The gate covers reads as well as writes, because a read route's declared
+permission is what keeps one agent's log and stream output out of another
+agent's reach.
+
 Tenant scope binding
 --------------------
 Every credential the middleware accepts is bound to exactly one tenant
@@ -135,6 +150,26 @@ if TYPE_CHECKING:
 
 _PERM_TASKS_WRITE = "tasks:write"
 _PERM_ADMIN_MANAGE = "admin:manage"
+_PERM_TASKS_CLAIM = "tasks:claim"
+
+# Grants an agent identity may hold in place of a route-map permission.
+#
+# ``_ROUTE_PERMISSIONS`` names the authority a route needs in the RBAC
+# vocabulary the SSO principal is described in.  Agent identities are minted
+# from ``AGENT_ROLE_PERMISSIONS``, a deliberately narrower vocabulary scoped
+# to what a worker agent does, and it spells the per-task write authority
+# ``tasks:claim`` rather than ``tasks:write``: claiming, progressing,
+# completing, failing and blocking a task, plus decomposing it into subtasks,
+# are the writes the spawner issues that grant for.  The two names denote the
+# same authority, so the equivalence is recorded here instead of widening the
+# issued grant, which other subsystems read for their own decisions.
+#
+# Nothing else in either vocabulary overlaps: an agent that must reach the
+# ``/agents``, ``/cluster``, ``/bulletin``, ``/auth``, ``/webhooks`` or
+# operator surfaces has to hold that surface's permission outright.
+_AGENT_PERMISSION_EQUIVALENTS: Final[dict[str, frozenset[str]]] = {
+    _PERM_TASKS_WRITE: frozenset({_PERM_TASKS_CLAIM}),
+}
 
 type _ExpectedResourceConfig = str | Sequence[str] | None
 
@@ -571,6 +606,33 @@ def _get_required_permission(path: str, method: str) -> str | None:
     return _PERM_ADMIN_MANAGE
 
 
+def _agent_holds_permission(agent_identity: Any, permission: str) -> bool:
+    """Return True when an agent identity holds *permission* for a route.
+
+    Applies the identity's own signed permission set first.  The set is
+    pinned to the presented token - ``AgentIdentityStore.authenticate``
+    refuses a JWT whose ``scopes`` claim differs from the stored grant - so
+    it is authenticated state rather than request input.
+
+    When the route names a permission the agent vocabulary spells
+    differently, the grants listed for it in
+    :data:`_AGENT_PERMISSION_EQUIVALENTS` satisfy it too.  Anything else is
+    refused: an agent that does not hold the permission does not get the
+    route.
+
+    Args:
+        agent_identity: The authenticated ``AgentIdentity``.
+        permission: Permission the route requires, from
+            :func:`_get_required_permission`.
+
+    Returns:
+        True when the identity is authorised for the route.
+    """
+    if agent_identity.has_permission(permission):
+        return True
+    return any(agent_identity.has_permission(grant) for grant in _AGENT_PERMISSION_EQUIVALENTS.get(permission, ()))
+
+
 class SSOAuthMiddleware(BaseHTTPMiddleware):
     """Multi-strategy authentication middleware.
 
@@ -920,11 +982,13 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         credential = getattr(agent_identity, "credential", None)
         bind_request_tenant(request, getattr(credential, "tenant_id", None))
 
+        required_permission = _get_required_permission(path, request.method)
+
         # Agent identity JWTs - even manager-role / unrestricted ones - must
         # never reach operator-only endpoints (shutdown, broadcast, drain,
         # config writer).  These mutate process-wide state and require an
         # admin SSO user or the legacy operator bearer.
-        if request.method not in _READ_METHODS and _get_required_permission(path, request.method) == _PERM_ADMIN_MANAGE:
+        if request.method not in _READ_METHODS and required_permission == _PERM_ADMIN_MANAGE:
             logger.warning(
                 "Agent %s denied operator-only path %s (admin:manage required)",
                 sanitize_log(agent_identity.id),
@@ -935,6 +999,31 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                 content={
                     "detail": "Agent tokens cannot access operator-only endpoints",
                     "required_permission": _PERM_ADMIN_MANAGE,
+                    "agent_id": agent_identity.id,
+                },
+            )
+
+        # Every other route is gated on the permission it declares, the same
+        # way the SSO principal is gated in ``_try_sso_auth``.  Without this
+        # an agent credential authenticated and then went straight to the
+        # handler, so the only thing a route's declared permission bounded
+        # was an SSO user: a task-scoped worker token reached the agent
+        # log/stream reads and the session-kill route while holding neither
+        # ``agents:read`` nor ``agents:kill``.  Reads are gated too - the
+        # permission a read route declares is what keeps one agent's output
+        # out of another agent's reach.
+        if required_permission and not _agent_holds_permission(agent_identity, required_permission):
+            logger.warning(
+                "Agent %s denied %s (%s required)",
+                sanitize_log(agent_identity.id),
+                sanitize_log(path),
+                sanitize_log(required_permission),
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": f"Insufficient permissions. Required: {required_permission}",
+                    "required_permission": required_permission,
                     "agent_id": agent_identity.id,
                 },
             )
