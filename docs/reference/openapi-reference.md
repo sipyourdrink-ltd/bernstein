@@ -15,7 +15,7 @@ uv run python scripts/generate_openapi.py
 
 Run this after adding or modifying any API route, Pydantic model, or response schema, then commit the updated JSON. The hosted Redoc page reads the spec at load time, so the rendered reference updates automatically once the JSON is committed.
 
-Forgetting the step is a CI failure, not a silent rot: `tests/unit/test_openapi_snapshot_drift.py` rebuilds the app, diffs its paths and component schemas against the committed snapshot, and names whatever moved.
+Forgetting the step is a CI failure, not a silent rot: `tests/unit/test_openapi_snapshot_drift.py` rebuilds the app and diffs it against the committed snapshot, naming whatever moved. It compares paths, component schema names, the property names inside those schemas, and each operation's response codes and media types. Prose is deliberately excluded, so rewording a handler docstring never forces a snapshot commit -- but it does mean a description-only change reaches the published reference on the next regeneration, whenever that is.
 
 **Alternative -- inspect the spec from a running server:**
 

@@ -4466,7 +4466,7 @@
     "/costs/current": {
       "get": {
         "summary": "Get Cost Current",
-        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx §6.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.",
+        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx §6.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.\n\nScope: every figure here is the caller's tenant's, not the run's or the\ndeployment's - spend is replayed from the caller's scope only, and the\ncap it is measured against is that tenant's configured cap where one is\nconfigured.  ``tenant_id`` in the response names the scope, so a client\naggregating across tenants can tell these apart from run-wide totals.",
         "operationId": "get_cost_current_costs_current_get",
         "responses": {
           "200": {
@@ -4483,7 +4483,7 @@
     "/costs/alerts": {
       "get": {
         "summary": "Get Cost Alerts",
-        "description": "Return active budget alerts and 30d/90d cost trends.\n\nReads the live cost data for the most recent run, checks whether spend\nhas reached the 80% or 95% alert threshold, and returns trend data\ncomputed from ``.sdd/metrics/cost_history.jsonl``.",
+        "description": "Return active budget alerts and 30d/90d cost trends.\n\nReads the live cost data for the most recent run, checks whether spend\nhas reached the 80% or 95% alert threshold, and returns trend data\ncomputed from ``.sdd/metrics/cost_history.jsonl``.\n\nBoth halves of this response are scoped to ``tenant_id``: ``alerts`` is\ncomputed from the caller's tenant's spend against the caller's tenant's\ncap, and ``trend`` / ``history_days`` are narrowed to snapshots recorded\nfor that same tenant.  A history snapshot written before per-tenant\nattribution existed carries no tenant and is excluded from every scoped\ntrend, so a fresh deployment's 30/90-day averages start empty and fill in\nas new, attributed snapshots accumulate.",
         "operationId": "get_cost_alerts_costs_alerts_get",
         "responses": {
           "200": {
@@ -4500,7 +4500,7 @@
     "/costs/history": {
       "get": {
         "summary": "Get Cost History",
-        "description": "Return cost history for chart visualization.\n\nTwo response modes share one endpoint:\n\n* ``GET /costs/history?hours=24&granularity=hour`` (web GUI sparkline) -\n  returns a flat ``[{ts, usd}]`` array bucketed from cost-tracker\n  usages over the last *hours* window.\n* ``GET /costs/history`` *or* ``?envelope=1`` (legacy/CLI) - returns the\n  original ``{history, trend, burn_rate_*, history_days}`` envelope\n  built from ``.sdd/metrics/cost_history.jsonl`` daily snapshots.\n\nThe sparkline branch lets the GUI feed `recharts` directly without\nunwrapping a ``.history`` field.",
+        "description": "Return cost history for chart visualization.\n\nTwo response modes share one endpoint:\n\n* ``GET /costs/history?hours=24&granularity=hour`` (web GUI sparkline) -\n  returns a flat ``[{ts, usd}]`` array bucketed from cost-tracker\n  usages over the last *hours* window.\n* ``GET /costs/history`` *or* ``?envelope=1`` (legacy/CLI) - returns the\n  original ``{history, trend, burn_rate_*, history_days}`` envelope\n  built from ``.sdd/metrics/cost_history.jsonl`` daily snapshots, narrowed\n  to the caller's tenant the same way ``/costs/alerts`` is.\n\nThe sparkline branch lets the GUI feed `recharts` directly without\nunwrapping a ``.history`` field.",
         "operationId": "get_cost_history_costs_history_get",
         "parameters": [
           {
@@ -4904,7 +4904,7 @@
     "/costs/{run_id}": {
       "get": {
         "summary": "Get Cost Budget",
-        "description": "Return budget status for a specific run.\n\nLoads the persisted cost tracker from ``.sdd/runtime/costs/{run_id}.json``\nand returns its ``BudgetStatus`` as JSON.",
+        "description": "Return budget status for a specific run, within the caller's scope.\n\nLoads the persisted cost tracker from ``.sdd/runtime/costs/{run_id}.json``\nand returns its ``BudgetStatus`` as JSON.\n\nScope: every figure is the caller's tenant's share of the run, not the\nrun's total - the run file holds the spend of every tenant that spent\nagainst it, and only the caller's is replayed.  ``tenant_id`` in the\nresponse names the scope the figures belong to.",
         "operationId": "get_cost_budget_costs__run_id__get",
         "parameters": [
           {
@@ -7049,7 +7049,7 @@
     "/export/tasks": {
       "get": {
         "summary": "Export Tasks",
-        "description": "Export tasks as CSV or JSON.\n\nQuery params:\n    format: ``csv`` or ``json`` (default ``json``).\n    limit: Optional max number of tasks to return. Pushed into\n        ``TaskStore.list_tasks`` so large stores no longer materialise\n        the whole table (issue #1728 finding 3).\n    offset: Optional number of tasks to skip before returning rows.",
+        "description": "Export tasks as CSV or JSON.\n\nQuery params:\n    format: ``csv`` or ``json`` (default ``json``).\n    limit: Optional max number of tasks to return. Pushed into\n        ``TaskStore.list_tasks`` so large stores no longer materialise\n        the whole table (issue #1728 finding 3).\n    offset: Optional number of tasks to skip before returning rows.\n\nThe export is a whole-store read, so it narrows to the caller's tenant\nscope the same way the paginated task list does. The scope is pushed into\n``list_tasks`` rather than applied to the returned rows so that it is\n``limit``/``offset`` that page through the caller's own tasks: filtering\nafter the slice would page through every tenant's and return short pages.",
         "operationId": "export_tasks_export_tasks_get",
         "parameters": [
           {
@@ -13282,7 +13282,7 @@
     "/api/v1/costs/current": {
       "get": {
         "summary": "Get Cost Current",
-        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx §6.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.",
+        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx §6.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.\n\nScope: every figure here is the caller's tenant's, not the run's or the\ndeployment's - spend is replayed from the caller's scope only, and the\ncap it is measured against is that tenant's configured cap where one is\nconfigured.  ``tenant_id`` in the response names the scope, so a client\naggregating across tenants can tell these apart from run-wide totals.",
         "operationId": "get_cost_current_api_v1_costs_current_get",
         "responses": {
           "200": {
@@ -13299,7 +13299,7 @@
     "/api/v1/costs/alerts": {
       "get": {
         "summary": "Get Cost Alerts",
-        "description": "Return active budget alerts and 30d/90d cost trends.\n\nReads the live cost data for the most recent run, checks whether spend\nhas reached the 80% or 95% alert threshold, and returns trend data\ncomputed from ``.sdd/metrics/cost_history.jsonl``.",
+        "description": "Return active budget alerts and 30d/90d cost trends.\n\nReads the live cost data for the most recent run, checks whether spend\nhas reached the 80% or 95% alert threshold, and returns trend data\ncomputed from ``.sdd/metrics/cost_history.jsonl``.\n\nBoth halves of this response are scoped to ``tenant_id``: ``alerts`` is\ncomputed from the caller's tenant's spend against the caller's tenant's\ncap, and ``trend`` / ``history_days`` are narrowed to snapshots recorded\nfor that same tenant.  A history snapshot written before per-tenant\nattribution existed carries no tenant and is excluded from every scoped\ntrend, so a fresh deployment's 30/90-day averages start empty and fill in\nas new, attributed snapshots accumulate.",
         "operationId": "get_cost_alerts_api_v1_costs_alerts_get",
         "responses": {
           "200": {
@@ -13316,7 +13316,7 @@
     "/api/v1/costs/history": {
       "get": {
         "summary": "Get Cost History",
-        "description": "Return cost history for chart visualization.\n\nTwo response modes share one endpoint:\n\n* ``GET /costs/history?hours=24&granularity=hour`` (web GUI sparkline) -\n  returns a flat ``[{ts, usd}]`` array bucketed from cost-tracker\n  usages over the last *hours* window.\n* ``GET /costs/history`` *or* ``?envelope=1`` (legacy/CLI) - returns the\n  original ``{history, trend, burn_rate_*, history_days}`` envelope\n  built from ``.sdd/metrics/cost_history.jsonl`` daily snapshots.\n\nThe sparkline branch lets the GUI feed `recharts` directly without\nunwrapping a ``.history`` field.",
+        "description": "Return cost history for chart visualization.\n\nTwo response modes share one endpoint:\n\n* ``GET /costs/history?hours=24&granularity=hour`` (web GUI sparkline) -\n  returns a flat ``[{ts, usd}]`` array bucketed from cost-tracker\n  usages over the last *hours* window.\n* ``GET /costs/history`` *or* ``?envelope=1`` (legacy/CLI) - returns the\n  original ``{history, trend, burn_rate_*, history_days}`` envelope\n  built from ``.sdd/metrics/cost_history.jsonl`` daily snapshots, narrowed\n  to the caller's tenant the same way ``/costs/alerts`` is.\n\nThe sparkline branch lets the GUI feed `recharts` directly without\nunwrapping a ``.history`` field.",
         "operationId": "get_cost_history_api_v1_costs_history_get",
         "parameters": [
           {
@@ -13720,7 +13720,7 @@
     "/api/v1/costs/{run_id}": {
       "get": {
         "summary": "Get Cost Budget",
-        "description": "Return budget status for a specific run.\n\nLoads the persisted cost tracker from ``.sdd/runtime/costs/{run_id}.json``\nand returns its ``BudgetStatus`` as JSON.",
+        "description": "Return budget status for a specific run, within the caller's scope.\n\nLoads the persisted cost tracker from ``.sdd/runtime/costs/{run_id}.json``\nand returns its ``BudgetStatus`` as JSON.\n\nScope: every figure is the caller's tenant's share of the run, not the\nrun's total - the run file holds the spend of every tenant that spent\nagainst it, and only the caller's is replayed.  ``tenant_id`` in the\nresponse names the scope the figures belong to.",
         "operationId": "get_cost_budget_api_v1_costs__run_id__get",
         "parameters": [
           {
@@ -15865,7 +15865,7 @@
     "/api/v1/export/tasks": {
       "get": {
         "summary": "Export Tasks",
-        "description": "Export tasks as CSV or JSON.\n\nQuery params:\n    format: ``csv`` or ``json`` (default ``json``).\n    limit: Optional max number of tasks to return. Pushed into\n        ``TaskStore.list_tasks`` so large stores no longer materialise\n        the whole table (issue #1728 finding 3).\n    offset: Optional number of tasks to skip before returning rows.",
+        "description": "Export tasks as CSV or JSON.\n\nQuery params:\n    format: ``csv`` or ``json`` (default ``json``).\n    limit: Optional max number of tasks to return. Pushed into\n        ``TaskStore.list_tasks`` so large stores no longer materialise\n        the whole table (issue #1728 finding 3).\n    offset: Optional number of tasks to skip before returning rows.\n\nThe export is a whole-store read, so it narrows to the caller's tenant\nscope the same way the paginated task list does. The scope is pushed into\n``list_tasks`` rather than applied to the returned rows so that it is\n``limit``/``offset`` that page through the caller's own tasks: filtering\nafter the slice would page through every tenant's and return short pages.",
         "operationId": "export_tasks_api_v1_export_tasks_get",
         "parameters": [
           {
@@ -21198,6 +21198,18 @@
               }
             ],
             "title": "Max Turns"
+          },
+          "artifact_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Spec"
           }
         },
         "type": "object",
@@ -22035,6 +22047,18 @@
               }
             ],
             "title": "Max Turns"
+          },
+          "artifact_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Spec"
           }
         },
         "type": "object",
@@ -22908,6 +22932,18 @@
               }
             ],
             "title": "Max Turns"
+          },
+          "artifact_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Spec"
           }
         },
         "type": "object",

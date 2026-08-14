@@ -18,6 +18,13 @@ and ``/plans*`` from 503 to 404 on the same day -- 30 operations went stale
 without a single test going red. Comparing the declared status codes closes
 that hole while still ignoring prose (summaries, descriptions, examples), so
 editing a docstring does not force a snapshot commit.
+
+Schema property names are compared for the same reason, one level further in.
+Three models gained an ``artifact_spec`` field while the snapshot kept the
+older field list; the schema *names* still matched, so every check above
+stayed green and both the published reference and the generated SDK omitted
+the field. Field names only -- their titles and descriptions stay out, so the
+prose rule above holds throughout.
 """
 
 from __future__ import annotations
@@ -121,6 +128,44 @@ def test_snapshot_schema_names_match_live_app() -> None:
 
     assert live == committed, "docs/reference/openapi.json component schemas are stale.\n" + _format(
         "schema", live - committed, committed - live
+    )
+
+
+def _schema_properties(spec: dict[str, Any]) -> set[str]:
+    """Flatten component schemas into ``Schema.property`` strings."""
+    return {
+        f"{name}.{field}"
+        for name, schema in (spec.get("components", {}).get("schemas") or {}).items()
+        if isinstance(schema, dict)
+        for field in (schema.get("properties") or {})
+    }
+
+
+def test_snapshot_schema_properties_match_live_app() -> None:
+    """Fields inside each documented model track the app's models.
+
+    Comparing schema *names* leaves a hole one level down. ``artifact_spec``
+    was added to ``TaskCreate``, ``TaskResponse`` and ``WebhookTaskCreate``
+    while the snapshot kept the older field list: the three names still
+    matched, so every guard above stayed green and the omission survived
+    until someone regenerated the file by hand. A field that never reaches
+    the snapshot never reaches the published reference or the SDK generated
+    from it, so callers cannot see the field exists and generated clients
+    drop it on the way out.
+
+    Every component schema is compared, not just request bodies. Response
+    models rot the same way -- ``TaskResponse`` above is one -- and they seed
+    the same generated client.
+
+    Only property *names* are compared, so this stays on the prose-free side
+    of the line the module docstring draws: retitling or re-describing a
+    field does not demand a snapshot commit.
+    """
+    live = _schema_properties(_live_spec())
+    committed = _schema_properties(_committed_spec())
+
+    assert live == committed, "docs/reference/openapi.json schema properties are stale.\n" + _format(
+        "schema property", live - committed, committed - live
     )
 
 
