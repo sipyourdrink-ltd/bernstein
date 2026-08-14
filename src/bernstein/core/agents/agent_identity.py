@@ -422,11 +422,30 @@ class AgentIdentityStore:
         path.write_text(json.dumps(identity.to_dict(), indent=2), encoding="utf-8")
 
     def _load(self, identity_id: str) -> AgentIdentity | None:
+        """Read one persisted identity, or None when it does not deserialise.
+
+        This is the single boundary every caller reaches a stored identity
+        through - ``authenticate``, ``authorize``, ``get``, the lifecycle
+        mutators - so it is where a record that cannot be turned into an
+        identity has to stop.  A record whose persisted enum or tenant value
+        is not a legitimate one is treated exactly like a missing file: the
+        caller gets ``None`` and answers "not authenticated", instead of an
+        exception escaping into the authentication middleware and turning an
+        unusable credential into a 500.
+
+        The same failure modes ``list_identities`` skips are handled here, so
+        a corrupt record is consistently invisible rather than fatal on one
+        path and merely absent on the other.
+        """
         path = self._identity_path(identity_id)
         if not path.exists():
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return AgentIdentity.from_dict(data)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return AgentIdentity.from_dict(data)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            logger.warning("Skipping corrupt identity file: %s", path)
+            return None
 
     def _rebuild_token_index(self) -> None:
         """Scan persisted identities and populate the token→identity lookup."""

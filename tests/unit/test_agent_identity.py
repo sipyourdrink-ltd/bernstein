@@ -441,3 +441,85 @@ class TestAgentCredentialTenantDeserialization:
 
         assert identity.id in listed
         assert "session-corrupt" not in listed
+
+
+class TestCorruptIdentityDoesNotBreakAuthentication:
+    """A record that will not deserialise authenticates as nobody, not as a 500.
+
+    ``AgentCredential.from_dict`` refuses a persisted ``tenant_id`` that is
+    not a real tenant id, and that refusal reaches every caller through
+    ``AgentIdentityStore._load``.  ``_load`` sits under the authentication
+    entry points, which sit under the server's auth middleware, so an escape
+    there turns an unusable stored record into a 500 on an unauthenticated
+    request - a corrupt file on disk becoming a server error any caller can
+    trigger. The store answers "no such identity" instead.
+    """
+
+    @staticmethod
+    def _corrupt_tenant(identities_dir: Path, identity_id: str) -> None:
+        """Rewrite one persisted record's credential tenant to a bad value."""
+        import json
+
+        path = identities_dir / f"{identity_id}.json"
+        payload = json.loads(path.read_text())
+        payload["credential"]["tenant_id"] = 42
+        path.write_text(json.dumps(payload))
+
+    def test_jwt_authentication_returns_none_for_a_corrupt_record(self, tmp_path: Path) -> None:
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-jwt", "backend")
+        assert store.authenticate(token) is not None, "precondition: the token authenticates before corruption"
+
+        self._corrupt_tenant(tmp_path / "agent_identities", identity.id)
+
+        assert AgentIdentityStore(tmp_path).authenticate(token) is None
+
+    def test_opaque_authentication_returns_none_for_a_corrupt_record(self, tmp_path: Path) -> None:
+        """The opaque-token path reaches ``_load`` through the token index.
+
+        The index is rebuilt from the raw JSON and never validates the
+        tenant, so it hands out the identity id and the failure lands in
+        ``_load`` - a different route to the same record than the JWT path.
+        """
+        import json
+
+        opaque_token = "opaque-agent-token"
+        store = AgentIdentityStore(tmp_path)
+        identity, _token = store.create_identity("session-opaque", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        path = identities_dir / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        payload["credential"]["token_type"] = "opaque"
+        payload["credential"]["token_hash"] = _hash_token(opaque_token)
+        path.write_text(json.dumps(payload))
+        assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is not None, (
+            "precondition: the opaque token authenticates before corruption"
+        )
+
+        self._corrupt_tenant(identities_dir, identity.id)
+
+        assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is None
+
+    def test_a_valid_identity_still_authenticates_alongside_a_corrupt_one(self, tmp_path: Path) -> None:
+        """Skipping the bad record does not take the good ones with it."""
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        good, good_token = store.create_identity("session-good", "backend")
+
+        identities_dir = tmp_path / "agent_identities"
+        corrupt = identities_dir / "session-corrupt.json"
+        payload = json.loads((identities_dir / f"{good.id}.json").read_text())
+        payload["id"] = "session-corrupt"
+        payload["session_id"] = "session-corrupt"
+        payload["credential"]["token_hash"] = _hash_token("some-other-token")
+        payload["credential"]["tenant_id"] = 42
+        corrupt.write_text(json.dumps(payload))
+
+        reloaded = AgentIdentityStore(tmp_path)
+
+        assert reloaded.get("session-corrupt") is None
+        authenticated = reloaded.authenticate(good_token)
+        assert authenticated is not None
+        assert authenticated.id == good.id

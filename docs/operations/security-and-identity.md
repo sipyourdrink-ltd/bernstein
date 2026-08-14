@@ -235,6 +235,16 @@ is given. Routes that aggregate process-global data or look rows up by ID withou
 passing a tenant are not scoped by this binding; treat them as operator surfaces
 until they are converted.
 
+Budget figures follow the same scope. A run's cost file records the spend of
+every tenant that spent against it, and the caps stored beside it bound the run
+as a whole — so a tenant-scoped read reports the tenant's spend against the
+tenant's configured `budget_usd`, not the run's. Where no tenants are
+configured the run and the scope are the same thing and the run's caps stand.
+The retained-usage limit applies as before: a cost file holds the usage buffer
+(`BERNSTEIN_COST_USAGE_BUFFER`, 10 000 rows by default), so on a long run these
+figures cover the retained window, and full history lives in the rotation files
+when `rotation_dir` is configured.
+
 Operators audit tenant leakage with `tenant_isolation_verify.py` and rate-limit
 per-tenant via `tenant_rate_limiter.py`.
 
@@ -256,6 +266,31 @@ Backing store: `core/security/agent_identity.py` (`AgentIdentityStore`) under
 `.sdd/auth/`. The store is created lazily on first request
 (`routes/identities.py:17-27`). Credentials are stored hashed; the API
 strips them before responses (`:82`).
+
+### Unreadable identity records
+
+A credential's persisted `tenant_id` is read back as the scope every request
+that credential authenticates is served under, so the store requires it to be
+a real tenant id rather than coercing whatever is on disk into one. A record
+written before the field existed omits it and resolves to `default`; a record
+carrying a blank or non-string value is not one the store can write, and it is
+treated as corrupt.
+
+A corrupt record is skipped, never fatal: `GET /identities` leaves it out, and
+a request presenting its token is answered `401` like any other unrecognised
+token — not `500`. Each skip logs `Skipping corrupt identity file: <path>`.
+
+Operator repair, for a record hand-edited or written by an external tool:
+
+1. Find the path in the warning, under `.sdd/auth/agent_identities/`.
+2. Set `credential.tenant_id` to the tenant the agent belongs to, or delete the
+   key to place it in `default`.
+3. No restart is needed — the store reads each record on demand — but a running
+   server keeps a token index built at startup, so restart it if the repaired
+   identity uses an opaque token.
+
+Revoking and re-spawning the agent is always a valid alternative: identities are
+per-session and cheap to reissue.
 
 ## Delegation capability tokens
 
