@@ -927,3 +927,129 @@ async def test_scoped_status_divides_by_the_tenants_cap_not_the_runs(
     assert body["budget_usd"] == pytest.approx(tenant_cap)
     assert body["percentage_used"] == pytest.approx(seeded_costs / tenant_cap, abs=1e-4)
     assert body["remaining_usd"] == pytest.approx(tenant_cap - seeded_costs)
+
+
+# ---------------------------------------------------------------------------
+# Row-level robustness of the cost replay
+# ---------------------------------------------------------------------------
+
+
+def _write_usage_rows(sdd_dir: Path, run_id: str, rows: list[dict[str, Any]]) -> None:
+    """Replace a run file's usage rows with *rows* verbatim."""
+    import json
+
+    path = sdd_dir / "runtime" / "costs" / f"{run_id}.json"
+    payload = json.loads(path.read_text())
+    payload["usages"] = rows
+    path.write_text(json.dumps(payload))
+
+
+def _usage_row(**overrides: Any) -> dict[str, Any]:
+    """A well-formed persisted usage row, before any override."""
+    row: dict[str, Any] = {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "model": "row-model",
+        "cost_usd": 1.0,
+        "agent_id": "row-agent",
+        "task_id": "row-task",
+        "tenant_id": DEFAULT_TENANT_ID,
+        "timestamp": 1_700_000_000.0,
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.anyio()
+async def test_one_unreadable_usage_row_does_not_discard_the_run(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+) -> None:
+    """A single bad row is skipped; the rows beside it still count.
+
+    A run file accumulates thousands of rows.  Aborting the whole replay on
+    the first unreadable one reports a run that spent money as having spent
+    nothing, which is the more dangerous failure of the two.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    tracker = CostTracker(run_id="row-robustness-run", budget_usd=10_000.0)
+    tracker.record("seed-agent", fx.task_default_id, "seed-model", 1, 1, cost_usd=0.0, tenant_id=DEFAULT_TENANT_ID)
+    tracker.save(sdd_dir)
+    _write_usage_rows(
+        sdd_dir,
+        "row-robustness-run",
+        [
+            _usage_row(cost_usd=1.25),
+            {"input_tokens": 1},  # missing every required key
+            _usage_row(cost_usd="not-a-number"),
+            _usage_row(cost_usd=2.75),
+        ],
+    )
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get("/costs/live", headers=credential.headers)
+
+    assert response.status_code == 200
+    assert response.json()["spent_usd"] == pytest.approx(4.0)
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("bad_tenant", [42, True, ["default"], {"id": "default"}])
+async def test_a_row_whose_tenant_is_not_a_tenant_reaches_no_aggregate(
+    fx: Fixture,
+    client: AsyncClient,
+    sdd_dir: Path,
+    bad_tenant: object,
+) -> None:
+    """A non-string stored tenant is refused, not coerced into a scope.
+
+    ``str()`` would turn each of these into a plausible-looking scope label
+    and file the row's spend under a tenant nobody ever had - and ``None``
+    would file it under the default tenant, which is somebody's.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    good_cost = 3.5
+    tracker = CostTracker(run_id="bad-tenant-run", budget_usd=10_000.0)
+    tracker.record("seed-agent", fx.task_default_id, "seed-model", 1, 1, cost_usd=0.0, tenant_id=DEFAULT_TENANT_ID)
+    tracker.save(sdd_dir)
+    _write_usage_rows(
+        sdd_dir,
+        "bad-tenant-run",
+        [
+            _usage_row(cost_usd=good_cost),
+            _usage_row(cost_usd=99.5, tenant_id=bad_tenant, agent_id="ghost-agent"),
+        ],
+    )
+
+    credential = _credential(fx, "legacy_bearer")
+    response = await client.get("/costs/live", headers=credential.headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spent_usd"] == pytest.approx(good_cost)
+    assert "ghost-agent" not in body["per_agent"]
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("endpoint", ["/costs/current", "/costs/alerts"])
+async def test_scoped_cost_responses_name_their_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    seeded_costs: float,
+    endpoint: str,
+) -> None:
+    """A tenant projection says which tenant it is a projection of.
+
+    These endpoints return one tenant's share of a run in fields whose names
+    read as run-wide accounting, so the response has to carry the scope for a
+    client to tell the two apart.
+    """
+    credential = _credential(fx, "legacy_bearer")
+
+    response = await client.get(endpoint, headers=credential.headers)
+
+    assert response.status_code == 200
+    assert response.json()["tenant_id"] == DEFAULT_TENANT_ID

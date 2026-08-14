@@ -33,7 +33,7 @@ from bernstein.core.models import (
     RunCostProjection,
     RunCostReport,
 )
-from bernstein.core.tenanting import normalize_tenant_id
+from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,31 @@ DEFAULT_KILL_GRACE_PERIOD_S: int = 30
 # (totals, per-agent, per-model, cache savings) are maintained via
 # accumulators and remain correct after eviction.
 DEFAULT_USAGE_BUFFER: int = 10_000
+
+
+def _usage_tenant_scope(raw: object) -> str:
+    """Return the normalized tenant a persisted usage row belongs to.
+
+    Read before the row is deserialised, because this is what decides which
+    tenant's totals the row lands in.  ``TokenUsage.from_dict`` coerces the
+    stored field with ``str()``, which would turn a number or a boolean into
+    a plausible-looking scope label and file the row under a tenant nobody
+    ever had - so a stored value that is not a string is refused here instead
+    of being invented into one.
+
+    Absent, ``null`` and blank stay lenient and resolve to the default
+    tenant: rows predate the field, and a blank is what an unset tenant was
+    written as.  Padded strings normalize, so a row stored as ``"  acme  "``
+    is read as belonging to ``acme``.
+
+    Raises:
+        ValueError: The row carries a ``tenant_id`` that is not a string.
+    """
+    if raw is None:
+        return DEFAULT_TENANT_ID
+    if not isinstance(raw, str):
+        raise ValueError(f"usage tenant_id must be a string, got {type(raw).__name__}")
+    return normalize_tenant_id(raw)
 
 
 def _resolve_usage_buffer_size() -> int:
@@ -1208,8 +1233,22 @@ class CostTracker:
             )
             scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
             for u_dict in data.get("usages", []):
-                usage = TokenUsage.from_dict(u_dict)
-                if scope is not None and normalize_tenant_id(usage.tenant_id) != scope:
+                # One row per iteration, each guarded on its own.  A run file
+                # accumulates thousands of rows over a long run; letting a
+                # single unreadable one abort the whole replay would discard
+                # every good row beside it and report the run as having spent
+                # nothing.  The outer guard still covers file-level damage.
+                try:
+                    row_tenant = _usage_tenant_scope(u_dict.get("tenant_id", None))
+                    if scope is not None and row_tenant != scope:
+                        continue
+                    usage = TokenUsage.from_dict(u_dict)
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    # Validated before the row is built, so a row carrying a
+                    # tenant that is not a tenant id never reaches an
+                    # aggregate - scoped or whole-file - under a scope label
+                    # invented by coercing it.
+                    logger.warning("Skipping corrupt usage row in cost file: %s", file_path)
                     continue
                 tracker._usages.append(usage)
                 tracker._spent_usd += usage.cost_usd

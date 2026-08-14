@@ -376,6 +376,12 @@ def get_cost_current(request: Request) -> JSONResponse:
     ``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and
     ``last_sync_at`` fields. Existing TUI/CLI callers keep reading
     ``spent_usd`` / ``percentage_used`` etc. unchanged.
+
+    Scope: every figure here is the caller's tenant's, not the run's or the
+    deployment's - spend is replayed from the caller's scope only, and the
+    cap it is measured against is that tenant's configured cap where one is
+    configured.  ``tenant_id`` in the response names the scope, so a client
+    aggregating across tenants can tell these apart from run-wide totals.
     """
     from bernstein.core.cost_tracker import CostTracker
 
@@ -477,6 +483,7 @@ def get_cost_current(request: Request) -> JSONResponse:
             "used_pct": round(used_pct, 2),
             "resets_at": _next_utc_reset_iso(),
             "last_sync_at": last_sync_iso,
+            "tenant_id": tenant_id,
         }
     )
 
@@ -488,6 +495,13 @@ def get_cost_alerts(request: Request) -> JSONResponse:
     Reads the live cost data for the most recent run, checks whether spend
     has reached the 80% or 95% alert threshold, and returns trend data
     computed from ``.sdd/metrics/cost_history.jsonl``.
+
+    Scope: the two halves of this response are scoped differently, and
+    ``tenant_id`` names the scope of the first.  ``alerts`` is computed from
+    the caller's tenant's spend against the caller's tenant's cap.  ``trend``
+    and ``history_days`` come from the run-wide cost history file, which is
+    not tenant-partitioned, so they describe the deployment rather than the
+    caller's scope.
     """
     from bernstein.core.cost_history import compute_trends, get_active_alerts, load_history
     from bernstein.core.cost_tracker import CostTracker
@@ -517,6 +531,11 @@ def get_cost_alerts(request: Request) -> JSONResponse:
             "alerts": [a.to_dict() for a in alerts],
             "trend": trend.to_dict(),
             "history_days": len(history),
+            "tenant_id": tenant_id,
+            # ``trend`` and ``history_days`` are read from the run-wide cost
+            # history file, which carries no tenant, so they are not narrowed
+            # to ``tenant_id`` the way ``alerts`` is.
+            "trend_scope": "run-wide",
         }
     )
 
@@ -1537,10 +1556,15 @@ def get_cost_efficiency(request: Request) -> JSONResponse:
 
 @router.get("/costs/{run_id}", responses={404: {"description": "No cost data for run"}})
 def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
-    """Return budget status for a specific run.
+    """Return budget status for a specific run, within the caller's scope.
 
     Loads the persisted cost tracker from ``.sdd/runtime/costs/{run_id}.json``
     and returns its ``BudgetStatus`` as JSON.
+
+    Scope: every figure is the caller's tenant's share of the run, not the
+    run's total - the run file holds the spend of every tenant that spent
+    against it, and only the caller's is replayed.  ``tenant_id`` in the
+    response names the scope the figures belong to.
     """
     from bernstein.core.cost_tracker import CostTracker
 
@@ -1552,4 +1576,5 @@ def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
 
     result = tracker.status().to_dict()
     result.update(_build_breakdowns(tracker))
+    result["tenant_id"] = tenant_id
     return JSONResponse(content=result)
