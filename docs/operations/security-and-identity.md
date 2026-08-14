@@ -91,24 +91,56 @@ rejected.
 5. Returns `JSONResponse(401)` on any verification failure, `403` when the
    credential authenticates but does not hold the route's permission.
 
-**Route permissions.** Both credential kinds are gated on the permission
-`_get_required_permission(path, method)` resolves for the route, before the
-request reaches a handler: an SSO user against its RBAC role, an agent
-identity against the permission set its token pins. An agent that does not
-hold the permission gets `403` — a worker token reaches neither the agent
-log and stream reads (`agents:read`) nor the session-kill route
-(`agents:kill`), and neither the `/cluster` nor the `/bulletin` surface.
-Reads are gated as well as writes, because a read route's declared
-permission is what keeps one agent's output out of another agent's reach.
+**Route permissions.** Every credential that authenticates is gated on the
+permission `_get_required_permission(path, method)` resolves for the route,
+before the request reaches a handler. Each kind is checked against the
+authority it actually carries, and gets `403` when the route names one it
+does not hold:
 
-Agent grants use a narrower vocabulary than the route map, and spell the
-per-task write authority `tasks:claim` where the route map says
-`tasks:write`. The two names denote the same authority and are resolved
-through `_AGENT_PERMISSION_EQUIVALENTS` in `auth_middleware.py`, so a worker
-still claims, progresses, completes and decomposes its own tasks — bounded
-by `task_ids` as before. Nothing else in the two vocabularies is treated as
-equivalent: a new agent-reachable surface needs its permission granted
-outright in `AGENT_ROLE_PERMISSIONS`.
+| Credential | Checked against | Reaches |
+| --- | --- | --- |
+| SSO user JWT | the RBAC role's permissions | whatever the role grants |
+| Agent identity token | the signed permission set the token pins, plus `_AGENT_PERMISSION_EQUIVALENTS` | its own task work; not `/agents/*`, `/cluster/*` or `/bulletin` unless the grant says so |
+| Cluster worker secret | `_CLUSTER_SECRET_PERMISSIONS`, a fixed set | `cluster:write` / `cluster:read`, `tasks:write` / `tasks:read`, `status:read` — and nothing else |
+| Legacy static bearer | nothing — it is the operator credential | everything |
+
+Reads are gated as well as writes. A read route's declared permission is
+what keeps one agent's log and stream output out of another agent's reach,
+and it is the only thing that bounds a read at all: the separate
+operator-only (`admin:manage`) refusal that agent tokens and the cluster
+secret have always carried runs on non-read methods only.
+
+*Agent identities.* Agent grants use a narrower vocabulary than the route
+map, and spell the per-task write authority `tasks:claim` where the route
+map says `tasks:write`. The two names denote the same authority and are
+resolved through `_AGENT_PERMISSION_EQUIVALENTS` in `auth_middleware.py`, so
+a worker still claims, progresses, completes and decomposes its own tasks —
+bounded by `task_ids` as before. Nothing else in the two vocabularies is
+treated as equivalent: a new agent-reachable surface needs its permission
+granted outright in `AGENT_ROLE_PERMISSIONS`.
+
+*Cluster worker secret.* This credential has no record of its own to hang a
+grant on — it is one string handed to every node in the fleet, so it cannot
+be revoked per worker or narrowed per task. Its authority is therefore fixed
+in the middleware at what joining and working a cluster needs: the
+`/cluster` surface, the task pull-and-report cycle, and the `status:read`
+floor. It reaches neither the agent log, stream and session-kill routes nor
+the bulletin, `/auth` or `/webhooks`, because a worker drives its own agents
+through the local spawner and never touches those over HTTP. Widening this
+set widens it for the whole fleet at once; a deployment that needs one
+credential to do more should use an SSO user with the role that grants it.
+
+**Two layers on the cluster routes.** The middleware is the only gate on
+most paths. `_verify_cluster_auth` in `routes/task_cluster.py` adds a second,
+scope-checked layer, and it covers the mutating `/cluster/*` routes only —
+registration and heartbeat (`node:register` / `node:heartbeat`), claim
+gossip (`node:heartbeat`), and the node-registry mutations cordon, uncordon,
+drain, unregister and steal (`node:admin`). `POST /cluster/steal` reassigns
+other nodes' claimed work from caller-reported queue depths, so it is scoped
+with the other node-registry mutations rather than with gossip, whose bearer
+scope only has to establish fleet membership because each receipt carries
+its own Ed25519 signature. For `/tasks/*`, `/agents/*` and `/bulletin` there
+is no inner layer at all.
 
 **Where the task id comes from.** A rule enforced on only some of these is
 enforced on an arbitrary subset, so all of them are covered:

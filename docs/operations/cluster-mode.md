@@ -172,8 +172,17 @@ Default scopes, defined in `cluster_auth.py:23-25`:
 | Scope             | Required by                                         |
 | ----------------- | --------------------------------------------------- |
 | `node:register`   | `POST /cluster/nodes`                               |
-| `node:heartbeat`  | `POST /cluster/nodes/{id}/heartbeat`                |
-| `node:admin`      | `cordon`, `uncordon`, `drain`, `DELETE /cluster/nodes` |
+| `node:heartbeat`  | `POST /cluster/nodes/{id}/heartbeat`, `POST /cluster/claims/gossip` |
+| `node:admin`      | `cordon`, `uncordon`, `drain`, `DELETE /cluster/nodes`, `POST /cluster/steal` |
+
+`POST /cluster/steal` reassigns other nodes' claimed work from
+caller-reported queue depths, so it is scoped with the node-registry
+mutations rather than with gossip: gossip verifies each receipt's own
+Ed25519 signature and chain link inside the handler, so its bearer scope
+only has to establish fleet membership. A default node token carries
+register + heartbeat, so triggering a rebalance uses the cluster secret or
+an admin-scoped token — the same credential the drain and cordon primitives
+already need.
 
 The worker side of the flow lives in `worker_cmd.py:134-164` (registration)
 and `:165-190` (heartbeat). On HTTP 404 from the heartbeat the worker

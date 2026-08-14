@@ -3374,7 +3374,7 @@
     "/cluster/steal": {
       "post": {
         "summary": "Steal Tasks",
-        "description": "Evaluate task stealing policy and reassign claimed tasks between nodes.\n\nWorkers report their queue depths; the server runs the steal policy and\nreturns a list of task reassignments.  Stolen tasks are reset to ``open``\nso the receiver node can claim them.",
+        "description": "Evaluate task stealing policy and reassign claimed tasks between nodes.\n\nWorkers report their queue depths; the server runs the steal policy and\nreturns a list of task reassignments.  Stolen tasks are reset to ``open``\nso the receiver node can claim them.\n\nAuthorisation requires the node-admin scope, like the other node-registry\nmutations (cordon, uncordon, drain, unregister) this sits beside in the\noperational-primitives table.  It is deliberately NOT the heartbeat scope\nthat ``POST /cluster/claims/gossip`` uses: gossip proves each receipt with\nits own Ed25519 signature and chain link inside the handler, so its bearer\nscope only has to establish fleet membership, whereas here the caller's\nreported queue depths drive ``force_claim`` directly with no further proof\nto check.",
         "operationId": "steal_tasks_cluster_steal_post",
         "requestBody": {
           "content": {
@@ -3396,6 +3396,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Cluster authentication failed"
           },
           "422": {
             "description": "Validation Error",
@@ -12187,7 +12190,7 @@
     "/api/v1/cluster/steal": {
       "post": {
         "summary": "Steal Tasks",
-        "description": "Evaluate task stealing policy and reassign claimed tasks between nodes.\n\nWorkers report their queue depths; the server runs the steal policy and\nreturns a list of task reassignments.  Stolen tasks are reset to ``open``\nso the receiver node can claim them.",
+        "description": "Evaluate task stealing policy and reassign claimed tasks between nodes.\n\nWorkers report their queue depths; the server runs the steal policy and\nreturns a list of task reassignments.  Stolen tasks are reset to ``open``\nso the receiver node can claim them.\n\nAuthorisation requires the node-admin scope, like the other node-registry\nmutations (cordon, uncordon, drain, unregister) this sits beside in the\noperational-primitives table.  It is deliberately NOT the heartbeat scope\nthat ``POST /cluster/claims/gossip`` uses: gossip proves each receipt with\nits own Ed25519 signature and chain link inside the handler, so its bearer\nscope only has to establish fleet membership, whereas here the caller's\nreported queue depths drive ``force_claim`` directly with no further proof\nto check.",
         "operationId": "steal_tasks_api_v1_cluster_steal_post",
         "requestBody": {
           "content": {
@@ -12209,6 +12212,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Cluster authentication failed"
           },
           "422": {
             "description": "Validation Error",

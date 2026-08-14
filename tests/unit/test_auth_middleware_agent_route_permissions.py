@@ -48,6 +48,11 @@ _OPERATOR_TOKEN = "operator-token-for-route-permission-tests"
 # not about which session id the caller names.
 _VICTIM_SESSION = "backend-victim01"
 
+# Content of the bulletin message the refused writes try to append.  Read
+# back off the board to prove the refusal stopped the write, not just the
+# response.
+_BULLETIN_PROBE = "probe-that-must-not-be-published"
+
 
 @pytest.fixture
 def app(tmp_path: Path) -> FastAPI:
@@ -233,18 +238,42 @@ def test_cluster_rebalance_is_refused_without_cluster_write(app: FastAPI) -> Non
 
 
 def test_bulletin_post_is_refused_without_bulletin_write(app: FastAPI) -> None:
-    """A worker grant carries no bulletin permission, so the write is refused."""
+    """A worker grant carries no bulletin permission, so the write is refused.
+
+    The body is a valid :class:`BulletinPostRequest`, and the board is read
+    back afterwards: a request the schema rejects would 422 before the
+    handler either way, which would make this pass for a reason that has
+    nothing to do with authorisation, and a refusal that still appended the
+    message would have published it regardless of the status code.
+    """
     own_id = _create_task(app, 13, "own-bulletin")
     headers = _agent_headers(app, "session-bulletin", [own_id])
 
     response = _client(app, 14).post(
         "/bulletin",
         headers=headers,
-        json={"author": "session-bulletin", "message": "probe"},
+        json={"agent_id": "session-bulletin", "type": "status", "content": _BULLETIN_PROBE},
     )
 
     assert response.status_code == 403, response.text
     assert response.json()["required_permission"] == "bulletin:write"
+
+    board = _client(app, 24).get("/bulletin", headers=_operator_headers())
+    assert board.status_code == 200, board.text
+    assert all(message["content"] != _BULLETIN_PROBE for message in board.json())
+
+
+def test_bulletin_post_body_matches_the_route_schema() -> None:
+    """The refusal above is pinned to the real schema, not to a 422.
+
+    ``BulletinPostRequest`` is the model the route validates against.  If the
+    probe body drifts from it, the test above stops exercising the permission
+    gate and starts exercising body validation.
+    """
+    from bernstein.core.server.server_models import BulletinPostRequest
+
+    assert set(BulletinPostRequest.model_fields) == {"agent_id", "type", "content", "cell_id"}
+    BulletinPostRequest(agent_id="session-bulletin", type="status", content=_BULLETIN_PROBE)
 
 
 # ---------------------------------------------------------------------------

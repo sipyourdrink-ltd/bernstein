@@ -276,16 +276,27 @@ def gossip_claims(body: ClaimGossipRequest, request: Request) -> ClaimGossipResp
     )
 
 
-@router.post("/cluster/steal")
+@router.post("/cluster/steal", responses=_AUTH_RESPONSES)
 async def steal_tasks(body: TaskStealRequest, request: Request) -> TaskStealResponse:
     """Evaluate task stealing policy and reassign claimed tasks between nodes.
 
     Workers report their queue depths; the server runs the steal policy and
     returns a list of task reassignments.  Stolen tasks are reset to ``open``
     so the receiver node can claim them.
+
+    Authorisation requires the node-admin scope, like the other node-registry
+    mutations (cordon, uncordon, drain, unregister) this sits beside in the
+    operational-primitives table.  It is deliberately NOT the heartbeat scope
+    that ``POST /cluster/claims/gossip`` uses: gossip proves each receipt with
+    its own Ed25519 signature and chain link inside the handler, so its bearer
+    scope only has to establish fleet membership, whereas here the caller's
+    reported queue depths drive ``force_claim`` directly with no further proof
+    to check.
     """
     from bernstein.core.cluster import TaskStealPolicy
+    from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
 
+    _verify_cluster_auth(request, SCOPE_NODE_ADMIN)
     node_registry = _get_node_registry(request)
     store = _get_store(request)
 

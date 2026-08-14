@@ -57,16 +57,34 @@ Route permission enforcement
 ----------------------------
 Every credential that authenticates is also gated on the permission the
 requested route declares (:func:`_get_required_permission`), before the
-request reaches a handler.  SSO users are checked against their RBAC role,
-agent identities against the signed permission set their token pins, and
-both are refused with HTTP 403 when the permission is not held.  Agent
-grants use a narrower vocabulary than the route map, so the one authority
-the two spell differently is resolved through
+request reaches a handler.  Each kind is checked against the authority it
+actually carries, and refused with HTTP 403 when the route names one it
+does not hold:
+
+=========================  ===========================================
+Credential                 Checked against
+=========================  ===========================================
+SSO user JWT               the RBAC role's permissions
+Agent identity token       the signed permission set the token pins,
+                           plus :data:`_AGENT_PERMISSION_EQUIVALENTS`
+Cluster worker secret      :data:`_CLUSTER_SECRET_PERMISSIONS`, a fixed
+                           set - one string serves the whole fleet, so
+                           there is no per-worker grant to read
+Legacy static bearer       nothing; it is the operator credential
+=========================  ===========================================
+
+Agent grants use a narrower vocabulary than the route map, so the one
+authority the two spell differently is resolved through
 :data:`_AGENT_PERMISSION_EQUIVALENTS`; nothing else is implied.
 
 The gate covers reads as well as writes, because a read route's declared
 permission is what keeps one agent's log and stream output out of another
 agent's reach.
+
+It is also the only gate on most paths.  The inner cluster route layer
+(``_verify_cluster_auth`` in ``routes/task_cluster.py``) covers the mutating
+``/cluster/*`` routes and nothing else, so for ``/agents/*``, ``/bulletin``
+and ``/tasks/*`` a credential that clears this check reaches the handler.
 
 Tenant scope binding
 --------------------
@@ -151,6 +169,10 @@ if TYPE_CHECKING:
 _PERM_TASKS_WRITE = "tasks:write"
 _PERM_ADMIN_MANAGE = "admin:manage"
 _PERM_TASKS_CLAIM = "tasks:claim"
+_PERM_TASKS_READ = "tasks:read"
+_PERM_CLUSTER_WRITE = "cluster:write"
+_PERM_CLUSTER_READ = "cluster:read"
+_PERM_STATUS_READ = "status:read"
 
 # Grants an agent identity may hold in place of a route-map permission.
 #
@@ -170,6 +192,43 @@ _PERM_TASKS_CLAIM = "tasks:claim"
 _AGENT_PERMISSION_EQUIVALENTS: Final[dict[str, frozenset[str]]] = {
     _PERM_TASKS_WRITE: frozenset({_PERM_TASKS_CLAIM}),
 }
+
+# Authority the cluster shared secret carries.
+#
+# Unlike an SSO user or an agent identity, this credential has no record of
+# its own to hang a grant on: it is one string handed to every worker in the
+# fleet, so it cannot be revoked per worker and cannot be narrowed per task.
+# Its authority is therefore fixed here, at exactly what joining and working
+# a cluster needs:
+#
+#   ``cluster:write`` / ``cluster:read``
+#       register, heartbeat, cordon, drain, unregister, gossip claim
+#       receipts, rebalance, and read the node registry
+#   ``tasks:write`` / ``tasks:read``
+#       pull the next task for a role and report it complete, failed or
+#       released - the work a worker node exists to do
+#   ``status:read``
+#       the read floor every credential holds; it is what
+#       :func:`_get_required_permission` returns for every read route the
+#       map does not name, including the liveness surfaces a worker polls
+#
+# Nothing else is implied.  ``agents:read`` and ``agents:kill`` are outside
+# the set on purpose: a worker drives its own agents through the local
+# spawner, never through the HTTP agent surface, so granting them would make
+# one fleet-wide string a read-and-terminate handle on every other session's
+# agent.  ``bulletin:write``, ``auth:manage`` and ``webhooks:manage`` are out
+# for the same reason - a worker never writes to those surfaces, and the
+# credential that fans out to the whole fleet is the wrong one to widen.
+# ``admin:manage`` keeps its own earlier, more specific refusal below.
+_CLUSTER_SECRET_PERMISSIONS: Final[frozenset[str]] = frozenset(
+    {
+        _PERM_CLUSTER_WRITE,
+        _PERM_CLUSTER_READ,
+        _PERM_TASKS_WRITE,
+        _PERM_TASKS_READ,
+        _PERM_STATUS_READ,
+    }
+)
 
 type _ExpectedResourceConfig = str | Sequence[str] | None
 
@@ -429,7 +488,7 @@ _RESOURCE_MALFORMED_CHALLENGE = 'Bearer error="invalid_token", error_description
 _ROUTE_PERMISSIONS: dict[str, str] = {
     "/tasks": _PERM_TASKS_WRITE,
     "/agents": "agents:write",
-    "/cluster": "cluster:write",
+    "/cluster": _PERM_CLUSTER_WRITE,
     "/bulletin": "bulletin:write",
     "/auth": "auth:manage",
     "/config": _PERM_ADMIN_MANAGE,
@@ -633,6 +692,26 @@ def _agent_holds_permission(agent_identity: Any, permission: str) -> bool:
     return any(agent_identity.has_permission(grant) for grant in _AGENT_PERMISSION_EQUIVALENTS.get(permission, ()))
 
 
+def _cluster_secret_holds_permission(permission: str) -> bool:
+    """Return True when the cluster shared secret covers *permission*.
+
+    The secret's authority is the fixed set in
+    :data:`_CLUSTER_SECRET_PERMISSIONS` rather than a per-credential grant,
+    because one string serves the whole worker fleet and there is no
+    per-worker record to attach a grant to.  A route naming any other
+    permission is refused: presenting the fleet credential is not evidence
+    of authority over a surface a worker does not use.
+
+    Args:
+        permission: Permission the route requires, from
+            :func:`_get_required_permission`.
+
+    Returns:
+        True when the cluster credential is authorised for the route.
+    """
+    return permission in _CLUSTER_SECRET_PERMISSIONS
+
+
 class SSOAuthMiddleware(BaseHTTPMiddleware):
     """Multi-strategy authentication middleware.
 
@@ -678,8 +757,10 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         self._agent_identity_store = agent_identity_store
         # The cluster shared secret is accepted as a worker credential so a
         # single token clears both this outer layer and the inner cluster
-        # route layer (#2805). It is barred from operator-only endpoints
-        # below, mirroring the agent-identity restriction.
+        # route layer (#2805). Its authority here is the fixed set in
+        # ``_CLUSTER_SECRET_PERMISSIONS``, checked against the route's
+        # declared permission below, and it keeps the separate operator-only
+        # refusal that mirrors the agent-identity restriction.
         self._cluster_secret = cluster_secret or None
         # Resolve opt-out from explicit arg > env var. Config-based opt-out
         # should be passed in via ``auth_disabled=True`` from the factory.
@@ -846,24 +927,46 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                 return response
 
         # Strategy 3b: Cluster shared secret. A cluster worker presents the
-        # cluster secret to register, heartbeat, and pull tasks; it must clear
-        # this outer layer as well as the inner cluster route layer (#2805).
-        # Accepted like the legacy operator token but - like agent tokens -
-        # barred from operator-only (admin:manage) endpoints so it cannot
-        # shut down or reconfigure the server.
+        # cluster secret to register, heartbeat, and pull tasks; on the
+        # mutating ``/cluster/*`` routes it clears this outer layer as well as
+        # the inner cluster route layer (#2805), each of which enforces its
+        # own scope.  Everywhere else - ``/tasks/*``, ``/agents/*``,
+        # ``/bulletin`` - there is no inner cluster layer at all and this gate
+        # is the only one, so it is gated on the route's declared permission
+        # like every other credential kind rather than only on the
+        # operator-only refusal.
         if self._cluster_secret:
             import hmac
 
             if hmac.compare_digest(token, self._cluster_secret):
-                if (
-                    request.method not in _READ_METHODS
-                    and _get_required_permission(path, request.method) == _PERM_ADMIN_MANAGE
-                ):
+                required_permission = _get_required_permission(path, request.method)
+                if request.method not in _READ_METHODS and required_permission == _PERM_ADMIN_MANAGE:
                     return JSONResponse(
                         status_code=403,
                         content={
                             "detail": "Cluster credential cannot access operator-only endpoints",
                             "required_permission": _PERM_ADMIN_MANAGE,
+                        },
+                    )
+                # The fleet secret carries a fixed authority
+                # (``_CLUSTER_SECRET_PERMISSIONS``), so a route naming any
+                # other permission is refused here.  Without this the only
+                # bound on a fleet-wide string was the operator-only check on
+                # writes: it reached the session-kill route, another session's
+                # agent log and stream, and the bulletin write, holding none
+                # of the permissions those routes declare.  Reads are gated
+                # too, for the same reason they are on the agent path.
+                if required_permission and not _cluster_secret_holds_permission(required_permission):
+                    logger.warning(
+                        "Cluster credential denied %s (%s required)",
+                        sanitize_log(path),
+                        sanitize_log(required_permission),
+                    )
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": f"Insufficient permissions. Required: {required_permission}",
+                            "required_permission": required_permission,
                         },
                     )
                 request.state.user = None  # type: ignore[attr-defined]
