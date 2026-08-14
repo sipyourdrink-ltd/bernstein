@@ -344,6 +344,13 @@ bernstein doctor
 
 Treat telemetry as configurable: enabled only when endpoint/settings are provided.
 
+On Windows, `prometheus_client` is imported with a timeout because it can hang
+there; if it does not finish in time, metrics are disabled for that process and
+`/metrics` returns an empty body. `BERNSTEIN_PROMETHEUS_IMPORT_TIMEOUT` sets that
+budget in seconds (default `3.0`). Raise it on a machine slow enough that metrics
+disable themselves on every start. It has no effect on other platforms, where the
+import is not timed.
+
 ---
 
 ## Notifications
