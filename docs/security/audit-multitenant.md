@@ -99,6 +99,14 @@ link - `.sdd/acme/metrics -> /var/data/acme-metrics`, say - was followed
 silently. That link now fails on first use with `OSError` (`ELOOP`, or
 `ENOTDIR` on platforms that report it that way) naming the component.
 
+The server does not refuse to start over it. Seed reload - which runs on
+startup and again on `SIGHUP` - reports the refusal in its result instead:
+the reload payload carries an `error` naming the tenant and the component,
+that tenant is left out of the registry, and nothing is written through the
+link. A seed naming a tenant whose id is not a valid identifier is reported
+the same way. Both are configuration errors to fix and re-signal, not
+reasons for the process to fail to come up.
+
 Two ways out, both offline:
 
 1. **Move the data under `.sdd`.** Replace the link with a real
@@ -142,6 +150,13 @@ detects a redirected `.sdd/<tenant>/audit`. Treat multi-tenant storage
 that has to resist a local attacker as supported on Linux and macOS, and
 keep `.sdd` on a filesystem only the service account can write to
 regardless of platform.
+
+The same split applies to file permissions. Files created through the
+anchored helper are created `0o600`, which covers the tenant backlog
+mirrors, the collector's metric files, and the per-run cost files. That is
+a POSIX mode; Windows ignores it and there is no ACL fallback here, so on
+Windows those files land under the process umask. The write-ahead log and
+the audit chain open their own files and are under the umask everywhere.
 
 ## CLI usage
 
