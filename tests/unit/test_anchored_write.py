@@ -33,6 +33,12 @@ pytestmark = pytest.mark.ci
 
 needs_anchoring = pytest.mark.skipif(not ANCHORED_WRITE_SUPPORTED, reason="needs dir_fd and O_NOFOLLOW")
 
+# `os.open`'s mode argument is a POSIX mode. Windows does not apply it, and
+# there is no ACL fallback here to apply instead, so the owner-only guarantee
+# is a POSIX one and the assertion that checks it says so rather than failing
+# on a platform the guarantee was never claimed for.
+posix_modes_only = pytest.mark.skipif(os.name != "posix", reason="0o600 is a POSIX mode; Windows ignores it")
+
 
 class TestComponentValidation:
     """A component is one name, never a path."""
@@ -500,6 +506,7 @@ def test_relative_root_is_pinned_at_construction(tmp_path: Path, monkeypatch: py
     assert not (tmp_path / "elsewhere" / "here" / "m.jsonl").exists()
 
 
+@posix_modes_only
 def test_created_files_are_owner_only(tmp_path: Path) -> None:
     """Containing the write and then leaving the file readable answers half of it."""
     fd = open_anchored_write(AnchoredDir(root=tmp_path), "state.json", flags=os.O_WRONLY | os.O_CREAT)

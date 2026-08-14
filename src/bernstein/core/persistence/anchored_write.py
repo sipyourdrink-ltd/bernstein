@@ -270,11 +270,22 @@ def _open_regular(target: str | Path, flags: int, *, dir_fd: int | None = None) 
     again, and the flag comes off once the file is known to be an ordinary one.
 
     Files are created ``0o600``.  Everything reached through an anchored write
-    is store-managed tenant state -- metrics, cost, the write-ahead log, the
-    audit chain -- and there is no reader of it but the process that wrote it.
-    Guarding which directory a write lands in and then leaving the file
-    world-readable would answer half the question.  It matches the mode the
-    audit HMAC key has always been required to have.
+    is store-managed tenant state -- the tenant backlog mirrors, the collector's
+    metric files, the per-run cost files -- and there is no reader of it but the
+    process that wrote it.  Guarding which directory a write lands in and then
+    leaving the file world-readable would answer half the question.  It matches
+    the mode the audit HMAC key has always been required to have.
+
+    The mode covers the files this helper creates and no others.  The
+    write-ahead log and the audit chain open their own files directly, so they
+    are created under the process umask; extending the mode to them is a change
+    to those writers, not a property this docstring can claim on their behalf.
+
+    ``0o600`` is a POSIX mode, and Windows ignores it.  There is no Windows ACL
+    mechanism in this package to fall back to, so on Windows the containment
+    guarantee holds and the owner-only one does not.  The test that asserts the
+    mode is skipped there for that reason rather than because it is awkward to
+    run.
     """
     nonblock = getattr(os, "O_NONBLOCK", 0)
     fd = os.open(target, flags | nonblock, 0o600, dir_fd=dir_fd)
