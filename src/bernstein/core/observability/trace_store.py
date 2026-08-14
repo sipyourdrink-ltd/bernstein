@@ -49,6 +49,7 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Final
 
+from bernstein.core.observability.log_redact import redact_sensitive_bytes
 from bernstein.core.persistence.cas_store import CASIntegrityError
 
 if TYPE_CHECKING:
@@ -350,8 +351,11 @@ class ContentAddressedTraceStore:
         if not isinstance(trace_bytes, (bytes, bytearray)):
             msg = "trace_bytes must be bytes"
             raise TypeError(msg)
-        # Normalise bytearray to bytes; passthrough for bytes is a no-op.
-        raw = bytes(trace_bytes) if isinstance(trace_bytes, bytearray) else trace_bytes
+        # Redaction precedes content addressing.  The digest identifies the
+        # exact safe bytes stored and later verified; hashing first would make
+        # a redacted blob fail its own receipt.
+        incoming = bytes(trace_bytes) if isinstance(trace_bytes, bytearray) else trace_bytes
+        raw = redact_sensitive_bytes(incoming)
         sha256 = hashlib.sha256(raw).hexdigest()
 
         existing = self._existing_blob_path(sha256)

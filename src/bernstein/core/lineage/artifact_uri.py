@@ -539,7 +539,7 @@ def _normalise_digest(digest: str) -> str:
     return f"{alg}:{hexpart}"
 
 
-def external_reference_bytes(uri: str, *, digest: str) -> bytes:
+def external_reference_bytes(uri: str, *, digest: str, extractor: str | None = None) -> bytes:
     """Return the canonical reference document anchoring an external artifact.
 
     An external artifact's bytes do not live in the worktree, so the lineage
@@ -553,18 +553,35 @@ def external_reference_bytes(uri: str, *, digest: str) -> bytes:
     anchoring the same artifact at the same digest derive byte-identical bytes
     and therefore the same content address.
 
+    When an external reference is consumed as extracted text rather than as an
+    opaque digest -- an HTML page rendered by an extractor, a PDF, a fetched
+    document -- the bytes are only half the evidence: the same bytes through a
+    different extractor yield different text in front of the model. Pass
+    ``extractor`` (a stable identity string naming the extractor and its
+    version, e.g. ``"html-readability@2.4.1"``) and it joins the canonical
+    document, so the content address changes when the extraction changes. A
+    reference with no extraction step (a commit SHA, an image digest) must
+    omit it -- an empty-string default would silently change its content
+    address and is refused. The caller passes the version deliberately: a
+    library ``__version__`` read at runtime can differ across install methods,
+    which would give two operators different content addresses for identical
+    evidence, violating the determinism property below.
+
     Args:
         uri: An external artifact URI (``pr``/``pkg``/``deploy``/``doc``).
         digest: The referenced content digest as ``<alg>:<hex>``.
+        extractor: Optional stable extractor identity (``"id@version"``)
+            for references consumed as extracted text. ``None`` when the
+            reference is anchored as an opaque digest.
 
     Returns:
         RFC 8785-style canonical JSON bytes (sorted keys, minimal separators).
 
     Raises:
-        ArtifactURIError: When ``uri`` is a repo key or either input is
-            malformed. A repo artifact is anchored by its own bytes, so
-            referencing it here would create a second, weaker anchor for
-            content the chain can hash directly.
+        ArtifactURIError: When ``uri`` is a repo key, either input is
+            malformed, or ``extractor`` is empty. A repo artifact is anchored
+            by its own bytes, so referencing it here would create a second,
+            weaker anchor for content the chain can hash directly.
     """
     key = parse_artifact_key(uri)
     if key.is_repo:
@@ -572,18 +589,27 @@ def external_reference_bytes(uri: str, *, digest: str) -> bytes:
             f"repo artifacts are anchored by their own bytes, not by reference: {uri!r}",
             reason=REASON_MALFORMED_URI,
         )
-    document = {
+    if extractor is not None and not extractor:
+        raise ArtifactURIError(
+            "extractor identity must be non-empty when provided",
+            reason=REASON_MALFORMED_URI,
+        )
+    document: dict[str, str | int] = {
         "artifact_uri": key.canonical,
         "digest": _normalise_digest(digest),
         "v": _REFERENCE_VERSION,
     }
+    if extractor is not None:
+        document["extractor"] = extractor
     return json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
-def external_reference_content_hash(uri: str, *, digest: str) -> str:
+def external_reference_content_hash(uri: str, *, digest: str, extractor: str | None = None) -> str:
     """Return the ``sha256:``-prefixed content address of an external reference.
 
     This is the value a lineage entry records as its ``content_hash`` for an
-    ``external`` artefact kind. Deterministic across hosts.
+    ``external`` artefact kind. Deterministic across hosts. ``extractor`` is
+    forwarded to :func:`external_reference_bytes`; see its docstring for when
+    a reference consumed as extracted text must carry it.
     """
-    return "sha256:" + hashlib.sha256(external_reference_bytes(uri, digest=digest)).hexdigest()
+    return "sha256:" + hashlib.sha256(external_reference_bytes(uri, digest=digest, extractor=extractor)).hexdigest()

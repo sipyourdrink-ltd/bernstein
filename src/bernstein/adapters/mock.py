@@ -17,38 +17,6 @@ if TYPE_CHECKING:
     from bernstein.core.models import ModelConfig
 
 
-def _matches_off_by_one(prompt_lower: str) -> bool:
-    """Check if prompt matches off-by-one task patterns."""
-    if "off-by-one" in prompt_lower or "off_by_one" in prompt_lower:
-        return True
-    return "items" in prompt_lower and (
-        "index" in prompt_lower or "route" in prompt_lower or "n - 1" in prompt_lower or "1-indexed" in prompt_lower
-    )
-
-
-def _matches_missing_import(prompt_lower: str) -> bool:
-    """Check if prompt matches missing-import task patterns."""
-    return (
-        "missing import" in prompt_lower
-        or "missing `request`" in prompt_lower
-        or ("request" in prompt_lower and "import" in prompt_lower)
-    )
-
-
-def _matches_health_status(prompt_lower: str) -> bool:
-    """Check if prompt matches health-status task patterns."""
-    return "201" in prompt_lower or ("health" in prompt_lower and ("status" in prompt_lower or "code" in prompt_lower))
-
-
-def _matches_broken_test(prompt_lower: str) -> bool:
-    """Check if prompt matches broken-test task patterns."""
-    return (
-        "broken" in prompt_lower
-        or "assertion" in prompt_lower
-        or ("test" in prompt_lower and ("404" in prompt_lower or "wrong" in prompt_lower))
-    )
-
-
 class MockAgentAdapter(CLIAdapter):
     """Simulates an agent without making real API calls.
 
@@ -77,28 +45,28 @@ class MockAgentAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
         multimodal_context: Any | None = None,
+        task_id: str = "",
+        task_title: str = "",
     ) -> SpawnResult:
         """Spawn a mock agent subprocess that applies demo changes.
 
         Args:
-            prompt: Agent task description (analyzed to determine action).
+            prompt: Agent task description (unused for identity).
             workdir: Project root directory.
             model_config: Model configuration (unused for mock).
             session_id: Unique session identifier.
             mcp_config: MCP configuration (unused for mock).
+            task_id: The real task identifier, threaded through to the adapter
+                to avoid prompt-based identity matching (issue #3629).
+            task_title: The unique task title, used to determine which fix to apply.
 
         Returns:
             SpawnResult with mock process PID and log path.
         """
-        # Create log file
         self.refuse_multimodal_if_needed(multimodal_context)
         log_path = workdir / ".sdd" / "runtime" / f"agent-{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Determine which task this is based on the prompt content
-        task_name = self._identify_task(prompt)
-
-        # Create a temporary Python script that will simulate the agent work
         script_content = self._build_mock_script()
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -111,12 +79,12 @@ class MockAgentAdapter(CLIAdapter):
             tmp.flush()
             script_path = tmp.name
 
-        # Pass task info as JSON to avoid shell quoting issues
         task_info = json.dumps(
             {
                 "workdir": str(workdir),
-                "task_name": task_name,
                 "log_path": str(log_path),
+                "task_id": task_id,
+                "task_title": task_title,
             }
         )
 
@@ -126,12 +94,6 @@ class MockAgentAdapter(CLIAdapter):
             task_info,
         ]
 
-        # Pass an explicit ``env=`` (allowlist only) so the mock adapter
-        # cannot leak orchestrator credentials to the child python script.
-        # The mock only needs PATH/HOME/PYTHONPATH which are already on
-        # the base allowlist; the BERNSTEIN_MOCK_* vars opt the embedded
-        # script into idle mode (used by ``bernstein run --idle`` for GUI
-        # development).
         env = build_filtered_env(
             [
                 "BERNSTEIN_MOCK_IDLE",
@@ -158,34 +120,6 @@ class MockAgentAdapter(CLIAdapter):
         return "mock"
 
     @staticmethod
-    def _identify_task(prompt: str) -> str:
-        """Identify which task this is from the prompt text.
-
-        Args:
-            prompt: Agent task description.
-
-        Returns:
-            Task identifier matching one of the fix functions in the mock script.
-        """
-        prompt_lower = prompt.lower()
-        if _matches_off_by_one(prompt_lower):
-            return "off_by_one"
-        if _matches_missing_import(prompt_lower):
-            return "missing_import"
-        if _matches_health_status(prompt_lower):
-            return "health_status"
-        if _matches_broken_test(prompt_lower):
-            return "broken_test"
-        # Legacy / generic fallbacks
-        if "health" in prompt_lower or "/health" in prompt_lower:
-            return "health_status"
-        if "test" in prompt_lower:
-            return "broken_test"
-        if "error" in prompt_lower or "handler" in prompt_lower:
-            return "off_by_one"
-        return "unknown"
-
-    @staticmethod
     def _build_mock_script() -> str:
         """Build a Python script that simulates agent bug-fix work.
 
@@ -208,27 +142,14 @@ def write_log(path: Path, message: str) -> None:
 
 
 def record_modified(log_path: Path, rel_path: str) -> None:
-    """Write the completion-evidence line the orchestrator parses.
-
-    The log aggregator's ``file_modified`` pattern is ^-anchored
-    (``^(?:Modified|Created|Wrote|Updated): <path>``), so this line must
-    start the log line - the usual timestamp prefix would defeat it.
-    """
+    """Write the completion-evidence line the orchestrator parses."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a") as f:
         f.write(f"Modified: {rel_path}\n")
 
 
 def commit_fix(workdir: Path, log_path: Path, message: str, rel_path: str) -> None:
-    """Commit exactly the fixed file on the worktree branch.
-
-    Real agents land their work as commits; the reaper's completion
-    evidence and the merge path both key off them. Staging and the
-    commit are both restricted to ``rel_path`` so a resumed worktree's
-    unrelated edits are never swept into this task's output. Degrades
-    to log-evidence only when git is unavailable, the workdir is not a
-    repository, or nothing changed.
-    """
+    """Commit exactly the fixed file on the worktree branch."""
     import subprocess
 
     git = [
@@ -256,12 +177,8 @@ def fix_off_by_one(workdir: Path, log_path: Path) -> str | None:
     """Fix ITEMS[n] -> ITEMS[n - 1] off-by-one in app.py."""
     app_file = workdir / "app.py"
     if not app_file.exists():
-        write_log(log_path, "⚠ app.py not found")
         return None
     content = app_file.read_text()
-    # Mutation ground truth is content inequality, not substring presence:
-    # the fixture's docstring also mentions ITEMS[n], so a rerun in an
-    # already-fixed worktree would otherwise claim work it never did.
     fixed = content.replace(
         "return jsonify({\"id\": n, \"item\": ITEMS[n]})  # off-by-one",
         (
@@ -275,7 +192,6 @@ def fix_off_by_one(workdir: Path, log_path: Path) -> str | None:
         app_file.write_text(fixed)
         write_log(log_path, "✓ Fixed off-by-one: ITEMS[n] → ITEMS[n - 1] + bounds check")
         return "app.py"
-    write_log(log_path, "⚠ off-by-one pattern not found (already fixed?)")
     return None
 
 
@@ -283,7 +199,6 @@ def fix_missing_import(workdir: Path, log_path: Path) -> str | None:
     """Add 'request' to the flask import line in app.py."""
     app_file = workdir / "app.py"
     if not app_file.exists():
-        write_log(log_path, "⚠ app.py not found")
         return None
     content = app_file.read_text()
     old_import = "from flask import Flask, jsonify  # BUG 2: 'request' is missing from this import"
@@ -291,7 +206,6 @@ def fix_missing_import(workdir: Path, log_path: Path) -> str | None:
     fixed = content
     if old_import in content:
         fixed = fixed.replace(old_import, new_import)
-        # Also remove the noqa/type-ignore comment from the echo route
         fixed = fixed.replace(
             "    msg = request.args.get(\"msg\", \"\")  # type: ignore[name-defined]  # noqa: F821",
             "    msg = request.args.get(\"msg\", \"\")",
@@ -306,7 +220,6 @@ def fix_missing_import(workdir: Path, log_path: Path) -> str | None:
         app_file.write_text(fixed)
         write_log(log_path, "✓ Fixed missing import: added 'request' to flask imports")
         return "app.py"
-    write_log(log_path, "⚠ missing import pattern not found (already fixed?)")
     return None
 
 
@@ -314,7 +227,6 @@ def fix_health_status(workdir: Path, log_path: Path) -> str | None:
     """Remove incorrect HTTP 201 status from health endpoint in app.py."""
     app_file = workdir / "app.py"
     if not app_file.exists():
-        write_log(log_path, "⚠ app.py not found")
         return None
     content = app_file.read_text()
     old_line = '    return jsonify({"status": "healthy", "version": "1.0.0"}), 201  # type: ignore[return-value]'
@@ -324,7 +236,6 @@ def fix_health_status(workdir: Path, log_path: Path) -> str | None:
         app_file.write_text(fixed)
         write_log(log_path, "✓ Fixed health status code: 201 → 200")
         return "app.py"
-    write_log(log_path, "⚠ health status code pattern not found (already fixed?)")
     return None
 
 
@@ -332,14 +243,12 @@ def fix_broken_test(workdir: Path, log_path: Path) -> str | None:
     """Fix the wrong status_code assertion in tests/test_app.py."""
     test_file = workdir / "tests" / "test_app.py"
     if not test_file.exists():
-        write_log(log_path, "⚠ tests/test_app.py not found")
         return None
     content = test_file.read_text()
     fixed = content.replace(
         "assert resp.status_code == 404  # wrong - should be 200",
         "assert resp.status_code == 200",
     )
-    # Also remove the BUG 4 docstring annotation
     fixed = fixed.replace(
         '\n    BUG 4: asserts 404 instead of 200.\n    ',
         '\n    ',
@@ -348,22 +257,11 @@ def fix_broken_test(workdir: Path, log_path: Path) -> str | None:
         test_file.write_text(fixed)
         write_log(log_path, "✓ Fixed broken test: status_code 404 → 200")
         return "tests/test_app.py"
-    write_log(log_path, "⚠ broken test pattern not found (already fixed?)")
     return None
 
 
 def _idle_mode(log_path: Path) -> None:
-    """Sleep for a randomized interval, optionally fail at the end.
-
-    Driven by ``BERNSTEIN_MOCK_IDLE_MIN_S`` (default 15) and
-    ``BERNSTEIN_MOCK_IDLE_MAX_S`` (default 120). With probability
-    ``BERNSTEIN_MOCK_FAIL_RATE`` (default 0.05) the agent exits non-zero so
-    the GUI shows a mix of completed/failed states.
-
-    Env vars that fail to parse fall back to defaults instead of crashing
-    so a typo (e.g. ``BERNSTEIN_MOCK_IDLE_MIN_S=180s``) does not silently
-    abort GUI demo agents.
-    """
+    """Sleep for a randomized interval, optionally fail at the end."""
     import os
     import random
 
@@ -390,7 +288,6 @@ def _idle_mode(log_path: Path) -> None:
 
     lo = _int_env("BERNSTEIN_MOCK_IDLE_MIN_S", 15)
     hi = _int_env("BERNSTEIN_MOCK_IDLE_MAX_S", 120)
-    # Clamp to non-negative to avoid random.randint(0, 0) edge crashes.
     lo = max(0, lo)
     hi = max(0, hi)
     if hi < lo:
@@ -418,38 +315,47 @@ def main():
 
     task_info = json.loads(sys.argv[1])
     workdir = Path(task_info["workdir"])
-    task_name = task_info["task_name"]
+    task_id = task_info.get("task_id", "unknown")
+    task_title = task_info.get("task_title", "")
     log_path = Path(task_info["log_path"])
 
-    write_log(log_path, f"Mock agent started for task: {task_name}")
+    # Write the real task_id to the log so the reaper can attribute evidence
+    # without parsing prompt text (issue #3629).
+    write_log(log_path, f"TaskID: {task_id}")
 
-    # Idle mode: GUI dev path - `bernstein run --idle` sets BERNSTEIN_MOCK_IDLE=1
-    # so each spawned mock just sleeps + emits heartbeat lines instead of doing fixes.
     if os.environ.get("BERNSTEIN_MOCK_IDLE") == "1":
         _idle_mode(log_path)
         return
 
-    # Simulate realistic agent work time
     time.sleep(1.5)
 
+    # Determine which fix to apply based on the task title (unique per task)
+    # rather than fragile prompt substring matching (issue #3629).
+    title_lower = task_title.lower()
+    fix_name = "unknown"
+    if "off-by-one" in title_lower:
+        fix_name = "off_by_one"
+    elif "missing" in title_lower and "import" in title_lower:
+        fix_name = "missing_import"
+    elif "health" in title_lower:
+        fix_name = "health_status"
+    elif "broken" in title_lower or "assertion" in title_lower:
+        fix_name = "broken_test"
+
     modified = None
-    if task_name == "off_by_one":
+    if fix_name == "off_by_one":
         modified = fix_off_by_one(workdir, log_path)
-    elif task_name == "missing_import":
+    elif fix_name == "missing_import":
         modified = fix_missing_import(workdir, log_path)
-    elif task_name == "health_status":
+    elif fix_name == "health_status":
         modified = fix_health_status(workdir, log_path)
-    elif task_name == "broken_test":
+    elif fix_name == "broken_test":
         modified = fix_broken_test(workdir, log_path)
     else:
-        write_log(log_path, f"Unknown task type: {task_name} - no-op")
+        write_log(log_path, f"Unknown task title: {task_title} - no-op")
 
-    # Commit first, evidence second: only a task that actually mutated a
-    # file commits, only the mutated path is staged, and the ``Modified:``
-    # completion-evidence line is emitted once the work is finalized (the
-    # commit landed, or the commit degraded to log-only without git).
     if modified is not None:
-        commit_fix(workdir, log_path, f"demo: {task_name.replace('_', ' ')}", modified)
+        commit_fix(workdir, log_path, f"demo: {fix_name.replace('_', ' ')}", modified)
         record_modified(log_path, modified)
 
     time.sleep(0.5)

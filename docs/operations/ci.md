@@ -16,6 +16,7 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 | Concurrency | PR-scoped cancel, push-scoped non-cancel | `.github/workflows/ci.yml` |
 | Integration suite | Whole directory, every event, via `integration-tests` | `.github/workflows/ci.yml` |
 | Collection completeness | Guard test, fails on an uncollected test file | `scripts/check_test_collection.py` |
+| Feature-matrix drift | Advisory; fails on a registered command with no matrix row | `.github/workflows/feature-matrix-drift.yml` |
 | Required-context presence | Operator command + advisory PR step | `scripts/check_required_contexts.py` |
 | Type-check scope | Blocking vs advisory scopes | `docs/operations/type-check-scope.md` |
 
@@ -270,7 +271,8 @@ Everything else that triggers on `pull_request` is advisory:
 `a2a-federation-e2e`, `airgap-e2e`, `bernstein-pr-review`,
 `cluster-e2e`, `codeql`,
 `contract-drift-autofix`, `dependabot-auto-merge`,
-`dependency-review`, `docs-drift`, `license-compliance`, `pr-labels`,
+`dependency-review`, `docs-drift`, `feature-matrix-drift`,
+`license-compliance`, `pr-labels`,
 `pr-observability-summary`, `pr-policy`, `required-check-canary`,
 `spa-bundle-freshness`, `spiffe-extra-e2e`, `trufflehog`, `typecheck-ts`,
 `zizmor`.

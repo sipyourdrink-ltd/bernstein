@@ -12,7 +12,6 @@ from bernstein.core.plan_schema import (
     COMPLEXITY_VALUES,
     EFFORT_VALUES,
     KNOWN_ROLES,
-    MODEL_VALUES,
     PLAN_JSON_SCHEMA,
     SCOPE_VALUES,
     generate_schema_file,
@@ -82,9 +81,10 @@ class TestSchemaStructure:
         step_schema = PLAN_JSON_SCHEMA["properties"]["stages"]["items"]["properties"]["steps"]["items"]
         assert step_schema["properties"]["complexity"]["enum"] == COMPLEXITY_VALUES
 
-    def test_schema_step_model_enum(self) -> None:
+    def test_schema_step_model_is_free_form_string(self) -> None:
         step_schema = PLAN_JSON_SCHEMA["properties"]["stages"]["items"]["properties"]["steps"]["items"]
-        assert step_schema["properties"]["model"]["enum"] == MODEL_VALUES
+        assert step_schema["properties"]["model"]["type"] == "string"
+        assert "enum" not in step_schema["properties"]["model"]
 
     def test_schema_step_effort_enum(self) -> None:
         step_schema = PLAN_JSON_SCHEMA["properties"]["stages"]["items"]["properties"]["steps"]["items"]
@@ -250,11 +250,17 @@ class TestValidatePlanInvalidEnums:
         errors = validate_plan(plan)
         assert any("complexity" in e and "extreme" in e for e in errors)
 
-    def test_invalid_model(self) -> None:
+    def test_arbitrary_model_identifier_is_valid(self) -> None:
         plan = _minimal_plan()
-        plan["stages"][0]["steps"][0]["model"] = "gpt-4"
+        plan["stages"][0]["steps"][0]["model"] = "provider/model-name"
         errors = validate_plan(plan)
-        assert any("model" in e and "gpt-4" in e for e in errors)
+        assert errors == []
+
+    def test_empty_model_identifier_is_invalid(self) -> None:
+        plan = _minimal_plan()
+        plan["stages"][0]["steps"][0]["model"] = ""
+        errors = validate_plan(plan)
+        assert any("model" in e and "empty" in e for e in errors)
 
     def test_invalid_effort(self) -> None:
         plan = _minimal_plan()

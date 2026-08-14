@@ -66,6 +66,22 @@ content_hash = external_reference_content_hash(
 )
 ```
 
+An external reference consumed as *text* (an HTML page, a PDF, a rendered
+doc) reaches the agent through an extractor. Record the extractor identity
+too, so the content address changes when the extraction changes:
+
+```python
+content_hash = external_reference_content_hash(
+    "doc://example.test/lineage",
+    digest="sha256:" + page_sha256,
+    extractor="html-readability@2.4.1",     # stable "id@version", passed deliberately
+)
+```
+
+A reference with no extraction step (a commit SHA, an image digest) must
+omit `extractor`; an empty string is refused, because it would silently
+change the content address of every such reference.
+
 The digest must name its algorithm (`sha1`, `sha256` or `sha512`); a bare hex
 string is ambiguous, and an ambiguous anchor is not an anchor. Entries recorded
 this way carry `artefact_kind="external"`.

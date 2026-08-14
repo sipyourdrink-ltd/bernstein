@@ -1800,6 +1800,68 @@ def _apply_cost_meter(mcp: FastMCP[None]) -> None:
         tool.fn = metered
 
 
+def _apply_tool_timeouts(mcp: FastMCP[None]) -> None:
+    """Enforce the declared timeoutSeconds of the host-effecting tools.
+
+    The four tools that leave the process (bernstein_create_subtask,
+    bernstein_post_artifact, bernstein_update, load_skill) declare an upper
+    execution bound in their schema file (``timeoutSeconds``). Without an
+    enforced bound a client can only block indefinitely or invent a
+    timeout - and a client timeout that fires mid-write reports a failure
+    for a call that in fact succeeded. This wrap gives the caller the
+    declared bound to plan against and turns an overrun into a structured
+    error naming the tool and the limit instead of a dropped connection
+    (#3647).
+
+    The wrap sits on the tool manager's call path, which every FastMCP
+    transport (stdio and SSE) and direct ``mcp.call_tool`` calls funnel
+    through. The bound is read from the registry on every call, so
+    tightening a schema file takes effect without a server restart.
+
+    Args:
+        mcp: The FastMCP server whose tools should be timeout-enforced.
+    """
+    import asyncio
+    import functools
+
+    registry = get_registry()
+    manager = mcp._tool_manager  # pyright: ignore[reportPrivateUsage]
+    original_call = manager.call_tool
+
+    @functools.wraps(original_call)
+    async def bounded_call(
+        name: str,
+        arguments: dict[str, Any],
+        context: Any = None,
+        convert_result: bool = False,
+    ) -> Any:
+        schema = registry.get(name)
+        declared = schema.get("timeoutSeconds") if schema is not None else None
+        if declared is None:
+            return await original_call(name, arguments, context=context, convert_result=convert_result)
+        try:
+            return await asyncio.wait_for(
+                original_call(name, arguments, context=context, convert_result=convert_result),
+                timeout=float(declared),
+            )
+        except TimeoutError:
+            # Structured error naming the tool and the limit, matching the
+            # shape clients already parse from validation failures.
+            payload = {
+                "error": f"tool {name} exceeded its declared timeout of {declared}s",
+                "tool": name,
+                "timeoutSeconds": declared,
+                "timeout": True,
+            }
+            text = json.dumps(payload)
+            return CallToolResult(content=[TextContent(type="text", text=text)])
+
+    # FastMCP exposes no public per-tool timeout hook, so replace the call
+    # path on the tool manager directly (same access pattern as
+    # _apply_tool_tier).
+    manager.call_tool = bounded_call  # pyright: ignore[reportAttributeAccessIssue]
+
+
 def _apply_advertised_schemas(mcp: FastMCP[None]) -> None:
     """Advertise each tool's enforced schema and host-effect description.
 
@@ -2296,6 +2358,7 @@ def create_mcp_server(
     _apply_advertised_schemas(mcp)
     _shape_tools_list(mcp)
     _apply_cost_meter(mcp)
+    _apply_tool_timeouts(mcp)
     return mcp
 
 

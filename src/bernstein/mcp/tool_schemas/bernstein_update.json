@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_update",
   "description": "Deprecated alias of bernstein_post_message. Posts a progress message to a task mailbox on the Bernstein server. Host effects: makes network requests.",
+  "timeoutSeconds": 30.0,
   "type": "object",
   "additionalProperties": false,
   "required": ["task_id", "body", "sender"],

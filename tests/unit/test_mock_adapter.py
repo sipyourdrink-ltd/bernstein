@@ -318,14 +318,19 @@ def _make_demo_workdir(tmp_path: Path) -> Path:
     return project
 
 
-def _run_mock_script(workdir: Path, task_name: str, tmp_path: Path) -> Path:
+def _run_mock_script(workdir: Path, task_title: str, tmp_path: Path) -> Path:
     """Execute the embedded mock-agent script exactly as ``spawn()`` does."""
     from bernstein.adapters.mock import MockAgentAdapter
 
     script = tmp_path / "mock_script.py"
     script.write_text(MockAgentAdapter._build_mock_script())
     log_path = workdir / ".sdd" / "runtime" / "agent-mock-test.log"
-    task_info = json.dumps({"workdir": str(workdir), "task_name": task_name, "log_path": str(log_path)})
+    task_info = json.dumps({
+        "workdir": str(workdir),
+        "log_path": str(log_path),
+        "task_id": "test-task-id",
+        "task_title": task_title,
+    })
     subprocess.run(
         [sys.executable, str(script), task_info],
         check=True,
@@ -345,7 +350,7 @@ def test_mock_fix_evidence_parses_into_files_modified(tmp_path: Path) -> None:
     from bernstein.core.agents.agent_log_aggregator import AgentLogAggregator
 
     project = _make_demo_workdir(tmp_path)
-    log_path = _run_mock_script(project, "off_by_one", tmp_path)
+    log_path = _run_mock_script(project, "Fix off-by-one in get_item route", tmp_path)
 
     summary = AgentLogAggregator(project).parse_log("agent-mock-test", log_path=log_path)
     assert "app.py" in summary.files_modified
@@ -369,7 +374,7 @@ def test_mock_fix_commits_on_the_worktree_branch(tmp_path: Path) -> None:
 
     project = _make_demo_workdir(tmp_path)
     before = _count(project)
-    _run_mock_script(project, "health_status", tmp_path)
+    _run_mock_script(project, "Fix health endpoint returns 201 instead of 200", tmp_path)
 
     assert _count(project) == before + 1
     porcelain = subprocess.run(
@@ -392,8 +397,7 @@ def test_mock_without_git_repo_degrades_to_log_evidence(tmp_path: Path) -> None:
     project = _make_demo_workdir(tmp_path)
     shutil.rmtree(project / ".git")
 
-    log_path = _run_mock_script(project, "off_by_one", tmp_path)
-
+    log_path = _run_mock_script(project, "Fix off-by-one in get_item route", tmp_path)
     text = log_path.read_text(encoding="utf-8")
     assert any(line.startswith("Modified: app.py") for line in text.splitlines())
     assert "commit skipped" in text
@@ -418,14 +422,14 @@ def test_noop_task_neither_commits_nor_claims_evidence(tmp_path: Path) -> None:
 
     project = _make_demo_workdir(tmp_path)
     # First run applies the fix and commits it; the rerun sees no pattern.
-    _run_mock_script(project, "off_by_one", tmp_path)
+    _run_mock_script(project, "Fix off-by-one in get_item route", tmp_path)
     after_first = _count(project)
     # An unrelated edit a resumed worktree might carry.
     unrelated = project / "requirements.txt"
     unrelated.write_text(unrelated.read_text() + "\n# unrelated local edit\n")
 
     log_path = project / ".sdd" / "runtime" / "agent-rerun.log"
-    task_info = json.dumps({"workdir": str(project), "task_name": "off_by_one", "log_path": str(log_path)})
+    task_info = json.dumps({"workdir": str(project), "task_id": "rerun", "task_title": "Fix off-by-one in get_item route", "log_path": str(log_path)})
     script = tmp_path / "mock_script.py"
     subprocess.run([sys.executable, str(script), task_info], check=True, timeout=60, capture_output=True)
 
@@ -451,7 +455,7 @@ def test_commit_contains_only_the_fixed_file(tmp_path: Path) -> None:
     unrelated = project / "requirements.txt"
     unrelated.write_text(unrelated.read_text() + "\n# unrelated local edit\n")
 
-    log_path = _run_mock_script(project, "health_status", tmp_path)
+    log_path = _run_mock_script(project, "Fix health endpoint returns 201 instead of 200", tmp_path)
 
     committed = subprocess.run(
         ["git", "show", "--name-only", "--format=", "HEAD"],
@@ -474,3 +478,56 @@ def test_commit_contains_only_the_fixed_file(tmp_path: Path) -> None:
     committed_at = next(i for i, ln in enumerate(lines) if "Committed fix:" in ln)
     evidence_at = next(i for i, ln in enumerate(lines) if ln.startswith("Modified: app.py"))
     assert committed_at < evidence_at
+
+def test_mock_agent_attributes_evidence_to_correct_task_id(tmp_path: Path) -> None:
+    """Two tasks with identical prompts must resolve to distinct task identities.
+
+    Regression for issue #3629: prompt-based identity matching caused collisions
+    when two tasks shared enough text. The mock adapter now receives a real
+    task_id and writes it to the log, ensuring evidence lands against exactly
+    one task regardless of prompt wording.
+    """
+    project = _make_demo_workdir(tmp_path)
+
+    # Spawn session for Task A
+    log_path_a = project / ".sdd" / "runtime" / "agent-task-a.log"
+    task_info_a = json.dumps({
+        "workdir": str(project),
+        "log_path": str(log_path_a),
+        "task_id": "task-a-123",
+        "task_title": "Task A",
+    })
+    script_path = tmp_path / "mock_script.py"
+    from bernstein.adapters.mock import MockAgentAdapter
+    script_path.write_text(MockAgentAdapter._build_mock_script())
+
+    subprocess.run(
+        [sys.executable, str(script_path), task_info_a],
+        check=True,
+        timeout=60,
+        capture_output=True,
+    )
+
+    # Spawn session for Task B
+    log_path_b = project / ".sdd" / "runtime" / "agent-task-b.log"
+    task_info_b = json.dumps({
+        "workdir": str(project),
+        "log_path": str(log_path_b),
+        "task_id": "task-b-456",
+        "task_title": "Task B",
+    })
+    subprocess.run(
+        [sys.executable, str(script_path), task_info_b],
+        check=True,
+        timeout=60,
+        capture_output=True,
+    )
+
+    # Assert that the logs contain the correct, distinct task_ids
+    log_a = log_path_a.read_text(encoding="utf-8")
+    log_b = log_path_b.read_text(encoding="utf-8")
+
+    assert "TaskID: task-a-123" in log_a
+    assert "TaskID: task-b-456" in log_b
+    assert "task-a-123" not in log_b
+    assert "task-b-456" not in log_a

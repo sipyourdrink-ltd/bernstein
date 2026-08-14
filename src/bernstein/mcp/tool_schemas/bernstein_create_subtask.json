@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_create_subtask",
   "description": "Deprecated alias folded into bernstein_run. Queues a subtask that writes orchestration state and starts agent work; the call returns before that work finishes. Host effects: writes files; spawns agent processes; makes network requests.",
+  "timeoutSeconds": 30.0,
   "type": "object",
   "additionalProperties": false,
   "required": ["parent_task_id", "goal"],

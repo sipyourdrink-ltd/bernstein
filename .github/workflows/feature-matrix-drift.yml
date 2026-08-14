@@ -1,0 +1,97 @@
+name: Feature matrix drift
+
+# The feature matrix is the index a reader is sent to for the full picture,
+# and nothing held it to the code.
+#
+# Problem
+# -------
+# ``docs/reference/FEATURE_MATRIX.md`` is what README links to as the
+# exhaustive capability index. Its two sibling reference pages already have
+# gates: ``cli-reference.md`` is held to the registered command tree by
+# ``tests/unit/test_cli_command_registration.py``, and ``capabilities.md``
+# by ``tests/unit/test_docs_capability_reachability.py``. The matrix had
+# neither, so a command could ship, be documented on every other surface,
+# and never reach the index -- with every check green.
+#
+# Fix
+# ---
+# ``tests/unit/test_feature_matrix_drift.py`` walks the registered command
+# tree against the rows of the matrix in both directions: a registered
+# command named by no row fails, and a row naming an unregistered command
+# fails. It runs in the unit suite like any other test; this workflow runs
+# it directly on the diffs that can cause the drift, so a change to the
+# command tree cannot land it past a PR lane that only runs affected tests.
+#
+# No job here is named ``CI gate``: the required-check name canary
+# allow-lists exactly two emitters of that string and rejects a third. See
+# docs/operations/ci.md.
+#
+# It also has no ``merge_group`` trigger, so it must not be made a required
+# context as it stands - a required context that cannot report on a queued
+# ref wedges the merge queue (see docs/operations/merge-queue.md). Add the
+# trigger first if branch protection is ever meant to require it.
+
+on:
+  pull_request:
+    paths:
+      - "docs/reference/FEATURE_MATRIX.md"
+      - "src/bernstein/cli/**"
+      - "tests/unit/test_feature_matrix_drift.py"
+      - ".github/workflows/feature-matrix-drift.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/reference/FEATURE_MATRIX.md"
+      - "src/bernstein/cli/**"
+      - "tests/unit/test_feature_matrix_drift.py"
+      - ".github/workflows/feature-matrix-drift.yml"
+
+concurrency:
+  group: feature-matrix-drift-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  matrix-rows:
+    name: registered CLI commands have a matrix row
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+
+      - name: Check the matrix against the registered command tree
+        run: |
+          uv sync --group dev --frozen
+          uv run pytest tests/unit/test_feature_matrix_drift.py -q --no-cov --timeout=120
+        shell: bash
+
+      - name: How to fix
+        if: failure()
+        run: |
+          echo "The feature matrix no longer matches the CLI surface it indexes."
+          echo
+          echo "A registered command with no row: add one to the CLI commands"
+          echo "section of docs/reference/FEATURE_MATRIX.md with a Docs status"
+          echo "and a Maturity score."
+          echo
+          echo "A row naming a command the CLI does not register: correct or"
+          echo "remove the row - following it produces 'No such command'."
+          echo
+          echo "Reproduce locally:"
+          echo "  uv run pytest tests/unit/test_feature_matrix_drift.py -q --no-cov"
+        shell: bash

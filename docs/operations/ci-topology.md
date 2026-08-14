@@ -40,6 +40,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
+| .github/workflows/feature-matrix-drift.yml | Feature matrix drift | pull_request, push | {"cancel-in-progress": "true", "group": "feature-matrix-drift-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/hotfix-r-tracker.yml | Hotfix R-counter | push | {"cancel-in-progress": "false", "group": "hotfix-r-tracker-${{ github.sha }}"} | 1 |
 | .github/workflows/license-compliance.yml | License Compliance | pull_request, push | {"cancel-in-progress": "true", "group": "license-${{ github.ref }}"} | 1 |
 | .github/workflows/main-sha-marker.yml | Main SHA marker | push | {"cancel-in-progress": "false", "group": "main-sha-marker-${{ github.sha }}"} | 1 |
@@ -108,6 +109,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-drift.yml | drift-check: Run drift check<br>drift-publish: Publish drift surfaces |
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture snapshot |
 | .github/workflows/eval-nightly.yml | bench: bench (full)<br>preflight: preflight (gate)<br>smoke: smoke (synthetic) |
+| .github/workflows/feature-matrix-drift.yml | matrix-rows: registered CLI commands have a matrix row |
 | .github/workflows/hotfix-r-tracker.yml | track: Detect hotfix-begets-hotfix |
 | .github/workflows/license-compliance.yml | license-check |
 | .github/workflows/main-sha-marker.yml | marker: Main SHA marker |
@@ -176,6 +178,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read"}<br>drift-publish: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED |
+| .github/workflows/feature-matrix-drift.yml | workflow: {"contents": "read"}<br>matrix-rows: {"contents": "read"} | - |
 | .github/workflows/hotfix-r-tracker.yml | track: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/license-compliance.yml | workflow: {"contents": "read"}<br>license-check: {"contents": "read"} | - |
 | .github/workflows/main-sha-marker.yml | - | - |

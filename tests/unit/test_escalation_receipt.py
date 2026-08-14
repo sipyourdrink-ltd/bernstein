@@ -286,6 +286,7 @@ def test_audit_chain_mirror_records_escalation(tmp_path: Path) -> None:
         chain=chain,
         run_id=receipt.run_id,
         worker_id=receipt.worker_id,
+        session_id=receipt.session_id,
         stall_reason=receipt.stall_reason.value,
         recommended_action=receipt.recommended_action.value,
         journal_head_at_stall=receipt.journal_head_at_stall,
@@ -296,5 +297,7 @@ def test_audit_chain_mirror_records_escalation(tmp_path: Path) -> None:
     assert event.event_type == EVENT_ESCALATION_RECEIPT
     assert "prev_chain_digest" in event.details
     assert event.details["run_id"] == receipt.run_id
+    # The session link is read from the record, not reconstructed by matching.
+    assert event.details["session_id"] == receipt.session_id
     ok, errors = chain.verify()
     assert ok, errors

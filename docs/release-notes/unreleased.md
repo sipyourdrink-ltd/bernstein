@@ -115,6 +115,15 @@ landed since the newest one.
 
 ## Fixed
 
+- The CLI reference no longer names command spellings that do not resolve. It
+  claimed `bernstein commit-stats`, `bernstein incident`, and `bernstein
+  postmortem` were live deprecated aliases after v4.0.0 removed them, and
+  listed `bernstein task compose`, `task sync`, `task notes`, and `task parts`
+  as invocable when those commands are registered at the top level (or, for
+  `notes`, nowhere). `bernstein report commits --help` printed the removed
+  spelling in its own examples. Every command spelling named in a reference
+  table cell is now resolved through the real CLI in CI, so a documented
+  invocation that would exit "No such command" fails the build.
 - `bernstein trace verify-projection` now authenticates the complete
   `otel.projection` audit binding instead of accepting any projection whose
   signature and journal-derived span ids verify (#3551). A verified result

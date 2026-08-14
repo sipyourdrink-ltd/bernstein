@@ -4416,9 +4416,10 @@ class AgentSpawner:
                             # tasks carry a value the largest wins, mirroring
                             # budget_multiplier above.
                             _extra_spawn_kwargs: dict[str, Any] = {}
+                            _spawn_params = inspect.signature(target_adapter.spawn).parameters
                             _explicit_turns = max((t.max_turns for t in tasks if t.max_turns is not None), default=None)
                             if _explicit_turns is not None:
-                                if "explicit_max_turns" in inspect.signature(target_adapter.spawn).parameters:
+                                if "explicit_max_turns" in _spawn_params:
                                     _extra_spawn_kwargs["explicit_max_turns"] = _explicit_turns
                                 else:
                                     logger.warning(
@@ -4427,6 +4428,15 @@ class AgentSpawner:
                                         adapter_name,
                                         _explicit_turns,
                                     )
+                            # Task identity for adapters that brand their
+                            # output per task (log attribution, per-task
+                            # behaviour). Grouped spawns are led by their
+                            # first task, the same order the prompt lists
+                            # them in.
+                            if "task_id" in _spawn_params:
+                                _extra_spawn_kwargs["task_id"] = tasks[0].id
+                            if "task_title" in _spawn_params:
+                                _extra_spawn_kwargs["task_title"] = tasks[0].title
                             # Cacheable prefix extraction is deferred to adapters
                             # that support provider-specific caching.
                             result = target_adapter.spawn(
@@ -4844,12 +4854,21 @@ class AgentSpawner:
 
         _scope_order = {"small": 0, "medium": 1, "large": 2}
         resume_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))
+        # Same task-identity forwarding as the primary spawn path: a resumed
+        # agent must attribute its output to the task it continues.
+        _resume_extra: dict[str, Any] = {}
+        _resume_params = inspect.signature(self._adapter.spawn).parameters
+        if "task_id" in _resume_params:
+            _resume_extra["task_id"] = tasks[0].id
+        if "task_title" in _resume_params:
+            _resume_extra["task_title"] = tasks[0].title
         result = self._adapter.spawn(
             prompt=prompt,
             workdir=worktree_path,
             model_config=model_config,
             session_id=session_id,
             task_scope=resume_scope,
+            **_resume_extra,
         )
         session.pid = result.pid
         session.abort_reason = result.abort_reason

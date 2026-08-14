@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import jsonschema
 
+from bernstein.core.planning.plan_schema import KNOWN_ROLES
+
 if TYPE_CHECKING:
     from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -175,6 +177,16 @@ def load_registry(
             # operator bug we want to surface at startup, not on the first
             # incoming call.
             jsonschema.Draft7Validator.check_schema(schemas[tool])
+    # #3647: create_subtask's ``role`` is a closed set that must track
+    # plan_schema.KNOWN_ROLES exactly. The JSON schema file cannot import
+    # the Python constant, so bind the enum here at load time - the schema
+    # and the constant are then the same object, and adding a role to one
+    # cannot leave the other behind.
+    subtask = schemas.get("bernstein_create_subtask")
+    if subtask is not None:
+        role_schema = cast("dict[str, Any] | None", subtask.get("properties", {}).get("role"))
+        if isinstance(role_schema, dict):
+            role_schema["enum"] = KNOWN_ROLES
     return SchemaRegistry(
         schemas=schemas,
         allow_unsafe_args=allow_unsafe_args or frozenset(),

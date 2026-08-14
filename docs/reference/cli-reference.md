@@ -281,12 +281,12 @@ See [`cli/task-lifecycle.md#bernstein-review-bernstein-verify`](cli/task-lifecyc
 | `bernstein retro` | Detailed retrospective. | `cli/commands/advanced_cmd.py:299` |
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
 | `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
-| `bernstein report commits` | Per-run git diff stats. Deprecated alias until v4.0.0: `bernstein commit-stats`. | `cli/commands/status_cmd.py:914` |
+| `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
 | `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
-| `bernstein report incident` | Open an incident report. Deprecated alias until v4.0.0: `bernstein incident`. | `cli/incident_cmd.py:53` |
-| `bernstein report postmortem` | Failed-task postmortem. Deprecated alias until v4.0.0: `bernstein postmortem`. | `cli/postmortem_cmd.py:12` |
+| `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
+| `bernstein report postmortem` | Failed-task postmortem. | `cli/commands/postmortem_cmd.py:12` |
 
 #### `bernstein status`
 
@@ -1516,16 +1516,24 @@ First slice of the prompt-to-repo scaffolder. See
 
 ## Hidden commands
 
-Four task-related commands are wired but hidden from `--help`. They are stable and supported; just not surfaced because their UX is uneven or because their visible counterpart (`bernstein add-task`, `bernstein logs`) is what most users want.
+Three task-related commands carry `hidden=True`, so they do not appear in
+`--help`. They are stable and supported, and each is registered at the **top
+level** -- not under `bernstein task`. The spellings below are the ones that
+resolve.
 
-| Command | Source | Replacement |
+| Command | Source | Notes |
 |---|---|---|
-| `bernstein task compose TITLE` | `cli/commands/task_cmd.py:37` | Use `bernstein add-task TITLE` (it's the same command, registered with a different name at `cli/main.py:696`). |
-| `bernstein task sync` | `cli/commands/task_cmd.py:116` | Reconciles on-disk task files with the running server. Use when you've hand-edited backlog files and want them registered without restarting. |
-| `bernstein task notes` | `cli/commands/task_cmd.py:614` | Tail server / spawner logs. Prefer `bernstein logs tail`. |
-| `bernstein task parts` | `cli/commands/task_cmd.py:637` | Same as `bernstein list-tasks`. |
+| `bernstein add-task TITLE` | `cli/commands/task_cmd.py:155` | Declared as `compose`, registered top-level as `add-task`. |
+| `bernstein sync` | `cli/commands/task_cmd.py:337` | Reconciles on-disk task files with the running server. Use when you've hand-edited backlog files and want them registered without restarting. |
+| `bernstein list-tasks` | `cli/commands/task_cmd.py:776` | Declared as `parts`, registered top-level as `list-tasks`. |
 
-To invoke any of them, just type the full path (`bernstein task compose ...`) - they accept the same flags as their visible siblings.
+A command's declared name and its registered name differ here, so the
+declared spelling is not an invocation: `bernstein task compose` and
+`bernstein task parts` resolve to nothing. Type the names in the table.
+
+`task_cmd.py` also declares a `notes` command (`_notes_legacy`,
+`cli/commands/task_cmd.py:753`) that is registered nowhere and therefore
+cannot be invoked at all. To tail server / spawner logs, use `bernstein logs`.
 
 ---
 

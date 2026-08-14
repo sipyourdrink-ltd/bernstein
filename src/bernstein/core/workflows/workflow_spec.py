@@ -111,6 +111,9 @@ class WorkflowNode(BaseModel):
         prompt: Prompt body for agent-typed nodes.  May contain the
             ``{goal}`` placeholder which the runner substitutes from
             ``WorkflowRunner.run(goal=...)``.
+        cli: Optional adapter override for this node.
+        model: Optional provider-specific model identifier for this node.
+        effort: Optional reasoning-effort override for this node.
         loop: Optional loop predicate.  When set the node re-fires.
         fresh_context: When ``True``, agent-typed nodes get a fresh
             session per iteration (no carryover).  Ignored for command-
@@ -132,6 +135,9 @@ class WorkflowNode(BaseModel):
     command: str | None = None
     agent: str | None = None
     prompt: str | None = None
+    cli: str | None = Field(default=None, min_length=1, max_length=128)
+    model: str | None = Field(default=None, min_length=1, max_length=256)
+    effort: str | None = Field(default=None, min_length=1, max_length=32)
     loop: LoopSpec | None = None
     fresh_context: bool = False
     interactive: bool = False
@@ -169,6 +175,15 @@ class WorkflowNode(BaseModel):
             )
         if has_command and self.prompt is not None:
             raise ValueError(f"node {self.id!r} sets 'command'; 'prompt' is not allowed")
+        if has_command:
+            routing_fields = [
+                name for name, value in (("cli", self.cli), ("model", self.model), ("effort", self.effort)) if value
+            ]
+            if routing_fields:
+                fields = ", ".join(repr(name) for name in routing_fields)
+                raise ValueError(
+                    f"node {self.id!r} sets 'command'; routing fields {fields} require an agent node",
+                )
         if has_agent and (self.prompt is None or self.prompt.strip() == ""):
             raise ValueError(f"node {self.id!r} sets 'agent'; 'prompt' is required")
         if self.id in set(self.depends_on):
