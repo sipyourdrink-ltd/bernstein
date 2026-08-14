@@ -690,3 +690,177 @@ class TestPersistedScopeCollectionsAreValidated:
         path.write_text(json.dumps(payload))
 
         assert AgentIdentityStore(tmp_path).authenticate(token) is None
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    @pytest.mark.parametrize("value", [["ok", 7], ["ok", None], "t-1", {"t-1": True}])
+    def test_a_bad_scope_is_refused_before_a_token_is_minted(self, tmp_path: Path, field: str, value: object) -> None:
+        """A scope the reader would refuse must not become a signed credential.
+
+        Validating only on the read side leaves the caller able to mint a
+        token whose own record cannot be loaded - the agent then authenticates
+        as an unknown identity for the whole life of the token.
+        """
+        store = AgentIdentityStore(tmp_path)
+
+        with pytest.raises(ValueError, match=field):
+            store.create_identity("session-bad-scope", "backend", **{field: value})  # type: ignore[arg-type]
+
+        assert not list((tmp_path / "agent_identities").glob("session-bad-scope*.json"))
+
+
+class TestIdentityAndCredentialScopeMustAgree:
+    """Two copies of the task scope must not disagree about what is allowed.
+
+    ``task_ids`` and ``allowed_files`` are persisted on the identity and on
+    its credential.  Different consumers read different copies - the request
+    middleware reads the identity's, the JWT claim check reads the
+    credential's - so a record holding two answers is authorized under
+    whichever copy the reader happens to reach.  An identity holding an empty
+    list beside a scoped credential is the dangerous direction: empty means
+    unrestricted.
+    """
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    def test_an_empty_identity_scope_beside_a_scoped_credential_is_refused(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict(
+                {
+                    "id": "x",
+                    "role": "backend",
+                    "session_id": "x",
+                    "credential": {"token_hash": "abc", field: ["t-1"]},
+                    field: [],
+                }
+            )
+
+    @pytest.mark.parametrize("field", ["task_ids", "allowed_files"])
+    def test_a_wider_identity_scope_is_refused(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            AgentIdentity.from_dict(
+                {
+                    "id": "x",
+                    "role": "backend",
+                    "session_id": "x",
+                    "credential": {"token_hash": "abc", field: ["t-1"]},
+                    field: ["t-1", "t-2"],
+                }
+            )
+
+    def test_matching_scopes_in_any_order_are_accepted(self) -> None:
+        """Ordering is not a scope difference - only membership is."""
+        identity = AgentIdentity.from_dict(
+            {
+                "id": "x",
+                "role": "backend",
+                "session_id": "x",
+                "credential": {"token_hash": "abc", "task_ids": ["t-2", "t-1"]},
+                "task_ids": ["t-1", "t-2"],
+            }
+        )
+
+        assert identity.task_ids == ["t-1", "t-2"]
+
+    def test_an_identity_without_a_credential_is_unaffected(self) -> None:
+        identity = AgentIdentity.from_dict({"id": "x", "role": "backend", "session_id": "x", "task_ids": ["t-1"]})
+
+        assert identity.task_ids == ["t-1"]
+
+    def test_a_divergent_record_does_not_authenticate_an_opaque_token(self, tmp_path: Path) -> None:
+        """An opaque token never reaches the claim check that would disagree.
+
+        The JWT path compares the token's claims against the credential, so a
+        widened identity copy is caught there.  An opaque token skips that
+        comparison entirely, which is exactly the case the read-side check has
+        to cover.
+        """
+        import json
+
+        store = AgentIdentityStore(tmp_path)
+        identity, _ = store.create_identity("session-opaque", "backend", task_ids=["t-1"])
+        path = tmp_path / "agent_identities" / f"{identity.id}.json"
+        payload = json.loads(path.read_text())
+        opaque_token = "opaque-token-value"
+        payload["credential"]["token_type"] = "opaque"
+        payload["credential"]["token_hash"] = _hash_token(opaque_token)
+        # The credential stays scoped; the identity copy is widened to
+        # "unrestricted", which is what the request middleware reads.
+        payload["task_ids"] = []
+        path.write_text(json.dumps(payload))
+
+        assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is None
+
+    def test_what_the_store_writes_still_loads(self, tmp_path: Path) -> None:
+        store = AgentIdentityStore(tmp_path)
+        _, token = store.create_identity("session-agree", "backend", task_ids=["t-1"], allowed_files=["src/a.py"])
+
+        reloaded = AgentIdentityStore(tmp_path).authenticate(token)
+
+        assert reloaded is not None
+        assert reloaded.task_ids == ["t-1"]
+        assert reloaded.allowed_files == ["src/a.py"]
+
+
+class TestSignedClaimsAreComparedWithoutCoercion:
+    """A claim is compared as stored, not as ``str()`` renders it.
+
+    ``sorted(map(str, claim))`` makes a claim of ``[1]`` compare equal to a
+    stored ``["1"]``.  The comparison exists to establish that the token's
+    scope is the credential's scope, and a coerced match does not establish
+    that.
+    """
+
+    @staticmethod
+    def _claims_for(identity: AgentIdentity, **overrides: object) -> dict[str, object]:
+        cred = identity.credential
+        assert cred is not None
+        return {
+            "sub": identity.id,
+            "sid": identity.session_id,
+            "role": identity.role,
+            "jti": cred.jti,
+            "scopes": sorted(identity.permissions),
+            "tenant_id": cred.tenant_id,
+            "task_ids": list(cred.task_ids),
+            "allowed_files": list(cred.allowed_files),
+            **overrides,
+        }
+
+    @pytest.mark.parametrize(
+        ("field", "stored", "claimed"),
+        [
+            ("task_ids", ["1"], [1]),
+            ("task_ids", ["True"], [True]),
+            ("allowed_files", ["1"], [1]),
+            ("scopes", None, [1]),
+        ],
+    )
+    def test_a_coercible_claim_is_not_accepted_as_a_match(
+        self, tmp_path: Path, field: str, stored: list[str] | None, claimed: list[object]
+    ) -> None:
+        """``str()`` on a claim would make a number match a stored string."""
+        store = AgentIdentityStore(tmp_path)
+        task_ids = stored if field == "task_ids" else None
+        allowed_files = stored if field == "allowed_files" else None
+        identity, token = store.create_identity(
+            f"session-claims-{field}", "backend", task_ids=task_ids, allowed_files=allowed_files
+        )
+        claims = self._claims_for(identity, **{field: claimed})
+
+        assert store._validate_jwt_claims(claims, identity, token) is False
+
+    def test_a_claim_that_is_not_a_list_is_not_accepted(self, tmp_path: Path) -> None:
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity("session-claims-shape", "backend", task_ids=["t-1"])
+        claims = self._claims_for(identity, task_ids={"t-1": True})
+
+        assert store._validate_jwt_claims(claims, identity, token) is False
+
+    def test_the_issued_claims_still_validate(self, tmp_path: Path) -> None:
+        """The tightened comparison does not reject a real token."""
+        store = AgentIdentityStore(tmp_path)
+        identity, token = store.create_identity(
+            "session-claims-ok", "backend", task_ids=["t-1"], allowed_files=["src/a.py"]
+        )
+
+        assert store._validate_jwt_claims(self._claims_for(identity), identity, token) is True
+        assert AgentIdentityStore(tmp_path).authenticate(token) is not None

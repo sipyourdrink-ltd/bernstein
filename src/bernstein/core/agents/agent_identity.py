@@ -183,6 +183,56 @@ def _string_list(raw: Any, field: str) -> list[str]:
     return [str(entry) for entry in entries]
 
 
+def _claim_string_list(raw: object) -> list[str] | None:
+    """Return a signed-token claim as a list of strings, or ``None`` if it is not one.
+
+    The same reasoning as :func:`_string_list`, applied to the claim side of
+    the comparison rather than the stored side.  ``map(str)`` would coerce a
+    claim before comparing it, so a claim carrying ``1`` would compare equal
+    to a stored ``"1"`` and a claim carrying ``True`` to a stored ``"True"``.
+    The point of the comparison is that the token's scope is the credential's
+    scope, and a coerced match does not establish that.
+
+    Returns ``None`` rather than raising: the caller turns any non-match into
+    a failed authentication, and a malformed claim is a failed authentication
+    like any other.
+    """
+    if not isinstance(raw, list | tuple):
+        return None
+    entries = cast("list[Any]", list(raw))
+    if any(not isinstance(entry, str) for entry in entries):
+        return None
+    return [str(entry) for entry in entries]
+
+
+def _require_matching_scope(field: str, on_identity: list[str], on_credential: list[str]) -> None:
+    """Refuse a persisted identity whose scope disagrees with its credential's.
+
+    Both copies of ``task_ids`` and ``allowed_files`` are read back as
+    authorization state, but by different consumers: the request middleware
+    reads the identity's copy, while the JWT claim check reads the
+    credential's.  A record where the two disagree therefore has two
+    different answers to "what may this agent act on", and the widest one
+    wins wherever it happens to be read - an identity holding an empty list
+    beside a scoped credential is treated as unrestricted by the middleware,
+    and an opaque token never reaches the claim check that would have
+    disagreed.
+
+    Nothing writes such a record: ``create_identity`` puts the same list in
+    both places.  A record carrying two answers was therefore hand-edited or
+    written by something else, so it is refused through the same
+    ``ValueError`` path as any other unreadable record rather than
+    authenticated under whichever scope is read first.
+
+    Raises:
+        ValueError: The two copies of the field differ.
+    """
+    if sorted(on_identity) != sorted(on_credential):
+        raise ValueError(
+            f"{field} on the identity does not match the credential: {sorted(on_identity)} vs {sorted(on_credential)}"
+        )
+
+
 def _credential_tenant_id(raw: Any) -> str:
     """Return the tenant a persisted credential is scoped to.
 
@@ -359,6 +409,12 @@ class AgentIdentity:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AgentIdentity:
         cred_data = d.get("credential")
+        credential = AgentCredential.from_dict(cred_data) if cred_data else None
+        task_ids = _string_list(d.get("task_ids", ()), "task_ids")
+        allowed_files = _string_list(d.get("allowed_files", ()), "allowed_files")
+        if credential is not None:
+            _require_matching_scope("task_ids", task_ids, credential.task_ids)
+            _require_matching_scope("allowed_files", allowed_files, credential.allowed_files)
         return cls(
             id=str(d["id"]),
             role=str(d["role"]),
@@ -369,11 +425,11 @@ class AgentIdentity:
             last_authenticated_at=float(d.get("last_authenticated_at", 0)),
             revoked_at=float(d.get("revoked_at", 0)),
             revocation_reason=str(d.get("revocation_reason", "")),
-            credential=AgentCredential.from_dict(cred_data) if cred_data else None,
+            credential=credential,
             parent_identity_id=d.get("parent_identity_id"),
             metadata=dict(d.get("metadata", {})),
-            task_ids=_string_list(d.get("task_ids", ()), "task_ids"),
-            allowed_files=_string_list(d.get("allowed_files", ()), "allowed_files"),
+            task_ids=task_ids,
+            allowed_files=allowed_files,
         )
 
 
@@ -559,19 +615,30 @@ class AgentIdentityStore:
             task_ids: Task IDs this identity is authorised to act on.  An empty
                 list means no restriction (orchestrator / manager role).
             allowed_files: File glob patterns this identity may write to.  An
-                empty list means no restriction.
+                empty list means no restriction.  Recorded on the credential
+                and compared against the token's claim; no file-write boundary
+                consumes it (see the operations guide).
 
         Returns:
             Tuple of ``(AgentIdentity, raw_token)`` - the raw bearer token is
             returned exactly once and must be passed to the agent securely.
+
+        Raises:
+            ValueError: ``task_ids`` or ``allowed_files`` is not a list of
+                strings.  Refused before the token is signed, so a bad scope
+                cannot become a credential that fails to load.
         """
         identity_id = session_id  # 1:1 mapping with agent session
         permissions = permissions_for_role(role)
         if extra_permissions:
             permissions = permissions | extra_permissions
 
-        scoped_task_ids: list[str] = list(task_ids) if task_ids else []
-        scoped_files: list[str] = list(allowed_files) if allowed_files else []
+        # Validated here rather than at the read side alone: these two lists are
+        # signed into the token and persisted beside it, so a caller passing a
+        # non-string entry would mint a credential that its own reader refuses,
+        # leaving an agent whose token authenticates as an unknown identity.
+        scoped_task_ids = _string_list(task_ids or (), "task_ids")
+        scoped_files = _string_list(allowed_files or (), "allowed_files")
 
         now = time.time()
         # Use shorter expiry (4 h) for task-scoped tokens to limit blast radius.
@@ -759,14 +826,14 @@ class AgentIdentityStore:
             return False
         if normalize_tenant_id(str(claims.get("tenant_id", "default"))) != cred.tenant_id:
             return False
-        claim_scopes = claims.get("scopes", [])
-        if not isinstance(claim_scopes, list) or set(map(str, claim_scopes)) != set(identity.permissions):
+        claim_scopes = _claim_string_list(claims.get("scopes", []))
+        if claim_scopes is None or set(claim_scopes) != set(identity.permissions):
             return False
-        claim_task_ids = claims.get("task_ids", [])
-        if not isinstance(claim_task_ids, list) or sorted(map(str, claim_task_ids)) != sorted(cred.task_ids):
+        claim_task_ids = _claim_string_list(claims.get("task_ids", []))
+        if claim_task_ids is None or sorted(claim_task_ids) != sorted(cred.task_ids):
             return False
-        claim_files = claims.get("allowed_files", [])
-        return isinstance(claim_files, list) and sorted(map(str, claim_files)) == sorted(cred.allowed_files)
+        claim_files = _claim_string_list(claims.get("allowed_files", []))
+        return claim_files is not None and sorted(claim_files) == sorted(cred.allowed_files)
 
     def _audit_denial(self, identity_id: str, reason: str) -> None:
         """Log a denied authentication attempt."""
