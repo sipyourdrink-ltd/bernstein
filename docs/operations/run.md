@@ -83,6 +83,15 @@ attachment back to bytes; the resolver raises
 `WorktreeAccessDenied` on cross-worktree attempts. This protects
 session-shared state where multiple worktrees coexist.
 
+The resolver reads the `multimodal.attach` events through the
+chain's authenticated scan, so the worktree it grants access to is
+one the HMAC linkage actually attests. If the chain does not verify
+-- for example because something appended an attach row into the
+audit directory without the audit key -- the lookup refuses with
+`AttachmentChainUnverified` rather than trusting the row. Run
+`bernstein audit verify` to see the per-entry errors behind the
+refusal.
+
 ### Task YAML
 
 Plan-file steps accept an `attachments:` list:

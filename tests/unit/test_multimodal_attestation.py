@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from bernstein.core.agents.multimodal import (
     is_multimodal_capable,
 )
 from bernstein.core.agents.multimodal_attestation import (
+    AttachmentChainUnverified,
     AttachmentResolution,
     CapabilityRefusal,
     WorktreeAccessDenied,
@@ -793,3 +795,138 @@ class TestTaskFromDictAttachmentsType:
         }
         task = Task.from_dict(raw)
         assert task.attachments == ["a.png", "b.png"]
+
+
+# ---------------------------------------------------------------------------
+# Authenticated attach reads (issue #3567)
+# ---------------------------------------------------------------------------
+
+
+def _canonical_line(row: dict[str, object]) -> str:
+    """Serialise *row* exactly as the audit log writes its entries."""
+    return json.dumps(row, sort_keys=True) + "\n"
+
+
+def _append_forged_attach(audit_dir: Path, *, sha256: str, worktree_id: str) -> None:
+    """Append a shape-valid ``multimodal.attach`` row whose HMAC linkage is wrong.
+
+    This is what a writer with filesystem access to the audit directory but
+    without the audit key can produce: correct canonical JSON, correct field
+    names, a plausible ``prev_chain_digest`` -- and an HMAC it cannot compute.
+    """
+    segments = sorted(audit_dir.glob("*.jsonl"))
+    assert segments, "expected a live audit segment"
+    segment = segments[-1]
+    rows = [json.loads(line) for line in segment.read_text(encoding="utf-8").splitlines()]
+    template = next(r for r in rows if r.get("event_type") == EVENT_MULTIMODAL_ATTACH)
+    forged = json.loads(json.dumps(template))
+    forged["actor"] = "forger"
+    forged["details"]["sha256"] = sha256
+    forged["details"]["worktree_id"] = worktree_id
+    forged["details"]["worker_id"] = "forger"
+    forged["details"]["prev_chain_digest"] = template["hmac"]
+    forged["hmac"] = "f" * 64
+    with segment.open("a", encoding="utf-8") as handle:
+        handle.write(_canonical_line(forged))
+
+
+class TestAuthenticatedAttachReads:
+    """The worktree pin must rest only on rows whose HMAC linkage held."""
+
+    def _attach(self, tmp_path: Path) -> tuple[str, CASStore, AuditChainStore]:
+        img = _make_image(tmp_path / "shot.png")
+        chain = _audit_chain(tmp_path)
+        cas = CASStore(tmp_path / "cas")
+        result = build_attachment_context(
+            attachments=[str(img)],
+            worker_id="wkr-1",
+            turn_seq=0,
+            worktree_id="wt-a",
+            cas=cas,
+            audit_chain=chain,
+        )
+        return result.resolutions[0].sha256, cas, chain
+
+    def test_forged_attach_row_does_not_grant_cross_worktree_access(self, tmp_path: Path) -> None:
+        """A ``multimodal.attach`` row without valid HMAC linkage grants nothing."""
+        digest, cas, chain = self._attach(tmp_path)
+        _append_forged_attach(tmp_path / "audit", sha256=digest, worktree_id="wt-b")
+        # Sanity: the forged row is exactly what an unauthenticated read admits.
+        assert any(
+            str(e.details.get("worktree_id")) == "wt-b"
+            for e in chain.query(event_type=EVENT_MULTIMODAL_ATTACH)
+            if e.details.get("sha256") == digest
+        )
+        with pytest.raises(AttachmentChainUnverified):
+            resolve_attachment_for_worker(
+                sha256=digest,
+                requesting_worktree_id="wt-b",
+                cas=cas,
+                audit_chain=chain,
+            )
+
+    def test_broken_chain_also_refuses_the_owning_worktree(self, tmp_path: Path) -> None:
+        """Verification failure fails the lookup closed, it does not merely drop the bad row."""
+        digest, cas, chain = self._attach(tmp_path)
+        _append_forged_attach(tmp_path / "audit", sha256=digest, worktree_id="wt-b")
+        with pytest.raises(AttachmentChainUnverified):
+            resolve_attachment_for_worker(
+                sha256=digest,
+                requesting_worktree_id="wt-a",
+                cas=cas,
+                audit_chain=chain,
+            )
+
+    def test_repeat_resolve_resumes_from_the_kept_cursor(self, tmp_path: Path) -> None:
+        """The per-attachment path must not re-walk the whole chain on every lookup."""
+        digest, cas, chain = self._attach(tmp_path)
+        seen: list[tuple[object, bool]] = []
+        real_scan = chain.scan_verified
+
+        def recording_scan(cursor=None, *, event_type=None):  # type: ignore[no-untyped-def]
+            result = real_scan(cursor, event_type=event_type)
+            seen.append((cursor, result.rescanned))
+            return result
+
+        chain.scan_verified = recording_scan  # type: ignore[method-assign]
+        for _ in range(3):
+            resolve_attachment_for_worker(
+                sha256=digest,
+                requesting_worktree_id="wt-a",
+                cas=cas,
+                audit_chain=chain,
+            )
+        assert len(seen) == 3
+        assert seen[0][0] is None, "first lookup starts cold"
+        assert all(cursor is not None for cursor, _ in seen[1:]), "later lookups must resume"
+        assert all(not rescanned for _, rescanned in seen[1:]), "resumed scans must not re-walk the chain"
+
+    def test_attach_recorded_after_a_resolve_is_visible_to_the_next_resolve(self, tmp_path: Path) -> None:
+        """A kept cursor must not freeze the view: later attaches still resolve."""
+        digest, cas, chain = self._attach(tmp_path)
+        assert resolve_attachment_for_worker(
+            sha256=digest,
+            requesting_worktree_id="wt-a",
+            cas=cas,
+            audit_chain=chain,
+        )
+        # Same bytes attached again, this time from wt-b, after the index warmed.
+        img_b = _make_image(tmp_path / "b.png")
+        second = build_attachment_context(
+            attachments=[str(img_b)],
+            worker_id="wkr-2",
+            turn_seq=1,
+            worktree_id="wt-b",
+            cas=cas,
+            audit_chain=chain,
+        )
+        assert second.resolutions[0].sha256 == digest
+        assert (
+            resolve_attachment_for_worker(
+                sha256=digest,
+                requesting_worktree_id="wt-b",
+                cas=cas,
+                audit_chain=chain,
+            )
+            == img_b.read_bytes()
+        )

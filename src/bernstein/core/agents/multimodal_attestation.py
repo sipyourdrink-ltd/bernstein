@@ -31,7 +31,13 @@ to bytes for workers in the same worktree it was attached from. The
 worktree id is embedded in the ``multimodal.attach`` event payload;
 :func:`resolve_attachment_for_worker` consults the chain on lookup
 and raises :class:`WorktreeAccessDenied` for any cross-worktree
-attempt.
+attempt. That lookup reads through
+:meth:`AuditChainStore.scan_verified`, so the access decision rests
+only on rows whose HMAC linkage held: a ``multimodal.attach`` row
+appended by a writer without the audit key names a worktree the chain
+never authenticated, and the resolve fails closed with
+:class:`AttachmentChainUnverified` instead of handing over another
+worktree's bytes.
 """
 
 from __future__ import annotations
@@ -39,9 +45,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path  # runtime use in encode_one
 from typing import TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 from bernstein.core.agents.multimodal import (
     MultiModalContext,
@@ -60,6 +68,7 @@ from bernstein.core.security.audit_chain import (
 
 if TYPE_CHECKING:
     from bernstein.core.persistence.cas_store import CASStore
+    from bernstein.core.security.audit import ChainScanCursor
     from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
@@ -295,6 +304,27 @@ def encode_one(file_path: str | Path) -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 
+class AttachmentChainUnverified(RuntimeError):
+    """Raised when the chain backing an attachment lookup does not authenticate.
+
+    The worktree pin is only as strong as the rows it is read from. When the
+    HMAC linkage over the audit chain does not hold, no ``multimodal.attach``
+    row can be attributed to a worktree, so the resolve refuses rather than
+    falling back to whatever the log happens to contain.
+
+    Attributes:
+        sha256: Digest whose resolve was refused.
+        errors: Per-entry verification errors reported by the chain scan.
+    """
+
+    def __init__(self, sha256: str, errors: list[str]) -> None:
+        self.sha256 = sha256
+        self.errors = errors
+        super().__init__(
+            f"Refusing to resolve attachment {sha256[:12]}... from an unverified audit chain: " + "; ".join(errors[:3])
+        )
+
+
 class WorktreeAccessDenied(RuntimeError):
     """Raised when a worker in worktree B requests an attachment from A."""
 
@@ -310,6 +340,73 @@ class WorktreeAccessDenied(RuntimeError):
         )
 
 
+class _VerifiedAttachIndex:
+    """Attaching worktrees per digest, built only from authenticated rows.
+
+    The index is fed by :meth:`AuditChainStore.scan_verified`, which
+    recomputes the HMAC of exactly the bytes it reads and refuses the whole
+    scan when the linkage breaks. Keeping the returned cursor here is what
+    makes an authenticated read affordable on this path: the first lookup
+    walks the chain once, and every later lookup verifies and parses only the
+    bytes appended since, so a per-attachment resolve costs O(new rows)
+    instead of O(entire chain).
+
+    The index lives beside the cursor because the two must be discarded
+    together: when a scan reports ``rescanned`` the history under the cursor
+    changed, and any mapping derived from the old prefix is no longer backed
+    by rows this process authenticated.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cursor: ChainScanCursor | None = None
+        self._owners: dict[str, set[str]] = {}
+
+    def owners_of(self, chain: AuditChainStore, sha256: str) -> frozenset[str]:
+        """Return the worktree ids that verifiably attached *sha256*.
+
+        Raises:
+            AttachmentChainUnverified: The chain scan did not authenticate.
+        """
+        with self._lock:
+            result = chain.scan_verified(self._cursor, event_type=EVENT_MULTIMODAL_ATTACH)
+            if not result.ok:
+                # Leave the cursor where it was: a failed scan consumed bytes
+                # it could not authenticate, so advancing past them would let
+                # the next lookup treat the damaged span as verified history.
+                raise AttachmentChainUnverified(sha256=sha256, errors=result.errors)
+            if result.rescanned:
+                self._owners.clear()
+            for event in result.events:
+                if event.event_type != EVENT_MULTIMODAL_ATTACH:
+                    continue
+                digest = str(event.details.get("sha256", ""))
+                if not digest:
+                    continue
+                self._owners.setdefault(digest, set()).add(str(event.details.get("worktree_id", "")))
+            self._cursor = result.cursor
+            return frozenset(self._owners.get(sha256, frozenset()))
+
+
+#: One index per :class:`AuditChainStore` instance. The cursor is only
+#: meaningful against the chain it was produced from, so the store is the
+#: correct owner; the mapping is weak-keyed so a store that goes out of scope
+#: takes its cursor and index with it rather than pinning them for the life of
+#: the process.
+_ATTACH_INDEXES: WeakKeyDictionary[AuditChainStore, _VerifiedAttachIndex] = WeakKeyDictionary()
+_ATTACH_INDEXES_LOCK = threading.Lock()
+
+
+def _attach_index_for(chain: AuditChainStore) -> _VerifiedAttachIndex:
+    """Return (creating on first use) the authenticated attach index for *chain*."""
+    with _ATTACH_INDEXES_LOCK:
+        index = _ATTACH_INDEXES.get(chain)
+        if index is None:
+            index = _VerifiedAttachIndex()
+            _ATTACH_INDEXES[chain] = index
+        return index
+
+
 def resolve_attachment_for_worker(
     *,
     sha256: str,
@@ -319,10 +416,19 @@ def resolve_attachment_for_worker(
 ) -> bytes:
     """Return attached bytes if the requesting worktree owns the attach.
 
-    Looks up the most recent ``multimodal.attach`` event matching
-    ``sha256``. If that event's ``worktree_id`` matches
-    ``requesting_worktree_id`` the bytes are returned from CAS;
-    otherwise :class:`WorktreeAccessDenied` is raised.
+    Looks up the ``multimodal.attach`` events matching ``sha256``. If one of
+    them pins the attachment to ``requesting_worktree_id`` the bytes are
+    returned from CAS; otherwise :class:`WorktreeAccessDenied` is raised.
+
+    Events are read through :meth:`AuditChainStore.scan_verified`, never
+    through ``query()``. ``query()`` performs no HMAC checking, so a
+    ``multimodal.attach`` row appended by anything that can write the audit
+    directory -- without the audit key, and therefore without valid chain
+    linkage -- would name any worktree it likes and hand that worktree another
+    worktree's attachment bytes. The scan authenticates the rows it returns and
+    the lookup fails closed when the linkage does not hold. The cursor behind
+    the scan is kept per audit-chain store (see :class:`_VerifiedAttachIndex`)
+    so the authenticated read stays incremental on this per-attachment path.
 
     Args:
         sha256: Hex digest of the requested attachment.
@@ -334,15 +440,13 @@ def resolve_attachment_for_worker(
         The raw attachment bytes.
 
     Raises:
+        AttachmentChainUnverified: The audit chain did not verify, so no
+            attach row can be attributed to a worktree.
         WorktreeAccessDenied: The attach event's worktree id differs
             from the requesting worktree id.
         FileNotFoundError: No attach event exists for the SHA, or the
             CAS lookup misses.
     """
-    entries = audit_chain.query(event_type=EVENT_MULTIMODAL_ATTACH)
-    matches = [e for e in entries if e.details.get("sha256") == sha256]
-    if not matches:
-        raise FileNotFoundError(f"No multimodal.attach event for {sha256[:12]}...")
     # Resolve by (sha256, worktree_id) so concurrent attaches in
     # different worktrees of the same bytes do not poison each other.
     # If any historical attach in the requesting worktree exists for
@@ -350,11 +454,11 @@ def resolve_attachment_for_worker(
     # attaching worktrees (for the structured error) is built from
     # every historical event so the operator sees the full picture.
     # (bot-ack: 3284182761 -- CodeRabbit major.)
-    in_worktree = [e for e in matches if str(e.details.get("worktree_id", "")) == requesting_worktree_id]
-    if not in_worktree:
-        seen_worktrees = sorted(
-            {str(e.details.get("worktree_id", "")) for e in matches if e.details.get("worktree_id")}
-        )
+    attaching_worktrees = _attach_index_for(audit_chain).owners_of(audit_chain, sha256)
+    if not attaching_worktrees:
+        raise FileNotFoundError(f"No multimodal.attach event for {sha256[:12]}...")
+    if requesting_worktree_id not in attaching_worktrees:
+        seen_worktrees = sorted(w for w in attaching_worktrees if w)
         raise WorktreeAccessDenied(
             sha256=sha256,
             attached_worktree=", ".join(seen_worktrees) or "<unknown>",
@@ -381,6 +485,7 @@ def worker_lineage_parents(result: AttachmentBuildResult) -> list[str]:
 
 __all__ = [
     "AttachmentBuildResult",
+    "AttachmentChainUnverified",
     "AttachmentResolution",
     "CapabilityRefusal",
     "WorktreeAccessDenied",
