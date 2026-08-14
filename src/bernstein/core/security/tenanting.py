@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, cast
 
 from bernstein.core.persistence.anchored_write import AnchoredDir, mkdir_anchored
+from bernstein.core.security.path_containment import PathContainmentError, contained_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -306,7 +307,7 @@ def resolve_tenant_scope(
     return target
 
 
-def _assert_contained(base: Path, derived: Path, tenant_id: str) -> None:
+def _assert_contained(base: Path, *segments: str, tenant_id: str) -> None:
     """Refuse a derived directory that does not sit strictly under *base*.
 
     A cheap invariant check on the layout as it stands, run before anything is
@@ -314,12 +315,22 @@ def _assert_contained(base: Path, derived: Path, tenant_id: str) -> None:
     it pointed when it was resolved, and the write happens later -- but it
     keeps the derivation honest on its own terms, and it is what fails first if
     the identifier rule is ever widened.
+
+    Delegates the realpath-containment check itself to
+    :func:`bernstein.core.security.path_containment.contained_path`, the same
+    barrier the rest of the codebase asserts through (#3692), rather than
+    re-deriving the check here. Its refusal is translated into
+    `InvalidTenantIdError` so existing callers -- which already treat a bad
+    tenant id as a `LookupError` via that type's `LookupError` base -- keep
+    working unchanged.
     """
 
-    resolved_derived = derived.resolve()
-    resolved_base = base.resolve()
-    if resolved_derived == resolved_base or not resolved_derived.is_relative_to(resolved_base):
-        raise InvalidTenantIdError(f"tenant id {_describe_tenant_id(str(tenant_id))} resolves outside the tenant root")
+    try:
+        contained_path(base, *segments, label="tenant id")
+    except PathContainmentError as exc:
+        raise InvalidTenantIdError(
+            f"tenant id {_describe_tenant_id(str(tenant_id))} resolves outside the tenant root"
+        ) from exc
 
 
 def tenant_paths(sdd_dir: Path, tenant_id: str) -> TenantPaths:
@@ -353,7 +364,7 @@ def tenant_paths(sdd_dir: Path, tenant_id: str) -> TenantPaths:
 
     normalized = normalize_tenant_id(tenant_id)
     root = sdd_dir / normalized
-    _assert_contained(sdd_dir, root, tenant_id)
+    _assert_contained(sdd_dir, normalized, tenant_id=tenant_id)
     return TenantPaths(
         root=root,
         backlog_dir=root / "backlog",
@@ -414,7 +425,7 @@ def _tenant_metrics_anchor(metrics_dir: Path, tenant_id: str) -> AnchoredDir:
         base, parts = metrics_dir.parent, (normalized, "metrics")
     else:
         base, parts = metrics_dir, (normalized,)
-    _assert_contained(base, base.joinpath(*parts), tenant_id)
+    _assert_contained(base, *parts, tenant_id=tenant_id)
     return AnchoredDir(root=base, parts=parts)
 
 
