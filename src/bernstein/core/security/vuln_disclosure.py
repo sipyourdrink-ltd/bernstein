@@ -1,10 +1,19 @@
-"""Coordinated vulnerability disclosure with non-monetary recognition.
+"""Coordinated vulnerability disclosure per the project's SECURITY.md policy.
 
 Provides structured vulnerability report handling, triage workflows,
 coordinated disclosure timelines, and RFC 9116 security.txt generation.
-Recognition for valid reports is non-monetary - severity maps to a
-recognition tier (acknowledgment, public credit, CVE credit, hall of
-fame) rather than a cash payout.
+
+Recognition is non-monetary and uniform: every valid, first-reported issue
+gets the same credit - name/handle/link in the release notes of the fixing
+release, plus reporter credit on the published GitHub Security Advisory
+(which may carry a CVE). There is no severity-based recognition ladder and
+no bug bounty.
+
+There is no fix deadline. Severity sets the order reports are worked on, not
+a promised delivery date. The only date this module commits to is the first
+substantive response, due within ``response_sla_hours`` of submission (up to
+90 days per SECURITY.md), and the public-disclosure date, which the reporter
+may exercise unilaterally regardless of fix status.
 
 Usage::
 
@@ -64,18 +73,16 @@ class ReportStatus(StrEnum):
 
 
 class RecognitionTier(StrEnum):
-    """Non-monetary recognition granted for a valid disclosure.
+    """Non-monetary recognition granted for a disclosure.
 
-    The project is non-commercial and runs no paid bounty; researchers are
-    recognized through acknowledgment, public credit, CVE credit, and the
-    hall of fame rather than a cash reward.
+    Recognition does not vary by severity: every valid, first-reported issue
+    receives the same credit (release notes plus GitHub Security Advisory
+    credit). A report that is rejected, or that is not the first report of
+    a duplicate, receives none.
     """
 
     NONE = "none"
-    ACKNOWLEDGMENT = "acknowledgment"
-    PUBLIC_CREDIT = "public-credit"
-    CVE_CREDIT = "cve-credit"
-    HALL_OF_FAME = "hall-of-fame"
+    CREDITED = "credited"
 
 
 @dataclass(frozen=True)
@@ -109,46 +116,39 @@ class VulnReport:
 class DisclosureScope:
     """Scope definition for the coordinated disclosure program.
 
-    Recognition is non-monetary: ``recognition`` maps a severity level to a
-    :class:`RecognitionTier` value rather than a cash amount.
-
     Attributes:
         in_scope: Components or endpoints that are in scope.
         out_of_scope: Components explicitly out of scope.
-        recognition: Mapping from severity level to recognition tier.
-        response_sla_hours: Maximum hours before initial triage response.
+        response_sla_hours: Maximum hours before the first substantive
+            response. SECURITY.md states this as "up to 90 days"
+            (``90 * 24 = 2160`` hours); this is a maintained-alone project's
+            outer bound, not a target most reports will take that long.
     """
 
     in_scope: tuple[str, ...] = ()
     out_of_scope: tuple[str, ...] = ()
-    recognition: dict[str, str] = field(
-        default_factory=lambda: {
-            "low": RecognitionTier.ACKNOWLEDGMENT.value,
-            "medium": RecognitionTier.PUBLIC_CREDIT.value,
-            "high": RecognitionTier.CVE_CREDIT.value,
-            "critical": RecognitionTier.HALL_OF_FAME.value,
-        }
-    )
-    response_sla_hours: int = 48
+    response_sla_hours: int = 2160
 
 
 @dataclass(frozen=True)
 class DisclosureTimeline:
     """Coordinated disclosure timeline milestones.
 
+    There is no fix-deadline milestone: SECURITY.md promises a first
+    response, not a fix date.
+
     Attributes:
         report_id: The associated vulnerability report.
-        triage_date: When the report was initially triaged.
         vendor_notified: When the vendor was first notified.
-        fix_deadline: Expected date for a fix to be available.
-        public_disclosure: Date when the vulnerability will be publicly disclosed.
+        first_response_due: Deadline for the first substantive response.
+        public_disclosure: Date the reporter may disclose unilaterally,
+            with or without a shipped fix.
         milestones: All milestone dates with labels.
     """
 
     report_id: str
-    triage_date: datetime
     vendor_notified: datetime
-    fix_deadline: datetime
+    first_response_due: datetime
     public_disclosure: datetime
     milestones: dict[str, datetime] = field(default_factory=dict)
 
@@ -224,20 +224,14 @@ class VulnerabilityDisclosureManager:
     """Manages the full lifecycle of vulnerability disclosure.
 
     Handles report submission, triage, fix tracking, and coordinated
-    disclosure timelines. Classifies each report into a non-monetary
-    recognition tier based on the disclosure scope.
+    disclosure timelines. Recognition is a single uniform credit path -
+    there is no severity-based tier to classify into.
 
     Usage::
 
         mgr = VulnerabilityDisclosureManager(
             scope=DisclosureScope(
                 in_scope=("/api/v1/*", "/api/v2/*"),
-                recognition={
-                    "low": "acknowledgment",
-                    "medium": "public-credit",
-                    "high": "cve-credit",
-                    "critical": "hall-of-fame",
-                },
             ),
         )
         report_id = mgr.submit_report(report)
@@ -248,15 +242,11 @@ class VulnerabilityDisclosureManager:
         self,
         scope: DisclosureScope | None = None,
         *,
-        triage_sla_hours: int = 48,
-        fix_deadline_days: int = 90,
-        disclosure_delay_days: int = 30,
+        disclosure_days: int = 90,
     ) -> None:
         self._scope = scope or DisclosureScope()
         self._reports: dict[str, VulnReport] = {}
-        self._triage_sla_hours = triage_sla_hours
-        self._fix_deadline_days = fix_deadline_days
-        self._disclosure_delay_days = disclosure_delay_days
+        self._disclosure_days = disclosure_days
 
     @property
     def scope(self) -> DisclosureScope:
@@ -417,12 +407,15 @@ class VulnerabilityDisclosureManager:
     def generate_disclosure_timeline(self, report_id: str) -> DisclosureTimeline:
         """Generate a coordinated disclosure timeline for a report.
 
-        Computes milestones based on the SLA and deadline configuration:
+        Computes milestones directly from the submission date. There is no
+        fix-deadline milestone: SECURITY.md promises a first response, not a
+        fix date.
 
-        1. **Triage** - within ``triage_sla_hours`` of submission.
-        2. **Vendor notified** - at submission time.
-        3. **Fix deadline** - ``fix_deadline_days`` after submission.
-        4. **Public disclosure** - ``disclosure_delay_days`` after fix deadline.
+        1. **Vendor notified** - at submission time.
+        2. **First response due** - within ``response_sla_hours`` of
+           submission.
+        3. **Public disclosure** - ``disclosure_days`` after submission,
+           available to the reporter regardless of fix status.
 
         Args:
             report_id: Tracking ID of the report.
@@ -438,23 +431,20 @@ class VulnerabilityDisclosureManager:
             raise KeyError(f"Report {report_id!r} not found")
 
         submitted = report.submitted_at
-        triage_date = submitted + timedelta(hours=self._triage_sla_hours)
-        fix_deadline = submitted + timedelta(days=self._fix_deadline_days)
-        public_disclosure = fix_deadline + timedelta(days=self._disclosure_delay_days)
+        first_response_due = submitted + timedelta(hours=self._scope.response_sla_hours)
+        public_disclosure = submitted + timedelta(days=self._disclosure_days)
 
         milestones = {
             "submitted": submitted,
-            "triage": triage_date,
             "vendor_notified": submitted,
-            "fix_deadline": fix_deadline,
+            "first_response_due": first_response_due,
             "public_disclosure": public_disclosure,
         }
 
         return DisclosureTimeline(
             report_id=report_id,
-            triage_date=triage_date,
             vendor_notified=submitted,
-            fix_deadline=fix_deadline,
+            first_response_due=first_response_due,
             public_disclosure=public_disclosure,
             milestones=milestones,
         )
@@ -462,11 +452,11 @@ class VulnerabilityDisclosureManager:
     # -- Recognition classification -------------------------------------------
 
     def classify_recognition(self, report_id: str) -> str:
-        """Classify a triaged report into a non-monetary recognition tier.
+        """Classify a report into its (uniform) recognition state.
 
-        Looks up the severity in the disclosure scope's recognition table.
-        Returns :attr:`RecognitionTier.NONE` (``"none"``) if the severity is
-        not in the table.
+        Recognition does not depend on severity: every report that has not
+        been rejected is credited the same way (release notes plus GitHub
+        Security Advisory credit). A rejected report gets none.
 
         Args:
             report_id: Tracking ID of the report.
@@ -481,19 +471,25 @@ class VulnerabilityDisclosureManager:
         if report is None:
             raise KeyError(f"Report {report_id!r} not found")
 
-        return self._scope.recognition.get(report.severity, RecognitionTier.NONE.value)
+        if report.status == ReportStatus.REJECTED.value:
+            return RecognitionTier.NONE.value
+        return RecognitionTier.CREDITED.value
 
     # -- SLA compliance -------------------------------------------------------
 
     def check_sla_compliance(self, report_id: str) -> dict[str, bool]:
-        """Check whether SLA deadlines are met for a report.
+        """Check whether the first-response SLA has been met.
+
+        There is no fix deadline to check against - only the first
+        substantive response is a commitment SECURITY.md makes.
 
         Args:
             report_id: Tracking ID of the report.
 
         Returns:
-            Dictionary with keys ``triage_within_sla``, ``fix_within_sla``,
-            and ``disclosure_within_sla``, each a boolean.
+            Dictionary with key ``response_within_sla``: ``True`` if the
+            report has moved past ``new`` (i.e. a response has occurred) or
+            the response SLA window has not yet elapsed.
 
         Raises:
             KeyError: If the report does not exist.
@@ -503,15 +499,9 @@ class VulnerabilityDisclosureManager:
             raise KeyError(f"Report {report_id!r} not found")
 
         now = datetime.now(UTC)
-        fix_deadline = report.submitted_at + timedelta(days=self._fix_deadline_days)
+        response_deadline = report.submitted_at + timedelta(hours=self._scope.response_sla_hours)
+        responded = report.status != ReportStatus.NEW.value
 
         return {
-            "triage_within_sla": True,
-            "fix_within_sla": report.status
-            in (
-                ReportStatus.RESOLVED.value,
-                ReportStatus.DISCLOSED.value,
-            )
-            or now <= fix_deadline,
-            "disclosure_within_sla": True,  # disclosure is future-dated
+            "response_within_sla": responded or now <= response_deadline,
         }
