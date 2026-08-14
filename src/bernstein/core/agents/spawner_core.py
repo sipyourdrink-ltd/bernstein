@@ -28,6 +28,14 @@ from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
+from bernstein.core.agents.attachment_dispatch import (
+    AttachmentDispatchError,
+    DispatchedAttachments,
+    collect_declared_attachments,
+    dispatch_for_spawn,
+    rebuild_context_for_resume,
+    stamp_dispatch,
+)
 from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.agents.context_attachments import (
     collect_declared_context_files,
@@ -4162,6 +4170,14 @@ class AgentSpawner:
             except Exception as exc:  # pragma: no cover - best-effort, never blocks spawn
                 logger.warning("Failed to write task-specific CLAUDE.md for %s: %s", session_id, exc)
 
+            # Issue #1797: store, attest, and pin the operator's attachments
+            # before the process launches. Unlike the context-file stamp above
+            # this is not best-effort: an attachment that reaches the model
+            # with no CAS bytes and no chain event behind it is precisely the
+            # provenance gap the dispatch exists to close, so a failure here
+            # aborts the spawn instead of running the worker unattested.
+            _attachments = self._resolve_and_stamp_attachments(session, tasks, spawn_cwd)
+
             # Inject role-specific skills into the worktree before spawn so the
             # agent picks up orchestration protocol and role-specific instructions.
             # Skills survive context compaction and reduce prompt boilerplate.
@@ -4443,6 +4459,24 @@ class AgentSpawner:
                                 _extra_spawn_kwargs["task_id"] = tasks[0].id
                             if "task_title" in _spawn_params:
                                 _extra_spawn_kwargs["task_title"] = tasks[0].title
+                            # Issue #1797: hand the attested attachments to the
+                            # adapter. Only passed when something was declared,
+                            # so an unattached spawn calls exactly the argument
+                            # list it always did. A capable adapter inlines the
+                            # bytes; an incapable one raises CapabilityRefusal
+                            # from its own spawn() before launching a process.
+                            # An adapter whose spawn() predates the parameter
+                            # cannot carry them at all, and dropping them
+                            # silently is the failure this wiring exists to
+                            # remove - so that refuses here instead.
+                            if _attachments is not None:
+                                if "multimodal_context" not in _spawn_params:
+                                    raise AttachmentDispatchError(
+                                        f"adapter {adapter_name!r} cannot carry attachments: its spawn() "
+                                        "does not accept multimodal_context. Use a multimodal-capable "
+                                        "adapter (claude, gemini) or drop the attachments."
+                                    )
+                                _extra_spawn_kwargs["multimodal_context"] = _attachments.context
                             # Cacheable prefix extraction is deferred to adapters
                             # that support provider-specific caching.
                             result = target_adapter.spawn(
@@ -4691,6 +4725,77 @@ class AgentSpawner:
                     )
         return declared
 
+    def _attachment_routing_refusal(self) -> str | None:
+        """Name the active execution path that cannot carry attachments.
+
+        Only the direct-subprocess path reaches ``adapter.spawn()`` with a
+        ``multimodal_context``; the capable adapters inline the encoded bytes
+        into the prompt from inside that call. Every other route either
+        renders its own command from a prompt file (container, sandbox) or
+        speaks a protocol with no attachment slot (runtime bridge,
+        in-process), so an attachment handed to them would be dropped
+        between the audit-chain event and the model. Returns ``None`` when
+        the spawn is on the path that carries them.
+        """
+        if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+            return "the in-process backend"
+        if self._runtime_bridge is not None:
+            return f"the {self._runtime_bridge.name()} runtime bridge"
+        if self._sandbox_session_routing_active():
+            return "a sandbox session"
+        if self._sandbox is not None:
+            return "a Docker/Podman sandbox"
+        if self._container_mgr is not None:
+            return "a container"
+        return None
+
+    def _resolve_and_stamp_attachments(
+        self,
+        session: AgentSession,
+        tasks: list[Task],
+        worktree_path: Path,
+    ) -> DispatchedAttachments | None:
+        """Dispatch declared attachments for this spawn (issue #1797).
+
+        Collects the run-level ``--attach`` list and any plan-declared
+        ``Task.attachments``, stores the bytes in the run's CAS, appends a
+        ``multimodal.attach`` event pinned to *worktree_path*, and stamps the
+        resulting digests onto the session and its tasks so the completion
+        path can carry them into the artefact's lineage receipt and the resume
+        path can resolve the same bytes back.
+
+        Returns the dispatch record, or ``None`` when nothing was declared -
+        in which case no CAS directory, no chain event, and no adapter
+        argument are produced, leaving an unattached spawn exactly as it was.
+
+        Raises:
+            AttachmentDispatchError: Attachments were declared but this
+                spawn is routed through an execution path that cannot carry
+                them (see :meth:`_attachment_routing_refusal`). The check
+                runs before anything is written, so a refused spawn leaves
+                no orphan blob or attach event behind.
+        """
+        declared = collect_declared_attachments(tasks)
+        if not declared:
+            return None
+
+        refusal = self._attachment_routing_refusal()
+        if refusal is not None:
+            raise AttachmentDispatchError(
+                f"--attach is not supported when agents run via {refusal}: that path builds its own "
+                "command instead of calling the adapter's spawn(), so the attachment bytes would "
+                "never reach the model. Re-run without the attachments, or without that isolation mode."
+            )
+
+        dispatched = dispatch_for_spawn(
+            declared=declared,
+            session_id=session.id,
+            worktree_path=worktree_path,
+            run_root=self._workdir,
+        )
+        stamp_dispatch(session, tasks, dispatched)
+        return dispatched
+
     def _resolve_and_stamp_injected_skills(self, session: AgentSession, tasks: list[Task]) -> None:
         """Carry the injected-skill audit set forward on resume (issue #3382).
 
@@ -4857,6 +4962,17 @@ class AgentSpawner:
         # any edits the crashed agent made to the declared files.
         self._resolve_and_stamp_context_files(session, tasks, worktree_path)
         self._resolve_and_stamp_injected_skills(session, tasks)
+        # Issue #1797: rebuild the attachment context from CAS rather than
+        # re-reading the operator's files. The crashed agent may have edited
+        # or deleted them, and the bytes the chain attests -- not whatever is
+        # on disk now -- are what the original turn sent. The read goes
+        # through the worktree-pinned, authenticated resolver, so a resume
+        # that somehow lands in another worktree gets nothing.
+        _resume_attachments = rebuild_context_for_resume(
+            tasks=tasks,
+            worktree_path=worktree_path,
+            run_root=self._workdir,
+        )
 
         _scope_order = {"small": 0, "medium": 1, "large": 2}
         resume_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))
@@ -4868,6 +4984,13 @@ class AgentSpawner:
             _resume_extra["task_id"] = tasks[0].id
         if "task_title" in _resume_params:
             _resume_extra["task_title"] = tasks[0].title
+        if _resume_attachments is not None:
+            if "multimodal_context" not in _resume_params:
+                raise AttachmentDispatchError(
+                    f"adapter {self._adapter.name()!r} cannot carry attachments on resume: its "
+                    "spawn() does not accept multimodal_context."
+                )
+            _resume_extra["multimodal_context"] = _resume_attachments
         result = self._adapter.spawn(
             prompt=prompt,
             workdir=worktree_path,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import json
+import re
 from dataclasses import asdict, dataclass
 
 LINEAGE_ENTRY_VERSION = 1
@@ -51,6 +52,9 @@ ARTEFACT_KINDS: frozenset[str] = frozenset(
 #: :mod:`bernstein.core.lineage.provenance`.
 TRUST_CLASSES: frozenset[str] = frozenset({"operator", "workspace", "first_party", "third_party", "public"})
 
+#: Shape of a bare hex SHA-256, used to validate recorded attachment digests.
+_HEX64: re.Pattern[str] = re.compile(r"\A[0-9a-f]{64}\Z")
+
 
 @dataclass(frozen=True, slots=True)
 class LineageEntry:
@@ -75,6 +79,18 @@ class LineageEntry:
     # bytes so every historical entry keeps its exact wire form, signature and
     # HMAC. A tool-result provenance record sets this to one of TRUST_CLASSES.
     trust_class: str | None = None
+    # Additive, optional (issue #1797), dropped when ``None`` on the same rule
+    # as ``trust_class``. Hex SHA-256 digests of the operator attachments the
+    # producing turn was handed, so the receipt names every input the model
+    # saw and not only the artefacts it read.
+    #
+    # Deliberately NOT folded into ``parent_hashes``: that list is the
+    # artefact's own ancestry, and ``_compute_tips_from_entries`` reads a
+    # length of two or more as a fork merge. An attached image is an input to
+    # the turn, not a prior version of the output, so recording it there would
+    # both mis-type the relation and make every attached linear write look
+    # like a merge in the tip projection.
+    attachment_digests: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.v != LINEAGE_ENTRY_VERSION:
@@ -88,6 +104,12 @@ class LineageEntry:
                 raise ValueError(f"parent_hash must start with 'sha256:', got {p!r}")
         if self.trust_class is not None and self.trust_class not in TRUST_CLASSES:
             raise ValueError(f"unknown trust_class: {self.trust_class!r}")
+        if self.attachment_digests is not None:
+            if not self.attachment_digests:
+                raise ValueError("attachment_digests must be omitted rather than empty")
+            for d in self.attachment_digests:
+                if len(d) != 64 or not _HEX64.match(d):
+                    raise ValueError(f"attachment digest must be 64 lower-case hex chars, got {d!r}")
 
 
 def _canonical_body(entry: LineageEntry) -> dict[str, object]:
@@ -104,6 +126,8 @@ def _canonical_body(entry: LineageEntry) -> dict[str, object]:
     body = asdict(entry)
     if body.get("trust_class") is None:
         body.pop("trust_class", None)
+    if body.get("attachment_digests") is None:
+        body.pop("attachment_digests", None)
     return body
 
 

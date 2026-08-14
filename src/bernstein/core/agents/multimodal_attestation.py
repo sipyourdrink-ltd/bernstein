@@ -12,9 +12,21 @@ This module wires the operator-supplied ``--attach <path>`` flow into:
   records an HMAC-chained ``multimodal.attach`` event carrying the
   bytes' SHA-256, MIME, worker identity, turn sequence, worktree id,
   the operator install signature, and the prior chain digest.
-* :mod:`bernstein.core.persistence.lineage_signer` -- the worker's
-  lineage v1 receipt is augmented with attachment digests in its
-  ``parents`` list via :func:`worker_lineage_parents`.
+* :mod:`bernstein.core.lineage.entry` -- the signed lineage entry for
+  an artefact produced by an attached turn carries the digests in its
+  ``attachment_digests`` field, so the receipt names every input the
+  turn consumed. :mod:`bernstein.core.agents.attachment_dispatch` is
+  the seam that calls this module from the spawn path and stamps those
+  digests for the completion and resume paths.
+
+  :func:`worker_lineage_parents` builds
+  ``multimodal-attachment://<sha256>`` URIs for the ``parents`` list of
+  the WAL-backed ``persistence.lineage.LineageWriter`` record. That
+  writer is deprecated and its ``LineageRecord`` has no ``parents``
+  field, so the helper has no live consumer. The digests are
+  deliberately not folded into a signed entry's ``parent_hashes``
+  either: that list is the artefact's own ancestry, and the tip
+  projection reads two or more parents as a fork merge.
 
 The :func:`refuse_when_incapable` helper performs capability gating
 BEFORE any process is launched: if the selected adapter does not

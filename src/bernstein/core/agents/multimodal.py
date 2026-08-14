@@ -17,6 +17,10 @@ import mimetypes
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -194,23 +198,32 @@ def build_multimodal_context(files: list[str | Path]) -> MultiModalContext:
         except FileNotFoundError:
             logger.warning("Skipping missing file: %s", fp)
 
-    if not inputs:
-        return MultiModalContext(inputs=(), primary_modality=ModalityType.TEXT)
+    return MultiModalContext(inputs=tuple(inputs), primary_modality=primary_modality(inputs))
 
-    # Majority-vote for primary modality.
+
+def primary_modality(inputs: Sequence[MultiModalInput]) -> ModalityType:
+    """Return the dominant modality across *inputs* by majority vote.
+
+    Ties are broken by ``ModalityType`` declaration order (TEXT < IMAGE <
+    DIAGRAM < AUDIO), and an empty input list resolves to TEXT. Split out
+    of :func:`build_multimodal_context` so a context rebuilt from stored
+    bytes rather than from disk -- the crash-resume path in
+    :mod:`bernstein.core.agents.attachment_dispatch` -- ranks its
+    modalities by exactly the same rule instead of a second copy of it.
+    """
+    if not inputs:
+        return ModalityType.TEXT
+
     counts: dict[ModalityType, int] = {}
     for inp in inputs:
         counts[inp.modality] = counts.get(inp.modality, 0) + 1
 
     max_count = max(counts.values())
     # Among tied modalities, pick the first in ModalityType declaration order.
-    primary = ModalityType.TEXT
     for m in ModalityType:
         if counts.get(m, 0) == max_count:
-            primary = m
-            break
-
-    return MultiModalContext(inputs=tuple(inputs), primary_modality=primary)
+            return m
+    return ModalityType.TEXT
 
 
 # ---------------------------------------------------------------------------

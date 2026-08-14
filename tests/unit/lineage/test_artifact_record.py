@@ -56,6 +56,75 @@ def _write_card(cards_dir: Path, card: AgentCard) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Attachment parents (issue #1797)
+# ---------------------------------------------------------------------------
+
+
+def test_attachment_digests_land_on_the_entry(tmp_path: Path, identity: tuple[AgentCard, str]) -> None:
+    """An artefact produced from an attached image records that image's digest.
+
+    This is the lineage half of the ``--attach`` promise: the receipt for
+    whatever the worker produced names the input image, so an auditor reading
+    the entry sees every input the turn consumed.
+    """
+    card, priv = identity
+    digest = "a" * 64
+    store = LineageStore(tmp_path / "run" / "lineage")
+
+    record_artifact(
+        recorder=SignedLineageLog(store=store, operator_hmac_key=_HMAC_KEY),
+        sink_root=tmp_path / "run" / "artifacts",
+        task_id="T-attach",
+        kind=ArtifactKind.REPORT,
+        artifact="findings",
+        agent_id=card.agent_id,
+        agent_card=card,
+        private_key_pem=priv,
+        attachment_digests=[digest],
+    )
+
+    entries = [entry for entry, _raw in store.read_log()]
+    assert len(entries) == 1
+    assert entries[0].attachment_digests == [digest]
+    # The digest is an input to the turn, not the artefact's own ancestry:
+    # recording it as a parent would read as a fork merge in the tip
+    # projection and mis-type the relation.
+    assert entries[0].parent_hashes == []
+
+
+def test_entry_hash_unchanged_without_attachments(tmp_path: Path, identity: tuple[AgentCard, str]) -> None:
+    """Omitting attachments reproduces the pre-wiring entry byte-for-byte.
+
+    ``extra_parents`` defaults to ``None``, so every artefact recorded by a
+    task that declared no attachments must hash exactly as it did before the
+    parameter existed.
+    """
+    card, priv = identity
+    common = {
+        "task_id": "T-1",
+        "kind": ArtifactKind.REPORT,
+        "artifact": "findings",
+        "agent_id": card.agent_id,
+        "agent_card": card,
+        "private_key_pem": priv,
+    }
+
+    without = record_artifact(
+        recorder=_recorder(tmp_path / "a"),
+        sink_root=tmp_path / "a" / "artifacts",
+        **common,  # type: ignore[arg-type]
+    )
+    explicit_none = record_artifact(
+        recorder=_recorder(tmp_path / "b"),
+        sink_root=tmp_path / "b" / "artifacts",
+        attachment_digests=None,
+        **common,  # type: ignore[arg-type]
+    )
+
+    assert without.entry_hash == explicit_none.entry_hash
+
+
+# ---------------------------------------------------------------------------
 # Determinism: same input -> byte-identical content_hash AND entry_hash
 # ---------------------------------------------------------------------------
 

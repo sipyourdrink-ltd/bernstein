@@ -138,6 +138,7 @@ def seal_write(
     artefact_kind: str = "file",
     trust_class: str | None = None,
     extra_parents: list[str] | None = None,
+    attachment_digests: list[str] | None = None,
     ts_ns: int | None = None,
 ) -> str:
     """Seal a single signed lineage write into ``store``. Returns the entry hash.
@@ -180,6 +181,13 @@ def seal_write(
             the artefact's own tip. This is the cross-artefact lineage edge that
             anchors a derived artefact (or a quarantine extraction) back to the
             tainted source it was produced from.
+        attachment_digests: Optional hex SHA-256 digests of the operator
+            attachments the producing turn consumed (issue #1797). Recorded in
+            their own field rather than as parents: ``parent_hashes`` is the
+            artefact's ancestry, and a second parent there reads as a fork
+            merge in the tip projection. ``None`` is dropped from the
+            canonical bytes, so an unattached write keeps its exact historical
+            entry hash, HMAC and signature.
         ts_ns: Optional deterministic entry timestamp (nanoseconds). When
             ``None`` the wall clock is stamped. Artifact-mode callers pass a
             logical timestamp so two operators with equal inputs produce a
@@ -230,6 +238,7 @@ def seal_write(
         ts_ns=entry_ts_ns,
         operator_hmac="",
         trust_class=trust_class,
+        attachment_digests=attachment_digests,
     )
     operator_hmac = compute_operator_hmac(unsigned_entry, operator_hmac_key)
 
@@ -246,6 +255,7 @@ def seal_write(
         ts_ns=entry_ts_ns,
         operator_hmac=operator_hmac,
         trust_class=trust_class,
+        attachment_digests=attachment_digests,
     )
 
     # Sign the JCS-canonical entry bytes. The auditor verifies the same bytes
@@ -314,6 +324,7 @@ class SignedLineageLog:
         artefact_kind: str = "file",
         trust_class: str | None = None,
         extra_parents: list[str] | None = None,
+        attachment_digests: list[str] | None = None,
         ts_ns: int | None = None,
     ) -> str:
         """Seal one artefact write into the bound store. Returns the entry hash.
@@ -334,6 +345,7 @@ class SignedLineageLog:
             artefact_kind=artefact_kind,
             trust_class=trust_class,
             extra_parents=extra_parents,
+            attachment_digests=attachment_digests,
             ts_ns=ts_ns,
         )
 

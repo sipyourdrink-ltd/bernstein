@@ -1211,6 +1211,13 @@ class AgentSession:
     # whether the human-readable activation log is enabled. Empty when
     # nothing was injected (not absent).
     injected_skills: list[dict[str, str]] = field(default_factory=list)
+    # Operator attachments resolved at spawn (issue #1797). Each entry is
+    # ``{"sha256", "mime", "worktree_id", "source_path", "modality"}`` in
+    # declared order. Stamped by the spawner from the same dispatch that
+    # stored the bytes in CAS and appended the ``multimodal.attach`` chain
+    # event, so the session record names exactly the digests the chain
+    # attests. Empty when the session's tasks declare no attachments.
+    multimodal_attachments: list[dict[str, str]] = field(default_factory=list)
 
 
 class IsolationMode(StrEnum):

@@ -147,6 +147,7 @@ def record_artifact(
     agent_card: AgentCard,
     private_key_pem: str,
     ts_ns: int = 0,
+    attachment_digests: list[str] | None = None,
 ) -> ArtifactReceipt:
     """Canonicalise, record, and persist a non-coding artifact.
 
@@ -164,6 +165,11 @@ def record_artifact(
         agent_id, agent_card, private_key_pem: Signing identity.
         ts_ns: Logical entry timestamp. Fixed (default ``0``) so the signed
             entry is a deterministic projection of the inputs.
+        attachment_digests: Hex SHA-256 digests of the operator attachments
+            the producing task was spawned with (issue #1797), recorded on the
+            signed entry so the receipt names every input the turn consumed.
+            Omitted by default, which keeps an unattached artefact's entry
+            hash byte-identical to what it was before attachments were wired.
 
     Raises:
         ValueError: When ``kind`` is ``code_diff``.
@@ -194,6 +200,7 @@ def record_artifact(
         tool_call_id=_artifact_tool_call_id(task_id),
         span_id=_artifact_span_id(task_id, k.value),
         artefact_kind=k.value,
+        attachment_digests=attachment_digests,
         ts_ns=ts_ns,
     )
 

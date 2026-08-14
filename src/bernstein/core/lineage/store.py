@@ -35,7 +35,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 # ``fcntl`` is POSIX-only. On Windows the module doesn't exist; the lock
 # context manager below becomes a no-op (Windows CI runs are single-process
@@ -335,6 +335,20 @@ class LineageStore:
         return _compute_tips_from_entries(sequence)
 
 
+def _optional_str_list(raw: object) -> list[str] | None:
+    """Coerce an optional JSON list field into ``list[str] | None``.
+
+    An absent field reads back as ``None``, which canonicalises to the exact
+    bytes that were read, so the entry hash round-trips for entries written
+    before the field existed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError(f"expected a list, got {type(raw).__name__}")
+    return [str(item) for item in cast("list[object]", raw)]
+
+
 def _entry_from_dict(payload: dict[str, object]) -> LineageEntry:
     """Reconstruct a ``LineageEntry`` from its JSON dict form."""
     # All canonical-field names map 1:1 onto the dataclass kwargs. Cast through
@@ -354,6 +368,8 @@ def _entry_from_dict(payload: dict[str, object]) -> LineageEntry:
         # Additive (issue #2513): absent on pre-feature entries -> None, which
         # canonicalises back to the exact bytes read, so entry_hash round-trips.
         trust_class=(None if payload.get("trust_class") is None else str(payload["trust_class"])),
+        # Additive (issue #1797), same absent -> None round-trip rule.
+        attachment_digests=_optional_str_list(payload.get("attachment_digests")),
     )
 
 

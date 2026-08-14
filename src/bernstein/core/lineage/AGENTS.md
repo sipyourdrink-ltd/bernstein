@@ -25,6 +25,17 @@ that every adapter artifact write routes through.
   shape breaks head-hash verification for existing runs.
 - The spine's HMAC tag reuses the audit-chain key
   (`../security/audit.py`); key handling rules from that module apply.
+- A new `LineageEntry` field must be optional, default `None`, and be
+  dropped from `_canonical_body` when `None` (see `trust_class`,
+  `attachment_digests`). That is what keeps every historical entry's
+  bytes, HMAC and JWS valid. Add the matching read in
+  `store._entry_from_dict` too, or the field will not survive a
+  round-trip.
+- `parent_hashes` is the artefact's own ancestry and nothing else.
+  `store._compute_tips_from_entries` reads a length of two or more as a
+  *fork merge*, so recording an unrelated input there (an attachment, a
+  source reference) both mis-types the relation and corrupts the tip
+  projection. Give such inputs their own field.
 - Design rationale: `docs/decisions/009-lineage-v1.md`.
 
 ## Testing

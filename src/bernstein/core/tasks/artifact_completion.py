@@ -466,6 +466,15 @@ def complete_artifact_task(
     from bernstein.core.lineage.artifact_record import record_artifact
 
     card, private_pem = load_artifact_identity(sdd)
+    # Issue #1797: an artefact produced by a worker that was handed an image
+    # records that image's digest on its signed entry, so the receipt names
+    # every input the turn saw and not just the code it read. The digests come
+    # from what the spawn stamped on the task -- the same records behind the
+    # ``multimodal.attach`` chain rows -- rather than a fresh hash of files
+    # that may have changed since. Empty for an unattached task, which leaves
+    # its entry hash unchanged.
+    from bernstein.core.agents.attachment_dispatch import attachment_digests_for_tasks
+
     try:
         receipt = record_artifact(
             recorder=_build_signed_log(sdd, operator_hmac_key),
@@ -476,6 +485,7 @@ def complete_artifact_task(
             agent_id=card.agent_id,
             agent_card=card,
             private_key_pem=private_pem,
+            attachment_digests=attachment_digests_for_tasks([task]) or None,
             ts_ns=ts_ns,
         )
     except (CanonicalisationError, ValueError) as exc:

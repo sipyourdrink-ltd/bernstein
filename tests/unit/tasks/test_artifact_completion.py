@@ -541,3 +541,45 @@ def test_a_signal_less_coding_task_still_skips_the_pass(tmp_path: Path) -> None:
 
     task = Task(id="T-code", title="t", description="d", role="backend")
     assert _enqueue_alive_exit_janitor_pass(_FakeOrch(tmp_path), task, reason="alive_exit_tick") is None
+
+
+# ---------------------------------------------------------------------------
+# Attachment digests on the completion receipt (issue #1797)
+# ---------------------------------------------------------------------------
+
+
+def test_receipt_entry_carries_the_spawn_stamped_attachment_digests(tmp_path: Path) -> None:
+    """A task spawned with an image completes into an entry naming that image.
+
+    This is the far end of the ``--attach`` chain: the spawn stamps the
+    digests it stored in CAS and attested in the audit chain, and the
+    completion path carries them onto the signed entry rather than re-hashing
+    files that may have changed since.
+    """
+    from bernstein.core.agents.attachment_dispatch import ATTACHMENT_METADATA_KEY
+    from bernstein.core.lineage.store import LineageStore
+
+    digest = "b" * 64
+    task = _task(output_path="out/report.md")
+    task.metadata[ATTACHMENT_METADATA_KEY] = [
+        {"sha256": digest, "mime": "image/png", "worktree_id": "wt", "source_path": "shot.png"}
+    ]
+    _write(tmp_path, "out/report.md", "the summary")
+
+    result = _run(tmp_path, task)
+
+    assert result.ok, result.failures
+    entries = [entry for entry, _raw in LineageStore(tmp_path / ".sdd" / "lineage").read_log()]
+    assert [e.attachment_digests for e in entries] == [[digest]]
+
+
+def test_receipt_entry_omits_the_field_without_attachments(tmp_path: Path) -> None:
+    """An unattached task records no attachment field at all."""
+    from bernstein.core.lineage.store import LineageStore
+
+    task = _task(output_path="out/report.md")
+    _write(tmp_path, "out/report.md", "the summary")
+
+    assert _run(tmp_path, task).ok
+    entries = [entry for entry, _raw in LineageStore(tmp_path / ".sdd" / "lineage").read_log()]
+    assert [e.attachment_digests for e in entries] == [None]
