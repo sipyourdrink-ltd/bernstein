@@ -814,7 +814,12 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
     )
     from bernstein.core.runtime_state import hash_file, write_config_state
     from bernstein.core.seed import SeedError, parse_seed, resolve_seed_path
-    from bernstein.core.tenanting import TenantRegistry, ensure_tenant_layout, tenant_registry_from_seed
+    from bernstein.core.tenanting import (
+        InvalidTenantIdError,
+        TenantRegistry,
+        ensure_tenant_layout,
+        tenant_registry_from_seed,
+    )
 
     # resolve_seed_path() checks BERNSTEIN_SEED_PATH env first so this reload
     # picks up the same seed file the bootstrap process actually parsed,
@@ -838,11 +843,39 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
             application.state.seed_config = parse_seed(seed_path)  # type: ignore[attr-defined]
             application.state.tenant_registry = tenant_registry_from_seed(application.state.seed_config)  # type: ignore[attr-defined]
             for tenant in application.state.tenant_registry.tenants:  # type: ignore[attr-defined]
-                ensure_tenant_layout(sdd_dir, tenant.id)
+                # `ensure_tenant_layout` refuses a tenant directory whose
+                # component is a symlink or is not a directory, because
+                # following it would write one tenant's state through a path
+                # another one controls. The refusal is the point; escaping as a
+                # raw `OSError` was not, since it took the server down on boot
+                # with nothing naming which tenant to look at. Only the layout
+                # call is wrapped, so a filesystem error from anywhere else in
+                # this block still surfaces as itself.
+                try:
+                    ensure_tenant_layout(sdd_dir, tenant.id)
+                except OSError as exc:
+                    msg = (
+                        f"tenant '{tenant.id}' layout unusable under {sdd_dir}: {exc}. Replace the linked "
+                        "or non-directory component with a real directory, copying its contents across "
+                        "rather than linking them."
+                    )
+                    raise SeedError(msg) from exc
             payload["loaded"] = True
         except SeedError as exc:
             payload["error"] = str(exc)
             application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
+        except InvalidTenantIdError as exc:
+            # Runs from lifespan startup and from SIGHUP, and both treat a seed
+            # they cannot use as a configuration error to report rather than as
+            # a reason to refuse to run. A tenant id that is not a usable path
+            # segment is still refused -- no registry, no layout -- but it is
+            # refused as an answer instead of as a crash on boot.
+            payload["error"] = (
+                f"tenant configuration rejected: {exc}. Rename the tenant in the seed file, then move its "
+                "existing directory under .sdd to the new name."
+            )
+            application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
+            logger.error("Seed reload rejected a tenant id: %s", exc)
     else:
         application.state.seed_config = None  # type: ignore[attr-defined]
         application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]

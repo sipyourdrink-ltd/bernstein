@@ -160,3 +160,57 @@ class TestTenantMetricsAndCosts:
         assert live_b.status_code == 200
         assert live_b.json()["tenant_id"] == "team-b"
         assert live_b.json()["spent_usd"] == pytest.approx(3.0)
+
+
+class TestSeedReloadReportsTenantProblemsInsteadOfAborting:
+    """A seed the server cannot use is an error to report, not a crash on boot.
+
+    `reload_seed_config` runs from lifespan startup and again on SIGHUP. Both
+    tenant refusals below are correct -- no registry, no layout, nothing
+    written -- but letting either escape the handler took the whole server
+    down with nothing in the response naming what to fix.
+    """
+
+    def _app(self, tmp_path: Path) -> FastAPI:
+        return create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+
+    def test_unusable_tenant_id_is_reported_and_leaves_the_registry_empty(self, tmp_path: Path) -> None:
+        (tmp_path / "bernstein.yaml").write_text(
+            'goal: "Ship it"\ntenants:\n  - id: tenant with spaces\n    budget: 10\n',
+            encoding="utf-8",
+        )
+        application = self._app(tmp_path)
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert "tenant with spaces" in payload["error"]
+        assert "Rename the tenant" in payload["error"]
+        assert application.state.tenant_registry.tenants == ()
+
+    def test_linked_tenant_component_is_reported_and_leaves_the_registry_empty(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        sdd_dir = tmp_path / ".sdd"
+        sdd_dir.mkdir(parents=True, exist_ok=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        # A tenant directory that is a link resolves under `.sdd` and so passes
+        # containment; the anchored walk is what refuses to write through it.
+        (sdd_dir / "team-a").symlink_to(elsewhere, target_is_directory=True)
+        application = self._app(tmp_path)
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is False
+        assert "team-a" in payload["error"]
+        assert application.state.tenant_registry.tenants == ()
+        assert not (elsewhere / "backlog").exists()
+
+    def test_a_usable_seed_still_loads(self, tmp_path: Path) -> None:
+        _write_seed(tmp_path)
+        application = self._app(tmp_path)
+
+        payload = application.state.reload_seed_config()
+
+        assert payload["loaded"] is True
+        assert [t.id for t in application.state.tenant_registry.tenants] == ["team-a", "team-b"]
