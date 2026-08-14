@@ -1315,6 +1315,8 @@ async def test_task_diff_still_serves_a_task_in_the_callers_scope(
 
     assert response.status_code == 200, f"{credential_name} lost the diff for its own tenant"
     assert response.json()["task_id"] == own_task_id
+
+
 # Cost-history trend scoping (issue #3702)
 # ---------------------------------------------------------------------------
 # The 30/90-day trend behind /costs/alerts (and the legacy /costs/history
