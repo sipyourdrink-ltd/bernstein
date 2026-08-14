@@ -511,6 +511,14 @@ async def task_diff(request: Request, task_id: str) -> TaskDiffResponse:
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
+    # The same gate the task-detail and log-stream routes apply.  The task is
+    # what resolves the working branch below, and the response carries that
+    # branch's contents, so an ungated read hands over the source changes as
+    # well as the row.
+    from bernstein.core.routes.task_crud import _require_task_access
+
+    _require_task_access(task, request)
+
     workdir = _get_workdir(request)
     base_ref = await asyncio.to_thread(_resolve_base_ref, workdir)
     branch = await asyncio.to_thread(_resolve_branch_for_task, workdir, task.assigned_agent)

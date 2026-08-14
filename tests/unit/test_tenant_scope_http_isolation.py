@@ -1053,3 +1053,264 @@ async def test_scoped_cost_responses_name_their_scope(
 
     assert response.status_code == 200
     assert response.json()["tenant_id"] == DEFAULT_TENANT_ID
+
+
+# ---------------------------------------------------------------------------
+# Bulk task readers and the batch mutator
+#
+# The routes above reach one task by id.  These reach the task table itself -
+# a whole-store export, a GraphQL collection resolver, a batch mutator taking
+# a list of ids, and the diff sibling of the task-detail route.  Each one
+# resolves task rows without going through ``GET /tasks/{id}``, so the scope
+# the request resolves to has to be applied at each of them separately.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", READ_CREDENTIALS)
+@pytest.mark.parametrize("export_format", ["json", "csv"])
+async def test_export_tasks_omits_rows_outside_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+    export_format: str,
+) -> None:
+    """The task export is a whole-store read and has to narrow before it serialises.
+
+    Both renderings are asserted because the narrowing has to happen on the
+    row set, not in one formatter: a filter applied while building the JSON
+    body would leave the CSV attachment carrying the same rows.
+    """
+    credential = _credential(fx, credential_name)
+
+    response = await client.get(
+        f"/export/tasks?format={export_format}",
+        headers=credential.headers,
+    )
+
+    assert response.status_code == 200, f"{credential_name} could not export its own tenant"
+    body = response.text
+    assert fx.task_b_id not in body, f"{credential_name} exported an out-of-scope task id ({export_format})"
+    assert "tenant B work" not in body, f"{credential_name} exported an out-of-scope task title ({export_format})"
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize(("credential_name", "own_tenant"), READ_CREDENTIALS_WITH_OWN_TENANT)
+async def test_export_tasks_still_returns_the_callers_own_rows(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+    own_tenant: str,
+) -> None:
+    """Positive control: narrowing the export does not empty it.
+
+    Without this, the leak assertion above would be satisfied by an export
+    that returned nothing to anybody.
+    """
+    credential = _credential(fx, credential_name)
+    own_task_id = fx.task_a_id if own_tenant == TENANT_A else fx.task_default_id
+
+    response = await client.get("/export/tasks?format=json", headers=credential.headers)
+
+    assert response.status_code == 200
+    assert own_task_id in {row["id"] for row in response.json()}, (
+        f"{credential_name} lost its own tenant's rows from the export"
+    )
+
+
+# ``POST /graphql`` is not in the middleware's route-permission table, so it
+# lands on the fail-closed ``admin:manage`` default and only the operator
+# bearer reaches it.  That credential binds to ``DEFAULT_TENANT_ID``, which is
+# a tenant like any other rather than a wildcard - so it is still the wrong
+# answer for it to resolve a named tenant's rows.
+GRAPHQL_CREDENTIALS = ["legacy_bearer"]
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", GRAPHQL_CREDENTIALS)
+async def test_graphql_tasks_query_omits_rows_outside_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """The GraphQL collection resolver reads the same table the REST list does.
+
+    It is a second front door onto ``list_tasks`` with its own resolver, so
+    narrowing the REST list alone leaves this one answering for every tenant.
+    """
+    credential = _credential(fx, credential_name)
+
+    response = await client.post(
+        "/graphql",
+        headers=credential.headers,
+        json={"query": "{ tasks { id title status } }"},
+    )
+
+    assert response.status_code == 200, f"{credential_name} could not query its own tenant"
+    returned = {row["id"] for row in response.json()["data"]["tasks"]}
+    assert fx.task_b_id not in returned, f"{credential_name} resolved an out-of-scope task through GraphQL"
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", GRAPHQL_CREDENTIALS)
+async def test_graphql_tasks_query_still_returns_the_callers_own_rows(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """Positive control: the GraphQL resolver still answers for the bound scope."""
+    credential = _credential(fx, credential_name)
+
+    response = await client.post(
+        "/graphql",
+        headers=credential.headers,
+        json={"query": "{ tasks { id title status } }"},
+    )
+
+    assert response.status_code == 200
+    assert fx.task_default_id in {row["id"] for row in response.json()["data"]["tasks"]}, (
+        f"{credential_name} lost its own tenant's rows from the GraphQL resolver"
+    )
+
+
+# Every batch action that reaches an existing row, with the body it needs.
+BATCH_ACTIONS = [
+    ("cancel", {}),
+    ("retry", {}),
+    ("reprioritize", {"priority": 0}),
+    ("tag", {"tags": ["injected"]}),
+]
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", WRITE_CREDENTIALS)
+@pytest.mark.parametrize(("action", "extra"), BATCH_ACTIONS)
+async def test_batch_ops_refuses_a_task_outside_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+    action: str,
+    extra: dict[str, Any],
+) -> None:
+    """Every batch action is a mutation and each one has to clear the scope gate.
+
+    The route already pins an *agent* credential to its own task ids, which
+    says nothing about any other credential type, so the tenant boundary is
+    the only thing that can refuse these.  The assertion covers the stored row
+    as well as the status: a refusal that still wrote would pass a status-only
+    check, and ``tag`` and ``reprioritize`` in particular mutate in place.
+    """
+    credential = _credential(fx, credential_name)
+    store: Any = fx.app.state.store
+    before = store.get_task(fx.task_b_id)
+    assert before is not None
+    before_state = (before.status.value, before.priority, dict(before.metadata))
+
+    response = await client.post(
+        "/tasks/batch-ops",
+        headers=credential.headers,
+        json={"action": action, "ids": [fx.task_b_id], **extra},
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} ran batch {action} on an out-of-scope task: got {response.status_code}"
+    )
+    after = store.get_task(fx.task_b_id)
+    assert after is not None
+    assert (after.status.value, after.priority, dict(after.metadata)) == before_state, (
+        f"{credential_name} mutated an out-of-scope task via batch {action} despite the refusal"
+    )
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", WRITE_CREDENTIALS)
+async def test_batch_ops_refuses_the_whole_batch_when_one_id_is_out_of_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """An out-of-scope id poisons the batch rather than being skipped inside it.
+
+    This is the shape the route's pre-existing agent-scope gate already has:
+    the ids are checked together, before the loop, so a caller cannot smuggle
+    one row past the boundary by burying it among ids it does hold.
+    """
+    credential = _credential(fx, credential_name)
+    store: Any = fx.app.state.store
+    before_priority = store.get_task(fx.task_a_id).priority
+
+    response = await client.post(
+        "/tasks/batch-ops",
+        headers=credential.headers,
+        json={"action": "reprioritize", "ids": [fx.task_a_id, fx.task_b_id], "priority": 0},
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} ran a mixed-scope batch: got {response.status_code}"
+    )
+    assert store.get_task(fx.task_a_id).priority == before_priority, (
+        f"{credential_name} applied a mixed-scope batch to the in-scope half"
+    )
+
+
+@pytest.mark.anyio()
+async def test_batch_ops_still_mutates_a_task_in_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+) -> None:
+    """Positive control: the gate does not refuse the caller's own rows."""
+    credential = _credential(fx, "legacy_bearer")
+    store: Any = fx.app.state.store
+
+    response = await client.post(
+        "/tasks/batch-ops",
+        headers=credential.headers,
+        json={"action": "reprioritize", "ids": [fx.task_default_id], "priority": 7},
+    )
+
+    assert response.status_code == 200, f"batch-ops refused an in-scope task: got {response.status_code}"
+    assert response.json()["succeeded"] == [fx.task_default_id]
+    assert store.get_task(fx.task_default_id).priority == 7
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize("credential_name", READ_CREDENTIALS)
+async def test_task_diff_requires_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+) -> None:
+    """The diff route applies the same gate its task-detail sibling applies.
+
+    It reads the task to resolve the working branch and then returns that
+    branch's contents, so an ungated read hands over another tenant's source
+    changes as well as the row.
+    """
+    credential = _credential(fx, credential_name)
+
+    response = await client.get(
+        f"/dashboard/tasks/{fx.task_b_id}/diff",
+        headers=credential.crossing_headers(),
+    )
+
+    assert response.status_code in REJECTION_STATUSES, (
+        f"{credential_name} read the diff of an out-of-scope task: got {response.status_code}"
+    )
+
+
+@pytest.mark.anyio()
+@pytest.mark.parametrize(("credential_name", "own_tenant"), READ_CREDENTIALS_WITH_OWN_TENANT)
+async def test_task_diff_still_serves_a_task_in_the_callers_scope(
+    fx: Fixture,
+    client: AsyncClient,
+    credential_name: str,
+    own_tenant: str,
+) -> None:
+    """Positive control: the caller's own task still resolves a diff."""
+    credential = _credential(fx, credential_name)
+    own_task_id = fx.task_a_id if own_tenant == TENANT_A else fx.task_default_id
+
+    response = await client.get(f"/dashboard/tasks/{own_task_id}/diff", headers=credential.headers)
+
+    assert response.status_code == 200, f"{credential_name} lost the diff for its own tenant"
+    assert response.json()["task_id"] == own_task_id

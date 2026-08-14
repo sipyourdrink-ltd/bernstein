@@ -304,6 +304,26 @@ def _enforce_parent_task_scope(request: Request, parent_task_ids: Sequence[str |
         _require_parent_tenant_scope(request, named)
 
 
+def require_tenant_scope_for_ids(request: Request, task_ids: Sequence[str]) -> None:
+    """Reject any of *task_ids* that resolves outside the caller's tenant scope.
+
+    The by-id counterpart to :func:`_require_task_access`, for the routes that
+    take a list of ids rather than one in the path.  It is deliberately an
+    all-or-nothing gate over the whole list: checking the ids together, before
+    anything acts on them, is what stops a caller smuggling one row past the
+    boundary by burying it among ids it does hold.
+
+    An id that does not resolve at all is left to the caller's existing
+    behaviour - this guard narrows scope, it does not add an existence check.
+    """
+    store = _get_store(request)
+    effective_tenant = _resolve_request_tenant_scope(request)
+    for task_id in task_ids:
+        task = store.get_task(task_id)
+        if task is not None and task.tenant_id != effective_tenant:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+
+
 def _require_parent_tenant_scope(request: Request, parent_task_ids: Sequence[str]) -> None:
     """Reject a parent association that reaches outside the caller's scope.
 
@@ -314,16 +334,8 @@ def _require_parent_tenant_scope(request: Request, parent_task_ids: Sequence[str
     onto a parent resolved outside that scope would let one scope's write
     drive another's subtree lifecycle.  The parent has to sit where the child
     lands.
-
-    A parent that does not resolve at all is left to the caller's existing
-    behaviour - this guard narrows scope, it does not add an existence check.
     """
-    store = _get_store(request)
-    effective_tenant = _resolve_request_tenant_scope(request)
-    for parent_id in parent_task_ids:
-        parent = store.get_task(parent_id)
-        if parent is not None and parent.tenant_id != effective_tenant:
-            raise HTTPException(status_code=404, detail=f"Task '{parent_id}' not found")
+    require_tenant_scope_for_ids(request, parent_task_ids)
 
 
 # ---------------------------------------------------------------------------

@@ -118,8 +118,20 @@ def export_tasks(
             ``TaskStore.list_tasks`` so large stores no longer materialise
             the whole table (issue #1728 finding 3).
         offset: Optional number of tasks to skip before returning rows.
+
+    The export is a whole-store read, so it narrows to the caller's tenant
+    scope the same way the paginated task list does. The scope is pushed into
+    ``list_tasks`` rather than applied to the returned rows so that it is
+    ``limit``/``offset`` that page through the caller's own tasks: filtering
+    after the slice would page through every tenant's and return short pages.
     """
-    all_tasks = _get_store(request).list_tasks(limit=limit, offset=offset)
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
+    all_tasks = _get_store(request).list_tasks(
+        limit=limit,
+        offset=offset,
+        tenant_id=_resolve_request_tenant_scope(request),
+    )
     rows = [_task_to_export_dict(t) for t in all_tasks]
 
     if format == "csv":

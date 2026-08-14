@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from bernstein.core.tenanting import DEFAULT_TENANT_ID
 
 from bernstein.core.routes.graphql_api import (
     GraphQLRequest,
@@ -19,13 +20,20 @@ from bernstein.core.routes.graphql_api import (
 
 
 class _MockStore:
-    """Minimal mock for testing GraphQL resolvers."""
+    """Minimal mock for testing GraphQL resolvers.
+
+    ``list_tasks`` narrows on ``tenant_id`` the way the real store does, so a
+    resolver that stopped passing the scope through shows up here as rows it
+    should not have seen rather than as a silently ignored argument.
+    """
 
     def __init__(self, tasks: list[dict[str, Any]]) -> None:
         self._tasks = tasks
 
-    def list_tasks(self) -> list[dict[str, Any]]:
-        return self._tasks
+    def list_tasks(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
+        if tenant_id is None:
+            return self._tasks
+        return [t for t in self._tasks if t.get("tenant_id", DEFAULT_TENANT_ID) == tenant_id]
 
     def status_summary(self) -> dict[str, Any]:
         return {
@@ -106,7 +114,7 @@ class TestExecuteGraphQL:
                 {"id": "t1", "title": "Task 1", "status": "open", "role": "backend"},
             ]
         )
-        result = execute_graphql("{ tasks { id title status } }", store=mock_store)
+        result = execute_graphql("{ tasks { id title status } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         assert "errors" not in result
         assert len(result["data"]["tasks"]) == 1
         assert result["data"]["tasks"][0]["id"] == "t1"
@@ -117,7 +125,7 @@ class TestExecuteGraphQL:
                 {"id": "t1", "title": "Task 1", "status": "open", "role": "backend"},
             ]
         )
-        result = execute_graphql("{ tasks { id } }", store=mock_store)
+        result = execute_graphql("{ tasks { id } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         task = result["data"]["tasks"][0]
         assert "id" in task
         assert "title" not in task
@@ -132,54 +140,73 @@ class TestExecuteGraphQL:
         result = execute_graphql(
             '{ tasks(status: "open") { id title status } }',
             store=mock_store,
+            tenant_id=DEFAULT_TENANT_ID,
         )
         assert len(result["data"]["tasks"]) == 1
         assert result["data"]["tasks"][0]["id"] == "t1"
 
     def test_tasks_query_missing_field_is_none(self) -> None:
         mock_store = _MockStore([{"id": "t1"}])
-        result = execute_graphql("{ tasks { id cost_usd } }", store=mock_store)
+        result = execute_graphql("{ tasks { id cost_usd } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         task = result["data"]["tasks"][0]
         assert task["id"] == "t1"
         assert task["cost_usd"] is None
 
     def test_tasks_agent_virtual_field(self) -> None:
         mock_store = _MockStore([{"id": "t1", "assigned_agent": "a1", "provider": "claude"}])
-        result = execute_graphql("{ tasks { id agent } }", store=mock_store)
+        result = execute_graphql("{ tasks { id agent } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         task = result["data"]["tasks"][0]
         assert task["agent"]["id"] == "a1"
         assert task["agent"]["provider"] == "claude"
 
     def test_status_query(self) -> None:
         mock_store = _MockStore([])
-        result = execute_graphql("{ status { total completed } }", store=mock_store)
+        result = execute_graphql("{ status { total completed } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         assert "data" in result
         assert result["data"]["status"]["total"] == 0
         assert result["data"]["status"]["completed"] == 0
 
     def test_agents_query(self) -> None:
         mock_store = _MockStore([])
-        result = execute_graphql("{ agents { id provider status } }", store=mock_store)
+        result = execute_graphql("{ agents { id provider status } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         assert "data" in result
         assert result["data"]["agents"] == []
 
     def test_costs_query(self) -> None:
         mock_store = _MockStore([])
-        result = execute_graphql("{ costs { total_usd } }", store=mock_store)
+        result = execute_graphql("{ costs { total_usd } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         assert "data" in result
         assert result["data"]["costs"]["total_usd"] == pytest.approx(0.0)
 
     def test_unknown_operation(self) -> None:
         mock_store = _MockStore([])
-        result = execute_graphql("{ unknown { id } }", store=mock_store)
+        result = execute_graphql("{ unknown { id } }", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         assert "errors" in result
         assert "Unknown operation" in result["errors"][0]["message"]
 
     def test_unparseable_query(self) -> None:
         mock_store = _MockStore([])
-        result = execute_graphql("garbage", store=mock_store)
+        result = execute_graphql("garbage", store=mock_store, tenant_id=DEFAULT_TENANT_ID)
         assert "errors" in result
         assert "Could not parse" in result["errors"][0]["message"]
+
+    def test_tasks_query_resolves_only_the_named_tenant(self) -> None:
+        """The scope reaches the store, rather than being accepted and dropped.
+
+        ``tenant_id`` is a required argument, so a regression here is not a
+        forgotten call site but a resolver that takes the scope and then reads
+        the table without it.
+        """
+        mock_store = _MockStore(
+            [
+                {"id": "t1", "title": "Task 1", "status": "open", "tenant_id": "tenant-a"},
+                {"id": "t2", "title": "Task 2", "status": "open", "tenant_id": "tenant-b"},
+            ]
+        )
+
+        result = execute_graphql("{ tasks { id title status } }", store=mock_store, tenant_id="tenant-a")
+
+        assert [task["id"] for task in result["data"]["tasks"]] == ["t1"]
 
 
 # ---------------------------------------------------------------------------

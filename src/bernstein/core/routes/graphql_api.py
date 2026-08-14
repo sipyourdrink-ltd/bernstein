@@ -141,17 +141,19 @@ def _extract_task_fields(task: dict[str, Any], fields: list[str]) -> dict[str, A
     return row
 
 
-def _resolve_tasks(parsed: ParsedQuery, store: Any) -> list[dict[str, Any]]:
-    """Resolve a tasks query against the store.
+def _resolve_tasks(parsed: ParsedQuery, store: Any, tenant_id: str) -> list[dict[str, Any]]:
+    """Resolve a tasks query against the store, narrowed to *tenant_id*.
 
     Args:
         parsed: Parsed query with optional status filter and field selection.
         store: TaskStore (or mock) with a ``list_tasks()`` method.
+        tenant_id: The effective tenant scope the query is answered under.
+            Pushed into ``list_tasks`` so rows outside it are never read.
 
     Returns:
         List of task dicts with only the requested fields.
     """
-    tasks = store.list_tasks()
+    tasks = store.list_tasks(tenant_id=tenant_id)
     status_filter = parsed.args.get("status")
 
     results: list[dict[str, Any]] = []
@@ -182,6 +184,7 @@ def _resolve_status(parsed: ParsedQuery, store: Any) -> dict[str, Any]:
 def execute_graphql(
     query: str,
     store: Any,
+    tenant_id: str,
     variables: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute a GraphQL query against the store.
@@ -192,6 +195,10 @@ def execute_graphql(
     Args:
         query: GraphQL query string.
         store: TaskStore instance (or compatible mock).
+        tenant_id: The effective tenant scope to answer the query under.
+            Required rather than defaulted: this is a second front door onto
+            the task table, and a default would make "every tenant" the
+            behaviour a caller gets by forgetting to say anything.
         variables: Optional query variables (reserved for future use).
 
     Returns:
@@ -204,7 +211,7 @@ def execute_graphql(
 
     match parsed.operation:
         case "tasks":
-            data = _resolve_tasks(parsed, store)
+            data = _resolve_tasks(parsed, store, tenant_id)
             return {"data": {"tasks": data}}
         case "status":
             data_status = _resolve_status(parsed, store)
@@ -230,5 +237,12 @@ async def graphql_endpoint(req: GraphQLRequest, request: Request) -> dict[str, A
     Returns:
         GraphQL response with ``data`` or ``errors``.
     """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope
+
     store = request.app.state.store
-    return execute_graphql(req.query, store=store, variables=req.variables)
+    return execute_graphql(
+        req.query,
+        store=store,
+        tenant_id=_resolve_request_tenant_scope(request),
+        variables=req.variables,
+    )
