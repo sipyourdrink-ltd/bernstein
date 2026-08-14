@@ -1235,6 +1235,31 @@ class ChainScanCursor:
     complete: set[str] = field(default_factory=set)
     fingerprint: dict[str, tuple[int, int]] = field(default_factory=dict)
 
+    def working_copy(self) -> ChainScanCursor:
+        """Return an independent cursor for a scan that has no verdict yet.
+
+        A scan advances its cursor *while* walking the new tail and only
+        decides ``ok`` once the whole walk is done, so at the moment the bytes
+        that fail to authenticate are consumed the scan does not yet know they
+        failed. Handing the walk the caller's own object would therefore move
+        that object past a span the scan went on to refuse: the caller drops
+        the result, but its cursor has already adopted the damaged offsets, and
+        the next resumed scan skips those bytes and reports a clean chain for a
+        span nothing ever verified -- one refusal, then silence.
+
+        :meth:`AuditLog.scan_verified` walks this copy instead and returns it,
+        which makes ``result.cursor`` the only way to advance: a caller that
+        adopts it only on the verdict it wants keeps a failure re-detectable on
+        every later call.
+        """
+        return ChainScanCursor(
+            prev_hmac=self.prev_hmac,
+            consumed=dict(self.consumed),
+            order=list(self.order),
+            complete=set(self.complete),
+            fingerprint=dict(self.fingerprint),
+        )
+
 
 @dataclass
 class ChainScanResult:
@@ -1910,14 +1935,24 @@ class AuditLog:
           attacker with write access to the audit directory cannot forge an
           entry, and any unusable index simply degrades to a full walk (#2648).
 
+        The cursor passed in is never mutated. The scan walks a copy and
+        returns it, so ``result.cursor`` is the only thing that advances a
+        caller's resume point. That is what keeps a refusal repeatable: a
+        caller that adopts the returned cursor only when ``ok`` re-verifies the
+        same bytes -- and reports the same break -- on every later call,
+        instead of resuming past a span it never authenticated.
+
         Args:
             cursor: Resume point from a previous call, or ``None`` to scan all.
+                Left untouched by this call.
             event_type: If set, only return events of this type, and enable the
                 segment index (which retains only the filtered rows).
 
         Returns:
             A :class:`ChainScanResult` whose ``events`` are the newly consumed
-            rows and whose ``cursor`` should be passed to the next call.
+            rows and whose ``cursor`` should be passed to the next call. Adopt
+            it only on the verdict you are willing to treat as verified
+            history; on ``ok is False`` keep the cursor you already had.
         """
         segments: list[tuple[str, Path, bool]] = [
             (_segment_stem(p), p, True) for p in _archived_segment_paths(self._audit_dir)
@@ -1932,7 +1967,11 @@ class AuditLog:
             if not set(cursor.order).issubset(set(stems)) or stems[: len(cursor.order)] != cursor.order:
                 resume = False
 
-        active = cursor if resume and cursor is not None else ChainScanCursor()
+        # Never walk the caller's cursor object: the walk advances it before it
+        # knows whether the bytes it just consumed authenticate, so mutating a
+        # caller-owned cursor would let a refused scan silently advance the
+        # caller past the damage (see :meth:`ChainScanCursor.working_copy`).
+        active = cursor.working_copy() if resume and cursor is not None else ChainScanCursor()
         errors: list[str] = []
         events: list[AuditEvent] = []
 

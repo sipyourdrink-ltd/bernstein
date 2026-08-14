@@ -371,9 +371,14 @@ class _VerifiedAttachIndex:
         with self._lock:
             result = chain.scan_verified(self._cursor, event_type=EVENT_MULTIMODAL_ATTACH)
             if not result.ok:
-                # Leave the cursor where it was: a failed scan consumed bytes
-                # it could not authenticate, so advancing past them would let
-                # the next lookup treat the damaged span as verified history.
+                # Leave the cursor where it was by not adopting ``result.cursor``:
+                # the failed scan consumed bytes it could not authenticate, so
+                # advancing past them would let the next lookup treat the damaged
+                # span as verified history and go quiet about a break it already
+                # found. ``scan_verified`` walks a copy of what it is handed
+                # (:meth:`ChainScanCursor.working_copy`), so ``self._cursor``
+                # really is still the pre-scan resume point here and the next
+                # lookup re-verifies -- and re-refuses -- the same bytes.
                 raise AttachmentChainUnverified(sha256=sha256, errors=result.errors)
             if result.rescanned:
                 self._owners.clear()

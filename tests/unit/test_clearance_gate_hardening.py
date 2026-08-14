@@ -994,6 +994,51 @@ def test_incremental_scan_still_catches_tampering(tmp_path: Path) -> None:
     assert not cold.ok, "a tampered row survived the indexed scan"
 
 
+def test_a_failed_scan_does_not_advance_a_caller_owned_cursor(tmp_path: Path) -> None:
+    """A refused scan must stay refused for every caller that kept its cursor.
+
+    The scan advances its cursor while walking the new tail and only decides
+    ``ok`` afterwards. If it walked the caller's object, a caller that declines
+    to adopt ``result.cursor`` on failure would still have been moved past the
+    bytes that failed, and the next resumed scan -- with nothing appended --
+    would take the "already == total" fast path and report a clean chain for a
+    span nothing authenticated.
+    """
+    from bernstein.core.security.audit import AuditLog
+
+    audit = tmp_path / "audit"
+    log = AuditLog(audit, key=b"k" * 32)
+    for i in range(10):
+        log.log(event_type="task.transition", actor="x", resource_type="task", resource_id=f"t{i}", details={})
+
+    warm = log.scan_verified(event_type="task.transition")
+    assert warm.ok, warm.errors
+    kept = warm.cursor
+    before = (kept.prev_hmac, dict(kept.consumed), list(kept.order))
+
+    # Append a row whose HMAC an attacker without the key cannot compute.
+    segment = next(iter(sorted(audit.glob("*.jsonl"))))
+    rows = [json.loads(line) for line in segment.read_text().splitlines() if line.strip()]
+    forged = json.loads(json.dumps(rows[-1]))
+    forged["actor"] = "forger"
+    forged["prev_hmac"] = rows[-1]["hmac"]
+    forged["hmac"] = "f" * 64
+    with segment.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(forged, sort_keys=True) + "\n")
+
+    failed = log.scan_verified(kept, event_type="task.transition")
+    assert not failed.ok, "the forged row was not caught"
+    assert (kept.prev_hmac, dict(kept.consumed), list(kept.order)) == before, (
+        "the failed scan mutated the cursor the caller still owns"
+    )
+
+    # Nothing appended since: a caller that kept its cursor must see the break
+    # again rather than resume past it.
+    again = log.scan_verified(kept, event_type="task.transition")
+    assert not again.ok, "the tamper went unreported on the next scan from the same cursor"
+    assert again.errors == failed.errors
+
+
 def test_a_forged_segment_index_is_ignored(tmp_path: Path) -> None:
     """An attacker with write access to the audit dir cannot forge the index."""
     from bernstein.core.security.audit import AuditLog

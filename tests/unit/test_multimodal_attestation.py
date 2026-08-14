@@ -877,6 +877,53 @@ class TestAuthenticatedAttachReads:
                 audit_chain=chain,
             )
 
+    def test_tamper_is_still_refused_and_reported_after_a_failed_scan(self, tmp_path: Path) -> None:
+        """A warm cursor must not turn a refusal into a one-shot event.
+
+        Fail-closed is only useful if it holds on every lookup. The sequence
+        that matters is warm cursor -> failing scan -> another lookup with
+        nothing appended in between: if the failed scan is allowed to advance
+        the kept cursor past the bytes it could not authenticate, the next
+        lookup resumes beyond the damage, sees no new bytes, and reports a
+        clean chain for a span nothing ever verified.
+        """
+        digest, cas, chain = self._attach(tmp_path)
+        # 1. Warm the kept cursor on a chain that verifies.
+        assert resolve_attachment_for_worker(
+            sha256=digest,
+            requesting_worktree_id="wt-a",
+            cas=cas,
+            audit_chain=chain,
+        )
+        _append_forged_attach(tmp_path / "audit", sha256=digest, worktree_id="wt-b")
+        # 2. The scan that first meets the forged row must refuse.
+        with pytest.raises(AttachmentChainUnverified) as first:
+            resolve_attachment_for_worker(
+                sha256=digest,
+                requesting_worktree_id="wt-a",
+                cas=cas,
+                audit_chain=chain,
+            )
+        assert first.value.errors, "the first refusal must name what failed"
+        # 3. Nothing appended since. The same store must refuse again, with the
+        #    same evidence -- not go quiet about a break it already found.
+        with pytest.raises(AttachmentChainUnverified) as second:
+            resolve_attachment_for_worker(
+                sha256=digest,
+                requesting_worktree_id="wt-a",
+                cas=cas,
+                audit_chain=chain,
+            )
+        assert second.value.errors == first.value.errors
+        # And the forged worktree stays refused on the repeat too.
+        with pytest.raises(AttachmentChainUnverified):
+            resolve_attachment_for_worker(
+                sha256=digest,
+                requesting_worktree_id="wt-b",
+                cas=cas,
+                audit_chain=chain,
+            )
+
     def test_repeat_resolve_resumes_from_the_kept_cursor(self, tmp_path: Path) -> None:
         """The per-attachment path must not re-walk the whole chain on every lookup."""
         digest, cas, chain = self._attach(tmp_path)
